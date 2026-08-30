@@ -1,6 +1,7 @@
 import {
   artifactSchema,
   createArtifact as buildArtifact,
+  newId,
   stampNewEntity,
   type Artifact,
   type ArtifactPatch,
@@ -43,33 +44,58 @@ export async function createArtifact(
   input: CreateArtifactInput,
   meta: RevisionMeta = USER_SAVE,
 ): Promise<Artifact> {
-  return persistRevision(buildArtifact(input), meta);
+  const valid = artifactSchema.parse({ ...buildArtifact(input), updatedAt: Date.now() });
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    await writeRevision(valid, meta);
+    return valid;
+  });
 }
 
 /**
  * The canonical content save (01-DATA-MODEL §ArtifactRevision): increment
  * `currentRevision`, write the revision row with a deep snapshot, update the
- * artifact row, then trim to the newest 50 revisions. All in one transaction.
+ * artifact row, then trim to the newest 50 revisions.
+ *
+ * Trusts the passed row's `currentRevision` — callers that read the row
+ * themselves (the editor's autosave) should use `updateArtifact`, which does
+ * the read and the write inside one transaction and is therefore safe
+ * against overlapping saves.
  */
 export async function saveArtifact(
   artifact: Artifact,
   meta: RevisionMeta = USER_SAVE,
 ): Promise<Artifact> {
-  return persistRevision({ ...artifact, currentRevision: artifact.currentRevision + 1 }, meta);
+  const valid = artifactSchema.parse({
+    ...artifact,
+    currentRevision: artifact.currentRevision + 1,
+    updatedAt: Date.now(),
+  });
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    await writeRevision(valid, meta);
+    return valid;
+  });
 }
 
-/** Merges a patch and saves it as a new revision. */
+/** Merges a patch and saves it as a new revision (race-safe). */
 export async function updateArtifact(
   id: Id,
   patch: ArtifactPatch,
   meta: RevisionMeta = USER_SAVE,
 ): Promise<Artifact> {
-  const current = await db.artifacts.get(id);
-  if (!current) throw new NotFoundError('Artifact', id);
-  // Parse-normalize the merged row: keeps the union sound when `patch.data`
-  // replaces the whole data object, and rejects kind/data mismatches.
-  const merged = artifactSchema.parse({ ...current, ...patch });
-  return saveArtifact(merged, meta);
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    const current = await db.artifacts.get(id);
+    if (!current) throw new NotFoundError('Artifact', id);
+    // Parse-normalize the merged row: keeps the union sound when `patch.data`
+    // replaces the whole data object, and rejects kind/data mismatches.
+    const merged = artifactSchema.parse({ ...current, ...patch });
+    const next = artifactSchema.parse({
+      ...merged,
+      currentRevision: current.currentRevision + 1,
+      updatedAt: Date.now(),
+    });
+    await writeRevision(next, meta);
+    return next;
+  });
 }
 
 /**
@@ -77,14 +103,44 @@ export async function updateArtifact(
  * "restore = save as new revision"); the old revisions stay untouched.
  */
 export async function restoreRevision(artifactId: Id, revision: number): Promise<Artifact> {
-  const row = await getRevision(artifactId, revision);
-  if (!row) throw new NotFoundError('ArtifactRevision', `${artifactId}#${revision}`);
-  const current = await db.artifacts.get(artifactId);
-  if (!current) throw new NotFoundError('Artifact', artifactId);
-  return persistRevision(
-    { ...row.snapshot, currentRevision: current.currentRevision + 1 },
-    USER_SAVE,
-  );
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    const row = await db.revisions
+      .where('[artifactId+revision]')
+      .equals([artifactId, revision])
+      .first();
+    if (!row) throw new NotFoundError('ArtifactRevision', `${artifactId}#${revision}`);
+    const current = await db.artifacts.get(artifactId);
+    if (!current) throw new NotFoundError('Artifact', artifactId);
+    const next = artifactSchema.parse({
+      ...row.snapshot,
+      currentRevision: current.currentRevision + 1,
+      updatedAt: Date.now(),
+    });
+    await writeRevision(next, USER_SAVE);
+    return next;
+  });
+}
+
+/**
+ * Duplicates an artifact (tree context menu): fresh identity, "(copy)" name
+ * suffix, and its own revision-1 snapshot.
+ */
+export async function duplicateArtifact(id: Id): Promise<Artifact> {
+  const source = await db.artifacts.get(id);
+  if (!source) throw new NotFoundError('Artifact', id);
+  const now = Date.now();
+  const copy = artifactSchema.parse({
+    ...structuredClone(source),
+    id: newId(),
+    createdAt: now,
+    updatedAt: now,
+    name: `${source.name} (copy)`,
+    currentRevision: 1,
+  });
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    await writeRevision(copy, USER_SAVE);
+    return copy;
+  });
 }
 
 export async function listRevisions(artifactId: Id): Promise<ArtifactRevision[]> {
@@ -108,28 +164,23 @@ export async function deleteArtifact(id: Id): Promise<void> {
 }
 
 /**
- * Single write path for artifact content: validates the row, writes it plus a
- * revision snapshot, and trims old revisions. Caller decides the revision
- * number by setting `currentRevision` beforehand.
+ * Core revision write: puts the artifact row, its revision snapshot, and
+ * trims old revisions. Must run inside a `rw` transaction over
+ * `artifacts` + `revisions` (all public functions above provide one) so that
+ * overlapping saves serialize instead of clobbering revision numbers.
  */
-async function persistRevision(artifact: Artifact, meta: RevisionMeta): Promise<Artifact> {
-  const now = Date.now();
-  const valid = artifactSchema.parse({ ...artifact, updatedAt: now });
+async function writeRevision(valid: Artifact, meta: RevisionMeta): Promise<void> {
   const revision: ArtifactRevision = {
-    ...stampNewEntity(now),
+    ...stampNewEntity(valid.updatedAt),
     artifactId: valid.id,
     revision: valid.currentRevision,
     snapshot: structuredClone(valid),
     source: meta.source,
     runId: meta.runId ?? null,
   };
-
-  await db.transaction('rw', db.artifacts, db.revisions, async () => {
-    await db.artifacts.put(valid);
-    await db.revisions.put(revision);
-    await trimRevisions(valid.id);
-  });
-  return valid;
+  await db.artifacts.put(valid);
+  await db.revisions.put(revision);
+  await trimRevisions(valid.id);
 }
 
 /** Deletes the oldest revisions beyond the per-artifact cap. */

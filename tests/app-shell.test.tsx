@@ -9,8 +9,9 @@ import { ROUTES } from '@/app/routes';
 import { DEFAULT_THEME, THEME_STORAGE_KEY, useThemeStore } from '@/app/theme/theme';
 
 /**
- * T1 acceptance: the app shell renders on every route with placeholder pages
- * and a working theme toggle (docs/06-MILESTONES.md).
+ * App shell behavior (T1): shell + theme toggle on every route, and the
+ * routed pages as they become real (T3: picker + workspace; later tasks
+ * replace the remaining placeholders).
  */
 
 function renderAppAt(path: string): void {
@@ -47,23 +48,23 @@ describe('app shell', () => {
     expect(screen.getByRole('button', { name: 'Switch to light theme' })).toBeInTheDocument();
   });
 
-  it('renders the campaign picker placeholder on /', () => {
+  it('renders the campaign picker on /', () => {
     renderAppAt(ROUTES.campaignPicker);
 
-    expect(screen.getByRole('heading', { name: 'Campaign picker' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Campaigns' })).toBeInTheDocument();
+    expect(screen.getByTestId('new-campaign')).toBeInTheDocument();
   });
 
-  it('renders the workspace placeholder for /c/:campaignId', () => {
+  it('renders the workspace for /c/:campaignId (missing-campaign pane when empty)', async () => {
     renderAppAt('/c/campaign-1');
 
-    expect(screen.getByRole('heading', { name: 'Campaign workspace' })).toBeInTheDocument();
-    expect(screen.getByText(/campaign “campaign-1”/)).toBeInTheDocument();
+    expect(await screen.findByText(/does not exist/)).toBeInTheDocument();
   });
 
-  it('renders the workspace placeholder for /c/:campaignId/a/:artifactId', () => {
+  it('renders the workspace for /c/:campaignId/a/:artifactId', async () => {
     renderAppAt('/c/campaign-1/a/artifact-9');
 
-    expect(screen.getByText(/campaign “campaign-1”, artifact “artifact-9”/)).toBeInTheDocument();
+    expect(await screen.findByText(/does not exist/)).toBeInTheDocument();
   });
 
   it('navigates to the Rules placeholder from the top bar', async () => {

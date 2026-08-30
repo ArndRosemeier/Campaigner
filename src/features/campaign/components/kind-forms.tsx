@@ -1,0 +1,270 @@
+import { useState } from 'react';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
+import type {
+  FactionArtifactData,
+  GameSystem,
+  LocationArtifactData,
+  NpcArtifactData,
+  StatBlock,
+} from '@/domain';
+import { blankStatBlock } from '@/domain';
+import { PairListEditor, StringListEditor } from '@/features/campaign/components/list-editors';
+import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <label className="flex flex-col gap-1 text-xs font-medium text-muted-foreground">
+      {label}
+      {children}
+    </label>
+  );
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label={label}>
+      <Textarea
+        value={value}
+        className="min-h-[64px] text-sm"
+        onChange={(event) => {
+          onChange(event.target.value);
+        }}
+      />
+    </Field>
+  );
+}
+
+// Kind-specific forms (05-UI: "plain labeled inputs, mapped 1:1 to the
+// structured data fields").
+
+export interface NpcFormProps {
+  artifactName: string;
+  data: NpcArtifactData;
+  onChange: (data: NpcArtifactData) => void;
+  campaignSystem: GameSystem;
+}
+
+export function NpcForm({ artifactName, data, onChange, campaignSystem }: NpcFormProps) {
+  const [editingStatBlock, setEditingStatBlock] = useState(false);
+
+  function patch(next: Partial<NpcArtifactData>): void {
+    onChange({ ...data, ...next });
+  }
+
+  function setStatBlock(next: StatBlock): void {
+    patch({ statBlock: next });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Role">
+          <Input
+            value={data.role}
+            className="h-7 text-sm"
+            onChange={(event) => {
+              patch({ role: event.target.value });
+            }}
+          />
+        </Field>
+        <Field label="Voice notes">
+          <Input
+            value={data.voiceNotes}
+            className="h-7 text-sm"
+            onChange={(event) => {
+              patch({ voiceNotes: event.target.value });
+            }}
+          />
+        </Field>
+      </div>
+      <TextAreaField
+        label="Appearance"
+        value={data.appearance}
+        onChange={(appearance) => {
+          patch({ appearance });
+        }}
+      />
+      <TextAreaField
+        label="Personality"
+        value={data.personality}
+        onChange={(personality) => {
+          patch({ personality });
+        }}
+      />
+      <TextAreaField
+        label="Motivation"
+        value={data.motivation}
+        onChange={(motivation) => {
+          patch({ motivation });
+        }}
+      />
+      <TextAreaField
+        label="Secrets"
+        value={data.secrets}
+        onChange={(secrets) => {
+          patch({ secrets });
+        }}
+      />
+
+      <div className="flex flex-col gap-2 border-t pt-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium">Stat block</h2>
+          {data.statBlock === null ? (
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => {
+                patch({ statBlock: blankStatBlock(campaignSystem) });
+              }}
+            >
+              Add stat block
+            </Button>
+          ) : (
+            <div className="flex items-center gap-1">
+              <Button
+                size="xs"
+                variant={editingStatBlock ? 'secondary' : 'outline'}
+                onClick={() => {
+                  setEditingStatBlock((editing) => !editing);
+                }}
+              >
+                {editingStatBlock ? 'Done editing' : 'Edit'}
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => {
+                  patch({ statBlock: null });
+                }}
+              >
+                Remove
+              </Button>
+            </div>
+          )}
+        </div>
+        {data.statBlock !== null && !editingStatBlock && (
+          <StatBlockCard statBlock={data.statBlock} name={artifactName} />
+        )}
+        {data.statBlock !== null && editingStatBlock && (
+          <StatBlockForm statBlock={data.statBlock} onChange={setStatBlock} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+export interface LocationFormProps {
+  data: LocationArtifactData;
+  onChange: (data: LocationArtifactData) => void;
+}
+
+export function LocationForm({ data, onChange }: LocationFormProps) {
+  function patch(next: Partial<LocationArtifactData>): void {
+    onChange({ ...data, ...next });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <Field label="Location type">
+        <Input
+          value={data.locationType}
+          className="h-7 text-sm"
+          placeholder="e.g. tavern, ruin, city quarter"
+          onChange={(event) => {
+            patch({ locationType: event.target.value });
+          }}
+        />
+      </Field>
+      <TextAreaField
+        label="Inhabitants"
+        value={data.inhabitants}
+        onChange={(inhabitants) => {
+          patch({ inhabitants });
+        }}
+      />
+      <PairListEditor
+        label="Points of interest"
+        labelA="Name"
+        labelB="Description"
+        rows={data.pointsOfInterest.map((poi) => ({ a: poi.name, b: poi.description }))}
+        onChange={(rows) => {
+          patch({ pointsOfInterest: rows.map((row) => ({ name: row.a, description: row.b })) });
+        }}
+      />
+      <StringListEditor
+        label="Adventure hooks"
+        items={data.hooks}
+        onChange={(hooks) => {
+          patch({ hooks });
+        }}
+        itemPlaceholder="A hook…"
+      />
+    </div>
+  );
+}
+
+export interface FactionFormProps {
+  data: FactionArtifactData;
+  onChange: (data: FactionArtifactData) => void;
+}
+
+export function FactionForm({ data, onChange }: FactionFormProps) {
+  function patch(next: Partial<FactionArtifactData>): void {
+    onChange({ ...data, ...next });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <TextAreaField
+        label="Goals"
+        value={data.goals}
+        onChange={(goals) => {
+          patch({ goals });
+        }}
+      />
+      <TextAreaField
+        label="Methods"
+        value={data.methods}
+        onChange={(methods) => {
+          patch({ methods });
+        }}
+      />
+      <TextAreaField
+        label="Resources"
+        value={data.resources}
+        onChange={(resources) => {
+          patch({ resources });
+        }}
+      />
+      <PairListEditor
+        label="Ranks"
+        labelA="Title"
+        labelB="Description"
+        rows={data.ranks.map((rank) => ({ a: rank.title, b: rank.description }))}
+        onChange={(rows) => {
+          patch({ ranks: rows.map((row) => ({ title: row.a, description: row.b })) });
+        }}
+      />
+    </div>
+  );
+}
+
+export function NoteForm() {
+  return (
+    <p className="text-xs text-muted-foreground">
+      Notes have no additional fields — use the Markdown body above.
+    </p>
+  );
+}

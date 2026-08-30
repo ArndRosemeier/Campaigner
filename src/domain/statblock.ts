@@ -47,3 +47,13 @@ export const statBlockSchema = z.object({
 });
 
 export type StatBlock = z.infer<typeof statBlockSchema>;
+
+/** Standard d20 ability modifier: floor((score - 10) / 2). */
+export function abilityModifier(score: number): number {
+  return Math.floor((score - 10) / 2);
+}
+
+/** Formats a modifier for display: 3 → '+3', -1 → '-1'. */
+export function formatModifier(value: number): string {
+  return value >= 0 ? `+${value}` : String(value);
+}

@@ -15,12 +15,50 @@ import { DEFAULT_PERSONA_TEMPERATURE, personaSchema, type Persona } from '@/doma
 import { rulebookSchema, type Rulebook } from '@/domain/rulebook';
 import { personaRunSchema, type Autonomy, type PersonaRun } from '@/domain/run';
 import type { GameSystem } from '@/domain/gameSystem';
+import { statBlockSchema, type StatBlock } from '@/domain/statblock';
 
 /**
  * Centralized factories for new entities — the only place "blank" states are
  * defined, so features never hand-roll defaults (T3's tree `+` buttons, the
  * campaign picker dialog and the run engine all build on these).
  */
+
+/** Default names for blank artifacts — always non-empty (names are required). */
+export const DEFAULT_ARTIFACT_NAMES: Readonly<Record<ArtifactKind, string>> = {
+  npc: 'New NPC',
+  location: 'New Location',
+  faction: 'New Faction',
+  note: 'New Note',
+};
+
+export function defaultArtifactName(kind: ArtifactKind): string {
+  return DEFAULT_ARTIFACT_NAMES[kind];
+}
+
+/** An empty-but-valid StatBlock to start the stat-block form from. */
+export function blankStatBlock(system: GameSystem): StatBlock {
+  return statBlockSchema.parse({
+    system,
+    level: '',
+    size: '',
+    creatureType: '',
+    ac: 10,
+    acNote: '',
+    hp: 1,
+    hpFormula: '',
+    speed: '',
+    abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+    saves: '',
+    skills: '',
+    senses: '',
+    languages: '',
+    traits: [],
+    actions: [],
+    reactions: [],
+    legendary: [],
+    extras: {},
+  });
+}
 
 /** The blank structured data for a kind, per 01-DATA-MODEL. */
 export function blankArtifactData(kind: ArtifactKind): ArtifactData {

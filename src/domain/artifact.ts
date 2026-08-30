@@ -18,6 +18,14 @@ export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
   note: 'Notes',
 };
 
+/** Singular labels, for badges and toasts ("NPC created"). */
+export const ARTIFACT_KIND_SINGULAR: Readonly<Record<ArtifactKind, string>> = {
+  npc: 'NPC',
+  location: 'Location',
+  faction: 'Faction',
+  note: 'Note',
+};
+
 export const artifactLinkSchema = z.object({
   targetId: z.uuid(),
   relation: z.string(),

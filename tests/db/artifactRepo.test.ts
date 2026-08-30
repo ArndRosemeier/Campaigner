@@ -16,8 +16,7 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { db } from '@/db/db';
-import { NotFoundError } from '@/lib/errors';
-import { clearDatabase } from './helpers';
+import { clearDatabase, expectNotFound } from './helpers';
 
 describe('artifactRepo revisions', () => {
   beforeEach(clearDatabase);
@@ -135,8 +134,10 @@ describe('artifactRepo revisions', () => {
   });
 
   it('throws NotFoundError for missing artifacts/revisions', async () => {
-    await expect(updateArtifact('missing', { body: 'x' })).rejects.toBeInstanceOf(NotFoundError);
-    await expect(restoreRevision('missing', 1)).rejects.toBeInstanceOf(NotFoundError);
+    // updateArtifact/restoreRevision throw inside transactions, so Dexie
+    // wraps the error — match through the guard, not by identity.
+    await expectNotFound(updateArtifact('missing', { body: 'x' }));
+    await expectNotFound(restoreRevision('missing', 1));
     expect(await getRevision(newId(), 1)).toBeUndefined();
   });
 

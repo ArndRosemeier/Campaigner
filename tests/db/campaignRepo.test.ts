@@ -33,11 +33,13 @@ describe('campaignRepo', () => {
 
   it('updates campaigns and sorts the list by most recent update', async () => {
     const first = await addCampaign({ name: 'First', system: 'cosmere' });
+    // Deterministic ordering: updatedAt has millisecond resolution, so the
+    // two rows must be created at distinct timestamps.
+    await new Promise((resolve) => setTimeout(resolve, 2));
     const second = await addCampaign({ name: 'Second', system: 'other' });
 
     expect((await listCampaigns()).map((c) => c.id)).toEqual([second.id, first.id]);
 
-    // Deterministic ordering: updatedAt has millisecond resolution.
     await new Promise((resolve) => setTimeout(resolve, 2));
     await updateCampaign(first.id, { name: 'First Updated' });
     expect((await listCampaigns()).map((c) => c.id)).toEqual([first.id, second.id]);

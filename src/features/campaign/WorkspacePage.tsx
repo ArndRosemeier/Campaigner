@@ -1,28 +1,101 @@
 import type { JSX } from 'react';
-import { useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useDefaultLayout } from 'react-resizable-panels';
 
-import { PlaceholderPage } from '@/components/PlaceholderPage';
-import type { RouteParams } from '@/app/routes';
+import { ROUTES, artifactPath } from '@/app/routes';
+import type { Artifact } from '@/domain';
+import { Button } from '@/components/ui/button';
+import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
+import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
+import { CampaignTree } from '@/features/campaign/components/campaign-tree';
+import { PersonaPanelPlaceholder } from '@/features/campaign/components/persona-panel-placeholder';
+import { WelcomePanel } from '@/features/campaign/components/welcome-panel';
+import { useArtifacts, useCampaign } from '@/features/campaign/hooks';
+
+/** Pane ids for layout persistence (must match the rendered Panels). */
+const PANEL_IDS = ['tree', 'editor', 'persona'] as const;
 
 /**
- * Placeholder for the three-pane workspace (05-UI.md §Workspace): campaign
- * tree · artifact editor · persona panel. Implemented in T3. Rendered for
- * both `/c/:campaignId` and `/c/:campaignId/a/:artifactId`.
+ * Three-pane workspace (05-UI §Workspace): campaign tree · artifact editor ·
+ * persona panel, as resizable panes with the spec's pixel minimums
+ * (220/400/320 px). The layout persists across reloads via localStorage.
+ *
+ * Rendered for both `/c/:campaignId` and `/c/:campaignId/a/:artifactId`; the
+ * open artifact lives in the URL (deep-linkable, back-button friendly).
  */
 export function WorkspacePage(): JSX.Element {
-  const { campaignId, artifactId } = useParams<RouteParams['artifact']>();
+  const { campaignId, artifactId } = useParams<{ campaignId: string; artifactId: string }>();
+  const campaign = useCampaign(campaignId);
+  const artifacts = useArtifacts(campaignId);
+  const navigate = useNavigate();
+  const layout = useDefaultLayout({
+    id: 'campaigner.workspace',
+    panelIds: [...PANEL_IDS],
+    storage: window.localStorage,
+  });
 
-  const routeSummary = campaignId
-    ? artifactId
-      ? `campaign “${campaignId}”, artifact “${artifactId}”`
-      : `campaign “${campaignId}”`
-    : 'no campaign selected';
+  if (campaignId === undefined) {
+    return <MissingPane message="No campaign selected." backLink />;
+  }
+  if (campaign === null) {
+    return (
+      <MissingPane message="This campaign does not exist (it may have been deleted)." backLink />
+    );
+  }
+  if (campaign === undefined || artifacts === undefined) {
+    return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
+  }
+
+  const selected: Artifact | undefined =
+    artifactId === undefined ? undefined : artifacts.find((artifact) => artifact.id === artifactId);
 
   return (
-    <PlaceholderPage
-      title="Campaign workspace"
-      description={`The three-pane workspace (campaign tree · artifact editor · persona panel) will live here. Route resolves to: ${routeSummary}.`}
-      milestone="T3"
-    />
+    <ResizablePanelGroup
+      orientation="horizontal"
+      defaultLayout={layout.defaultLayout}
+      onLayoutChanged={layout.onLayoutChanged}
+      className="h-full"
+    >
+      <ResizablePanel id="tree" defaultSize="22%" minSize={220}>
+        <CampaignTree
+          campaignId={campaignId}
+          artifacts={artifacts}
+          selectedArtifactId={selected?.id}
+          onSelectArtifact={(id) => {
+            navigate(artifactPath(campaignId, id));
+          }}
+        />
+      </ResizablePanel>
+      <ResizableHandle />
+      <ResizablePanel id="editor" defaultSize="48%" minSize={400}>
+        {selected !== undefined ? (
+          <ArtifactEditor
+            key={selected.id}
+            artifact={selected}
+            campaignArtifacts={artifacts}
+            campaignSystem={campaign.system}
+          />
+        ) : (
+          <WelcomePanel campaignId={campaignId} />
+        )}
+      </ResizablePanel>
+      <ResizableHandle />
+      <ResizablePanel id="persona" defaultSize="30%" minSize={320}>
+        <PersonaPanelPlaceholder />
+      </ResizablePanel>
+    </ResizablePanelGroup>
+  );
+}
+
+function MissingPane({ message, backLink }: { message: string; backLink?: boolean }): JSX.Element {
+  return (
+    <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
+      <p className="text-sm text-muted-foreground">{message}</p>
+      {backLink === true && (
+        <Button variant="outline" size="sm" render={<Link to={ROUTES.campaignPicker} />}>
+          Back to campaigns
+        </Button>
+      )}
+    </div>
   );
 }
