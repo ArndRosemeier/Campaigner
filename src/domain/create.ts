@@ -1,0 +1,160 @@
+import {
+  artifactSchema,
+  type Artifact,
+  type ArtifactData,
+  type ArtifactKind,
+  type ArtifactLink,
+  type FactionArtifact,
+  type LocationArtifact,
+  type NpcArtifact,
+  type NoteArtifact,
+} from '@/domain/artifact';
+import { campaignSchema, type Campaign, type NewCampaign } from '@/domain/campaign';
+import { stampNewEntity, type Id } from '@/domain/entity';
+import { DEFAULT_PERSONA_TEMPERATURE, personaSchema, type Persona } from '@/domain/persona';
+import { rulebookSchema, type Rulebook } from '@/domain/rulebook';
+import { personaRunSchema, type Autonomy, type PersonaRun } from '@/domain/run';
+import type { GameSystem } from '@/domain/gameSystem';
+
+/**
+ * Centralized factories for new entities — the only place "blank" states are
+ * defined, so features never hand-roll defaults (T3's tree `+` buttons, the
+ * campaign picker dialog and the run engine all build on these).
+ */
+
+/** The blank structured data for a kind, per 01-DATA-MODEL. */
+export function blankArtifactData(kind: ArtifactKind): ArtifactData {
+  switch (kind) {
+    case 'npc':
+      return {
+        role: '',
+        appearance: '',
+        personality: '',
+        motivation: '',
+        secrets: '',
+        voiceNotes: '',
+        statBlock: null,
+      };
+    case 'location':
+      return { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] };
+    case 'faction':
+      return { goals: '', methods: '', resources: '', ranks: [] };
+    case 'note':
+      return {};
+  }
+}
+
+export interface CreateArtifactInput<K extends ArtifactKind = ArtifactKind> {
+  campaignId: Id;
+  kind: K;
+  name: string;
+  tags?: readonly string[];
+  summary?: string;
+  body?: string;
+  links?: readonly ArtifactLink[];
+  data?: ArtifactData;
+}
+
+export function createArtifact(input: CreateArtifactInput<'npc'>): NpcArtifact;
+export function createArtifact(input: CreateArtifactInput<'location'>): LocationArtifact;
+export function createArtifact(input: CreateArtifactInput<'faction'>): FactionArtifact;
+export function createArtifact(input: CreateArtifactInput<'note'>): NoteArtifact;
+export function createArtifact(input: CreateArtifactInput): Artifact;
+export function createArtifact(input: CreateArtifactInput): Artifact {
+  const stamp = stampNewEntity();
+  const artifact = {
+    ...stamp,
+    campaignId: input.campaignId,
+    kind: input.kind,
+    name: input.name,
+    tags: [...(input.tags ?? [])],
+    summary: input.summary ?? '',
+    body: input.body ?? '',
+    links: [...(input.links ?? [])],
+    currentRevision: 1,
+    data: input.data ?? blankArtifactData(input.kind),
+  };
+  // Parse instead of casting: guarantees every artifact entering the DB
+  // satisfies the discriminated union (kind must match its data shape).
+  return artifactSchema.parse(artifact);
+}
+
+export function createCampaign(input: NewCampaign): Campaign {
+  const stamp = stampNewEntity();
+  return campaignSchema.parse({
+    ...stamp,
+    name: input.name,
+    description: input.description ?? '',
+    system: input.system,
+  });
+}
+
+export interface NewRulebook {
+  title: string;
+  system: GameSystem;
+  filename: string;
+  pageCount?: number;
+}
+
+export function createRulebook(input: NewRulebook): Rulebook {
+  const stamp = stampNewEntity();
+  return rulebookSchema.parse({
+    ...stamp,
+    title: input.title,
+    system: input.system,
+    filename: input.filename,
+    pageCount: input.pageCount ?? 0,
+    status: 'processing',
+    errorMessage: '',
+  });
+}
+
+export interface NewPersona {
+  slug: string;
+  name: string;
+  description: string;
+  systemPrompt: string;
+  model?: string;
+  temperature?: number;
+  producesKind: ArtifactKind;
+  builtIn: boolean;
+}
+
+export function createPersona(input: NewPersona): Persona {
+  const stamp = stampNewEntity();
+  return personaSchema.parse({
+    ...stamp,
+    slug: input.slug,
+    name: input.name,
+    description: input.description,
+    systemPrompt: input.systemPrompt,
+    model: input.model ?? '',
+    temperature: input.temperature ?? DEFAULT_PERSONA_TEMPERATURE,
+    producesKind: input.producesKind,
+    builtIn: input.builtIn,
+  });
+}
+
+export interface NewPersonaRun {
+  campaignId: Id;
+  personaId: Id;
+  autonomy: Autonomy;
+  userBrief: string;
+  pinnedChunkIds?: readonly Id[];
+}
+
+export function createPersonaRun(input: NewPersonaRun): PersonaRun {
+  const stamp = stampNewEntity();
+  return personaRunSchema.parse({
+    ...stamp,
+    campaignId: input.campaignId,
+    personaId: input.personaId,
+    autonomy: input.autonomy,
+    status: 'running',
+    userBrief: input.userBrief,
+    pinnedChunkIds: [...(input.pinnedChunkIds ?? [])],
+    steps: [],
+    resultArtifactId: null,
+    errorMessage: '',
+  });
+}

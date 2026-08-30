@@ -55,6 +55,9 @@ export default tseslint.config(
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_' },
       ],
+      // Numbers interpolate deterministically; the default ban is too strict
+      // for a codebase that formats counts and indices into messages/tests.
+      '@typescript-eslint/restrict-template-expressions': ['error', { allowNumber: true }],
     },
   },
 
