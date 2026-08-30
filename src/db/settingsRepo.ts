@@ -14,6 +14,14 @@ export async function getSettings(): Promise<Settings> {
   return created;
 }
 
+/**
+ * Pure read (no default-row write) — for read-only contexts such as Dexie
+ * liveQuery; callers see defaults without persisting them.
+ */
+export async function readSettings(): Promise<Settings> {
+  return (await db.settings.get('settings')) ?? defaultSettings();
+}
+
 /** Overwrites the settings row wholesale (validated). */
 export async function saveSettings(next: Settings): Promise<Settings> {
   const valid = settingsSchema.parse(next);

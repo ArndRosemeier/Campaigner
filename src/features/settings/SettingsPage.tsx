@@ -1,18 +1,27 @@
-import type { JSX } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 
-import { PlaceholderPage } from '@/components/PlaceholderPage';
+import type { JSX } from 'react';
+import { listPersonas } from '@/db/personaRepo';
+import { PersonaSection } from '@/features/settings/persona-section';
+import { DangerZone } from '@/features/settings/danger-zone';
+import { SettingsSection } from '@/features/settings/settings-section';
 
 /**
- * Placeholder for the settings screen (05-UI.md §Settings): OpenRouter API
- * key, default models, embeddings toggle, personas, danger zone. Implemented
- * in T6 (key/models) and T7 (personas).
+ * Settings screen (05-UI.md §Settings): OpenRouter credentials and models,
+ * embeddings toggle, personas, danger zone.
  */
 export function SettingsPage(): JSX.Element {
+  const personas = useLiveQuery(() => listPersonas(), []);
+
   return (
-    <PlaceholderPage
-      title="Settings"
-      description="OpenRouter API key, default chat and embedding models, the embeddings toggle and persona management will live here."
-      milestone="T6–T7"
-    />
+    <div
+      className="mx-auto flex h-full w-full max-w-2xl flex-col gap-4 overflow-y-auto p-4"
+      data-testid="settings-page"
+    >
+      <h1 className="text-base font-semibold">Settings</h1>
+      <SettingsSection />
+      <PersonaSection personas={personas ?? []} />
+      <DangerZone />
+    </div>
   );
 }
