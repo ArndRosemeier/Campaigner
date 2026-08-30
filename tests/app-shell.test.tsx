@@ -67,13 +67,13 @@ describe('app shell', () => {
     expect(await screen.findByText(/does not exist/)).toBeInTheDocument();
   });
 
-  it('navigates to the Rules placeholder from the top bar', async () => {
+  it('navigates to the Rules screen from the top bar', async () => {
     const user = userEvent.setup();
     renderAppAt(ROUTES.campaignPicker);
 
     await user.click(screen.getByRole('link', { name: 'Rules' }));
 
-    expect(screen.getByRole('heading', { name: 'Rules library' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Rulebooks' })).toBeInTheDocument();
   });
 
   it('navigates to the Settings placeholder from the top bar', async () => {

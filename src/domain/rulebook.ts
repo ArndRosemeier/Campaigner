@@ -46,3 +46,13 @@ export const ruleChunkSchema = z.object({
 });
 
 export type RuleChunk = z.infer<typeof ruleChunkSchema>;
+
+/**
+ * A chunk as produced by the ingestion worker: everything except identity,
+ * book linkage and timestamps, which the main thread adds when persisting
+ * (02-INGESTION.md "RuleChunkDraft").
+ */
+export type RuleChunkDraft = Omit<RuleChunk, 'id' | 'createdAt' | 'updatedAt' | 'bookId'>;
+
+/** Pre-hash chunk output of the pure chunker (worker computes contentHash). */
+export type UnhashedChunk = Omit<RuleChunkDraft, 'contentHash'>;

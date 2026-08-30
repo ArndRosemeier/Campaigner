@@ -1,0 +1,58 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 5 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 7 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 6 0 R >> >> /Contents 8 0 R >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold >>
+endobj
+7 0 obj
+<< /Length 566 >>
+stream
+BT /F2 20 Tf 72 740 Td (Chapter 1: The Grappling Rules) Tj ET
+BT /F1 10 Tf 72 700 Td (Grappling is a special melee attack used to seize and hold a creature.) Tj ET
+BT /F1 10 Tf 72 686 Td (When you grapple a target, both of you use the escape DC of the grappler.) Tj ET
+BT /F1 10 Tf 72 672 Td (A grappled creature can still attack other targets but cannot move away.) Tj ET
+BT /F1 10 Tf 72 658 Td (Movement while grappling is halved for both creatures involved.) Tj ET
+BT /F1 10 Tf 72 644 Td (The grapple ends if the grappler is knocked prone or incapacitated.) Tj ET
+endstream
+endobj
+8 0 obj
+<< /Length 395 >>
+stream
+BT /F2 16 Tf 72 740 Td (Goblin Boss) Tj ET
+BT /F1 10 Tf 72 720 Td (Medium humanoid, neutral evil) Tj ET
+BT /F1 10 Tf 72 700 Td (Armor Class 17 \(chain shirt\)) Tj ET
+BT /F1 10 Tf 72 686 Td (Hit Points 66 \(12d6 + 22\)) Tj ET
+BT /F1 10 Tf 72 672 Td (Speed 30 ft.) Tj ET
+BT /F1 10 Tf 72 658 Td (STR 14 DEX 14 CON 14 INT 10 WIS 10 CHA 12) Tj ET
+BT /F1 10 Tf 72 644 Td (Challenge 2 \(450 XP\)) Tj ET
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000327 00000 n 
+0000000463 00000 n 
+0000000538 00000 n 
+0000001155 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+1601
+%%EOF
