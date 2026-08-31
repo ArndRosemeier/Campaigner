@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDownIcon, ChevronRightIcon, PlusIcon, WaypointsIcon } from 'lucide-react';
+import {
+  ChevronDownIcon,
+  ChevronRightIcon,
+  PlusIcon,
+  Trash2Icon,
+  WaypointsIcon,
+} from 'lucide-react';
 
 import { graphPath, workspacePath } from '@/app/routes';
 import { Link } from 'react-router-dom';
@@ -340,14 +346,26 @@ function TreeRow({
           render={
             <ContextMenuTrigger
               className={cn(
-                'flex w-full cursor-default items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm outline-none hover:bg-accent',
+                'group/row flex w-full cursor-default items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm outline-none hover:bg-accent',
                 selected && 'bg-accent font-medium text-accent-foreground',
               )}
               onClick={onSelect}
             />
           }
         >
-          <span className="truncate">{artifact.name}</span>
+          <span className="min-w-0 flex-1 truncate">{artifact.name}</span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`Delete ${artifact.name}`}
+            className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-destructive focus-visible:opacity-100"
+            onClick={(event) => {
+              event.stopPropagation();
+              onDelete();
+            }}
+          >
+            <Trash2Icon aria-hidden />
+          </Button>
         </TooltipTrigger>
         <TooltipContent side="right" className="max-w-64">
           {artifact.summary === '' ? 'No summary yet.' : artifact.summary}

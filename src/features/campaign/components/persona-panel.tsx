@@ -10,6 +10,7 @@ import {
   PlayIcon,
   RotateCcwIcon,
   SquareArrowOutUpRightIcon,
+  Trash2Icon,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
@@ -25,11 +26,12 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { toastError, toastSuccess } from '@/lib/toast';
 import { Textarea } from '@/components/ui/textarea';
 import { ROUTES, artifactPath } from '@/app/routes';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
-import { getRun, listRunsByCampaign } from '@/db/runRepo';
+import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, PersonaRun } from '@/domain';
 import { runEngine } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
@@ -520,6 +522,16 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
     [openRunId],
   );
 
+  async function handleDeleteRun(id: string): Promise<void> {
+    if (openRunId === id) setOpenRunId(null);
+    try {
+      await deleteRun(id);
+      toastSuccess('Run deleted');
+    } catch (error) {
+      toastError('Could not delete run', error);
+    }
+  }
+
   return (
     <div className="flex flex-col gap-2 p-3" data-testid="runs-list">
       {(runs ?? []).length === 0 && (
@@ -527,24 +539,38 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
       )}
       {(runs ?? []).map((run) => {
         const persona = personas?.find((candidate) => candidate.id === run.personaId);
+        const stamp = new Date(run.updatedAt).toLocaleString();
         return (
-          <button
+          <div
             key={run.id}
-            type="button"
-            className="flex flex-col gap-0.5 rounded-md border p-2 text-left text-xs"
-            onClick={() => {
-              setOpenRunId((previous) => (previous === run.id ? null : run.id));
-            }}
+            className="group/run flex items-start gap-1 rounded-md border p-2 text-xs"
           >
-            <span className="flex items-center gap-2">
-              <span className="font-medium">{persona?.name ?? 'Persona'}</span>
-              <Badge variant="outline">{STATUS_LABELS[run.status]}</Badge>
-            </span>
-            <span className="truncate text-muted-foreground">{run.userBrief}</span>
-            <span className="text-muted-foreground">
-              {new Date(run.updatedAt).toLocaleString()}
-            </span>
-          </button>
+            <button
+              type="button"
+              className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
+              onClick={() => {
+                setOpenRunId((previous) => (previous === run.id ? null : run.id));
+              }}
+            >
+              <span className="flex items-center gap-2">
+                <span className="font-medium">{persona?.name ?? 'Persona'}</span>
+                <Badge variant="outline">{STATUS_LABELS[run.status]}</Badge>
+              </span>
+              <span className="truncate text-muted-foreground">{run.userBrief}</span>
+              <span className="text-muted-foreground">{stamp}</span>
+            </button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Delete run ${stamp}`}
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/run:opacity-100 hover:text-destructive focus-visible:opacity-100"
+              onClick={() => {
+                void handleDeleteRun(run.id);
+              }}
+            >
+              <Trash2Icon aria-hidden />
+            </Button>
+          </div>
         );
       })}
       {openRun !== undefined && (

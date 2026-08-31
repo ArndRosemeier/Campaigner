@@ -166,6 +166,18 @@ export async function deleteArtifact(id: Id): Promise<void> {
   await db.transaction('rw', db.artifacts, db.revisions, async () => {
     await db.revisions.where('artifactId').equals(id).delete();
     await db.artifacts.delete(id);
+    // Drop links in other artifacts that pointed at the deleted one, so no
+    // dangling targets linger in the tree, editor, or link graph.
+    const referring = await db.artifacts
+      .toCollection()
+      .filter((artifact) => artifact.links.some((link) => link.targetId === id))
+      .toArray();
+    for (const artifact of referring) {
+      await db.artifacts.update(artifact.id, {
+        links: artifact.links.filter((link) => link.targetId !== id),
+        updatedAt: Date.now(),
+      });
+    }
   });
 }
 

@@ -15,6 +15,7 @@ import {
   saveArtifact,
   updateArtifact,
 } from '@/db/artifactRepo';
+import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { clearDatabase, expectNotFound } from './helpers';
 
@@ -176,5 +177,35 @@ describe('artifactRepo revisions', () => {
 
     expect(saved.currentRevision).toBe(2);
     expect((await getRevision(artifact.id, 2))?.snapshot.name).toBe('Renamed');
+  });
+});
+
+describe('deleteArtifact', () => {
+  it('removes the artifact, its revisions, and dangling links in other artifacts', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const npc = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Gorim' });
+    const location = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Forge',
+      links: [{ targetId: npc.id, relation: 'workplace-of' }],
+      body: 'x'.repeat(50),
+    });
+    const note = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'note',
+      name: 'Rumors',
+      links: [{ targetId: location.id, relation: 'about' }],
+      body: 'y'.repeat(50),
+    });
+
+    await deleteArtifact(npc.id);
+
+    const afterLocation = await getArtifact(location.id);
+    expect(afterLocation?.links).toEqual([]);
+    const afterNote = await getArtifact(note.id);
+    expect(afterNote?.links).toEqual([{ targetId: location.id, relation: 'about' }]);
+    expect(await getArtifact(npc.id)).toBeUndefined();
+    expect(await listRevisions(npc.id)).toEqual([]);
   });
 });
