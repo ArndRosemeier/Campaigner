@@ -12,7 +12,10 @@ export class OpenRouterError extends Error {
   readonly bodyText: string;
 
   constructor(status: number, bodyText: string) {
-    super(`OpenRouter request failed (${String(status)})`);
+    // Surface the reason in the message — this string is what failed runs
+    // display, so "OpenRouter request failed (200)" alone is useless.
+    const snippet = bodyText.length > 200 ? bodyText.slice(0, 200) + '…' : bodyText;
+    super(`OpenRouter request failed (${String(status)})${snippet === '' ? '' : `: ${snippet}`}`);
     this.name = 'OpenRouterError';
     this.status = status;
     this.bodyText = bodyText;
@@ -44,10 +47,19 @@ export interface ChatOptions {
 /** Spec backoff schedule for 429/5xx retries (04 spec: 2s, 8s). */
 export const DEFAULT_RETRY_BACKOFFS_MS = [2000, 8000] as const;
 
+/**
+ * Abort a stream that receives no bytes at all for this long (keep-alive
+ * comments count as activity). Without it a hung SSE connection leaves a run
+ * stuck in "streaming" forever; with it the run fails visibly and can be
+ * retried.
+ */
+export const DEFAULT_STREAM_STALL_TIMEOUT_MS = 120_000;
+
 export async function chat(
   messages: ChatMessage[],
   opts: ChatOptions,
   retryBackoffs: readonly number[] = DEFAULT_RETRY_BACKOFFS_MS,
+  stallTimeoutMs: number = DEFAULT_STREAM_STALL_TIMEOUT_MS,
 ): Promise<string> {
   const settings = await getSettings();
   if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
@@ -76,7 +88,7 @@ export async function chat(
     init,
     retryBackoffs,
   );
-  return readStream(response, opts.onToken);
+  return readStream(response, opts.onToken, stallTimeoutMs);
 }
 
 /** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */
@@ -114,42 +126,80 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   });
 }
 
-/** Parses `data: {json}` SSE lines, concatenating content deltas. */
-async function readStream(response: Response, onToken?: (delta: string) => void): Promise<string> {
+/**
+ * Parses `data: {json}` SSE lines, concatenating content deltas. Aborts with
+ * an error when the connection goes silent for `stallTimeoutMs`, and treats
+ * in-stream `{ "error": … }` events as hard failures instead of ignoring
+ * them (both previously left runs stuck in "streaming" forever).
+ */
+async function readStream(
+  response: Response,
+  onToken: ((delta: string) => void) | undefined,
+  stallTimeoutMs: number,
+): Promise<string> {
   if (response.body === null) throw new OpenRouterError(response.status, 'empty response body');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let full = '';
+  let lastActivity = Date.now();
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newlineAt = buffer.indexOf('\n');
-    while (newlineAt !== -1) {
-      const line = buffer.slice(0, newlineAt).trimEnd();
-      buffer = buffer.slice(newlineAt + 1);
-      newlineAt = buffer.indexOf('\n');
-      if (!line.startsWith('data:')) continue;
-      const payload = line.slice(5).trim();
-      if (payload === '[DONE]') {
-        return full;
-      }
-      let delta: string | undefined;
-      try {
-        const parsed = JSON.parse(payload) as {
-          choices?: { delta?: { content?: string } }[];
-        };
-        delta = parsed.choices?.[0]?.delta?.content;
-      } catch {
-        continue; // ignore keep-alive/malformed lines
-      }
-      if (delta !== undefined && delta !== '') {
-        full += delta;
-        onToken?.(delta);
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastActivity > stallTimeoutMs) {
+      void reader.cancel().catch(() => undefined);
+    }
+  }, 1000);
+
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      lastActivity = Date.now();
+      buffer += decoder.decode(value, { stream: true });
+      let newlineAt = buffer.indexOf('\n');
+      while (newlineAt !== -1) {
+        const line = buffer.slice(0, newlineAt).trimEnd();
+        buffer = buffer.slice(newlineAt + 1);
+        newlineAt = buffer.indexOf('\n');
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') {
+          return full;
+        }
+        let delta: string | undefined;
+        let errorText: string | undefined;
+        try {
+          const parsed = JSON.parse(payload) as {
+            choices?: { delta?: { content?: string } }[];
+            error?: { message?: string } | string;
+          };
+          delta = parsed.choices?.[0]?.delta?.content;
+          if (parsed.error !== undefined) {
+            errorText =
+              typeof parsed.error === 'string'
+                ? parsed.error
+                : (parsed.error.message ?? 'unknown stream error');
+          }
+        } catch {
+          continue; // ignore keep-alive/malformed lines
+        }
+        if (errorText !== undefined) {
+          throw new OpenRouterError(response.status, `stream error: ${errorText}`);
+        }
+        if (delta !== undefined && delta !== '') {
+          full += delta;
+          onToken?.(delta);
+        }
       }
     }
+  } finally {
+    clearInterval(watchdog);
+  }
+  if (Date.now() - lastActivity > stallTimeoutMs) {
+    throw new OpenRouterError(
+      response.status,
+      `stream stalled after ${String(stallTimeoutMs)}ms of silence`,
+    );
   }
   return full;
 }

@@ -356,6 +356,7 @@ function CreateCampaignDialog({ open, onOpenChange }: CreateCampaignDialogProps)
               System
               <Select
                 value={system}
+                items={GAME_SYSTEM_LABELS}
                 onValueChange={(value) => {
                   if (value !== null) setSystem(value);
                 }}

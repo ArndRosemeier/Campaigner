@@ -125,6 +125,9 @@ export function PersonaPanel({
                 onValueChange={(value) => {
                   if (value !== null) setPersonaId(value);
                 }}
+                items={Object.fromEntries(
+                  (personas ?? []).map((persona) => [persona.id, persona.name]),
+                )}
               >
                 <SelectTrigger className="w-full" aria-label="Persona">
                   <SelectValue
@@ -145,6 +148,9 @@ export function PersonaPanel({
               <Label htmlFor="autonomy-select">Autonomy</Label>
               <Select
                 value={autonomy}
+                items={Object.fromEntries(
+                  AUTONOMY_OPTIONS.map((option) => [option.value, option.label]),
+                )}
                 onValueChange={(value) => {
                   if (value !== null) setAutonomy(value);
                 }}
@@ -167,6 +173,9 @@ export function PersonaPanel({
                 <Label htmlFor="target-select">Artifact to check</Label>
                 <Select
                   value={targetArtifactId}
+                  items={Object.fromEntries(
+                    (campaignArtifacts ?? []).map((artifact) => [artifact.id, artifact.name]),
+                  )}
                   onValueChange={(value) => {
                     if (value !== null) setTargetArtifactId(value);
                   }}

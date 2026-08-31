@@ -160,6 +160,7 @@ function SystemDialog({
           <div className="my-3">
             <Select
               value={system}
+              items={GAME_SYSTEM_LABELS}
               onValueChange={(value) => {
                 if (value !== null) setSystem(value);
               }}

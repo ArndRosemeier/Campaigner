@@ -169,6 +169,9 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
             <Badge variant="outline">{index + 1}</Badge>
             <Select
               value={step.personaId}
+              items={Object.fromEntries(
+                (personas ?? []).map((persona) => [persona.id, persona.name]),
+              )}
               disabled={busy}
               onValueChange={(value) => {
                 if (value === null) return;

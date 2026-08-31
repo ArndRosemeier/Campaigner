@@ -11,6 +11,7 @@ import { newId } from '@/domain';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
+import { seedBuiltInPersonas } from '@/db/seed';
 import { clearDatabase } from '../db/helpers';
 
 function renderWorkspace(path: string): void {
@@ -104,6 +105,37 @@ describe('WorkspacePage', () => {
     );
     expect(await getArtifact(npc.id)).toBeUndefined();
     expect(rows.find((row) => row.name === 'Forge')?.links).toEqual([]);
+  }, 20000);
+
+  it('shows persona names, not ids, in selects after choosing', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await seedBuiltInPersonas();
+
+    renderWorkspace(workspacePath(campaign.id));
+
+    // Wait for the personas live query to resolve (the Assistant tab's
+    // persona select shows the placeholder until then).
+    const personaTrigger = await screen.findByRole('combobox', { name: 'Persona' });
+    await waitFor(() => {
+      expect(personaTrigger.textContent).not.toBe('Loading…');
+    });
+
+    // The chain builder pre-selects the first persona: the closed trigger
+    // must show its human-readable NAME, never the raw id (regression for
+    // selects displaying uuids after a choice).
+    await user.click(screen.getByRole('tab', { name: "Writers' room" }));
+    await screen.findByTestId('writers-room');
+    await user.click(screen.getByRole('button', { name: 'Add step' }));
+    const stepTrigger = await screen.findByRole('combobox', { name: 'Step 1 persona' });
+    const { listPersonas } = await import('@/db/personaRepo');
+    const personas = await listPersonas();
+    const firstPersona = personas[0];
+    expect(firstPersona).toBeDefined();
+    await waitFor(() => {
+      expect(stepTrigger.textContent).toBe(`${firstPersona?.name}▼`);
+    });
+    expect(stepTrigger.textContent ?? '').not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
   }, 20000);
 
   it('deletes a run from the Runs tab', async () => {

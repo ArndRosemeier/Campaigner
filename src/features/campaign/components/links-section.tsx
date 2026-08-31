@@ -97,6 +97,7 @@ export function LinksSection({ links, onChange, campaignArtifacts, selfId }: Lin
         <span className="text-xs text-muted-foreground">→</span>
         <Select
           value={newTargetId === '' ? null : newTargetId}
+          items={Object.fromEntries(candidates.map((artifact) => [artifact.id, artifact.name]))}
           onValueChange={(value) => {
             setNewTargetId(value ?? '');
           }}

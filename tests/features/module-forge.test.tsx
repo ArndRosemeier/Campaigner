@@ -148,7 +148,8 @@ describe('Module forge UI', () => {
     const forge = await screen.findByTestId('module-forge');
 
     // Disabled without a concept
-    expect(within(forge).getByTestId('forge-module').hasAttribute('disabled')).toBe(true);
+    const forgeButton = within(forge).getByTestId('forge-module');
+    expect(forgeButton.hasAttribute('disabled')).toBe(true);
 
     await user.type(
       within(forge).getByLabelText('Module concept'),

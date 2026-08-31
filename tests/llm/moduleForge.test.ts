@@ -241,9 +241,7 @@ describe('ModuleForge end-to-end', () => {
     // (order between the two is not guaranteed — same-millisecond stamps).
     const arcVersions = artifacts.filter((artifact) => artifact.name === 'The Drowned Bell');
     expect(arcVersions).toHaveLength(2);
-    expect(arcVersions.some((artifact) => artifact.summary.includes('docks included'))).toBe(
-      true,
-    );
+    expect(arcVersions.some((artifact) => artifact.summary.includes('docks included'))).toBe(true);
 
     // Every step is a real run in history.
     const runs = await import('@/db/runRepo').then((m) => m.listRunsByCampaign(campaign.id));
