@@ -8,7 +8,9 @@ import { clearDatabase } from '../db/helpers';
 
 /**
  * OpenRouter stream hardening: a stalled SSE connection and in-stream error
- * events must fail fast (previously runs hung in "streaming" forever).
+ * events must fail fast (previously runs hung in "streaming" forever), and a
+ * provider that never sends [DONE] must not leave runs hanging after the
+ * content is complete.
  */
 
 function sseResponse(chunks: string[], close = false): Response {
@@ -41,11 +43,14 @@ describe('chat stream hardening', () => {
     vi.stubGlobal(
       'fetch',
       fetchStub(
-        sseResponse([
-          'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
-          'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
-          'data: [DONE]\n\n',
-        ]),
+        sseResponse(
+          [
+            'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+            'data: [DONE]\n\n',
+          ],
+          true,
+        ),
       ),
     );
     const tokens: string[] = [];
@@ -70,10 +75,13 @@ describe('chat stream hardening', () => {
     vi.stubGlobal(
       'fetch',
       fetchStub(
-        sseResponse([
-          'data: {"choices":[{"delta":{"content":"par"}}]}\n\n',
-          'data: {"error":{"message":"provider exploded"}}\n\n',
-        ]),
+        sseResponse(
+          [
+            'data: {"choices":[{"delta":{"content":"par"}}]}\n\n',
+            'data: {"error":{"message":"provider exploded"}}\n\n',
+          ],
+          true,
+        ),
       ),
     );
     await expect(
@@ -95,5 +103,32 @@ describe('chat stream hardening', () => {
       5000,
     );
     expect(result).toBe('{}');
+  });
+
+  it('finishes on finish_reason even when [DONE] never arrives', async () => {
+    // Reproduces the reported hang: all content arrives, the provider sends
+    // finish_reason, then keeps the socket open with keep-alive comments
+    // forever — no [DONE], no close. The stream must complete anyway.
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"{\\"ac\\": 14"}}]}\n\n',
+          'data: {"choices":[{"delta":{"content":", \\"hp\\": 22}"}}]}\n\n',
+          'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
+          ': OPENROUTER PROCESSING\n\n',
+          ': OPENROUTER PROCESSING\n\n',
+        ]),
+      ),
+    );
+    const tokens: string[] = [];
+    const result = await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'm', temperature: 0.5, onToken: (delta) => tokens.push(delta) },
+      [0, 0],
+      300,
+    );
+    expect(result).toBe('{"ac": 14, "hp": 22}');
+    expect(tokens).toHaveLength(2);
   });
 });

@@ -168,12 +168,14 @@ async function readStream(
         }
         let delta: string | undefined;
         let errorText: string | undefined;
+        let finishReason: string | null | undefined;
         try {
           const parsed = JSON.parse(payload) as {
-            choices?: { delta?: { content?: string } }[];
+            choices?: { delta?: { content?: string }; finish_reason?: string | null }[];
             error?: { message?: string } | string;
           };
           delta = parsed.choices?.[0]?.delta?.content;
+          finishReason = parsed.choices?.[0]?.finish_reason;
           if (parsed.error !== undefined) {
             errorText =
               typeof parsed.error === 'string'
@@ -189,6 +191,13 @@ async function readStream(
         if (delta !== undefined && delta !== '') {
           full += delta;
           onToken?.(delta);
+        }
+        if (finishReason !== null && finishReason !== undefined) {
+          // The model finished. Some providers never send the [DONE] sentinel
+          // nor close the socket (keep-alive comments keep flowing), which
+          // used to leave runs in "streaming" forever — the finish_reason is
+          // the authoritative end marker, so stop reading here.
+          return full;
         }
       }
     }
