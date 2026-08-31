@@ -43,6 +43,8 @@ describe('layoutGraph', () => {
       summary: '',
       body: '',
       links,
+      imageIds: [],
+      coverImageId: null,
       currentRevision: 1,
       data:
         kind === 'npc'

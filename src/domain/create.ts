@@ -126,6 +126,8 @@ export function createArtifact(input: CreateArtifactInput): Artifact {
     body: input.body ?? '',
     links: [...(input.links ?? [])],
     currentRevision: 1,
+    imageIds: [],
+    coverImageId: null,
     data: input.data ?? blankArtifactData(input.kind),
   };
   // Parse instead of casting: guarantees every artifact entering the DB
@@ -170,13 +172,20 @@ export interface NewPersona {
   systemPrompt: string;
   model?: string;
   temperature?: number;
-  producesKind: ArtifactKind;
+  /**
+   * Artifact kind the persona outputs. Required unless mode is 'image'
+   * (image personas decorate existing artifacts and never create one).
+   */
+  producesKind?: ArtifactKind;
   mode?: Persona['mode'];
   builtIn: boolean;
 }
 
 export function createPersona(input: NewPersona): Persona {
   const stamp = stampNewEntity();
+  if (input.mode !== 'image' && input.producesKind === undefined) {
+    throw new Error(`Persona "${input.slug}" must declare producesKind (mode ${input.mode ?? 'generate'})`);
+  }
   return personaSchema.parse({
     ...stamp,
     slug: input.slug,
@@ -185,7 +194,7 @@ export function createPersona(input: NewPersona): Persona {
     systemPrompt: input.systemPrompt,
     model: input.model ?? '',
     temperature: input.temperature ?? DEFAULT_PERSONA_TEMPERATURE,
-    producesKind: input.producesKind,
+    ...(input.producesKind === undefined ? {} : { producesKind: input.producesKind }),
     mode: input.mode ?? 'generate',
     builtIn: input.builtIn,
   });
@@ -197,6 +206,8 @@ export interface NewPersonaRun {
   autonomy: Autonomy;
   userBrief: string;
   pinnedChunkIds?: readonly Id[];
+  /** Review/image personas: the artifact under review/decoration. */
+  targetArtifactId?: Id | null;
 }
 
 export function createPersonaRun(input: NewPersonaRun): PersonaRun {
@@ -211,6 +222,7 @@ export function createPersonaRun(input: NewPersonaRun): PersonaRun {
     pinnedChunkIds: [...(input.pinnedChunkIds ?? [])],
     steps: [],
     resultArtifactId: null,
+    targetArtifactId: input.targetArtifactId ?? null,
     errorMessage: '',
   });
 }

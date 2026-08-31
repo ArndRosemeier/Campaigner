@@ -54,7 +54,11 @@ function PersonaRow({ persona }: { persona: Persona }): JSX.Element {
           )}
           <span className="truncate text-sm font-medium">{persona.name}</span>
         </CollapsibleTrigger>
-        <Badge variant="secondary">{ARTIFACT_KIND_SINGULAR[persona.producesKind]}</Badge>
+        <Badge variant="secondary">
+          {persona.mode === 'image'
+            ? 'images'
+            : ARTIFACT_KIND_SINGULAR[persona.producesKind ?? 'note']}
+        </Badge>
         {persona.builtIn && <Badge variant="outline">built-in</Badge>}
       </div>
       <CollapsibleContent>

@@ -61,6 +61,10 @@ const artifactBaseShape = {
   links: z.array(artifactLinkSchema),
   /** 1-based; every content save appends a matching revision row. */
   currentRevision: z.number().int().positive(),
+  /** Referenced image blobs (images table), in gallery order (M3-A). */
+  imageIds: z.array(z.uuid()),
+  /** The artifact's cover image (thumbnail in tree/PDF), or null. */
+  coverImageId: z.uuid().nullable(),
 };
 
 /** Fields shared by every artifact kind. */
@@ -73,6 +77,10 @@ export interface ArtifactBase extends BaseEntity {
   body: string;
   links: ArtifactLink[];
   currentRevision: number;
+  /** Referenced image blobs (images table), in gallery order (M3-A). */
+  imageIds: Id[];
+  /** The artifact's cover image, or null (M3-A). */
+  coverImageId: Id | null;
 }
 
 // --- Kind-specific structured data -----------------------------------------
@@ -236,4 +244,8 @@ export interface ArtifactPatch {
   body?: string;
   links?: ArtifactLink[];
   data?: ArtifactData;
+  /** Image gallery changes (M3-A): appends/removes references; blobs are
+   * deleted by the repo when the last reference goes away. */
+  imageIds?: Id[];
+  coverImageId?: Id | null;
 }

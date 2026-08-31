@@ -52,6 +52,22 @@ export const noteDraftSchema = z.object({
 
 export type NoteDraft = z.infer<typeof noteDraftSchema>;
 
+/**
+ * Illustrator prompt-draft contract (07-MILESTONE-3 M3-A): the checkpoint the
+ * user edits instead of rerolling images. `negative` and `styleNotes` are
+ * guidance fields, never empty-required.
+ */
+export const imagePromptDraftSchema = z.object({
+  /** The image generation prompt (the main editable payload). */
+  prompt: z.string().min(1),
+  /** What to avoid; '' when none. */
+  negative: z.string(),
+  /** Free-form style guidance folded into the final prompt. */
+  styleNotes: z.string(),
+});
+
+export type ImagePromptDraft = z.infer<typeof imagePromptDraftSchema>;
+
 export const encounterDraftSchema = z.object({
   ...draftBase,
   difficulty: z.string(),

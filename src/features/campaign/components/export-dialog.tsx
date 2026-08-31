@@ -67,8 +67,8 @@ export function ExportCampaignDialog({
         .map((artifact) => artifact.id);
       const exported =
         selected.size === artifacts.length
-          ? await buildCampaignExport(campaignId)
-          : await buildCampaignExport(campaignId, ids);
+          ? await buildCampaignExport(campaignId, undefined, { images: format === 'zip' })
+          : await buildCampaignExport(campaignId, ids, { images: format === 'zip' });
       const basename = exportFileName(exported).replace(/\.json$/, '');
       if (format === 'zip') {
         downloadBlob(
@@ -152,6 +152,11 @@ export function ExportCampaignDialog({
         </div>
 
         <DialogFooter>
+          {format === 'json' && (
+            <p className="mr-auto text-xs text-muted-foreground">
+              Plain JSON export omits image binaries — use the zip bundle to include images.
+            </p>
+          )}
           <Button
             variant="outline"
             onClick={() => {

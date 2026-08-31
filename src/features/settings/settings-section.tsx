@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { CheckCircle2Icon, KeyRoundIcon, XCircleIcon } from 'lucide-react';
+import { CheckCircle2Icon, ImageIcon, KeyRoundIcon, XCircleIcon } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -11,8 +11,9 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
 import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from '@/domain/settings';
+import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
 import { toastError, toastSuccess } from '@/lib/toast';
-import { listModels } from '@/llm/openrouter';
+import { listImageModels, listModels } from '@/llm/openrouter';
 import { ModelInput } from '@/features/settings/model-input';
 
 type TestState =
@@ -161,6 +162,43 @@ export function SettingsSection(): JSX.Element {
               }}
             />
           </div>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-md border p-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <ImageIcon aria-hidden className="size-4" />
+              <Label htmlFor="images-enabled">Image generation</Label>
+            </div>
+            <div className="flex items-center gap-2">
+              {!current.imagesEnabled && current.openRouterApiKey === '' && (
+                <Badge variant="outline">needs key</Badge>
+              )}
+              <Switch
+                id="images-enabled"
+                data-testid="images-enabled"
+                checked={current.imagesEnabled}
+                onCheckedChange={(checked) => {
+                  void updateSettings({ imagesEnabled: checked });
+                }}
+              />
+            </div>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Lets the Illustrator persona generate images (costs money per image). Images are stored
+            locally in this browser.
+          </p>
+          <ModelInput
+            id="image-model"
+            label="Image model"
+            value={current.imageModel}
+            onChange={(value) => {
+              void updateSettings({ imageModel: value });
+            }}
+            placeholder={DEFAULT_IMAGE_MODEL}
+            canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+            fetchOptions={listImageModels}
+          />
         </div>
       </CardContent>
     </Card>

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ChevronDownIcon,
@@ -22,6 +23,7 @@ import {
 import { defaultArtifactName } from '@/domain';
 import { exportSingleArtifact } from '@/features/campaign/components/export-dialog';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
+import { ImageThumb } from '@/features/images/image-thumb';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -332,6 +334,19 @@ interface TreeRowProps {
   onExportPdfPlayer: () => void;
 }
 
+/** 16px cover-image thumbnail, shown only when the artifact has one (M3-A). */
+function CoverThumb({ artifact }: { artifact: Artifact }): JSX.Element | null {
+  if (artifact.coverImageId === null) return null;
+  return (
+    <ImageThumb
+      imageId={artifact.coverImageId}
+      alt={`Cover of ${artifact.name}`}
+      size={16}
+      rounded
+    />
+  );
+}
+
 function TreeRow({
   artifact,
   selected,
@@ -357,6 +372,7 @@ function TreeRow({
             />
           }
         >
+          <CoverThumb artifact={artifact} />
           <span className="min-w-0 flex-1 truncate">{artifact.name}</span>
           <Button
             variant="ghost"

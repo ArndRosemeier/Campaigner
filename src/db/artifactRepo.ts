@@ -12,6 +12,7 @@ import {
   MAX_REVISIONS_PER_ARTIFACT,
 } from '@/domain';
 import { db } from '@/db/db';
+import { pruneUnreferencedImages } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
 /** Who is saving, and (for persona saves) which run produced the content. */
@@ -163,20 +164,26 @@ export async function getRevision(
 
 /** Deletes an artifact and its revision history. Idempotent. */
 export async function deleteArtifact(id: Id): Promise<void> {
-  await db.transaction('rw', db.artifacts, db.revisions, async () => {
+  await db.transaction('rw', db.artifacts, db.revisions, db.images, async () => {
+    const artifact = await db.artifacts.get(id);
     await db.revisions.where('artifactId').equals(id).delete();
     await db.artifacts.delete(id);
     // Drop links in other artifacts that pointed at the deleted one, so no
     // dangling targets linger in the tree, editor, or link graph.
     const referring = await db.artifacts
       .toCollection()
-      .filter((artifact) => artifact.links.some((link) => link.targetId === id))
+      .filter((row) => row.links.some((link) => link.targetId === id))
       .toArray();
-    for (const artifact of referring) {
-      await db.artifacts.update(artifact.id, {
-        links: artifact.links.filter((link) => link.targetId !== id),
+    for (const row of referring) {
+      await db.artifacts.update(row.id, {
+        links: row.links.filter((link) => link.targetId !== id),
         updatedAt: Date.now(),
       });
+    }
+    // Image blobs the deleted artifact was the last referencer of are
+    // pruned (M3-A): the check covers remaining artifacts and revisions.
+    if (artifact !== undefined) {
+      await pruneUnreferencedImages(artifact.campaignId);
     }
   });
 }

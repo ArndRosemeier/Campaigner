@@ -155,6 +155,12 @@ export class ChainRunner {
       this.state.steps[index] = { runId: null, status: 'running', artifactId: null };
       this.emit();
 
+      // Image personas decorate an existing artifact via the editor; they
+      // never appear in pipelines (07-MILESTONE-3 M3-A).
+      if (persona.mode === 'image') {
+        throw new Error(`"${persona.name}" is not chainable — illustrate via the artifact editor`);
+      }
+
       const stepAutonomy = autonomyFor(step, autonomy);
       const input: StartRunInput = {
         campaign,
@@ -282,6 +288,12 @@ export class ChainRunner {
       this.state.currentIndex = index;
       this.state.steps[index] = { runId: null, status: 'running', artifactId: null };
       this.emit();
+
+      // Image personas decorate an existing artifact via the editor; they
+      // never appear in pipelines (07-MILESTONE-3 M3-A).
+      if (persona.mode === 'image') {
+        throw new Error(`"${persona.name}" is not chainable — illustrate via the artifact editor`);
+      }
 
       const stepAutonomy = autonomyFor(step, autonomy);
       const input: StartRunInput = {

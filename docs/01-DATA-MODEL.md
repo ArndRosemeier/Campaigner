@@ -43,6 +43,8 @@ interface ArtifactBase extends BaseEntity {
   body: string;                 // markdown, the main free-text content
   links: ArtifactLink[];        // outgoing links
   currentRevision: number;      // starts at 1
+  imageIds: Id[];               // referenced images (images table), gallery order (M3-A)
+  coverImageId: Id | null;      // cover thumbnail for tree/PDF (M3-A)
 }
 type ArtifactKind = 'npc' | 'location' | 'faction' | 'note';
 
@@ -182,7 +184,9 @@ interface Persona extends BaseEntity {
   systemPrompt: string;
   model: string;                // OpenRouter model id, e.g. 'anthropic/claude-sonnet-4.5'
   temperature: number;          // default 0.8
-  producesKind: ArtifactKind;   // artifact kind this persona outputs
+  producesKind?: ArtifactKind;  // artifact kind this persona outputs;
+                                // omitted for image personas (mode 'image', M3-A)
+  mode: 'generate' | 'review' | 'image';  // default 'generate'
   builtIn: boolean;             // built-ins are re-seeded on app start if missing
 }
 
@@ -199,15 +203,39 @@ interface PersonaRun extends BaseEntity {
   pinnedChunkIds: Id[];         // user-pinned rule chunks
   steps: RunStep[];             // embedded array (runs are small)
   resultArtifactId: Id | null;
+  targetArtifactId: Id | null;  // review (M2) / image (M3-A) personas: the artifact under review/decoration
   errorMessage: string;
 }
 interface RunStep {
   index: number;
-  name: string;                 // 'retrieve' | 'draft' | 'statblock' | 'finalize'
+  name: string;                 // 'retrieve' | 'draft' | 'statblock' | 'finalize' (generate personas)
+                                // 'gather' | 'check' | 'finalize' (review personas, M2)
+                                // 'prompt-draft' | 'generate' | 'pick' (image personas, M3-A)
   status: 'pending' | 'running' | 'done' | 'approved' | 'rejected';
   input: unknown;               // JSON-serializable
   output: unknown;              // JSON-serializable
   userEdit: unknown | null;     // user's edited version of output, if any
+}
+```
+
+### StoredImage (M3-A)
+
+Binary payloads live in their own table; artifacts reference them by id
+(`imageIds`/`coverImageId`). Payloads are stored as `Uint8Array` bytes
+(structured clone-safe), never Blobs; consumers rebuild a Blob at the
+boundary. A blob is deleted only when no artifact AND no revision snapshot
+references it anymore (reference-counted deletion in `imageRepo`).
+
+```ts
+interface StoredImage extends BaseEntity {
+  campaignId: Id;
+  bytes: Uint8Array;            // re-encoded at intake: EXIF-safe decode, ≤1600px long edge
+  mimeType: string;             // actually encoded format ('image/webp' target, PNG fallback)
+  width: number;
+  height: number;
+  prompt: string;               // generation prompt; '' for uploads
+  model: string;                // image model id; '' for uploads
+  source: 'generated' | 'uploaded';
 }
 ```
 
@@ -220,6 +248,8 @@ interface Settings {
   defaultChatModel: string;     // default 'anthropic/claude-sonnet-4.5'
   embeddingModel: string;       // default 'openai/text-embedding-3-small'
   embeddingsEnabled: boolean;   // default false until API key present
+  imageModel: string;           // default 'google/gemini-2.5-flash-image' (M3-A)
+  imagesEnabled: boolean;       // default false — image generation is opt-in (M3-A)
 }
 ```
 
@@ -232,6 +262,7 @@ export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
   artifacts!: Table<Artifact, Id>;
   revisions!: Table<ArtifactRevision, Id>;
+  images!: Table<StoredImage, Id>;      // M3-A
   rulebooks!: Table<Rulebook, Id>;
   chunks!: Table<RuleChunk, Id>;
   embeddings!: Table<ChunkEmbedding, string>;
@@ -252,6 +283,23 @@ export class CampaignerDB extends Dexie {
       runs:       'id, campaignId, personaId, status, updatedAt',
       settings:   'id',
     });
+    // M3-A: new images table; artifacts gain imageIds/coverImageId; runs gain
+    // targetArtifactId. The upgrade fills defaults on existing rows —
+    // existing version blocks are never mutated.
+    this.version(2)
+      .stores({
+        campaigns:  'id, name',
+        artifacts:  'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions:  'id, artifactId, [artifactId+revision]',
+        images:     'id, campaignId',
+        rulebooks:  'id, system, status',
+        chunks:     'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas:   'id, &slug',
+        runs:       'id, campaignId, personaId, status, updatedAt',
+        settings:   'id',
+      })
+      .upgrade(async (tx) => { /* imageIds [], coverImageId null, targetArtifactId null */ });
   }
 }
 export const db = new CampaignerDB();

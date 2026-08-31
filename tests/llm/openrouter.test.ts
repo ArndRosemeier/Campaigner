@@ -36,6 +36,8 @@ const SETTINGS = {
   defaultChatModel: 'anthropic/claude-sonnet-4.5',
   embeddingModel: 'openai/text-embedding-3-small',
   embeddingsEnabled: false,
+  imageModel: 'google/gemini-2.5-flash-image',
+  imagesEnabled: false,
 };
 
 beforeEach(async () => {

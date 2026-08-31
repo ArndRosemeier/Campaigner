@@ -59,6 +59,7 @@ import {
   buildCampaignExport,
   exportFileName,
   importExport,
+  importZip,
 } from '@/lib/exportImport';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useNavigate as useNav } from 'react-router-dom';
@@ -79,8 +80,11 @@ export function CampaignPickerPage(): JSX.Element {
 
   async function handleImportFile(file: File): Promise<void> {
     try {
-      const parsed: unknown = JSON.parse(await file.text());
-      const result = await importExport(parsed);
+      // Zip bundles carry image binaries next to the manifest (M3-A).
+      const result =
+        file.name.endsWith('.zip') || file.type === 'application/zip'
+          ? await importZip(new Uint8Array(await file.arrayBuffer()))
+          : await importExport(JSON.parse(await file.text()));
       toastSuccess(`Imported ${result.createdArtifacts} artifact(s) as a new campaign`);
       importedNavigate(workspacePath(result.campaignId));
     } catch (error) {
@@ -103,7 +107,7 @@ export function CampaignPickerPage(): JSX.Element {
             <input
               ref={importInputRef}
               type="file"
-              accept="application/json,.json"
+              accept="application/json,.json,application/zip,.zip"
               className="hidden"
               data-testid="import-input"
               onChange={(event) => {
@@ -120,7 +124,7 @@ export function CampaignPickerPage(): JSX.Element {
               data-testid="import-campaign"
             >
               <FileUpIcon aria-hidden data-icon="inline-start" />
-              Import JSON
+              Import
             </Button>
             <Button
               onClick={() => {

@@ -49,6 +49,11 @@ export const personaRunSchema = z.object({
   /** Embedded array (runs are small). */
   steps: z.array(runStepSchema),
   resultArtifactId: z.uuid().nullable(),
+  /**
+   * The artifact a run operates on: review personas check it (M2), image
+   * personas decorate it (M3-A). Null for generate personas.
+   */
+  targetArtifactId: z.uuid().nullable(),
   errorMessage: z.string(),
 });
 

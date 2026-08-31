@@ -3,15 +3,18 @@ import { db } from '@/db/db';
 
 /**
  * Reads the single settings row, creating the default row on first access so
- * callers never have to handle "no settings yet".
+ * callers never have to handle "no settings yet". Rows written by older app
+ * versions are merged over the defaults so newly added fields (M3: images)
+ * always have values.
  */
 export async function getSettings(): Promise<Settings> {
   const existing = await db.settings.get('settings');
-  if (existing) return existing;
-
-  const created = defaultSettings();
-  await db.settings.put(created);
-  return created;
+  if (existing === undefined) {
+    const created = defaultSettings();
+    await db.settings.put(created);
+    return created;
+  }
+  return settingsSchema.parse({ ...defaultSettings(), ...existing });
 }
 
 /**
@@ -19,7 +22,9 @@ export async function getSettings(): Promise<Settings> {
  * liveQuery; callers see defaults without persisting them.
  */
 export async function readSettings(): Promise<Settings> {
-  return (await db.settings.get('settings')) ?? defaultSettings();
+  const existing = await db.settings.get('settings');
+  if (existing === undefined) return defaultSettings();
+  return settingsSchema.parse({ ...defaultSettings(), ...existing });
 }
 
 /** Overwrites the settings row wholesale (validated). */

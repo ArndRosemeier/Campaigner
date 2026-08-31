@@ -1,0 +1,83 @@
+import 'fake-indexeddb/auto';
+
+import Dexie from 'dexie';
+import { describe, expect, it } from 'vitest';
+
+/**
+ * Schema migration (07-MILESTONE-3 M3-A): a database created by version 1
+ * (before images existed) is upgraded in place — artifacts gain
+ * `imageIds: []` / `coverImageId: null`, runs gain `targetArtifactId: null`.
+ * The v1 store block is never mutated; only the upgrade function fills
+ * defaults.
+ */
+
+describe('v1 → v2 migration', () => {
+  it('fills image and target-artifact defaults on rows written by version 1', async () => {
+    // Build a v1-only database with pre-M3 rows, then close it.
+    const legacy = new Dexie('campaigner');
+    legacy.version(1).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('campaigns').put({
+      id: '00000000-0000-4000-8000-0000000000c1',
+      name: 'Legacy',
+      system: 'dnd5e',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-0000000000a1',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      kind: 'note',
+      name: 'Old note',
+      tags: [],
+      summary: '',
+      body: 'Written before M3.',
+      links: [],
+      currentRevision: 1,
+      data: {},
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('runs').put({
+      id: '00000000-0000-4000-8000-0000000000d1',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      personaId: '00000000-0000-4000-8000-0000000000e1',
+      autonomy: 'manual',
+      status: 'completed',
+      userBrief: 'brief',
+      pinnedChunkIds: [],
+      steps: [],
+      resultArtifactId: '00000000-0000-4000-8000-0000000000a1',
+      errorMessage: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-2 upgrade.
+    const { db } = await import('@/db/db');
+    const artifact = await db.artifacts.get('00000000-0000-4000-8000-0000000000a1');
+    expect(artifact?.imageIds).toEqual([]);
+    expect(artifact?.coverImageId).toBeNull();
+    const run = await db.runs.get('00000000-0000-4000-8000-0000000000d1');
+    expect(run?.targetArtifactId).toBeNull();
+
+    // The upgraded rows validate against the current domain schemas.
+    const { artifactSchema, personaRunSchema } = await import('@/domain');
+    expect(artifactSchema.parse(artifact).imageIds).toEqual([]);
+    expect(personaRunSchema.parse(run).targetArtifactId).toBeNull();
+
+    await db.delete();
+  });
+});

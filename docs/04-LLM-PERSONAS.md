@@ -34,17 +34,26 @@ async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>
 ## Built-in personas (`/src/llm/personas/builtins.ts`)
 
 Seed on app start (insert if slug missing; never overwrite user edits).
-Milestone 1 ships **NPC Smith** fully wired; the other definitions are seeded
+Milestone 1 shipped **NPC Smith** fully wired; the other definitions are seeded
 but their runs reuse the exact same pipeline with different prompts and
 `producesKind` (implement in M2 — pipeline must not hardcode NPC anywhere
 except step `statblock`, which runs only when `producesKind === 'npc'`).
 
-| slug             | name              | producesKind | one-line purpose                       |
-|------------------|-------------------|--------------|----------------------------------------|
-| npc-smith        | NPC Smith         | npc          | Memorable NPCs with stat blocks         |
-| worldbuilder     | Worldbuilder      | location     | Regions, cities, dungeons               |
-| faction-designer | Faction Designer  | faction      | Factions with goals, methods, ranks     |
-| plot-architect   | Plot Architect    | note         | Adventure/campaign arcs and hooks       |
+`producesKind` is required for generate/review personas; image personas
+(`mode: 'image'`, M3-A) never produce an artifact and omit it. Image personas
+are not chainable (chainRunner/moduleForge reject them).
+
+| slug             | name              | producesKind | mode     | one-line purpose                       |
+|------------------|-------------------|--------------|----------|----------------------------------------|
+| npc-smith        | NPC Smith         | npc          | generate | Memorable NPCs with stat blocks         |
+| worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons               |
+| faction-designer | Faction Designer  | faction      | generate | Factions with goals, methods, ranks     |
+| plot-architect   | Plot Architect    | note         | generate | Adventure/campaign arcs and hooks       |
+| arc-weaver       | Arc Weaver        | plotarc      | generate | Plot arcs with beats, stakes, climax    |
+| session-chronicler | Session Chronicler | session   | generate | Ready-to-run session plans              |
+| encounter-smith  | Encounter Smith   | encounter    | generate | Balanced encounters with monsters       |
+| continuity-editor | Continuity Editor | note        | review   | Reports contradictions in an artifact   |
+| illustrator      | Illustrator       | —            | image    | Drafts an image prompt and generates candidate images for an artifact (M3-A) |
 
 NPC Smith `systemPrompt` (verbatim):
 
@@ -104,6 +113,33 @@ After each step completes:
 
 Cancel → `status:'cancelled'`, abort in-flight fetch via AbortSignal, no
 artifact created. Unexpected exception → `status:'failed'`, `errorMessage` set.
+
+### Image personas (M3-A Illustrator)
+
+Steps: `prompt-draft` → `generate` → `pick` (no retrieve — image prompts don't
+use rule excerpts).
+
+1. **prompt-draft** — LLM call (chat, `responseFormat:'json'`) producing
+   `{ prompt, negative, styleNotes }` (zod `imagePromptDraftSchema`, same
+   one-retry policy as drafts). Pauses like a reviewable step: `manual`/`review`
+   pause at `awaiting_user`; `auto` continues. The UI presents the three fields
+   as editable inputs; continuing stores them as `userEdit: { parsed: … }`
+   (the edit wins over the raw output).
+2. **generate** — one call to `POST /api/v1/images`
+   `{ model: settings.imageModel, prompt, n: 2, output_format: 'webp' }`
+   (negative/styleNotes folded into the prompt text). Requires
+   `settings.imagesEnabled`; fails with a clear message otherwise. Each
+   returned image is stored through the intake pipeline (M3-A §Storage) with
+   `source:'generated'`, prompt and model recorded. No pause.
+3. **pick** — ALWAYS pauses (`awaiting_user`) on every autonomy level. The UI
+   shows candidate thumbnails; the user keeps 0–2. Applying the pick appends
+   kept ids to `targetArtifact.imageIds` (first keep becomes the cover if none
+   set), prunes discarded candidate blobs, and completes the run with
+   `resultArtifactId` = the target artifact.
+
+Runs require `targetArtifactId` (rejected at start otherwise); the run row
+persists it. Review/image personas never create artifacts; only generate
+personas produce one.
 
 ## Acceptance criteria
 

@@ -55,6 +55,16 @@ export const DEFAULT_RETRY_BACKOFFS_MS = [2000, 8000] as const;
  */
 export const DEFAULT_STREAM_STALL_TIMEOUT_MS = 120_000;
 
+/** Shared OpenRouter headers (chat, images, models endpoints). */
+export function openRouterHeaders(apiKey: string): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${apiKey}`,
+    'HTTP-Referer': 'https://campaigner.local',
+    'X-Title': 'Campaigner',
+  };
+}
+
 export async function chat(
   messages: ChatMessage[],
   opts: ChatOptions,
@@ -74,12 +84,7 @@ export async function chat(
 
   const init: RequestInit & { signal?: AbortSignal | undefined } = {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${settings.openRouterApiKey}`,
-      'HTTP-Referer': 'https://campaigner.local',
-      'X-Title': 'Campaigner',
-    },
+    headers: openRouterHeaders(settings.openRouterApiKey),
     body: JSON.stringify(body),
   };
   if (opts.signal !== undefined) init.signal = opts.signal;
@@ -92,7 +97,7 @@ export async function chat(
 }
 
 /** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */
-async function fetchWithRetries(
+export async function fetchWithRetries(
   url: string,
   init: RequestInit & { signal?: AbortSignal | undefined },
   backoffs: readonly number[],
@@ -290,4 +295,28 @@ export async function listModels(): Promise<OpenRouterModel[]> {
   if (!response.ok) throw new OpenRouterError(response.status, await response.text());
   const json = (await response.json()) as { data?: OpenRouterModel[] };
   return json.data ?? [];
+}
+
+/**
+ * Model ids that can generate images (07-MILESTONE-3 M3-A §Settings): the
+ * /models endpoint is filtered server-side via output_modalities=image; a
+ * client-side check on each entry keeps the result robust.
+ */
+export async function listImageModels(): Promise<string[]> {
+  const settings = await getSettings();
+  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
+  const response = await fetch(`${OPENROUTER_BASE}/models?output_modalities=image`, {
+    headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
+  });
+  if (!response.ok) throw new OpenRouterError(response.status, await response.text());
+  const json = (await response.json()) as {
+    data?: ({ id?: string; output_modalities?: string[] } | null | undefined)[];
+  };
+  const imageModelIds: string[] = [];
+  for (const model of json.data ?? []) {
+    if (model?.id === undefined) continue;
+    if (!(model.output_modalities?.includes('image') ?? true)) continue;
+    imageModelIds.push(model.id);
+  }
+  return imageModelIds.sort();
 }

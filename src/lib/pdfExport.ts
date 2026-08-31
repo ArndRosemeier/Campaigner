@@ -1,15 +1,26 @@
 import type { Content, NamedStyle, TDocumentDefinitions } from 'pdfmake/interfaces';
 
 import type { Artifact, StatBlock } from '@/domain';
+import { imageBlob } from '@/domain';
+import { getImage } from '@/db/imageRepo';
+import { blobToScaledDataUrl } from '@/lib/imageIntake';
 
 /**
  * PDF export (06-MILESTONES M2): pdfmake definitions for the two templates —
  * **GM notes** (everything: body, structured data, stat block, links) and the
  * **player handout** (name, summary, body only — no secrets, no mechanics).
- * Definition builders are pure; `exportArtifactPdf` loads pdfmake lazily.
+ * Definition builders are pure; `exportArtifactPdf` loads pdfmake lazily and
+ * resolves the artifact's cover image (M3-A) as a ≤1024px data URL.
  */
 
 export type PdfTemplate = 'gm' | 'player';
+
+/** Cover image payload for PDF embedding (M3-A): a JPEG data URL. */
+export interface PdfCoverImage {
+  dataUrl: string;
+  width: number;
+  height: number;
+}
 
 /** Minimal markdown → plain text for PDF rendering (no WYSIWYG in M1/M2). */
 export function markdownToText(markdown: string): string {
@@ -246,10 +257,25 @@ const ARTIFACT_KIND_LABELS: Readonly<Record<Artifact['kind'], string>> = {
   session: 'Session',
 };
 
+/** Cover image node: centered, scaled to fit ≤480pt width (M3-A). */
+function coverImageNode(cover: PdfCoverImage): Content {
+  const scale = Math.min(1, 480 / cover.width, 360 / cover.height);
+  return {
+    image: cover.dataUrl,
+    width: Math.max(40, Math.round(cover.width * scale)),
+    alignment: 'center',
+    margin: [0, 0, 0, 8],
+  };
+}
+
 /** GM notes: everything, including secrets and the stat block. */
-export function buildGmNotesDefinition(artifact: Artifact): TDocumentDefinitions {
+export function buildGmNotesDefinition(
+  artifact: Artifact,
+  cover?: PdfCoverImage | null,
+): TDocumentDefinitions {
   const doc = baseDoc(artifact);
   const content: Content[] = [doc.content].flat();
+  if (cover !== undefined && cover !== null) content.push(coverImageNode(cover));
   if (artifact.summary !== '') content.push({ text: artifact.summary, style: 'meta' });
   content.push({
     text: artifact.body === '' ? '(no body)' : markdownToText(artifact.body),
@@ -264,19 +290,36 @@ export function buildGmNotesDefinition(artifact: Artifact): TDocumentDefinitions
 }
 
 /** Player handout: name, summary, body — no data, no secrets, no mechanics. */
-export function buildPlayerHandoutDefinition(artifact: Artifact): TDocumentDefinitions {
+export function buildPlayerHandoutDefinition(
+  artifact: Artifact,
+  cover?: PdfCoverImage | null,
+): TDocumentDefinitions {
   const doc = baseDoc(artifact);
-  return {
-    ...doc,
-    content: [
-      ...[doc.content].flat(),
-      ...(artifact.summary === '' ? [] : [{ text: artifact.summary, style: 'meta' }]),
-      {
-        text: artifact.body === '' ? '(empty)' : markdownToText(artifact.body),
-        style: 'body',
-      } satisfies Content,
-    ] satisfies Content[],
-  };
+  const content: Content[] = [...[doc.content].flat()];
+  if (cover !== undefined && cover !== null) content.push(coverImageNode(cover));
+  content.push(
+    ...(artifact.summary === '' ? [] : [{ text: artifact.summary, style: 'meta' }]),
+    {
+      text: artifact.body === '' ? '(empty)' : markdownToText(artifact.body),
+      style: 'body',
+    } satisfies Content,
+  );
+  return { ...doc, content } satisfies TDocumentDefinitions;
+}
+
+/**
+ * Loads the artifact's cover image as a ≤1024px JPEG data URL (M3-A).
+ * A missing or unreadable image never fails the PDF export.
+ */
+async function loadPdfCoverImage(artifact: Artifact): Promise<PdfCoverImage | null> {
+  if (artifact.coverImageId === null) return null;
+  try {
+    const image = await getImage(artifact.coverImageId);
+    if (image === undefined) return null;
+    return await blobToScaledDataUrl(imageBlob(image), 1024);
+  } catch {
+    return null;
+  }
 }
 
 /** Generates and downloads the PDF for an artifact (used by the tree menu). */
@@ -300,8 +343,11 @@ export function pdfFileName(artifact: Artifact, template: PdfTemplate): string {
 
 /** Generates the PDF blob; pdfmake is loaded on demand (heavy dependency). */
 export async function exportArtifactPdf(artifact: Artifact, template: PdfTemplate): Promise<Blob> {
+  const cover = await loadPdfCoverImage(artifact);
   const definition =
-    template === 'gm' ? buildGmNotesDefinition(artifact) : buildPlayerHandoutDefinition(artifact);
+    template === 'gm'
+      ? buildGmNotesDefinition(artifact, cover)
+      : buildPlayerHandoutDefinition(artifact, cover);
   const [pdfmakeModule, fonts] = await Promise.all([
     import('pdfmake/build/pdfmake.js'),
     import('pdfmake/build/vfs_fonts.js'),

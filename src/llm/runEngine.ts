@@ -1,5 +1,6 @@
 import type {
   ArtifactData,
+  ArtifactKind,
   Autonomy,
   Campaign,
   Id,
@@ -8,8 +9,9 @@ import type {
   RunStep,
   StatBlock,
 } from '@/domain';
-import { createArtifact, listArtifactsByCampaign, listArtifactsByIds } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listArtifactsByCampaign, listArtifactsByIds, updateArtifact } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
+import { createImage, deleteUnreferencedImages } from '@/db/imageRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -17,9 +19,12 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import type { z } from 'zod';
 import { chat, MissingApiKeyError, type ChatMessage } from '@/llm/openrouter';
+import { generateImages } from '@/llm/imageGen';
+import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
   factionDraftSchema,
+  imagePromptDraftSchema,
   locationDraftSchema,
   noteDraftSchema,
   npcDraftSchema,
@@ -27,6 +32,7 @@ import {
   sessionDraftSchema,
   continuityReportSchema,
 } from '@/llm/schemas';
+import type { ImagePromptDraft } from '@/llm/schemas';
 
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
@@ -55,10 +61,18 @@ export interface StepStatblockOutput {
 }
 
 const STEP_NAMES = ['retrieve', 'draft', 'statblock', 'finalize'] as const;
-export type StepName = (typeof STEP_NAMES)[number] | ReviewStepName;
+export type StepName = (typeof STEP_NAMES)[number] | ReviewStepName | ImageStepName;
 
 const REVIEW_STEP_NAMES = ['gather', 'check', 'finalize'] as const;
 export type ReviewStepName = (typeof REVIEW_STEP_NAMES)[number];
+
+/**
+ * Image personas (M3-A Illustrator): the prompt draft is the user-editable
+ * checkpoint, generate runs the image API, pick ALWAYS pauses (07-MILESTONE-3
+ * M3-A) so the user chooses 0–2 candidates on every autonomy level.
+ */
+const IMAGE_STEP_NAMES = ['prompt-draft', 'generate', 'pick'] as const;
+export type ImageStepName = (typeof IMAGE_STEP_NAMES)[number];
 
 export type EngineEvent =
   | { kind: 'run'; runId: Id; status: PersonaRun['status'] }
@@ -113,8 +127,8 @@ interface DraftContract {
   keys: string[];
 }
 
-function draftContractFor(persona: Persona): DraftContract {
-  switch (persona.producesKind) {
+function draftContractFor(kind: ArtifactKind): DraftContract {
+  switch (kind) {
     case 'npc':
       return { schema: npcDraftSchema, keys: Object.keys(npcDraftSchema.shape) };
     case 'location':
@@ -132,7 +146,7 @@ function draftContractFor(persona: Persona): DraftContract {
   }
 }
 
-function dataForDraft(kind: Persona['producesKind'], draft: Record<string, unknown>): ArtifactData {
+function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): ArtifactData {
   switch (kind) {
     case 'npc':
       return {
@@ -221,12 +235,16 @@ export class RunEngine {
 
   /** Starts a run; resolves with the run id once the row exists. */
   async startRun(input: StartRunInput): Promise<Id> {
+    if (input.persona.mode === 'image' && input.targetArtifactId === undefined) {
+      throw new Error(`"${input.persona.name}" needs a target artifact to illustrate`);
+    }
     const run = await createRun({
       campaignId: input.campaign.id,
       personaId: input.persona.id,
       autonomy: input.autonomy,
       userBrief: input.brief,
       pinnedChunkIds: input.pinnedChunkIds,
+      targetArtifactId: input.targetArtifactId ?? null,
     });
     this.draftRetried.delete(run.id);
     this.cancelRequested.delete(run.id);
@@ -244,6 +262,11 @@ export class RunEngine {
       (step) => step.status === 'running' || step.status === 'pending',
     );
     const target = stepIndex === -1 ? run.steps.length - 1 : stepIndex;
+    // Approving a pick without a selection means "keep nothing".
+    if (run.steps[target]?.name === 'pick') {
+      await this.pickImages(runId, []);
+      return;
+    }
     await this.updateStep(runId, target, { status: 'approved' });
     this.emit({ kind: 'step', runId, stepIndex: target, status: 'approved' });
     void this.executeFrom(runId, target + 1, input).catch((error: unknown) => {
@@ -258,6 +281,15 @@ export class RunEngine {
     userEdit: unknown,
     input: StartRunInput,
   ): Promise<void> {
+    const run = await getRun(runId);
+    if (run === undefined) return;
+    if (run.steps[stepIndex]?.name === 'pick') {
+      // The pick step's edit is the image selection ({ keep: Id[] }).
+      const keep = (userEdit as { keep?: unknown } | null)?.keep;
+      const ids = Array.isArray(keep) ? keep.filter((id): id is Id => typeof id === 'string') : [];
+      await this.pickImages(runId, ids);
+      return;
+    }
     await this.updateStep(runId, stepIndex, { userEdit, status: 'approved' });
     this.emit({ kind: 'step', runId, stepIndex, status: 'approved' });
     void this.executeFrom(runId, stepIndex + 1, input).catch((error: unknown) => {
@@ -304,9 +336,11 @@ export class RunEngine {
     const kinds: StepName[] =
       input.persona.mode === 'review'
         ? [...REVIEW_STEP_NAMES]
-        : input.persona.producesKind === 'npc'
-          ? [...STEP_NAMES]
-          : STEP_NAMES.filter((name) => name !== 'statblock');
+        : input.persona.mode === 'image'
+          ? [...IMAGE_STEP_NAMES]
+          : input.persona.producesKind === 'npc'
+            ? [...STEP_NAMES]
+            : STEP_NAMES.filter((name) => name !== 'statblock');
 
     const controller = new AbortController();
     this.controllers.set(runId, controller);
@@ -392,6 +426,12 @@ export class RunEngine {
         return this.runGather(stepIndex, steps, input);
       case 'check':
         return this.runCheck(runId, stepIndex, steps, input, signal, extraInstruction);
+      case 'prompt-draft':
+        return this.runPromptDraft(runId, stepIndex, steps, input, signal, extraInstruction);
+      case 'generate':
+        return this.runGenerate(runId, stepIndex, steps, input, signal);
+      case 'pick':
+        return this.runPick(stepIndex, steps);
       case 'finalize':
         return this.runFinalize(runId, stepIndex, steps, input);
     }
@@ -481,7 +521,9 @@ export class RunEngine {
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     const settings = await getSettings();
     const context = await this.retrieveContext(input);
-    const contract = draftContractFor(input.persona);
+    const kind = input.persona.producesKind;
+    if (kind === undefined) throw new Error('image personas do not draft artifacts');
+    const contract = draftContractFor(kind);
     const contextArtifacts = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const contextSection =
       contextArtifacts.length === 0
@@ -731,6 +773,191 @@ export class RunEngine {
     }
   }
 
+  /**
+   * The effective prompt draft of an image run: the user's edit wins over the
+   * LLM output; both are `{ parsed: {prompt, negative, styleNotes} }`.
+   */
+  private effectivePromptDraft(steps: readonly RunStep[]): ImagePromptDraft | null {
+    const step = steps.find((candidate) => candidate.name === 'prompt-draft');
+    if (step === undefined) return null;
+    const effective = step.userEdit ?? step.output;
+    if (effective === null || typeof effective !== 'object') return null;
+    const parsed = (effective as { parsed?: unknown }).parsed;
+    const result = imagePromptDraftSchema.safeParse(parsed);
+    return result.success ? result.data : null;
+  }
+
+  /** Prompt-draft step (M3-A): drafts an image prompt for the target artifact. */
+  private async runPromptDraft(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+    signal: AbortSignal,
+    extraInstruction: string,
+  ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
+    const settings = await getSettings();
+    const targetId = input.targetArtifactId ?? null;
+    const target = targetId === null ? undefined : await getArtifact(targetId);
+    if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
+    const instruction = [
+      `Artifact: ${target.name} (${target.kind})`,
+      target.summary === '' ? null : `Summary: ${target.summary}`,
+      target.body === '' ? null : `Description (may be truncated):\n${target.body.slice(0, 800)}`,
+      `Campaign tone: ${input.campaign.name}${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
+      input.brief === '' ? null : `Focus: ${input.brief}`,
+      'Reply with ONLY a JSON object with exactly these fields: ["prompt", "negative", "styleNotes"] — `prompt` describes the image to generate for this artifact, `negative` lists what to avoid, `styleNotes` gives style guidance.',
+      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+    ]
+      .filter((part) => part !== null)
+      .join('\n\n');
+
+    const messages: ChatMessage[] = [
+      { role: 'system', content: input.persona.systemPrompt },
+      { role: 'user', content: instruction },
+    ];
+    if (this.draftRetried.has(runId)) {
+      messages.push({
+        role: 'user',
+        content:
+          'Your previous reply was invalid JSON for the schema. Reply with corrected JSON only.',
+      });
+    }
+
+    const raw = await chat(messages, {
+      model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
+      temperature: input.persona.temperature,
+      responseFormat: 'json',
+      signal,
+      onToken: (delta) => {
+        this.emit({ kind: 'token', runId, stepIndex, delta });
+      },
+    });
+
+    let parsed: unknown;
+    try {
+      const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+      parsed = imagePromptDraftSchema.parse(JSON.parse(jsonText) as unknown);
+    } catch (error) {
+      const issues = error instanceof Error ? error.message : String(error);
+      if (!this.draftRetried.has(runId)) {
+        // One automatic JSON-fix retry (same policy as artifact drafts).
+        this.draftRetried.add(runId);
+        return this.runPromptDraft(
+          runId,
+          stepIndex,
+          steps,
+          input,
+          signal,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply was invalid JSON for the schema: ${issues}. Reply with corrected JSON only.`,
+        );
+      }
+      const step = this.finishStep(steps[stepIndex], { raw }, 'rejected');
+      if (input.autonomy === 'auto') return { step };
+      if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
+      return { step, runStatus: 'needs_review' };
+    }
+
+    const step = this.finishStep(steps[stepIndex], { parsed });
+    const pausesHere = pauses(input.autonomy, true);
+    return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
+  }
+
+  /** Generate step (M3-A): calls the image API and stores the candidates. */
+  private async runGenerate(
+    _runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+    signal: AbortSignal,
+  ): Promise<{ step: RunStep }> {
+    const settings = await getSettings();
+    if (!settings.imagesEnabled) {
+      throw new Error('Image generation is disabled — enable it in Settings');
+    }
+    const draft = this.effectivePromptDraft(steps);
+    if (draft === null) throw new Error('no prompt draft available to generate from');
+    const finalPrompt = [
+      draft.prompt,
+      draft.styleNotes === '' ? null : `Style: ${draft.styleNotes}`,
+      draft.negative === '' ? null : `Avoid: ${draft.negative}`,
+    ]
+      .filter((part) => part !== null)
+      .join('\n');
+    const generated = await generateImages(finalPrompt, 2, {
+      model: settings.imageModel,
+      signal,
+    });
+
+    // Store each candidate through the same intake pipeline as uploads
+    // (EXIF-safe decode, ≤1600px, WebP re-encode with format detection).
+    const imageIds: Id[] = [];
+    for (const blob of generated.images) {
+      const intake = await intakeImage(blob);
+      const stored = await createImage({
+        campaignId: input.campaign.id,
+        blob: intake.blob,
+        mimeType: intake.mimeType,
+        width: intake.width,
+        height: intake.height,
+        prompt: finalPrompt,
+        model: settings.imageModel,
+        source: 'generated',
+      });
+      imageIds.push(stored.id);
+    }
+    const step = this.finishStep(steps[stepIndex], { imageIds, costUsd: generated.costUsd });
+    return { step };
+  }
+
+  /**
+   * Pick step (M3-A): ALWAYS pauses (07-MILESTONE-3 M3-A) — on every autonomy
+   * level the user chooses 0–2 candidates.
+   */
+  private runPick(stepIndex: number, steps: RunStep[]): { step: RunStep; runStatus: PersonaRun['status'] } {
+    const generateStep = steps.find((step) => step.name === 'generate');
+    const output = (generateStep?.output ?? {}) as { imageIds?: unknown };
+    const candidates = Array.isArray(output.imageIds) ? (output.imageIds as Id[]) : [];
+    const step = this.finishStep(steps[stepIndex], { candidates });
+    return { step, runStatus: 'awaiting_user' };
+  }
+
+  /**
+   * Applies the user's pick for an image run (M3-A): appends kept ids to the
+   * target artifact (the first keep becomes the cover if none exists), prunes
+   * discarded candidates, and completes the run with the target as result.
+   */
+  async pickImages(runId: Id, keep: readonly Id[]): Promise<void> {
+    const run = await getRun(runId);
+    if (run?.status !== 'awaiting_user') return;
+    const targetId = run.targetArtifactId;
+    if (targetId === null) throw new Error('image run has no target artifact');
+    const target = await getArtifact(targetId);
+    if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
+
+    const existing = new Set(target.imageIds);
+    const kept = keep.filter((id) => !existing.has(id));
+    const updated = await updateArtifact(targetId, {
+      imageIds: [...target.imageIds, ...kept],
+      coverImageId: target.coverImageId ?? keep[0] ?? null,
+    });
+
+    const stepIndex = run.steps.findIndex((step) => step.name === 'pick');
+    if (stepIndex !== -1) {
+      await this.updateStep(runId, stepIndex, { userEdit: { keep: [...keep] }, status: 'approved' });
+      this.emit({ kind: 'step', runId, stepIndex, status: 'approved' });
+    }
+    // Discarded candidates (from the pick step's candidate list) are pruned.
+    const pickStep = run.steps[stepIndex];
+    const pickOutput = (pickStep?.output ?? {}) as { candidates?: unknown };
+    const candidates = Array.isArray(pickOutput.candidates)
+      ? (pickOutput.candidates as Id[])
+      : [];
+    await deleteUnreferencedImages(updated.campaignId, candidates);
+    await updateRun(runId, { status: 'completed', resultArtifactId: updated.id });
+    this.emit({ kind: 'run', runId, status: 'completed' });
+  }
+
   private async runFinalize(
     runId: Id,
     stepIndex: number,
@@ -739,6 +966,7 @@ export class RunEngine {
   ): Promise<{ step: RunStep; artifactId: Id }> {
     const draft = this.effectiveDraft(steps) ?? {};
     const kind = input.persona.producesKind;
+    if (kind === undefined) throw new Error('image personas do not produce artifacts');
     const data = dataForDraft(kind, draft);
     // Attach the parsed stat block for NPC artifacts before creating (the
     // finalize revision is the baseline snapshot).

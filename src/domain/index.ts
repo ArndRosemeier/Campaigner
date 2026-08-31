@@ -9,6 +9,7 @@ export * from '@/domain/create';
 export * from '@/domain/embedding';
 export * from '@/domain/entity';
 export * from '@/domain/gameSystem';
+export * from '@/domain/image';
 export * from '@/domain/persona';
 export * from '@/domain/rulebook';
 export * from '@/domain/run';

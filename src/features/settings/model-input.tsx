@@ -14,13 +14,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { listModels, type OpenRouterModel } from '@/llm/openrouter';
+import { listModels } from '@/llm/openrouter';
 import { toastError } from '@/lib/toast';
 
 /**
  * Model field (05-UI.md §Settings): free-form text input prefilled with the
  * default, plus a combobox of the account's models (fetched from /models when
- * a valid key is present).
+ * a valid key is present). `fetchOptions` customizes the source — e.g. the
+ * image-model list (07-MILESTONE-3 M3-A §Settings).
  */
 export function ModelInput({
   id,
@@ -28,6 +29,7 @@ export function ModelInput({
   value,
   placeholder,
   canBrowse,
+  fetchOptions,
   onChange,
 }: {
   id: string;
@@ -35,18 +37,21 @@ export function ModelInput({
   value: string;
   placeholder: string;
   canBrowse: boolean;
+  /** Model ids to offer; defaults to all account models. */
+  fetchOptions?: () => Promise<string[]>;
   onChange: (value: string) => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
-  const [models, setModels] = useState<OpenRouterModel[] | null>(null);
+  const [options, setOptions] = useState<string[] | null>(null);
 
-  async function fetchModels(): Promise<void> {
-    if (models !== null) return;
+  async function fetchModelOptions(): Promise<void> {
+    if (options !== null) return;
+    const load = fetchOptions ?? (async () => (await listModels()).map((model) => model.id));
     try {
-      setModels(await listModels());
+      setOptions(await load());
     } catch (error) {
       toastError('Could not load model list', error);
-      setModels([]);
+      setOptions([]);
     }
   }
 
@@ -66,7 +71,7 @@ export function ModelInput({
           open={open}
           onOpenChange={(next) => {
             setOpen(next);
-            if (next) void fetchModels();
+            if (next) void fetchModelOptions();
           }}
         >
           <PopoverTrigger
@@ -82,16 +87,16 @@ export function ModelInput({
               <CommandList>
                 <CommandEmpty>No models found.</CommandEmpty>
                 <CommandGroup>
-                  {(models ?? []).slice(0, 200).map((model) => (
+                  {(options ?? []).slice(0, 200).map((model) => (
                     <CommandItem
-                      key={model.id}
-                      value={model.id}
+                      key={model}
+                      value={model}
                       onSelect={() => {
-                        onChange(model.id);
+                        onChange(model);
                         setOpen(false);
                       }}
                     >
-                      {model.id}
+                      {model}
                     </CommandItem>
                   ))}
                 </CommandGroup>

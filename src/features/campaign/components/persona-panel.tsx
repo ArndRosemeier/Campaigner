@@ -33,9 +33,11 @@ import { ROUTES, artifactPath } from '@/app/routes';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import type { Autonomy, Campaign, PersonaRun } from '@/domain';
+import type { Autonomy, Campaign, Id, Persona, PersonaRun } from '@/domain';
 import { runEngine } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
+import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
+import { ImageThumb } from '@/features/images/image-thumb';
 import { WritersRoom } from '@/features/campaign/components/writers-room';
 
 const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
@@ -71,15 +73,33 @@ export function PersonaPanel({
   const [brief, setBrief] = useState('');
   const [targetArtifactId, setTargetArtifactId] = useState<string>('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [tab, setTab] = useState<string>('assistant');
   const pinned = usePinnedChunksStore((state) => state.chunks);
   const unpin = usePinnedChunksStore((state) => state.unpin);
+  const requestArtifactId = useIllustrationRequest((state) => state.artifactId);
+  const requestedAt = useIllustrationRequest((state) => state.requestedAt);
+  const clearRequest = useIllustrationRequest((state) => state.clear);
 
   const selectedPersona = personas?.find((persona) => persona.id === personaId);
   const isReview = selectedPersona?.mode === 'review';
+  const isImage = selectedPersona?.mode === 'image';
+  const needsTarget = isReview || isImage;
+
+  // "Illustrate…" from the artifact editor: select the Illustrator persona,
+  // target the requesting artifact, and focus the Assistant tab (M3-A).
+  useEffect(() => {
+    if (requestArtifactId === null) return;
+    const illustrator = personas?.find((persona) => persona.slug === 'illustrator');
+    if (illustrator === undefined) return; // personas not loaded yet
+    setPersonaId(illustrator.id);
+    setTargetArtifactId(requestArtifactId);
+    setTab('assistant');
+    clearRequest();
+  }, [requestArtifactId, requestedAt, personas, clearRequest]);
 
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
-    if (selectedPersona.mode === 'review') {
+    if (needsTarget) {
       if (targetArtifactId === '') return;
       const runId = await runEngine.startRun({
         campaign,
@@ -104,7 +124,13 @@ export function PersonaPanel({
 
   return (
     <div className="flex h-full flex-col" data-testid="persona-panel">
-      <Tabs defaultValue="assistant" className="flex h-full flex-col gap-0">
+      <Tabs
+        value={tab}
+        onValueChange={(value) => {
+          if (typeof value === 'string') setTab(value);
+        }}
+        className="flex h-full flex-col gap-0"
+      >
         <div className="flex items-center border-b">
           <TabsList className="flex-1 justify-start rounded-none border-b-0">
             <TabsTrigger value="assistant">Assistant</TabsTrigger>
@@ -168,9 +194,11 @@ export function PersonaPanel({
               </Select>
             </div>
 
-            {isReview && (
+            {needsTarget && (
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="target-select">Artifact to check</Label>
+                <Label htmlFor="target-select">
+                  {isImage ? 'Artifact to illustrate' : 'Artifact to check'}
+                </Label>
                 <Select
                   value={targetArtifactId}
                   items={Object.fromEntries(
@@ -180,7 +208,10 @@ export function PersonaPanel({
                     if (value !== null) setTargetArtifactId(value);
                   }}
                 >
-                  <SelectTrigger className="w-full" aria-label="Artifact to check">
+                  <SelectTrigger
+                    className="w-full"
+                    aria-label={isImage ? 'Artifact to illustrate' : 'Artifact to check'}
+                  >
                     <SelectValue placeholder="Choose an artifact" />
                   </SelectTrigger>
                   <SelectContent>
@@ -194,7 +225,9 @@ export function PersonaPanel({
                 <Textarea
                   id="brief"
                   rows={2}
-                  placeholder="Optional focus, e.g. timeline consistency"
+                  placeholder={
+                    isImage ? 'Optional image focus, e.g. night scene' : 'Optional focus, e.g. timeline consistency'
+                  }
                   value={brief}
                   onChange={(event) => {
                     setBrief(event.target.value);
@@ -203,7 +236,7 @@ export function PersonaPanel({
               </div>
             )}
 
-            {!isReview && (
+            {!needsTarget && (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="brief">Brief</Label>
                 <Textarea
@@ -247,13 +280,13 @@ export function PersonaPanel({
               <Button
                 disabled={
                   selectedPersona === undefined ||
-                  (isReview ? targetArtifactId === '' : brief.trim() === '')
+                  (needsTarget ? targetArtifactId === '' : brief.trim() === '')
                 }
                 onClick={() => void start()}
                 data-testid="start-run"
               >
                 <PlayIcon aria-hidden data-icon="inline-start" />
-                Start
+                {isImage ? 'Illustrate' : 'Start'}
               </Button>
             ) : (
               <div className="rounded-md border border-dashed p-2 text-center text-xs text-muted-foreground">
@@ -283,6 +316,10 @@ export function PersonaPanel({
 
 function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): JSX.Element {
   const run = useLiveQuery(() => getRun(runId), [runId]);
+  const persona = useLiveQuery(
+    () => (run === undefined ? undefined : getPersona(run.personaId)),
+    [run === undefined ? undefined : run.personaId],
+  );
   const [streamed, setStreamed] = useState('');
   const streamRef = useRef<HTMLPreElement | null>(null);
 
@@ -342,7 +379,199 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
         </pre>
       )}
 
-      <RunActions run={run} campaign={campaign} />
+      {persona?.mode === 'image' ? (
+        <ImageRunActions run={run} campaign={campaign} persona={persona} />
+      ) : (
+        <RunActions run={run} campaign={campaign} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Run actions for image personas (07-MILESTONE-3 M3-A): the prompt draft is
+ * editable fields (the user edits the prompt instead of rerolling images),
+ * and the pick step ALWAYS pauses for the user to choose 0–2 candidates.
+ */
+function ImageRunActions({
+  run,
+  campaign,
+  persona,
+}: {
+  run: PersonaRun;
+  campaign: Campaign;
+  persona: Persona;
+}): JSX.Element | null {
+  const [selected, setSelected] = useState<Id[]>([]);
+  const [prompt, setPrompt] = useState('');
+  const [negative, setNegative] = useState('');
+  const [styleNotes, setStyleNotes] = useState('');
+
+  const paused = run.status === 'awaiting_user';
+  const draftStep = run.steps.find((step) => step.name === 'prompt-draft');
+  const pickStep = run.steps.find((step) => step.name === 'pick');
+  const generating = run.steps.some((step) => step.name === 'generate' && step.status === 'running');
+
+  // Sync the editable prompt fields from the latest draft output (the user's
+  // saved edit wins over the raw output, mirroring the engine).
+  useEffect(() => {
+    if (!paused || draftStep === undefined) return;
+    const effective = (draftStep.userEdit ?? draftStep.output) as
+      | { parsed?: { prompt?: string; negative?: string; styleNotes?: string } }
+      | null;
+    setPrompt(effective?.parsed?.prompt ?? '');
+    setNegative(effective?.parsed?.negative ?? '');
+    setStyleNotes(effective?.parsed?.styleNotes ?? '');
+  }, [paused, draftStep]);
+
+  const pickCandidates = ((pickStep?.output as { candidates?: unknown } | null | undefined)?.candidates ?? []) as Id[];
+
+  if (run.status === 'completed' && run.resultArtifactId !== null) {
+    return (
+      <Button render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />}>
+        <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
+        Open artifact
+      </Button>
+    );
+  }
+
+  if (run.status === 'failed' || run.status === 'cancelled') return null;
+
+  const input = {
+    campaign,
+    persona,
+    autonomy: run.autonomy,
+    brief: run.userBrief,
+    pinnedChunkIds: run.pinnedChunkIds,
+  };
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="image-run-actions">
+      {paused && draftStep?.status === 'done' && (
+        <div className="flex flex-col gap-1.5" data-testid="image-prompt-edit">
+          <Label htmlFor="image-prompt">Image prompt</Label>
+          <Textarea
+            id="image-prompt"
+            rows={4}
+            value={prompt}
+            onChange={(event) => {
+              setPrompt(event.target.value);
+            }}
+          />
+          <Label htmlFor="image-negative">Avoid</Label>
+          <Textarea
+            id="image-negative"
+            rows={2}
+            value={negative}
+            onChange={(event) => {
+              setNegative(event.target.value);
+            }}
+          />
+          <Label htmlFor="image-style">Style notes</Label>
+          <Textarea
+            id="image-style"
+            rows={2}
+            value={styleNotes}
+            onChange={(event) => {
+              setStyleNotes(event.target.value);
+            }}
+          />
+          <Button
+            size="sm"
+            disabled={prompt.trim() === ''}
+            data-testid="continue-image"
+            onClick={() => {
+              void runEngine
+                .editStep(run.id, draftStep.index, {
+                  parsed: { prompt: prompt.trim(), negative, styleNotes },
+                }, input)
+                .catch((error: unknown) => {
+                  toastError('Could not continue', error);
+                });
+            }}
+          >
+            <CheckIcon aria-hidden data-icon="inline-start" />
+            Generate images
+          </Button>
+        </div>
+      )}
+
+      {generating && (
+        <p className="text-xs text-muted-foreground">Generating 2 candidate images…</p>
+      )}
+
+      {paused && pickStep?.status === 'done' && (
+        <div className="flex flex-col gap-2" data-testid="image-pick">
+          <Label>Candidates — pick up to 2</Label>
+          <div className="flex flex-wrap gap-2">
+            {pickCandidates.map((candidateId) => {
+              const isSelected = selected.includes(candidateId);
+              return (
+                <button
+                  key={candidateId}
+                  type="button"
+                  aria-pressed={isSelected}
+                  aria-label={`Candidate ${candidateId}`}
+                  className={`rounded-md border p-0.5 ${isSelected ? 'border-primary ring-2 ring-primary' : ''}`}
+                  onClick={() => {
+                    setSelected((previous) =>
+                      previous.includes(candidateId)
+                        ? previous.filter((id) => id !== candidateId)
+                        : previous.length >= 2
+                          ? previous
+                          : [...previous, candidateId],
+                    );
+                  }}
+                >
+                  <ImageThumb imageId={candidateId} alt={`Generated candidate ${candidateId}`} size={72} />
+                </button>
+              );
+            })}
+          </div>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              disabled={selected.length === 0}
+              data-testid="keep-selected"
+              onClick={() => {
+                void runEngine.pickImages(run.id, selected).catch((error: unknown) => {
+                  toastError('Could not save selection', error);
+                });
+              }}
+            >
+              <CheckIcon aria-hidden data-icon="inline-start" />
+              Keep {selected.length} selected
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="keep-none"
+              onClick={() => {
+                void runEngine.pickImages(run.id, []).catch((error: unknown) => {
+                  toastError('Could not discard images', error);
+                });
+              }}
+            >
+              Keep none
+            </Button>
+          </div>
+        </div>
+      )}
+
+      <div>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            void runEngine.cancel(run.id).catch((error: unknown) => {
+              console.error(error);
+            });
+          }}
+        >
+          <BanIcon aria-hidden data-icon="inline-start" />
+          Cancel run
+        </Button>
+      </div>
     </div>
   );
 }

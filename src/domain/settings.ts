@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
+
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
 
@@ -15,6 +17,10 @@ export const settingsSchema = z.object({
   embeddingModel: z.string().min(1),
   /** Default false until an API key is present. */
   embeddingsEnabled: z.boolean(),
+  /** Image generation model (M3-A). */
+  imageModel: z.string().min(1),
+  /** Image generation off until the user opts in (M3-A). */
+  imagesEnabled: z.boolean(),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -27,5 +33,7 @@ export function defaultSettings(): Settings {
     defaultChatModel: DEFAULT_CHAT_MODEL,
     embeddingModel: DEFAULT_EMBEDDING_MODEL,
     embeddingsEnabled: false,
+    imageModel: DEFAULT_IMAGE_MODEL,
+    imagesEnabled: false,
   };
 }

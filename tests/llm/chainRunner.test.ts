@@ -8,7 +8,7 @@ import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artif
 import { getRun } from '@/db/runRepo';
 import { chainRunner, type ChainStepInput } from '@/llm/chainRunner';
 import { runEngine } from '@/llm/runEngine';
-import { createPersona, type Id, type Persona } from '@/domain';
+import { createPersona, type ArtifactKind, type Id, type Persona } from '@/domain';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -26,7 +26,7 @@ vi.mock('@/llm/openrouter', () => ({
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 
-function personaOf(slug: string, name: string, producesKind: Persona['producesKind']): Persona {
+function personaOf(slug: string, name: string, producesKind: ArtifactKind): Persona {
   return createPersona({
     slug,
     name,

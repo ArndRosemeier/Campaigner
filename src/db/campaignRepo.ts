@@ -42,18 +42,28 @@ export async function updateCampaign(id: string, patch: CampaignPatch): Promise<
 
 /**
  * Deletes a campaign and everything that hangs off it in one transaction:
- * its artifacts, those artifacts' revisions, and its persona runs.
+ * its artifacts, those artifacts' revisions, its persona runs, and its
+ * images (M3-A).
  */
 export async function deleteCampaign(id: string): Promise<void> {
-  await db.transaction('rw', db.campaigns, db.artifacts, db.revisions, db.runs, async () => {
-    const artifacts = await db.artifacts.where('campaignId').equals(id).toArray();
-    const artifactIds = artifacts.map((artifact) => artifact.id);
+  await db.transaction(
+    'rw',
+    db.campaigns,
+    db.artifacts,
+    db.revisions,
+    db.runs,
+    db.images,
+    async () => {
+      const artifacts = await db.artifacts.where('campaignId').equals(id).toArray();
+      const artifactIds = artifacts.map((artifact) => artifact.id);
 
-    if (artifactIds.length > 0) {
-      await db.revisions.where('artifactId').anyOf(artifactIds).delete();
-    }
-    await db.artifacts.where('campaignId').equals(id).delete();
-    await db.runs.where('campaignId').equals(id).delete();
-    await db.campaigns.delete(id);
-  });
+      if (artifactIds.length > 0) {
+        await db.revisions.where('artifactId').anyOf(artifactIds).delete();
+      }
+      await db.artifacts.where('campaignId').equals(id).delete();
+      await db.runs.where('campaignId').equals(id).delete();
+      await db.images.where('campaignId').equals(id).delete();
+      await db.campaigns.delete(id);
+    },
+  );
 }

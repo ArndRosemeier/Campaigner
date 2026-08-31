@@ -37,6 +37,7 @@ import {
   SessionForm,
 } from '@/features/campaign/components/kind-forms';
 import { LinksSection } from '@/features/campaign/components/links-section';
+import { ImagesSection } from '@/features/campaign/components/images-section';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { RevisionDialog } from '@/features/campaign/components/revision-dialog';
 import { TagEditor } from '@/features/campaign/components/tag-editor';
@@ -270,9 +271,10 @@ export function ArtifactEditor({
             }}
           />
 
+          <ImagesSection artifact={artifact} />
+
           <section className="flex flex-col gap-2">
-            <h2 className="text-sm font-medium">{ARTIFACT_KIND_SINGULAR[artifact.kind]} details</h2>
-            {draft.kind === 'npc' && (
+            <h2 className="text-sm font-medium">{ARTIFACT_KIND_SINGULAR[artifact.kind]} details</h2>            {draft.kind === 'npc' && (
               <NpcForm
                 artifactName={draft.name}
                 data={draft.data}
