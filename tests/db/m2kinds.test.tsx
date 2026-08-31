@@ -36,7 +36,9 @@ describe('encounter / plotarc / session kinds', () => {
       data: {
         difficulty: 'deadly',
         levelHint: '5',
-        monsters: [{ name: 'Troll', count: 2, notes: 'regenerates' }],
+        monsters: [
+          { name: 'Troll', count: 2, notes: 'regenerates', source: { type: 'none' } },
+        ],
         terrain: 'river crossing',
         tactics: 'hit and run',
         treasure: 'none',

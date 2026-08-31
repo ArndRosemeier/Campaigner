@@ -114,6 +114,23 @@ After each step completes:
 Cancel → `status:'cancelled'`, abort in-flight fetch via AbortSignal, no
 artifact created. Unexpected exception → `status:'failed'`, `errorMessage` set.
 
+### Monster stat sources (M3-B Encounter Smith)
+
+The Encounter Smith's retrieve step runs a second `searchRules` call restricted
+to `chunkTypes: ['statblock']` (the monster-ish nouns of the brief) and presents
+those chunks as a numbered "Stat-block excerpts" list. The draft prompt teaches
+the citation scheme; per monster the model outputs:
+
+- `sourceChunkIndex: <n>` — finalize maps it back to the cited chunk id and
+  persists `{ type: 'rulebook', chunkId }`;
+- a full `statBlock` object (only when no excerpt matched) — persisted as
+  `{ type: 'inline', statBlock }`;
+- neither — name-only `{ type: 'none' }`.
+
+Resolution to displayable stat blocks happens in
+`resolveMonsterEntryWithRepos` (origin badges: "NPC: <name>", "Bestiary p. N",
+"inline"; dangling refs degrade to a visible "missing ref" badge).
+
 ### Image personas (M3-A Illustrator)
 
 Steps: `prompt-draft` → `generate` → `pick` (no retrieve — image prompts don't

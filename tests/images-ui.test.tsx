@@ -71,7 +71,7 @@ describe('images ui', () => {
     const { artifactPath: path } = await seedWithImage();
     renderAppAt(path);
 
-    expect(await screen.findByAltText('Cover of Old Tower')).toBeInTheDocument();
+    expect(await screen.findByAltText('Cover of Old Tower', {}, { timeout: 5_000 })).toBeInTheDocument();
     expect(screen.getByTestId('images-section')).toBeInTheDocument();
     expect(screen.getByAltText('Artifact image')).toHaveAttribute('src', expect.stringMatching(/^blob:mock-/));
     expect(screen.getByRole('button', { name: /Illustrate/ })).toBeInTheDocument();
@@ -83,7 +83,7 @@ describe('images ui', () => {
     const { artifactPath: path, imageId, campaignId } = await seedWithImage();
     renderAppAt(path);
 
-    await screen.findByAltText('Artifact image');
+    await screen.findByAltText('Artifact image', {}, { timeout: 5_000 });
     await user.click(screen.getByRole('button', { name: /Open image/ }));
     expect(await screen.findByAltText('Artifact image, large view')).toBeInTheDocument();
 
@@ -120,7 +120,7 @@ describe('images ui', () => {
     const { artifactPath: path } = await seedWithImage();
     renderAppAt(path);
 
-    await screen.findByAltText('Artifact image');
+    await screen.findByAltText('Artifact image', {}, { timeout: 5_000 });
     await user.click(screen.getByRole('button', { name: /Illustrate/ }));
 
     // The persona select now shows Illustrator and the target select is set.

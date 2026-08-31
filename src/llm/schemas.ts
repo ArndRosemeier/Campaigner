@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { statBlockSchema } from '@/domain/statblock';
+
 /**
  * Draft JSON contracts (04-LLM-PERSONAS §Draft JSON contracts): what the
  * draft LLM step must return for each artifact kind. Location/Faction mirror
@@ -73,7 +75,16 @@ export const encounterDraftSchema = z.object({
   difficulty: z.string(),
   levelHint: z.string(),
   monsters: z.array(
-    z.object({ name: z.string(), count: z.number().int().positive(), notes: z.string() }),
+    z.object({
+      name: z.string(),
+      count: z.number().int().positive(),
+      notes: z.string(),
+      /** M3-B: index into the numbered stat-block excerpts of the retrieve
+       * step — mapped back to { type: 'rulebook', chunkId } on finalize. */
+      sourceChunkIndex: z.number().int().nonnegative().optional(),
+      /** M3-B: a full inline stat block when no rulebook excerpt matched. */
+      statBlock: statBlockSchema.optional(),
+    }),
   ),
   terrain: z.string(),
   tactics: z.string(),

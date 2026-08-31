@@ -49,6 +49,28 @@ describe('v1 → v2 migration', () => {
       createdAt: 1,
       updatedAt: 1,
     });
+    // Pre-M3-B encounter: monster entries have no `source` yet.
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-0000000000a2',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      kind: 'encounter',
+      name: 'Old ambush',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      data: {
+        difficulty: 'medium',
+        levelHint: '3',
+        monsters: [{ name: 'Troll', count: 2, notes: 'regenerates' }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    });
     await legacy.table('runs').put({
       id: '00000000-0000-4000-8000-0000000000d1',
       campaignId: '00000000-0000-4000-8000-0000000000c1',
@@ -65,13 +87,19 @@ describe('v1 → v2 migration', () => {
     });
     legacy.close();
 
-    // Opening the app's versioned DB runs the version-2 upgrade.
+    // Opening the app's versioned DB runs the version-2 and version-3 upgrades.
     const { db } = await import('@/db/db');
     const artifact = await db.artifacts.get('00000000-0000-4000-8000-0000000000a1');
     expect(artifact?.imageIds).toEqual([]);
     expect(artifact?.coverImageId).toBeNull();
     const run = await db.runs.get('00000000-0000-4000-8000-0000000000d1');
     expect(run?.targetArtifactId).toBeNull();
+
+    // v1 → v3: pre-M3-B encounter monsters become name-only entries.
+    const encounter = await db.artifacts.get('00000000-0000-4000-8000-0000000000a2');
+    expect(encounter?.kind === 'encounter' && encounter.data.monsters[0]?.source).toEqual({
+      type: 'none',
+    });
 
     // The upgraded rows validate against the current domain schemas.
     const { artifactSchema, personaRunSchema } = await import('@/domain');

@@ -123,14 +123,37 @@ export const noteDataSchema = z.record(z.string(), z.never());
 
 export type NoteArtifactData = z.infer<typeof noteDataSchema>;
 
+/**
+ * Where a monster's stats come from (07-MILESTONE-3 M3-B):
+ * - npc-ref: links an NPC artifact (stats live with the NPC);
+ * - inline: a one-off embedded StatBlock;
+ * - rulebook: an ingested statblock chunk;
+ * - none: name-only entry (pre-M3 rows migrate to this).
+ */
+export const monsterSourceSchema = z.discriminatedUnion('type', [
+  z.object({ type: z.literal('npc-ref'), artifactId: z.uuid() }),
+  z.object({ type: z.literal('inline'), statBlock: statBlockSchema }),
+  z.object({ type: z.literal('rulebook'), chunkId: z.uuid() }),
+  z.object({ type: z.literal('none') }),
+]);
+
+export type MonsterSource = z.infer<typeof monsterSourceSchema>;
+
+export const monsterEntrySchema = z.object({
+  name: z.string(),
+  count: z.number().int().positive(),
+  notes: z.string(),
+  source: monsterSourceSchema,
+});
+
+export type MonsterEntry = z.infer<typeof monsterEntrySchema>;
+
 export const encounterDataSchema = z.object({
   /** e.g. 'medium', 'deadly', or free text. */
   difficulty: z.string(),
   /** Party level this encounter targets. */
   levelHint: z.string(),
-  monsters: z.array(
-    z.object({ name: z.string(), count: z.number().int().positive(), notes: z.string() }),
-  ),
+  monsters: z.array(monsterEntrySchema),
   terrain: z.string(),
   tactics: z.string(),
   treasure: z.string(),

@@ -146,6 +146,19 @@ function draftContractFor(kind: ArtifactKind): DraftContract {
   }
 }
 
+/**
+ * M3-B: instruction section for encounter personas — a numbered list of
+ * stat-block-only excerpts the model may cite via `sourceChunkIndex`.
+ */
+function buildStatblockCitationSection(statblockTitles: readonly string[]): string | null {
+  if (statblockTitles.length === 0) return null;
+  return [
+    'Stat-block excerpts (0-based index before each):',
+    ...statblockTitles.map((title, index) => `[${index}] ${title}`),
+    'For each monster: if one of these stat blocks matches, add "sourceChunkIndex": <index> to that monster (referring to this numbered list); otherwise leave sourceChunkIndex out and describe the monster in notes.',
+  ].join('\n');
+}
+
 function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): ArtifactData {
   switch (kind) {
     case 'npc':
@@ -183,7 +196,11 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         difficulty: asString(draft.difficulty),
         levelHint: asString(draft.levelHint),
         monsters: Array.isArray(draft.monsters)
-          ? (draft.monsters as { name: string; count: number; notes: string }[])
+          ? (draft.monsters as { name: string; count: number; notes: string }[]).map((monster) => ({
+              ...monster,
+              // Finalize replaces these with cited/inline sources (M3-B).
+              source: { type: 'none' } as const,
+            }))
           : [],
         terrain: asString(draft.terrain),
         tactics: asString(draft.tactics),
@@ -472,11 +489,30 @@ export class RunEngine {
 
   private async retrieveContext(
     input: StartRunInput,
-  ): Promise<{ chunkIds: Id[]; titles: string[]; excerpts: string }> {
+  ): Promise<{
+    chunkIds: Id[];
+    titles: string[];
+    excerpts: string;
+    /** M3-B: statblock-only hits, in citation order (encounter personas). */
+    statblockChunkIds: Id[];
+    statblockTitles: string[];
+  }> {
     const query = `${input.brief} (${GAME_SYSTEM_LABELS[input.campaign.system]})`;
     const hits = await searchRules(query, { limit: 8 });
     const pinned = await getChunksByIds([...input.pinnedChunkIds]);
     const merged: Id[] = [...pinned.map((chunk) => chunk.id)];
+    // M3-B: the Encounter Designer gets a second search restricted to
+    // statblock chunks so it can cite real bestiary entries.
+    const statblockChunkIds: Id[] = [];
+    if (input.persona.producesKind === 'encounter') {
+      const statHits = await searchRules(query, { limit: 6, chunkTypes: ['statblock'] });
+      for (const hit of statHits) {
+        if (!merged.includes(hit.chunk.id)) {
+          merged.push(hit.chunk.id);
+          statblockChunkIds.push(hit.chunk.id);
+        }
+      }
+    }
     for (const hit of hits) {
       if (merged.length >= 12) break;
       if (!merged.includes(hit.chunk.id)) merged.push(hit.chunk.id);
@@ -494,7 +530,14 @@ export class RunEngine {
         return `[${where}] ${heading}\n${chunk.text}`;
       })
       .join('\n\n');
-    return { chunkIds: merged, titles, excerpts };
+    const statblockChunks = statblockChunkIds
+      .map((id) => chunks.find((chunk) => chunk.id === id))
+      .filter((chunk): chunk is (typeof chunks)[number] => chunk !== undefined);
+    const statblockTitles = statblockChunks.map(
+      (chunk) =>
+        `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart} — ${chunk.headingPath.join(' > ')}`,
+    );
+    return { chunkIds: merged, titles, excerpts, statblockChunkIds, statblockTitles };
   }
 
   private async runRetrieve(
@@ -507,6 +550,7 @@ export class RunEngine {
     const step = this.finishStep(steps[stepIndex], {
       chunkIds: context.chunkIds,
       titles: context.titles,
+      statblockChunkIds: context.statblockChunkIds,
     });
     return { step };
   }
@@ -541,6 +585,7 @@ export class RunEngine {
       context.excerpts === ''
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
+      buildStatblockCitationSection(context.statblockTitles),
       `Reply with ONLY a JSON object with exactly these fields: ${JSON.stringify(contract.keys)}`,
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     ]
@@ -976,6 +1021,34 @@ export class RunEngine {
     if (kind === 'npc' && 'statBlock' in data) {
       const statBlock = statblockOutput?.statBlock;
       if (statBlock !== undefined) data.statBlock = statBlock;
+    }
+    // M3-B: map encounter monsters' cited rulebook chunks / inline stat
+    // blocks back into persisted `source` entries.
+    if (kind === 'encounter' && 'monsters' in data) {
+      const retrieveStep = steps.find((step) => step.name === 'retrieve');
+      const retrieveOutput = (retrieveStep?.output ?? {}) as { statblockChunkIds?: unknown };
+      const statblockChunkIds = Array.isArray(retrieveOutput.statblockChunkIds)
+        ? (retrieveOutput.statblockChunkIds as Id[])
+        : [];
+      const draftMonsters = (draft as { monsters?: { sourceChunkIndex?: number; statBlock?: StatBlock }[] })
+        .monsters;
+      data.monsters = data.monsters.map((monster, index) => {
+        const cited = draftMonsters?.[index];
+        if (cited?.statBlock !== undefined) {
+          return { ...monster, source: { type: 'inline', statBlock: cited.statBlock } };
+        }
+        const chunkId =
+          typeof cited?.sourceChunkIndex === 'number'
+            ? statblockChunkIds[cited.sourceChunkIndex]
+            : undefined;
+        return {
+          ...monster,
+          source:
+            chunkId !== undefined
+              ? { type: 'rulebook', chunkId }
+              : { type: 'none' },
+        };
+      });
     }
 
     // Review personas finalize as a continuity report note linked to the

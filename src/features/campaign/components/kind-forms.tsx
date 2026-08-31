@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import type {
+  Artifact,
   EncounterArtifactData,
   FactionArtifactData,
   GameSystem,
@@ -14,6 +15,7 @@ import type {
   StatBlock,
 } from '@/domain';
 import { blankStatBlock } from '@/domain';
+import { MonsterSourceControls, MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
 import { PairListEditor, StringListEditor } from '@/features/campaign/components/list-editors';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 
@@ -264,66 +266,79 @@ export function FactionForm({ data, onChange }: FactionFormProps) {
   );
 }
 
-/** Monsters row editor: name / count / notes (Encounter kind). */
+/** Monsters row editor: name / count / notes / source (Encounter kind, M3-B). */
 function MonsterListEditor({
   monsters,
+  campaignArtifacts,
   onChange,
 }: {
   monsters: EncounterArtifactData['monsters'];
+  campaignArtifacts: readonly Artifact[];
   onChange: (monsters: EncounterArtifactData['monsters']) => void;
 }) {
   return (
     <div className="flex flex-col gap-1">
       <span className="text-xs font-medium text-muted-foreground">Monsters</span>
       {monsters.map((monster, index) => (
-        <div key={index} className="flex items-center gap-1">
-          <Input
-            value={monster.name}
-            placeholder="Name"
-            className="h-7 flex-1 text-sm"
-            aria-label="Monster name"
-            onChange={(event) => {
-              onChange(
-                monsters.map((m, i) => (i === index ? { ...m, name: event.target.value } : m)),
-              );
+        <div key={index} className="flex flex-col gap-1 rounded-md border p-1.5">
+          <div className="flex items-center gap-1">
+            <Input
+              value={monster.name}
+              placeholder="Name"
+              className="h-7 flex-1 text-sm"
+              aria-label="Monster name"
+              onChange={(event) => {
+                onChange(
+                  monsters.map((m, i) => (i === index ? { ...m, name: event.target.value } : m)),
+                );
+              }}
+            />
+            <Input
+              type="number"
+              min={1}
+              value={monster.count}
+              aria-label="Monster count"
+              className="h-7 w-16 text-sm"
+              onChange={(event) => {
+                const count = Number.parseInt(event.target.value, 10);
+                onChange(
+                  monsters.map((m, i) =>
+                    i === index
+                      ? { ...m, count: Number.isNaN(count) ? 1 : Math.max(1, count) }
+                      : m,
+                  ),
+                );
+              }}
+            />
+            <Input
+              value={monster.notes}
+              placeholder="Notes"
+              className="h-7 flex-1 text-sm"
+              aria-label="Monster notes"
+              onChange={(event) => {
+                onChange(
+                  monsters.map((m, i) => (i === index ? { ...m, notes: event.target.value } : m)),
+                );
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              aria-label={`Remove monster ${monster.name || index + 1}`}
+              onClick={() => {
+                onChange(monsters.filter((_, i) => i !== index));
+              }}
+            >
+              ×
+            </Button>
+          </div>
+          <MonsterSourceControls
+            entry={monster}
+            campaignArtifacts={campaignArtifacts}
+            onChange={(next) => {
+              onChange(monsters.map((m, i) => (i === index ? next : m)));
             }}
           />
-          <Input
-            type="number"
-            min={1}
-            value={monster.count}
-            aria-label="Monster count"
-            className="h-7 w-16 text-sm"
-            onChange={(event) => {
-              const count = Number.parseInt(event.target.value, 10);
-              onChange(
-                monsters.map((m, i) =>
-                  i === index ? { ...m, count: Number.isNaN(count) ? 1 : Math.max(1, count) } : m,
-                ),
-              );
-            }}
-          />
-          <Input
-            value={monster.notes}
-            placeholder="Notes"
-            className="h-7 flex-1 text-sm"
-            aria-label="Monster notes"
-            onChange={(event) => {
-              onChange(
-                monsters.map((m, i) => (i === index ? { ...m, notes: event.target.value } : m)),
-              );
-            }}
-          />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Remove monster ${monster.name || index + 1}`}
-            onClick={() => {
-              onChange(monsters.filter((_, i) => i !== index));
-            }}
-          >
-            ×
-          </Button>
         </div>
       ))}
       <Button
@@ -331,7 +346,7 @@ function MonsterListEditor({
         size="xs"
         className="self-start"
         onClick={() => {
-          onChange([...monsters, { name: '', count: 1, notes: '' }]);
+          onChange([...monsters, { name: '', count: 1, notes: '', source: { type: 'none' } }]);
         }}
       >
         Add monster
@@ -342,10 +357,11 @@ function MonsterListEditor({
 
 export interface EncounterFormProps {
   data: EncounterArtifactData;
+  campaignArtifacts: readonly Artifact[];
   onChange: (data: EncounterArtifactData) => void;
 }
 
-export function EncounterForm({ data, onChange }: EncounterFormProps) {
+export function EncounterForm({ data, campaignArtifacts, onChange }: EncounterFormProps) {
   function patch(next: Partial<EncounterArtifactData>): void {
     onChange({ ...data, ...next });
   }
@@ -376,10 +392,12 @@ export function EncounterForm({ data, onChange }: EncounterFormProps) {
       </div>
       <MonsterListEditor
         monsters={data.monsters}
+        campaignArtifacts={campaignArtifacts}
         onChange={(monsters) => {
           patch({ monsters });
         }}
       />
+      <MonsterStatblocksPanel monsters={data.monsters} />
       <Field label="Terrain">
         <Input
           value={data.terrain}

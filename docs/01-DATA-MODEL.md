@@ -123,6 +123,29 @@ interface StatBlock {
 interface NamedText { name: string; text: string }
 ```
 
+### Monster sources (M3-B)
+
+Every `encounter` monster entry carries a `source` discriminated union that
+says where its stats come from. Resolution is repo-backed
+(`resolveMonsterEntryWithRepos`) over the pure dispatcher in
+`/src/domain/encounterResolve.ts`; dangling references resolve to
+`{ statBlock: null, origin: 'missing ref' }` so the UI renders a warning
+badge instead of crashing.
+
+```ts
+type MonsterSource =
+  | { type: 'npc-ref'; artifactId: Id }    // stats live on the linked NPC artifact
+  | { type: 'inline'; statBlock: StatBlock } // one-off, embedded
+  | { type: 'rulebook'; chunkId: Id }      // ingested statblock chunk (RuleChunk)
+  | { type: 'none' };                      // name-only entry (pre-M3-B rows migrate here)
+interface MonsterEntry { name: string; count: number; notes: string; source: MonsterSource }
+```
+
+Dexie upgrade `version(3)` fills `source: { type: 'none' }` on pre-M3-B
+encounter rows. The Encounter Designer cites ingested stat-block excerpts via
+`sourceChunkIndex` in its draft, which finalize maps back to
+`{ type: 'rulebook', chunkId }` (see 04-LLM-PERSONAS.md).
+
 ### ArtifactRevision
 
 Full snapshot per revision (simple, storage is cheap for text).

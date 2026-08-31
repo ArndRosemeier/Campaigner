@@ -72,6 +72,31 @@ export class CampaignerDB extends Dexie {
           if (run.targetArtifactId === undefined) run.targetArtifactId = null;
         });
       });
+    // M3-B (07-MILESTONE-3): encounter monster entries gain a `source`
+    // discriminated union; pre-M3 rows become name-only ({ type: 'none' }).
+    this.version(3)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const artifacts = tx.table('artifacts');
+        await artifacts.where('kind').equals('encounter').modify((artifact: {
+          data?: { monsters?: { source?: unknown }[] };
+        }) => {
+          for (const monster of artifact.data?.monsters ?? []) {
+            if (monster.source === undefined) monster.source = { type: 'none' };
+          }
+        });
+      });
   }
 }
 
