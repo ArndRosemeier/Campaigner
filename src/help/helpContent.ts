@@ -48,7 +48,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
     summary: 'The picker screen lists every campaign on this browser profile.',
     tips: [
       'New campaign: the "New campaign" button — name, game system, short setting description.',
-      'Open a campaign with its card button; the ⋮ menu offers "Export whole campaign (JSON)" and Delete (with confirmation — removes artifacts, revisions and runs).',
+      'Open a campaign with its card button; the ⋮ menu offers "Export campaign…" (pick artifacts, JSON file or zip bundle — zip includes images) and Delete (with confirmation — removes artifacts, revisions and runs).',
       'Import JSON: the "Import JSON" button accepts files exported from any Campaigner; an import always creates a fresh copy and never overwrites existing data.',
       'Deleting a campaign only removes it from this browser; exports are your backup.',
     ],

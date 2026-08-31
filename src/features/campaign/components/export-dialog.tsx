@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { DownloadIcon, FileArchiveIcon, FileJsonIcon } from 'lucide-react';
 
@@ -47,6 +47,16 @@ export function ExportCampaignDialog({
   const [format, setFormat] = useState<ExportFormat>('json');
   const [selected, setSelected] = useState<ReadonlySet<Id>>(new Set(artifacts.map((a) => a.id)));
   const [busy, setBusy] = useState(false);
+
+  // Preselect every artifact each time the dialog opens. The artifacts prop
+  // resolves asynchronously (live query), so the useState initializer above
+  // sees an empty list on mount — without this reset the dialog would open
+  // with nothing selected (found by tests/features/export-dialog.test.tsx).
+  const [wasOpen, setWasOpen] = useState(false);
+  useEffect(() => {
+    if (open && !wasOpen) setSelected(new Set(artifacts.map((a) => a.id)));
+    setWasOpen(open);
+  }, [open, wasOpen, artifacts]);
 
   const allSelected = selected.size === artifacts.length;
 

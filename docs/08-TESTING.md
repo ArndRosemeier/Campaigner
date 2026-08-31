@@ -87,17 +87,17 @@ test) · ❌ gap.
 | Campaign tree: filter, collapse, row tooltip, context menu, rename dialog, Link graph | `ui-smoke.test` | ✅ (was ❌) |
 | Workspace: three resizable panes, welcome center | `workspace.test`, `ui-smoke.test` | ✅ |
 | Editor: name autosave, revision creation, empty-name guard | `editor-autosave.test`, `m2kinds.test` | ✅ |
-| Editor: revision dropdown + **restore** | dropdown live query only | ❌ restore flow |
-| Editor: markdown **preview toggle** | — | ❌ |
-| Editor: tag editor chips | mounted via editor | 🟡 interactions ❌ |
+| Editor: revision dropdown → snapshot dialog → **restore** | `editor-surfaces.test` | ✅ (was ❌) |
+| Editor: markdown **preview toggle** | `editor-surfaces.test` | ✅ (was ❌) |
+| Editor: tag editor chips | `editor-surfaces.test` | ✅ (was 🟡) |
 | Editor: kind forms (npc/location/faction/encounter/plotarc/session) | `editor-autosave` (npc), `encounter-form` (encounter), `m2kinds` (session), `ui-smoke` (all kinds mount) | 🟡 forms beyond encounter/session |
-| Editor: **stat block card + edit toggle** | resolve pipeline (`encounter-form`) | ❌ card UI |
-| Editor: links section rows (combobox add/remove) | mounted via editor | 🟡 interactions ❌ |
+| Editor: **stat block card + edit toggle** | card/form UI `editor-surfaces.test`, resolve pipeline `encounter-form` | ✅ (was ❌) |
+| Editor: links section rows (combobox add/remove, dangling targets) | `editor-surfaces.test` | ✅ (was 🟡) |
 | Editor: images section, cover, lightbox | `images-ui.test` | ✅ |
-| Editor: **export dialog** / single-artifact export UI | — | ❌ |
-| Editor: **monster source** | — | ❌ |
+| Editor: **export dialog** / single-artifact export UI | `export-dialog.test` (through the picker ⋮ menu) | ✅ (was ❌) |
+| Editor: **monster source** UI | resolve pipeline `encounterResolve.test` | ❌ UI controls |
 | Persona panel: assistant tab, disabled-without-key hint | `workspace.test` | ✅ |
-| Persona panel: run lifecycle UI (awaiting_user approve/edit/retry, streaming tail) | — | ❌ (needs run-engine mock) |
+| Persona panel: run lifecycle UI (pause actions, edit rescue, retry, cancel, completed link) | `persona-run-ui.test` (mocked chat) | ✅ (was ❌) |
 | Persona panel: runs list + delete | `workspace.test` | ✅ |
 | Writers' room: step plan, badges, live tail | `module-forge.test` | ✅ |
 | Quick-find (Ctrl+K): artifact pick, rule preview/pin | `play-page.test`, `deliverables-page.test`, `ui-smoke.test` | ✅ |
@@ -109,21 +109,31 @@ test) · ❌ gap.
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
 | 404 page | `app-shell.test`, `ui-smoke.test` | ✅ |
 
-### Open gaps (ordered by user impact)
+### Remaining gaps
 
-1. **Persona panel run lifecycle UI** — the approve/edit/retry checkpoint UI
-   is the core "user-in-the-loop" surface (00-OVERVIEW §3) and has no UI test.
-   Requires driving the run engine with a scripted OpenRouter mock.
-2. **Revision restore** — `restoreRevision` is repo-tested, but the dropdown →
-   snapshot view → restore confirmation is not.
-3. **Export dialog** — file generation is lib-tested (`pdfExport`,
-   `modulePdf`), the dialog itself is not opened by any test.
-4. **Markdown preview toggle**, **stat block card UI**, **tag editor
-   interactions**, **links section interactions** — mounted, not interacted
-   with.
+1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC
+   combobox and inline-stats dialog are mounted (editor tests render the
+   encounter form) and the resolve pipeline is repo-tested
+   (`encounterResolve.test`), but the controls themselves are not driven by a
+   test. Next task when touching M3-B: add `tests/features/monster-source.test.tsx`,
+   then hook the surface into the sweep only if it needs a shell.
 
-Each of these is a natural next task: add a `tests/features/…` test, then hook
-the surface into the sweep only if it needs a shell.
+### Bugs the coverage work already caught (fixed in the same change)
+
+Writing these tests surfaced three real defects that no user had hit yet —
+exactly the class the review was after:
+
+- **The export dialog was unreachable.** The picker card menu downloaded
+  JSON directly instead of opening the M2 dialog, leaving the dialog (and
+  the zip-bundle path) dead code. The menu now opens the dialog
+  ("Export campaign…"; help content updated).
+- **The dialog opened with nothing selected.** Its selection state was
+  initialized from an async live-query prop in `useState`'s initializer, so
+  by the time the user opened the dialog the preselection was empty and
+  "Export" was disabled. It now preselects every artifact on each open.
+- **Rejected-draft rescue via the UI** — manual autonomy keeps the raw reply
+  for editing; the edit → "Save & continue" path is now pinned so the
+  finalize guard against placeholder output can't regress silently.
 
 ## Gate
 

@@ -54,13 +54,7 @@ import {
 import { Textarea } from '@/components/ui/textarea';
 import { useCampaignSummaries, type CampaignSummary } from '@/features/campaign/hooks';
 import { ExportCampaignDialog } from '@/features/campaign/components/export-dialog';
-import {
-  downloadBlob,
-  buildCampaignExport,
-  exportFileName,
-  importExport,
-  importZip,
-} from '@/lib/exportImport';
+import { importExport, importZip } from '@/lib/exportImport';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useNavigate as useNav } from 'react-router-dom';
 import { formatDate } from '@/lib/format';
@@ -191,19 +185,6 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
   const [exportOpen, setExportOpen] = useState(false);
   const exportArtifacts = useLiveQuery(() => listArtifactsByCampaign(campaign.id), [campaign.id]);
 
-  async function handleExportCampaign(): Promise<void> {
-    try {
-      const exported = await buildCampaignExport(campaign.id);
-      downloadBlob(
-        new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
-        exportFileName(exported),
-      );
-      toastSuccess('Campaign exported');
-    } catch (error) {
-      toastError('Export failed', error);
-    }
-  }
-
   async function handleDelete(): Promise<void> {
     try {
       await campaignRepo.deleteCampaign(campaign.id);
@@ -240,11 +221,11 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   onClick={() => {
-                    void handleExportCampaign();
+                    setExportOpen(true);
                   }}
                 >
                   <FileDownIcon aria-hidden data-icon="inline-start" />
-                  Export whole campaign (JSON)
+                  Export campaign…
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   className="text-destructive"

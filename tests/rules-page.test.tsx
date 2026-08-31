@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import { ROUTES } from '@/app/routes';
 import { clearDatabase } from './db/helpers';
+import { flushAsyncUpdates } from './helpers/flush';
 
 /**
  * Rules screen (T4): PDF import through the UI with the committed fixture,
@@ -115,10 +116,13 @@ describe('rules screen', () => {
     await waitFor(() => {
       expect(screen.queryByText('sample-rulebook')).not.toBeInTheDocument();
     });
+    // Drain the delete's live-query cascade inside act before plain reads.
+    await flushAsyncUpdates();
     // The chunks are gone with the book, not orphaned.
     const { db } = await import('@/db/db');
     const { listRulebooks } = await import('@/db/rulebookRepo');
     expect(await listRulebooks()).toHaveLength(0);
     expect(await db.chunks.count()).toBe(0);
+    await flushAsyncUpdates();
   }, 30000);
 });
