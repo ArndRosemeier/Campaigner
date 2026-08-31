@@ -27,3 +27,6 @@ coverage
 *.njsproj
 *.sln
 *.sw?
+
+# Local sample rulebooks (large, copyrighted — never commit)
+Sample rules/
