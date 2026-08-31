@@ -114,9 +114,14 @@ describe('encounter form monster sources', () => {
     );
 
     await user.click(screen.getByLabelText('Stats source for Bandit'));
-    await user.click(screen.getByRole('option', { name: 'Inline stats' }));
+    // Under full-suite parallel load the popup can lag; wait for it.
+    await user.click(
+      await screen.findByRole('option', { name: 'Inline stats' }, { timeout: 5_000 }),
+    );
     // The dialog opens with an empty inline stat block; add one.
-    await user.click(await screen.findByRole('button', { name: 'Add stat block' }));
+    await user.click(
+      await screen.findByRole('button', { name: 'Add stat block' }, { timeout: 5_000 }),
+    );
     await waitFor(() => {
       expect(latest?.monsters[0]?.source.type).toBe('inline');
     });

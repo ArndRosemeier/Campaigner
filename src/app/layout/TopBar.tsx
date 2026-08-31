@@ -4,7 +4,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { CampaignSwitcher } from '@/app/layout/CampaignSwitcher';
 import { navItems } from '@/app/layout/nav';
 import { ThemeToggle } from '@/app/layout/ThemeToggle';
-import { ROUTES, campaignIdFromPath } from '@/app/routes';
+import { ROUTES, campaignIdFromPath, playPath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { cn } from '@/lib/utils';
@@ -49,6 +49,15 @@ export function TopBar(): JSX.Element {
       </nav>
 
       <div className="ml-auto flex items-center gap-1">
+        {campaignIdFromPath(pathname) !== undefined && (
+          <NavLink
+            to={playPath(campaignIdFromPath(pathname) ?? '')}
+            className={buttonVariants({ variant: 'secondary', size: 'sm' })}
+            aria-label="Play"
+          >
+            ▶ Play
+          </NavLink>
+        )}
         <HelpButton label="Campaigner" />
         <ThemeToggle />
       </div>

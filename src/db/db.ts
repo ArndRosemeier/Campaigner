@@ -97,6 +97,31 @@ export class CampaignerDB extends Dexie {
           }
         });
       });
+    // M3-C (07-MILESTONE-3): session artifacts gain the play-mode scene
+    // checklist and quick log; pre-M3-C rows get empty defaults.
+    this.version(4)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const artifacts = tx.table('artifacts');
+        await artifacts.where('kind').equals('session').modify((artifact: {
+          data?: { scenes?: unknown; log?: unknown };
+        }) => {
+          artifact.data ??= {};
+          if (artifact.data.scenes === undefined) artifact.data.scenes = [];
+          if (artifact.data.log === undefined) artifact.data.log = '';
+        });
+      });
   }
 }
 

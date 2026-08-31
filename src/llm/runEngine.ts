@@ -223,6 +223,8 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         recap: asString(draft.recap),
         prep: Array.isArray(draft.prep) ? (draft.prep as string[]) : [],
         openThreads: Array.isArray(draft.openThreads) ? (draft.openThreads as string[]) : [],
+        scenes: [],
+        log: '',
       };
   }
 }

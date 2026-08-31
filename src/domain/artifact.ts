@@ -183,6 +183,16 @@ export const sessionDataSchema = z.object({
   prep: z.array(z.string()),
   /** Unresolved threads carried forward. */
   openThreads: z.array(z.string()),
+  /** Play-mode scene checklist (M3-C); artifactId optionally jumps focus. */
+  scenes: z.array(
+    z.object({
+      title: z.string(),
+      done: z.boolean(),
+      artifactId: z.uuid().nullable(),
+    }),
+  ),
+  /** Quick session log (M3-C): markdown lines `- HH:MM <text>`, appended on Enter. */
+  log: z.string(),
 });
 
 export type SessionArtifactData = z.infer<typeof sessionDataSchema>;

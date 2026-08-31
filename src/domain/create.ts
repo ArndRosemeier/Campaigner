@@ -94,7 +94,7 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
     case 'plotarc':
       return { arcType: '', premise: '', stakes: '', beats: [], hooks: [], climax: '' };
     case 'session':
-      return { sessionNumber: '', recap: '', prep: [], openThreads: [] };
+      return { sessionNumber: '', recap: '', prep: [], openThreads: [], scenes: [], log: '' };
   }
 }
 

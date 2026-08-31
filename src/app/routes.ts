@@ -16,6 +16,8 @@ export const ROUTES = {
   artifact: '/c/:campaignId/a/:artifactId',
   /** Link graph for a campaign (M2). */
   graph: '/c/:campaignId/graph',
+  /** Session Mode play view (M3-C). */
+  play: '/c/:campaignId/play',
   /** Rules library (books list + browser). */
   rules: '/rules',
   /** Settings page. */
@@ -31,6 +33,11 @@ export interface RouteParams {
 /** Path of the link-graph screen for a given campaign. */
 export function graphPath(campaignId: string): `/c/${string}/graph` {
   return `/c/${encodeURIComponent(campaignId)}/graph`;
+}
+
+/** Path of the Session Mode play view for a given campaign (M3-C). */
+export function playPath(campaignId: string): `/c/${string}/play` {
+  return `/c/${encodeURIComponent(campaignId)}/play`;
 }
 
 /** Path of the workspace screen for a given campaign. */
@@ -52,6 +59,7 @@ export function campaignIdFromPath(pathname: string): string | undefined {
   return (
     matchPath(ROUTES.artifact, pathname)?.params.campaignId ??
     matchPath(ROUTES.graph, pathname)?.params.campaignId ??
+    matchPath(ROUTES.play, pathname)?.params.campaignId ??
     matchPath(ROUTES.workspace, pathname)?.params.campaignId
   );
 }

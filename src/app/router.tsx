@@ -6,6 +6,7 @@ import { ROUTES } from '@/app/routes';
 import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
 import { GraphPage } from '@/features/campaign/GraphPage';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
+import { PlayPage } from '@/features/play/PlayPage';
 import { RulesPage } from '@/features/rules/RulesPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 
@@ -28,6 +29,7 @@ export function createAppRouter(): AppRouter {
         { path: ROUTES.workspace, element: <WorkspacePage /> },
         { path: ROUTES.artifact, element: <WorkspacePage /> },
         { path: ROUTES.graph, element: <GraphPage /> },
+        { path: ROUTES.play, element: <PlayPage /> },
         { path: ROUTES.rules, element: <RulesPage /> },
         { path: ROUTES.settings, element: <SettingsPage /> },
         { path: '*', element: <NotFoundPage /> },

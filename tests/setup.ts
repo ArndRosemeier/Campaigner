@@ -28,6 +28,17 @@ if (typeof Element !== 'undefined' && !('getAnimations' in Element.prototype)) {
   });
 }
 
+// cmdk (quick-find palette) scrolls the highlighted item into view; jsdom
+// lacks Element.scrollIntoView.
+if (typeof Element !== 'undefined' && !('scrollIntoView' in Element.prototype)) {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    // eslint-disable-next-line @typescript-eslint/no-empty-function
+    value: () => {},
+    configurable: true,
+    writable: true,
+  });
+}
+
 afterEach(() => {
   cleanup();
   localStorage.clear();

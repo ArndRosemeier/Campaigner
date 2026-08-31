@@ -11,8 +11,8 @@ import { describe, expect, it } from 'vitest';
  * defaults.
  */
 
-describe('v1 → v2 migration', () => {
-  it('fills image and target-artifact defaults on rows written by version 1', async () => {
+describe('v1 → v4 migration', () => {
+  it('fills image, monster-source, and session defaults on rows written by version 1', async () => {
     // Build a v1-only database with pre-M3 rows, then close it.
     const legacy = new Dexie('campaigner');
     legacy.version(1).stores({
@@ -71,6 +71,21 @@ describe('v1 → v2 migration', () => {
       createdAt: 1,
       updatedAt: 1,
     });
+    // Pre-M3-C session: no scenes/log yet.
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-0000000000a3',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      kind: 'session',
+      name: 'Old session',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      data: { sessionNumber: '1', recap: '', prep: [], openThreads: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    });
     await legacy.table('runs').put({
       id: '00000000-0000-4000-8000-0000000000d1',
       campaignId: '00000000-0000-4000-8000-0000000000c1',
@@ -100,6 +115,11 @@ describe('v1 → v2 migration', () => {
     expect(encounter?.kind === 'encounter' && encounter.data.monsters[0]?.source).toEqual({
       type: 'none',
     });
+
+    // v1 → v4: pre-M3-C sessions gain the play checklist and log defaults.
+    const session = await db.artifacts.get('00000000-0000-4000-8000-0000000000a3');
+    expect(session?.kind === 'session' && session.data.scenes).toEqual([]);
+    expect(session?.kind === 'session' && session.data.log).toBe('');
 
     // The upgraded rows validate against the current domain schemas.
     const { artifactSchema, personaRunSchema } = await import('@/domain');

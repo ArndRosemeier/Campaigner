@@ -6,6 +6,7 @@ import { TopBar } from '@/app/layout/TopBar';
 import { useThemeSync } from '@/app/theme/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
+import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
 import { failRunningRuns } from '@/db/runRepo';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
@@ -54,6 +55,7 @@ export function AppShell(): JSX.Element {
         </main>
         <Toaster position="bottom-right" />
         <HelpDialog />
+        <QuickFindHotkey />
       </div>
     </TooltipProvider>
   );
