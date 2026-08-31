@@ -27,7 +27,9 @@ import {
 import type { Autonomy, Campaign, Id } from '@/domain';
 import { chainRunner, type ChainState } from '@/llm/chainRunner';
 import { DEFAULT_MODULE_OPTIONS, moduleForge, type ForgeState } from '@/llm/moduleForge';
+import { runEngine } from '@/llm/runEngine';
 import { HelpButton } from '@/help/HelpButton';
+import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 
@@ -62,6 +64,12 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
   useEffect(() => moduleForge.on(setForge), []);
 
   const forgeBusy = forge.phase === 'generating' || forge.phase === 'refining';
+
+  /** Artifact id → name, for naming what each finished step produced. */
+  const artifactNames = useLiveQuery(async () => {
+    const rows = await listArtifactsByCampaign(campaign.id);
+    return new Map(rows.map((row) => [row.id, row.name]));
+  }, [campaign.id]);
 
   function addStep(): void {
     const first = personas?.[0];
@@ -149,8 +157,8 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
         </div>
         {forge.phase !== 'idle' && (
           <p className="text-xs text-muted-foreground" data-testid="forge-status">
-            {forge.phase === 'generating' && 'Generating artifacts…'}
-            {forge.phase === 'refining' && 'Refining flagged artifacts…'}
+            {forge.phase === 'generating' && forgeStatusLine(forge, 'Generating module')}
+            {forge.phase === 'refining' && forgeStatusLine(forge, 'Refinement pass')}
             {forge.phase === 'completed' &&
               `Module complete — ${forge.chain.steps.filter((s) => s.artifactId !== null).length} artifacts generated.`}
             {forge.phase === 'failed' &&
@@ -311,19 +319,29 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
       {chain.steps.length > 0 && (
         <ol className="flex flex-col gap-1 border-t pt-2" data-testid="chain-progress">
           {chain.steps.map((step, index) => (
-            <li key={index} className="flex items-center gap-2 text-xs">
-              <span className="font-medium">Step {index + 1}</span>
-              <Badge
-                variant={
-                  step.status === 'completed'
-                    ? 'default'
-                    : step.status === 'failed'
-                      ? 'destructive'
-                      : 'outline'
-                }
-              >
-                {CHAIN_STEP_LABELS[step.status]}
-              </Badge>
+            <li key={index} className="flex flex-col gap-0.5 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="font-medium">{step.title ?? `Step ${index + 1}`}</span>
+                <Badge
+                  variant={
+                    step.status === 'completed'
+                      ? 'default'
+                      : step.status === 'failed'
+                        ? 'destructive'
+                        : 'outline'
+                  }
+                >
+                  {CHAIN_STEP_LABELS[step.status]}
+                </Badge>
+                {step.status === 'completed' && step.artifactId !== null && (
+                  <span className="text-muted-foreground" data-testid={`chain-step-artifact-${index + 1}`}>
+                    → {artifactNames?.get(step.artifactId) ?? 'artifact'}
+                  </span>
+                )}
+              </div>
+              {step.status === 'running' && step.runId !== null && (
+                <RunTokenPreview key={step.runId} runId={step.runId} />
+              )}
             </li>
           ))}
           {chain.status === 'paused' && (
@@ -347,5 +365,44 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
         </ol>
       )}
     </div>
+  );
+}
+
+/** Status line for a busy forge: "Generating module — step 3 of 11: Key location 1". */
+function forgeStatusLine(forge: ForgeState, phaseLabel: string): string {
+  const { steps, currentIndex } = forge.chain;
+  const current = steps[currentIndex];
+  const title = current?.title ?? 'preparing…';
+  return `${phaseLabel} — step ${currentIndex + 1} of ${steps.length}: ${title}`;
+}
+
+const TOKEN_PREVIEW_CHARS = 400;
+
+/**
+ * Live output preview for the currently running chain step: accumulates the
+ * streamed tokens of exactly this run (engine events are filtered by runId)
+ * and shows the tail while the step is in flight. Never shows stale text
+ * from a previous step — the component remounts per runId.
+ */
+function RunTokenPreview({ runId }: { runId: Id }): JSX.Element {
+  const [text, setText] = useState('');
+
+  useEffect(() => {
+    setText('');
+    return runEngine.on((event) => {
+      if (event.kind === 'token' && event.runId === runId) {
+        setText((previous) => (previous + event.delta).slice(-TOKEN_PREVIEW_CHARS));
+      }
+    });
+  }, [runId]);
+
+  return (
+    <pre
+      aria-live="polite"
+      data-testid="run-token-preview"
+      className="max-h-24 overflow-hidden rounded border bg-muted/40 p-1.5 text-[11px] whitespace-pre-wrap text-muted-foreground"
+    >
+      {text.trim() === '' ? '…writing' : text}
+    </pre>
   );
 }

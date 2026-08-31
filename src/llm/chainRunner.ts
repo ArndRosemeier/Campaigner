@@ -13,6 +13,11 @@ import { runEngine, type StartRunInput } from '@/llm/runEngine';
 export interface ChainStepInput {
   personaId: Id;
   brief: string;
+  /**
+   * Human-readable step label shown in the progress list ("Key location 1").
+   * Optional — custom pipeline steps without one fall back to "Step N".
+   */
+  title?: string;
   /** Per-step autonomy override (falls back to the chain-wide autonomy). */
   autonomy?: Autonomy;
   /**
@@ -42,6 +47,8 @@ export interface ChainStepState {
   runId: Id | null;
   status: ChainStepStatus;
   artifactId: Id | null;
+  /** From the step input; null for custom pipeline steps (UI falls back). */
+  title: string | null;
 }
 
 export interface ChainState {
@@ -132,7 +139,12 @@ export class ChainRunner {
     this.cancelRequested = false;
     this.resumeArgs = { campaign, personas, steps, autonomy, pinnedChunkIds };
     this.state = {
-      steps: steps.map(() => ({ runId: null, status: 'pending' as const, artifactId: null })),
+      steps: steps.map((stepInput) => ({
+        runId: null,
+        status: 'pending' as const,
+        artifactId: null,
+        title: stepInput.title ?? null,
+      })),
       currentIndex: 0,
       status: 'running',
     };
@@ -145,14 +157,14 @@ export class ChainRunner {
       if (step === undefined) break;
       const persona = personas.find((candidate) => candidate.id === step.personaId);
       if (persona === undefined) {
-        this.state.steps[index] = { runId: null, status: 'failed', artifactId: null };
+        this.state.steps[index] = { runId: null, status: 'failed', artifactId: null, title: step.title ?? null };
         this.state.status = 'failed';
         this.emit();
         return this.state;
       }
 
       this.state.currentIndex = index;
-      this.state.steps[index] = { runId: null, status: 'running', artifactId: null };
+      this.state.steps[index] = { runId: null, status: 'running', artifactId: null, title: step.title ?? null };
       this.emit();
 
       // Image personas decorate an existing artifact via the editor; they
@@ -175,7 +187,7 @@ export class ChainRunner {
         if (targetId !== undefined) input.targetArtifactId = targetId;
       }
       const runId = await runEngine.startRun(input);
-      this.state.steps[index] = { runId, status: 'running', artifactId: null };
+      this.state.steps[index] = { runId, status: 'running', artifactId: null, title: step.title ?? null };
       this.emit();
 
       // Wait for the run to finish or pause for the user (the user resolves
@@ -185,6 +197,7 @@ export class ChainRunner {
         runId,
         status: stepStatusForRun(outcome),
         artifactId: outcome.resultArtifactId,
+        title: step.title ?? null,
       };
       this.emit();
 
@@ -240,6 +253,7 @@ export class ChainRunner {
       runId: pausedStep.runId,
       status: stepStatusForRun(outcome),
       artifactId: outcome.resultArtifactId,
+      title: pausedStep.title,
     };
     this.emit();
 
@@ -279,14 +293,14 @@ export class ChainRunner {
       if (step === undefined) break;
       const persona = personas.find((candidate) => candidate.id === step.personaId);
       if (persona === undefined) {
-        this.state.steps[index] = { runId: null, status: 'failed', artifactId: null };
+        this.state.steps[index] = { runId: null, status: 'failed', artifactId: null, title: step.title ?? null };
         this.state.status = 'failed';
         this.emit();
         return this.state;
       }
 
       this.state.currentIndex = index;
-      this.state.steps[index] = { runId: null, status: 'running', artifactId: null };
+      this.state.steps[index] = { runId: null, status: 'running', artifactId: null, title: step.title ?? null };
       this.emit();
 
       // Image personas decorate an existing artifact via the editor; they
@@ -309,7 +323,7 @@ export class ChainRunner {
         if (targetId !== undefined) input.targetArtifactId = targetId;
       }
       const runId = await runEngine.startRun(input);
-      this.state.steps[index] = { runId, status: 'running', artifactId: null };
+      this.state.steps[index] = { runId, status: 'running', artifactId: null, title: step.title ?? null };
       this.emit();
 
       const outcome = await this.waitForRun(runId);
@@ -317,6 +331,7 @@ export class ChainRunner {
         runId,
         status: stepStatusForRun(outcome),
         artifactId: outcome.resultArtifactId,
+        title: step.title ?? null,
       };
       this.emit();
 

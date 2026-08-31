@@ -79,31 +79,37 @@ export function buildModuleSteps(
   const steps: ChainStepInput[] = [
     {
       personaId: arc.id,
+      title: 'Plot arc',
       brief: `Design the central plot arc of the module. Concept: ${options.concept}`,
       autonomy: 'auto',
     },
     ...repeat(options.sessions, (index) => ({
       personaId: session.id,
+      title: `Session ${index}`,
       brief: `Plan session ${index} of the module. Concept: ${options.concept}. Build it on the plot arc created earlier in this pipeline.`,
       autonomy: 'auto' as const,
     })),
     ...repeat(options.locations, (index) => ({
       personaId: location.id,
+      title: `Key location ${index}`,
       brief: `Create key location ${index} of the module. Concept: ${options.concept}. It must serve the plot arc created earlier in this pipeline.`,
       autonomy: 'auto' as const,
     })),
     ...repeat(options.factions, (index) => ({
       personaId: faction.id,
+      title: `Faction ${index}`,
       brief: `Create faction ${index} of the module. Concept: ${options.concept}. Motivate it by the stakes of the plot arc created earlier in this pipeline.`,
       autonomy: 'auto' as const,
     })),
     ...repeat(options.npcs, (index) => ({
       personaId: npc.id,
+      title: `Key NPC ${index}`,
       brief: `Create key NPC ${index} of the module with a full stat block. Concept: ${options.concept}. Tie the NPC to the arc, locations and factions created earlier in this pipeline.`,
       autonomy: 'auto' as const,
     })),
     ...repeat(options.encounters, (index) => ({
       personaId: encounter.id,
+      title: `Encounter ${index}`,
       brief: `Design combat encounter ${index} of the module. Concept: ${options.concept}. Use the NPCs, locations and factions created earlier in this pipeline.`,
       autonomy: 'auto' as const,
     })),
@@ -113,6 +119,7 @@ export function buildModuleSteps(
     const continuity = personaBySlug(personas, FORGE_SLUGS.continuity);
     steps.push({
       personaId: continuity.id,
+      title: 'Continuity review',
       brief:
         'Review the plot arc of this module against everything else generated in this pipeline.',
       autonomy: 'auto',
@@ -334,6 +341,7 @@ export async function buildRefineSteps(
     const persona = personaBySlug(personas, slugForKind[artifact.kind] ?? FORGE_SLUGS.npc);
     steps.push({
       personaId: persona.id,
+      title: `Refine: "${artifact.name}"`,
       brief: [
         `A continuity review flagged the ${artifact.kind} "${artifact.name}" of this module.`,
         `Its current summary: ${artifact.summary}`,
@@ -354,6 +362,7 @@ export async function buildRefineSteps(
         const arcPersona = personaBySlug(personas, slugForKind[arc.kind] ?? FORGE_SLUGS.arc);
         steps.push({
           personaId: arcPersona.id,
+          title: `Refine: "${arc.name}"`,
           brief: [
             `A continuity review flagged the module's ${arc.kind} "${arc.name}".`,
             `Its current summary: ${arc.summary}`,

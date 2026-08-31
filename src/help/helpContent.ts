@@ -117,7 +117,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       '"Generate module" plans and runs the entire pipeline itself: plot arc first, then sessions, locations, factions, NPCs and encounters — every step automatic, each one seeing the artifacts created before it.',
       'With the continuity pass on, the Continuity Editor reviews the finished set; when it finds issues, the forge automatically runs refinement steps for the flagged artifacts.',
       'Refinements are NEW artifacts placed next to the originals (the engine never overwrites) — compare them in the editor and delete the weaker version.',
-      'Watch progress right in the forge card; every step is a real run listed in the Runs tab. Stop cancels after the current step.',
+      'Watch progress right in the forge card: a status line shows "step X of Y" with the current step name, the plan lists every step with its state, finished steps name the artifact they produced, and the running step streams its output live. Every step is a real run listed in the Runs tab. Stop cancels after the current step.',
       'For full control use the chain builder below instead: same engine, but you define each step yourself.',
     ],
     keywords: 'automatic one-click whole module generate refine continuity forge',

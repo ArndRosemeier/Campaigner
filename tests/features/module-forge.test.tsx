@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import type { ChatOptions } from '@/llm/openrouter';
 import { WritersRoom } from '@/features/campaign/components/writers-room';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { clearDatabase } from '../db/helpers';
@@ -183,4 +184,78 @@ describe('Module forge UI', () => {
       expect(run.status).toBe('completed');
     }
   }, 30000);
+
+  it('shows per-step titles, progress, streamed output, and produced artifacts while running', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+
+    // Stream the reply in chunks through the real onToken path so the live
+    // preview receives run-engine token events.
+    chatMock.mockImplementation(
+      (messages: unknown, opts: ChatOptions) => {
+        const reply = forgeReply(messages);
+        for (const chunk of reply.match(/.{1,24}/gs) ?? []) {
+          opts.onToken?.(chunk);
+        }
+        return Promise.resolve(reply);
+      },
+    );
+
+    render(<WritersRoom campaign={campaign} />);
+    const forge = await screen.findByTestId('module-forge');
+    await user.type(
+      within(forge).getByLabelText('Module concept'),
+      'A drowned shrine calls a harbour town.',
+    );
+    await user.click(within(forge).getByTestId('forge-module'));
+
+    // Status line names the phase, the step counter, and the current step.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('forge-status').textContent).toMatch(
+          /Generating module — step 1 of 11: Plot arc/,
+        );
+      },
+      { timeout: 10_000 },
+    );
+
+    // The plan is listed with human-readable step titles.
+    const progress = await screen.findByTestId('chain-progress', {}, { timeout: 10_000 });
+    expect(progress.textContent).toContain('Plot arc');
+    expect(progress.textContent).toContain('Session 1');
+    expect(progress.textContent).toContain('Key location 1');
+    expect(progress.textContent).toContain('Key NPC 3');
+    expect(progress.textContent).toContain('Encounter 2');
+    expect(progress.textContent).toContain('Continuity review');
+
+    // The running step streams its output through the live preview.
+    await waitFor(
+      () => {
+        const previews = screen.getAllByTestId('run-token-preview');
+        const preview = previews[0];
+        expect(preview).toBeDefined();
+        if (preview === undefined) throw new Error('no token preview');
+        expect(preview.textContent.length).toBeGreaterThan(0);
+      },
+      { timeout: 10_000 },
+    );
+
+    // Completed steps name the artifact they produced.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('chain-step-artifact-1').textContent).toContain(
+          'The Sunken Shrine',
+        );
+      },
+      { timeout: 10_000 },
+    );
+
+    // Refinement pass relabels the status line with its own counter.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('forge-status').textContent).toContain('Module complete');
+      },
+      { timeout: 20_000 },
+    );
+  }, 40000);
 });
