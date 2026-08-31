@@ -48,15 +48,14 @@ afterEach(() => {
 
 describe('chat', () => {
   it('streams content deltas to onToken and returns the full text', async () => {
-    const fetchMock = vi.fn(
-      (_url: unknown, _init?: { body?: string }) =>
-        Promise.resolve(
-          sseResponse([
-            { choices: [{ delta: { content: 'Hello ' } }] },
-            { choices: [{ delta: { content: 'world' } }] },
-            { choices: [{ delta: {} }] },
-          ]),
-        ),
+    const fetchMock = vi.fn((_url: unknown, _init?: { body?: string }) =>
+      Promise.resolve(
+        sseResponse([
+          { choices: [{ delta: { content: 'Hello ' } }] },
+          { choices: [{ delta: { content: 'world' } }] },
+          { choices: [{ delta: {} }] },
+        ]),
+      ),
     );
     vi.stubGlobal('fetch', fetchMock);
 

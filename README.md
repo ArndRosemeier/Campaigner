@@ -13,10 +13,38 @@ MiniSearch · pdfjs-dist · vitest + testing-library.
 
 ## Getting started
 
+Prerequisites: Node 20+ and [pnpm](https://pnpm.io).
+
 ```sh
 pnpm install
 pnpm dev        # start the dev server
 ```
+
+Open the printed URL (default `http://localhost:5173`). The app runs fully
+client-side — no backend, no accounts.
+
+## Usage
+
+1. **Settings first (optional but recommended).** Open _Settings_ and paste an
+   [OpenRouter](https://openrouter.ai) API key, pick a default chat model, and
+   (optionally) enable embeddings for semantic search. _Test key_ verifies the
+   key against OpenRouter. The _Danger zone_ deletes **all** local data.
+2. **Create a campaign** on the picker screen — name, game system, description.
+3. **Import a rulebook** in _Rules_: pick a PDF; it is parsed into searchable
+   chunks (chapter headings, stat blocks, prose) in a web worker. Progress and
+   per-book status show on each book card; failed books offer a _Retry…_ menu
+   item (the original bytes are not stored — you re-select the file).
+4. **Search & pin** rule text in the rules search box — keyword (and semantic,
+   when embeddings are on) results show their source, book/page breadcrumb, and
+   highlighted matches. Pin chunks to keep them attached to persona runs.
+5. **Write with personas** from the workspace right pane: choose a persona
+   (e.g. _NPC Smith_), an autonomy mode — _Manual_ (approve every step),
+   _Review_ (pause on problems), _Auto_ (run through) — type a brief, and press
+   _Start_. Each run streams its steps (retrieve → draft → stat block →
+   finalize); approve, edit, retry, or cancel when prompted. Finished runs
+   produce versioned artifacts in the campaign tree (full revision history,
+   restore any snapshot).
+6. Everything persists locally in IndexedDB and survives reloads.
 
 ## Scripts
 
