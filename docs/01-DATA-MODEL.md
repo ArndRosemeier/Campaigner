@@ -302,6 +302,10 @@ interface Settings {
   embeddingsEnabled: boolean;   // default false until API key present
   imageModel: string;           // default 'google/gemini-2.5-flash-image' (M3-A)
   imagesEnabled: boolean;       // default false — image generation is opt-in (M3-A)
+  language: 'en'|'de'|'fr'|'es'|'it'|'pt'|'nl'|'pl'|'ru'|'ja'|'zh';
+                                // generation language, default 'en' — enforced
+                                // in every chat completion via a system
+                                // directive (see /src/llm/language.ts)
 }
 ```
 

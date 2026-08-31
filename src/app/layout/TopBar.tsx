@@ -7,6 +7,7 @@ import { ThemeToggle } from '@/app/layout/ThemeToggle';
 import { ROUTES, campaignIdFromPath, playPath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
+import { LanguageSelect } from '@/features/settings/language-select';
 import { cn } from '@/lib/utils';
 
 /**
@@ -49,6 +50,9 @@ export function TopBar(): JSX.Element {
       </nav>
 
       <div className="ml-auto flex items-center gap-1">
+        {/* Generation language (default English) — choosable on the main
+            page's top bar and persisted in the settings row. */}
+        <LanguageSelect compact />
         {campaignIdFromPath(pathname) !== undefined && (
           <NavLink
             to={playPath(campaignIdFromPath(pathname) ?? '')}

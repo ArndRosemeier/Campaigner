@@ -1,8 +1,10 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 
 import type { JSX } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { listPersonas } from '@/db/personaRepo';
 import { HelpButton } from '@/help/HelpButton';
+import { LanguageSelect } from '@/features/settings/language-select';
 import { PersonaSection } from '@/features/settings/persona-section';
 import { DangerZone } from '@/features/settings/danger-zone';
 import { SettingsSection } from '@/features/settings/settings-section';
@@ -27,6 +29,18 @@ export function SettingsPage(): JSX.Element {
         <HelpButton topic="settings" label="settings" />
       </h1>
       <SettingsSection />
+      <Card>
+        <CardHeader>
+          <CardTitle>Generation language</CardTitle>
+          <CardDescription>
+            Language for all generated content (default English). Enforced in every
+            generation prompt; also selectable in the top bar.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LanguageSelect ariaLabel="Generation language" />
+        </CardContent>
+      </Card>
       <PersonaSection personas={personas ?? []} />
       <DangerZone />
     </div>

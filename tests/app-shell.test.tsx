@@ -189,3 +189,31 @@ describe('theme toggle', () => {
     expect(document.documentElement).toHaveClass('dark');
   });
 });
+
+describe('generation language select', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+  });
+
+  it('is choosable on the main page and persists the choice in settings', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.campaignPicker);
+
+    await user.click(
+      await screen.findByLabelText('Generation language', {}, { timeout: 5_000 }),
+    );
+    await user.click(
+      await screen.findByRole('option', { name: 'Deutsch (German)' }, { timeout: 5_000 }),
+    );
+
+    await waitFor(async () => {
+      const { readSettings } = await import('@/db/settingsRepo');
+      expect((await readSettings()).language).toBe('de');
+    });
+
+    // The choice survives a re-render (value read back from settings).
+    await waitFor(() => {
+      expect(screen.getByLabelText('Generation language')).toHaveTextContent('Deutsch');
+    });
+  });
+});

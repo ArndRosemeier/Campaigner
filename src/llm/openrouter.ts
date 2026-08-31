@@ -1,4 +1,5 @@
 import { getSettings } from '@/db/settingsRepo';
+import { applyLanguageDirective } from '@/llm/language';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): always-streaming chat completions
@@ -74,11 +75,15 @@ export async function chat(
   const settings = await getSettings();
   if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
 
+  // Generation-language enforcement: the settings-selected language is
+  // injected into every chat completion (07 §Settings).
+  const effectiveMessages = applyLanguageDirective(messages, settings.language);
+
   const body: Record<string, unknown> = {
     model: opts.model,
     temperature: opts.temperature,
     stream: true,
-    messages,
+    messages: effectiveMessages,
   };
   if (opts.responseFormat === 'json') body.response_format = { type: 'json_object' };
 

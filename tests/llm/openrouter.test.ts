@@ -38,6 +38,7 @@ const SETTINGS = {
   embeddingsEnabled: false,
   imageModel: 'google/gemini-2.5-flash-image',
   imagesEnabled: false,
+  language: 'en' as const,
 };
 
 beforeEach(async () => {
