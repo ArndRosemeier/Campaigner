@@ -87,3 +87,19 @@ export const sessionDraftSchema = z.object({
 });
 
 export type SessionDraft = z.infer<typeof sessionDraftSchema>;
+
+/** Continuity Editor report (06-MILESTONES M2): issues found in a target. */
+export const continuityReportSchema = z.object({
+  verdict: z.enum(['consistent', 'issues_found']),
+  summary: z.string(),
+  issues: z.array(
+    z.object({
+      severity: z.enum(['minor', 'major']),
+      message: z.string(),
+      /** Name of the artifact this conflicts with, '' when none. */
+      relatedTo: z.string(),
+    }),
+  ),
+});
+
+export type ContinuityReport = z.infer<typeof continuityReportSchema>;

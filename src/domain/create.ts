@@ -171,6 +171,7 @@ export interface NewPersona {
   model?: string;
   temperature?: number;
   producesKind: ArtifactKind;
+  mode?: Persona['mode'];
   builtIn: boolean;
 }
 
@@ -185,6 +186,7 @@ export function createPersona(input: NewPersona): Persona {
     model: input.model ?? '',
     temperature: input.temperature ?? DEFAULT_PERSONA_TEMPERATURE,
     producesKind: input.producesKind,
+    mode: input.mode ?? 'generate',
     builtIn: input.builtIn,
   });
 }

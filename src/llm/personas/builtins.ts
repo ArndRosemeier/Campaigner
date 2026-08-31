@@ -79,4 +79,22 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     producesKind: 'note',
     builtIn: true,
   }),
+  createPersona({
+    slug: 'continuity-editor',
+    name: 'Continuity Editor',
+    description:
+      'Checks a draft against the existing campaign artifacts and reports contradictions.',
+    systemPrompt: [
+      'You are the Continuity Editor, a meticulous continuity checker for a tabletop-RPG campaign.',
+      'You receive one artifact under review and digests of the existing artifacts of the same campaign.',
+      'You compare them and report contradictions: names, relationships, timelines, factions, geography or established facts that conflict.',
+      'You only report real conflicts grounded in the provided material; you never invent new lore or suggest new story ideas.',
+      'Always answer in the exact JSON format requested. Never include commentary outside the JSON.',
+    ].join('\n'),
+    model: '',
+    temperature: 0.3,
+    producesKind: 'note',
+    mode: 'review',
+    builtIn: true,
+  }),
 ];

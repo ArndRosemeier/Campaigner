@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getRun } from '@/db/runRepo';
 import { chainRunner, type ChainStepInput } from '@/llm/chainRunner';
 import { runEngine } from '@/llm/runEngine';
@@ -141,6 +141,79 @@ describe('remaining personas wired', () => {
     const artifact = (await listArtifactsByCampaign(campaign.id))[0];
     expect(artifact?.kind).toBe('note');
     expect(artifact?.body).toContain('Three acts');
+  }, 20000);
+});
+
+describe('continuity editor persona', () => {
+  it('reviews a target artifact and finalizes a report note linked to it', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    // Existing artifact that the target contradicts.
+    const existing = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Grimm',
+      summary: 'Died last winter.',
+    });
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Vera',
+      summary: 'Lieutenant under Grimm, who is alive and well.',
+    });
+
+    const persona = createPersona({
+      slug: 'continuity-editor',
+      name: 'Continuity Editor',
+      description: '',
+      systemPrompt: 'You are the Continuity Editor.',
+      producesKind: 'note',
+      mode: 'review',
+      builtIn: true,
+    });
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        verdict: 'issues_found',
+        summary: 'Grimm is described as alive here but dead elsewhere.',
+        issues: [
+          {
+            severity: 'major',
+            message: 'Grimm is alive in this artifact but buried in the cemetery log.',
+            relatedTo: 'Grimm',
+          },
+        ],
+      }),
+    );
+
+    const runId = await runEngine.startRun({
+      campaign: {
+        id: campaign.id,
+        name: 'Emberfall',
+        system: 'dnd5e',
+        description: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      persona,
+      autonomy: 'auto',
+      brief: 'Focus on who is alive.',
+      pinnedChunkIds: [],
+      targetArtifactId: target.id,
+    });
+
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    const report = artifacts.find((artifact) => artifact.tags.includes('continuity'));
+    expect(report).toBeDefined();
+    expect(report?.kind).toBe('note');
+    expect(report?.name).toBe('Continuity report — Vera');
+    expect(report?.body).toContain('[major]');
+    expect(report?.links).toEqual([{ targetId: target.id, relation: 'continuity-check-of' }]);
+    expect(existing).toBeDefined();
+    const run = await getRun(runId);
+    expect(run?.steps.map((step) => step.name)).toEqual(['gather', 'check', 'finalize']);
   }, 20000);
 });
 

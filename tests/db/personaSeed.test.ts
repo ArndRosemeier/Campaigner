@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/domain';
 import { seedBuiltInPersonas } from '@/db/seed';
+import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import {
   addPersona,
   findPersonaBySlug,
@@ -15,14 +16,16 @@ import { db } from '@/db/db';
 import { clearDatabase, expectNotFound } from './helpers';
 
 describe('built-in persona seeding', () => {
-  it('seeds all four built-ins exactly once', async () => {
+  it('seeds all built-ins exactly once', async () => {
     await seedBuiltInPersonas();
     await seedBuiltInPersonas();
 
-    expect(await db.personas.count()).toBe(4);
+    expect(await db.personas.count()).toBe(BUILT_IN_PERSONAS.length);
     const slugs = (await listPersonas()).map((persona) => persona.slug);
     // listPersonas sorts by name.
-    expect(slugs).toEqual(['faction-designer', 'npc-smith', 'plot-architect', 'worldbuilder']);
+    expect(slugs).toEqual(
+      [...BUILT_IN_PERSONAS.map((persona) => persona.slug)].sort((a, b) => a.localeCompare(b)),
+    );
   });
 
   it('seeds NPC Smith with the verbatim system prompt', async () => {
@@ -59,7 +62,7 @@ describe('built-in persona seeding', () => {
     await seedBuiltInPersonas();
 
     expect(await findPersonaBySlug('npc-smith')).toBeDefined();
-    expect(await db.personas.count()).toBe(4);
+    expect(await db.personas.count()).toBe(BUILT_IN_PERSONAS.length);
   });
 
   it('resetPersonaToDefault restores built-in values, keeping the row id', async () => {

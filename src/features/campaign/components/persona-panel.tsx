@@ -27,6 +27,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { ROUTES, artifactPath } from '@/app/routes';
+import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, PersonaRun } from '@/domain';
@@ -61,17 +62,33 @@ export function PersonaPanel({
   hasApiKey: boolean;
 }): JSX.Element {
   const personas = useLiveQuery(() => listPersonas(), []);
+  const campaignArtifacts = useLiveQuery(() => listArtifactsByCampaign(campaign.id), [campaign.id]);
   const [personaId, setPersonaId] = useState<string>('');
   const [autonomy, setAutonomy] = useState<Autonomy>('manual');
   const [brief, setBrief] = useState('');
+  const [targetArtifactId, setTargetArtifactId] = useState<string>('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const pinned = usePinnedChunksStore((state) => state.chunks);
   const unpin = usePinnedChunksStore((state) => state.unpin);
 
   const selectedPersona = personas?.find((persona) => persona.id === personaId);
+  const isReview = selectedPersona?.mode === 'review';
 
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
+    if (selectedPersona.mode === 'review') {
+      if (targetArtifactId === '') return;
+      const runId = await runEngine.startRun({
+        campaign,
+        persona: selectedPersona,
+        autonomy,
+        brief,
+        pinnedChunkIds: pinned.map((chunk) => chunk.id),
+        targetArtifactId,
+      });
+      setActiveRunId(runId);
+      return;
+    }
     const runId = await runEngine.startRun({
       campaign,
       persona: selectedPersona,
@@ -137,18 +154,52 @@ export function PersonaPanel({
               </Select>
             </div>
 
-            <div className="flex flex-col gap-1.5">
-              <Label htmlFor="brief">Brief</Label>
-              <Textarea
-                id="brief"
-                rows={4}
-                placeholder="e.g. a goblin alchemist boss for a level 3 party"
-                value={brief}
-                onChange={(event) => {
-                  setBrief(event.target.value);
-                }}
-              />
-            </div>
+            {isReview && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="target-select">Artifact to check</Label>
+                <Select
+                  value={targetArtifactId}
+                  onValueChange={(value) => {
+                    if (value !== null) setTargetArtifactId(value);
+                  }}
+                >
+                  <SelectTrigger className="w-full" aria-label="Artifact to check">
+                    <SelectValue placeholder="Choose an artifact" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {(campaignArtifacts ?? []).map((artifact) => (
+                      <SelectItem key={artifact.id} value={artifact.id}>
+                        {artifact.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Textarea
+                  id="brief"
+                  rows={2}
+                  placeholder="Optional focus, e.g. timeline consistency"
+                  value={brief}
+                  onChange={(event) => {
+                    setBrief(event.target.value);
+                  }}
+                />
+              </div>
+            )}
+
+            {!isReview && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="brief">Brief</Label>
+                <Textarea
+                  id="brief"
+                  rows={4}
+                  placeholder="e.g. a goblin alchemist boss for a level 3 party"
+                  value={brief}
+                  onChange={(event) => {
+                    setBrief(event.target.value);
+                  }}
+                />
+              </div>
+            )}
 
             {pinned.length > 0 && (
               <div className="flex flex-col gap-1.5">
@@ -177,7 +228,10 @@ export function PersonaPanel({
 
             {hasApiKey ? (
               <Button
-                disabled={selectedPersona === undefined || brief.trim() === ''}
+                disabled={
+                  selectedPersona === undefined ||
+                  (isReview ? targetArtifactId === '' : brief.trim() === '')
+                }
                 onClick={() => void start()}
                 data-testid="start-run"
               >

@@ -15,6 +15,12 @@ export const personaSchema = z.object({
   temperature: z.number().min(0).max(2),
   /** Artifact kind this persona outputs. */
   producesKind: artifactKindSchema,
+  /**
+   * 'generate' personas create artifacts from a brief (M1 pipeline);
+   * 'review' personas check an existing artifact against the campaign and
+   * produce a report (M2 Continuity Editor).
+   */
+  mode: z.enum(['generate', 'review']).default('generate'),
   /** Built-ins are re-seeded on app start if missing (never overwritten). */
   builtIn: z.boolean(),
 });

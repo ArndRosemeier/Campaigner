@@ -8,7 +8,7 @@ import type {
   RunStep,
   StatBlock,
 } from '@/domain';
-import { createArtifact, listArtifactsByIds } from '@/db/artifactRepo';
+import { createArtifact, listArtifactsByCampaign, listArtifactsByIds } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
@@ -25,7 +25,10 @@ import {
   npcDraftSchema,
   plotArcDraftSchema,
   sessionDraftSchema,
+  continuityReportSchema,
 } from '@/llm/schemas';
+
+type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
 import { toastError } from '@/lib/toast';
 
@@ -52,7 +55,10 @@ export interface StepStatblockOutput {
 }
 
 const STEP_NAMES = ['retrieve', 'draft', 'statblock', 'finalize'] as const;
-export type StepName = (typeof STEP_NAMES)[number];
+export type StepName = (typeof STEP_NAMES)[number] | ReviewStepName;
+
+const REVIEW_STEP_NAMES = ['gather', 'check', 'finalize'] as const;
+export type ReviewStepName = (typeof REVIEW_STEP_NAMES)[number];
 
 export type EngineEvent =
   | { kind: 'run'; runId: Id; status: PersonaRun['status'] }
@@ -73,6 +79,8 @@ export interface StartRunInput {
    * from the produced artifact.
    */
   contextArtifactIds?: readonly Id[];
+  /** Review personas: the artifact under continuity review. */
+  targetArtifactId?: Id;
 }
 
 /** Fetches context artifacts for the prompt (name + summary + body excerpt). */
@@ -294,9 +302,11 @@ export class RunEngine {
 
     const steps: RunStep[] = [...run.steps];
     const kinds: StepName[] =
-      input.persona.producesKind === 'npc'
-        ? [...STEP_NAMES]
-        : STEP_NAMES.filter((name) => name !== 'statblock');
+      input.persona.mode === 'review'
+        ? [...REVIEW_STEP_NAMES]
+        : input.persona.producesKind === 'npc'
+          ? [...STEP_NAMES]
+          : STEP_NAMES.filter((name) => name !== 'statblock');
 
     const controller = new AbortController();
     this.controllers.set(runId, controller);
@@ -378,9 +388,35 @@ export class RunEngine {
         return this.runDraft(runId, stepIndex, steps, input, signal, extraInstruction);
       case 'statblock':
         return this.runStatblock(runId, stepIndex, steps, input, signal, extraInstruction);
+      case 'gather':
+        return this.runGather(stepIndex, steps, input);
+      case 'check':
+        return this.runCheck(runId, stepIndex, steps, input, signal, extraInstruction);
       case 'finalize':
         return this.runFinalize(runId, stepIndex, steps, input);
     }
+  }
+
+  /** The parsed continuity report from the check step (or null). */
+  private reportFromCheck(steps: readonly RunStep[]): ContinuityReport | null {
+    const checkStep = steps.find((step) => step.name === 'check');
+    const effective = checkStep?.userEdit ?? checkStep?.output;
+    if (effective === null || effective === undefined || typeof effective !== 'object') return null;
+    const report = (effective as { report?: unknown }).report;
+    return report !== undefined && report !== null && typeof report === 'object'
+      ? (report as ContinuityReport)
+      : null;
+  }
+
+  private targetName(steps: readonly RunStep[]): string {
+    const gatherStep = steps.find((step) => step.name === 'gather');
+    const effective = gatherStep?.userEdit ?? gatherStep?.output;
+    if (effective === null || effective === undefined || typeof effective !== 'object') {
+      return 'unknown artifact';
+    }
+    const target = (effective as { target?: { name?: unknown } | null }).target;
+    const name = target?.name;
+    return typeof name === 'string' && name !== '' ? name : 'unknown artifact';
   }
 
   private effectiveDraft(steps: readonly RunStep[]): Record<string, unknown> | null {
@@ -588,6 +624,113 @@ export class RunEngine {
     return { step };
   }
 
+  /**
+   * Review step 1 (06-MILESTONES M2, Continuity Editor): digest the target
+   * artifact and the rest of the campaign for the check step.
+   */
+  private async runGather(
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+  ): Promise<{ step: RunStep }> {
+    const targetId = input.targetArtifactId;
+    const artifacts = await listArtifactsByCampaign(input.campaign.id);
+    const target =
+      targetId === undefined ? undefined : artifacts.find((artifact) => artifact.id === targetId);
+    const others = artifacts
+      .filter((artifact) => artifact.id !== targetId)
+      .map((artifact) => ({
+        id: artifact.id,
+        name: artifact.name,
+        kind: artifact.kind,
+        summary: artifact.summary,
+        body: artifact.body.length > 600 ? `${artifact.body.slice(0, 600)}…` : artifact.body,
+      }));
+    const step = this.finishStep(steps[stepIndex], {
+      target:
+        target === undefined
+          ? null
+          : {
+              id: target.id,
+              name: target.name,
+              kind: target.kind,
+              summary: target.summary,
+              body: target.body,
+            },
+      others,
+    });
+    return { step };
+  }
+
+  /**
+   * Review step 2: the continuity check itself — compare the target against
+   * the campaign digest, JSON report, same JSON-retry policy as draft.
+   */
+  private async runCheck(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+    signal: AbortSignal,
+    extraInstruction: string,
+  ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
+    const settings = await getSettings();
+    const gatherStep = steps.find((step) => step.name === 'gather');
+    const gather = (gatherStep?.userEdit ?? gatherStep?.output) as
+      | {
+          target?: { name?: string } | null;
+          others?: { name?: string; kind?: string; summary?: string; body?: string }[];
+        }
+      | null
+      | undefined;
+    const target = gather?.target;
+    const others = gather?.others ?? [];
+
+    const instruction = [
+      `Artifact under review: ${target?.name ?? 'unknown'}\n${JSON.stringify(target ?? {})}`,
+      `Existing artifacts of the campaign:\n${(others ?? [])
+        .map(
+          (other) =>
+            `- ${other.name ?? ''} (${other.kind ?? ''})${other.summary === undefined || other.summary === '' ? '' : ` — ${other.summary}`}\n${other.body ?? ''}`,
+        )
+        .join('\n')}`,
+      input.brief === '' ? null : `Focus: ${input.brief}`,
+      'Reply with ONLY a JSON object: { "verdict": "consistent" | "issues_found", "summary": string, "issues": [{ "severity": "minor" | "major", "message": string, "relatedTo": string }] } — "relatedTo" is the name of the conflicting artifact or "".',
+      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+    ]
+      .filter((part) => part !== null)
+      .join('\n\n');
+
+    const raw = await chat(
+      [
+        { role: 'system', content: input.persona.systemPrompt },
+        { role: 'user', content: instruction },
+      ],
+      {
+        model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
+        temperature: input.persona.temperature,
+        responseFormat: 'json',
+        signal,
+        onToken: (delta) => {
+          this.emit({ kind: 'token', runId, stepIndex, delta });
+        },
+      },
+    );
+
+    try {
+      const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+      const report = continuityReportSchema.parse(JSON.parse(jsonText) as unknown);
+      const step = this.finishStep(steps[stepIndex], { report });
+      if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
+      return { step };
+    } catch (error) {
+      const step = this.finishStep(steps[stepIndex], { raw }, 'rejected');
+      if (input.autonomy === 'auto') return { step };
+      if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
+      return { step, runStatus: 'needs_review' };
+    }
+  }
+
   private async runFinalize(
     runId: Id,
     stepIndex: number,
@@ -605,6 +748,46 @@ export class RunEngine {
     if (kind === 'npc' && 'statBlock' in data) {
       const statBlock = statblockOutput?.statBlock;
       if (statBlock !== undefined) data.statBlock = statBlock;
+    }
+
+    // Review personas finalize as a continuity report note linked to the
+    // target artifact (06-MILESTONES M2: Continuity Editor).
+    if (input.persona.mode === 'review') {
+      const report = this.reportFromCheck(steps);
+      const targetId = input.targetArtifactId ?? null;
+      const reportBody = [
+        `# Continuity report — ${report?.summary !== undefined ? '' : ''}${this.targetName(steps)}`,
+        report === null ? 'The check step produced no structured report.' : '',
+        report === null
+          ? ''
+          : [
+              `**Verdict:** ${report.verdict === 'consistent' ? 'consistent' : 'issues found'}`,
+              report.issues
+                .map(
+                  (issue) =>
+                    `- **[${issue.severity}]** ${issue.message}${issue.relatedTo === '' ? '' : ` (relates to: ${issue.relatedTo})`}`,
+                )
+                .join('\n'),
+            ]
+              .filter((part) => part !== '')
+              .join('\n\n'),
+      ].join('\n');
+      const artifact = await createArtifact(
+        {
+          campaignId: input.campaign.id,
+          kind: 'note',
+          name: `Continuity report — ${this.targetName(steps)}`,
+          tags: ['continuity'],
+          summary: report?.summary ?? '',
+          body: reportBody,
+          links: targetId === null ? [] : [{ targetId, relation: 'continuity-check-of' }],
+          data: {},
+        },
+        { source: 'persona', runId },
+      );
+      const step = this.finishStep(steps[stepIndex], { artifactId: artifact.id });
+      await updateRun(runId, { resultArtifactId: artifact.id });
+      return { step, artifactId: artifact.id };
     }
 
     const artifact = await createArtifact(
