@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -9,6 +9,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { newId } from '@/domain';
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { clearDatabase } from './helpers';
+import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * M2 artifact kinds (06-MILESTONES): encounter / plotarc / session — domain
@@ -102,12 +103,16 @@ describe('encounter / plotarc / session kinds', () => {
       { timeout: 4000 },
     );
 
-    // A content change appends a revision (source user).
+    // A content change appends a revision (source user). The write triggers
+    // the editor's revision live query, so run it inside act.
     const after = await getArtifact(artifact.id);
     if (after === undefined) throw new Error('artifact vanished');
-    await updateArtifact(after.id, { summary: 'Session one recap recorded' });
+    await act(async () => {
+      await updateArtifact(after.id, { summary: 'Session one recap recorded' });
+    });
     const updated = await getArtifact(artifact.id);
     if (updated === undefined) throw new Error('artifact vanished after update');
     expect(updated.currentRevision).toBe(after.currentRevision + 1);
+    await flushAsyncUpdates();
   }, 20000);
 });

@@ -13,6 +13,7 @@ import { db } from '@/db/db';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { clearDatabase } from '../db/helpers';
+import { flushAsyncUpdates } from '../helpers/flush';
 
 function renderWorkspace(path: string): void {
   render(
@@ -99,12 +100,15 @@ describe('WorkspacePage', () => {
     await waitFor(() => {
       expect(screen.queryByText('Gorim')).not.toBeInTheDocument();
     });
+    // Drain the delete-triggered live-query updates before the plain DB reads.
+    await flushAsyncUpdates();
     const { getArtifact } = await import('@/db/artifactRepo');
     const rows = await import('@/db/artifactRepo').then((m) =>
       m.listArtifactsByCampaign(campaign.id),
     );
     expect(await getArtifact(npc.id)).toBeUndefined();
     expect(rows.find((row) => row.name === 'Forge')?.links).toEqual([]);
+    await flushAsyncUpdates();
   }, 20000);
 
   it('shows persona names, not ids, in selects after choosing', async () => {

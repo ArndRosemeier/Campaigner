@@ -66,6 +66,8 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 - `04-LLM-PERSONAS.md` — OpenRouter client, persona definitions, run pipeline
 - `05-UI.md`         — screens, layout, component inventory, interaction flows
 - `06-MILESTONES.md` — ordered implementation tasks with acceptance criteria
+- `07-MILESTONE-3.md` — M3 feature specs (session mode, module forge, images)
+- `08-TESTING.md`    — UI test-coverage matrix, console-hygiene guard, route sweep
 
 ## Global conventions (binding for all code)
 

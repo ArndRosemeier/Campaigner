@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, getArtifact } from '@/db/artifactRepo';
@@ -14,10 +14,16 @@ import { clearDatabase } from '../db/helpers';
 // what we assert on. (Also avoids Dexie live-query reactivity in jsdom.)
 vi.mock('@/features/campaign/hooks', () => ({ useRevisions: () => undefined }));
 
-/** Real timers (Dexie schedules work with them); autosave debounces 800 ms. */
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    setTimeout(resolve, ms);
+/**
+ * Real timers (Dexie schedules work with them); autosave debounces 800 ms.
+ * Wrapped in act so component updates driven by Base UI internals (scroll
+ * area resize observation) during the wait do not fire outside act.
+ */
+async function sleep(ms: number): Promise<void> {
+  await act(async () => {
+    await new Promise((resolve) => {
+      setTimeout(resolve, ms);
+    });
   });
 }
 

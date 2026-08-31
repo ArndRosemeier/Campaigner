@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,7 @@ import { readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
 import { defaultSettings } from '@/domain';
 import { db } from '@/db/db';
 import { clearDatabase } from './db/helpers';
+import { flushAsyncUpdates } from './helpers/flush';
 
 /**
  * Images UI (07-MILESTONE-3 M3-A §UI): tree cover thumbnail, editor Images
@@ -73,9 +74,14 @@ describe('images ui', () => {
 
     expect(await screen.findByAltText('Cover of Old Tower', {}, { timeout: 5_000 })).toBeInTheDocument();
     expect(screen.getByTestId('images-section')).toBeInTheDocument();
-    expect(screen.getByAltText('Artifact image')).toHaveAttribute('src', expect.stringMatching(/^blob:mock-/));
+    // The gallery resolves its own image live query a tick after the tree
+    // thumbnail — never assert on it synchronously.
+    expect(
+      await screen.findByAltText('Artifact image', {}, { timeout: 5_000 }),
+    ).toHaveAttribute('src', expect.stringMatching(/^blob:mock-/));
     expect(screen.getByRole('button', { name: /Illustrate/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Upload/ })).toBeInTheDocument();
+    await flushAsyncUpdates();
   });
 
   it('deletes an image from the lightbox, clearing the live references (blob survives via history)', async () => {
@@ -97,8 +103,10 @@ describe('images ui', () => {
     await waitFor(() => {
       expect(screen.queryByAltText('Cover of Old Tower')).not.toBeInTheDocument();
     });
+    // Drain the delete's live-query cascade inside act before plain reads.
+    await flushAsyncUpdates();
     // The live artifact lost its references…
-    const artifacts = await db.artifacts.toArray();
+    const artifacts = await act(async () => db.artifacts.toArray());
     expect(artifacts[0]?.imageIds).toEqual([]);
     expect(artifacts[0]?.coverImageId).toBeNull();
     // …but the blob survives: revision snapshots still reference it and a
@@ -106,13 +114,17 @@ describe('images ui', () => {
     // covers artifacts AND revisions).
     expect(await getImage(imageId)).toBeDefined();
 
-    // Deleting the whole artifact prunes the now-orphaned blobs.
+    // Deleting the whole artifact prunes the now-orphaned blobs. The write
+    // re-fires live queries, so run it inside act.
     const { deleteArtifact } = await import('@/db/artifactRepo');
-    await deleteArtifact(artifacts[0]?.id ?? '');
+    await act(async () => {
+      await deleteArtifact(artifacts[0]?.id ?? '');
+    });
     await waitFor(async () => {
       expect(await getImage(imageId)).toBeUndefined();
     });
     void campaignId;
+    await flushAsyncUpdates();
   });
 
   it('"Illustrate…" pre-selects the Illustrator persona with the artifact as target', async () => {
@@ -142,5 +154,9 @@ describe('images ui', () => {
     await waitFor(() => {
       void expect(readSettings()).resolves.toMatchObject({ imagesEnabled: true });
     });
-    await updateSettings({ imagesEnabled: false });
+    // The write re-fires the settings live query — keep it inside act.
+    await act(async () => {
+      await updateSettings({ imagesEnabled: false });
+    });
+    await flushAsyncUpdates();
   });});

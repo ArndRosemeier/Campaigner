@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,6 +11,7 @@ import { EmbeddingLibraryPanel } from '@/features/rules/embedding-panel';
 import { embeddingStats, clearEmbeddings, embedWholeLibrary } from '@/search/embeddings';
 import { db } from '@/db/db';
 import { clearDatabase } from '../db/helpers';
+import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Whole-library embedding management (06-MILESTONES M2): stats, whole-library
@@ -134,7 +135,11 @@ describe('EmbeddingLibraryPanel', () => {
     await waitFor(() => {
       expect(screen.getByText('0 of 2 chunks embedded')).toBeDefined();
     });
-    const rows = await db.embeddings.toArray();
+    // The embed/clear writes cascade live-query re-fires on fake-indexeddb's
+    // timed queue; drain them inside act before the un-wrapped plain reads.
+    await flushAsyncUpdates();
+    const rows = await act(async () => db.embeddings.toArray());
     expect(rows).toHaveLength(0);
+    await flushAsyncUpdates();
   }, 20000);
 });
