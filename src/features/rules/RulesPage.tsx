@@ -244,7 +244,7 @@ function BookCard({
     <>
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">{book.title}</CardTitle>
+          <CardTitle className="min-w-0 text-sm [overflow-wrap:anywhere]">{book.title}</CardTitle>
           <CardAction className="flex items-center gap-1">
             <Button
               variant="ghost"
