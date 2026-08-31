@@ -315,6 +315,8 @@ describe('writers\u2019 room chain', () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
     const run = await getRun(runId);
-    expect(await getArtifact(run?.resultArtifactId!)).toBeDefined();
+    const reportId = run?.resultArtifactId;
+    if (reportId === null || reportId === undefined) throw new Error('no report artifact');
+    expect(await getArtifact(reportId)).toBeDefined();
   }, 30000);
 });

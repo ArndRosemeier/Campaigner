@@ -157,7 +157,12 @@ export class ChainRunner {
       };
       this.emit();
 
-      if (this.cancelRequested || outcome.status === 'cancelled') {
+      if (outcome.status === 'cancelled') {
+        this.state.status = 'cancelled';
+        this.emit();
+        return this.state;
+      }
+      if (this.cancelRequested) {
         this.state.status = 'cancelled';
         this.emit();
         return this.state;
@@ -192,15 +197,17 @@ export class ChainRunner {
       (step) => step.status === 'awaiting_user' || step.status === 'needs_review',
     );
     const pausedStep = this.state.steps[pausedIndex];
-    if (pausedIndex === -1 || pausedStep === undefined || pausedStep.runId === null) {
+    if (pausedStep === undefined || pausedIndex === -1 || pausedStep.runId === null) {
       return this.state;
     }
     this.state.status = 'running';
     this.emit();
 
-    const producedArtifactIds = this.state.steps
-      .filter((step) => step.artifactId !== null)
-      .map((step) => step.artifactId!);
+    const producedArtifactIds: Id[] = [];
+    for (const step of this.state.steps) {
+      const artifactId = step.artifactId;
+      if (artifactId !== null) producedArtifactIds.push(artifactId);
+    }
 
     const outcome = await this.waitForRunCompletion(pausedStep.runId);
     this.state.steps[pausedIndex] = {
@@ -276,7 +283,12 @@ export class ChainRunner {
       };
       this.emit();
 
-      if (this.cancelRequested || outcome.status === 'cancelled') {
+      if (outcome.status === 'cancelled') {
+        this.state.status = 'cancelled';
+        this.emit();
+        return this.state;
+      }
+      if (this.cancelRequested) {
         this.state.status = 'cancelled';
         this.emit();
         return this.state;

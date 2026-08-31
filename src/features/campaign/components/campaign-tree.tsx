@@ -13,6 +13,7 @@ import {
   type Id,
 } from '@/domain';
 import { defaultArtifactName } from '@/domain';
+import { exportSingleArtifact } from '@/features/campaign/components/export-dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -207,6 +208,9 @@ export function CampaignTree({
                           onDelete={() => {
                             setDeleteTarget(artifact);
                           }}
+                          onExport={() => {
+                            void exportSingleArtifact(artifact);
+                          }}
                         />
                       </li>
                     ))}
@@ -296,9 +300,18 @@ interface TreeRowProps {
   onRename: () => void;
   onDuplicate: () => void;
   onDelete: () => void;
+  onExport: () => void;
 }
 
-function TreeRow({ artifact, selected, onSelect, onRename, onDuplicate, onDelete }: TreeRowProps) {
+function TreeRow({
+  artifact,
+  selected,
+  onSelect,
+  onRename,
+  onDuplicate,
+  onDelete,
+  onExport,
+}: TreeRowProps) {
   return (
     <ContextMenu>
       <Tooltip>
@@ -329,6 +342,7 @@ function TreeRow({ artifact, selected, onSelect, onRename, onDuplicate, onDelete
           Duplicate
         </ContextMenuItem>
         <ContextMenuSeparator />
+        <ContextMenuItem onClick={onExport}>Export as JSON</ContextMenuItem>
         <ContextMenuItem className="text-destructive" onClick={onDelete}>
           Delete
         </ContextMenuItem>

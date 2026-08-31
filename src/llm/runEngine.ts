@@ -687,8 +687,8 @@ export class RunEngine {
     const others = gather?.others ?? [];
 
     const instruction = [
-      `Artifact under review: ${target?.name ?? 'unknown'}\n${JSON.stringify(target ?? {})}`,
-      `Existing artifacts of the campaign:\n${(others ?? [])
+      `Artifact under review: ${target?.name ?? 'unknown'}\n${JSON.stringify(target)}`,
+      `Existing artifacts of the campaign:\n${others
         .map(
           (other) =>
             `- ${other.name ?? ''} (${other.kind ?? ''})${other.summary === undefined || other.summary === '' ? '' : ` — ${other.summary}`}\n${other.body ?? ''}`,
@@ -723,7 +723,7 @@ export class RunEngine {
       const step = this.finishStep(steps[stepIndex], { report });
       if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
       return { step };
-    } catch (error) {
+    } catch {
       const step = this.finishStep(steps[stepIndex], { raw }, 'rejected');
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };

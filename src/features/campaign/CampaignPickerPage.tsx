@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { EllipsisVerticalIcon, PlusIcon } from 'lucide-react';
+import { EllipsisVerticalIcon, FileDownIcon, FileUpIcon, PlusIcon } from 'lucide-react';
+
+import { useLiveQuery } from 'dexie-react-hooks';
 
 import { workspacePath } from '@/app/routes';
 import { campaignRepo } from '@/db';
@@ -50,6 +52,15 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useCampaignSummaries, type CampaignSummary } from '@/features/campaign/hooks';
+import { ExportCampaignDialog } from '@/features/campaign/components/export-dialog';
+import {
+  downloadBlob,
+  buildCampaignExport,
+  exportFileName,
+  importExport,
+} from '@/lib/exportImport';
+import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { useNavigate as useNav } from 'react-router-dom';
 import { formatDate } from '@/lib/format';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -62,6 +73,19 @@ export function CampaignPickerPage(): JSX.Element {
   const summaries = useCampaignSummaries();
   const [createOpen, setCreateOpen] = useState(false);
   const navigate = useNavigate();
+  const importInputRef = useRef<HTMLInputElement | null>(null);
+  const importedNavigate = useNav();
+
+  async function handleImportFile(file: File): Promise<void> {
+    try {
+      const parsed: unknown = JSON.parse(await file.text());
+      const result = await importExport(parsed);
+      toastSuccess(`Imported ${result.createdArtifacts} artifact(s) as a new campaign`);
+      importedNavigate(workspacePath(result.campaignId));
+    } catch (error) {
+      toastError('Import failed — is this a Campaigner export?', error);
+    }
+  }
 
   return (
     <div className="h-full overflow-y-auto p-6">
@@ -73,15 +97,39 @@ export function CampaignPickerPage(): JSX.Element {
               Pick a campaign to open its workspace, or start a new one.
             </p>
           </div>
-          <Button
-            onClick={() => {
-              setCreateOpen(true);
-            }}
-            data-testid="new-campaign"
-          >
-            <PlusIcon aria-hidden data-icon="inline-start" />
-            New Campaign
-          </Button>
+          <div className="flex gap-2">
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json,.json"
+              className="hidden"
+              data-testid="import-input"
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file !== undefined) void handleImportFile(file);
+                event.target.value = '';
+              }}
+            />
+            <Button
+              variant="outline"
+              onClick={() => {
+                importInputRef.current?.click();
+              }}
+              data-testid="import-campaign"
+            >
+              <FileUpIcon aria-hidden data-icon="inline-start" />
+              Import JSON
+            </Button>
+            <Button
+              onClick={() => {
+                setCreateOpen(true);
+              }}
+              data-testid="new-campaign"
+            >
+              <PlusIcon aria-hidden data-icon="inline-start" />
+              New Campaign
+            </Button>
+          </div>
         </div>
 
         {summaries === undefined ? (
@@ -134,6 +182,21 @@ interface CampaignCardProps {
 function CampaignCard({ summary, onOpen }: CampaignCardProps) {
   const { campaign, artifactCount } = summary;
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const exportArtifacts = useLiveQuery(() => listArtifactsByCampaign(campaign.id), [campaign.id]);
+
+  async function handleExportCampaign(): Promise<void> {
+    try {
+      const exported = await buildCampaignExport(campaign.id);
+      downloadBlob(
+        new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
+        exportFileName(exported),
+      );
+      toastSuccess('Campaign exported');
+    } catch (error) {
+      toastError('Export failed', error);
+    }
+  }
 
   async function handleDelete(): Promise<void> {
     try {
@@ -170,6 +233,14 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
               </DropdownMenuTrigger>
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
+                  onClick={() => {
+                    void handleExportCampaign();
+                  }}
+                >
+                  <FileDownIcon aria-hidden data-icon="inline-start" />
+                  Export whole campaign (JSON)
+                </DropdownMenuItem>
+                <DropdownMenuItem
                   className="text-destructive"
                   onClick={() => {
                     setDeleteOpen(true);
@@ -188,6 +259,14 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
           </span>
         </CardContent>
       </Card>
+
+      <ExportCampaignDialog
+        campaignId={campaign.id}
+        campaignName={campaign.name}
+        artifacts={exportArtifacts ?? []}
+        open={exportOpen}
+        onOpenChange={setExportOpen}
+      />
 
       <AlertDialog
         open={deleteOpen}
