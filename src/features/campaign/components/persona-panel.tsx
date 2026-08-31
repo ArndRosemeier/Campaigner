@@ -273,7 +273,7 @@ export function PersonaPanel({
           <WritersRoom campaign={campaign} />
         </TabsContent>
 
-        <TabsContent value="runs" className="min-h-0 flex-1">
+        <TabsContent value="runs" className="min-h-0 flex-1 overflow-y-auto">
           <RunsList campaignId={campaign.id} />
         </TabsContent>
       </Tabs>

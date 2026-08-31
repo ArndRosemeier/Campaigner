@@ -261,7 +261,7 @@ export function ArtifactEditor({
         />
       </header>
 
-      <ScrollArea className="flex-1">
+      <ScrollArea className="min-h-0 flex-1">
         <div className="flex flex-col gap-4 p-3">
           <MarkdownBody
             value={draft.body}

@@ -8,7 +8,11 @@ function ScrollArea({ className, children, ...props }: ScrollAreaPrimitive.Root.
   return (
     <ScrollAreaPrimitive.Root
       data-slot="scroll-area"
-      className={cn('relative', className)}
+      // Base UI is headless: without overflow-hidden here, a Root used as a
+      // flex child keeps min-height:auto and grows to its content height —
+      // the viewport never overflows and the pane just clips (no scrollbar).
+      // With it, the automatic minimum size is zero, so flex-1/max-h bound it.
+      className={cn('relative overflow-hidden', className)}
       {...props}
     >
       <ScrollAreaPrimitive.Viewport
