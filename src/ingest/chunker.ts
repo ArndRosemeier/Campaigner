@@ -72,19 +72,45 @@ export function chunkLines(
     section.lines.push(line);
     section.text = section.text === '' ? line.text : `${section.text}\n${line.text}`;
 
-    // Overflow: split at the nearest sentence boundary within the window
-    // (hard cut as fallback), continuing a new chunk with the same path.
+    // Overflow: split at the nearest sentence boundary, snapped back to the
+    // end of a whole line (a raw sentence boundary can fall mid-line, which
+    // desynced section.lines from section.text and later produced chunks
+    // with no lines — their page range collapsed to ±Infinity).
     if (section.text.length >= MAX_SECTION_CHARS) {
       const window = section.text.slice(0, MAX_SECTION_CHARS);
-      let cut = lastSentenceBoundary(window);
-      if (cut < MIN_SECTION_CHARS) cut = MAX_SECTION_CHARS - 1;
-      const headText = section.text.slice(0, cut + 1);
-      const rest = section.text.slice(cut + 1);
-      const headLines = linesUpTo(section.lines, headText.length);
-      chunks.push(makeChunk('section', headLines, headText, section.path, system));
+      let target = lastSentenceBoundary(window);
+      if (target < MIN_SECTION_CHARS) target = MAX_SECTION_CHARS - 1;
+      let headLineCount = 0;
+      let consumed = 0;
+      for (const line of section.lines) {
+        if (consumed + line.text.length - 1 > target) break;
+        headLineCount += 1;
+        consumed += line.text.length + 1; // +1 for the joining '\n'
+      }
+      let headLines: Line[];
+      let restLines: Line[];
+      const first = section.lines[0];
+      if (headLineCount === 0 && first !== undefined) {
+        // Single line longer than the window: split the line itself so both
+        // sides keep their lines in sync with the text (same page).
+        headLines = [{ ...first, text: first.text.slice(0, target + 1) }];
+        restLines = [{ ...first, text: first.text.slice(target + 1) }, ...section.lines.slice(1)];
+      } else {
+        headLines = section.lines.slice(0, headLineCount);
+        restLines = section.lines.slice(headLineCount);
+      }
+      chunks.push(
+        makeChunk(
+          'section',
+          headLines,
+          headLines.map((headLine) => headLine.text).join('\n'),
+          section.path,
+          system,
+        ),
+      );
       section = {
-        lines: section.lines.slice(headLines.length),
-        text: rest,
+        lines: restLines,
+        text: restLines.map((restLine) => restLine.text).join('\n'),
         path: [...headingPath],
       };
     }
@@ -102,11 +128,13 @@ function makeChunk(
   headingPath: string[],
   system: GameSystem,
 ): UnhashedChunk {
-  const pages = spanLines.map((line) => line.page);
+  // Guard against empty spans (would yield ±Infinity, which the schema
+  // rejects); after the line-synced split this should never trigger.
+  const pages = spanLines.map((line) => line.page).filter((page) => Number.isFinite(page));
   return {
     chunkType,
-    pageStart: Math.min(...pages),
-    pageEnd: Math.max(...pages),
+    pageStart: pages.length === 0 ? 1 : Math.min(...pages),
+    pageEnd: pages.length === 0 ? 1 : Math.max(...pages),
     headingPath,
     text,
     statBlock: chunkType === 'statblock' ? parseStatBlock(text, system) : null,
@@ -158,16 +186,4 @@ function lastSentenceBoundary(text: string): number {
     }
   }
   return -1;
-}
-
-/** How many leading lines make up `charCount` characters (joining '\n'). */
-function linesUpTo(lines: readonly Line[], charCount: number): Line[] {
-  let length = 0;
-  const out: Line[] = [];
-  for (const line of lines) {
-    if (length >= charCount) break;
-    out.push(line);
-    length += line.text.length + 1; // +1 for the joining '\n'
-  }
-  return out;
 }

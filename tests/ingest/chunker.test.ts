@@ -44,6 +44,30 @@ describe('chunkLines', () => {
     expect(chunks.map((chunk) => chunk.text).join(' ')).toContain('crossroads');
   });
 
+  it('keeps lines and text in sync when the sentence boundary falls mid-line (no ±Infinity pages)', () => {
+    // The boundary lands inside the second line; the tail after the cut is
+    // long enough to become its own chunk. The old mid-line cut desynced
+    // section.lines from section.text and produced pageStart/pageEnd of
+    // Infinity/-Infinity, which ruleChunkSchema rejects.
+    const head = 'Kurzer Einstieg. ';
+    const tailSentences =
+      'Der Abenteurer wandert weiter durch das Tal und beachtet jede Wegmarkierung. '.repeat(40);
+    const chunks = chunkLines([
+      ...line('Reisen', { headingLevel: 1 }),
+      ...line(head),
+      ...line(head + tailSentences),
+    ]);
+
+    expect(chunks.length).toBeGreaterThan(1);
+    chunks.forEach((chunk) => {
+      expect(Number.isFinite(chunk.pageStart)).toBe(true);
+      expect(Number.isFinite(chunk.pageEnd)).toBe(true);
+      expect(chunk.pageStart).toBeGreaterThanOrEqual(1);
+      expect(chunk.pageEnd).toBeGreaterThanOrEqual(chunk.pageStart);
+    });
+    expect(chunks.map((chunk) => chunk.text).join(' ')).toContain('Wegmarkierung');
+  });
+
   it('strips lines repeated on most pages (headers/footers)', () => {
     const lines = [1, 2, 3, 4].flatMap((page) => [
       ...line('CHAPTER ONE', { page }),
