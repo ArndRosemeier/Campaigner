@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { BookOpenIcon, EllipsisVerticalIcon, PlusIcon } from 'lucide-react';
+import { BookOpenIcon, EllipsisVerticalIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 
 import { EmbeddingLibraryPanel } from '@/features/rules/embedding-panel';
 import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
@@ -245,7 +245,19 @@ function BookCard({
       <Card>
         <CardHeader>
           <CardTitle className="text-sm">{book.title}</CardTitle>
-          <CardAction>
+          <CardAction className="flex items-center gap-1">
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="text-muted-foreground hover:text-destructive"
+              aria-label={`Delete ${book.title}`}
+              disabled={importing}
+              onClick={() => {
+                setMenuAction('delete');
+              }}
+            >
+              <Trash2Icon aria-hidden />
+            </Button>
             <DropdownMenu>
               <DropdownMenuTrigger
                 className={buttonVariants({ variant: 'ghost', size: 'icon-sm' })}

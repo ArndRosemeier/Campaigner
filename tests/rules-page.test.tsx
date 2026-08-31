@@ -96,4 +96,29 @@ describe('rules screen', () => {
     });
     expect(await screen.findByText('No rulebooks yet')).toBeInTheDocument();
   }, 30000);
+
+  it('deletes a book from the visible card button, removing its chunks', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.rules);
+    importFixture();
+
+    await screen.findByText('sample-rulebook');
+    await waitFor(() => {
+      expect(screen.getByText('ready')).toBeInTheDocument();
+    });
+
+    // The card carries its own visible delete affordance (no menu needed).
+    await user.click(screen.getByRole('button', { name: 'Delete sample-rulebook' }));
+    const dialog = await screen.findByRole('alertdialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Delete' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('sample-rulebook')).not.toBeInTheDocument();
+    });
+    // The chunks are gone with the book, not orphaned.
+    const { db } = await import('@/db/db');
+    const { listRulebooks } = await import('@/db/rulebookRepo');
+    expect(await listRulebooks()).toHaveLength(0);
+    expect(await db.chunks.count()).toBe(0);
+  }, 30000);
 });
