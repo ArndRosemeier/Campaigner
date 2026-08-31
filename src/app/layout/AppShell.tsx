@@ -5,15 +5,20 @@ import { TopBar } from '@/app/layout/TopBar';
 import { useThemeSync } from '@/app/theme/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
+import { failRunningRuns } from '@/db/runRepo';
 
 /**
  * App frame shown on every route: the top bar (app name, campaign switcher,
  * nav links, theme toggle) above the routed page content (05-UI.md §Top bar).
  * Hosts the app-wide TooltipProvider and the single Toaster (errors surface
- * through `lib/toast.ts` only).
+ * through `lib/toast.ts` only). On start, runs left 'running' by a reload are
+ * marked failed (04-LLM-PERSONAS "Interrupted by reload").
  */
 export function AppShell(): JSX.Element {
   useThemeSync();
+  void failRunningRuns().catch((error: unknown) => {
+    console.error('Could not reconcile interrupted runs', error);
+  });
 
   return (
     <TooltipProvider>

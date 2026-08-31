@@ -12,7 +12,9 @@ import { chat, listModels, MissingApiKeyError } from '@/llm/openrouter';
  * errors — with mocked fetch and fast retry backoffs.
  */
 
-interface SseEvent { choices?: { delta?: { content?: string } }[] }
+interface SseEvent {
+  choices?: { delta?: { content?: string } }[];
+}
 
 function sseResponse(events: SseEvent[]): Response {
   const encoder = new TextEncoder();
@@ -54,7 +56,7 @@ describe('chat', () => {
             { choices: [{ delta: { content: 'world' } }] },
             { choices: [{ delta: {} }] },
           ]),
-        ) as Promise<Response>,
+        ),
     );
     vi.stubGlobal('fetch', fetchMock);
 

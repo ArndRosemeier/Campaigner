@@ -8,9 +8,11 @@ import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { CampaignTree } from '@/features/campaign/components/campaign-tree';
-import { PersonaPanelPlaceholder } from '@/features/campaign/components/persona-panel-placeholder';
+import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { WelcomePanel } from '@/features/campaign/components/welcome-panel';
 import { useArtifacts, useCampaign } from '@/features/campaign/hooks';
+import { readSettings } from '@/db/settingsRepo';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 /** Pane ids for layout persistence (must match the rendered Panels). */
 const PANEL_IDS = ['tree', 'editor', 'persona'] as const;
@@ -81,10 +83,21 @@ export function WorkspacePage(): JSX.Element {
       </ResizablePanel>
       <ResizableHandle />
       <ResizablePanel id="persona" defaultSize="30%" minSize={320}>
-        <PersonaPanelPlaceholder />
+        <PersonaPanelWithKey campaign={campaign} />
       </ResizablePanel>
     </ResizablePanelGroup>
   );
+}
+
+/** Persona panel with the API-key presence from settings. */
+function PersonaPanelWithKey({
+  campaign,
+}: {
+  campaign: NonNullable<ReturnType<typeof useCampaign>>;
+}): JSX.Element {
+  const settings = useLiveQuery(() => readSettings(), []);
+  const hasApiKey = (settings?.openRouterApiKey ?? '') !== '';
+  return <PersonaPanel campaign={campaign} hasApiKey={hasApiKey} />;
 }
 
 function MissingPane({ message, backLink }: { message: string; backLink?: boolean }): JSX.Element {

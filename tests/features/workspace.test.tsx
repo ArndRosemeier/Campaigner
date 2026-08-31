@@ -40,7 +40,7 @@ describe('WorkspacePage', () => {
     renderWorkspace(workspacePath(campaign.id));
 
     expect(await screen.findByText('Gorim')).toBeDefined();
-    expect(screen.getByText('Persona panel')).toBeDefined();
+    expect(screen.getByTestId('persona-panel')).toBeDefined();
 
     await user.click(screen.getByText('Gorim'));
 
