@@ -5,8 +5,10 @@ import { z } from 'zod';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { ROUTES } from '@/app/routes';
+import { ROUTES, workspacePath } from '@/app/routes';
 import { DEFAULT_THEME, THEME_STORAGE_KEY, useThemeStore } from '@/app/theme/theme';
+import { createCampaign } from '@/db/campaignRepo';
+import { clearDatabase } from './db/helpers';
 
 /**
  * App shell behavior (T1): shell + theme toggle on every route, and the
@@ -89,6 +91,42 @@ describe('app shell', () => {
     renderAppAt('/definitely-not-a-route');
 
     expect(screen.getByRole('heading', { name: 'Page not found' })).toBeInTheDocument();
+  });
+});
+
+describe('campaign switcher', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+  });
+
+  it('lists created campaigns, navigates on selection and shows the current one', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'The Sunless Sea', system: 'generic-d20' });
+    renderAppAt(ROUTES.campaignPicker);
+
+    // On the picker route no campaign is open yet.
+    expect(screen.getByTestId('current-campaign')).toHaveTextContent('No campaign');
+
+    await user.click(screen.getByRole('button', { name: 'Switch campaign' }));
+    expect(
+      await screen.findByRole('menuitem', { name: 'The Sunless Sea' }),
+    ).toBeInTheDocument();
+
+    // Selecting a campaign opens its workspace and updates the trigger.
+    await user.click(screen.getByRole('menuitem', { name: 'The Sunless Sea' }));
+    expect(await screen.findByTestId('current-campaign')).toHaveTextContent('The Sunless Sea');
+    expect(window.location.pathname).toBe(workspacePath(campaign.id));
+  });
+
+  it('shows the empty state before any campaign exists', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.campaignPicker);
+
+    await user.click(screen.getByRole('button', { name: 'Switch campaign' }));
+
+    expect(
+      await screen.findByRole('menuitem', { name: 'No campaigns yet' }),
+    ).toHaveAttribute('aria-disabled', 'true');
   });
 });
 
