@@ -1,9 +1,9 @@
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { ChevronDown, CheckIcon } from 'lucide-react';
-import { matchPath, useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
-import { ROUTES, workspacePath } from '@/app/routes';
+import { campaignIdFromPath, workspacePath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -26,9 +26,8 @@ export function CampaignSwitcher(): JSX.Element {
   const { pathname } = useLocation();
 
   // The top bar renders outside the routed page, so useParams() cannot see
-  // :campaignId — match the URL against the workspace/artifact patterns.
-  const match = matchPath(ROUTES.artifact, pathname) ?? matchPath(ROUTES.workspace, pathname);
-  const currentId = match?.params.campaignId;
+  // :campaignId — resolve it from the URL instead (all campaign routes).
+  const currentId = campaignIdFromPath(pathname);
   const current = campaigns?.find((campaign) => campaign.id === currentId);
 
   return (

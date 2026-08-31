@@ -5,6 +5,8 @@
  * `app/router.tsx`; the `*Path()` builders below are used everywhere else
  * (links, navigation) so path strings are never hand-written twice.
  */
+import { matchPath } from 'react-router-dom';
+
 export const ROUTES = {
   /** Campaign picker (list + create). */
   campaignPicker: '/',
@@ -39,4 +41,17 @@ export function workspacePath(campaignId: string): `/c/${string}` {
 /** Path of the workspace screen with a given artifact open. */
 export function artifactPath(campaignId: string, artifactId: string): `/c/${string}/a/${string}` {
   return `/c/${encodeURIComponent(campaignId)}/a/${encodeURIComponent(artifactId)}`;
+}
+
+/**
+ * The campaignId when `pathname` is a campaign-scoped route (workspace,
+ * artifact, graph), else undefined. For chrome rendered outside the routed
+ * page (top bar), which cannot use `useParams` for child-route params.
+ */
+export function campaignIdFromPath(pathname: string): string | undefined {
+  return (
+    matchPath(ROUTES.artifact, pathname)?.params.campaignId ??
+    matchPath(ROUTES.graph, pathname)?.params.campaignId ??
+    matchPath(ROUTES.workspace, pathname)?.params.campaignId
+  );
 }

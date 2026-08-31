@@ -1,4 +1,4 @@
-import { ROUTES } from '@/app/routes';
+import { ROUTES, workspacePath } from '@/app/routes';
 
 /** One primary navigation entry in the top bar (05-UI.md §Top bar). */
 export interface NavItem {
@@ -13,11 +13,17 @@ export interface NavItem {
 
 /**
  * The primary navigation, in spec order: Workspace / Rules / Settings.
- * The Workspace link points at the campaign picker until a campaign is
- * selected (it will target the active campaign from T3 on).
+ *
+ * The Workspace link targets the open campaign's workspace when one is open
+ * (campaign-scoped URL), and falls back to the campaign picker otherwise —
+ * there is no "current campaign" outside the picker to link to.
  */
-export const NAV_ITEMS: readonly NavItem[] = [
-  { label: 'Workspace', to: ROUTES.campaignPicker, end: true },
-  { label: 'Rules', to: ROUTES.rules, end: false },
-  { label: 'Settings', to: ROUTES.settings, end: false },
-];
+export function navItems(campaignId: string | undefined): readonly NavItem[] {
+  return [
+    campaignId === undefined
+      ? { label: 'Workspace', to: ROUTES.campaignPicker, end: true }
+      : { label: 'Workspace', to: workspacePath(campaignId), end: false },
+    { label: 'Rules', to: ROUTES.rules, end: false },
+    { label: 'Settings', to: ROUTES.settings, end: false },
+  ];
+}

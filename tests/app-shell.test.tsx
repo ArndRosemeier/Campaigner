@@ -1,11 +1,11 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
 import { z } from 'zod';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { ROUTES, workspacePath } from '@/app/routes';
+import { ROUTES, graphPath, workspacePath } from '@/app/routes';
 import { DEFAULT_THEME, THEME_STORAGE_KEY, useThemeStore } from '@/app/theme/theme';
 import { createCampaign } from '@/db/campaignRepo';
 import { clearDatabase } from './db/helpers';
@@ -127,6 +127,39 @@ describe('campaign switcher', () => {
     expect(
       await screen.findByRole('menuitem', { name: 'No campaigns yet' }),
     ).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('tracks the campaign in the switcher on every campaign route', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+
+    renderAppAt(graphPath(campaign.id));
+    // The trigger renders synchronously with 'No campaign'; the live query
+    // resolves a tick later.
+    await waitFor(() => {
+      expect(screen.getByTestId('current-campaign')).toHaveTextContent('Ember');
+    });
+  });
+
+  it('points the Workspace nav link at the open campaign', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+
+    renderAppAt(workspacePath(campaign.id));
+    await waitFor(() => {
+      expect(screen.getByTestId('current-campaign')).toHaveTextContent('Ember');
+    });
+    expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
+      'href',
+      workspacePath(campaign.id),
+    );
+  });
+
+  it('points the Workspace nav link at the picker when no campaign is open', () => {
+    renderAppAt(ROUTES.campaignPicker);
+
+    expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
+      'href',
+      ROUTES.campaignPicker,
+    );
   });
 });
 
