@@ -11,6 +11,7 @@ import type { ChatOptions } from '@/llm/openrouter';
 import { WritersRoom } from '@/features/campaign/components/writers-room';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { clearDatabase } from '../db/helpers';
+import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Module forge UI (M3): the Writers' room forge card plans and runs the whole
@@ -306,5 +307,75 @@ describe('Module forge UI', () => {
     expect(names).toHaveLength(2);
     expect(names).toContain('The Sunken Shrine');
     expect(names).toContain('Session 1');
+    await flushAsyncUpdates();
   }, 40000);
+
+  it('a failed step is resumable: retry re-runs it and the forge completes', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+
+    // Key locations fail on the first attempt (the draft AND its automatic
+    // JSON-fix retry), then answer normally — as if the LLM hiccuped once.
+    let locationCalls = 0;
+    chatMock.mockImplementation((messages: unknown) => {
+      const text = JSON.stringify(messages);
+      if (text.includes('Create key location')) {
+        locationCalls += 1;
+        if (locationCalls <= 2) return Promise.resolve('{"name": ');
+        return Promise.resolve(JSON.stringify(LOCATION));
+      }
+      return Promise.resolve(forgeReply(messages));
+    });
+
+    render(<WritersRoom campaign={campaign} />);
+    const forge = await screen.findByTestId('module-forge');
+    await user.type(
+      within(forge).getByLabelText('Module concept'),
+      'A drowned shrine calls a harbour town.',
+    );
+    await user.click(within(forge).getByTestId('forge-module'));
+
+    // The failure names the failed step, notes prior work is kept, and the
+    // retry affordance is right there.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('forge-status').textContent).toContain(
+          'failed at "Key location 1"',
+        );
+      },
+      { timeout: 20_000 },
+    );
+    expect(screen.getByTestId('forge-status').textContent).toContain(
+      'everything before it is kept',
+    );
+    const retryButton = screen.getByTestId('retry-forge');
+    expect(retryButton).toBeEnabled();
+
+    await user.click(retryButton);
+
+    // The forge continues from the failed step through refinement.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('forge-status').textContent).toContain('Module complete');
+      },
+      { timeout: 30_000 },
+    );
+
+    // The full module exists — including both locations (the defaults
+    // generate two, and both drafts share the sample name).
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    const names = artifacts.map((artifact) => artifact.name);
+    expect(names.filter((name) => name === 'Drowned Docks')).toHaveLength(2);
+    expect(artifacts).toHaveLength(11);
+
+    // History: the 3 original runs (arc, session, failed location) plus the
+    // 9 retry runs (locations, faction, NPCs, encounters, continuity) — the
+    // completed steps were never re-run.
+    const runs = await db.runs.toArray();
+    expect(runs).toHaveLength(12);
+    expect(runs.filter((run) => run.status === 'failed')).toHaveLength(1);
+    const failedRun = runs.find((run) => run.status === 'failed');
+    expect(failedRun?.errorMessage ?? '').not.toBe('');
+    await flushAsyncUpdates();
+  }, 60000);
 });

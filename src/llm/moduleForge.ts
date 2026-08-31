@@ -154,6 +154,17 @@ export class ModuleForge {
   };
   private cancelRequested = false;
   private chainUnsubscribe: (() => void) | null = null;
+  /** Inputs of the last run() — retry() resumes the failed phase of it. */
+  private lastRunArgs: {
+    campaign: Campaign;
+    personas: readonly Persona[];
+    options: ModuleForgeOptions;
+    pinnedChunkIds: readonly Id[];
+  } | null = null;
+  /** Phase the last run failed in (null when nothing is resumable). */
+  private failedPhase: 'generating' | 'refining' | null = null;
+  /** Artifacts produced by the generate phase (context for the refine chain). */
+  private producedIds: Id[] = [];
 
   on(listener: ForgeListener): () => void {
     this.listeners.add(listener);
@@ -185,10 +196,22 @@ export class ModuleForge {
     return this.cancelRequested;
   }
 
+  /** Subscribes to chain updates (replacing any previous subscription). */
+  private watchChain(): void {
+    this.chainUnsubscribe?.();
+    this.chainUnsubscribe = chainRunner.on((chain) => {
+      this.state = { ...this.state, chain };
+      this.emit();
+    });
+  }
+
   reset(): void {
     this.cancelRequested = false;
     this.chainUnsubscribe?.();
     this.chainUnsubscribe = null;
+    this.lastRunArgs = null;
+    this.failedPhase = null;
+    this.producedIds = [];
     chainRunner.reset();
     this.state = { phase: 'idle', chain: chainRunner.getState() };
     this.emit();
@@ -201,25 +224,25 @@ export class ModuleForge {
     options: ModuleForgeOptions,
     pinnedChunkIds: readonly Id[],
   ): Promise<ForgeState> {
+    this.lastRunArgs = { campaign, personas, options, pinnedChunkIds };
+    this.producedIds = [];
+    this.failedPhase = null;
     this.cancelRequested = false;
-    this.chainUnsubscribe = chainRunner.on((chain) => {
-      this.state = { ...this.state, chain };
-      this.emit();
-    });
+    this.watchChain();
 
     this.state = { phase: 'generating', chain: chainRunner.getState() };
     this.emit();
 
-    const generateSteps = buildModuleSteps(options, personas);
     const generateResult = await chainRunner.run(
       campaign,
       personas,
-      generateSteps,
+      buildModuleSteps(options, personas),
       'auto',
       pinnedChunkIds,
     );
 
     if (generateResult.status !== 'completed') {
+      this.failedPhase = 'generating';
       this.state.phase =
         generateResult.status === 'cancelled' || this.cancelWasRequested()
           ? 'cancelled'
@@ -227,6 +250,57 @@ export class ModuleForge {
       this.emit();
       return this.state;
     }
+
+    this.producedIds = generateResult.steps
+      .map((step) => step.artifactId)
+      .filter((id): id is Id => id !== null);
+    return this.runRefinePhase();
+  }
+
+  /**
+   * Resumes a failed forge from its failed step (00-OVERVIEW: prior work is
+   * never wasted). The failed run stays in the Runs tab with its error;
+   * retry starts a new run for that step — fed the artifacts of every
+   * completed step — and then finishes the remaining plan, including the
+   * refinement pass when the generation phase completed.
+   */
+  async retry(): Promise<ForgeState> {
+    const args = this.lastRunArgs;
+    if (args === null || this.failedPhase === null) return this.state;
+    if (chainRunner.getState().status !== 'failed') return this.state;
+
+    this.cancelRequested = false;
+    this.watchChain();
+    this.state = { ...this.state, phase: this.failedPhase };
+    this.emit();
+
+    const chainResult = await chainRunner.retry();
+    if (chainResult.status !== 'completed') {
+      this.state.phase =
+        chainResult.status === 'cancelled' || this.cancelWasRequested()
+          ? 'cancelled'
+          : 'failed';
+      this.emit();
+      return this.state;
+    }
+
+    if (this.failedPhase === 'generating') {
+      this.producedIds = chainResult.steps
+        .map((step) => step.artifactId)
+        .filter((id): id is Id => id !== null);
+      return this.runRefinePhase();
+    }
+
+    this.state.phase = 'completed';
+    this.emit();
+    return this.state;
+  }
+
+  /** Refinement phase: continuity report → one refine step per finding. */
+  private async runRefinePhase(): Promise<ForgeState> {
+    const args = this.lastRunArgs;
+    if (args === null) throw new Error('Module forge cannot refine without its run inputs');
+    const { campaign, personas, options, pinnedChunkIds } = args;
 
     if (!options.refinePass) {
       this.state.phase = 'completed';
@@ -237,29 +311,25 @@ export class ModuleForge {
     this.state.phase = 'refining';
     this.emit();
 
-    const producedIds = generateResult.steps
-      .map((step) => step.artifactId)
-      .filter((id): id is Id => id !== null);
-    const refineSteps = await buildRefineSteps(producedIds, personas);
+    const refineSteps = await buildRefineSteps(this.producedIds, personas);
     if (refineSteps.length === 0) {
       this.state.phase = 'completed';
       this.emit();
       return this.state;
     }
 
-    const refineResult = await chainRunner.run(
-      campaign,
-      personas,
-      refineSteps,
-      'auto',
-      pinnedChunkIds,
-    );
-    this.state.phase =
-      refineResult.status === 'completed'
-        ? 'completed'
-        : refineResult.status === 'cancelled' || this.cancelWasRequested()
+    const refineResult = await chainRunner.run(campaign, personas, refineSteps, 'auto', pinnedChunkIds);
+    if (refineResult.status !== 'completed') {
+      this.failedPhase = 'refining';
+      this.state.phase =
+        refineResult.status === 'cancelled' || this.cancelWasRequested()
           ? 'cancelled'
           : 'failed';
+      this.emit();
+      return this.state;
+    }
+
+    this.state.phase = 'completed';
     this.emit();
     return this.state;
   }

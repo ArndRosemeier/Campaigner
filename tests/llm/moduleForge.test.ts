@@ -255,6 +255,111 @@ describe('ModuleForge end-to-end', () => {
     expect(forgeState.chain.steps).toHaveLength(1);
     expect(forgeState.chain.steps[0]?.artifactId).not.toBeNull();
   }, 30000);
+
+  it('retry resumes a failed generate phase from the failed step, keeping prior artifacts', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const options = {
+      concept: 'A sunken shrine drives a harbour town mad.',
+      sessions: 0,
+      npcs: 0,
+      locations: 1,
+      factions: 0,
+      encounters: 0,
+      refinePass: false,
+    };
+
+    // Arc completes; the location draft is garbage twice (draft + the
+    // automatic JSON-fix retry) → its run fails → the forge stops.
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(ARC_DRAFT))
+      .mockResolvedValueOnce('this is not json')
+      .mockResolvedValueOnce('still not json');
+
+    const failed = await moduleForge.run(campaign, BUILT_IN_PERSONAS, options, []);
+    expect(failed.phase).toBe('failed');
+    expect(failed.chain.steps.map((step) => step.status)).toEqual(['completed', 'failed']);
+
+    // Nothing is lost: the arc artifact exists before the retry.
+    const arcBefore = (await import('@/db/artifactRepo').then((m) =>
+      m.listArtifactsByCampaign(campaign.id),
+    )).find((artifact) => artifact.kind === 'plotarc');
+    expect(arcBefore?.name).toBe('The Drowned Bell');
+
+    // Retry: the failed location step re-runs with a valid reply…
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        name: 'The Drowned Docks',
+        summary: 'Flooded piers.',
+        suggestedTags: [],
+        body: '# Docks',
+        locationType: 'district',
+        inhabitants: 'Fishers',
+        pointsOfInterest: [],
+        hooks: [],
+      }),
+    );
+    const retried = await moduleForge.retry();
+    expect(retried.phase).toBe('completed');
+
+    // …and both artifacts exist.
+    const names = (await import('@/db/artifactRepo').then((m) =>
+      m.listArtifactsByCampaign(campaign.id),
+    )).map((artifact) => artifact.name);
+    expect(names).toContain('The Drowned Bell');
+    expect(names).toContain('The Drowned Docks');
+
+    // The failed run stays in history (arc ✓ + failed location + retried location).
+    const runs = await import('@/db/runRepo').then((m) => m.listRunsByCampaign(campaign.id));
+    expect(runs).toHaveLength(3);
+    expect(runs.filter((run) => run.status === 'failed')).toHaveLength(1);
+    expect(runs.filter((run) => run.status === 'completed')).toHaveLength(2);
+  }, 30000);
+
+  it('retry resumes a failed refinement phase without regenerating the module', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const options = {
+      concept: 'A sunken shrine drives a harbour town mad.',
+      sessions: 0,
+      npcs: 0,
+      locations: 0,
+      factions: 0,
+      encounters: 0,
+      refinePass: true,
+    };
+
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(ARC_DRAFT)) // arc
+      .mockResolvedValueOnce(JSON.stringify(REPORT_ISSUES)) // continuity review → refine step planned
+      .mockResolvedValueOnce('garbage one') // refine draft fails
+      .mockResolvedValueOnce('garbage two'); // its JSON-fix retry fails
+
+    const failed = await moduleForge.run(campaign, BUILT_IN_PERSONAS, options, []);
+    expect(failed.phase).toBe('failed');
+    // The failed chain IS the refine chain.
+    expect(failed.chain.steps[0]?.title).toContain('Refine');
+
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        ...ARC_DRAFT,
+        summary: 'A sunken shrine drives the town mad — docks included.',
+      }),
+    );
+    const retried = await moduleForge.retry();
+    expect(retried.phase).toBe('completed');
+
+    // The module was NOT regenerated: the original arc plus exactly one
+    // refined copy (the engine never overwrites).
+    const arcs = (await import('@/db/artifactRepo').then((m) =>
+      m.listArtifactsByCampaign(campaign.id),
+    )).filter((artifact) => artifact.name === 'The Drowned Bell');
+    expect(arcs).toHaveLength(2);
+    expect(arcs.some((artifact) => artifact.summary.includes('docks included'))).toBe(true);
+
+    // 2 generate-chain runs + 1 failed refine run + 1 retried refine run.
+    const runs = await import('@/db/runRepo').then((m) => m.listRunsByCampaign(campaign.id));
+    expect(runs).toHaveLength(4);
+    expect(runs.filter((run) => run.status === 'failed')).toHaveLength(1);
+  }, 30000);
 });
 
 /** Unit coverage for the refine plan builder (engine-created artifacts). */

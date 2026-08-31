@@ -7,6 +7,7 @@ import {
   BanIcon,
   PlayIcon,
   PlusIcon,
+  RotateCcwIcon,
   SparklesIcon,
   Trash2Icon,
 } from 'lucide-react';
@@ -165,6 +166,22 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
             {forge.phase === 'failed' && forgeFailureLine(forge)}
             {forge.phase === 'cancelled' && 'The forge was stopped.'}
           </p>
+        )}
+        {forge.phase === 'failed' && (
+          <Button
+            variant="outline"
+            size="sm"
+            className="self-start"
+            data-testid="retry-forge"
+            onClick={() => {
+              void moduleForge.retry().catch((error: unknown) => {
+                toastError('Could not retry the forge', error);
+              });
+            }}
+          >
+            <RotateCcwIcon aria-hidden data-icon="inline-start" />
+            Retry failed step
+          </Button>
         )}
       </section>
       <p className="text-xs text-muted-foreground">
@@ -362,6 +379,24 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
               </Button>
             </li>
           )}
+          {chain.status === 'failed' && (
+            <li className="flex items-center gap-2 text-xs text-muted-foreground">
+              Chain failed — completed steps are kept as context.
+              <Button
+                variant="outline"
+                size="xs"
+                data-testid="retry-chain"
+                onClick={() => {
+                  void chainRunner.retry().catch((error: unknown) => {
+                    toastError('Could not retry the chain', error);
+                  });
+                }}
+              >
+                <RotateCcwIcon aria-hidden data-icon="inline-start" />
+                Retry failed step
+              </Button>
+            </li>
+          )}
         </ol>
       )}
     </div>
@@ -411,5 +446,5 @@ function RunTokenPreview({ runId }: { runId: Id }): JSX.Element {
 function forgeFailureLine(forge: ForgeState): string {
   const failed = forge.chain.steps.find((step) => step.status === 'failed');
   const title = failed?.title ?? 'a step';
-  return `The forge failed at "${title}" — open the Runs tab to see what went wrong, then run the forge again.`;
+  return `The forge failed at "${title}" — everything before it is kept. Retry continues from that step; the failed run stays in the Runs tab with its error.`;
 }

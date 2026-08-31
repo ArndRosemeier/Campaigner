@@ -319,4 +319,93 @@ describe('writers\u2019 room chain', () => {
     if (reportId === null || reportId === undefined) throw new Error('no report artifact');
     expect(await getArtifact(reportId)).toBeDefined();
   }, 30000);
+
+  it('retry resumes a failed chain from the failed step, reusing prior artifacts as context', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const worldbuilder = personaOf('worldbuilder', 'Worldbuilder', 'location');
+    const factionDesigner = personaOf('faction-designer', 'Faction Designer', 'faction');
+
+    // Step 1 completes; step 2's reply is garbage twice (draft + the engine's
+    // automatic JSON-fix retry) → the run fails → the chain stops.
+    chatMock
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          name: 'Emberfall Docks',
+          summary: 'Smuggling hub.',
+          suggestedTags: [],
+          body: '# Emberfall Docks',
+          locationType: 'district',
+          inhabitants: 'Dockworkers',
+          pointsOfInterest: [],
+          hooks: [],
+        }),
+      )
+      .mockResolvedValueOnce('this is not json')
+      .mockResolvedValueOnce('still not json');
+
+    const steps: ChainStepInput[] = [
+      { personaId: worldbuilder.id, brief: 'Build a docks district.' },
+      { personaId: factionDesigner.id, brief: 'Design the faction ruling it.' },
+    ];
+    const failed = await chainRunner.run(
+      campaign,
+      [worldbuilder, factionDesigner],
+      steps,
+      'auto',
+      [],
+    );
+    expect(failed.status).toBe('failed');
+    expect(failed.steps.map((step) => step.status)).toEqual(['completed', 'failed']);
+
+    // The failed run stays in history with its error message (loud, per 00-OVERVIEW).
+    const { listRunsByCampaign } = await import('@/db/runRepo');
+    const runsAfterFailure = await listRunsByCampaign(campaign.id);
+    expect(runsAfterFailure).toHaveLength(2);
+    const failedRun = runsAfterFailure.find((run) => run.status === 'failed');
+    expect(failedRun?.errorMessage ?? '').not.toBe('');
+
+    // Retry: only the failed step re-runs, with a valid reply this time.
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        name: 'The Ember Guild',
+        summary: 'Rules the docks.',
+        suggestedTags: [],
+        body: 'A guild.',
+        goals: '',
+        methods: '',
+        resources: '',
+        ranks: [],
+      }),
+    );
+    const retried = await chainRunner.retry();
+    expect(retried.status).toBe('completed');
+    expect(retried.steps.map((step) => step.status)).toEqual(['completed', 'completed']);
+
+    // Prior work was never wasted: the retried step received the completed
+    // step's artifact as context (its name appears in the retried prompt).
+    const retryCall = chatMock.mock.calls.at(-1);
+    const retryMessages = (retryCall?.[0] ?? []) as readonly { content: string }[];
+    expect(JSON.stringify(retryMessages)).toContain('Emberfall Docks');
+
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    expect(artifacts).toHaveLength(2);
+    expect(artifacts.map((artifact) => artifact.kind)).toEqual(['location', 'faction']);
+
+    // History keeps the failed run (2 original + 1 retried).
+    const runs = await listRunsByCampaign(campaign.id);
+    expect(runs).toHaveLength(3);
+    expect(runs.filter((run) => run.status === 'failed')).toHaveLength(1);
+    expect(runs.filter((run) => run.status === 'completed')).toHaveLength(2);
+  }, 30000);
+
+  it('retry is a no-op when the chain is not failed', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const persona = personaOf('worldbuilder', 'Worldbuilder', 'location');
+    // Never-run state: retry must not start anything.
+    const state = await chainRunner.retry();
+    expect(state.status).toBe('idle');
+    expect(await listArtifactsByCampaign(campaign.id)).toHaveLength(0);
+    expect(chatMock).not.toHaveBeenCalled();
+    void persona;
+  });
 });

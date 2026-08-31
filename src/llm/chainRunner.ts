@@ -276,6 +276,40 @@ export class ChainRunner {
     );
   }
 
+  /**
+   * Resumes a FAILED chain from its failed step (00-OVERVIEW: a run that
+   * failed at one step is resumable, not restartable). The failed run stays
+   * in the Runs tab with its error message; retry starts a NEW run for that
+   * step — fed the artifacts of every completed step before it as context —
+   * and then runs the remaining steps.
+   */
+  async retry(): Promise<ChainState> {
+    if (this.resumeArgs === null || this.state.status !== 'failed') return this.state;
+    const failedIndex = this.state.steps.findIndex((step) => step.status === 'failed');
+    const failedStep = this.state.steps[failedIndex];
+    if (failedIndex === -1 || failedStep === undefined) return this.state;
+
+    const args = this.resumeArgs;
+    this.state.status = 'running';
+    this.emit();
+
+    // Prior work feeds the retried step as context — nothing is wasted.
+    const producedArtifactIds = this.state.steps
+      .slice(0, failedIndex)
+      .map((step) => step.artifactId)
+      .filter((id): id is Id => id !== null);
+
+    return this.runRemaining(
+      args.campaign,
+      args.personas,
+      args.steps,
+      args.autonomy,
+      args.pinnedChunkIds,
+      failedIndex,
+      producedArtifactIds,
+    );
+  }
+
   /** Runs steps[fromIndex..] with the given already-produced artifacts. */
   private async runRemaining(
     campaign: Campaign,
