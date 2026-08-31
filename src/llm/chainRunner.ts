@@ -13,6 +13,26 @@ import { runEngine, type StartRunInput } from '@/llm/runEngine';
 export interface ChainStepInput {
   personaId: Id;
   brief: string;
+  /** Per-step autonomy override (falls back to the chain-wide autonomy). */
+  autonomy?: Autonomy;
+  /**
+   * Review steps only: which produced artifact to review. 'first' targets
+   * the first artifact of the chain (the module's plot arc), 'last' the most
+   * recent one. Ignored for generate personas.
+   */
+  reviewTarget?: 'first' | 'last';
+}
+
+/** Autonomy for a step: the explicit override wins over the chain default. */
+function autonomyFor(step: ChainStepInput | undefined, chainAutonomy: Autonomy): Autonomy {
+  return step?.autonomy ?? chainAutonomy;
+}
+
+/** The review target for a review-persona step, from artifacts so far. */
+function reviewTargetId(step: ChainStepInput | undefined, produced: readonly Id[]): Id | undefined {
+  if (step?.reviewTarget === 'first') return produced[0];
+  if (step?.reviewTarget === 'last') return produced[produced.length - 1];
+  return produced[produced.length - 1];
 }
 
 export type ChainStepStatus =
@@ -135,14 +155,19 @@ export class ChainRunner {
       this.state.steps[index] = { runId: null, status: 'running', artifactId: null };
       this.emit();
 
+      const stepAutonomy = autonomyFor(step, autonomy);
       const input: StartRunInput = {
         campaign,
         persona,
-        autonomy,
+        autonomy: stepAutonomy,
         brief: step.brief,
         pinnedChunkIds,
         contextArtifactIds: producedArtifactIds,
       };
+      if (persona.mode === 'review') {
+        const targetId = reviewTargetId(step, producedArtifactIds);
+        if (targetId !== undefined) input.targetArtifactId = targetId;
+      }
       const runId = await runEngine.startRun(input);
       this.state.steps[index] = { runId, status: 'running', artifactId: null };
       this.emit();
@@ -258,14 +283,19 @@ export class ChainRunner {
       this.state.steps[index] = { runId: null, status: 'running', artifactId: null };
       this.emit();
 
+      const stepAutonomy = autonomyFor(step, autonomy);
       const input: StartRunInput = {
         campaign,
         persona,
-        autonomy,
+        autonomy: stepAutonomy,
         brief: step.brief,
         pinnedChunkIds,
         contextArtifactIds: producedArtifactIds,
       };
+      if (persona.mode === 'review') {
+        const targetId = reviewTargetId(step, producedArtifactIds);
+        if (targetId !== undefined) input.targetArtifactId = targetId;
+      }
       const runId = await runEngine.startRun(input);
       this.state.steps[index] = { runId, status: 'running', artifactId: null };
       this.emit();

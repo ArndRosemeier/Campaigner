@@ -11,6 +11,7 @@ export type HelpTopic =
   | 'editor'
   | 'assistant'
   | 'writers-room'
+  | 'module'
   | 'runs'
   | 'rules'
   | 'search'
@@ -104,8 +105,22 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'Typical chain: Plot Architect (arc) → Session Chronicler (session) → NPC Smith (villain) — later steps see what earlier ones produced.',
       'A chain pauses when a Manual/Review step asks for input; resolve it in the Assistant tab, then Resume the chain here.',
       'Stop cancels the chain after the current step.',
+      'Want zero setup? The Module forge above builds and runs a whole-module plan for you, including continuity refinement.',
     ],
     keywords: 'chain pipeline steps resume pause sequence',
+  },
+  module: {
+    title: 'Module forge (one-click module)',
+    summary:
+      'Fully automatic generation of a whole adventure module from a one-or-two sentence concept — no step-by-step setup needed.',
+    tips: [
+      '"Generate module" plans and runs the entire pipeline itself: plot arc first, then sessions, locations, factions, NPCs and encounters — every step automatic, each one seeing the artifacts created before it.',
+      'With the continuity pass on, the Continuity Editor reviews the finished set; when it finds issues, the forge automatically runs refinement steps for the flagged artifacts.',
+      'Refinements are NEW artifacts placed next to the originals (the engine never overwrites) — compare them in the editor and delete the weaker version.',
+      'Watch progress right in the forge card; every step is a real run listed in the Runs tab. Stop cancels after the current step.',
+      'For full control use the chain builder below instead: same engine, but you define each step yourself.',
+    ],
+    keywords: 'automatic one-click whole module generate refine continuity forge',
   },
   runs: {
     title: 'Runs',

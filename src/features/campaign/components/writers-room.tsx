@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowDownIcon, ArrowUpIcon, BanIcon, PlayIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+  BanIcon,
+  PlayIcon,
+  PlusIcon,
+  SparklesIcon,
+  Trash2Icon,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -16,6 +26,8 @@ import {
 } from '@/components/ui/select';
 import type { Autonomy, Campaign, Id } from '@/domain';
 import { chainRunner, type ChainState } from '@/llm/chainRunner';
+import { DEFAULT_MODULE_OPTIONS, moduleForge, type ForgeState } from '@/llm/moduleForge';
+import { HelpButton } from '@/help/HelpButton';
 import { listPersonas } from '@/db/personaRepo';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 
@@ -42,8 +54,14 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
   const [chain, setChain] = useState<ChainState>(chainRunner.getState());
   const [autonomy, setAutonomy] = useState<Autonomy>('auto');
   const [steps, setSteps] = useState<{ personaId: Id; brief: string }[]>([]);
+  const [forge, setForge] = useState<ForgeState>(moduleForge.getState());
+  const [concept, setConcept] = useState('');
+  const [refinePass, setRefinePass] = useState(true);
 
   useEffect(() => chainRunner.on(setChain), []);
+  useEffect(() => moduleForge.on(setForge), []);
+
+  const forgeBusy = forge.phase === 'generating' || forge.phase === 'refining';
 
   function addStep(): void {
     const first = personas?.[0];
@@ -69,6 +87,78 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="writers-room">
+      <section className="flex flex-col gap-2 rounded-lg border p-3" data-testid="module-forge">
+        <h2 className="flex items-center gap-1 text-sm font-semibold">
+          Module forge
+          <HelpButton topic="module" label="module forge" />
+        </h2>
+        <p className="text-xs text-muted-foreground">
+          One click generates a whole module — arc, sessions, locations, factions, NPCs, encounters
+          — then a continuity pass refines flagged parts. Refinements appear as new artifacts next
+          to the originals.
+        </p>
+        <Textarea
+          value={concept}
+          placeholder="Module concept — e.g. 'A smuggling ring in a flooded mining town hides an older cult; the party arrives as a festival begins.'"
+          aria-label="Module concept"
+          className="min-h-16 text-sm"
+          onChange={(event) => {
+            setConcept(event.target.value);
+          }}
+        />
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          <Checkbox
+            checked={refinePass}
+            onCheckedChange={(checked) => {
+              if (typeof checked === 'boolean') setRefinePass(checked);
+            }}
+          />
+          Continuity review + automatic refinement pass
+        </label>
+        <div className="flex gap-2">
+          <Button
+            data-testid="forge-module"
+            disabled={forgeBusy || busy || concept.trim() === '' || personas === undefined}
+            onClick={() => {
+              void moduleForge
+                .run(
+                  campaign,
+                  personas ?? [],
+                  { ...DEFAULT_MODULE_OPTIONS, concept, refinePass },
+                  pinned.map((chunk) => chunk.id),
+                )
+                .catch((error: unknown) => {
+                  console.error(error);
+                });
+            }}
+          >
+            <SparklesIcon aria-hidden data-icon="inline-start" />
+            Generate module
+          </Button>
+          {forgeBusy && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                moduleForge.cancel();
+              }}
+            >
+              <BanIcon aria-hidden data-icon="inline-start" />
+              Stop
+            </Button>
+          )}
+        </div>
+        {forge.phase !== 'idle' && (
+          <p className="text-xs text-muted-foreground" data-testid="forge-status">
+            {forge.phase === 'generating' && 'Generating artifacts…'}
+            {forge.phase === 'refining' && 'Refining flagged artifacts…'}
+            {forge.phase === 'completed' &&
+              `Module complete — ${forge.chain.steps.filter((s) => s.artifactId !== null).length} artifacts generated.`}
+            {forge.phase === 'failed' &&
+              'The forge failed — check the Runs tab for the failing step.'}
+            {forge.phase === 'cancelled' && 'The forge was stopped.'}
+          </p>
+        )}
+      </section>
       <p className="text-xs text-muted-foreground">
         Chain personas into a pipeline — each step sees the artifacts of the steps before it.
       </p>
