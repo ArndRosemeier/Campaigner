@@ -16,8 +16,17 @@ async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>
 - Endpoint `POST https://openrouter.ai/api/v1/chat/completions`, headers
   `Authorization: Bearer <settings.openRouterApiKey>`,
   `HTTP-Referer: 'https://campaigner.local'`, `X-Title: 'Campaigner'`.
-- Always request `stream: true`; parse SSE lines (`data: {json}` / `data: [DONE]`),
-  concatenate `choices[0].delta.content`, invoke `onToken` per delta.
+- Always request `stream: true`; parse SSE per the WHATWG spec (`data: {json}` /
+  `data: [DONE]`, `:`-prefixed keep-alive comments like `: OPENROUTER PROCESSING`
+  are ignored), concatenate `choices[0].delta.content`, invoke `onToken` per delta.
+- Stream completion: whichever comes first of `[DONE]`, a clean connection
+  close, or `choices[0].finish_reason` (the terminal finish_reason repeats on
+  OpenRouter's accounting usage chunk — treat it as an accounting frame, not a
+  second terminal event). The reader is cancelled on completion/failure so the
+  connection returns to the pool.
+- Stream failures are surfaced, never hung: a top-level `error` field or
+  `finish_reason: "error"` throws `OpenRouterError`; no bytes for 120s (stall
+  watchdog, keep-alives count as activity) aborts with a stall error.
 - Errors: non-200 → throw `OpenRouterError(status, bodyText)`. 429/5xx: retry
   twice with 2s/8s backoff before throwing. Missing API key → throw
   `MissingApiKeyError` (UI catches this and opens Settings).

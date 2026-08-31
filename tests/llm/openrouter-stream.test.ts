@@ -6,27 +6,19 @@ import { chat, OpenRouterError } from '@/llm/openrouter';
 import { updateSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
-/**
- * OpenRouter stream hardening: a stalled SSE connection and in-stream error
- * events must fail fast (previously runs hung in "streaming" forever), and a
- * provider that never sends [DONE] must not leave runs hanging after the
- * content is complete.
- */
-
 function sseResponse(chunks: string[], close = false): Response {
   const encoder = new TextEncoder();
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
       if (close) controller.close();
-      // NOTE: when not closed, the stream stalls forever (provider hang).
     },
   });
   return new Response(stream, { status: 200 });
 }
 
 function fetchStub(response: Response): typeof fetch {
-  return vi.fn(async () => response);
+  return vi.fn(() => Promise.resolve(response));
 }
 
 beforeEach(async () => {
@@ -63,7 +55,9 @@ describe('chat stream hardening', () => {
     expect(result).toBe('Hello');
     expect(tokens).toEqual(['Hel', 'lo']);
   });
+});
 
+describe('more stream cases', () => {
   it('throws when the stream stalls beyond the stall timeout', async () => {
     vi.stubGlobal('fetch', fetchStub(sseResponse([': keep-alive\n\n'])));
     await expect(
@@ -88,10 +82,10 @@ describe('chat stream hardening', () => {
       chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0.5 }, [0, 0], 5000),
     ).rejects.toThrow(/provider exploded/);
   });
+});
 
-  it('treats stream end without [DONE] as completion of what arrived', async () => {
-    // Provider closed the connection without [DONE]: the partial text is kept
-    // (the caller's JSON parsing decides whether it is usable).
+describe('documented OpenRouter behaviors', () => {
+  it('treats stream end without DONE as completion of what arrived', async () => {
     vi.stubGlobal(
       'fetch',
       fetchStub(sseResponse(['data: {"choices":[{"delta":{"content":"{}"}}]}\n\n'], true)),
@@ -105,10 +99,7 @@ describe('chat stream hardening', () => {
     expect(result).toBe('{}');
   });
 
-  it('finishes on finish_reason even when [DONE] never arrives', async () => {
-    // Reproduces the reported hang: all content arrives, the provider sends
-    // finish_reason, then keeps the socket open with keep-alive comments
-    // forever — no [DONE], no close. The stream must complete anyway.
+  it('finishes on finish_reason even when DONE never arrives', async () => {
     vi.stubGlobal(
       'fetch',
       fetchStub(
@@ -117,7 +108,86 @@ describe('chat stream hardening', () => {
           'data: {"choices":[{"delta":{"content":", \\"hp\\": 22}"}}]}\n\n',
           'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n',
           ': OPENROUTER PROCESSING\n\n',
-          ': OPENROUTER PROCESSING\n\n',
+        ]),
+      ),
+    );
+    const result = await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'm', temperature: 0.5 },
+      [0, 0],
+      300,
+    );
+    expect(result).toBe('{"ac": 14, "hp": 22}');
+  });
+});
+
+describe('documented error and framing shapes', () => {
+  it('handles the documented mid-stream error event', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse(
+          [
+            'data: {"choices":[{"delta":{"content":"partial"}}]}\n\n',
+            'data: {"id":"cmpl-1","error":{"code":"server_error","message":"Provider disconnected unexpectedly"},"choices":[{"index":0,"delta":{"content":""},"finish_reason":"error"}]}\n\n',
+          ],
+          true,
+        ),
+      ),
+    );
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0.5 }, [0, 0], 5000),
+    ).rejects.toThrow(/Provider disconnected unexpectedly/);
+  });
+
+  it('treats finish_reason error as failure even without an error field', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse(['data: {"choices":[{"delta":{},"finish_reason":"error"}]}\n\n'], true),
+      ),
+    );
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0.5 }, [0, 0], 5000),
+    ).rejects.toThrow(/finish_reason "error"/);
+  });
+});
+
+describe('framing', () => {
+  it('parses CRLF streams and data lines split across chunks', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"He"}}]}\r\n\r\n',
+          'data: {"choices"',
+          ':[{"delta":{"content":"llo"}}]}\n\n',
+          'data: [DONE]\n\n',
+        ]),
+      ),
+    );
+    const result = await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'm', temperature: 0.5 },
+      [0, 0],
+      5000,
+    );
+    expect(result).toBe('Hello');
+  });
+
+  it('ignores empty deltas and the accounting usage chunk', async () => {
+    // Per the streaming docs, OpenRouter ends every chat stream with a usage
+    // chunk whose content-free delta repeats the terminal finish_reason, just
+    // before [DONE]. The stream must complete on the first finish_reason with
+    // only the real content deltas forwarded to onToken.
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n',
+          'data: {"choices":[{"delta":{"content":"!"},"finish_reason":"stop"}]}\n\n',
+          'data: {"choices":[{"index":0,"delta":{"content":"","role":"assistant"},"finish_reason":"stop","native_finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":2}}\n\n',
+          'data: [DONE]\n\n',
         ]),
       ),
     );
@@ -126,9 +196,9 @@ describe('chat stream hardening', () => {
       [{ role: 'user', content: 'hi' }],
       { model: 'm', temperature: 0.5, onToken: (delta) => tokens.push(delta) },
       [0, 0],
-      300,
+      5000,
     );
-    expect(result).toBe('{"ac": 14, "hp": 22}');
-    expect(tokens).toHaveLength(2);
+    expect(result).toBe('Hi!');
+    expect(tokens).toEqual(['Hi', '!']);
   });
 });

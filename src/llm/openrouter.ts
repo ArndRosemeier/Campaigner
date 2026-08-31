@@ -127,10 +127,59 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
 }
 
 /**
- * Parses `data: {json}` SSE lines, concatenating content deltas. Aborts with
- * an error when the connection goes silent for `stallTimeoutMs`, and treats
- * in-stream `{ "error": … }` events as hard failures instead of ignoring
- * them (both previously left runs stuck in "streaming" forever).
+ * Incremental SSE event parser per the WHATWG spec: events are separated by
+ * blank lines, `data:` fields of one event concatenate with newlines, lines
+ * starting with `:` are comments (OpenRouter's `: OPENROUTER PROCESSING`
+ * keep-alives), and CR is stripped so CRLF streams work. Chunks may split
+ * lines and events anywhere; push() buffers until events are complete.
+ */
+export class SseEventParser {
+  private buffer = '';
+  private dataLines: string[] = [];
+
+  /** Feeds a decoded text chunk; returns the data payload of each complete event. */
+  push(chunk: string): string[] {
+    this.buffer += chunk;
+    const events: string[] = [];
+    for (;;) {
+      const newlineAt = this.buffer.indexOf('\n');
+      if (newlineAt === -1) break;
+      const line = this.buffer.slice(0, newlineAt).replace(/\r$/, '');
+      this.buffer = this.buffer.slice(newlineAt + 1);
+      if (line === '') {
+        // Event boundary: dispatch the collected data field, if any.
+        if (this.dataLines.length > 0) {
+          events.push(this.dataLines.join('\n'));
+          this.dataLines = [];
+        }
+        continue;
+      }
+      if (line.startsWith(':')) continue; // comment / keep-alive
+      if (line.startsWith('data:')) {
+        // Per spec, strip exactly one leading space after the field name.
+        const value = line.slice(5);
+        this.dataLines.push(value.startsWith(' ') ? value.slice(1) : value);
+      }
+      // Other fields (event:, id:, retry:) are irrelevant here.
+    }
+    return events;
+  }
+}
+
+/**
+ * Reads an OpenRouter streaming response and concatenates content deltas.
+ *
+ * End-of-stream is whichever arrives first (per OpenRouter's streaming docs):
+ * the `data: [DONE]` sentinel, a clean connection close, or the
+ * `choices[0].finish_reason` field — OpenRouter's docs note the terminal
+ * finish_reason appears on the last content chunk (and again on the usage
+ * chunk), and some providers never send [DONE] nor close the socket, so
+ * relying on either alone hangs the run.
+ *
+ * Failures that previously left runs in "streaming" forever are surfaced:
+ * mid-stream errors arrive as data events with a top-level `error` field and
+ * `finish_reason: "error"` (both throw), and a connection with no bytes at
+ * all for `stallTimeoutMs` is aborted by a watchdog.
  */
 async function readStream(
   response: Response,
@@ -140,7 +189,7 @@ async function readStream(
   if (response.body === null) throw new OpenRouterError(response.status, 'empty response body');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
-  let buffer = '';
+  const parser = new SseEventParser();
   let full = '';
   let lastActivity = Date.now();
 
@@ -150,57 +199,70 @@ async function readStream(
     }
   }, 1000);
 
+  const handleEvent = (payload: string): 'done' | 'continue' => {
+    if (payload === '[DONE]') return 'done';
+    let delta: string | undefined;
+    let errorText: string | undefined;
+    let finishReason: string | null | undefined;
+    try {
+      const parsed = JSON.parse(payload) as {
+        choices?: {
+          delta?: { content?: string; reasoning?: string; reasoning_content?: string };
+          finish_reason?: string | null;
+        }[];
+        error?: { message?: string } | string;
+      };
+      delta = parsed.choices?.[0]?.delta?.content;
+      finishReason = parsed.choices?.[0]?.finish_reason;
+      if (parsed.error !== undefined) {
+        errorText =
+          typeof parsed.error === 'string'
+            ? parsed.error
+            : (parsed.error.message ?? 'unknown stream error');
+      }
+    } catch {
+      return 'continue'; // ignore malformed payloads (comments never reach here)
+    }
+    if (errorText !== undefined) {
+      throw new OpenRouterError(response.status, `stream error: ${errorText}`);
+    }
+    if (delta !== undefined && delta !== '') {
+      full += delta;
+      onToken?.(delta);
+    }
+    if (finishReason !== null && finishReason !== undefined) {
+      if (finishReason === 'error') {
+        // Per OpenRouter docs, mid-stream errors terminate with
+        // finish_reason: "error" — even without an error field, that is a
+        // failure, not a completed (truncated) answer. (An error field with
+        // a message already threw above, so errorText is undefined here.)
+        throw new OpenRouterError(response.status, 'stream terminated with finish_reason "error"');
+      }
+      return 'done';
+    }
+    return 'continue';
+  };
+
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       lastActivity = Date.now();
-      buffer += decoder.decode(value, { stream: true });
-      let newlineAt = buffer.indexOf('\n');
-      while (newlineAt !== -1) {
-        const line = buffer.slice(0, newlineAt).trimEnd();
-        buffer = buffer.slice(newlineAt + 1);
-        newlineAt = buffer.indexOf('\n');
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') {
-          return full;
-        }
-        let delta: string | undefined;
-        let errorText: string | undefined;
-        let finishReason: string | null | undefined;
-        try {
-          const parsed = JSON.parse(payload) as {
-            choices?: { delta?: { content?: string }; finish_reason?: string | null }[];
-            error?: { message?: string } | string;
-          };
-          delta = parsed.choices?.[0]?.delta?.content;
-          finishReason = parsed.choices?.[0]?.finish_reason;
-          if (parsed.error !== undefined) {
-            errorText =
-              typeof parsed.error === 'string'
-                ? parsed.error
-                : (parsed.error.message ?? 'unknown stream error');
-          }
-        } catch {
-          continue; // ignore keep-alive/malformed lines
-        }
-        if (errorText !== undefined) {
-          throw new OpenRouterError(response.status, `stream error: ${errorText}`);
-        }
-        if (delta !== undefined && delta !== '') {
-          full += delta;
-          onToken?.(delta);
-        }
-        if (finishReason !== null && finishReason !== undefined) {
-          // The model finished. Some providers never send the [DONE] sentinel
-          // nor close the socket (keep-alive comments keep flowing), which
-          // used to leave runs in "streaming" forever — the finish_reason is
-          // the authoritative end marker, so stop reading here.
+      for (const payload of parser.push(decoder.decode(value, { stream: true }))) {
+        if (handleEvent(payload) === 'done') {
+          // Completion happens before the body is fully drained (the usage
+          // chunk and [DONE] tail are never read): cancel the reader so the
+          // socket is released back to the pool instead of leaking until GC.
+          void reader.cancel().catch(() => undefined);
           return full;
         }
       }
     }
+  } catch (error) {
+    // Tear the connection down on failures too (mid-stream error event,
+    // abort, watchdog stall) so a broken stream never lingers half-read.
+    void reader.cancel().catch(() => undefined);
+    throw error;
   } finally {
     clearInterval(watchdog);
   }
