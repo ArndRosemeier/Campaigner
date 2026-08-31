@@ -3,8 +3,16 @@ import { z } from 'zod';
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
 import { statBlockSchema } from '@/domain/statblock';
 
-/** Artifact kinds implemented in Milestone 1; the union grows in M2. */
-export const ARTIFACT_KINDS = ['npc', 'location', 'faction', 'note'] as const;
+/** Artifact kinds; M1 shipped npc/location/faction/note, M2 adds the rest. */
+export const ARTIFACT_KINDS = [
+  'npc',
+  'location',
+  'faction',
+  'note',
+  'encounter',
+  'plotarc',
+  'session',
+] as const;
 
 export const artifactKindSchema = z.enum(ARTIFACT_KINDS);
 
@@ -16,6 +24,9 @@ export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
   location: 'Locations',
   faction: 'Factions',
   note: 'Notes',
+  encounter: 'Encounters',
+  plotarc: 'Plot Arcs',
+  session: 'Sessions',
 };
 
 /** Singular labels, for badges and toasts ("NPC created"). */
@@ -24,6 +35,9 @@ export const ARTIFACT_KIND_SINGULAR: Readonly<Record<ArtifactKind, string>> = {
   location: 'Location',
   faction: 'Faction',
   note: 'Note',
+  encounter: 'Encounter',
+  plotarc: 'Plot arc',
+  session: 'Session',
 };
 
 export const artifactLinkSchema = z.object({
@@ -101,8 +115,55 @@ export const noteDataSchema = z.record(z.string(), z.never());
 
 export type NoteArtifactData = z.infer<typeof noteDataSchema>;
 
+export const encounterDataSchema = z.object({
+  /** e.g. 'medium', 'deadly', or free text. */
+  difficulty: z.string(),
+  /** Party level this encounter targets. */
+  levelHint: z.string(),
+  monsters: z.array(
+    z.object({ name: z.string(), count: z.number().int().positive(), notes: z.string() }),
+  ),
+  terrain: z.string(),
+  tactics: z.string(),
+  treasure: z.string(),
+});
+
+export type EncounterArtifactData = z.infer<typeof encounterDataSchema>;
+
+export const plotArcDataSchema = z.object({
+  /** 'adventure' | 'campaign' | free text. */
+  arcType: z.string(),
+  premise: z.string(),
+  stakes: z.string(),
+  /** Ordered story beats. */
+  beats: z.array(z.object({ title: z.string(), description: z.string() })),
+  /** Adventure hooks that pull the party into the arc. */
+  hooks: z.array(z.string()),
+  climax: z.string(),
+});
+
+export type PlotArcArtifactData = z.infer<typeof plotArcDataSchema>;
+
+export const sessionDataSchema = z.object({
+  /** Display label, e.g. '12' or '2025-01-31'. */
+  sessionNumber: z.string(),
+  recap: z.string(),
+  /** Prep checklist for the next session. */
+  prep: z.array(z.string()),
+  /** Unresolved threads carried forward. */
+  openThreads: z.array(z.string()),
+});
+
+export type SessionArtifactData = z.infer<typeof sessionDataSchema>;
+
 export type ArtifactData =
-  NpcArtifactData | LocationArtifactData | FactionArtifactData | NoteArtifactData;
+  | NpcArtifactData
+  | LocationArtifactData
+  | FactionArtifactData
+  | NoteArtifactData
+  | EncounterArtifactData
+  | PlotArcArtifactData
+  | SessionArtifactData;
 
 // --- Discriminated artifact union -------------------------------------------
 
@@ -130,17 +191,41 @@ export const noteArtifactSchema = z.object({
   data: noteDataSchema,
 });
 
+export const encounterArtifactSchema = z.object({
+  ...artifactBaseShape,
+  kind: z.literal('encounter'),
+  data: encounterDataSchema,
+});
+
+export const plotArcArtifactSchema = z.object({
+  ...artifactBaseShape,
+  kind: z.literal('plotarc'),
+  data: plotArcDataSchema,
+});
+
+export const sessionArtifactSchema = z.object({
+  ...artifactBaseShape,
+  kind: z.literal('session'),
+  data: sessionDataSchema,
+});
+
 export const artifactSchema = z.discriminatedUnion('kind', [
   npcArtifactSchema,
   locationArtifactSchema,
   factionArtifactSchema,
   noteArtifactSchema,
+  encounterArtifactSchema,
+  plotArcArtifactSchema,
+  sessionArtifactSchema,
 ]);
 
 export type NpcArtifact = z.infer<typeof npcArtifactSchema>;
 export type LocationArtifact = z.infer<typeof locationArtifactSchema>;
 export type FactionArtifact = z.infer<typeof factionArtifactSchema>;
 export type NoteArtifact = z.infer<typeof noteArtifactSchema>;
+export type EncounterArtifact = z.infer<typeof encounterArtifactSchema>;
+export type PlotArcArtifact = z.infer<typeof plotArcArtifactSchema>;
+export type SessionArtifact = z.infer<typeof sessionArtifactSchema>;
 export type Artifact = z.infer<typeof artifactSchema>;
 
 /** Mutable fields of an artifact; `kind`/`campaignId`/identity are immutable. */

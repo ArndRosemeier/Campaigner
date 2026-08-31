@@ -51,3 +51,39 @@ export const noteDraftSchema = z.object({
 });
 
 export type NoteDraft = z.infer<typeof noteDraftSchema>;
+
+export const encounterDraftSchema = z.object({
+  ...draftBase,
+  difficulty: z.string(),
+  levelHint: z.string(),
+  monsters: z.array(
+    z.object({ name: z.string(), count: z.number().int().positive(), notes: z.string() }),
+  ),
+  terrain: z.string(),
+  tactics: z.string(),
+  treasure: z.string(),
+});
+
+export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
+
+export const plotArcDraftSchema = z.object({
+  ...draftBase,
+  arcType: z.string(),
+  premise: z.string(),
+  stakes: z.string(),
+  beats: z.array(z.object({ title: z.string(), description: z.string() })),
+  hooks: z.array(z.string()),
+  climax: z.string(),
+});
+
+export type PlotArcDraft = z.infer<typeof plotArcDraftSchema>;
+
+export const sessionDraftSchema = z.object({
+  ...draftBase,
+  sessionNumber: z.string(),
+  recap: z.string(),
+  prep: z.array(z.string()),
+  openThreads: z.array(z.string()),
+});
+
+export type SessionDraft = z.infer<typeof sessionDraftSchema>;

@@ -7,11 +7,14 @@ import {
   type Artifact,
   type ArtifactLink,
   type ArtifactRevision,
+  type EncounterArtifactData,
   type FactionArtifactData,
   type GameSystem,
   type Id,
   type LocationArtifactData,
   type NpcArtifactData,
+  type PlotArcArtifactData,
+  type SessionArtifactData,
 } from '@/domain';
 import { Badge } from '@/components/ui/badge';
 import { buttonVariants } from '@/components/ui/button';
@@ -24,10 +27,13 @@ import {
 import { Input } from '@/components/ui/input';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import {
+  EncounterForm,
   FactionForm,
   LocationForm,
   NpcForm,
   NoteForm,
+  PlotArcForm,
+  SessionForm,
 } from '@/features/campaign/components/kind-forms';
 import { LinksSection } from '@/features/campaign/components/links-section';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
@@ -57,7 +63,17 @@ type NpcDraft = CommonDraft & { kind: 'npc'; data: NpcArtifactData };
 type LocationDraft = CommonDraft & { kind: 'location'; data: LocationArtifactData };
 type FactionDraft = CommonDraft & { kind: 'faction'; data: FactionArtifactData };
 type NoteDraft = CommonDraft & { kind: 'note'; data: Record<string, never> };
-export type ArtifactDraft = NpcDraft | LocationDraft | FactionDraft | NoteDraft;
+type EncounterDraft = CommonDraft & { kind: 'encounter'; data: EncounterArtifactData };
+type PlotArcDraft = CommonDraft & { kind: 'plotarc'; data: PlotArcArtifactData };
+type SessionDraft = CommonDraft & { kind: 'session'; data: SessionArtifactData };
+export type ArtifactDraft =
+  | NpcDraft
+  | LocationDraft
+  | FactionDraft
+  | NoteDraft
+  | EncounterDraft
+  | PlotArcDraft
+  | SessionDraft;
 
 function draftFrom(artifact: Artifact): ArtifactDraft {
   const common: CommonDraft = {
@@ -76,6 +92,12 @@ function draftFrom(artifact: Artifact): ArtifactDraft {
       return { ...common, kind: 'faction', data: structuredClone(artifact.data) };
     case 'note':
       return { ...common, kind: 'note', data: structuredClone(artifact.data) };
+    case 'encounter':
+      return { ...common, kind: 'encounter', data: structuredClone(artifact.data) };
+    case 'plotarc':
+      return { ...common, kind: 'plotarc', data: structuredClone(artifact.data) };
+    case 'session':
+      return { ...common, kind: 'session', data: structuredClone(artifact.data) };
   }
 }
 
@@ -275,6 +297,30 @@ export function ArtifactEditor({
               />
             )}
             {draft.kind === 'note' && <NoteForm />}
+            {draft.kind === 'encounter' && (
+              <EncounterForm
+                data={draft.data}
+                onChange={(data) => {
+                  setDraft((previous) => ({ ...previous, kind: 'encounter', data }));
+                }}
+              />
+            )}
+            {draft.kind === 'plotarc' && (
+              <PlotArcForm
+                data={draft.data}
+                onChange={(data) => {
+                  setDraft((previous) => ({ ...previous, kind: 'plotarc', data }));
+                }}
+              />
+            )}
+            {draft.kind === 'session' && (
+              <SessionForm
+                data={draft.data}
+                onChange={(data) => {
+                  setDraft((previous) => ({ ...previous, kind: 'session', data }));
+                }}
+              />
+            )}
           </section>
 
           <LinksSection

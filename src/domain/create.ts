@@ -29,6 +29,9 @@ export const DEFAULT_ARTIFACT_NAMES: Readonly<Record<ArtifactKind, string>> = {
   location: 'New Location',
   faction: 'New Faction',
   note: 'New Note',
+  encounter: 'New Encounter',
+  plotarc: 'New Plot Arc',
+  session: 'New Session',
 };
 
 export function defaultArtifactName(kind: ArtifactKind): string {
@@ -79,6 +82,19 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
       return { goals: '', methods: '', resources: '', ranks: [] };
     case 'note':
       return {};
+    case 'encounter':
+      return {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+      };
+    case 'plotarc':
+      return { arcType: '', premise: '', stakes: '', beats: [], hooks: [], climax: '' };
+    case 'session':
+      return { sessionNumber: '', recap: '', prep: [], openThreads: [] };
   }
 }
 

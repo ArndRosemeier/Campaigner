@@ -18,10 +18,13 @@ import { statBlockSchema } from '@/domain/statblock';
 import type { z } from 'zod';
 import { chat, MissingApiKeyError, type ChatMessage } from '@/llm/openrouter';
 import {
+  encounterDraftSchema,
   factionDraftSchema,
   locationDraftSchema,
   noteDraftSchema,
   npcDraftSchema,
+  plotArcDraftSchema,
+  sessionDraftSchema,
 } from '@/llm/schemas';
 import { searchRules } from '@/search';
 import { toastError } from '@/lib/toast';
@@ -93,6 +96,12 @@ function draftContractFor(persona: Persona): DraftContract {
       return { schema: factionDraftSchema, keys: Object.keys(factionDraftSchema.shape) };
     case 'note':
       return { schema: noteDraftSchema, keys: Object.keys(noteDraftSchema.shape) };
+    case 'encounter':
+      return { schema: encounterDraftSchema, keys: Object.keys(encounterDraftSchema.shape) };
+    case 'plotarc':
+      return { schema: plotArcDraftSchema, keys: Object.keys(plotArcDraftSchema.shape) };
+    case 'session':
+      return { schema: sessionDraftSchema, keys: Object.keys(sessionDraftSchema.shape) };
   }
 }
 
@@ -128,6 +137,35 @@ function dataForDraft(kind: Persona['producesKind'], draft: Record<string, unkno
       };
     case 'note':
       return {};
+    case 'encounter':
+      return {
+        difficulty: asString(draft.difficulty),
+        levelHint: asString(draft.levelHint),
+        monsters: Array.isArray(draft.monsters)
+          ? (draft.monsters as { name: string; count: number; notes: string }[])
+          : [],
+        terrain: asString(draft.terrain),
+        tactics: asString(draft.tactics),
+        treasure: asString(draft.treasure),
+      };
+    case 'plotarc':
+      return {
+        arcType: asString(draft.arcType),
+        premise: asString(draft.premise),
+        stakes: asString(draft.stakes),
+        beats: Array.isArray(draft.beats)
+          ? (draft.beats as { title: string; description: string }[])
+          : [],
+        hooks: Array.isArray(draft.hooks) ? (draft.hooks as string[]) : [],
+        climax: asString(draft.climax),
+      };
+    case 'session':
+      return {
+        sessionNumber: asString(draft.sessionNumber),
+        recap: asString(draft.recap),
+        prep: Array.isArray(draft.prep) ? (draft.prep as string[]) : [],
+        openThreads: Array.isArray(draft.openThreads) ? (draft.openThreads as string[]) : [],
+      };
   }
 }
 
