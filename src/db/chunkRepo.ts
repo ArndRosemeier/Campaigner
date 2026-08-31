@@ -12,6 +12,11 @@ export async function putChunks(chunks: RuleChunk[]): Promise<void> {
 }
 
 /** Chunks of one book in reading order (page, then creation). */
+/** Every chunk in the library (embedding management). */
+export async function listAllChunks(): Promise<RuleChunk[]> {
+  return db.chunks.toArray();
+}
+
 export async function listChunksByBook(bookId: Id): Promise<RuleChunk[]> {
   const rows = await db.chunks.where('bookId').equals(bookId).toArray();
   return rows.sort((a, b) => a.pageStart - b.pageStart || a.createdAt - b.createdAt);

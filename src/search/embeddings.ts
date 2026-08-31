@@ -1,6 +1,7 @@
 import { db } from '@/db/db';
 import { getSettings } from '@/db/settingsRepo';
 import type { RuleChunk } from '@/domain';
+import { listAllChunks } from '@/db/chunkRepo';
 import { toastError } from '@/lib/toast';
 
 /**
@@ -65,6 +66,39 @@ async function requestEmbeddings(inputs: string[]): Promise<number[][]> {
     throw new Error('embedding response is missing vectors');
   }
   return vectors.filter((v): v is number[] => v !== undefined);
+}
+
+/** Library-wide embedding stats for the current model (M2 management UI). */
+export interface EmbeddingStats {
+  model: string;
+  totalChunks: number;
+  embeddedChunks: number;
+}
+
+export async function embeddingStats(): Promise<EmbeddingStats> {
+  const settings = await getSettings();
+  const model = settings.embeddingModel;
+  const keys = (await db.chunks.toArray()).map((chunk) => embeddingKey(chunk.contentHash, model));
+  const rows = await db.embeddings.bulkGet(keys);
+  const embedded = rows.filter((row) => row?.model === model).length;
+  return { model, totalChunks: keys.length, embeddedChunks: embedded };
+}
+
+/** Removes every cached embedding. */
+export async function clearEmbeddings(): Promise<void> {
+  await db.embeddings.clear();
+}
+
+/**
+ * Embeds every chunk of the library that is missing an embedding for the
+ * current model (M2: whole-library management).
+ */
+export async function embedWholeLibrary(
+  onProgress?: (done: number, total: number) => void,
+): Promise<void> {
+  const chunks = await listAllChunks();
+  if (chunks.length === 0) return;
+  await ensureEmbeddings(chunks, onProgress);
 }
 
 /**

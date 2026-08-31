@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { BookOpenIcon, EllipsisVerticalIcon, PlusIcon } from 'lucide-react';
 
+import { EmbeddingLibraryPanel } from '@/features/rules/embedding-panel';
 import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
 import type { Rulebook } from '@/domain/rulebook';
 import { Badge } from '@/components/ui/badge';
@@ -140,6 +141,7 @@ export function RulesPage(): JSX.Element {
           </Button>
           {importInput}
         </div>
+        <EmbeddingLibraryPanel />
         <div className="min-h-0 flex-1 overflow-y-auto p-3" data-testid="book-list">
           <BookList
             summaries={summaries}
