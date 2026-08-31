@@ -32,6 +32,7 @@ import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, PersonaRun } from '@/domain';
 import { runEngine } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
+import { WritersRoom } from '@/features/campaign/components/writers-room';
 
 const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
   { value: 'manual', label: 'Manual' },
@@ -86,6 +87,7 @@ export function PersonaPanel({
       <Tabs defaultValue="assistant" className="flex h-full flex-col gap-0">
         <TabsList className="w-full justify-start rounded-none border-b">
           <TabsTrigger value="assistant">Assistant</TabsTrigger>
+          <TabsTrigger value="room">Writers' room</TabsTrigger>
           <TabsTrigger value="runs">Runs</TabsTrigger>
         </TabsList>
 
@@ -194,6 +196,10 @@ export function PersonaPanel({
 
             {activeRunId !== null && <ActiveRun runId={activeRunId} campaign={campaign} />}
           </div>
+        </TabsContent>
+
+        <TabsContent value="room" className="min-h-0 flex-1 overflow-y-auto">
+          <WritersRoom campaign={campaign} />
         </TabsContent>
 
         <TabsContent value="runs" className="min-h-0 flex-1">

@@ -27,6 +27,12 @@ export async function getArtifact(id: Id): Promise<Artifact | undefined> {
 }
 
 /** All artifacts of a campaign, alphabetically by name (tree order). */
+/** bulkGet preserving no particular order; missing ids dropped. */
+export async function listArtifactsByIds(ids: readonly Id[]): Promise<Artifact[]> {
+  const rows = await db.artifacts.bulkGet([...ids]);
+  return rows.filter((row): row is Artifact => row !== undefined);
+}
+
 export async function listArtifactsByCampaign(campaignId: Id): Promise<Artifact[]> {
   const rows = await db.artifacts.where('campaignId').equals(campaignId).toArray();
   return rows.sort((a, b) => a.name.localeCompare(b.name));

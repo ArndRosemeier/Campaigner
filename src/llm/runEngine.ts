@@ -8,7 +8,7 @@ import type {
   RunStep,
   StatBlock,
 } from '@/domain';
-import { createArtifact } from '@/db/artifactRepo';
+import { createArtifact, listArtifactsByIds } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
@@ -67,6 +67,25 @@ export interface StartRunInput {
   autonomy: Autonomy;
   brief: string;
   pinnedChunkIds: readonly Id[];
+  /**
+   * Artifacts from earlier steps of a writers'-room chain (06-MILESTONES M2:
+   * persona chaining) — injected into the draft prompt as context and linked
+   * from the produced artifact.
+   */
+  contextArtifactIds?: readonly Id[];
+}
+
+/** Fetches context artifacts for the prompt (name + summary + body excerpt). */
+async function loadContextArtifacts(
+  ids: readonly Id[],
+): Promise<{ name: string; summary: string; body: string }[]> {
+  if (ids.length === 0) return [];
+  const artifacts = await listArtifactsByIds(ids);
+  return artifacts.map((artifact) => ({
+    name: artifact.name,
+    summary: artifact.summary,
+    body: artifact.body.length > 800 ? `${artifact.body.slice(0, 800)}…` : artifact.body,
+  }));
 }
 
 /** Whether a step needs explicit user action before the run continues. */
@@ -427,9 +446,20 @@ export class RunEngine {
     const settings = await getSettings();
     const context = await this.retrieveContext(input);
     const contract = draftContractFor(input.persona);
+    const contextArtifacts = await loadContextArtifacts(input.contextArtifactIds ?? []);
+    const contextSection =
+      contextArtifacts.length === 0
+        ? null
+        : `Artifacts created earlier in this pipeline:\n${contextArtifacts
+            .map(
+              (artifact) =>
+                `- ${artifact.name}${artifact.summary === '' ? '' : ` — ${artifact.summary}`}\n${artifact.body}`,
+            )
+            .join('\n')}`;
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
+      contextSection,
       context.excerpts === ''
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,

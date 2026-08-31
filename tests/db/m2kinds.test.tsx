@@ -92,7 +92,7 @@ describe('encounter / plotarc / session kinds', () => {
       async () => {
         const stored = await getArtifact(artifact.id);
         expect(stored?.summary === undefined ? stored?.body : stored.body).toBeDefined();
-        expect((stored)?.currentRevision).toBeGreaterThanOrEqual(1);
+        expect(stored?.currentRevision).toBeGreaterThanOrEqual(1);
         expect((stored as { data?: { recap?: string } } | undefined)?.data?.recap).toBe(
           'The party met in a tavern.',
         );
@@ -101,7 +101,7 @@ describe('encounter / plotarc / session kinds', () => {
     );
 
     // A content change appends a revision (source user).
-    const after = (await getArtifact(artifact.id));
+    const after = await getArtifact(artifact.id);
     if (after === undefined) throw new Error('artifact vanished');
     await updateArtifact(after.id, { summary: 'Session one recap recorded' });
     const updated = await getArtifact(artifact.id);
