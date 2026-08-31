@@ -20,24 +20,33 @@ import { SettingsPage } from '@/features/settings/SettingsPage';
  */
 export type AppRouter = ReturnType<typeof createBrowserRouter>;
 
+/** Vite `BASE_URL` always ends with `/`; React Router wants no trailing slash. */
+function appBasename(): string {
+  const base = import.meta.env.BASE_URL;
+  return base.endsWith('/') ? base.slice(0, -1) : base;
+}
+
 export function createAppRouter(): AppRouter {
-  return createBrowserRouter([
-    {
-      path: ROUTES.campaignPicker,
-      element: <AppShell />,
-      children: [
-        { index: true, element: <CampaignPickerPage /> },
-        { path: ROUTES.workspace, element: <WorkspacePage /> },
-        { path: ROUTES.artifact, element: <WorkspacePage /> },
-        { path: ROUTES.graph, element: <GraphPage /> },
-        { path: ROUTES.play, element: <PlayPage /> },
-        { path: ROUTES.deliverables, element: <DeliverablesPage /> },
-        { path: ROUTES.rules, element: <RulesPage /> },
-        { path: ROUTES.settings, element: <SettingsPage /> },
-        { path: '*', element: <NotFoundPage /> },
-      ],
-    },
-  ]);
+  return createBrowserRouter(
+    [
+      {
+        path: ROUTES.campaignPicker,
+        element: <AppShell />,
+        children: [
+          { index: true, element: <CampaignPickerPage /> },
+          { path: ROUTES.workspace, element: <WorkspacePage /> },
+          { path: ROUTES.artifact, element: <WorkspacePage /> },
+          { path: ROUTES.graph, element: <GraphPage /> },
+          { path: ROUTES.play, element: <PlayPage /> },
+          { path: ROUTES.deliverables, element: <DeliverablesPage /> },
+          { path: ROUTES.rules, element: <RulesPage /> },
+          { path: ROUTES.settings, element: <SettingsPage /> },
+          { path: '*', element: <NotFoundPage /> },
+        ],
+      },
+    ],
+    { basename: appBasename() },
+  );
 }
 
 /** The router instance used by the running app. */

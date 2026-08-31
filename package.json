@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:domainfactory": "tsc -b && vite build --mode domainfactory",
+    "deploy:sync": "powershell -ExecutionPolicy Bypass -File deploy-sync.ps1",
     "preview": "vite preview",
     "lint": "eslint .",
     "typecheck": "tsc -b",
