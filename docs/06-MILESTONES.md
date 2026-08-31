@@ -62,6 +62,11 @@ Run `pnpm lint && pnpm typecheck && pnpm test` before every commit.
 
 ## Milestone 2 (out of scope now — do not build early)
 
+> Status: this list has since **shipped** (export/zip/PDF, link-graph view,
+> encounter/plotarc/session kinds, writers' room chaining with the Continuity
+> Editor, JSON import, whole-library embedding panel). The current plan is
+> `07-MILESTONE-3.md`.
+
 - Export: JSON (single artifact / selection / whole campaign) + zip bundle;
   PDF export via pdfmake (GM notes + player handout templates).
 - Remaining personas wired (worldbuilder, faction-designer, plot-architect)
