@@ -135,7 +135,7 @@ describe('WorkspacePage', () => {
     await waitFor(() => {
       expect(stepTrigger.textContent).toBe(`${firstPersona?.name}▼`);
     });
-    expect(stepTrigger.textContent ?? '').not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
+    expect(stepTrigger.textContent).not.toMatch(/[0-9a-f]{8}-[0-9a-f]{4}/);
   }, 20000);
 
   it('deletes a run from the Runs tab', async () => {

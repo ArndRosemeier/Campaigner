@@ -335,8 +335,10 @@ describe('chain review steps', () => {
     // report note links back to it with the findings intact.
     const { getArtifact } = await import('@/db/artifactRepo');
     const reportId = result.steps[1]?.artifactId;
-    expect(reportId).not.toBeNull();
-    const report = await getArtifact(reportId!);
+    if (reportId === undefined || reportId === null) {
+      throw new Error('continuity report artifact was not produced');
+    }
+    const report = await getArtifact(reportId);
     expect(report?.name).toBe('Continuity report — The Drowned Bell');
     expect(report?.links[0]?.targetId).toBe(result.steps[0]?.artifactId);
     expect(report?.body).toContain('**[major]**');

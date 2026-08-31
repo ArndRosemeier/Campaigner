@@ -169,6 +169,15 @@ export class ModuleForge {
     chainRunner.cancel();
   }
 
+  /**
+   * Re-reads the cancel flag after an await: cancel() fires from the UI while
+   * a chain is in flight, but TypeScript's property narrowing cannot see that
+   * and would treat the field as still `false` after run() reset it.
+   */
+  private cancelWasRequested(): boolean {
+    return this.cancelRequested;
+  }
+
   reset(): void {
     this.cancelRequested = false;
     this.chainUnsubscribe?.();
@@ -205,7 +214,9 @@ export class ModuleForge {
 
     if (generateResult.status !== 'completed') {
       this.state.phase =
-        generateResult.status === 'cancelled' || this.cancelRequested ? 'cancelled' : 'failed';
+        generateResult.status === 'cancelled' || this.cancelWasRequested()
+          ? 'cancelled'
+          : 'failed';
       this.emit();
       return this.state;
     }
@@ -239,7 +250,7 @@ export class ModuleForge {
     this.state.phase =
       refineResult.status === 'completed'
         ? 'completed'
-        : refineResult.status === 'cancelled' || this.cancelRequested
+        : refineResult.status === 'cancelled' || this.cancelWasRequested()
           ? 'cancelled'
           : 'failed';
     this.emit();
@@ -289,7 +300,7 @@ export async function buildRefineSteps(
   const reportArtifactId = producedIds[producedIds.length - 1];
   if (reportArtifactId === undefined) return [];
   const reportArtifact = await getArtifact(reportArtifactId);
-  if (reportArtifact === undefined || reportArtifact.kind !== 'note') return [];
+  if (reportArtifact?.kind !== 'note') return [];
 
   const report = parseContinuityReportBody(reportArtifact.body);
   if (report.verdict !== 'issues_found' || report.issues.length === 0) return [];

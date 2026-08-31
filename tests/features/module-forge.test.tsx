@@ -142,7 +142,7 @@ describe('Module forge UI', () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
 
-    chatMock.mockImplementation(async (messages: unknown) => forgeReply(messages));
+    chatMock.mockImplementation((messages: unknown) => Promise.resolve(forgeReply(messages)));
 
     render(<WritersRoom campaign={campaign} />);
     const forge = await screen.findByTestId('module-forge');

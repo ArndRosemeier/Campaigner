@@ -79,7 +79,7 @@ export function EmbeddingLibraryPanel(): JSX.Element {
     }
   }
 
-  const active = settings?.embeddingsEnabled === true && (settings?.openRouterApiKey ?? '') !== '';
+  const active = settings?.embeddingsEnabled === true && settings.openRouterApiKey !== '';
   const total = progress?.total ?? stats?.totalChunks ?? 0;
 
   return (

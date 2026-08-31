@@ -20,7 +20,7 @@ import { clearDatabase } from '../db/helpers';
 const MODEL = 'text-embedding-3-small';
 
 function chunk(text: string): RuleChunk {
-  const hash = [...text].reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) % 0xffffffff) >>> 0, 7);
+  const hash = Array.from(text).reduce((acc, ch) => ((acc * 31 + ch.charCodeAt(0)) % 0xffffffff) >>> 0, 7);
   const suffix = hash.toString(16).padStart(8, '0');
   return {
     id: newId(),
