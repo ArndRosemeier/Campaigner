@@ -7,6 +7,7 @@ import { ArrowLeftIcon } from 'lucide-react';
 import { ROUTES, artifactPath, workspacePath } from '@/app/routes';
 import { ARTIFACT_KIND_LABELS, type ArtifactKind } from '@/domain';
 import { Button, buttonVariants } from '@/components/ui/button';
+import { HelpButton } from '@/help/HelpButton';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { layoutGraph } from '@/lib/graphLayout';
 
@@ -49,7 +50,10 @@ export function GraphPage(): JSX.Element {
         >
           <ArrowLeftIcon aria-hidden />
         </Button>
-        <h1 className="text-sm font-semibold">Link graph</h1>
+        <h1 className="flex items-center gap-1 text-sm font-semibold">
+          Link graph
+          <HelpButton topic="graph" label="link graph" />
+        </h1>
         <span className="text-xs text-muted-foreground">
           {layout.nodes.length} artifacts · {layout.edges.length} links
         </span>

@@ -28,6 +28,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { Textarea } from '@/components/ui/textarea';
+import { HelpButton } from '@/help/HelpButton';
 import { ROUTES, artifactPath } from '@/app/routes';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
@@ -104,11 +105,16 @@ export function PersonaPanel({
   return (
     <div className="flex h-full flex-col" data-testid="persona-panel">
       <Tabs defaultValue="assistant" className="flex h-full flex-col gap-0">
-        <TabsList className="w-full justify-start rounded-none border-b">
-          <TabsTrigger value="assistant">Assistant</TabsTrigger>
-          <TabsTrigger value="room">Writers' room</TabsTrigger>
-          <TabsTrigger value="runs">Runs</TabsTrigger>
-        </TabsList>
+        <div className="flex items-center border-b">
+          <TabsList className="flex-1 justify-start rounded-none border-b-0">
+            <TabsTrigger value="assistant">Assistant</TabsTrigger>
+            <TabsTrigger value="room">Writers' room</TabsTrigger>
+            <TabsTrigger value="runs">Runs</TabsTrigger>
+          </TabsList>
+          <div className="pr-1">
+            <HelpButton topic="assistant" label="personas & runs" />
+          </div>
+        </div>
 
         <TabsContent value="assistant" className="min-h-0 flex-1 overflow-y-auto">
           <div className="flex flex-col gap-3 p-3">

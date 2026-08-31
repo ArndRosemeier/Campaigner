@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { BookOpenIcon, EllipsisVerticalIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 
+import { HelpButton } from '@/help/HelpButton';
 import { EmbeddingLibraryPanel } from '@/features/rules/embedding-panel';
 import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
 import type { Rulebook } from '@/domain/rulebook';
@@ -129,7 +130,10 @@ export function RulesPage(): JSX.Element {
     <div className="flex h-full">
       <div className="flex h-full w-80 shrink-0 flex-col overflow-hidden border-r">
         <div className="flex items-center justify-between border-b p-3">
-          <h1 className="text-base font-semibold">Rulebooks</h1>
+          <h1 className="flex items-center gap-1 text-base font-semibold">
+            Rulebooks
+            <HelpButton topic="rules" label="rulebooks" />
+          </h1>
           <Button
             size="sm"
             disabled={importing}

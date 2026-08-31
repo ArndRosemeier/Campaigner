@@ -50,6 +50,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { HelpButton } from '@/help/HelpButton';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { matchesFilter } from '@/features/campaign/filter';
@@ -158,15 +159,18 @@ export function CampaignTree({
             setFilter(event.target.value);
           }}
         />
-        <Button
-          variant="outline"
-          size="xs"
-          className="mt-1.5 w-full"
-          render={<Link to={graphPath(campaignId)} />}
-        >
-          <WaypointsIcon aria-hidden data-icon="inline-start" />
-          Link graph
-        </Button>
+        <div className="mt-1.5 flex items-center gap-1">
+          <Button
+            variant="outline"
+            size="xs"
+            className="flex-1"
+            render={<Link to={graphPath(campaignId)} />}
+          >
+            <WaypointsIcon aria-hidden data-icon="inline-start" />
+            Link graph
+          </Button>
+          <HelpButton topic="tree" label="artifact library" />
+        </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {ARTIFACT_KINDS.map((kind) => {

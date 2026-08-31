@@ -63,6 +63,11 @@ client-side — no backend, no accounts.
    library at once or clear the cache.
 9. Everything persists locally in IndexedDB and survives reloads.
 
+**In-app help:** press <kbd>?</kbd> anywhere (or the ? button in the top bar)
+for searchable help, and every screen's header has a small ? button that opens
+help for exactly that surface — including the non-obvious bits like
+right-click menus, hover-to-delete buttons and persona chaining.
+
 ## Scripts
 
 | Script           | Purpose                           |

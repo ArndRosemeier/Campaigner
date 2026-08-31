@@ -6,6 +6,7 @@ import { NAV_ITEMS } from '@/app/layout/nav';
 import { ThemeToggle } from '@/app/layout/ThemeToggle';
 import { ROUTES } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
+import { HelpButton } from '@/help/HelpButton';
 import { cn } from '@/lib/utils';
 
 /**
@@ -42,7 +43,8 @@ export function TopBar(): JSX.Element {
         ))}
       </nav>
 
-      <div className="ml-auto">
+      <div className="ml-auto flex items-center gap-1">
+        <HelpButton label="Campaigner" />
         <ThemeToggle />
       </div>
     </header>

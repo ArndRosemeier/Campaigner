@@ -4,6 +4,7 @@ import { ChevronDownIcon, ChevronRightIcon, PinIcon, PinOffIcon, SearchIcon } fr
 
 import type { ChunkType, RuleChunk } from '@/domain/rulebook';
 import { Badge } from '@/components/ui/badge';
+import { HelpButton } from '@/help/HelpButton';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -63,26 +64,29 @@ export function SearchBrowser({ books }: { books: { id: string; title: string }[
   return (
     <div className="flex h-full flex-col">
       <div className="flex flex-col gap-2 border-b p-3">
-        <div className="relative">
-          <SearchIcon
-            aria-hidden
-            className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground"
-          />
-          <Input
-            value={query}
-            placeholder="Search the rules… (Enter to search)"
-            aria-label="Search the rules"
-            className="pl-8"
-            data-testid="rules-search"
-            onChange={(event) => {
-              setQuery(event.target.value);
-            }}
-            onKeyDown={(event) => {
-              if (event.key === 'Enter') {
-                void runSearch();
-              }
-            }}
-          />
+        <div className="flex items-center gap-1">
+          <div className="relative flex-1">
+            <SearchIcon
+              aria-hidden
+              className="pointer-events-none absolute top-1/2 left-2 size-4 -translate-y-1/2 text-muted-foreground"
+            />
+            <Input
+              value={query}
+              placeholder="Search the rules… (Enter to search)"
+              aria-label="Search the rules"
+              className="pl-8"
+              data-testid="rules-search"
+              onChange={(event) => {
+                setQuery(event.target.value);
+              }}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  void runSearch();
+                }
+              }}
+            />
+          </div>
+          <HelpButton topic="search" label="rules search" />
         </div>
         <div className="flex flex-wrap items-center gap-3 text-xs">
           <BookFilter books={books} selected={bookIds} onChange={setBookIds} />

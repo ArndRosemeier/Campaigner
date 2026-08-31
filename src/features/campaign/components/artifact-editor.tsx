@@ -17,6 +17,7 @@ import {
   type SessionArtifactData,
 } from '@/domain';
 import { Badge } from '@/components/ui/badge';
+import { HelpButton } from '@/help/HelpButton';
 import { buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -232,6 +233,7 @@ export function ArtifactEditor({
             rev {artifact.currentRevision}
           </Badge>
           <RevisionDropdown artifactId={artifact.id} onOpen={setRevisionView} />
+          <HelpButton topic="editor" label="artifact editor" className="ml-auto" />
           <span
             data-testid="save-state"
             className={cn(

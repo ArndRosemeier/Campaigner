@@ -19,6 +19,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import { HelpButton } from '@/help/HelpButton';
 import { Button, buttonVariants } from '@/components/ui/button';
 import {
   Card,
@@ -97,7 +98,8 @@ export function CampaignPickerPage(): JSX.Element {
               Pick a campaign to open its workspace, or start a new one.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-2">
+            <HelpButton topic="campaigns" label="campaigns" />
             <input
               ref={importInputRef}
               type="file"

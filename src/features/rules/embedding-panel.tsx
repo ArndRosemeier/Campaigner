@@ -16,6 +16,7 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import { HelpButton } from '@/help/HelpButton';
 import { readSettings } from '@/db/settingsRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
 import {
@@ -84,8 +85,9 @@ export function EmbeddingLibraryPanel(): JSX.Element {
   return (
     <div className="flex flex-col gap-2 border-b p-3" data-testid="embedding-panel">
       <div className="flex items-center gap-2">
-        <h2 className="text-xs font-semibold tracking-wide text-muted-foreground uppercase">
+        <h2 className="flex items-center gap-1 text-xs font-semibold tracking-wide text-muted-foreground uppercase">
           Embeddings
+          <HelpButton topic="embeddings" label="embeddings" className="size-5" />
         </h2>
         <Badge variant={active ? 'secondary' : 'outline'}>
           {active ? (stats?.model ?? 'model') : 'inactive'}

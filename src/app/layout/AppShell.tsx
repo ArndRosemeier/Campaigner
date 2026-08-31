@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import type { JSX } from 'react';
 import { Outlet } from 'react-router-dom';
 
@@ -6,6 +7,8 @@ import { useThemeSync } from '@/app/theme/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { failRunningRuns } from '@/db/runRepo';
+import { HelpDialog } from '@/help/HelpDialog';
+import { useHelpStore } from '@/help/helpStore';
 
 /**
  * App frame shown on every route: the top bar (app name, campaign switcher,
@@ -16,6 +19,28 @@ import { failRunningRuns } from '@/db/runRepo';
  */
 export function AppShell(): JSX.Element {
   useThemeSync();
+  const openHelp = useHelpStore((state) => state.openHelp);
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent): void {
+      if (event.key !== '?') return;
+      const target = event.target;
+      const typing =
+        target instanceof HTMLElement &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.tagName === 'SELECT' ||
+          target.isContentEditable);
+      if (typing) return;
+      event.preventDefault();
+      openHelp();
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+    };
+  }, [openHelp]);
+
   void failRunningRuns().catch((error: unknown) => {
     console.error('Could not reconcile interrupted runs', error);
   });
@@ -28,6 +53,7 @@ export function AppShell(): JSX.Element {
           <Outlet />
         </main>
         <Toaster position="bottom-right" />
+        <HelpDialog />
       </div>
     </TooltipProvider>
   );

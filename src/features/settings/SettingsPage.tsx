@@ -2,6 +2,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 import type { JSX } from 'react';
 import { listPersonas } from '@/db/personaRepo';
+import { HelpButton } from '@/help/HelpButton';
 import { PersonaSection } from '@/features/settings/persona-section';
 import { DangerZone } from '@/features/settings/danger-zone';
 import { SettingsSection } from '@/features/settings/settings-section';
@@ -21,7 +22,10 @@ export function SettingsPage(): JSX.Element {
       className="mx-auto flex h-full w-full max-w-2xl flex-col gap-4 overflow-y-auto p-4 [&>*]:shrink-0"
       data-testid="settings-page"
     >
-      <h1 className="text-base font-semibold">Settings</h1>
+      <h1 className="flex items-center gap-1 text-base font-semibold">
+        Settings
+        <HelpButton topic="settings" label="settings" />
+      </h1>
       <SettingsSection />
       <PersonaSection personas={personas ?? []} />
       <DangerZone />
