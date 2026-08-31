@@ -428,7 +428,10 @@ function ImageRunActions({
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
     return (
-      <Button render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />}>
+      <Button
+        render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />}
+        nativeButton={false}
+      >
         <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
         Open artifact
       </Button>
@@ -619,7 +622,10 @@ function RunActions({
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
     return (
-      <Button render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />}>
+      <Button
+        render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />}
+        nativeButton={false}
+      >
         <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
         Open artifact
       </Button>

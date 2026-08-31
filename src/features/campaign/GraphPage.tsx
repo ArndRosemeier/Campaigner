@@ -46,6 +46,7 @@ export function GraphPage(): JSX.Element {
           variant="ghost"
           size="icon-sm"
           render={<Link to={workspacePath(campaignId)} />}
+          nativeButton={false}
           aria-label="Back to workspace"
         >
           <ArrowLeftIcon aria-hidden />
@@ -161,7 +162,12 @@ function Missing({ message }: { message: string }): JSX.Element {
   return (
     <div className="flex h-full items-center justify-center gap-3 p-6 text-sm text-muted-foreground">
       {message}
-      <Button variant="outline" size="sm" render={<Link to={ROUTES.campaignPicker} />}>
+      <Button
+        variant="outline"
+        size="sm"
+        render={<Link to={ROUTES.campaignPicker} />}
+        nativeButton={false}
+      >
         All campaigns
       </Button>
     </div>

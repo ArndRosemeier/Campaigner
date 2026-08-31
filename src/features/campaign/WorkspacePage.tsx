@@ -105,7 +105,12 @@ function MissingPane({ message, backLink }: { message: string; backLink?: boolea
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
       <p className="text-sm text-muted-foreground">{message}</p>
       {backLink === true && (
-        <Button variant="outline" size="sm" render={<Link to={ROUTES.campaignPicker} />}>
+        <Button
+          variant="outline"
+          size="sm"
+          render={<Link to={ROUTES.campaignPicker} />}
+          nativeButton={false}
+        >
           Back to campaigns
         </Button>
       )}

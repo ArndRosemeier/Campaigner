@@ -167,6 +167,7 @@ export function CampaignTree({
             size="xs"
             className="flex-1"
             render={<Link to={graphPath(campaignId)} />}
+            nativeButton={false}
           >
             <WaypointsIcon aria-hidden data-icon="inline-start" />
             Link graph
