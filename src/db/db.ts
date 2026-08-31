@@ -5,6 +5,7 @@ import type {
   ArtifactRevision,
   Campaign,
   ChunkEmbedding,
+  Deliverable,
   Persona,
   PersonaRun,
   RuleChunk,
@@ -33,6 +34,7 @@ export class CampaignerDB extends Dexie {
   embeddings!: Table<ChunkEmbedding, string>;
   personas!: Table<Persona, Id>;
   runs!: Table<PersonaRun, Id>;
+  deliverables!: Table<Deliverable, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -59,6 +61,7 @@ export class CampaignerDB extends Dexie {
         embeddings: 'contentHash',
         personas: 'id, &slug',
         runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
         settings: 'id',
       })
       .upgrade(async (tx) => {
@@ -85,6 +88,7 @@ export class CampaignerDB extends Dexie {
         embeddings: 'contentHash',
         personas: 'id, &slug',
         runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
         settings: 'id',
       })
       .upgrade(async (tx) => {
@@ -110,6 +114,7 @@ export class CampaignerDB extends Dexie {
         embeddings: 'contentHash',
         personas: 'id, &slug',
         runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
         settings: 'id',
       })
       .upgrade(async (tx) => {
@@ -121,6 +126,22 @@ export class CampaignerDB extends Dexie {
           if (artifact.data.scenes === undefined) artifact.data.scenes = [];
           if (artifact.data.log === undefined) artifact.data.log = '';
         });
+      });
+    // M3-D (07-MILESTONE-3): new deliverables table (module PDF outlines);
+    // no data migration needed — the table starts empty.
+    this.version(5)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        settings: 'id',
       });
   }
 }

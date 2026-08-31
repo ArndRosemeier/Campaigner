@@ -6,6 +6,7 @@ export * from '@/domain/artifact';
 export * from '@/domain/artifactRevision';
 export * from '@/domain/campaign';
 export * from '@/domain/create';
+export * from '@/domain/deliverable';
 export * from '@/domain/embedding';
 export * from '@/domain/entity';
 export * from '@/domain/gameSystem';

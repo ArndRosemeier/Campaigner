@@ -341,13 +341,8 @@ export function pdfFileName(artifact: Artifact, template: PdfTemplate): string {
   return `${slug}-${template === 'gm' ? 'gm-notes' : 'handout'}.pdf`;
 }
 
-/** Generates the PDF blob; pdfmake is loaded on demand (heavy dependency). */
-export async function exportArtifactPdf(artifact: Artifact, template: PdfTemplate): Promise<Blob> {
-  const cover = await loadPdfCoverImage(artifact);
-  const definition =
-    template === 'gm'
-      ? buildGmNotesDefinition(artifact, cover)
-      : buildPlayerHandoutDefinition(artifact, cover);
+/** Generates a PDF blob from any pdfmake definition (shared bootstrapping). */
+export async function generatePdfBlob(definition: TDocumentDefinitions): Promise<Blob> {
   const [pdfmakeModule, fonts] = await Promise.all([
     import('pdfmake/build/pdfmake.js'),
     import('pdfmake/build/vfs_fonts.js'),
@@ -373,12 +368,18 @@ export async function exportArtifactPdf(artifact: Artifact, template: PdfTemplat
     engine.vfs = vfs;
   }
 
-  try {
-    const document = engine.createPdf(definition);
-    return await document.getBlob();
-  } catch (error) {
-    throw error instanceof Error ? error : new Error(String(error));
-  }
+  const document = engine.createPdf(definition);
+  return document.getBlob();
+}
+
+/** Generates the PDF blob; pdfmake is loaded on demand (heavy dependency). */
+export async function exportArtifactPdf(artifact: Artifact, template: PdfTemplate): Promise<Blob> {
+  const cover = await loadPdfCoverImage(artifact);
+  const definition =
+    template === 'gm'
+      ? buildGmNotesDefinition(artifact, cover)
+      : buildPlayerHandoutDefinition(artifact, cover);
+  return generatePdfBlob(definition);
 }
 
 interface PdfDocument {

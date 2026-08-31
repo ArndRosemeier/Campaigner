@@ -18,6 +18,8 @@ export const ROUTES = {
   graph: '/c/:campaignId/graph',
   /** Session Mode play view (M3-C). */
   play: '/c/:campaignId/play',
+  /** Deliverable builder for module PDFs (M3-D). */
+  deliverables: '/c/:campaignId/deliverables',
   /** Rules library (books list + browser). */
   rules: '/rules',
   /** Settings page. */
@@ -40,6 +42,11 @@ export function playPath(campaignId: string): `/c/${string}/play` {
   return `/c/${encodeURIComponent(campaignId)}/play`;
 }
 
+/** Path of the deliverable builder for a given campaign (M3-D). */
+export function deliverablesPath(campaignId: string): `/c/${string}/deliverables` {
+  return `/c/${encodeURIComponent(campaignId)}/deliverables`;
+}
+
 /** Path of the workspace screen for a given campaign. */
 export function workspacePath(campaignId: string): `/c/${string}` {
   return `/c/${encodeURIComponent(campaignId)}`;
@@ -60,6 +67,7 @@ export function campaignIdFromPath(pathname: string): string | undefined {
     matchPath(ROUTES.artifact, pathname)?.params.campaignId ??
     matchPath(ROUTES.graph, pathname)?.params.campaignId ??
     matchPath(ROUTES.play, pathname)?.params.campaignId ??
+    matchPath(ROUTES.deliverables, pathname)?.params.campaignId ??
     matchPath(ROUTES.workspace, pathname)?.params.campaignId
   );
 }

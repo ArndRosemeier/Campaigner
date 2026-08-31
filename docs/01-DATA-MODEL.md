@@ -241,6 +241,35 @@ interface RunStep {
 }
 ```
 
+### Deliverable (M3-D)
+
+A publishable adventure-module PDF built from an explicit, user-curated
+outline — never derived implicitly from the tree. Own table
+(`deliverables: 'id, campaignId'`, Dexie `version(5)`).
+
+```ts
+interface Deliverable extends BaseEntity {
+  campaignId: Id;
+  title: string;
+  subtitle: string;
+  audience: 'gm' | 'player';    // player: secrets/GM-only/tactics+treasure stripped
+  coverImageId: Id | null;
+  outline: OutlineNode[];
+}
+type OutlineNode =
+  | { type: 'chapter'; title: string; children: OutlineNode[] }   // page-break banner, ToC entry
+  | { type: 'part'; title: string; children: OutlineNode[] }      // group header inside a chapter
+  | { type: 'artifact'; artifactId: Id; include: { body: boolean; data: boolean; statBlocks: boolean; images: boolean } }
+  | { type: 'text'; markdown: string }    // interstitial prose
+  | { type: 'gallery'; gallery: 'npcs' | 'treasure' };            // auto-generated back matter
+```
+
+Rendering conventions live in 07-MILESTONE-3.md (read-aloud blockquote boxes,
+difficulty kickers, labeled per-kind sections, two-column stat boxes, images
+at ≤ 45% width, NPC gallery + treasure ledger appendices, "missing artifact"
+placeholders for dangling references). Renderer: `/src/lib/modulePdf.ts` +
+`/src/lib/mdToPdfmake.ts`.
+
 ### StoredImage (M3-A)
 
 Binary payloads live in their own table; artifacts reference them by id

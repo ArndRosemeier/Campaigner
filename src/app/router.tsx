@@ -7,6 +7,7 @@ import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
 import { GraphPage } from '@/features/campaign/GraphPage';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
 import { PlayPage } from '@/features/play/PlayPage';
+import { DeliverablesPage } from '@/features/deliverables/DeliverablesPage';
 import { RulesPage } from '@/features/rules/RulesPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 
@@ -30,6 +31,7 @@ export function createAppRouter(): AppRouter {
         { path: ROUTES.artifact, element: <WorkspacePage /> },
         { path: ROUTES.graph, element: <GraphPage /> },
         { path: ROUTES.play, element: <PlayPage /> },
+        { path: ROUTES.deliverables, element: <DeliverablesPage /> },
         { path: ROUTES.rules, element: <RulesPage /> },
         { path: ROUTES.settings, element: <SettingsPage /> },
         { path: '*', element: <NotFoundPage /> },
