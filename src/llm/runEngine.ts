@@ -406,6 +406,20 @@ export class RunEngine {
           this.emit({ kind: 'run', runId, status: outcome.runStatus });
           return; // paused (awaiting_user / needs_review)
         }
+
+        // Auto autonomy with a draft that failed JSON validation even after
+        // the automatic retry: fail the run instead of silently finalizing an
+        // EMPTY artifact named after the persona (e.g. two locations called
+        // "Worldbuilder"). The statblock step is exempt — an NPC without a
+        // stat block is still a valid artifact.
+        if (outcome.step.status === 'rejected' && name === 'draft' && input.autonomy === 'auto') {
+          const reason =
+            `Draft rejected: the model reply could not be parsed into the required JSON shape ` +
+            `after one automatic retry, so nothing was saved. Run the step again (or use manual/review autonomy) to keep the raw reply for editing.`;
+          await updateRun(runId, { status: 'failed', errorMessage: reason, steps: [...steps] });
+          this.emit({ kind: 'run', runId, status: 'failed' });
+          return;
+        }
       }
 
       await updateRun(runId, { status: 'completed' });

@@ -161,8 +161,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
             {forge.phase === 'refining' && forgeStatusLine(forge, 'Refinement pass')}
             {forge.phase === 'completed' &&
               `Module complete — ${forge.chain.steps.filter((s) => s.artifactId !== null).length} artifacts generated.`}
-            {forge.phase === 'failed' &&
-              'The forge failed — check the Runs tab for the failing step.'}
+            {forge.phase === 'failed' && forgeFailureLine(forge)}
             {forge.phase === 'cancelled' && 'The forge was stopped.'}
           </p>
         )}
@@ -405,4 +404,11 @@ function RunTokenPreview({ runId }: { runId: Id }): JSX.Element {
       {text.trim() === '' ? '…writing' : text}
     </pre>
   );
+}
+
+/** Failure line for the forge: names the step that failed (when known). */
+function forgeFailureLine(forge: ForgeState): string {
+  const failed = forge.chain.steps.find((step) => step.status === 'failed');
+  const title = failed?.title ?? 'a step';
+  return `The forge failed at "${title}" — open the Runs tab to see what went wrong, then run the forge again.`;
 }

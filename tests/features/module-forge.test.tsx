@@ -258,4 +258,45 @@ describe('Module forge UI', () => {
       { timeout: 20_000 },
     );
   }, 40000);
+
+  it('fails the forge instead of creating empty persona-named artifacts when a draft never parses', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+
+    // Locations reply with unparseable JSON (even after the retry);
+    // everything else answers normally.
+    chatMock.mockImplementation((messages: unknown) => {
+      const text = JSON.stringify(messages);
+      if (text.includes('Create key location')) return Promise.resolve('{"name": ');
+      return Promise.resolve(forgeReply(messages));
+    });
+
+    render(<WritersRoom campaign={campaign} />);
+    const forge = await screen.findByTestId('module-forge');
+    await user.type(
+      within(forge).getByLabelText('Module concept'),
+      'A drowned shrine calls a harbour town.',
+    );
+    await user.click(within(forge).getByTestId('forge-module'));
+
+    // The forge names the step that failed instead of failing silently.
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('forge-status').textContent).toContain(
+          'failed at "Key location 1"',
+        );
+      },
+      { timeout: 20_000 },
+    );
+
+    // Regression: this failure mode used to create empty artifacts named
+    // after the persona ("Worldbuilder") for every failed location step.
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    const names = artifacts.map((artifact) => artifact.name);
+    expect(names).not.toContain('Worldbuilder');
+    // Arc and session (the steps before the failure) still exist.
+    expect(names).toHaveLength(2);
+    expect(names).toContain('The Sunken Shrine');
+    expect(names).toContain('Session 1');
+  }, 40000);
 });

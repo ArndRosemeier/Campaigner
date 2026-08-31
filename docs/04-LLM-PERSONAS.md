@@ -86,7 +86,13 @@ Steps for every persona (M1):
    Parse with the kind's zod draft schema. Parse failure → one automatic retry
    appending "Your previous reply was invalid JSON for the schema: <issues>.
    Reply with corrected JSON only." Second failure → run `status:'needs_review'`
-   with raw text stored in `output`.
+   with raw text stored in `output`. Under `auto` autonomy there is no user to
+   rescue a rejected draft, so the run **fails** with a "Draft rejected"
+   error instead of finalizing an empty artifact (finalize's persona-name
+   fallback is unreachable for generate personas). Draft schemas tolerate
+   common model variations: bare strings for object lists (pointsOfInterest,
+   ranks, beats), objects inside string lists (hooks/prep/openThreads),
+   numeric-string counts, and a single string or omitted `suggestedTags`.
 3. **statblock** (npc only) — second LLM call asking to fill the `StatBlock`
    JSON schema for this NPC at a user-hinted level (from brief) grounded in the
    excerpts. Same retry policy. Skippable by user.

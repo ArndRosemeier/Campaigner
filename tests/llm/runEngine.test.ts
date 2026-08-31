@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createPersona, type Persona } from '@/domain';
-import { getArtifact } from '@/db/artifactRepo';
+import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import { runEngine } from '@/llm/runEngine';
 import { waitFor } from '@testing-library/react';
@@ -186,6 +186,75 @@ describe('runEngine', () => {
       const run2 = await getRun(runId);
       expect(run2?.status).toBe('completed');
     });
+  }, 20000);
+
+  it('auto mode with a never-parsing draft fails the run instead of saving an empty artifact', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock.mockResolvedValue('still not json');
+
+    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const };
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+    });
+
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('Draft rejected');
+    expect(run?.steps[1]?.status).toBe('rejected');
+    // Regression: this used to fall through to finalize and create an
+    // artifact named after the persona ("NPC Smith") with empty content.
+    expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
+    expect(chatMock).toHaveBeenCalledTimes(2); // one automatic JSON-fix retry
+  }, 20000);
+
+  it('tolerates loose draft shapes (string list items, single-string tags)', async () => {
+    const { campaignId } = await seed();
+    const persona2 = createPersona({
+      slug: 'worldbuilder-test',
+      name: 'Worldbuilder',
+      description: 'test',
+      systemPrompt: 'You are a test persona. Reply with JSON only.',
+      producesKind: 'location',
+      builtIn: true,
+    });
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        name: 'Drowned Docks',
+        summary: 'Flooded piers.',
+        suggestedTags: 'harbour',
+        body: '# Docks',
+        locationType: 'district',
+        inhabitants: 'Fishers',
+        pointsOfInterest: ['Sunken bell tower', { name: 'Fish market', description: 'Stalls.' }],
+        hooks: [{ title: 'Missing diver' }],
+      }),
+    );
+
+    const input = {
+      ...INPUT(campaignId, persona2),
+      brief: 'create a location',
+      autonomy: 'auto' as const,
+    };
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('completed');
+    });
+
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? '');
+    expect(artifact?.name).toBe('Drowned Docks');
+    expect(artifact?.tags).toEqual(['harbour']);
+    const data = artifact?.data as {
+      pointsOfInterest?: { name: string; description: string }[];
+      hooks?: string[];
+    };
+    expect(data.pointsOfInterest).toEqual([
+      { name: 'Sunken bell tower', description: '' },
+      { name: 'Fish market', description: 'Stalls.' },
+    ]);
+    expect(data.hooks).toEqual(['Missing diver']);
   }, 20000);
 
   it('auto mode runs to completion without pausing', async () => {

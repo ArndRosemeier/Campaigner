@@ -11,10 +11,58 @@ import { statBlockSchema } from '@/domain/statblock';
 const draftBase = {
   name: z.string().min(1),
   summary: z.string(),
-  suggestedTags: z.array(z.string()),
+  /** Models often omit tags entirely; a single string is also tolerated. */
+  suggestedTags: z.preprocess(
+    (value): unknown =>
+      typeof value === 'string' ? [value] : (value ?? []),
+    z.array(z.string()),
+  ),
   /** Markdown for the artifact body. */
   body: z.string(),
 };
+
+/**
+ * Models frequently return list items in a looser shape than the contract
+ * (a bare string instead of {name, description}, "4" instead of 4, an object
+ * inside a string list). These coercions accept the common variants so a
+ * good draft isn't thrown away over formatting.
+ */
+
+/** Flattens an object item to a string (name/title/text field, else JSON). */
+function itemToText(item: unknown): string {
+  if (typeof item === 'string') return item;
+  if (typeof item === 'number' || typeof item === 'boolean') return String(item);
+  if (item !== null && typeof item === 'object') {
+    const record = item as Record<string, unknown>;
+    for (const key of ['name', 'title', 'text', 'description', 'message']) {
+      const value = record[key];
+      if (typeof value === 'string' && value !== '') return value;
+    }
+    return JSON.stringify(item);
+  }
+  return '';
+}
+
+/** z.array(z.string()) that tolerates object/number entries. */
+function stringArray() {
+  return z.preprocess(
+    (value): unknown => (Array.isArray(value) ? value.map(itemToText) : value),
+    z.array(z.string()),
+  );
+}
+
+/** Array of {name|title, description}-style objects that tolerates bare strings. */
+function namedItemArray(nameKey: 'name' | 'title') {
+  return z.preprocess(
+    (value): unknown =>
+      Array.isArray(value)
+        ? value.map((item: unknown) =>
+            typeof item === 'string' ? { [nameKey]: item, description: '' } : item,
+          )
+        : value,
+    z.array(z.object({ [nameKey]: z.string(), description: z.string() })),
+  );
+}
 
 export const npcDraftSchema = z.object({
   ...draftBase,
@@ -32,8 +80,8 @@ export const locationDraftSchema = z.object({
   ...draftBase,
   locationType: z.string(),
   inhabitants: z.string(),
-  pointsOfInterest: z.array(z.object({ name: z.string(), description: z.string() })),
-  hooks: z.array(z.string()),
+  pointsOfInterest: namedItemArray('name'),
+  hooks: stringArray(),
 });
 
 export type LocationDraft = z.infer<typeof locationDraftSchema>;
@@ -43,7 +91,7 @@ export const factionDraftSchema = z.object({
   goals: z.string(),
   methods: z.string(),
   resources: z.string(),
-  ranks: z.array(z.object({ title: z.string(), description: z.string() })),
+  ranks: namedItemArray('title'),
 });
 
 export type FactionDraft = z.infer<typeof factionDraftSchema>;
@@ -77,7 +125,8 @@ export const encounterDraftSchema = z.object({
   monsters: z.array(
     z.object({
       name: z.string(),
-      count: z.number().int().positive(),
+      /** Models often send "4"; accept numeric strings. */
+      count: z.coerce.number().int().positive(),
       notes: z.string(),
       /** M3-B: index into the numbered stat-block excerpts of the retrieve
        * step — mapped back to { type: 'rulebook', chunkId } on finalize. */
@@ -98,8 +147,8 @@ export const plotArcDraftSchema = z.object({
   arcType: z.string(),
   premise: z.string(),
   stakes: z.string(),
-  beats: z.array(z.object({ title: z.string(), description: z.string() })),
-  hooks: z.array(z.string()),
+  beats: namedItemArray('title'),
+  hooks: stringArray(),
   climax: z.string(),
 });
 
@@ -109,8 +158,8 @@ export const sessionDraftSchema = z.object({
   ...draftBase,
   sessionNumber: z.string(),
   recap: z.string(),
-  prep: z.array(z.string()),
-  openThreads: z.array(z.string()),
+  prep: stringArray(),
+  openThreads: stringArray(),
 });
 
 export type SessionDraft = z.infer<typeof sessionDraftSchema>;
