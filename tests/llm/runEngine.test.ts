@@ -4,9 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createPersona, type Persona } from '@/domain';
-import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import { runEngine } from '@/llm/runEngine';
+import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { waitFor } from '@testing-library/react';
 import { clearDatabase } from '../db/helpers';
 
@@ -210,6 +211,68 @@ describe('runEngine', () => {
     // artifact named after the persona ("NPC Smith") with empty content.
     expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
     expect(chatMock).toHaveBeenCalledTimes(2); // one automatic JSON-fix retry
+  }, 20000);
+
+  it('auto NPC with a garbage statblock reply fails the run instead of dropping it silently', async () => {
+    // Regression for the silent fallback: a rejected statblock step used to
+    // be skipped and the NPC finalized WITHOUT its stat block.
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
+      .mockResolvedValue('this is not a statblock');
+
+    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const };
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+    });
+
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('Step "statblock" rejected');
+    expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
+  }, 20000);
+
+  it('review finalize refuses placeholder output when step edits are garbage', async () => {
+    // Editing the check step to garbage and approving used to produce a
+    // 'no structured report' placeholder note naming an 'unknown artifact'.
+    const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
+    if (editor === undefined) throw new Error('continuity-editor persona missing');
+    const fresh = await createCampaign({ name: 'Review Campaign', system: 'dnd5e' });
+    const arc = await createArtifact({
+      campaignId: fresh.id,
+      kind: 'plotarc',
+      name: 'The Drowned Bell',
+      body: '# Arc',
+    });
+
+    const input = {
+      campaign: fresh,
+      persona: editor,
+      autonomy: 'review' as const,
+      brief: 'review the arc',
+      pinnedChunkIds: [],
+      targetArtifactId: arc.id,
+    };
+    chatMock.mockResolvedValue('still not json');
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('needs_review');
+    });
+
+    // The user "edits" the check step to garbage and approves anyway.
+    await runEngine.editStep(runId, 1, {}, input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+    });
+
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('no continuity report');
+    // No placeholder report note was created.
+    const artifacts = await listArtifactsByCampaign(fresh.id);
+    expect(artifacts).toHaveLength(1); // just the target arc
   }, 20000);
 
   it('tolerates loose draft shapes (string list items, single-string tags)', async () => {
