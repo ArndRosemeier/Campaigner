@@ -14,6 +14,7 @@ import {
 } from '@/domain';
 import { defaultArtifactName } from '@/domain';
 import { exportSingleArtifact } from '@/features/campaign/components/export-dialog';
+import { exportArtifactPdfFile } from '@/lib/pdfExport';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -211,6 +212,12 @@ export function CampaignTree({
                           onExport={() => {
                             void exportSingleArtifact(artifact);
                           }}
+                          onExportPdfGm={() => {
+                            void exportArtifactPdfFile(artifact, 'gm');
+                          }}
+                          onExportPdfPlayer={() => {
+                            void exportArtifactPdfFile(artifact, 'player');
+                          }}
                         />
                       </li>
                     ))}
@@ -301,6 +308,8 @@ interface TreeRowProps {
   onDuplicate: () => void;
   onDelete: () => void;
   onExport: () => void;
+  onExportPdfGm: () => void;
+  onExportPdfPlayer: () => void;
 }
 
 function TreeRow({
@@ -311,6 +320,8 @@ function TreeRow({
   onDuplicate,
   onDelete,
   onExport,
+  onExportPdfGm,
+  onExportPdfPlayer,
 }: TreeRowProps) {
   return (
     <ContextMenu>
@@ -343,6 +354,8 @@ function TreeRow({
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuItem onClick={onExport}>Export as JSON</ContextMenuItem>
+        <ContextMenuItem onClick={onExportPdfGm}>Export PDF (GM notes)</ContextMenuItem>
+        <ContextMenuItem onClick={onExportPdfPlayer}>Export PDF (player handout)</ContextMenuItem>
         <ContextMenuItem className="text-destructive" onClick={onDelete}>
           Delete
         </ContextMenuItem>
