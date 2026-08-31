@@ -218,14 +218,7 @@ function baseDoc(artifact: Artifact): TDocumentDefinitions {
   const kindLabel = ARTIFACT_KIND_LABELS[artifact.kind];
   return {
     defaultStyle: { font: 'Roboto' },
-    styles: {
-      title: STYLES.title!,
-      meta: STYLES.meta!,
-      heading: STYLES.heading!,
-      subheading: STYLES.subheading!,
-      label: STYLES.label!,
-      value: STYLES.value!,
-    },
+    styles: STYLES,
     content: [
       { text: artifact.name, style: 'title' },
       {
@@ -313,7 +306,8 @@ export async function exportArtifactPdf(artifact: Artifact, template: PdfTemplat
     import('pdfmake/build/pdfmake.js'),
     import('pdfmake/build/vfs_fonts.js'),
   ]);
-  const engine = (pdfmakeModule.default ?? pdfmakeModule) as unknown as {
+  const pdfmakeAny = pdfmakeModule as { default?: unknown };
+  const engine = (pdfmakeAny.default ?? pdfmakeAny) as unknown as {
     addVirtualFileSystem?: (vfs: Record<string, string>) => void;
     vfs?: Record<string, string>;
   } & { createPdf: (dd: TDocumentDefinitions) => PdfDocument };

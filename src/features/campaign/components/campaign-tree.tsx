@@ -1,8 +1,9 @@
 import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ChevronDownIcon, ChevronRightIcon, PlusIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronRightIcon, PlusIcon, WaypointsIcon } from 'lucide-react';
 
-import { workspacePath } from '@/app/routes';
+import { graphPath, workspacePath } from '@/app/routes';
+import { Link } from 'react-router-dom';
 import { artifactRepo } from '@/db';
 import {
   ARTIFACT_KINDS,
@@ -151,6 +152,15 @@ export function CampaignTree({
             setFilter(event.target.value);
           }}
         />
+        <Button
+          variant="outline"
+          size="xs"
+          className="mt-1.5 w-full"
+          render={<Link to={graphPath(campaignId)} />}
+        >
+          <WaypointsIcon aria-hidden data-icon="inline-start" />
+          Link graph
+        </Button>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
         {ARTIFACT_KINDS.map((kind) => {

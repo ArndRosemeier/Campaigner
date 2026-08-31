@@ -4,6 +4,7 @@ import { NotFoundPage } from '@/components/NotFoundPage';
 import { AppShell } from '@/app/layout/AppShell';
 import { ROUTES } from '@/app/routes';
 import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
+import { GraphPage } from '@/features/campaign/GraphPage';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
 import { RulesPage } from '@/features/rules/RulesPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
@@ -26,6 +27,7 @@ export function createAppRouter(): AppRouter {
         { index: true, element: <CampaignPickerPage /> },
         { path: ROUTES.workspace, element: <WorkspacePage /> },
         { path: ROUTES.artifact, element: <WorkspacePage /> },
+        { path: ROUTES.graph, element: <GraphPage /> },
         { path: ROUTES.rules, element: <RulesPage /> },
         { path: ROUTES.settings, element: <SettingsPage /> },
         { path: '*', element: <NotFoundPage /> },

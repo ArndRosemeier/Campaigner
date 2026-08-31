@@ -12,6 +12,8 @@ export const ROUTES = {
   workspace: '/c/:campaignId',
   /** Workspace with a specific artifact open. */
   artifact: '/c/:campaignId/a/:artifactId',
+  /** Link graph for a campaign (M2). */
+  graph: '/c/:campaignId/graph',
   /** Rules library (books list + browser). */
   rules: '/rules',
   /** Settings page. */
@@ -22,6 +24,11 @@ export const ROUTES = {
 export interface RouteParams {
   workspace: { campaignId: string };
   artifact: { campaignId: string; artifactId: string };
+}
+
+/** Path of the link-graph screen for a given campaign. */
+export function graphPath(campaignId: string): `/c/${string}/graph` {
+  return `/c/${encodeURIComponent(campaignId)}/graph`;
 }
 
 /** Path of the workspace screen for a given campaign. */

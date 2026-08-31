@@ -162,11 +162,6 @@ export class ChainRunner {
         this.emit();
         return this.state;
       }
-      if (this.cancelRequested) {
-        this.state.status = 'cancelled';
-        this.emit();
-        return this.state;
-      }
       if (outcome.status === 'failed') {
         this.state.status = 'failed';
         this.emit();
