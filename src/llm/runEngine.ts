@@ -407,15 +407,16 @@ export class RunEngine {
           return; // paused (awaiting_user / needs_review)
         }
 
-        // Auto autonomy with a draft that failed JSON validation even after
-        // the automatic retry: fail the run instead of silently finalizing an
-        // EMPTY artifact named after the persona (e.g. two locations called
-        // "Worldbuilder"). The statblock step is exempt — an NPC without a
-        // stat block is still a valid artifact.
-        if (outcome.step.status === 'rejected' && name === 'draft' && input.autonomy === 'auto') {
+        // Auto autonomy has no user to rescue a rejected step: any step whose
+        // output failed validation (draft, statblock, check, prompt-draft)
+        // fails the run instead of silently continuing toward placeholder
+        // output (e.g. an empty artifact named after the persona — the
+        // "Worldbuilder"-class bug).
+        if (outcome.step.status === 'rejected' && input.autonomy === 'auto') {
           const reason =
-            `Draft rejected: the model reply could not be parsed into the required JSON shape ` +
-            `after one automatic retry, so nothing was saved. Run the step again (or use manual/review autonomy) to keep the raw reply for editing.`;
+            `Step "${name}" rejected: the model reply could not be parsed into the required ` +
+            `JSON shape after one automatic retry. The run failed without saving partial results — ` +
+            `run it again, or use manual/review autonomy to keep the raw reply for editing.`;
           await updateRun(runId, { status: 'failed', errorMessage: reason, steps: [...steps] });
           this.emit({ kind: 'run', runId, status: 'failed' });
           return;
@@ -485,11 +486,14 @@ export class RunEngine {
     const gatherStep = steps.find((step) => step.name === 'gather');
     const effective = gatherStep?.userEdit ?? gatherStep?.output;
     if (effective === null || effective === undefined || typeof effective !== 'object') {
-      return 'unknown artifact';
+      throw new Error('finalize: the review run has no gather output to read the target from');
     }
     const target = (effective as { target?: { name?: unknown } | null }).target;
     const name = target?.name;
-    return typeof name === 'string' && name !== '' ? name : 'unknown artifact';
+    if (typeof name !== 'string' || name === '') {
+      throw new Error('finalize: the review run has no readable target artifact');
+    }
+    return name;
   }
 
   private effectiveDraft(steps: readonly RunStep[]): Record<string, unknown> | null {
@@ -1071,31 +1075,34 @@ export class RunEngine {
     // target artifact (06-MILESTONES M2: Continuity Editor).
     if (input.persona.mode === 'review') {
       const report = this.reportFromCheck(steps);
+      // No structured report here means the check step lied about being
+      // done — refusing to write a "no structured report" placeholder note.
+      if (report === null) {
+        throw new Error('finalize: the check step produced no continuity report');
+      }
       const targetId = input.targetArtifactId ?? null;
+      const targetName = this.targetName(steps);
       const reportBody = [
-        `# Continuity report — ${report?.summary !== undefined ? '' : ''}${this.targetName(steps)}`,
-        report === null ? 'The check step produced no structured report.' : '',
-        report === null
-          ? ''
-          : [
-              `**Verdict:** ${report.verdict === 'consistent' ? 'consistent' : 'issues found'}`,
-              report.issues
-                .map(
-                  (issue) =>
-                    `- **[${issue.severity}]** ${issue.message}${issue.relatedTo === '' ? '' : ` (relates to: ${issue.relatedTo})`}`,
-                )
-                .join('\n'),
-            ]
-              .filter((part) => part !== '')
-              .join('\n\n'),
+        `# Continuity report — ${targetName}`,
+        [
+          `**Verdict:** ${report.verdict === 'consistent' ? 'consistent' : 'issues found'}`,
+          report.issues
+            .map(
+              (issue) =>
+                `- **[${issue.severity}]** ${issue.message}${issue.relatedTo === '' ? '' : ` (relates to: ${issue.relatedTo})`}`,
+            )
+            .join('\n'),
+        ]
+          .filter((part) => part !== '')
+          .join('\n\n'),
       ].join('\n');
       const artifact = await createArtifact(
         {
           campaignId: input.campaign.id,
           kind: 'note',
-          name: `Continuity report — ${this.targetName(steps)}`,
+          name: `Continuity report — ${targetName}`,
           tags: ['continuity'],
-          summary: report?.summary ?? '',
+          summary: report.summary,
           body: reportBody,
           links: targetId === null ? [] : [{ targetId, relation: 'continuity-check-of' }],
           data: {},
@@ -1107,11 +1114,20 @@ export class RunEngine {
       return { step, artifactId: artifact.id };
     }
 
+    // A generate persona reaching finalize without a draft name means the
+    // pipeline skipped validation — refuse instead of naming the artifact
+    // after the persona (the "Worldbuilder"-class bug).
+    const draftName = asString(draft.name);
+    if (draftName === '') {
+      throw new Error(
+        `finalize: the ${kind} draft has no name — refusing to create an unnamed artifact`,
+      );
+    }
     const artifact = await createArtifact(
       {
         campaignId: input.campaign.id,
         kind,
-        name: asString(draft.name) || input.persona.name,
+        name: draftName,
         tags: Array.isArray(draft.suggestedTags) ? (draft.suggestedTags as string[]) : [],
         summary: asString(draft.summary),
         body: asString(draft.body),

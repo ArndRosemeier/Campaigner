@@ -8,6 +8,8 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
 import { failRunningRuns } from '@/db/runRepo';
+import { seedBuiltInPersonas } from '@/db/seed';
+import { toastError } from '@/lib/toast';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
 
@@ -43,7 +45,13 @@ export function AppShell(): JSX.Element {
   }, [openHelp]);
 
   void failRunningRuns().catch((error: unknown) => {
-    console.error('Could not reconcile interrupted runs', error);
+    // Startup reconciliation failure must be visible, not console-only.
+    toastError('Could not reconcile interrupted runs', error);
+  });
+  // Built-in personas: insert-if-missing on every app start (01-DATA-MODEL).
+  // Seeding after mount (not in main.tsx) so failures surface as toasts.
+  void seedBuiltInPersonas().catch((error: unknown) => {
+    toastError('Could not load built-in personas — generation stays unavailable', error);
   });
 
   return (

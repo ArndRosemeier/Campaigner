@@ -109,6 +109,10 @@ const STATBLOCK = {
   skills: '',
   senses: '',
   languages: 'Common',
+  traits: [],
+  actions: [],
+  reactions: [],
+  legendary: [],
   extras: { cr: '2' },
 };
 const REPORT_CONSISTENT = { verdict: 'consistent', summary: 'All good.', issues: [] };
@@ -116,8 +120,12 @@ const REPORT_CONSISTENT = { verdict: 'consistent', summary: 'All good.', issues:
 /** Returns the right draft JSON for whatever forge step is calling. */
 function forgeReply(messages: unknown): string {
   const text = JSON.stringify(messages);
+  // The statblock step embeds the step instruction; anchor on it BEFORE the
+  // briefs (the statblock call also contains the NPC brief, and JSON escapes
+  // make the raw '"ac": number' substring unfindable in serialized messages).
+  if (text.includes('Fill the StatBlock for')) return JSON.stringify(STATBLOCK);
   // Anchor on the forge briefs (unique per step) — never on digest words.
-  if (text.includes('"ac": number')) return JSON.stringify(STATBLOCK);
+  if (text.includes('Design the central plot arc')) return JSON.stringify(ARC);
   if (text.includes('Design the central plot arc')) return JSON.stringify(ARC);
   if (text.includes('Plan session')) return JSON.stringify(SESSION);
   if (text.includes('Create key location')) return JSON.stringify(LOCATION);

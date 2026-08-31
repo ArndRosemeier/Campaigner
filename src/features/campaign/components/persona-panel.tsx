@@ -564,7 +564,7 @@ function ImageRunActions({
           size="sm"
           onClick={() => {
             void runEngine.cancel(run.id).catch((error: unknown) => {
-              console.error(error);
+              toastError('Could not cancel the run', error);
             });
           }}
         >
@@ -651,7 +651,7 @@ function RunActions({
                     setEditMode(false);
                   })
                   .catch((error: unknown) => {
-                    console.error(error);
+                    toastError('Could not apply the step edit', error);
                   });
               }}
             >
@@ -676,7 +676,7 @@ function RunActions({
               size="sm"
               onClick={() => {
                 void runEngine.approve(run.id, input).catch((error: unknown) => {
-                  console.error(error);
+                  toastError('Could not approve the step', error);
                 });
               }}
               data-testid="approve-step"
@@ -712,7 +712,7 @@ function RunActions({
               size="sm"
               onClick={() => {
                 void runEngine.cancel(run.id).catch((error: unknown) => {
-                  console.error(error);
+                  toastError('Could not cancel the run', error);
                 });
               }}
             >
@@ -734,7 +734,7 @@ function RunActions({
                 size="sm"
                 onClick={() => {
                   void runEngine.retryStep(run.id, retryText, input).catch((error: unknown) => {
-                    console.error(error);
+                    toastError('Could not retry the step', error);
                   });
                 }}
               >

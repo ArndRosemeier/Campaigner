@@ -208,9 +208,11 @@ describe('ModuleForge end-to-end', () => {
           skills: '',
           senses: '',
           languages: 'Common',
-          traits: [{ name: 'Bell-touched', description: "Immune to the bell's call." }],
-          actions: [{ name: 'Ritual dagger', description: 'Melee, 1d4+2.' }],
-          cr: '2',
+          traits: [{ name: 'Bell-touched', text: "Immune to the bell's call." }],
+          actions: [{ name: 'Ritual dagger', text: 'Melee, 1d4+2.' }],
+          reactions: [],
+          legendary: [],
+          extras: { cr: '2' },
         }),
       )
       // continuity check report

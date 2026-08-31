@@ -10,6 +10,7 @@ import {
   SparklesIcon,
   Trash2Icon,
 } from 'lucide-react';
+import { toastError } from '@/lib/toast';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -136,7 +137,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
                   pinned.map((chunk) => chunk.id),
                 )
                 .catch((error: unknown) => {
-                  console.error(error);
+                  toastError('The module forge crashed', error);
                 });
             }}
           >
@@ -295,7 +296,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
                 pinned.map((chunk) => chunk.id),
               )
               .catch((error: unknown) => {
-                console.error(error);
+                toastError('The chain crashed', error);
               });
           }}
         >
@@ -352,7 +353,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
                 data-testid="resume-chain"
                 onClick={() => {
                   void chainRunner.resume().catch((error: unknown) => {
-                    console.error(error);
+                    toastError('Could not resume the chain', error);
                   });
                 }}
               >

@@ -75,9 +75,21 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   their own copies of entity types.
 - All IndexedDB access goes through `/src/db`; components never import Dexie.
 - All LLM/JSON boundaries validated with zod `safeParse`; on failure the run
-  enters a `needs_review` state, never throws to the UI.
+  enters a `needs_review` state (manual/review autonomy) or **fails with an
+  `errorMessage`** (auto autonomy) — it never silently continues to produce
+  placeholder output.
 - Every entity has `id: string` (UUID), `createdAt: number`, `updatedAt: number`
   (epoch ms).
 - Errors shown to users via a single toast helper in `/src/lib/toast.ts`.
+- **No silent fallbacks (binding)**: when data, parsing, or a step fails, the
+  code must propagate a loud error — never substitute placeholder output.
+  Forbidden: finalizing artifacts from empty/failed drafts, placeholder
+  names/values derived from persona or step labels, `catch`-and-continue
+  around parsing/validation, `console.error` without a user-visible surface.
+  Defaults are allowed ONLY for genuine user preferences and optional
+  enrichment (e.g. unset generation language → `'en'`), never to mask a
+  failure. Every caught error must be surfaced to the user through
+  `lib/toast.ts`, the global error boundary, or a failed run with an
+  `errorMessage` — not swallowed into partial results.
 - No environment variables at build time; all configuration (API key, models)
   is user-entered at runtime and stored in Dexie `settings`.

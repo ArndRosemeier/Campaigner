@@ -179,13 +179,17 @@ describe('runEngine', () => {
     expect(run?.steps[1]?.status).toBe('rejected');
     expect(chatMock).toHaveBeenCalledTimes(2);
 
-    // Approving continues: finalize runs with an empty draft.
+    // The designed rescue path: the user EDITS the rejected draft step to
+    // valid JSON (approve-without-edit now fails loudly in finalize — it
+    // used to create an artifact named after the persona with empty data).
     chatMock.mockResolvedValue(JSON.stringify(VALID_STATBLOCK));
-    await runEngine.approve(runId, input);
+    await runEngine.editStep(runId, 1, { parsed: VALID_DRAFT }, input);
     await waitFor(async () => {
       const run2 = await getRun(runId);
       expect(run2?.status).toBe('completed');
     });
+    const run2 = await getRun(runId);
+    expect(run2?.resultArtifactId).not.toBeNull();
   }, 20000);
 
   it('auto mode with a never-parsing draft fails the run instead of saving an empty artifact', async () => {
@@ -200,7 +204,7 @@ describe('runEngine', () => {
     });
 
     const run = await getRun(runId);
-    expect(run?.errorMessage).toContain('Draft rejected');
+    expect(run?.errorMessage).toContain('Step "draft" rejected');
     expect(run?.steps[1]?.status).toBe('rejected');
     // Regression: this used to fall through to finalize and create an
     // artifact named after the persona ("NPC Smith") with empty content.

@@ -42,7 +42,7 @@ export function EmbeddingLibraryPanel(): JSX.Element {
     try {
       setStats(await embeddingStats());
     } catch (error) {
-      console.error(error);
+      toastError('Could not load embedding stats', error);
     }
   }
 

@@ -3,13 +3,10 @@ import { createRoot } from 'react-dom/client';
 
 import '@/index.css';
 import { App } from '@/app/App';
-import { seedBuiltInPersonas } from '@/db/seed';
 
-// Built-in personas: insert-if-missing on every app start (01-DATA-MODEL).
-// Failures must not block the app from rendering.
-void seedBuiltInPersonas().catch((error: unknown) => {
-  console.error('[campaigner] failed to seed built-in personas:', error);
-});
+// Built-in personas are seeded (insert-if-missing) from AppShell's mount
+// effect so a seeding failure surfaces as a visible toast — console-only
+// errors are forbidden (00-OVERVIEW §Global conventions).
 
 const rootElement = document.getElementById('root');
 

@@ -114,8 +114,10 @@ After each step completes:
   optionally with an extra instruction appended to the prompt), or **cancel**.
 - `review` → pause (`awaiting_user`) only if the step is `needs_review`
   (zod failure) — otherwise continue automatically.
-- `auto` → pause only on `needs_review`; `finalize` always runs, user reviews
-  the artifact afterwards.
+- `auto` → no user in the loop: a step whose output fails zod validation
+  **fails the run** (`status:'failed'` + `errorMessage`, nothing saved) —
+  the engine never falls through a rejected step to finalize placeholder
+  output. Completed runs are reviewable afterwards like any other.
 
 Cancel → `status:'cancelled'`, abort in-flight fetch via AbortSignal, no
 artifact created. Unexpected exception → `status:'failed'`, `errorMessage` set.
