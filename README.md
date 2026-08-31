@@ -43,8 +43,25 @@ client-side — no backend, no accounts.
    _Start_. Each run streams its steps (retrieve → draft → stat block →
    finalize); approve, edit, retry, or cancel when prompted. Finished runs
    produce versioned artifacts in the campaign tree (full revision history,
-   restore any snapshot).
-6. Everything persists locally in IndexedDB and survives reloads.
+   restore any snapshot). Beyond _NPC Smith_, the built-in set covers
+   _Location Architect_, _Faction Designer_, _Plot Architect_, and _Session
+   Chronicler_; the _Continuity Editor_ reviews any existing artifact for
+   inconsistencies and writes a continuity report. Chain several personas in
+   the _Writers' room_ tab: each step can hand its output to the next as
+   context. Artifact kinds include NPCs, locations, factions, notes,
+   encounters, plot arcs, and sessions.
+6. **Export & import** — a single artifact, a selection, or a whole campaign as
+   a JSON file (or a zip bundle with per-artifact files) via the tree's
+   right-click menu or the picker screen; import always creates a fresh copy.
+   Any artifact also exports as a PDF — _GM notes_ (everything incl. secrets
+   and stat block) or a _player handout_ (name/summary/body only).
+7. **See the web of links** with the _Link graph_ button above the tree:
+   artifacts cluster by kind, edges carry their relation labels, and clicking
+   a node opens the artifact.
+8. **Manage embeddings** on the _Rules_ page: the embeddings panel shows how
+   many chunks are embedded for the current model and lets you embed the whole
+   library at once or clear the cache.
+9. Everything persists locally in IndexedDB and survives reloads.
 
 ## Scripts
 
