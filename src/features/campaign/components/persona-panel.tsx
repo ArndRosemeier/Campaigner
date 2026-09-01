@@ -817,7 +817,7 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
               variant="ghost"
               size="icon-sm"
               aria-label={`Delete run ${stamp}`}
-              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/run:opacity-100 hover:text-destructive focus-visible:opacity-100"
+              className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/run:opacity-100 pointer-coarse:opacity-100 hover:text-destructive focus-visible:opacity-100"
               onClick={() => {
                 void handleDeleteRun(run.id);
               }}

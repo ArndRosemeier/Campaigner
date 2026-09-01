@@ -399,7 +399,7 @@ function TreeRow({
             variant="ghost"
             size="icon-sm"
             aria-label={`Delete ${artifact.name}`}
-            className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 hover:text-destructive focus-visible:opacity-100"
+            className="shrink-0 text-muted-foreground opacity-0 transition-opacity group-hover/row:opacity-100 pointer-coarse:opacity-100 hover:text-destructive focus-visible:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
               onDelete();

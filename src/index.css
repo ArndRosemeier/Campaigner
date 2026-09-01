@@ -127,6 +127,34 @@
   html {
     @apply font-sans;
   }
+
+  /* Tablet (05-UI.md §Tablet): the double-tap-to-zoom viewport gesture steals
+     the second click of a fast double click on small controls. `manipulation`
+     opts interactive elements out of double-tap zoom while keeping pinch zoom
+     and panning (page zoom itself stays enabled for accessibility). */
+  button,
+  a,
+  [role='button'],
+  summary {
+    touch-action: manipulation;
+  }
+
+  /* Tablet (05-UI.md §Tablet): the dense 24–32px controls a desktop pointer
+     handles fine are under finger size. Grow the hit box without moving the
+     layout — an absolutely-positioned pseudo-element is part of the button's
+     hit-test area, so ±4px turns a 24px icon into a ~32px target and a 32px
+     button into ~40px, with no visual change. */
+  @media (pointer: coarse) {
+    [data-slot='button'] {
+      position: relative;
+    }
+    [data-slot='button']::after {
+      content: '';
+      position: absolute;
+      inset: -4px;
+      border-radius: inherit;
+    }
+  }
 }
 
 /* Progress dock: indeterminate sweep — a third-width fill slides the full
