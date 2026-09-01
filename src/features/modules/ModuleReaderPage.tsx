@@ -340,7 +340,13 @@ export function ModuleReaderPage(): JSX.Element {
                   }}
                 />
               </section>
-              <SpineCheckpoint moduleId={module.id} campaign={campaign} spine={module.spine} busy={busy} />
+              <SpineCheckpoint
+                moduleId={module.id}
+                campaign={campaign}
+                spine={module.spine}
+                busy={busy}
+                entityKinds={module.entityKinds}
+              />
             </>
           ) : (
             <>

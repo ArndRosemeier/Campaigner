@@ -132,10 +132,11 @@ function moduleFixture(campaignId: Id): Module {
     },
     parts: [],
     entityKinds: [
-      { name: 'Undercroft', kind: 'location' },
-      { name: 'Kael', kind: 'npc' },
-      { name: 'Bram', kind: 'npc' },
+      { name: 'Undercroft', kind: 'location', absorbed: [] },
+      { name: 'Kael', kind: 'npc', absorbed: [] },
+      { name: 'Bram', kind: 'npc', absorbed: [] },
     ],
+    entityNamesNormalized: true,
   });
 }
 
@@ -641,7 +642,7 @@ describe('EntityPanel', () => {
         ...base.spine,
         premise: `${PREMISE} [[Cora]] tends the graves.`,
       },
-      entityKinds: [...base.entityKinds, { name: 'Cora', kind: 'npc' }],
+      entityKinds: [...base.entityKinds, { name: 'Cora', kind: 'npc', absorbed: [] }],
     });
 
     // The REAL chain runner pre-fills every step as 'pending' and stops at
@@ -775,4 +776,192 @@ describe('EntityPanel', () => {
     });
     expect(useProgressStore.getState().jobs).toEqual([]);
   });
+});
+
+describe('EntityPanel — normalization state (fix-01)', () => {
+  beforeEach(clearDatabase);
+  beforeEach(() => {
+    chainMocks.run.mockReset();
+    useProgressStore.getState().reset();
+    chatMock.mockReset();
+    toastErrorMock.mockClear();
+  });
+  afterEach(cleanup);
+
+  /** The panel module, saved so the normalization pass can patch the row. */
+  async function seedNormalizedModule(
+    campaignId: Id,
+    overrides: Partial<Module> = {},
+  ): Promise<Module> {
+    const module = moduleSchema.parse({ ...moduleFixture(campaignId), ...overrides });
+    await saveModule(module);
+    return module;
+  }
+
+  it('gates batch generation behind the normalization flag with a visible reason', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await seedNormalizedModule(campaign.id, { entityNamesNormalized: false });
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const npcButton = screen.getByTestId('batch-npc');
+    expect(npcButton).toBeDisabled();
+    expect(screen.getByTestId('batch-gate-reason')).toHaveTextContent(
+      'Entity names are not normalized yet',
+    );
+    // The manual pass trigger is available.
+    expect(screen.getByTestId('entity-normalize')).toBeInTheDocument();
+  });
+
+  it('shows the failed-pass banner with the error, and Retry re-runs the pass successfully', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await updateSettings({ defaultChatModel: 'test/fixture-model' });
+    const module = await seedNormalizedModule(campaign.id, {
+      entityNamesNormalized: false,
+      entityNormalizationError: 'the normalization reply violated its contract: omitted names',
+    });
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    // The failed state is loud, and the reason names the gate.
+    expect(screen.getByTestId('entity-normalize-error')).toHaveTextContent(
+      'omitted names',
+    );
+    expect(screen.getByTestId('batch-gate-reason')).toHaveTextContent('normalization failed');
+
+    // Retry runs the pass for real: every extracted name self-maps.
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        entities: [
+          { name: 'Mira', canonical: 'Mira', kind: 'npc' },
+          { name: 'Undercroft', canonical: 'Undercroft', kind: 'location' },
+          { name: 'Kael', canonical: 'Kael', kind: 'npc' },
+          { name: 'Bram', canonical: 'Bram', kind: 'npc' },
+          { name: 'The Tide Bell', canonical: 'The Tide Bell', kind: 'note' },
+        ],
+      }),
+    );
+    await user.click(screen.getByTestId('entity-normalize-retry'));
+
+    // The panel prop is a static snapshot here (no live query in this test),
+    // so the row itself is the ground truth for the retry's effect.
+    await waitFor(async () => {
+      expect((await getModule(module.id))?.entityNamesNormalized).toBe(true);
+    });
+    const after = await getModule(module.id);
+    expect(after?.entityNormalizationError).toBe('');
+    expect(after?.entityKinds.map((entry) => entry.name)).toEqual([
+      'Mira',
+      'Undercroft',
+      'Kael',
+      'Bram',
+      'The Tide Bell',
+    ]);
+  }, 20_000);
+
+  it('applies stored proposals to the documents current text on confirm', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const fixtureSpine = moduleFixture(campaign.id).spine;
+    if (fixtureSpine === null) throw new Error('fixture spine missing');
+    const module = await seedNormalizedModule(campaign.id, {
+      spine: { ...fixtureSpine, premise: `${PREMISE} [[Guard Mira]] was seen at dusk.` },
+      entityRewriteProposals: [
+        { planIndex: -1, replacements: [{ from: 'Guard Mira', to: 'Mira' }] },
+        { planIndex: 0, replacements: [{ from: 'Guard Mira', to: 'Mira' }] },
+      ],
+      parts: [
+        {
+          planIndex: 0,
+          status: 'ready' as const,
+          errorMessage: '',
+          edited: true,
+          markdown: 'The tide rose. [[Guard Mira]] kept the watch.',
+        },
+      ],
+    });
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByTestId('entity-proposals-banner')).toHaveTextContent(
+      'Normalization wants to update hand-edited text',
+    );
+    await user.click(screen.getByTestId('entity-proposals-review'));
+    const dialog = screen.getByTestId('entity-proposals-dialog');
+    expect(within(dialog).getByTestId('entity-proposals-list')).toHaveTextContent('Premise');
+    expect(within(dialog).getByTestId('entity-proposals-list')).toHaveTextContent('Part 1');
+    await user.click(within(dialog).getByTestId('entity-proposals-apply'));
+
+    const after = await getModule(module.id);
+    expect(after?.entityRewriteProposals).toBeNull();
+    // The premise took the proposal path and is now rewritten — display text
+    // preserved, target canonical.
+    expect(after?.spine?.premise).toContain('[[Mira|Guard Mira]]');
+    expect(after?.parts[0]?.markdown).toContain('[[Mira|Guard Mira]]');
+  }, 20_000);
+
+  it('drops the proposals on decline — nothing is rewritten', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const fixtureSpine = moduleFixture(campaign.id).spine;
+    if (fixtureSpine === null) throw new Error('fixture spine missing');
+    const module = await seedNormalizedModule(campaign.id, {
+      spine: { ...fixtureSpine, premise: `${PREMISE} [[Guard Mira]] was seen at dusk.` },
+      entityRewriteProposals: [
+        { planIndex: -1, replacements: [{ from: 'Guard Mira', to: 'Mira' }] },
+      ],
+      parts: [
+        {
+          planIndex: 0,
+          status: 'ready' as const,
+          errorMessage: '',
+          edited: true,
+          markdown: 'The tide rose. [[Guard Mira]] kept the watch.',
+        },
+      ],
+    });
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByTestId('entity-proposals-review'));
+    await user.click(screen.getByTestId('entity-proposals-decline'));
+
+    const after = await getModule(module.id);
+    expect(after?.entityRewriteProposals).toBeNull();
+    expect(after?.spine?.premise).toContain('[[Guard Mira]] was seen at dusk.');
+    expect(after?.parts[0]?.markdown).toContain('[[Guard Mira]]');
+  }, 20_000);
 });

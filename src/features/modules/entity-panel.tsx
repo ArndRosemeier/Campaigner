@@ -25,11 +25,12 @@ import type { Artifact, Campaign, Id, Module } from '@/domain';
 import { entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
-import { patchModule } from '@/db/moduleRepo';
+import { getModule, patchModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
+import { normalizeModuleEntityNames } from '@/llm/moduleGen';
 import { runEngine } from '@/llm/runEngine';
 import {
   alignEntityName,
@@ -45,6 +46,7 @@ import {
   countOccurrences,
   extractWikiLinks,
   resolveWikiLink,
+  rewriteWikiLinkTargets,
   sentenceAround,
   surroundingParagraphs,
 } from '@/lib/wikilinks';
@@ -53,14 +55,21 @@ import { useProgressStore } from '@/lib/progress';
 import { cn } from '@/lib/utils';
 
 /**
- * Entity panel (08-MODULE-DESIGNER M4-C): the right sidebar of the module
- * reader. Two lists — FOCUSED entities on top (the ones the table cares
- * about right now), then everything else, separated by a divider — with a
- * star toggle per row to move between them (persisted on the module row),
- * a sort button (first mention / alphabetical), occurrence counts, the
- * "N mentioned · M detailed" progress line, and the batch action "Generate
- * all unresolved of kind…". A resolved row opens the entity card (peek
- * modal); an unresolved row opens the stub popover.
+ * Entity panel (08-MODULE-DESIGNER M4-C; fix-01 state surfaces): the right
+ * sidebar of the module reader. Two lists — FOCUSED entities on top (the
+ * ones the table cares about right now), then everything else, separated by
+ * a divider — with a star toggle per row to move between them (persisted on
+ * the module row), a sort button (first mention / alphabetical), occurrence
+ * counts, the "N mentioned · M detailed" progress line, and the batch action
+ * "Generate all unresolved of kind…". A resolved row opens the entity card
+ * (peek modal); an unresolved row opens the stub popover.
+ *
+ * fix-01 state: batch generation is GATED on the module's entity-name
+ * normalization (`entityNamesNormalized`) — the visible guarantee that no
+ * variant name becomes an artifact through the batch. A failed pass shows a
+ * banner with the error and a Retry; stored rewrite proposals (hand-edited
+ * text / premise) show a review banner whose confirm dialog applies the
+ * rewrites to the documents' CURRENT text.
  *
  * IMAGES mode (M4-C, module-mode-as-play): the "Images" button swaps the row
  * stars for checkboxes — checked = the entity has an image, indeterminate =
@@ -159,6 +168,20 @@ export function EntityPanel({
   const progressFinish = useProgressStore((state) => state.finish);
   const queuedJobs = useEntityImageQueue((state) => state.queued);
   const activeJob = useEntityImageQueue((state) => state.active);
+  /** fix-01: the consent review dialog is open. */
+  const [proposalsOpen, setProposalsOpen] = useState(false);
+  /** fix-01: the normalization pass is running (Retry / manual run). */
+  const [normalizing, setNormalizing] = useState(false);
+
+  const moduleTag = moduleTagFor(module.title);
+
+  /** fix-01: the batch gate — no batch generation before the pass succeeded. */
+  const batchGateOpen = module.entityNamesNormalized;
+  const batchGateReason = batchGateOpen
+    ? undefined
+    : module.entityNormalizationError !== ''
+      ? 'Entity name normalization failed — retry it before batch generation.'
+      : 'Entity names are not normalized yet — run the pass before batch generation.';
 
   const mentioned = entries.length;
   const detailed = entries.filter((entry) => entry.resolved).length;
@@ -174,8 +197,6 @@ export function EntityPanel({
     list.push(entry);
     unresolvedByKind.set(kind, list);
   }
-
-  const moduleTag = moduleTagFor(module.title);
 
   /** Full module text for the brief context. */
   const moduleText = documents.map((document) => document.markdown).join('\n\n');
@@ -215,6 +236,64 @@ export function EntityPanel({
       });
     } catch (error) {
       toastError('Could not save the sort order', error);
+    }
+  }
+
+  /** fix-01: (Re-)runs the entity-name normalization pass. Failures are
+   * recorded on the module row + toasted inside the pass — this only adds
+   * the belt for unexpected throws. */
+  async function runNormalization(): Promise<void> {
+    setNormalizing(true);
+    try {
+      await normalizeModuleEntityNames(module.id);
+    } catch (error) {
+      toastError('Entity name normalization failed — retry from the entity panel', error);
+    } finally {
+      setNormalizing(false);
+    }
+  }
+
+  /**
+   * fix-01 consent: applies the stored rewrite proposals to the documents'
+   * CURRENT text (fetched fresh, so hand edits made since the pass are
+   * preserved), then clears the proposals. Tokens that no longer occur are
+   * skipped naturally by the mechanical rewriter.
+   */
+  async function applyProposals(): Promise<void> {
+    const proposals = module.entityRewriteProposals;
+    if (proposals === null) return;
+    try {
+      const current = await getModule(module.id);
+      if (current === undefined) throw new Error('the module row vanished');
+      let spine = current.spine;
+      let parts = current.parts;
+      for (const proposal of proposals) {
+        if (proposal.planIndex === -1) {
+          if (spine !== null) {
+            spine = { ...spine, premise: rewriteWikiLinkTargets(spine.premise, proposal.replacements) };
+          }
+          continue;
+        }
+        parts = parts.map((part) =>
+          part.planIndex === proposal.planIndex
+            ? { ...part, markdown: rewriteWikiLinkTargets(part.markdown, proposal.replacements) }
+            : part,
+        );
+      }
+      await patchModule(module.id, { spine, parts, entityRewriteProposals: null });
+      toastSuccess('Normalization rewrites applied to the hand-edited text');
+    } catch (error) {
+      toastError('Could not apply the normalization rewrites', error);
+    }
+  }
+
+  /** fix-01 consent: declines the proposals — nothing is rewritten, and the
+   * panel keeps showing its variant rows. Either way the proposals clear. */
+  async function declineProposals(): Promise<void> {
+    try {
+      await patchModule(module.id, { entityRewriteProposals: null });
+    } catch (error) {
+      toastError('Could not dismiss the rewrite proposals', error);
     }
   }
 
@@ -268,6 +347,13 @@ export function EntityPanel({
   }
 
   async function generateBatch(kind: StubKind): Promise<void> {
+    // fix-01 gate (belt behind the disabled buttons): no batch generation
+    // before the normalization pass succeeded — this is the guarantee that
+    // no variant name becomes an artifact through the batch.
+    if (!module.entityNamesNormalized) {
+      toastError('Entity names are not normalized yet — run the normalization pass first');
+      return;
+    }
     const targets = unresolvedByKind.get(kind) ?? [];
     if (targets.length === 0) return;
     setBatching(kind);
@@ -419,6 +505,47 @@ export function EntityPanel({
 
       {!collapsed && (
         <>
+          {module.entityRewriteProposals !== null && (
+            <div
+              className="flex items-center gap-2 border-b border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs"
+              data-testid="entity-proposals-banner"
+            >
+              <span className="min-w-0 flex-1">
+                Normalization wants to update hand-edited text — review the proposed rewrites.
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                data-testid="entity-proposals-review"
+                onClick={() => {
+                  setProposalsOpen(true);
+                }}
+              >
+                Review
+              </Button>
+            </div>
+          )}
+          {module.entityNormalizationError !== '' && (
+            <div
+              className="flex items-center gap-2 border-b border-destructive/40 bg-destructive/10 px-3 py-2 text-xs"
+              data-testid="entity-normalize-error"
+            >
+              <span className="min-w-0 flex-1" title={module.entityNormalizationError}>
+                Name normalization failed: {module.entityNormalizationError}
+              </span>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={normalizing}
+                data-testid="entity-normalize-retry"
+                onClick={() => {
+                  void runNormalization();
+                }}
+              >
+                {normalizing ? 'Normalizing…' : 'Retry'}
+              </Button>
+            </div>
+          )}
           <div className="flex flex-wrap items-center gap-1 border-b px-3 py-2">
             <Button
               variant={imageMode ? 'secondary' : 'outline'}
@@ -440,7 +567,8 @@ export function EntityPanel({
                   key={kind}
                   variant="outline"
                   size="xs"
-                  disabled={batching !== null}
+                  disabled={batching !== null || !batchGateOpen}
+                  title={batchGateReason}
                   data-testid={`batch-${kind}`}
                   onClick={() => {
                     void generateBatch(kind);
@@ -451,6 +579,20 @@ export function EntityPanel({
                 </Button>
               );
             })}
+            {!batchGateOpen && (
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={normalizing}
+                data-testid="entity-normalize"
+                onClick={() => {
+                  void runNormalization();
+                }}
+              >
+                <SparklesIcon aria-hidden data-icon="inline-start" />
+                {normalizing ? 'Normalizing…' : 'Normalize names'}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="xs"
@@ -473,6 +615,11 @@ export function EntityPanel({
               {module.entitySort === 'alphabetical' ? 'A–Z' : 'First mention'}
             </Button>
           </div>
+          {batchGateReason !== undefined && (
+            <p className="border-b px-3 py-1.5 text-[11px] text-muted-foreground" data-testid="batch-gate-reason">
+              {batchGateReason}
+            </p>
+          )}
 
           <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 text-sm">
             {entries.length === 0 && (
@@ -576,6 +723,61 @@ export function EntityPanel({
               }}
             >
               Delete image
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={proposalsOpen}
+        onOpenChange={(open) => {
+          if (!open) setProposalsOpen(false);
+        }}
+      >
+        <DialogContent className="sm:max-w-md" data-testid="entity-proposals-dialog">
+          <DialogHeader>
+            <DialogTitle>Apply the normalization rewrites?</DialogTitle>
+            <DialogDescription>
+              The pass wants to point variant wiki-links at their canonical
+              entity in text you edited by hand. The display text you wrote
+              stays exactly as it is — only the link target changes. Applying
+              re-checks each document&apos;s <em>current</em> text; tokens you
+              removed meanwhile are skipped.
+            </DialogDescription>
+          </DialogHeader>
+          <ul className="max-h-48 space-y-1 overflow-y-auto text-xs" data-testid="entity-proposals-list">
+            {(module.entityRewriteProposals ?? []).map((proposal) => (
+              <li key={String(proposal.planIndex)} className="rounded bg-muted px-2 py-1">
+                <span className="font-medium">
+                  {proposal.planIndex === -1
+                    ? 'Premise'
+                    : `Part ${String(proposal.planIndex + 1)}`}
+                </span>
+                {': '}
+                {proposal.replacements.map((rewrite) => `[[${rewrite.from}]] → [[${rewrite.to}]]`).join(', ')}
+              </li>
+            ))}
+          </ul>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="entity-proposals-decline"
+              onClick={() => {
+                setProposalsOpen(false);
+                void declineProposals();
+              }}
+            >
+              Keep as written
+            </Button>
+            <Button
+              size="sm"
+              data-testid="entity-proposals-apply"
+              onClick={() => {
+                setProposalsOpen(false);
+                void applyProposals();
+              }}
+            >
+              Apply rewrites
             </Button>
           </DialogFooter>
         </DialogContent>

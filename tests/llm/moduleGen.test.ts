@@ -4,15 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 
 import { createCampaign } from '@/db/campaignRepo';
+import { createArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import { createModule, moduleSpineSchema, type Campaign, type Id } from '@/domain';
 import {
   cancelModuleGen,
-  classifyEntityKind,
-  classifyModuleEntities,
+  classifyEntityName,
   generateMissingParts,
   ModuleBusyError,
+  normalizeModuleEntityNames,
   normalizePartMarkdown,
   parseSpine,
   parseSpineEntities,
@@ -83,6 +84,15 @@ const VALID_SPINE = {
     { name: 'Warden Bellamy', kind: 'npc' },
     { name: 'The Drowned Cathedral', kind: 'location' },
     { name: 'The Tide Cult', kind: 'faction' },
+  ],
+};
+
+/** The normalization reply for the spine's own entities: all map to themselves. */
+const SELF_NORMALIZATION = {
+  entities: [
+    { name: 'Warden Bellamy', canonical: 'Warden Bellamy', kind: 'npc' },
+    { name: 'The Drowned Cathedral', canonical: 'The Drowned Cathedral', kind: 'location' },
+    { name: 'The Tide Cult', canonical: 'The Tide Cult', kind: 'faction' },
   ],
 };
 
@@ -233,6 +243,8 @@ describe('runSpine', () => {
     await patchModule(moduleId, { status: 'failed', errorMessage: 'stale error' });
     const deferred = deferredChat();
     chatMock.mockImplementationOnce(() => deferred.promise);
+    // fix-01: the spine's entity list is normalized before storage.
+    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
 
     const pending = guard(runSpine(moduleId, campaign));
     await waitFor(async () => {
@@ -246,10 +258,12 @@ describe('runSpine', () => {
     expect(finished.errorMessage).toBe('');
     expect(finished.spine?.premise).toBe(VALID_SPINE.premise);
     expect(finished.spine?.partPlan).toHaveLength(3);
-    // The model-declared entity kinds land on the module row (08 §M4-C).
-    expect(finished.entityKinds).toEqual(VALID_SPINE.entities);
+    // The normalized, canonical entity kinds land on the module row (fix-01).
+    expect(finished.entityKinds).toEqual(
+      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
+    );
 
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(2);
     const firstCall = chatMock.mock.calls[0];
     if (firstCall === undefined) throw new Error('chat was not called');
     const [messages, options] = firstCall;
@@ -292,7 +306,9 @@ describe('runSpine', () => {
 describe('entity kinds — spine record (08 §M4-C)', () => {
   it('parseSpineEntities reads the model-declared entity list', () => {
     const raw = JSON.stringify(VALID_SPINE);
-    expect(parseSpineEntities(raw)).toEqual(VALID_SPINE.entities);
+    expect(parseSpineEntities(raw)).toEqual(
+      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
+    );
   });
 
   it('parseSpineEntities rejects a reply without entities or with a foreign kind', () => {
@@ -310,14 +326,18 @@ describe('entity kinds — spine record (08 §M4-C)', () => {
     const { entities: _entities, ...spineOnly } = VALID_SPINE;
     chatMock
       .mockResolvedValueOnce(JSON.stringify(spineOnly))
-      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE));
+      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE))
+      // fix-01: the normalization call that follows the parsed spine.
+      .mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
 
     const finished = await runSpine(moduleId, campaign);
 
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(chatMock).toHaveBeenCalledTimes(3);
     expect(userMessagesOf(1)).toContain('Your previous reply was invalid JSON');
     expect(finished.status).toBe('draft');
-    expect(finished.entityKinds).toEqual(VALID_SPINE.entities);
+    expect(finished.entityKinds).toEqual(
+      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
+    );
   }, 20000);
 });
 
@@ -530,6 +550,8 @@ describe('ModuleBusyError', () => {
     const { campaign, moduleId } = await seedModule();
     const deferred = deferredChat();
     chatMock.mockImplementationOnce(() => deferred.promise);
+    // fix-01: once the spine lands, the entity normalization call follows.
+    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
     const first = guard(runSpine(moduleId, campaign));
     await waitFor(async () => {
       expect((await getModule(moduleId))?.status).toBe('generating');
@@ -551,107 +573,153 @@ describe('ModuleBusyError', () => {
   }, 20000);
 });
 
-describe('entity kinds — prose classification (08 §M4-C)', () => {
-  it('classifyModuleEntities batch-classifies only unrecorded names and merges them', async () => {
-    const { moduleId } = await seedModule();
+describe('entity name normalization (fix-01)', () => {
+  it('replaces entityKinds with canonical records and rewrites generated part text', async () => {
+    const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
-    // One name already recorded by the spine pass must not be re-asked.
-    await patchModule(moduleId, { entityKinds: [{ name: 'Warden Bellamy', kind: 'npc' }] });
-    await seedReadyPart(
-      moduleId,
-      0,
-      partWithNames('PART-ONE', ['The Undercroft', 'The Tide Cult']),
-    );
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Guard Halmund', 'Halmunds', 'Halmund']));
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Halmund',
+      summary: 'The guard of the drowned bell.',
+    });
     chatMock.mockResolvedValueOnce(
       JSON.stringify({
         entities: [
-          { name: 'The Undercroft', kind: 'location' },
-          { name: 'The Tide Cult', kind: 'faction' },
+          { name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmunds', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmund', canonical: 'Halmund', kind: 'npc' },
         ],
       }),
     );
 
-    await classifyModuleEntities(moduleId);
+    await normalizeModuleEntityNames(moduleId);
 
-    expect(chatMock).toHaveBeenCalledTimes(1);
-    const [messages, options] = chatMock.mock.calls[0] ?? [];
-    expect(options?.responseFormat).toBe('json');
-    const prompt = messages?.find((message) => message.role === 'user')?.content ?? '';
-    expect(prompt).toContain('The Undercroft');
-    expect(prompt).toContain('The Tide Cult');
-    expect(prompt).not.toContain('Warden Bellamy');
     const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(true);
+    expect(after?.entityNormalizationError).toBe('');
+    // REPLACED, not merged: one canonical record carrying the absorbed variants.
     expect(after?.entityKinds).toEqual([
-      { name: 'Warden Bellamy', kind: 'npc' },
-      { name: 'The Undercroft', kind: 'location' },
-      { name: 'The Tide Cult', kind: 'faction' },
+      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'] },
+    ]);
+    // Generated part: link targets rewritten, display text preserved.
+    const part = after?.parts.find((entry) => entry.planIndex === 0);
+    expect(part?.markdown).toContain('[[Halmund|Guard Halmund]]');
+    expect(part?.markdown).toContain('[[Halmund|Halmunds]]');
+    expect(part?.markdown).toContain('[[Halmund]]');
+    // The variant names became aliases on the canonical artifact.
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    expect(artifacts[0]?.aliases).toEqual(['Guard Halmund', 'Halmunds']);
+    // No hand-edited text involved → no proposals.
+    expect(after?.entityRewriteProposals).toBeNull();
+  }, 20000);
+
+  it('holds hand-edited parts and the premise as proposals instead of rewriting', async () => {
+    const { moduleId } = await seedModule();
+    await patchModule(moduleId, {
+      spine: moduleSpineSchema.parse({ ...VALID_SPINE, premise: 'The bell tolls for [[Halmund]] and [[Guard Halmund]].' }),
+    });
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Halmunds']));
+    await seedReadyPart(moduleId, 1, partWithNames('PART-TWO', ['Halmunds']), { edited: true });
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        entities: [
+          { name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmunds', canonical: 'Halmund', kind: 'npc' },
+          { name: 'Halmund', canonical: 'Halmund', kind: 'npc' },
+        ],
+      }),
+    );
+
+    await normalizeModuleEntityNames(moduleId);
+
+    const after = await getModule(moduleId);
+    // The generated part was rewritten; the premise and the hand-edited part
+    // were not.
+    expect(after?.parts.find((entry) => entry.planIndex === 0)?.markdown).toContain('[[Halmund|Halmunds]]');
+    expect(after?.spine?.premise).toContain('[[Guard Halmund]]');
+    expect(after?.parts.find((entry) => entry.planIndex === 1)?.markdown).toContain('[[Halmunds]]');
+    expect(after?.parts.find((entry) => entry.planIndex === 1)?.edited).toBe(true);
+    expect(after?.entityRewriteProposals).toEqual([
+      { planIndex: -1, replacements: [{ from: 'Guard Halmund', to: 'Halmund' }] },
+      { planIndex: 1, replacements: [{ from: 'Halmunds', to: 'Halmund' }] },
     ]);
   }, 20000);
 
-  it('classifyModuleEntities is a no-op (no chat) when every name has a record', async () => {
+  it('records the failure and toasts when the reply is invalid twice; the module stays ready', async () => {
     const { moduleId } = await seedModule();
     await seedSpine(moduleId);
-    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael']));
-    await patchModule(moduleId, { entityKinds: [{ name: 'kael', kind: 'npc' }] });
-
-    await classifyModuleEntities(moduleId);
-
-    expect(chatMock).not.toHaveBeenCalled();
-  }, 20000);
-
-  it('classifyModuleEntities throws when the reply omits a requested name', async () => {
-    const { moduleId } = await seedModule();
-    await seedSpine(moduleId);
-    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['The Undercroft', 'The Tide Cult']));
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({ entities: [{ name: 'The Undercroft', kind: 'location' }] }),
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['The Undercroft']));
+    chatMock.mockResolvedValue(
+      JSON.stringify({ entities: [{ name: 'Ghost', canonical: 'Ghost', kind: 'npc' }] }),
     );
 
-    await expect(classifyModuleEntities(moduleId)).rejects.toThrow('omitted');
+    await normalizeModuleEntityNames(moduleId);
+
+    const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('omitted the listed name "The Undercroft"');
+    expect(chatMock).toHaveBeenCalledTimes(2); // one retry with the violations stated
+    expect(userMessagesOf(1)).toContain('Your previous reply was invalid');
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Entity name normalization failed — retry from the entity panel',
+      expect.any(Error),
+    );
   }, 20000);
 
-  it('runParts classifies prose-invented names after the run; a failure keeps the module ready and toasts', async () => {
+  it('classifies a single hand-typed name with kind and canonical verdict', async () => {
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({ entities: [{ name: 'Some Guard', canonical: 'Halmund', kind: 'npc' }] }),
+    );
+
+    const verdict = await classifyEntityName('Some Guard', 'Some Guard watches the quay.', 'A haunted keep.', [
+      'Halmund',
+    ]);
+
+    expect(verdict).toEqual({ kind: 'npc', canonical: 'Halmund' });
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain('Some Guard watches the quay.');
+    expect(prompt).toContain('A haunted keep.');
+    expect(prompt).toContain('Halmund'); // the campaign artifact index is included
+  }, 20000);
+
+  it('classifyEntityName rejects a contract-violating reply after the retry', async () => {
+    // The reply never answers for the requested name — an invalid reply after
+    // the one retry must throw, never silently resolve.
+    chatMock.mockResolvedValue(
+      JSON.stringify({ entities: [{ name: 'Someone Else', canonical: 'Someone Else', kind: 'npc' }] }),
+    );
+
+    await expect(classifyEntityName('Kael', '', '', [])).rejects.toThrow('violated its contract');
+    expect(chatMock).toHaveBeenCalledTimes(2);
+  }, 20000);
+
+  it('runParts normalizes prose-invented names after the run; a failure keeps the module ready and toasts', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
     chatMock
       .mockResolvedValueOnce(partWithNames('PART-ONE', ['Kael']))
       .mockResolvedValueOnce(partWithNames('PART-TWO', ['The Undercroft']))
       .mockResolvedValueOnce(partWithNames('PART-THREE', []))
-      .mockRejectedValueOnce(new Error('classification provider down'));
+      .mockRejectedValueOnce(new Error('normalization provider down'));
 
     const finished = await runParts(moduleId, campaign);
 
-    // Three part calls + one batched classification call.
+    // Three part calls + one normalization call.
     expect(chatMock).toHaveBeenCalledTimes(4);
     expect(finished.status).toBe('ready');
     expect(finished.parts.every((part) => part.status === 'ready')).toBe(true);
-    // The classification failure is loud but does NOT sink the finished run.
+    // The failure is recorded on the row and toasted, but does NOT sink the
+    // finished run — and batch generation stays gated.
+    const after = await getModule(moduleId);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('normalization provider down');
     expect(toastErrorMock).toHaveBeenCalledWith(
-      'Could not classify entity types — pick kinds manually when stubbing',
+      'Entity name normalization failed — retry from the entity panel',
       expect.any(Error),
     );
-    expect(finished.entityKinds).toEqual([]);
-  }, 20000);
-
-  it('classifyEntityKind answers a single hand-typed name with its context', async () => {
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({ entities: [{ name: 'Kael', kind: 'npc' }] }),
-    );
-
-    const kind = await classifyEntityKind('Kael', 'Kael guards the gate at night.', 'A haunted keep.');
-
-    expect(kind).toBe('npc');
-    const prompt = userPromptOf(0);
-    expect(prompt).toContain('Kael guards the gate at night.');
-    expect(prompt).toContain('A haunted keep.');
-  }, 20000);
-
-  it('classifyEntityKind throws when the reply does not answer for the name', async () => {
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({ entities: [{ name: 'Someone Else', kind: 'npc' }] }),
-    );
-
-    await expect(classifyEntityKind('Kael', '', '')).rejects.toThrow('did not answer');
   }, 20000);
 });
 
@@ -664,6 +732,8 @@ describe('progress dock reporting', () => {
     const { campaign, moduleId } = await seedModule();
     const deferred = deferredChat();
     chatMock.mockImplementationOnce(() => deferred.promise);
+    // fix-01: the entity normalization call follows the parsed spine.
+    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
 
     const pending = guard(runSpine(moduleId, campaign));
     await waitFor(() => {

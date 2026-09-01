@@ -1,6 +1,6 @@
 # fix-01 — Entity name normalization (one model call, no heuristics)
 
-Status: **approved design, not yet implemented**. Builds on `08-MODULE-DESIGNER.md`
+Status: **implemented**. Builds on `08-MODULE-DESIGNER.md`
 (M4-B generator, M4-C entity workflow); binding conventions from
 `00-OVERVIEW.md §Global conventions` and `AGENTS.md` apply.
 

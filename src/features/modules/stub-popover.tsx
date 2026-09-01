@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { UserPlusIcon, UsersIcon, Wand2Icon, XIcon } from 'lucide-react';
+import { LinkIcon, UserPlusIcon, UsersIcon, Wand2Icon, XIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -14,7 +14,8 @@ import {
 } from '@/components/ui/select';
 import type { Campaign, EntityKind } from '@/domain';
 import { artifactRepo } from '@/db';
-import { classifyEntityKind } from '@/llm/moduleGen';
+import { classifyEntityName } from '@/llm/moduleGen';
+import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { generateSingleEntity } from '@/features/modules/entity-detail';
 import {
   guessKindFromSentence,
@@ -31,11 +32,15 @@ const STUB_KIND_LABELS: Readonly<Record<StubKind, string>> = {
 };
 
 /**
- * Stub popover (08-MODULE-DESIGNER M4-C): the actions behind an unresolved
- * chip — create a minimal artifact (name, first-occurrence sentence as
- * summary, `module:<title>` tag), send it to a persona (workspace, prefilled),
- * or link it to an existing artifact (adds the link name as alias).
- * Rendered as a small anchored card; dismiss via Esc or the backdrop.
+ * Stub popover (08-MODULE-DESIGNER M4-C; verdict flow amended by fix-01): the
+ * actions behind an unresolved chip — create a minimal artifact (name,
+ * first-occurrence sentence as summary, `module:<title>` tag), send it to a
+ * persona (workspace, prefilled), or link it to an existing artifact (adds
+ * the link name as alias). For hand-typed names the one-shot normalization
+ * verdict may resolve the name onto an existing artifact: the popover then
+ * DEFAULTS to alias-linking (never a second stub), and creating/generating a
+ * standalone entity requires the inline two-step confirm. Rendered as a
+ * small anchored card; dismiss via Esc or the backdrop.
  */
 
 export interface StubPopoverState {
@@ -71,21 +76,42 @@ export function StubPopover({
   onLinkExisting,
 }: StubPopoverProps): JSX.Element {
   // The kind is the MODEL's record when it exists; hand-typed names get a
-  // one-shot classification call (regex below is only the instant
-  // placeholder while that call is in flight — 08 §M4-C).
+  // one-shot normalization call (regex below is only the instant placeholder
+  // while that call is in flight — 08 §M4-C; fix-01 extends the verdict with
+  // the canonical entity the name refers to).
   const [kind, setKind] = useState<StubKind>(recordedKind ?? guessKindFromSentence(sentence));
   const [name, setName] = useState(state.name);
   const [busy, setBusy] = useState(false);
+  /** fix-01: the normalization verdict — which canonical entity this name
+   * refers to, and its kind. Null while the call is in flight/failed. */
+  const [verdict, setVerdict] = useState<{ kind: StubKind; canonical: string } | null>(null);
+  const [canonicalArtifactName, setCanonicalArtifactName] = useState<string | null>(null);
   /** True once the user picked a kind by hand — the async classification
    * must never clobber a manual choice. */
   const userPickedRef = useRef(false);
+  /** fix-01: the two-step confirm state for overriding the model's verdict —
+   * "create/generate as a separate entity" must be a deliberate act. */
+  const [armedCreate, setArmedCreate] = useState(false);
+  const [armedGenerate, setArmedGenerate] = useState(false);
 
   useEffect(() => {
     if (recordedKind !== undefined) return;
     let alive = true;
-    classifyEntityKind(state.name, contextParagraphs, premise)
-      .then((classified) => {
-        if (alive && !userPickedRef.current) setKind(classified);
+    listArtifactsByCampaign(campaign.id)
+      .then(async (artifacts) => {
+        const classified = await classifyEntityName(
+          state.name,
+          contextParagraphs,
+          premise,
+          artifacts.map((artifact) => artifact.name),
+        );
+        if (!alive) return;
+        const canonical = artifacts.find(
+          (artifact) => artifact.name.trim().toLowerCase() === classified.canonical.trim().toLowerCase(),
+        );
+        setCanonicalArtifactName(canonical?.name ?? null);
+        if (!userPickedRef.current) setKind(classified.kind);
+        setVerdict({ kind: classified.kind, canonical: classified.canonical });
       })
       .catch((error: unknown) => {
         // Loud per AGENTS rule 2; the fallback guess stays selectable.
@@ -94,8 +120,45 @@ export function StubPopover({
     return () => {
       alive = false;
     };
-  }, [recordedKind, state.name, contextParagraphs, premise]);
+  }, [recordedKind, state.name, contextParagraphs, premise, campaign.id]);
+
+  /**
+   * fix-01: default action when the verdict resolves to an existing artifact —
+   * alias-add the name onto that artifact (same as "Link existing…"), never a
+   * second stub. Only a variant needs the alias; a name equal to the
+   * artifact's own spelling already resolves.
+   */
+  async function linkToCanonical(): Promise<void> {
+    if (canonicalArtifactName === null) return;
+    setBusy(true);
+    try {
+      const artifacts = await listArtifactsByCampaign(campaign.id);
+      const artifact = artifacts.find(
+        (candidate) => candidate.name.trim().toLowerCase() === canonicalArtifactName.trim().toLowerCase(),
+      );
+      if (artifact === undefined) throw new Error(`the artifact "${canonicalArtifactName}" vanished`);
+      const alias = name.trim();
+      const needsAlias =
+        alias.toLowerCase() !== artifact.name.trim().toLowerCase() &&
+        !artifact.aliases.some((existing) => existing.trim().toLowerCase() === alias.toLowerCase());
+      if (needsAlias) {
+        await artifactRepo.updateArtifact(artifact.id, { aliases: [...artifact.aliases, alias] });
+      }
+      toastSuccess(`“${alias}” now resolves to ${artifact.name}`);
+      onClose();
+    } catch (error) {
+      toastError(`Could not link "${name.trim()}" to "${canonicalArtifactName}"`, error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function createStub(): Promise<void> {
+    if (canonicalArtifactName !== null && !armedCreate) {
+      // Overriding the model's verdict is a two-step act (fix-01).
+      setArmedCreate(true);
+      return;
+    }
     setBusy(true);
     try {
       await artifactRepo.createArtifact({
@@ -123,6 +186,11 @@ export function StubPopover({
    * machinery as the batch runs here, visible on the shared progress bar.
    */
   async function generateInPlace(): Promise<void> {
+    if (canonicalArtifactName !== null && !armedGenerate) {
+      // Overriding the model's verdict is a two-step act (fix-01).
+      setArmedGenerate(true);
+      return;
+    }
     setGenerating(true);
     try {
       const result = await generateSingleEntity({
@@ -166,6 +234,29 @@ export function StubPopover({
         </div>
 
         <div className="mt-2 flex flex-col gap-2">
+          {verdict !== null && canonicalArtifactName !== null && (
+            <p
+              className="rounded bg-muted px-2 py-1 text-xs text-muted-foreground"
+              data-testid="stub-verdict"
+            >
+              The model resolved this to the existing entity “{canonicalArtifactName}”
+              {verdict.canonical.trim().toLowerCase() !== state.name.trim().toLowerCase()
+                ? ' — linking keeps the story consistent'
+                : ''}
+              .
+            </p>
+          )}
+          {canonicalArtifactName !== null && (
+            <Button
+              size="sm"
+              disabled={busy}
+              data-testid="stub-link-verdict"
+              onClick={() => void linkToCanonical()}
+            >
+              <LinkIcon aria-hidden data-icon="inline-start" />
+              Link to “{canonicalArtifactName}”
+            </Button>
+          )}
           <div className="flex items-center gap-2">
             <Label htmlFor="stub-name" className="shrink-0 text-xs">
               Name
@@ -176,6 +267,8 @@ export function StubPopover({
               className="h-7 text-xs"
               onChange={(event) => {
                 setName(event.target.value);
+                setArmedCreate(false);
+                setArmedGenerate(false);
               }}
             />
           </div>
@@ -207,22 +300,29 @@ export function StubPopover({
 
           <Button
             size="sm"
+            variant={armedCreate ? 'destructive' : 'default'}
             disabled={busy || name.trim() === ''}
             data-testid="stub-create"
+            data-armed={armedCreate || undefined}
             onClick={() => void createStub()}
           >
             <UserPlusIcon aria-hidden data-icon="inline-start" />
-            Create stub
+            {armedCreate ? 'Create as a separate entity — confirm?' : 'Create stub'}
           </Button>
           <Button
             size="sm"
             variant="outline"
             disabled={generating || busy || name.trim() === ''}
             data-testid="stub-generate"
+            data-armed={armedGenerate || undefined}
             onClick={() => void generateInPlace()}
           >
             <Wand2Icon aria-hidden data-icon="inline-start" />
-            {generating ? 'Generating…' : 'Generate'}
+            {generating
+              ? 'Generating…'
+              : armedGenerate
+                ? 'Generate as a separate entity — confirm?'
+                : 'Generate'}
           </Button>
           <Button
             size="sm"

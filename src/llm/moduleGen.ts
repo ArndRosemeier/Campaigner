@@ -1,12 +1,13 @@
 import type { Campaign, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
-import { createModule, mergeEntityKinds, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
+import { createModule, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
+import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage } from '@/llm/openrouter';
 import { searchRules } from '@/search';
-import { extractWikiLinks, surroundingParagraphs } from '@/lib/wikilinks';
+import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
 import { toastError } from '@/lib/toast';
 import { useProgressStore } from '@/lib/progress';
 import { z } from 'zod';
@@ -156,7 +157,31 @@ export async function runSpine(
 
     // Spine-level entities REPLACE the record: this pass invents the world
     // (and only runs while the module has no parts, so nothing is lost).
-    return await patchModule(moduleId, { spine, entityKinds, status: 'draft', errorMessage: '' });
+    // fix-01: the entity list is normalized against the existing campaign
+    // artifacts BEFORE storage — the glossary the checkpoint approves is
+    // canonical from the start. A normalization failure fails the spine
+    // loudly (same policy as the spine reply itself).
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    const artifactNames = artifacts.map((artifact) => artifact.name);
+    const spineNames = entityKinds.map((entry) => entry.name);
+    let normalizedKinds: ModuleEntityKind[] = [];
+    if (spineNames.length > 0) {
+      const verdicts = await normalizationCall(
+        normalizationMessages(
+          spineNames.map((name) => ({
+            name,
+            context: surroundingParagraphs(spine.premise, name, NORMALIZE_CONTEXT_CAP),
+          })),
+          artifactNames,
+          spine.premise,
+        ),
+        settings.defaultChatModel,
+        spineNames,
+        artifactNames,
+      );
+      normalizedKinds = canonicalEntityRecords(verdicts);
+    }
+    return await patchModule(moduleId, { spine, entityKinds: normalizedKinds, status: 'draft', errorMessage: '' });
   } catch (error) {
     await failModule(moduleId, error);
     throw error;
@@ -218,7 +243,7 @@ async function spineMessages(
       '- Every level in the range must be covered by exactly one part.',
       '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up).',
       '- Introduce as many locations, NPCs and factions as the story needs — you are not required to detail any of them.',
-      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "faction" (an organization or group), or "note" (anything else — items, rumors, mysteries, plot devices).',
+      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "faction" (an organization or group), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title.',
       '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
     ].join('\n'),
     extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
@@ -333,15 +358,14 @@ export async function runParts(
     }
 
     const result = await patchModule(moduleId, { status: 'ready', errorMessage: '' });
-    progress.update(jobId, { progress: 1, detail: 'Recording entity types…' });
-    // Entity kinds for names invented in prose (08 §M4-C): one batched call
-    // after the parts land. A classification failure is loud (toast) but
-    // must NOT fail the completed run — the popover stays user-editable.
-    try {
-      await classifyModuleEntities(moduleId);
-    } catch (error) {
-      toastError('Could not classify entity types — pick kinds manually when stubbing', error);
-    }
+    progress.update(jobId, { progress: 1, detail: 'Normalizing entity names…' });
+    // Entity name normalization (fix-01): one call after the parts land —
+    // canonical names, kinds, link rewrites and aliases. A failure is
+    // recorded on the module row (loud, batch gated, Retry in the panel) but
+    // must NOT fail the completed run — there is nothing safe to fall back to.
+    await normalizeModuleEntityNames(moduleId).catch((error: unknown) => {
+      toastError('Entity name normalization failed — retry from the entity panel', error);
+    });
     return result;
   } catch (error) {
     if (isAbort(error)) {
@@ -453,6 +477,24 @@ async function partCall(
 
   const ruleExcerpts = await ruleExcerptSection(plan.synopsis);
 
+  // fix-01: the writer sees the canonical glossary (the normalized spine
+  // records) plus the campaign artifact index, so it reuses exact spellings
+  // instead of re-deriving names from prose. Cost policy (fix-01): the
+  // campaign index is names-only and capped like the spine's (60); the
+  // module glossary is uncapped — it is the module's own, small list.
+  const artifacts = await listArtifactsByCampaign(campaign.id);
+  const glossary =
+    module.entityKinds.length === 0
+      ? null
+      : `Module entities — wiki-link these ONLY by these exact canonical spellings:\n${module.entityKinds
+          .map((entry) => `- ${entry.name} (${entry.kind})`)
+          .join('\n')}`;
+  const campaignNames = artifacts.slice(0, 60).map((artifact) => `- ${artifact.name} (${artifact.kind})`);
+  const campaignIndex =
+    campaignNames.length === 0
+      ? null
+      : `Existing campaign entities (reuse by exact name where they fit):\n${campaignNames.join('\n')}`;
+
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
     `Module premise:\n${spine.premise}`,
@@ -465,11 +507,14 @@ async function partCall(
       ? null
       : `Full markdown of the previous part (continue seamlessly from it):\n\n${continuity}`,
     ruleExcerpts,
+    glossary,
+    campaignIndex,
     [
       'Writing instructions:',
       '- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).',
       '- Read-aloud text goes in blockquotes.',
       '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters. Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
+      '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token — write [[Halmund]]s Haus, not [[Halmunds]] Haus (English genitive: [[Halmund]]\'s tower). Never bake roles or titles into the token — write [[Halmund|the guard Halmund]], not [[Guard Halmund]]. Use [[Name|display]] whenever the surface text must differ from the canonical name. The same rules apply in any language.',
       `- Target length for this part: ${MODULE_SIZE_WORD_TARGETS[module.sizeDial]} (soft target).`,
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
     ].join('\n'),
@@ -515,27 +560,46 @@ async function partCall(
   }
 }
 
-// --- Entity kind classification (08 §M4-C) -----------------------------------
+// --- Entity name normalization (fix-01) --------------------------------------
 
-const CLASSIFY_CONTEXT_CAP = 400;
+const NORMALIZE_CONTEXT_CAP = 400;
 
 /**
- * The shared classification prompt: the model — which already knows what it
- * invented — states each entity's kind. Same JSON contract for the spine
- * record, the post-parts pass and single hand-typed names.
+ * The shared normalization prompt (fix-01): the model — which wrote the text
+ * — decides per listed name which canonical entity it refers to, and states
+ * the canonical entity's kind. One contract for the post-parts pass, the
+ * spine's entity list, and single hand-typed names.
  */
-function entityKindMessages(requests: readonly { name: string; context: string }[], premise: string): ChatMessage[] {
+function normalizationMessages(
+  requests: readonly { name: string; context: string }[],
+  artifactNames: readonly string[],
+  premise: string,
+): ChatMessage[] {
   const lines = requests.map((request) => {
     const context = request.context.replaceAll('\n', ' ').trim();
     return `- ${request.name}${context === '' ? '' : ` :: ${context}`}`;
   });
+  const index =
+    artifactNames.length === 0
+      ? null
+      : `Existing campaign artifacts (a name matching one of these refers to that artifact):\n${artifactNames.join('\n')}`;
   const instruction = [
     `Module premise for context:\n${premise}`,
-    'Classify each entity below by what it is in this adventure.',
-    'Kinds: "npc" = a person or creature the party meets; "location" = a place; "faction" = an organization or group; "note" = anything else (items, rumors, mysteries, plot devices).',
+    'For each entity name below, decide which canonical entity it refers to.',
+    index,
+    [
+      'Rules:',
+      '- One entry per listed name; the "name" field spelled exactly as listed; no extra entries; no invented names.',
+      '- "canonical" is the exact spelling of the entity this name refers to: the name itself, another listed name (the canonical form of a variant), or an existing artifact\'s exact name. Never a name that appears nowhere in the inputs. Canonical spellings are final — never A → B when B maps elsewhere.',
+      '- Merge only when confident the names refer to the same entity (same person, place, organization, or thing). A role or title attached to the same person ("Guard Halmund" / "Harbormaster Ilse") maps onto the person\'s canonical name; similar names for different beings never merge.',
+      '- A name that exactly matches an existing artifact\'s name maps to itself.',
+      '- "kind" describes the canonical entity: "npc" = a person or creature the party meets; "location" = a place; "faction" = an organization or group; "note" = anything else (items, rumors, mysteries, plot devices).',
+    ].join('\n'),
     'Entities:\n' + lines.join('\n'),
-    'Reply with ONLY a JSON object: { "entities": [{ "name": string, "kind": "npc" | "location" | "faction" | "note" }] } — one entry per listed entity, names spelled exactly as listed, no extra entities.',
-  ].join('\n\n');
+    'Reply with ONLY a JSON object: { "entities": [{ "name": string, "canonical": string, "kind": "npc" | "location" | "faction" | "note" }] } — one entry per listed entity.',
+  ]
+    .filter((part) => part !== null)
+    .join('\n\n');
   return [
     {
       role: 'system',
@@ -547,36 +611,71 @@ function entityKindMessages(requests: readonly { name: string; context: string }
   ];
 }
 
-/** Runs one classification chat call (invalid-JSON retried once). */
-async function classifyCall(messages: ChatMessage[], model: string): Promise<ModuleEntityKind[]> {
+/**
+ * Runs one normalization call (fix-01): parses the JSON reply, checks the
+ * post-conditions (completeness, no chains, artifact-locked names), and
+ * retries ONCE with the violations stated. A second invalid reply throws —
+ * the caller records the failure loudly; nothing is ever corrected or
+ * substituted here.
+ */
+async function normalizationCall(
+  messages: ChatMessage[],
+  model: string,
+  names: readonly string[],
+  artifactNames: readonly string[],
+): Promise<NormalizationEntry[]> {
   const base = { model, temperature: 0.2, responseFormat: 'json' as const };
+  const run = (raw: string): NormalizationEntry[] => {
+    const parsed = normalizationReplySchema.parse(JSON.parse(jsonBody(raw)) as unknown).entities;
+    const violations = validateNormalizationReply(names, parsed, artifactNames);
+    if (violations.length > 0) {
+      throw new Error(`the normalization reply violated its contract: ${violations.join('; ')}`);
+    }
+    return parsed;
+  };
   const raw = await chat(messages, base);
   try {
-    return entityKindsReplySchema.parse(JSON.parse(jsonBody(raw)) as unknown).entities;
+    return run(raw);
   } catch (error) {
     const retry = await chat(
       [
         ...messages,
         {
           role: 'user',
-          content: `Your previous reply was invalid JSON: ${error instanceof Error ? error.message : String(error)}. Reply with corrected JSON only.`,
+          content: `Your previous reply was invalid: ${error instanceof Error ? error.message : String(error)}. Reply with corrected JSON only.`,
         },
       ],
       base,
     );
-    return entityKindsReplySchema.parse(JSON.parse(jsonBody(retry)) as unknown).entities;
+    return run(retry);
   }
 }
 
 /**
- * Classifies module names that have NO recorded kind yet — the names the
- * model invented while writing prose (08 §M4-C). ONE batched call for all
- * missing names; every requested name must come back classified (validated,
- * retried once; an incomplete reply throws). Records are merged into
- * `module.entityKinds` (case-insensitive, first spelling wins).
+ * The name-normalization pass (fix-01), run at the end of EVERY parts run:
+ * one model call sees every wiki-link name of the module text plus all
+ * existing campaign artifacts and returns, per name, the canonical entity it
+ * refers to. The verdict is applied mechanically:
+ *
+ * - link targets are rewritten to `[[canonical|<original display>]]`
+ *   (rendered prose byte-identical) in generated parts — hand-edited parts
+ *   and the premise produce stored proposals for the panel's consent review;
+ * - a canonical that is an existing artifact gains the variant as an alias;
+ * - `entityKinds` is REPLACED with one record per canonical entity
+ *   (`canonicalEntityRecords` — never merged, or stale variant records
+ *   survive).
+ *
+ * Failure semantics (deliberately tighter than the old classification):
+ * an invalid reply after the one retry is RECORDED on the module row
+ * (`entityNamesNormalized: false` + the error) and toasted — never swallowed,
+ * because a silent failure is a silent path back to duplicate entities. The
+ * module stays `status: 'ready'` (the parts are done); batch entity
+ * generation stays gated until the panel's Retry succeeds.
  */
-export async function classifyModuleEntities(moduleId: Id): Promise<void> {
+export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
   const module = await requireModule(moduleId);
+  const artifacts = await listArtifactsByCampaign(module.campaignId);
+  const artifactNames = artifacts.map((artifact) => artifact.name);
   const documents = [
     { where: 'premise', markdown: module.spine?.premise ?? '' },
     ...module.parts
@@ -585,49 +684,150 @@ export async function classifyModuleEntities(moduleId: Id): Promise<void> {
       .map((part) => ({ where: `part-${String(part.planIndex)}`, markdown: part.markdown })),
   ];
   const text = documents.map((document) => document.markdown).join('\n\n');
-  const known = new Set(module.entityKinds.map((entry) => entry.name.trim().toLowerCase()));
-  const names = extractWikiLinks(text)
-    .map((link) => link.name)
-    .filter((name) => !known.has(name.trim().toLowerCase()));
-  if (names.length === 0) return;
+  const names = extractWikiLinks(text).map((link) => link.name);
+
+  // Pass start: the previous state is invalid for the current text — batch
+  // generation gates off until this pass records a success.
+  await patchModule(moduleId, {
+    entityNamesNormalized: false,
+    entityNormalizationError: '',
+    entityRewriteProposals: null,
+  });
+  if (names.length === 0) {
+    await patchModule(moduleId, { entityKinds: [], entityNamesNormalized: true });
+    return;
+  }
 
   const settings = await getSettings();
-  const messages = entityKindMessages(
-    names.map((name) => ({ name, context: surroundingParagraphs(text, name, CLASSIFY_CONTEXT_CAP) })),
-    module.spine?.premise ?? '',
-  );
-  const parsed = await classifyCall(messages, settings.defaultChatModel);
-
-  const missing = names.filter(
-    (name) => !parsed.some((entry) => entry.name.trim().toLowerCase() === name.trim().toLowerCase()),
-  );
-  if (missing.length > 0) {
-    throw new Error(
-      `entity classification omitted ${String(missing.length)} of ${String(names.length)} names (first: ${missing[0] ?? ''})`,
+  let verdicts: NormalizationEntry[];
+  try {
+    verdicts = await normalizationCall(
+      normalizationMessages(
+        names.map((name) => ({ name, context: surroundingParagraphs(text, name, NORMALIZE_CONTEXT_CAP) })),
+        artifactNames,
+        module.spine?.premise ?? '',
+      ),
+      settings.defaultChatModel,
+      names,
+      artifactNames,
     );
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await patchModule(moduleId, { entityNamesNormalized: false, entityNormalizationError: message });
+    toastError('Entity name normalization failed — retry from the entity panel', error);
+    return;
   }
-  // Keep only records for names we asked about (drop model hallucinations).
-  const additions = parsed.filter((entry) =>
-    names.some((name) => name.trim().toLowerCase() === entry.name.trim().toLowerCase()),
-  );
-  const current = await requireModule(moduleId);
-  await patchModule(moduleId, { entityKinds: mergeEntityKinds(current.entityKinds, additions) });
+
+  await applyNormalizationVerdict(moduleId, module, artifacts, verdicts);
 }
 
 /**
- * Single-entity classification for hand-typed names (08 §M4-C): the stub
- * popover asks for the kind of a name the generator never recorded. Same
- * contract and retry policy as the batched version.
+ * Applies a validated verdict mechanically (fix-01): rewrites generated text,
+ * holds proposals for hand-edited text and the premise, records aliases,
+ * replaces `entityKinds`. The canonical spelling written into tokens/records
+ * is the listed or artifact spelling of the entity the model chose — the
+ * verdict itself is never altered.
  */
-export async function classifyEntityKind(name: string, context: string, premise: string): Promise<ModuleEntityKind['kind']> {
+async function applyNormalizationVerdict(
+  moduleId: Id,
+  module: Module,
+  artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
+  verdicts: readonly NormalizationEntry[],
+): Promise<void> {
+  const listedSpelling = new Map<string, string>();
+  for (const entry of verdicts) listedSpelling.set(entry.name.trim().toLowerCase(), entry.name.trim());
+  const artifactSpelling = new Map<string, string>();
+  for (const artifact of artifacts) artifactSpelling.set(artifact.name.trim().toLowerCase(), artifact.name.trim());
+
+  const rewrites: LinkRewrite[] = [];
+  const aliasAdditions = new Map<string, string[]>(); // artifactId → variant names
+  for (const entry of verdicts) {
+    const nameKey = entry.name.trim().toLowerCase();
+    const canonicalKey = entry.canonical.trim().toLowerCase();
+    if (canonicalKey === nameKey) continue;
+    const to = listedSpelling.get(canonicalKey) ?? artifactSpelling.get(canonicalKey) ?? entry.canonical.trim();
+    rewrites.push({ from: entry.name.trim(), to });
+    const artifact = artifacts.find((candidate) => candidate.name.trim().toLowerCase() === canonicalKey);
+    if (artifact !== undefined) {
+      aliasAdditions.set(artifact.id, [...(aliasAdditions.get(artifact.id) ?? []), entry.name.trim()]);
+    }
+  }
+
+  // Aliases make future hand-written variant links resolve on their own
+  // (campaign-wide), so no further text rewriting ever happens.
+  for (const [artifactId, variants] of aliasAdditions) {
+    const artifact = artifacts.find((candidate) => candidate.id === artifactId);
+    if (artifact === undefined) continue;
+    const additions = variants.filter(
+      (variant) => !artifact.aliases.some((alias) => alias.trim().toLowerCase() === variant.toLowerCase()),
+    );
+    if (additions.length === 0) continue;
+    await updateArtifact(artifactId, { aliases: [...artifact.aliases, ...additions] });
+  }
+
+  // Generated parts apply immediately; hand-edited parts and the premise are
+  // held as proposals (the pass runs headless — consent is the panel's job).
+  // The premise ALWAYS takes the proposal path (planIndex −1): it is user-
+  // visible everywhere, so its text changes only on explicit consent.
+  const sortedParts = [...module.parts].sort((a, b) => a.planIndex - b.planIndex);
+  const appliedParts = sortedParts.map((part) => {
+    if (part.edited) return part;
+    const rewritten = rewriteWikiLinkTargets(part.markdown, rewrites);
+    return rewritten === part.markdown ? part : { ...part, markdown: rewritten };
+  });
+  const premise = module.spine?.premise ?? '';
+  // Per-document proposal: only the replacements whose token actually occurs
+  // in that document (the stored record stays truthful for the consent UI;
+  // applying a replacement whose token is gone is a harmless no-op).
+  const rewritesFor = (markdown: string): LinkRewrite[] => {
+    const names = new Set(extractWikiLinks(markdown).map((link) => link.name.trim().toLowerCase()));
+    return rewrites.filter((rewrite) => names.has(rewrite.from.trim().toLowerCase()));
+  };
+  const proposals: { planIndex: number; replacements: LinkRewrite[] }[] = [];
+  const premiseRewrites = rewritesFor(premise);
+  if (premiseRewrites.length > 0) {
+    proposals.push({ planIndex: -1, replacements: premiseRewrites });
+  }
+  for (const part of sortedParts) {
+    if (!part.edited) continue;
+    const partRewrites = rewritesFor(part.markdown);
+    if (partRewrites.length > 0) {
+      proposals.push({ planIndex: part.planIndex, replacements: partRewrites });
+    }
+  }
+
+  await patchModule(moduleId, {
+    parts: appliedParts,
+    entityKinds: canonicalEntityRecords(verdicts),
+    entityNamesNormalized: true,
+    entityNormalizationError: '',
+    entityRewriteProposals: proposals.length > 0 ? proposals : null,
+  });
+}
+
+/**
+ * Single-name normalization for hand-typed names (fix-01): the stub popover
+ * asks which canonical entity the name refers to (and its kind) before
+ * creating anything. Same contract and retry policy as the batched pass.
+ */
+export async function classifyEntityName(
+  name: string,
+  context: string,
+  premise: string,
+  artifactNames: readonly string[],
+): Promise<{ kind: NormalizationEntry['kind']; canonical: string }> {
   const settings = await getSettings();
-  const messages = entityKindMessages([{ name, context }], premise);
-  const parsed = await classifyCall(messages, settings.defaultChatModel);
+  const parsed = await normalizationCall(
+    normalizationMessages([{ name, context }], artifactNames, premise),
+    settings.defaultChatModel,
+    [name],
+    artifactNames,
+  );
   const match = parsed.find((entry) => entry.name.trim().toLowerCase() === name.trim().toLowerCase());
   if (match === undefined) {
-    throw new Error(`entity classification did not answer for "${name}"`);
+    throw new Error(`entity normalization did not answer for "${name}"`);
   }
-  return match.kind;
+  return { kind: match.kind, canonical: match.canonical };
 }
 
 /** Rule excerpts for grounding (empty library → no section, not an error). */async function ruleExcerptSection(query: string): Promise<string | null> {

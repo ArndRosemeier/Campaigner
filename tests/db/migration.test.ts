@@ -264,3 +264,63 @@ describe('v6 → v7 migration', () => {
     await db.delete();
   }, 20000);
 });
+
+describe('v7 → v8 migration', () => {
+  it('backfills the fix-01 normalization state on pre-fix rows', async () => {
+    // Build a v7 database (entityKinds exists, the fix-01 fields do not) with
+    // one module row that has already recorded kinds, then close it.
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(7).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('modules').put({
+      id: '00000000-0000-4000-8000-0000000000b2',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      title: 'Pre-v8 module',
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      tone: '',
+      sizeDial: 'standard',
+      spine: null,
+      parts: [],
+      status: 'ready',
+      errorMessage: '',
+      entityKinds: [{ name: 'Kael', kind: 'npc' }],
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-8 upgrade: the module
+    // has never been normalized, carries no error and no proposals.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const module = await db.modules.get('00000000-0000-4000-8000-0000000000b2');
+    expect(module?.entityNamesNormalized).toBe(false);
+    expect(module?.entityNormalizationError).toBe('');
+    expect(module?.entityRewriteProposals).toBeNull();
+
+    // The upgraded row validates against the current module schema (whose
+    // entityKinds records now carry `absorbed`).
+    const { moduleSchema } = await import('@/domain');
+    const parsed = moduleSchema.parse(module);
+    expect(parsed.entityNamesNormalized).toBe(false);
+    expect(parsed.entityKinds).toEqual([{ name: 'Kael', kind: 'npc', absorbed: [] }]);
+
+    await db.delete();
+  }, 20000);
+});

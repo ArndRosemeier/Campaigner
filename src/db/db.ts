@@ -197,6 +197,32 @@ export class CampaignerDB extends Dexie {
           if (module.entityKinds === undefined) module.entityKinds = [];
         });
       });
+    // fix-01 (docs/fix-01-entity-name-normalization.md): modules gain the
+    // name-normalization pass state — pre-fix rows have never been normalized
+    // (false), carry no error and no pending rewrite proposals.
+    this.version(8)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const modules = tx.table('modules');
+        await modules.toCollection().modify((module: Record<string, unknown>) => {
+          if (module.entityNamesNormalized === undefined) module.entityNamesNormalized = false;
+          if (module.entityNormalizationError === undefined) module.entityNormalizationError = '';
+          if (module.entityRewriteProposals === undefined) module.entityRewriteProposals = null;
+        });
+      });
   }
 }
 

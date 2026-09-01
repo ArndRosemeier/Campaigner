@@ -42,7 +42,8 @@ function moduleFixture(campaignId: string): Module {
   return moduleSchema.parse({
     ...base,
     status: 'ready',
-    entityKinds: [{ name: 'Kael', kind: 'npc' }],
+    entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [] }],
+    entityNamesNormalized: true,
     spine: {
       premise: 'The gate of [[Ember Crypt]] opens at dusk.',
       themes: [],

@@ -5,6 +5,7 @@ import {
   countOccurrences,
   extractWikiLinks,
   resolveWikiLink,
+  rewriteWikiLinkTargets,
   sentenceAround,
   stripWikiLinks,
   surroundingParagraphs,
@@ -268,5 +269,65 @@ describe('surroundingParagraphs', () => {
     expect(surroundingParagraphs('[[Alice]] was here and the tale goes far beyond.', 'alice', 10)).toBe(
       '[[Alice]] …',
     );
+  });
+});
+
+describe('rewriteWikiLinkTargets', () => {
+  it('rewrites bare tokens to [[canonical|original name]], preserving rendered prose', () => {
+    expect(rewriteWikiLinkTargets('[[Guard Halmund]] guards.', [{ from: 'Guard Halmund', to: 'Halmund' }])).toBe(
+      '[[Halmund|Guard Halmund]] guards.',
+    );
+    // The display text the reader and PDF render is unchanged.
+    expect(stripWikiLinks('[[Halmund|Guard Halmund]] guards.')).toBe('Guard Halmund guards.');
+  });
+
+  it('keeps an existing display text exactly as written', () => {
+    expect(
+      rewriteWikiLinkTargets('[[Guard Halmund|the guard]] waits.', [{ from: 'Guard Halmund', to: 'Halmund' }]),
+    ).toBe('[[Halmund|the guard]] waits.');
+  });
+
+  it('rewrites every occurrence and leaves unrelated tokens alone', () => {
+    const out = rewriteWikiLinkTargets(
+      '[[Halmunds]] Haus neben [[Seggel]] und [[Halmunds]] Kegel — plus [[Seggel]] again.',
+      [
+        { from: 'Halmunds', to: 'Halmund' },
+        { from: 'Seggel', to: 'Seggel' },
+      ],
+    );
+    expect(out).toBe(
+      '[[Halmund|Halmunds]] Haus neben [[Seggel]] und [[Halmund|Halmunds]] Kegel — plus [[Seggel]] again.',
+    );
+  });
+
+  it('skips tokens inside fenced code blocks and inline code spans', () => {
+    const markdown = [
+      'Before [[Guard Halmund]].',
+      '',
+      '```markdown',
+      'Example: [[Guard Halmund]] stays',
+      '```',
+      '',
+      'Inline `[[Guard Halmund]]` stays too. After [[Guard Halmund|late]].',
+    ].join('\n');
+    const out = rewriteWikiLinkTargets(markdown, [{ from: 'Guard Halmund', to: 'Halmund' }]);
+    expect(out).toContain('Example: [[Guard Halmund]] stays');
+    expect(out).toContain('Inline `[[Guard Halmund]]` stays too.');
+    expect(out).toContain('Before [[Halmund|Guard Halmund]].');
+    expect(out).toContain('After [[Halmund|late]].');
+  });
+
+  it('rewrites in one pass so results are never re-matched', () => {
+    // "Halmunds" → "Halmund" produces [[Halmund|Halmunds]]; a naive second
+    // pass could re-match the inserted target — it must not.
+    const out = rewriteWikiLinkTargets('[[Halmunds]]', [
+      { from: 'Halmunds', to: 'Halmund' },
+      { from: 'Halmund', to: 'Other' },
+    ]);
+    expect(out).toBe('[[Halmund|Halmunds]]');
+  });
+
+  it('is a no-op without rewrites', () => {
+    expect(rewriteWikiLinkTargets('[[Alice]]', [])).toBe('[[Alice]]');
   });
 });

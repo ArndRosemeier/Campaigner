@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import type { Campaign, Id, ModuleSpine, PartPlan } from '@/domain';
+import type { Campaign, Id, ModuleEntityKind, ModuleSpine, PartPlan } from '@/domain';
 import { approveSpineAndRun, discardSpine, retrySpine } from '@/llm/moduleGen';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -15,7 +15,8 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * pass-0 draft (premise + part plan) is fully editable before pass 1 starts.
  * "Generate parts" stores the approved spine and runs pass 1; "Retry spine…"
  * re-runs pass 0 with an optional steering instruction; "Discard" drops the
- * spine back to a draft module.
+ * spine back to a draft module. The normalized entity glossary (fix-01) is
+ * shown read-only — editing a name there is an ordinary plan edit.
  */
 
 export interface SpineCheckpointProps {
@@ -23,6 +24,8 @@ export interface SpineCheckpointProps {
   campaign: Campaign;
   spine: ModuleSpine;
   busy: boolean;
+  /** fix-01: the normalized entity glossary (canonical records). */
+  entityKinds: ModuleEntityKind[];
 }
 
 export function SpineCheckpoint({
@@ -30,6 +33,7 @@ export function SpineCheckpoint({
   campaign,
   spine,
   busy,
+  entityKinds,
 }: SpineCheckpointProps): JSX.Element {
   const [draft, setDraft] = useState<ModuleSpine>(() => structuredClone(spine));
   const [retryOpen, setRetryOpen] = useState(false);
@@ -137,6 +141,18 @@ export function SpineCheckpoint({
         />
         {draft.themes.length > 0 && (
           <p className="text-xs text-muted-foreground">Themes: {draft.themes.join(' · ')}</p>
+        )}
+        {entityKinds.length > 0 && (
+          <p className="text-xs text-muted-foreground" data-testid="spine-entities">
+            Entities:{' '}
+            {entityKinds
+              .map((entity) =>
+                entity.absorbed.length > 0
+                  ? `${entity.name} (${entity.kind}; also: ${entity.absorbed.join(', ')})`
+                  : `${entity.name} (${entity.kind})`,
+              )
+              .join(' · ')}
+          </p>
         )}
       </div>
 

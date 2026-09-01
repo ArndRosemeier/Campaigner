@@ -60,13 +60,13 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
     createModuleAndRun: vi.fn(),
     // The stub popover classifies hand-typed names via a chat call — mocked
     // here (the seeded module's kinds are asserted explicitly).
-    classifyEntityKind: vi.fn(),
+    classifyEntityName: vi.fn(),
   };
 });
 
-const { rewritePart, classifyEntityKind } = await import('@/llm/moduleGen');
+const { rewritePart, classifyEntityName } = await import('@/llm/moduleGen');
 const rewriteMock = vi.mocked(rewritePart);
-const classifyEntityKindMock = vi.mocked(classifyEntityKind);
+const classifyEntityNameMock = vi.mocked(classifyEntityName);
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 const { toastSuccess } = await import('@/lib/toast');
@@ -295,7 +295,7 @@ describe('ModuleReaderPage', () => {
     const user = userEvent.setup();
     const { campaign, campaignId, moduleId } = await seedReaderModule();
     // No recorded kind for this name → the popover classifies it (mocked).
-    classifyEntityKindMock.mockResolvedValue('npc');
+    classifyEntityNameMock.mockResolvedValue({ kind: 'npc', canonical: 'Missing Person' });
     renderAppAt(modulePath(campaignId, moduleId));
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
@@ -342,10 +342,84 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('defaults to alias-linking when the verdict resolves the name onto an existing artifact (fix-01)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    // The canonical entity the model will name already exists in the campaign.
+    const canonical = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Warden Bellamy',
+      summary: 'The tower keeper.',
+    });
+    classifyEntityNameMock.mockResolvedValue({ kind: 'npc', canonical: 'Warden Bellamy' });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
+    await user.click(chip);
+    const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
+
+    // The verdict is shown as the reason, and linking is the primary action.
+    expect(within(popover).getByTestId('stub-verdict')).toHaveTextContent('Warden Bellamy');
+    await user.click(within(popover).getByTestId('stub-link-verdict'));
+
+    // No second artifact: the link name became an alias on the canonical one.
+    await waitFor(
+      async () => {
+        const rows = await listArtifactsByCampaign(campaignId);
+        const warden = rows.find((row) => row.id === canonical.id);
+        expect(warden?.aliases).toContain('Missing Person');
+        expect(rows.filter((row) => row.name === 'Missing Person')).toHaveLength(0);
+      },
+      { timeout: 10_000 },
+    );
+    // The chip now resolves through the alias.
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('stub-popover')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('wiki-chip-unresolved')).not.toBeInTheDocument();
+      },
+      { timeout: 10_000 },
+    );
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('requires the inline two-step confirm to override the verdict with a standalone stub (fix-01)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    await createArtifact({ campaignId, kind: 'npc', name: 'Warden Bellamy', summary: 'The tower keeper.' });
+    classifyEntityNameMock.mockResolvedValue({ kind: 'npc', canonical: 'Warden Bellamy' });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
+    await user.click(chip);
+    const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
+
+    // First click ARMS the override — nothing is created yet.
+    await user.click(within(popover).getByTestId('stub-create'));
+    expect(within(popover).getByTestId('stub-create')).toHaveTextContent(
+      'Create as a separate entity — confirm?',
+    );
+    expect(
+      (await listArtifactsByCampaign(campaignId)).filter((row) => row.name === 'Missing Person'),
+    ).toHaveLength(0);
+
+    // Second click is the deliberate act.
+    await user.click(within(popover).getByTestId('stub-create'));
+    await waitFor(
+      async () => {
+        const rows = await listArtifactsByCampaign(campaignId);
+        const stub = rows.find((row) => row.name === 'Missing Person');
+        expect(stub?.kind).toBe('npc');
+      },
+      { timeout: 10_000 },
+    );
+  }, 20_000);
+
   it('preselects the kind the generator recorded without a classification call', async () => {
     const user = userEvent.setup();
     const { campaignId, moduleId } = await seedReaderModule({
-      entityKinds: [{ name: 'Missing Person', kind: 'faction' }],
+      entityKinds: [{ name: 'Missing Person', kind: 'faction', absorbed: [] }],
     });
     renderAppAt(modulePath(campaignId, moduleId));
 
@@ -356,14 +430,14 @@ describe('ModuleReaderPage', () => {
     // The recorded kind is shown immediately…
     expect(within(popover).getByText('faction')).toBeInTheDocument();
     // …and the popover never asks the model again for a recorded name.
-    expect(classifyEntityKindMock).not.toHaveBeenCalled();
+    expect(classifyEntityNameMock).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   }, 20_000);
 
   it('generates an entity IN PLACE from the popover — no navigation, chip resolves', async () => {
     const user = userEvent.setup();
     const { campaignId, moduleId } = await seedReaderModule({
-      entityKinds: [{ name: 'Missing Person', kind: 'note' }],
+      entityKinds: [{ name: 'Missing Person', kind: 'note', absorbed: [] }],
     });
     chatMock.mockResolvedValueOnce(
       JSON.stringify({

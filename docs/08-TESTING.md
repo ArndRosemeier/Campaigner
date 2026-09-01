@@ -109,6 +109,16 @@ test) · ❌ gap.
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
 | 404 page | `app-shell.test`, `ui-smoke.test` | ✅ |
 
+### Module Designer entities (08-MODULE-DESIGNER M4-C, fix-01)
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| Name-normalization pass: verdict validation, mechanical application (link rewrites, alias adds, `entityKinds` REPLACEMENT with `absorbed` variants), proposals for hand-edited text/premise, failure recorded + toasted | `moduleGen.test`, `entityNormalization.test`, `wikilinks.test` | ✅ |
+| Batch generation gate: buttons disabled with visible reason until `entityNamesNormalized`, failed-pass banner + Retry | `entity-panel.test` | ✅ |
+| Consent review: proposals banner, confirm dialog applies rewrites to the documents' current text, decline drops them (proposals cleared either way) | `entity-panel.test` | ✅ |
+| Stub popover verdict: canonical resolution defaults to alias-linking; standalone stub/generate requires the inline two-step confirm | `module-reader.test` (verdict link, confirm arms, create-stub, no-re-ask paths) | ✅ |
+| Spine checkpoint: normalized entities line with absorbed variants | `spine-checkpoint.test` | ✅ |
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

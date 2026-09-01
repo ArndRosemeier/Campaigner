@@ -87,9 +87,13 @@ export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 /** One model-recorded entity type: a wiki-link name and its kind. */
 export const moduleEntityKindSchema = z.object({
-  /** The name as first written in the module text (wiki-link form). */
+  /** The name as first written in the module text (wiki-link form). For
+   * normalized records: the canonical spelling. */
   name: z.string().trim().min(1),
   kind: z.enum(ENTITY_KINDS),
+  /** fix-01: variant names this canonical entry absorbed (checkpoint
+   * display only; the panel folds via rewritten links). Empty otherwise. */
+  absorbed: z.array(z.string()).default([]),
 });
 
 export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
@@ -102,21 +106,6 @@ export function entityKindFor(
   const target = name.trim().toLowerCase();
   if (target === '') return undefined;
   return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.kind;
-}
-
-/** Merges new name→kind records into an existing list, case-insensitively. */
-export function mergeEntityKinds(
-  existing: readonly ModuleEntityKind[],
-  additions: readonly ModuleEntityKind[],
-): ModuleEntityKind[] {
-  const merged = existing.map((entry) => ({ ...entry }));
-  for (const addition of additions) {
-    const name = addition.name.trim();
-    if (name === '') continue;
-    const known = merged.find((entry) => entry.name.trim().toLowerCase() === name.toLowerCase());
-    if (known === undefined) merged.push({ name, kind: addition.kind });
-  }
-  return merged;
 }
 
 export const moduleSchema = z
@@ -142,6 +131,23 @@ export const moduleSchema = z
     focusedEntities: z.array(z.string()).max(400).default([]),
     /** How the entity panel orders entities (08 §M4-C). */
     entitySort: moduleEntitySortSchema.default('mention'),
+    /** fix-01: true once the name-normalization pass succeeded for the
+     * current text; batch entity generation is gated on it. */
+    entityNamesNormalized: z.boolean().default(false),
+    /** fix-01: the recorded pass failure ('' when none) — the panel shows it
+     * with a Retry; never a silent path back to duplicates. */
+    entityNormalizationError: z.string().default(''),
+    /** fix-01: held rewrites for hand-edited parts (planIndex −1 = premise)
+     * awaiting the user's consent in the panel; null = nothing pending. */
+    entityRewriteProposals: z
+      .array(
+        z.object({
+          planIndex: z.number().int(),
+          replacements: z.array(z.object({ from: z.string(), to: z.string() })),
+        }),
+      )
+      .nullable()
+      .default(null),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',
@@ -186,6 +192,9 @@ export function createModule(input: NewModule): Module {
     entityKinds: [],
     focusedEntities: [],
     entitySort: 'mention',
+    entityNamesNormalized: false,
+    entityNormalizationError: '',
+    entityRewriteProposals: null,
   });
 }
 

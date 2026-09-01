@@ -42,6 +42,47 @@ export function stripWikiLinks(markdown: string): string {
   });
 }
 
+/** A link-target rewrite: the token `[[from…]]` points at `to` instead. */
+export interface LinkRewrite {
+  /** The verbatim wiki-link name as extracted from the same text. */
+  from: string;
+  /** The canonical spelling the token's target becomes. */
+  to: string;
+}
+
+/**
+ * Rewrites wiki-link TARGETS per the given verdict (fix-01 "Applying a
+ * verdict"), preserving the rendered prose: `[[from]]` becomes
+ * `[[to|from]]` and `[[from|display]]` becomes `[[to|display]]` — the
+ * display text is exactly what was written, so reader and PDF render
+ * byte-identically. Matched in one pass against the token's trimmed name,
+ * so a rewritten token is never re-matched. Tokens inside fenced code
+ * blocks and inline code spans are untouched (mechanical text hygiene —
+ * the verdict itself is never re-derived here).
+ */
+export function rewriteWikiLinkTargets(markdown: string, rewrites: readonly LinkRewrite[]): string {
+  const byName = new Map<string, LinkRewrite>();
+  for (const rewrite of rewrites) {
+    // A self-mapping is not a rewrite — skip it rather than noise the text
+    // up with a redundant [[Seggel|Seggel]] display.
+    if (rewrite.from.trim().toLowerCase() === rewrite.to.trim().toLowerCase()) continue;
+    byName.set(rewrite.from.trim(), rewrite);
+  }
+  if (byName.size === 0) return markdown;
+  const rewriteSegment = (segment: string): string =>
+    segment.replaceAll(WIKI_LINK_PATTERN, (whole, rawName: string, rawDisplay?: string) => {
+      const rewrite = byName.get(rawName.trim());
+      if (rewrite === undefined) return whole;
+      const display = (rawDisplay ?? '').trim();
+      return display === '' ? `[[${rewrite.to}|${rawName.trim()}]]` : `[[${rewrite.to}|${display}]]`;
+    });
+  // Odd segments are the captured code spans/blocks — left untouched.
+  return markdown
+    .split(/(```[\s\S]*?```|`[^`\n]*`)/g)
+    .map((segment, index) => (index % 2 === 1 ? segment : rewriteSegment(segment)))
+    .join('');
+}
+
 /** One resolution outcome for a wiki-link name against the campaign artifacts. */
 export interface WikiLinkResolution {
   status: 'resolved' | 'unresolved' | 'ambiguous';
