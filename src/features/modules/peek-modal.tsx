@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeftIcon, SquareArrowOutUpRightIcon } from 'lucide-react';
+import { ArrowLeftIcon, SquareArrowOutUpRightIcon, XIcon } from 'lucide-react';
 
 import { artifactPath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
@@ -10,7 +10,7 @@ import { Separator } from '@/components/ui/separator';
 import type { Artifact, Id } from '@/domain';
 import { NpcCard, EncounterCard, Portrait } from '@/features/play/artifact-cards';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
-import { LightboxImage } from '@/features/images/lightbox-image';
+import { ZoomableImage } from '@/features/images/zoomable-image';
 import { useImageUrl } from '@/features/images/use-image-url';
 
 /**
@@ -151,16 +151,25 @@ export function PeekModal({
             data-testid="peek-image-fullscreen"
           >
             <DialogTitle className="sr-only">Image full screen</DialogTitle>
-            <button
-              type="button"
-              className="flex h-full w-full cursor-zoom-out items-center justify-center"
+            <Button
+              variant="secondary"
+              size="icon-sm"
               aria-label="Close full screen image"
+              className="absolute top-3 right-3 z-10"
               onClick={() => {
                 setFullscreenImageId(null);
               }}
+              data-testid="peek-image-fullscreen-close"
             >
-              <LightboxImage imageId={fullscreenImageId} className="max-h-full max-w-full border-0" />
-            </button>
+              <XIcon aria-hidden />
+            </Button>
+            <ZoomableImage
+              imageId={fullscreenImageId}
+              className="max-h-full max-w-full border-0"
+              onCloseRequest={() => {
+                setFullscreenImageId(null);
+              }}
+            />
           </DialogContent>
         </Dialog>
       )}
