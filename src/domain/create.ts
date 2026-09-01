@@ -8,6 +8,7 @@ import {
   type LocationArtifact,
   type NpcArtifact,
   type NoteArtifact,
+  type PcArtifact,
 } from '@/domain/artifact';
 import { campaignSchema, type Campaign, type NewCampaign } from '@/domain/campaign';
 import { stampNewEntity, type Id } from '@/domain/entity';
@@ -25,6 +26,7 @@ import { statBlockSchema, type StatBlock } from '@/domain/statblock';
 
 /** Default names for blank artifacts — always non-empty (names are required). */
 export const DEFAULT_ARTIFACT_NAMES: Readonly<Record<ArtifactKind, string>> = {
+  pc: 'New PC',
   npc: 'New NPC',
   location: 'New Location',
   faction: 'New Faction',
@@ -66,6 +68,14 @@ export function blankStatBlock(system: GameSystem): StatBlock {
 /** The blank structured data for a kind, per 01-DATA-MODEL. */
 export function blankArtifactData(kind: ArtifactKind): ArtifactData {
   switch (kind) {
+    case 'pc':
+      return {
+        playerName: '',
+        statBlock: null,
+        currentHp: 0,
+        initiativeOverride: null,
+        notes: '',
+      };
     case 'npc':
       return {
         role: '',
@@ -111,6 +121,7 @@ export interface CreateArtifactInput<K extends ArtifactKind = ArtifactKind> {
   data?: ArtifactData;
 }
 
+export function createArtifact(input: CreateArtifactInput<'pc'>): PcArtifact;
 export function createArtifact(input: CreateArtifactInput<'npc'>): NpcArtifact;
 export function createArtifact(input: CreateArtifactInput<'location'>): LocationArtifact;
 export function createArtifact(input: CreateArtifactInput<'faction'>): FactionArtifact;

@@ -3,8 +3,11 @@ import { z } from 'zod';
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
 import { statBlockSchema } from '@/domain/statblock';
 
-/** Artifact kinds; M1 shipped npc/location/faction/note, M2 adds the rest. */
+/** Artifact kinds; M1 shipped npc/location/faction/note, M2 adds the rest.
+ * M5-A puts `pc` first — the campaign tree renders kinds in this order, and
+ * the doc binds the Party group to the top of the tree. */
 export const ARTIFACT_KINDS = [
+  'pc',
   'npc',
   'location',
   'faction',
@@ -18,8 +21,9 @@ export const artifactKindSchema = z.enum(ARTIFACT_KINDS);
 
 export type ArtifactKind = z.infer<typeof artifactKindSchema>;
 
-/** Tree section labels per kind (05-UI: "NPCs", "Locations", "Factions", "Notes"). */
+/** Tree section labels per kind (05-UI: "NPCs", "Locations", "Factions", "Notes"; M5-A: "Party" on top). */
 export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
+  pc: 'Party',
   npc: 'NPCs',
   location: 'Locations',
   faction: 'Factions',
@@ -31,6 +35,7 @@ export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
 
 /** Singular labels, for badges and toasts ("NPC created"). */
 export const ARTIFACT_KIND_SINGULAR: Readonly<Record<ArtifactKind, string>> = {
+  pc: 'PC',
   npc: 'NPC',
   location: 'Location',
   faction: 'Faction',
@@ -88,6 +93,25 @@ export interface ArtifactBase extends BaseEntity {
 }
 
 // --- Kind-specific structured data -----------------------------------------
+
+/**
+ * Player character (M5-A): the human side of a battle. The battle engine
+ * REQUIRES the stat block for initiative/HP — a statless PC is a loud
+ * warning in the UI, never a silent placeholder.
+ */
+export const pcDataSchema = z.object({
+  /** The human player's name; '' for GM-run PCs. */
+  playerName: z.string(),
+  /** Same normalized d20 shape NPCs carry; null until filled in. */
+  statBlock: statBlockSchema.nullable(),
+  /** Owned by the PC (not the battle): whole number, 0..maxHp. */
+  currentHp: z.number().int().min(0),
+  /** Extra initiative bonus on top of the dex modifier (Alert etc.); null = dex only. */
+  initiativeOverride: z.number().int().nullable(),
+  notes: z.string(),
+});
+
+export type PcArtifactData = z.infer<typeof pcDataSchema>;
 
 export const npcDataSchema = z.object({
   role: z.string(),
@@ -202,6 +226,7 @@ export const sessionDataSchema = z.object({
 export type SessionArtifactData = z.infer<typeof sessionDataSchema>;
 
 export type ArtifactData =
+  | PcArtifactData
   | NpcArtifactData
   | LocationArtifactData
   | FactionArtifactData
@@ -211,6 +236,12 @@ export type ArtifactData =
   | SessionArtifactData;
 
 // --- Discriminated artifact union -------------------------------------------
+
+export const pcArtifactSchema = z.object({
+  ...artifactBaseShape,
+  kind: z.literal('pc'),
+  data: pcDataSchema,
+});
 
 export const npcArtifactSchema = z.object({
   ...artifactBaseShape,
@@ -255,6 +286,7 @@ export const sessionArtifactSchema = z.object({
 });
 
 export const artifactSchema = z.discriminatedUnion('kind', [
+  pcArtifactSchema,
   npcArtifactSchema,
   locationArtifactSchema,
   factionArtifactSchema,
@@ -264,6 +296,7 @@ export const artifactSchema = z.discriminatedUnion('kind', [
   sessionArtifactSchema,
 ]);
 
+export type PcArtifact = z.infer<typeof pcArtifactSchema>;
 export type NpcArtifact = z.infer<typeof npcArtifactSchema>;
 export type LocationArtifact = z.infer<typeof locationArtifactSchema>;
 export type FactionArtifact = z.infer<typeof factionArtifactSchema>;

@@ -146,7 +146,18 @@ function dataSections(
   statBlocks: boolean,
 ): Content[] {
   const out: Content[] = [];
-    if (artifact.kind === 'npc') {
+  if (artifact.kind === 'pc') {
+    // M5-A: the player variant renders the PC card (name, portrait, HP) with
+    // no notes — notes may carry secrets and never reach the player PDF.
+    pushSections(
+      out,
+      labeledSection('Current HP', String(artifact.data.currentHp)),
+      audience === 'gm' ? labeledSection('Notes', artifact.data.notes) : null,
+    );
+    if (statBlocks && artifact.data.statBlock !== null) {
+      pushSections(out, statBoxContent(artifact.data.statBlock, artifact.name));
+    }
+  } else if (artifact.kind === 'npc') {
     pushSections(
       out,
       labeledSection('Role', artifact.data.role),

@@ -79,6 +79,21 @@ export const npcDraftSchema = z.object({
 
 export type NpcDraft = z.infer<typeof npcDraftSchema>;
 
+/**
+ * PC draft (M5-A): a persona drafts the character concept/notes and may flag
+ * the statblock step. Human-owned fields (playerName, currentHp,
+ * initiativeOverride) are NEVER drafted — the player owns them.
+ */
+export const pcDraftSchema = z.object({
+  ...draftBase,
+  concept: z.string(),
+  notes: z.string(),
+  /** Same rule as NPCs: false skips the statblock step entirely. */
+  needsStatBlock: z.boolean(),
+});
+
+export type PcDraft = z.infer<typeof pcDraftSchema>;
+
 export const locationDraftSchema = z.object({
   ...draftBase,
   locationType: z.string(),

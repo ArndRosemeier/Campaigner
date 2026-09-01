@@ -10,6 +10,7 @@ import type {
   GameSystem,
   LocationArtifactData,
   NpcArtifactData,
+  PcArtifactData,
   PlotArcArtifactData,
   SessionArtifactData,
   StatBlock,
@@ -161,6 +162,125 @@ export function NpcForm({ artifactName, data, onChange, campaignSystem }: NpcFor
         </div>
         {data.statBlock !== null && !editingStatBlock && (
           <StatBlockCard statBlock={data.statBlock} name={artifactName} />
+        )}
+        {data.statBlock !== null && editingStatBlock && (
+          <StatBlockForm statBlock={data.statBlock} onChange={setStatBlock} />
+        )}
+      </div>
+    </div>
+  );
+}
+
+export interface PcFormProps {
+  data: PcArtifactData;
+  campaignSystem: GameSystem;
+  onChange: (data: PcArtifactData) => void;
+}
+
+/**
+ * Player-character form (M5-A). The HP field is the PC's own persistent
+ * current HP (whole number, clamped to ≥ 0 here; max comes from the stat
+ * block and the battle clamps on write). The initiative override is the
+ * extra bonus on top of the dex modifier; empty = dex only.
+ */
+export function PcForm({ data, campaignSystem, onChange }: PcFormProps) {
+  const [editingStatBlock, setEditingStatBlock] = useState(false);
+
+  function patch(next: Partial<PcArtifactData>): void {
+    onChange({ ...data, ...next });
+  }
+
+  function setStatBlock(next: StatBlock): void {
+    patch({ statBlock: next });
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Player name">
+          <Input
+            value={data.playerName}
+            placeholder="'' for GM-run PCs"
+            className="h-7 text-sm"
+            onChange={(event) => {
+              patch({ playerName: event.target.value });
+            }}
+          />
+        </Field>
+        <Field label="Current HP">
+          <Input
+            type="number"
+            value={String(data.currentHp)}
+            min={0}
+            step={1}
+            className="h-7 text-sm"
+            onChange={(event) => {
+              const parsed = Number.parseInt(event.target.value, 10);
+              patch({ currentHp: Number.isNaN(parsed) ? 0 : Math.max(0, parsed) });
+            }}
+          />
+        </Field>
+      </div>
+      <Field label="Initiative override (extra bonus on top of DEX; empty = dex only)">
+        <Input
+          type="number"
+          value={data.initiativeOverride === null ? '' : String(data.initiativeOverride)}
+          step={1}
+          className="h-7 text-sm"
+          onChange={(event) => {
+            const raw = event.target.value.trim();
+            const parsed = raw === '' ? Number.NaN : Number.parseInt(raw, 10);
+            patch({ initiativeOverride: Number.isNaN(parsed) ? null : parsed });
+          }}
+        />
+      </Field>
+      <TextAreaField
+        label="Notes"
+        value={data.notes}
+        onChange={(notes) => {
+          patch({ notes });
+        }}
+      />
+
+      <div className="flex flex-col gap-2 border-t pt-3">
+        <div className="flex items-center justify-between">
+          <h2 className="text-sm font-medium">Stat block</h2>
+          {data.statBlock === null ? (
+            <Button
+              size="xs"
+              variant="outline"
+              onClick={() => {
+                patch({ statBlock: blankStatBlock(campaignSystem) });
+              }}
+            >
+              Add stat block
+            </Button>
+          ) : (
+            <div className="flex items-center gap-1">
+              <Button
+                size="xs"
+                variant={editingStatBlock ? 'secondary' : 'outline'}
+                onClick={() => {
+                  setEditingStatBlock((editing) => !editing);
+                }}
+              >
+                {editingStatBlock ? 'Done editing' : 'Edit'}
+              </Button>
+              <Button
+                size="xs"
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => {
+                  patch({ statBlock: null });
+                }}
+              >
+                Remove
+              </Button>
+            </div>
+          )}
+        </div>
+        {data.statBlock !== null && !editingStatBlock && (
+          <StatBlockCard statBlock={data.statBlock} name="This PC" />
         )}
         {data.statBlock !== null && editingStatBlock && (
           <StatBlockForm statBlock={data.statBlock} onChange={setStatBlock} />

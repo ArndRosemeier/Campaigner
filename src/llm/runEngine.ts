@@ -28,6 +28,7 @@ import {
   locationDraftSchema,
   noteDraftSchema,
   npcDraftSchema,
+  pcDraftSchema,
   plotArcDraftSchema,
   sessionDraftSchema,
   continuityReportSchema,
@@ -130,6 +131,8 @@ interface DraftContract {
 
 function draftContractFor(kind: ArtifactKind): DraftContract {
   switch (kind) {
+    case 'pc':
+      return { schema: pcDraftSchema, keys: Object.keys(pcDraftSchema.shape) };
     case 'npc':
       return { schema: npcDraftSchema, keys: Object.keys(npcDraftSchema.shape) };
     case 'location':
@@ -162,6 +165,16 @@ function buildStatblockCitationSection(statblockTitles: readonly string[]): stri
 
 function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): ArtifactData {
   switch (kind) {
+    case 'pc':
+      // Human-owned fields are never drafted: the player owns name, HP and
+      // the initiative override.
+      return {
+        playerName: '',
+        statBlock: null,
+        currentHp: 0,
+        initiativeOverride: null,
+        notes: asString(draft.notes),
+      };
     case 'npc':
       return {
         role: asString(draft.role),
@@ -1116,7 +1129,7 @@ export class RunEngine {
     const statblockStep = steps.find((step) => step.name === 'statblock');
     const statblockOutput = (statblockStep?.userEdit ?? statblockStep?.output) as
       { statBlock?: StatBlock } | null | undefined;
-    if (kind === 'npc' && 'statBlock' in data) {
+    if ((kind === 'npc' || kind === 'pc') && 'statBlock' in data) {
       const statBlock = statblockOutput?.statBlock;
       if (statBlock !== undefined) data.statBlock = statBlock;
     }

@@ -36,6 +36,7 @@ import { clearDatabase } from '../db/helpers';
  */
 
 const KIND_NAMES: Record<ArtifactKind, string> = {
+  pc: 'Serren',
   npc: 'Gorim',
   location: 'Old Docks',
   faction: 'Harbor Guild',

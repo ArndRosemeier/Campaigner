@@ -13,6 +13,7 @@ import { layoutGraph } from '@/lib/graphLayout';
 
 /** Node fill colors per kind (Tailwind palette, dark-mode friendly). */
 const KIND_COLORS: Readonly<Record<ArtifactKind, string>> = {
+  pc: '#fda4af',
   npc: '#7dd3fc',
   location: '#86efac',
   faction: '#fca5a5',

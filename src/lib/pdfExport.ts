@@ -110,6 +110,21 @@ function dataSections(artifact: Artifact): object[] {
   };
 
   switch (artifact.kind) {
+    case 'pc': {
+      add('PC details', [
+        labelValue('Player', artifact.data.playerName),
+        labelValue('Current HP', String(artifact.data.currentHp)),
+        labelValue(
+          'Initiative bonus',
+          artifact.data.initiativeOverride === null ? '' : String(artifact.data.initiativeOverride),
+        ),
+        labelValue('Notes', artifact.data.notes),
+      ]);
+      if (artifact.data.statBlock !== null) {
+        sections.push(...statBlockSection(artifact.data.statBlock));
+      }
+      break;
+    }
     case 'npc': {
       add('NPC details', [
         labelValue('Role', artifact.data.role),
@@ -248,6 +263,7 @@ function baseDoc(artifact: Artifact): TDocumentDefinitions {
 
 // Label map kept local to avoid importing the React-only labels module.
 const ARTIFACT_KIND_LABELS: Readonly<Record<Artifact['kind'], string>> = {
+  pc: 'PC',
   npc: 'NPC',
   location: 'Location',
   faction: 'Faction',

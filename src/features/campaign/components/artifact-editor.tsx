@@ -13,6 +13,7 @@ import {
   type Id,
   type LocationArtifactData,
   type NpcArtifactData,
+  type PcArtifactData,
   type PlotArcArtifactData,
   type SessionArtifactData,
 } from '@/domain';
@@ -32,6 +33,7 @@ import {
   FactionForm,
   LocationForm,
   NpcForm,
+  PcForm,
   NoteForm,
   PlotArcForm,
   SessionForm,
@@ -62,6 +64,7 @@ interface CommonDraft {
   body: string;
   links: ArtifactLink[];
 }
+type PcDraft = CommonDraft & { kind: 'pc'; data: PcArtifactData };
 type NpcDraft = CommonDraft & { kind: 'npc'; data: NpcArtifactData };
 type LocationDraft = CommonDraft & { kind: 'location'; data: LocationArtifactData };
 type FactionDraft = CommonDraft & { kind: 'faction'; data: FactionArtifactData };
@@ -70,6 +73,7 @@ type EncounterDraft = CommonDraft & { kind: 'encounter'; data: EncounterArtifact
 type PlotArcDraft = CommonDraft & { kind: 'plotarc'; data: PlotArcArtifactData };
 type SessionDraft = CommonDraft & { kind: 'session'; data: SessionArtifactData };
 export type ArtifactDraft =
+  | PcDraft
   | NpcDraft
   | LocationDraft
   | FactionDraft
@@ -87,6 +91,8 @@ function draftFrom(artifact: Artifact): ArtifactDraft {
     links: structuredClone(artifact.links),
   };
   switch (artifact.kind) {
+    case 'pc':
+      return { ...common, kind: 'pc', data: structuredClone(artifact.data) };
     case 'npc':
       return { ...common, kind: 'npc', data: structuredClone(artifact.data) };
     case 'location':
@@ -282,7 +288,16 @@ export function ArtifactEditor({
           <ImagesSection artifact={artifact} />
 
           <section className="flex flex-col gap-2">
-            <h2 className="text-sm font-medium">{ARTIFACT_KIND_SINGULAR[artifact.kind]} details</h2>            {draft.kind === 'npc' && (
+            <h2 className="text-sm font-medium">{ARTIFACT_KIND_SINGULAR[artifact.kind]} details</h2>            {draft.kind === 'pc' && (
+              <PcForm
+                data={draft.data}
+                campaignSystem={campaignSystem}
+                onChange={(data) => {
+                  setDraft((previous) => ({ ...previous, kind: 'pc', data }));
+                }}
+              />
+            )}
+            {draft.kind === 'npc' && (
               <NpcForm
                 artifactName={draft.name}
                 data={draft.data}

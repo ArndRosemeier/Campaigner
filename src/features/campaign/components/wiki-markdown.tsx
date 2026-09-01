@@ -31,6 +31,7 @@ export interface WikiMarkdownProps {
 }
 
 const KIND_CHIP_CLASSES: Readonly<Record<ArtifactKind, string>> = {
+  pc: 'border-rose-500/50 bg-rose-500/10 text-rose-800 dark:text-rose-200',
   npc: 'border-sky-500/50 bg-sky-500/10 text-sky-800 dark:text-sky-200',
   location: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-800 dark:text-emerald-200',
   faction: 'border-amber-500/60 bg-amber-500/10 text-amber-800 dark:text-amber-200',
@@ -168,6 +169,7 @@ function WikiChip({
 }
 
 const ARTICLE_KIND_LABEL: Readonly<Record<ArtifactKind, string>> = {
+  pc: 'PC',
   npc: 'NPC',
   location: 'Location',
   faction: 'Faction',
