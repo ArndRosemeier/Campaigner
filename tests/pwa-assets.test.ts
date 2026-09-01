@@ -51,6 +51,44 @@ describe('pwa assets', () => {
     expect(indexHtml).toContain('rel="manifest"');
     expect(indexHtml).toContain('rel="apple-touch-icon"');
     expect(indexHtml).toContain('name="theme-color"');
+    // Installed-app compat on pre-manifest iPadOS and full-bleed status bar.
+    expect(indexHtml).toContain('name="apple-mobile-web-app-capable"');
+    expect(indexHtml).toContain('name="apple-mobile-web-app-status-bar-style"');
+  });
+
+  it('startup image links reference real PNGs sized to their media query', () => {
+    // WebKit picks the splash by exact media match; a link whose PNG is the
+    // wrong size silently regresses to the white flash.
+    const startupLinks = [...indexHtml.matchAll(/<link rel="apple-touch-startup-image" href="([^"]+)" media="([^"]+)" \/>/g)];
+    expect(startupLinks.length).toBeGreaterThanOrEqual(14); // 7 device classes × 2 orientations
+    expect(new Set(startupLinks.map((link) => link[1])).size).toBe(startupLinks.length);
+
+    for (const link of startupLinks) {
+      const href = link[1];
+      const media = link[2];
+      if (href === undefined || media === undefined) {
+        throw new Error('Malformed apple-touch-startup-image link in index.html');
+      }
+      expect(href).toMatch(/^\/splash\//);
+      const bytes = readFileSync(resolve(root, 'public', href.replace(/^\//, '')));
+      expect(bytes.subarray(1, 4).toString('ascii')).toBe('PNG');
+      // PNG IHDR: width and height are big-endian uint32s at offsets 16/20.
+      const width = bytes.readUInt32BE(16);
+      const height = bytes.readUInt32BE(20);
+
+      const orientation = /orientation: (\w+)/.exec(media)?.[1];
+      const deviceWidth = Number(/device-width: (\d+)px/.exec(media)?.[1]);
+      const deviceHeight = Number(/device-height: (\d+)px/.exec(media)?.[1]);
+      const dpr = Number(/device-pixel-ratio: (\d+)/.exec(media)?.[1]);
+      expect(orientation).toBeDefined();
+      expect(deviceWidth).toBeGreaterThan(0);
+      expect(deviceHeight).toBeGreaterThan(0);
+      expect(dpr).toBeGreaterThan(0);
+
+      // device-width/height are already stated in the link's orientation, so
+      // the image is always deviceWidth×dpr by deviceHeight×dpr.
+      expect([width, height]).toEqual([deviceWidth * dpr, deviceHeight * dpr]);
+    }
   });
 
   it('service worker only handles same-origin GETs and defers everything else', () => {
