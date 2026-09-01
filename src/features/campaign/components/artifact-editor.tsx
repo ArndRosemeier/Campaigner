@@ -39,6 +39,7 @@ import {
 import { LinksSection } from '@/features/campaign/components/links-section';
 import { ImagesSection } from '@/features/campaign/components/images-section';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
+import { PeekModal } from '@/features/modules/peek-modal';
 import { RevisionDialog } from '@/features/campaign/components/revision-dialog';
 import { TagEditor } from '@/features/campaign/components/tag-editor';
 import { useRevisions } from '@/features/campaign/hooks';
@@ -138,6 +139,7 @@ export function ArtifactEditor({
   const [draft, setDraft] = useState<ArtifactDraft>(() => draftFrom(artifact));
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved');
   const [revisionView, setRevisionView] = useState<ArtifactRevision | null>(null);
+  const [peekedId, setPeekedId] = useState<Id | null>(null);
   const lastSavedRef = useRef<ArtifactDraft>(draftFrom(artifact));
   const draftRef = useRef(draft);
   useEffect(() => {
@@ -210,6 +212,8 @@ export function ArtifactEditor({
     setDraft((previous) => ({ ...previous, ...patch }));
   }
 
+  const peekArtifact = campaignArtifacts.find((entry) => entry.id === peekedId);
+
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="artifact-editor">
       <header className="flex flex-col gap-1.5 border-b p-3">
@@ -268,6 +272,10 @@ export function ArtifactEditor({
             value={draft.body}
             onChange={(body) => {
               patchDraft({ body });
+            }}
+            artifacts={campaignArtifacts}
+            onOpenArtifact={(target) => {
+              setPeekedId(target.id);
             }}
           />
 
@@ -346,6 +354,18 @@ export function ArtifactEditor({
         }}
         onRestore={(revision) => void handleRestore(revision)}
       />
+
+      {peekArtifact !== undefined && (
+        <PeekModal
+          artifact={peekArtifact}
+          artifacts={campaignArtifacts}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPeekedId(null);
+          }}
+          campaignId={artifact.campaignId}
+        />
+      )}
     </div>
   );
 }
