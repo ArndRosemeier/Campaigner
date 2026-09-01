@@ -147,11 +147,20 @@ export function PeekModal({
           }}
         >
           <DialogContent
-            className="flex max-h-[90vh] items-center justify-center sm:max-w-3xl"
+            className="flex h-dvh w-dvw max-w-none items-center justify-center rounded-none border-0 bg-black p-0 sm:max-w-none"
             data-testid="peek-image-fullscreen"
           >
             <DialogTitle className="sr-only">Image full screen</DialogTitle>
-            <LightboxImage imageId={fullscreenImageId} />
+            <button
+              type="button"
+              className="flex h-full w-full cursor-zoom-out items-center justify-center"
+              aria-label="Close full screen image"
+              onClick={() => {
+                setFullscreenImageId(null);
+              }}
+            >
+              <LightboxImage imageId={fullscreenImageId} className="max-h-full max-w-full border-0" />
+            </button>
           </DialogContent>
         </Dialog>
       )}
@@ -161,8 +170,9 @@ export function PeekModal({
 
 /**
  * The entity's image banner (M4-C): the cover image (or the first gallery
- * image) shown prominently; click opens the fullscreen lightbox. Absent when
- * the entity has no image.
+ * image) shown UNCROPPED — the full picture fitted into the card's width,
+ * capped in height so tall images don't push the text out of view. Click
+ * opens the true fullscreen viewer. Absent when the entity has no image.
  */
 function PeekImage({
   artifact,
@@ -188,7 +198,7 @@ function PeekImage({
       <img
         src={url}
         alt={`Image of ${artifact.name}`}
-        className="max-h-56 w-full rounded-md border object-cover"
+        className="max-h-72 w-full rounded-md border object-contain"
       />
     </button>
   );

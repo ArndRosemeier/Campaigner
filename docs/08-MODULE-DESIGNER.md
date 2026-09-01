@@ -97,8 +97,11 @@ Session-Mode card components — portrait, summary, kind data, stat block,
 click-to-reveal secrets). Esc / click-outside dismisses back to the exact
 scroll position. Wiki-links inside the modal body push onto an in-modal
 breadcrumb stack (Back button, Esc pops one level). The entity's image
-(cover or first gallery image) is shown as a banner above the card; clicking
-it opens a fullscreen lightbox. Footer: "Open in workspace" (the "Focus in
+(cover or first gallery image) is shown as a banner above the card — the
+full picture, never cropped (`object-contain`); clicking it opens a viewer
+that fills the entire screen on a black background (GM-at-the-table use:
+biggest possible picture for the players; click anywhere or Esc closes).
+Footer: "Open in workspace" (the "Focus in
 Play" button was removed — module mode IS the play mode).
 
 The same wiki-link rendering must also apply to artifact `body` markdown
