@@ -4,6 +4,7 @@ import type { JSX } from 'react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { listPersonas } from '@/db/personaRepo';
 import { HelpButton } from '@/help/HelpButton';
+import { BackupSection } from '@/features/settings/backup-section';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { PersonaSection } from '@/features/settings/persona-section';
 import { DangerZone } from '@/features/settings/danger-zone';
@@ -11,7 +12,7 @@ import { SettingsSection } from '@/features/settings/settings-section';
 
 /**
  * Settings screen (05-UI.md §Settings): OpenRouter credentials and models,
- * embeddings toggle, personas, danger zone.
+ * embeddings toggle, personas, backup & restore, danger zone.
  */
 export function SettingsPage(): JSX.Element {
   const personas = useLiveQuery(() => listPersonas(), []);
@@ -42,6 +43,7 @@ export function SettingsPage(): JSX.Element {
         </CardContent>
       </Card>
       <PersonaSection personas={personas ?? []} />
+      <BackupSection />
       <DangerZone />
     </div>
   );
