@@ -30,3 +30,6 @@ coverage
 
 # Local sample rulebooks (large, copyrighted — never commit)
 Sample rules/
+
+# Local backup zips (user data — never commit)
+campaigner-backup-*.zip
