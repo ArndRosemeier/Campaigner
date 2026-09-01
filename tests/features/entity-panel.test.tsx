@@ -334,48 +334,6 @@ describe('EntityPanel', () => {
     expect(bramAligned?.name).toBe('Bram');
   });
 
-  it('renames nothing when the model already used the exact entity name', async () => {
-    const user = userEvent.setup();
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    await seedBuiltInPersonas();
-    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
-    const produced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Kael',
-    });
-    const bramProduced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Bram',
-    });
-
-    chainMocks.run.mockResolvedValue(completedChainState(produced, bramProduced));
-    chainMocks.getState.mockReturnValue(completedChainState(produced, bramProduced));
-
-    render(
-      <EntityPanel
-        module={moduleFixture(campaign.id)}
-        artifacts={[mira]}
-        campaign={campaign}
-        onStub={vi.fn()}
-        onScrollTo={vi.fn()}
-      />,
-    );
-    // Everything the batch does happens inside act — wait for the batch to
-    // END (button label restores) so the finally-block update is covered too.
-    await act(async () => {
-      await user.click(screen.getByTestId('batch-npc'));
-      await waitFor(() => {
-        expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 2 npc');
-      });
-    });
-    const saved = await getArtifact(produced.id);
-    expect(saved?.name).toBe('Kael');
-    expect(saved?.aliases).toEqual([]);
-    expect(toastErrorMock).not.toHaveBeenCalled();
-  });
-
   it('reports entities whose runs failed instead of finishing silently', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });

@@ -239,8 +239,9 @@ export class RunEngine {
   private listeners = new Set<Listener>();
   private controllers = new Map<Id, AbortController>();
   private cancelRequested = new Set<Id>();
-  /** JSON-parse retry state per run (one automatic fix retry). */
+  /** JSON-parse retry state per run (one automatic fix retry per LLM step). */
   private draftRetried = new Set<Id>();
+  private statblockRetried = new Set<Id>();
 
   on(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -267,6 +268,7 @@ export class RunEngine {
       targetArtifactId: input.targetArtifactId ?? null,
     });
     this.draftRetried.delete(run.id);
+    this.statblockRetried.delete(run.id);
     this.cancelRequested.delete(run.id);
     void this.executeFrom(run.id, 0, input).catch((error: unknown) => {
       void this.fail(run.id, error);
@@ -353,6 +355,7 @@ export class RunEngine {
     this.controllers.delete(runId);
     this.cancelRequested.delete(runId);
     this.draftRetried.delete(runId);
+    this.statblockRetried.delete(runId);
   }
 
   private async executeFrom(
@@ -438,12 +441,16 @@ export class RunEngine {
             `JSON shape after one automatic retry. The run failed without saving partial results — ` +
             `run it again, or use manual/review autonomy to keep the raw reply for editing.`;
           await updateRun(runId, { status: 'failed', errorMessage: reason, steps: [...steps] });
+          this.draftRetried.delete(runId);
+          this.statblockRetried.delete(runId);
           this.emit({ kind: 'run', runId, status: 'failed' });
           return;
         }
       }
 
       await updateRun(runId, { status: 'completed' });
+      this.draftRetried.delete(runId);
+      this.statblockRetried.delete(runId);
       this.emit({ kind: 'run', runId, status: 'completed' });
     } catch (error) {
       if (
@@ -720,7 +727,7 @@ export class RunEngine {
       context.excerpts === ''
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
-      'Reply with ONLY a JSON object: { "system": string, "ac": number, "acNote": string, "hp": number, "hpFormula": string, "speed": string, "level": string, "abilities": { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, "extras": Record<string,string> }.',
+      `Reply with ONLY a JSON object matching this COMPLETE schema: { "system": "${input.campaign.system}", "level": string, "size": string, "creatureType": string, "ac": number, "acNote": string, "hp": number, "hpFormula": string, "speed": string, "abilities": { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, "saves": string, "skills": string, "senses": string, "languages": string, "traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], "reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], "extras": Record<string,string> }. Include every field; use empty strings or arrays only when a section truly does not apply.`,
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     ]
       .filter((part) => part !== null)
@@ -747,8 +754,22 @@ export class RunEngine {
       const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
       const parsed = statBlockSchema.parse(JSON.parse(jsonText) as unknown);
       statBlock = parsed;
-    } catch {
-      // leave null → the step needs review
+    } catch (error) {
+      const issues = error instanceof Error ? error.message : String(error);
+      if (!this.statblockRetried.has(runId)) {
+        // 04-LLM-PERSONAS: same one-time schema-repair retry as draft. This
+        // was missing, so one malformed stat block discarded a valid NPC.
+        debugLog('run', 'statblock parse FAILED — retrying once', { issue: issues });
+        this.statblockRetried.add(runId);
+        return this.runStatblock(
+          runId,
+          stepIndex,
+          steps,
+          input,
+          signal,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous statblock reply was invalid JSON for the COMPLETE schema: ${issues}. Reply with corrected JSON only and include every required field.`,
+        );
+      }
     }
 
     if (statBlock === null) {
@@ -758,6 +779,7 @@ export class RunEngine {
       return { step, runStatus: 'needs_review' };
     }
 
+    this.statblockRetried.delete(runId);
     const step = this.finishStep(steps[stepIndex], { statBlock });
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
@@ -1203,6 +1225,8 @@ export class RunEngine {
   }
 
   private async fail(runId: Id, error: unknown): Promise<void> {
+    this.draftRetried.delete(runId);
+    this.statblockRetried.delete(runId);
     if (error instanceof MissingApiKeyError) {
       toastError('No API key — add one in Settings', error);
       await updateRun(runId, { status: 'failed', errorMessage: error.message });

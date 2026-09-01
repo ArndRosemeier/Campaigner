@@ -9,6 +9,8 @@ import { getRun } from '@/db/runRepo';
 import { chainRunner, type ChainStepInput } from '@/llm/chainRunner';
 import { runEngine } from '@/llm/runEngine';
 import { createPersona, type ArtifactKind, type Id, type Persona } from '@/domain';
+import { buildEntityBrief } from '@/features/modules/persona-request';
+import { resolveWikiLink } from '@/lib/wikilinks';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -141,6 +143,104 @@ describe('remaining personas wired', () => {
     const artifact = (await listArtifactsByCampaign(campaign.id))[0];
     expect(artifact?.kind).toBe('note');
     expect(artifact?.body).toContain('Three acts');
+  }, 20000);
+
+  it('npc batch retries a malformed statblock, persists the NPC, and resolves its wiki-link', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const persona = personaOf('npc-smith', 'NPC Smith', 'npc');
+    const draft = {
+      name: 'Kael',
+      summary: 'The watchful keeper of the tide gate.',
+      suggestedTags: ['warden'],
+      body: '# Kael\nKael keeps the gate and knows who passed at dusk.',
+      role: 'Gate warden',
+      appearance: 'Weathered leathers and a brass key-ring.',
+      personality: 'Quiet and observant.',
+      motivation: 'Keep the crypt sealed.',
+      secrets: 'He heard the bell beneath the sea.',
+      voiceNotes: 'Short sentences; counts exits while speaking.',
+    };
+    // This is the OLD prompt's exact shape: it is missing fields the real
+    // statBlockSchema requires. The engine must repair it once, not discard
+    // the already-valid NPC draft before finalize.
+    const incompleteStatblock = {
+      system: 'dnd5e',
+      level: '3',
+      ac: 15,
+      acNote: 'leather armor',
+      hp: 27,
+      hpFormula: '5d8+5',
+      speed: '30 ft.',
+      abilities: { str: 12, dex: 14, con: 12, int: 11, wis: 15, cha: 10 },
+      extras: {},
+    };
+    const validStatblock = {
+      ...incompleteStatblock,
+      size: 'Medium',
+      creatureType: 'Humanoid',
+      saves: 'Wis +4',
+      skills: 'Insight +4, Perception +4',
+      senses: 'passive Perception 14',
+      languages: 'Common',
+      traits: [{ name: 'Gatewatch', text: 'Kael has advantage on checks to notice intruders.' }],
+      actions: [{ name: 'Spear', text: 'Melee Weapon Attack: +4 to hit.' }],
+      reactions: [],
+      legendary: [],
+    };
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(draft))
+      .mockResolvedValueOnce(JSON.stringify(incompleteStatblock))
+      .mockResolvedValueOnce(JSON.stringify(validStatblock));
+
+    const state = await chainRunner.run(
+      campaign,
+      [persona],
+      [
+        {
+          personaId: persona.id,
+          title: 'Detail: Kael',
+          brief: buildEntityBrief('Kael', '[[Kael]] watches the tide gate.', ''),
+          autonomy: 'auto',
+        },
+      ],
+      'auto',
+      [],
+    );
+
+    expect(state.status).toBe('completed');
+    const step = state.steps[0];
+    expect(step?.status).toBe('completed');
+    expect(step?.artifactId).not.toBeNull();
+
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    expect(artifacts).toHaveLength(1);
+    const artifact = artifacts[0];
+    expect(artifact?.name).toBe('Kael');
+    expect(artifact?.kind).toBe('npc');
+    if (artifact?.kind === 'npc') {
+      expect(artifact.data.statBlock?.ac).toBe(15);
+      expect(artifact.data.statBlock?.traits[0]?.name).toBe('Gatewatch');
+    }
+    expect(resolveWikiLink('Kael', artifacts).status).toBe('resolved');
+
+    const run = step?.runId === null ? undefined : await getRun(step?.runId ?? '');
+    expect(run?.status).toBe('completed');
+    expect(run?.resultArtifactId).toBe(artifact?.id);
+    expect(run?.steps.map((runStep) => runStep.status)).toEqual([
+      'done',
+      'done',
+      'done',
+      'done',
+    ]);
+    expect(chatMock).toHaveBeenCalledTimes(3);
+    const statblockMessages = chatMock.mock.calls[1]?.[0] ?? [];
+    const statblockPrompt = statblockMessages.find((message) => message.role === 'user')?.content ?? '';
+    expect(statblockPrompt).toContain('"traits"');
+    expect(statblockPrompt).toContain('"legendary"');
+    const repairMessages = chatMock.mock.calls[2]?.[0] ?? [];
+    expect(repairMessages.find((message) => message.role === 'user')?.content).toContain(
+      'previous statblock reply was invalid',
+    );
   }, 20000);
 });
 
