@@ -411,4 +411,22 @@ describe('ModuleReaderPage', () => {
     expect(toastSuccessMock).toHaveBeenCalledWith('"Missing Person" detailed');
     await flushAsyncUpdates();
   }, 20_000);
+
+  it('opens the entity card (peek modal) from a resolved panel row', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    // 'Old Tower' ships resolved in the seed; its panel row must open the
+    // entity card — NOT scroll the module text (module-mode-as-play, first
+    // step: entity click = card).
+    const rows = await screen.findAllByTestId('entity-row', {}, { timeout: 10_000 });
+    const towerRow = rows.find((row) => row.textContent.includes('Old Tower'));
+    if (towerRow === undefined) throw new Error('Old Tower row not found in the entity panel');
+    await user.click(towerRow);
+
+    const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
+    expect(within(peek).getByText('Old Tower')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
 });

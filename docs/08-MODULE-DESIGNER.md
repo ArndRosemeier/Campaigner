@@ -191,8 +191,8 @@ pass 1.
 
 Reader sidebar (right, collapsible): "Entities" — all wiki-links across the
 module, grouped Resolved / Unresolved, with occurrence counts and a progress
-line ("14 mentioned · 5 detailed"). Clicking scrolls to first occurrence;
-unresolved rows offer the same actions as the stub popover.
+line ("14 mentioned · 5 detailed"). Clicking a resolved row opens the entity
+card (peek modal); unresolved rows offer the same actions as the stub popover.
 
 ### Stub popover (click on an unresolved chip)
 

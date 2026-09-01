@@ -205,7 +205,7 @@ describe('EntityPanel', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
     const onStub = vi.fn<(name: string, anchor: { x: number; y: number }) => void>();
-    const onScrollTo = vi.fn<(name: string) => void>();
+    const onOpenCard = vi.fn<(artifact: Artifact) => void>();
 
     render(
       <EntityPanel
@@ -213,7 +213,7 @@ describe('EntityPanel', () => {
         artifacts={[mira]}
         campaign={campaign}
         onStub={onStub}
-        onScrollTo={onScrollTo}
+        onOpenCard={onOpenCard}
       />,
     );
 
@@ -242,12 +242,12 @@ describe('EntityPanel', () => {
     expect(screen.queryByTestId('batch-note')).not.toBeInTheDocument();
     expect(screen.getAllByTestId(/batch-/)).toHaveLength(2);
 
-    // Resolved rows scroll the reader; unresolved rows open the stub popover.
+    // Resolved rows open the entity card; unresolved rows open the stub popover.
     await user.click(screen.getByRole('button', { name: /Mira/ }));
-    expect(onScrollTo).toHaveBeenCalledTimes(1);
-    expect(onScrollTo).toHaveBeenCalledWith('Mira');
+    expect(onOpenCard).toHaveBeenCalledTimes(1);
+    expect(onOpenCard).toHaveBeenCalledWith(mira);
     await user.click(screen.getByRole('button', { name: /Kael/ }));
-    expect(onScrollTo).toHaveBeenCalledTimes(1);
+    expect(onOpenCard).toHaveBeenCalledTimes(1);
     const stubCall = onStub.mock.calls.at(0);
     expect(stubCall?.[0]).toBe('Kael');
     expect(stubCall?.[1]?.x).toEqual(expect.any(Number));
@@ -280,7 +280,7 @@ describe('EntityPanel', () => {
         artifacts={[mira]}
         campaign={campaign}
         onStub={vi.fn()}
-        onScrollTo={vi.fn()}
+        onOpenCard={vi.fn()}
       />,
     );
 
@@ -374,7 +374,7 @@ describe('EntityPanel', () => {
         artifacts={[mira]}
         campaign={campaign}
         onStub={vi.fn()}
-        onScrollTo={vi.fn()}
+        onOpenCard={vi.fn()}
       />,
     );
     await user.click(screen.getByTestId('batch-npc'));
@@ -459,7 +459,7 @@ describe('EntityPanel', () => {
         artifacts={[mira]}
         campaign={campaign}
         onStub={vi.fn()}
-        onScrollTo={vi.fn()}
+        onOpenCard={vi.fn()}
       />,
     );
     await user.click(screen.getByTestId('batch-npc'));
@@ -512,7 +512,7 @@ describe('EntityPanel', () => {
           artifacts={[mira]}
           campaign={campaign}
           onStub={vi.fn()}
-          onScrollTo={vi.fn()}
+          onOpenCard={vi.fn()}
         />
         {/* The dock mounts app-wide from AppShell; the store is the seam. */}
         <ProgressDock />

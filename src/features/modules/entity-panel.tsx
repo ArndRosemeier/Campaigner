@@ -36,8 +36,9 @@ import { cn } from '@/lib/utils';
  * Entity panel (08-MODULE-DESIGNER M4-C): the right sidebar of the module
  * reader. Lists every wiki-link in the module (resolved first, then
  * unresolved) with occurrence counts, the "N mentioned · M detailed" progress
- * line, scroll-to-first-occurrence, and the M4-C batch action "Generate all
- * unresolved of kind…".
+ * line, and the M4-C batch action "Generate all unresolved of kind…". A
+ * resolved row opens the entity card (peek modal); an unresolved row opens
+ * the stub popover.
  */
 
 export interface EntityPanelProps {
@@ -46,8 +47,8 @@ export interface EntityPanelProps {
   campaign: Campaign;
   /** Opens the stub popover for an unresolved name. */
   onStub: (name: string, anchor: { x: number; y: number }) => void;
-  /** Scrolls the reader to the first occurrence of a name. */
-  onScrollTo: (name: string) => void;
+  /** Opens the entity card (peek modal) for a resolved entity. */
+  onOpenCard: (artifact: Artifact) => void;
 }
 
 /** Plural bucket label for the progress bar ("Generating 3 npcs"). */
@@ -113,7 +114,7 @@ export function EntityPanel({
   artifacts,
   campaign,
   onStub,
-  onScrollTo,
+  onOpenCard,
 }: EntityPanelProps): JSX.Element {
   const { entries, documents } = useModuleEntities(module, artifacts);
   const [collapsed, setCollapsed] = useState(false);
@@ -333,8 +334,8 @@ export function EntityPanel({
                   !entry.resolved && 'text-muted-foreground',
                 )}
                 onClick={(event) => {
-                  if (entry.resolved) {
-                    onScrollTo(entry.name);
+                  if (entry.resolved && entry.artifact !== undefined) {
+                    onOpenCard(entry.artifact);
                   } else {
                     onStub(entry.name, { x: event.clientX, y: event.clientY });
                   }

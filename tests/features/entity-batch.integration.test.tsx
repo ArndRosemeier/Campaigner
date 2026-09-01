@@ -78,7 +78,7 @@ function Harness({ campaign, module }: { campaign: Campaign; module: Module }) {
         artifacts={artifacts}
         campaign={campaign}
         onStub={vi.fn()}
-        onScrollTo={vi.fn()}
+        onOpenCard={vi.fn()}
       />
       <ProgressDock />
     </>

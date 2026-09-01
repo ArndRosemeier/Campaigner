@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
@@ -65,7 +65,6 @@ export function ModuleReaderPage(): JSX.Element {
   const module = useModule(moduleId === '' ? undefined : moduleId);
   const artifacts = useArtifacts(campaignId === '' ? undefined : campaignId);
   const location = useLocation();
-  const scrollRef = useRef<HTMLDivElement>(null);
 
   const [stub, setStub] = useState<StubPopoverState | null>(null);
   const [linkTargetName, setLinkTargetName] = useState<string | null>(null);
@@ -149,13 +148,6 @@ export function ModuleReaderPage(): JSX.Element {
 
   const peekArtifact =
     peekId !== null ? artifacts.find((artifact) => artifact.id === peekId) : undefined;
-
-  function scrollToName(name: string): void {
-    const container = scrollRef.current;
-    if (container === null) return;
-    const chip = container.querySelector(`[data-wiki-name="${CSS.escape(name)}"]`);
-    chip?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }
 
   function startEditPart(part: ModulePart): void {
     setEditPartIndex(part.planIndex);
@@ -277,7 +269,7 @@ export function ModuleReaderPage(): JSX.Element {
       )}
 
       {/* Document */}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <article className="mx-auto max-w-[70ch] px-6 py-10 text-[15px] leading-relaxed">
           <header className="mb-8 border-b pb-4">
             <ModuleTitleInput module={module} />
@@ -417,7 +409,9 @@ export function ModuleReaderPage(): JSX.Element {
         onStub={(name, anchor) => {
           setStub({ name, ...anchor });
         }}
-        onScrollTo={scrollToName}
+        onOpenCard={(artifact) => {
+          setPeekId(artifact.id);
+        }}
       />
 
       {/* Overlays */}
