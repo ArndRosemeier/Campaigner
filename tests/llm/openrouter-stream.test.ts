@@ -65,6 +65,89 @@ describe('more stream cases', () => {
     ).rejects.toThrow(OpenRouterError);
   });
 
+  it('aborts a keep-alive-only stream via the content-stall watchdog', async () => {
+    // The reported hang: the provider accepts the request and then streams
+    // `: OPENROUTER PROCESSING` keep-alives forever. Bytes keep the byte-level
+    // stall watchdog fed, so CONTENT silence gets its own cap.
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const timer = setInterval(() => {
+          try {
+            controller.enqueue(encoder.encode(': OPENROUTER PROCESSING\n\n'));
+          } catch {
+            clearInterval(timer); // reader cancelled — stop feeding
+          }
+        }, 500);
+      },
+    });
+    vi.stubGlobal('fetch', fetchStub(new Response(stream, { status: 200 })));
+    vi.useFakeTimers();
+    try {
+      const pending = chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0.5 }, [
+        0,
+        0,
+      ], 5_000, 3_000);
+      const assertion = expect(pending).rejects.toThrow(/no content for 3s/iu);
+      await vi.advanceTimersByTimeAsync(10_000);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not false-positive: keep-alives between content chunks still complete', async () => {
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse(
+          [
+            ': OPENROUTER PROCESSING\n\n',
+            'data: {"choices":[{"delta":{"content":"Hel"}}]}\n\n',
+            ': OPENROUTER PROCESSING\n\n',
+            'data: {"choices":[{"delta":{"content":"lo"}}]}\n\n',
+            'data: [DONE]\n\n',
+          ],
+          true,
+        ),
+      ),
+    );
+    const result = await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'm', temperature: 0.5 },
+      [0, 0],
+      5_000,
+      3_000,
+    );
+    expect(result).toBe('Hello');
+  });
+
+  it('counts reasoning deltas as progress while the model thinks', async () => {
+    // Reasoning models may emit only reasoning for a long stretch; that is
+    // progress, not a stall.
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse(
+          [
+            'data: {"choices":[{"delta":{"reasoning":"thinking hard…"}}]}\n\n',
+            'data: {"choices":[{"delta":{"content":"{}"}}]}\n\n',
+            'data: [DONE]\n\n',
+          ],
+          true,
+        ),
+      ),
+    );
+    const result = await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'm', temperature: 0.5 },
+      [0, 0],
+      5_000,
+      10_000,
+    );
+    expect(result).toBe('{}');
+  });
+
   it('surfaces in-stream error events instead of hanging on them', async () => {
     vi.stubGlobal(
       'fetch',

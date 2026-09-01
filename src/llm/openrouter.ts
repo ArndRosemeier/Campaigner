@@ -1,5 +1,6 @@
 import { getSettings } from '@/db/settingsRepo';
 import { applyLanguageDirective } from '@/llm/language';
+import { debugLog } from '@/lib/debug';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): always-streaming chat completions
@@ -56,6 +57,23 @@ export const DEFAULT_RETRY_BACKOFFS_MS = [2000, 8000] as const;
  */
 export const DEFAULT_STREAM_STALL_TIMEOUT_MS = 120_000;
 
+/**
+ * Abort a stream that produces no CONTENT for this long even while bytes
+ * (OpenRouter `: OPENROUTER PROCESSING` keep-alives, reasoning deltas) keep
+ * arriving. The byte-level stall timeout above cannot catch a provider that
+ * accepts the request and then streams keep-alives forever — that was the
+ * "drafting…" forever hang. Reasoning deltas count as progress (the model is
+ * working); silent keep-alives do not.
+ */
+export const DEFAULT_CONTENT_STALL_TIMEOUT_MS = 180_000;
+
+/**
+ * Hard deadline for one streamed chat call regardless of activity — a slow
+ * trickle (content every couple of minutes) would otherwise outlive any
+ * stall-based watchdog.
+ */
+export const DEFAULT_STREAM_MAX_DURATION_MS = 600_000;
+
 /** Shared OpenRouter headers (chat, images, models endpoints). */
 export function openRouterHeaders(apiKey: string): Record<string, string> {
   return {
@@ -71,6 +89,8 @@ export async function chat(
   opts: ChatOptions,
   retryBackoffs: readonly number[] = DEFAULT_RETRY_BACKOFFS_MS,
   stallTimeoutMs: number = DEFAULT_STREAM_STALL_TIMEOUT_MS,
+  contentStallMs: number = DEFAULT_CONTENT_STALL_TIMEOUT_MS,
+  maxDurationMs: number = DEFAULT_STREAM_MAX_DURATION_MS,
 ): Promise<string> {
   const settings = await getSettings();
   if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
@@ -98,7 +118,7 @@ export async function chat(
     init,
     retryBackoffs,
   );
-  return readStream(response, opts.onToken, stallTimeoutMs);
+  return readStream(response, opts.onToken, { stallTimeoutMs, contentStallMs, maxDurationMs });
 }
 
 /** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */
@@ -232,7 +252,11 @@ export class SseEventParser {
 async function readStream(
   response: Response,
   onToken: ((delta: string) => void) | undefined,
-  stallTimeoutMs: number,
+  limits: {
+    stallTimeoutMs: number;
+    contentStallMs: number;
+    maxDurationMs: number;
+  },
 ): Promise<string> {
   if (response.body === null) throw new OpenRouterError(response.status, 'empty response body');
   const reader = response.body.getReader();
@@ -240,9 +264,28 @@ async function readStream(
   const parser = new SseEventParser();
   let full = '';
   let lastActivity = Date.now();
+  let lastContentAt = Date.now();
+  const startedAt = Date.now();
+  const { stallTimeoutMs, contentStallMs, maxDurationMs } = limits;
 
   const watchdog = setInterval(() => {
-    if (Date.now() - lastActivity > stallTimeoutMs) {
+    const now = Date.now();
+    // Order matters for the post-loop diagnosis: the FIRST tripped limit
+    // describes the failure (silence vs keep-alive-only vs plain too long).
+    if (now - lastActivity > stallTimeoutMs) {
+      debugLog('llm', 'watchdog: no bytes — cancelling stream', { silentMs: now - lastActivity });
+      void reader.cancel().catch(() => undefined);
+    } else if (now - lastContentAt > contentStallMs) {
+      debugLog('llm', 'watchdog: keep-alives but no content — cancelling stream', {
+        contentSilentMs: now - lastContentAt,
+        receivedChars: full.length,
+      });
+      void reader.cancel().catch(() => undefined);
+    } else if (now - startedAt > maxDurationMs) {
+      debugLog('llm', 'watchdog: total duration exceeded — cancelling stream', {
+        durationMs: now - startedAt,
+        receivedChars: full.length,
+      });
       void reader.cancel().catch(() => undefined);
     }
   }, 1000);
@@ -255,12 +298,23 @@ async function readStream(
     try {
       const parsed = JSON.parse(payload) as {
         choices?: {
-          delta?: { content?: string; reasoning?: string; reasoning_content?: string };
+          delta?: {
+            content?: string;
+            reasoning?: string;
+            reasoning_content?: string;
+          };
           finish_reason?: string | null;
         }[];
         error?: { message?: string } | string;
       };
       delta = parsed.choices?.[0]?.delta?.content;
+      // Reasoning deltas are progress (the model is working) even though they
+      // are not part of the JSON reply — they count toward content activity.
+      const reasoning =
+        parsed.choices?.[0]?.delta?.reasoning ?? parsed.choices?.[0]?.delta?.reasoning_content;
+      if (typeof reasoning === 'string' && reasoning !== '') {
+        lastContentAt = Date.now();
+      }
       finishReason = parsed.choices?.[0]?.finish_reason;
       if (parsed.error !== undefined) {
         errorText =
@@ -276,6 +330,7 @@ async function readStream(
     }
     if (delta !== undefined && delta !== '') {
       full += delta;
+      lastContentAt = Date.now();
       onToken?.(delta);
     }
     if (finishReason !== null && finishReason !== undefined) {
@@ -291,16 +346,25 @@ async function readStream(
     return 'continue';
   };
 
+  let firstByteLogged = false;
   try {
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       lastActivity = Date.now();
+      if (!firstByteLogged) {
+        firstByteLogged = true;
+        debugLog('llm', `stream first byte after ${String(Date.now() - startedAt)}ms`);
+      }
       for (const payload of parser.push(decoder.decode(value, { stream: true }))) {
         if (handleEvent(payload) === 'done') {
           // Completion happens before the body is fully drained (the usage
           // chunk and [DONE] tail are never read): cancel the reader so the
           // socket is released back to the pool instead of leaking until GC.
+          debugLog(
+            'llm',
+            `stream complete: ${String(full.length)} chars in ${String(Date.now() - startedAt)}ms`,
+          );
           void reader.cancel().catch(() => undefined);
           return full;
         }
@@ -314,10 +378,26 @@ async function readStream(
   } finally {
     clearInterval(watchdog);
   }
-  if (Date.now() - lastActivity > stallTimeoutMs) {
+  // The reader was cancelled by a watchdog (or the socket closed): diagnose
+  // WHICH limit tripped — in the watchdog's order — and fail loudly.
+  const now = Date.now();
+  if (now - startedAt > maxDurationMs) {
     throw new OpenRouterError(
       response.status,
-      `stream stalled after ${String(stallTimeoutMs)}ms of silence`,
+      `stream exceeded ${String(Math.round(maxDurationMs / 1000))}s total — aborted; retry the run`,
+    );
+  }
+  if (now - lastContentAt > contentStallMs) {
+    throw new OpenRouterError(
+      response.status,
+      `stream delivered no content for ${String(Math.round(contentStallMs / 1000))}s ` +
+        '(keep-alives only) — the provider accepted the request but never answered; retry the run',
+    );
+  }
+  if (now - lastActivity > stallTimeoutMs) {
+    throw new OpenRouterError(
+      response.status,
+      `stream stalled after ${String(Math.round(stallTimeoutMs / 1000))}s of silence`,
     );
   }
   return full;

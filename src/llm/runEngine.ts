@@ -36,6 +36,7 @@ import type { ImagePromptDraft } from '@/llm/schemas';
 
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
+import { debugLog } from '@/lib/debug';
 import { toastError } from '@/lib/toast';
 
 /**
@@ -406,6 +407,7 @@ export class RunEngine {
           controller.signal,
           extraInstruction,
         );
+        debugLog('run', `step ${name} finished with status ${outcome.step.status}`);
         steps[i] = outcome.step;
         await updateRun(runId, {
           steps: [...steps],
@@ -585,6 +587,7 @@ export class RunEngine {
     input: StartRunInput,
   ): Promise<{ step: RunStep }> {
     const context = await this.retrieveContext(input);
+    debugLog('run', `retrieve done: ${String(context.chunkIds.length)} chunks selected`);
     const step = this.finishStep(steps[stepIndex], {
       chunkIds: context.chunkIds,
       titles: context.titles,
@@ -629,6 +632,11 @@ export class RunEngine {
     ]
       .filter((part) => part !== null)
       .join('\n\n');
+    debugLog(
+      'run',
+      `draft start: ${input.persona.model === '' ? 'default model' : input.persona.model}, ` +
+        `prompt ${String(instruction.length)} chars`,
+    );
 
     const messages: ChatMessage[] = [
       { role: 'system', content: input.persona.systemPrompt },
@@ -652,16 +660,21 @@ export class RunEngine {
       },
     });
 
+    debugLog('run', `draft chat returned ${String(raw.length)} chars`);
     let parsed: unknown = null;
     let parseFailed = false;
     try {
       const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
       parsed = contract.schema.parse(JSON.parse(jsonText) as unknown);
     } catch (error) {
+      debugLog('run', 'draft parse FAILED — retrying with schema-fix instruction', {
+        issue: error instanceof Error ? error.message : String(error),
+      });
       parseFailed = true;
       const issues = error instanceof Error ? error.message : String(error);
       if (!this.draftRetried.has(runId)) {
         // One automatic JSON-fix retry (04 spec).
+        debugLog('run', 'draft retrying once (automatic JSON fix)');
         this.draftRetried.add(runId);
         return this.runDraft(
           runId,
@@ -696,6 +709,7 @@ export class RunEngine {
     signal: AbortSignal,
     extraInstruction: string,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
+    debugLog('run', 'statblock start');
     const settings = await getSettings();
     const draft = this.effectiveDraft(steps);
     const levelHint = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';
