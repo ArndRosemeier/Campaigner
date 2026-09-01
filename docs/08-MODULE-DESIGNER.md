@@ -126,9 +126,14 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
 - Reuse existing campaign entities by their exact names when they fit.
 
 Output zod `ModuleSpineSchema` (premise, themes, partPlan with all four
-fields; partPlan length 1..20). `responseFormat:'json'`, same
-invalid-JSON-retry-once policy as personas; second failure → module
-`status:'failed'` + errorMessage (loud, per AGENTS rule 1).
+fields; partPlan length 1..20) **plus `entities: [{ name, kind }]`** — the
+model declares each entity's kind (npc/location/faction/note) when it
+invents the name; the record is stored as `module.entityKinds` and drives
+chip preselects and batch buckets (a missing/incomplete list fails the
+spine loudly — no client-side heuristic ever decides a type).
+`responseFormat:'json'`, same invalid-JSON-retry-once policy as personas;
+second failure → module `status:'failed'` + errorMessage (loud, per AGENTS
+rule 1).
 
 **Checkpoint (always, regardless of any autonomy setting): the spine is shown
 for approval** — editable premise textarea and part-plan table (edit titles/
@@ -191,9 +196,10 @@ unresolved rows offer the same actions as the stub popover.
 
 ### Stub popover (click on an unresolved chip)
 
-- **Create stub**: kind picker (npc/location/faction/note; preselect via
-  cheap heuristic — the sentence around the link, e.g. "at/in the" → location
-  — but always user-confirmable), creates a minimal artifact (name = link
+- **Create stub**: kind picker (npc/location/faction/note; preselected from
+  `module.entityKinds` — the type the generator declared when it invented
+  the name — or, for hand-typed names, a one-shot model classification;
+  always user-confirmable), creates a minimal artifact (name = link
   name, summary = the sentence containing the first occurrence, tag
   `module:<title>`). Chip turns resolved immediately.
 - **Generate with persona**: opens the persona panel prefilled — persona
@@ -208,9 +214,12 @@ unresolved rows offer the same actions as the stub popover.
 ### Batch generation
 
 Entity panel button "Generate all unresolved of kind…" (kind picker +
-confirm showing count): enqueues persona runs sequentially via the existing
-`chainRunner` in `auto` autonomy, brief-built exactly like the single case.
-Failures follow chain semantics (visible failed runs; continue).
+confirm showing count): buckets use `module.entityKinds` (the model's
+record; prose-invented names are classified by one batched model call after
+the parts land — never a client heuristic). Enqueues persona runs
+sequentially via the existing `chainRunner` in `auto` autonomy, brief-built
+exactly like the single case. Failures follow chain semantics (visible
+failed runs; continue).
 
 ---
 

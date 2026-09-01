@@ -211,3 +211,56 @@ describe('v5 → v6 migration', () => {
     await db.delete();
   });
 });
+
+describe('v6 → v7 migration', () => {
+  it('backfills module.entityKinds to [] on pre-M4-C rows', async () => {
+    // Build a v6 database (modules exist, entityKinds does not) with one
+    // pre-v7 module row, then close it.
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(6).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('modules').put({
+      id: '00000000-0000-4000-8000-0000000000b1',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      title: 'Pre-v7 module',
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      tone: '',
+      sizeDial: 'standard',
+      spine: null,
+      parts: [],
+      status: 'draft',
+      errorMessage: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-7 upgrade.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const module = await db.modules.get('00000000-0000-4000-8000-0000000000b1');
+    expect(module?.entityKinds).toEqual([]);
+
+    // The upgraded row validates against the current module schema.
+    const { moduleSchema } = await import('@/domain');
+    expect(moduleSchema.parse(module).entityKinds).toEqual([]);
+
+    await db.delete();
+  }, 20000);
+});

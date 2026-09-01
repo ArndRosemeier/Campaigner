@@ -1,12 +1,14 @@
-import type { Campaign, Id, Module, ModulePart, ModuleSpine, PartPlan } from '@/domain';
-import { createModule, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
+import type { Campaign, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
+import { createModule, mergeEntityKinds, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage } from '@/llm/openrouter';
 import { searchRules } from '@/search';
+import { extractWikiLinks, surroundingParagraphs } from '@/lib/wikilinks';
 import { toastError } from '@/lib/toast';
+import { z } from 'zod';
 
 /**
  * Module Designer generator (08-MODULE-DESIGNER M4-B): a two-pass flow —
@@ -120,8 +122,10 @@ export async function runSpine(
     });
 
     let spine: ModuleSpine;
+    let entityKinds: ModuleEntityKind[];
     try {
       spine = parseSpine(raw);
+      entityKinds = parseSpineEntities(raw);
     } catch (error) {
       // One automatic invalid-JSON retry (same policy as persona drafts); a
       // second failure fails the module loudly.
@@ -141,9 +145,12 @@ export async function runSpine(
         },
       );
       spine = parseSpine(raw);
+      entityKinds = parseSpineEntities(raw);
     }
 
-    return await patchModule(moduleId, { spine, status: 'draft', errorMessage: '' });
+    // Spine-level entities REPLACE the record: this pass invents the world
+    // (and only runs while the module has no parts, so nothing is lost).
+    return await patchModule(moduleId, { spine, entityKinds, status: 'draft', errorMessage: '' });
   } catch (error) {
     await failModule(moduleId, error);
     throw error;
@@ -155,9 +162,27 @@ export async function runSpine(
 
 /** Parses + validates the spine from model output (sliced to the JSON body). */
 export function parseSpine(raw: string): ModuleSpine {
+  return moduleSpineSchema.parse(JSON.parse(jsonBody(raw)) as unknown);
+}
+
+/** The pass-0 entity record schema ({ entities: [{ name, kind }] }). */
+const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSchema) });
+
+/**
+ * Parses the entity list the spine pass records alongside the spine (08
+ * §M4-C): the model declares each entity's kind when it invents the name —
+ * a missing/incomplete list is a validation error (retry-once, then the
+ * spine fails loudly; never a silent default).
+ */
+export function parseSpineEntities(raw: string): ModuleEntityKind[] {
+  return entityKindsReplySchema.parse(JSON.parse(jsonBody(raw)) as unknown).entities;
+}
+
+/** Slices the outermost JSON object out of a raw model reply. */
+function jsonBody(raw: string): string {
   const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
   if (jsonText === '') throw new Error('the reply contained no JSON object');
-  return moduleSpineSchema.parse(JSON.parse(jsonText) as unknown);
+  return jsonText;
 }
 
 async function spineMessages(
@@ -186,10 +211,11 @@ async function spineMessages(
       '- Every level in the range must be covered by exactly one part.',
       '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up).',
       '- Introduce as many locations, NPCs and factions as the story needs — you are not required to detail any of them.',
+      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "faction" (an organization or group), or "note" (anything else — items, rumors, mysteries, plot devices).',
       '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
     ].join('\n'),
     extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
-    'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }] } — partPlan length 1..20.',
+    'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "faction" | "note" }] } — partPlan length 1..20, one entity entry per named entity.',
   ]
     .filter((part) => part !== null)
     .join('\n\n');
@@ -281,7 +307,16 @@ export async function runParts(
       }
     }
 
-    return await patchModule(moduleId, { status: 'ready', errorMessage: '' });
+    const result = await patchModule(moduleId, { status: 'ready', errorMessage: '' });
+    // Entity kinds for names invented in prose (08 §M4-C): one batched call
+    // after the parts land. A classification failure is loud (toast) but
+    // must NOT fail the completed run — the popover stays user-editable.
+    try {
+      await classifyModuleEntities(moduleId);
+    } catch (error) {
+      toastError('Could not classify entity types — pick kinds manually when stubbing', error);
+    }
+    return result;
   } catch (error) {
     if (isAbort(error)) {
       // Parts already written stay; the interrupted part keeps its slot
@@ -453,8 +488,122 @@ async function partCall(
   }
 }
 
-/** Rule excerpts for grounding (empty library → no section, not an error). */
-async function ruleExcerptSection(query: string): Promise<string | null> {
+// --- Entity kind classification (08 §M4-C) -----------------------------------
+
+const CLASSIFY_CONTEXT_CAP = 400;
+
+/**
+ * The shared classification prompt: the model — which already knows what it
+ * invented — states each entity's kind. Same JSON contract for the spine
+ * record, the post-parts pass and single hand-typed names.
+ */
+function entityKindMessages(requests: readonly { name: string; context: string }[], premise: string): ChatMessage[] {
+  const lines = requests.map((request) => {
+    const context = request.context.replaceAll('\n', ' ').trim();
+    return `- ${request.name}${context === '' ? '' : ` :: ${context}`}`;
+  });
+  const instruction = [
+    `Module premise for context:\n${premise}`,
+    'Classify each entity below by what it is in this adventure.',
+    'Kinds: "npc" = a person or creature the party meets; "location" = a place; "faction" = an organization or group; "note" = anything else (items, rumors, mysteries, plot devices).',
+    'Entities:\n' + lines.join('\n'),
+    'Reply with ONLY a JSON object: { "entities": [{ "name": string, "kind": "npc" | "location" | "faction" | "note" }] } — one entry per listed entity, names spelled exactly as listed, no extra entities.',
+  ].join('\n\n');
+  return [
+    {
+      role: 'system',
+      content:
+        'You classify tabletop adventure entities precisely. ' +
+        'Always answer in the exact JSON format requested. Never include commentary outside the JSON.',
+    },
+    { role: 'user', content: instruction },
+  ];
+}
+
+/** Runs one classification chat call (invalid-JSON retried once). */
+async function classifyCall(messages: ChatMessage[], model: string): Promise<ModuleEntityKind[]> {
+  const base = { model, temperature: 0.2, responseFormat: 'json' as const };
+  const raw = await chat(messages, base);
+  try {
+    return entityKindsReplySchema.parse(JSON.parse(jsonBody(raw)) as unknown).entities;
+  } catch (error) {
+    const retry = await chat(
+      [
+        ...messages,
+        {
+          role: 'user',
+          content: `Your previous reply was invalid JSON: ${error instanceof Error ? error.message : String(error)}. Reply with corrected JSON only.`,
+        },
+      ],
+      base,
+    );
+    return entityKindsReplySchema.parse(JSON.parse(jsonBody(retry)) as unknown).entities;
+  }
+}
+
+/**
+ * Classifies module names that have NO recorded kind yet — the names the
+ * model invented while writing prose (08 §M4-C). ONE batched call for all
+ * missing names; every requested name must come back classified (validated,
+ * retried once; an incomplete reply throws). Records are merged into
+ * `module.entityKinds` (case-insensitive, first spelling wins).
+ */
+export async function classifyModuleEntities(moduleId: Id): Promise<void> {
+  const module = await requireModule(moduleId);
+  const documents = [
+    { where: 'premise', markdown: module.spine?.premise ?? '' },
+    ...module.parts
+      .slice()
+      .sort((a, b) => a.planIndex - b.planIndex)
+      .map((part) => ({ where: `part-${String(part.planIndex)}`, markdown: part.markdown })),
+  ];
+  const text = documents.map((document) => document.markdown).join('\n\n');
+  const known = new Set(module.entityKinds.map((entry) => entry.name.trim().toLowerCase()));
+  const names = extractWikiLinks(text)
+    .map((link) => link.name)
+    .filter((name) => !known.has(name.trim().toLowerCase()));
+  if (names.length === 0) return;
+
+  const settings = await getSettings();
+  const messages = entityKindMessages(
+    names.map((name) => ({ name, context: surroundingParagraphs(text, name, CLASSIFY_CONTEXT_CAP) })),
+    module.spine?.premise ?? '',
+  );
+  const parsed = await classifyCall(messages, settings.defaultChatModel);
+
+  const missing = names.filter(
+    (name) => !parsed.some((entry) => entry.name.trim().toLowerCase() === name.trim().toLowerCase()),
+  );
+  if (missing.length > 0) {
+    throw new Error(
+      `entity classification omitted ${String(missing.length)} of ${String(names.length)} names (first: ${missing[0] ?? ''})`,
+    );
+  }
+  // Keep only records for names we asked about (drop model hallucinations).
+  const additions = parsed.filter((entry) =>
+    names.some((name) => name.trim().toLowerCase() === entry.name.trim().toLowerCase()),
+  );
+  const current = await requireModule(moduleId);
+  await patchModule(moduleId, { entityKinds: mergeEntityKinds(current.entityKinds, additions) });
+}
+
+/**
+ * Single-entity classification for hand-typed names (08 §M4-C): the stub
+ * popover asks for the kind of a name the generator never recorded. Same
+ * contract and retry policy as the batched version.
+ */
+export async function classifyEntityKind(name: string, context: string, premise: string): Promise<ModuleEntityKind['kind']> {
+  const settings = await getSettings();
+  const messages = entityKindMessages([{ name, context }], premise);
+  const parsed = await classifyCall(messages, settings.defaultChatModel);
+  const match = parsed.find((entry) => entry.name.trim().toLowerCase() === name.trim().toLowerCase());
+  if (match === undefined) {
+    throw new Error(`entity classification did not answer for "${name}"`);
+  }
+  return match.kind;
+}
+
+/** Rule excerpts for grounding (empty library → no section, not an error). */async function ruleExcerptSection(query: string): Promise<string | null> {
   const hits = await searchRules(query, { limit: 4 });
   if (hits.length === 0) return null;
   return `Rule excerpts for grounding:\n${hits

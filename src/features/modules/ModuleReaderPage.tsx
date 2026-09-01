@@ -26,7 +26,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { Artifact, Campaign, Id, Module, ModulePart } from '@/domain';
-import { MODULE_SIZE_LABELS, moduleTagFor } from '@/domain';
+import { MODULE_SIZE_LABELS, entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
@@ -429,6 +429,7 @@ export function ModuleReaderPage(): JSX.Element {
           premise={module.spine?.premise ?? ''}
           moduleTag={moduleTagFor(module.title)}
           campaignId={campaignId}
+          recordedKind={entityKindFor(currentModule.entityKinds, stub.name)}
           onClose={() => {
             setStub(null);
           }}

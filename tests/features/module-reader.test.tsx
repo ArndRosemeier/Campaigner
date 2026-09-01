@@ -11,7 +11,14 @@ import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
-import { createModule, modulePartSchema, moduleSpineSchema, type Campaign, type Id } from '@/domain';
+import {
+  createModule,
+  modulePartSchema,
+  moduleSpineSchema,
+  type Campaign,
+  type Id,
+  type ModuleEntityKind,
+} from '@/domain';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 
@@ -40,11 +47,15 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
     generateMissingParts: vi.fn(),
     rewritePart: vi.fn(),
     createModuleAndRun: vi.fn(),
+    // The stub popover classifies hand-typed names via a chat call — mocked
+    // here (the seeded module's kinds are asserted explicitly).
+    classifyEntityKind: vi.fn(),
   };
 });
 
-const { rewritePart } = await import('@/llm/moduleGen');
+const { rewritePart, classifyEntityKind } = await import('@/llm/moduleGen');
 const rewriteMock = vi.mocked(rewritePart);
+const classifyEntityKindMock = vi.mocked(classifyEntityKind);
 const { toastSuccess } = await import('@/lib/toast');
 const toastSuccessMock = vi.mocked(toastSuccess);
 
@@ -58,7 +69,9 @@ function renderAppAt(path: string): void {
   render(<RouterProvider router={createAppRouter()} />);
 }
 
-async function seedReaderModule(options: { part0Edited?: boolean } = {}): Promise<{
+async function seedReaderModule(
+  options: { part0Edited?: boolean; entityKinds?: ModuleEntityKind[] } = {},
+): Promise<{
   campaign: Campaign;
   campaignId: Id;
   moduleId: Id;
@@ -119,6 +132,7 @@ async function seedReaderModule(options: { part0Edited?: boolean } = {}): Promis
         edited: false,
       }),
     ],
+    ...(options.entityKinds === undefined ? {} : { entityKinds: options.entityKinds }),
   });
   return { campaign, campaignId: campaign.id, moduleId: saved.id };
 }
@@ -267,6 +281,8 @@ describe('ModuleReaderPage', () => {
   it('creates a stub from an unresolved chip and the chip resolves once the artifact exists', async () => {
     const user = userEvent.setup();
     const { campaign, campaignId, moduleId } = await seedReaderModule();
+    // No recorded kind for this name → the popover classifies it (mocked).
+    classifyEntityKindMock.mockResolvedValue('npc');
     renderAppAt(modulePath(campaignId, moduleId));
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
@@ -276,16 +292,22 @@ describe('ModuleReaderPage', () => {
     // The popover opens with the link name prefilled.
     const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
     expect(within(popover).getByLabelText('Name')).toHaveValue('Missing Person');
+    // The one-shot classification call drives the kind preselect (08 §M4-C);
+    // Base UI's Select.Value renders the raw value string.
+    await waitFor(() => {
+      expect(within(popover).getByText('npc')).toBeInTheDocument();
+    });
 
     await user.click(within(popover).getByTestId('stub-create'));
 
-    // The stub artifact exists with the module tag and the first-occurrence
-    // sentence as summary.
+    // The stub artifact exists with the model-classified kind, the module tag
+    // and the first-occurrence sentence as summary.
     await waitFor(
       async () => {
         const rows = await listArtifactsByCampaign(campaignId);
         const stub = rows.find((row) => row.name === 'Missing Person');
         expect(stub?.campaignId).toBe(campaign.id);
+        expect(stub?.kind).toBe('npc');
         expect(stub?.tags).toEqual([`module:${MODULE_TITLE}`]);
         expect(stub?.summary).toContain('Missing Person was last seen');
       },
@@ -304,6 +326,24 @@ describe('ModuleReaderPage', () => {
     expect(
       resolvedChips.some((resolved) => resolved.getAttribute('data-wiki-name') === 'Missing Person'),
     ).toBe(true);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('preselects the kind the generator recorded without a classification call', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule({
+      entityKinds: [{ name: 'Missing Person', kind: 'faction' }],
+    });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
+    await user.click(chip);
+
+    const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
+    // The recorded kind is shown immediately…
+    expect(within(popover).getByText('faction')).toBeInTheDocument();
+    // …and the popover never asks the model again for a recorded name.
+    expect(classifyEntityKindMock).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   }, 20_000);
 });

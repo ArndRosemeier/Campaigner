@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
-import type { ArtifactKind, Id } from '@/domain';
+import type { ArtifactKind, EntityKind, Id } from '@/domain';
+import { ENTITY_KINDS } from '@/domain';
 
 /**
  * "Generate with persona" request bridge (08-MODULE-DESIGNER M4-C): the
@@ -42,9 +43,9 @@ export const usePersonaBriefRequest = create<PersonaRequestStore>((set) => ({
   },
 }));
 
-/** Stub-able kinds and the built-in persona that details each of them. */
-export const STUB_KINDS = ['npc', 'location', 'faction', 'note'] as const;
-export type StubKind = (typeof STUB_KINDS)[number];
+/** Stub-able kinds — the entity kinds the generator records (08 §M4-C). */
+export const STUB_KINDS = ENTITY_KINDS;
+export type StubKind = EntityKind;
 
 export const STUB_PERSONA_SLUGS: Readonly<Record<StubKind, string>> = {
   npc: 'npc-smith',
@@ -53,7 +54,12 @@ export const STUB_PERSONA_SLUGS: Readonly<Record<StubKind, string>> = {
   note: 'plot-architect',
 };
 
-/** Cheap kind heuristic for the stub popover preselect (08 §M4-C). */
+/**
+ * Cheap kind heuristic — INSTANT PLACEHOLDER ONLY (08 §M4-C): the real kind
+ * comes from the generator's recorded `module.entityKinds`, or from a
+ * one-shot classification call for hand-typed names. This regex never
+ * persists anything; the popover kind is always user-confirmable.
+ */
 export function guessKindFromSentence(sentence: string): StubKind {
   const text = sentence.toLowerCase();
   if (/\b(at|in|inside|near|beneath|under|above|beyond|through)\b/.test(text)) {
@@ -89,4 +95,3 @@ export function buildEntityBrief(
 export function asStubKind(kind: ArtifactKind): StubKind | undefined {
   return (STUB_KINDS as readonly string[]).includes(kind) ? (kind as StubKind) : undefined;
 }
-

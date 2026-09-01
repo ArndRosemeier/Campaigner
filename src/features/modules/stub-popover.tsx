@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { UserPlusIcon, UsersIcon, Wand2Icon, XIcon } from 'lucide-react';
@@ -14,8 +14,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { Id } from '@/domain';
+import type { EntityKind, Id } from '@/domain';
 import { artifactRepo } from '@/db';
+import { classifyEntityKind } from '@/llm/moduleGen';
 import {
   buildEntityBrief,
   guessKindFromSentence,
@@ -55,6 +56,8 @@ export interface StubPopoverProps {
   premise: string;
   moduleTag: string;
   campaignId: Id;
+  /** The kind the generator recorded for this name, when it knows one. */
+  recordedKind?: EntityKind | undefined;
   onClose: () => void;
   /** Opens the link-existing picker for this name (parent-driven). */
   onLinkExisting: (name: string) => void;
@@ -67,15 +70,37 @@ export function StubPopover({
   premise,
   moduleTag,
   campaignId,
+  recordedKind,
   onClose,
   onLinkExisting,
 }: StubPopoverProps): JSX.Element {
   const navigate = useNavigate();
   const requestPersona = usePersonaBriefRequest((store) => store.requestPersona);
-  const [kind, setKind] = useState<StubKind>(guessKindFromSentence(sentence));
+  // The kind is the MODEL's record when it exists; hand-typed names get a
+  // one-shot classification call (regex below is only the instant
+  // placeholder while that call is in flight — 08 §M4-C).
+  const [kind, setKind] = useState<StubKind>(recordedKind ?? guessKindFromSentence(sentence));
   const [name, setName] = useState(state.name);
   const [busy, setBusy] = useState(false);
+  /** True once the user picked a kind by hand — the async classification
+   * must never clobber a manual choice. */
+  const userPickedRef = useRef(false);
 
+  useEffect(() => {
+    if (recordedKind !== undefined) return;
+    let alive = true;
+    classifyEntityKind(state.name, contextParagraphs, premise)
+      .then((classified) => {
+        if (alive && !userPickedRef.current) setKind(classified);
+      })
+      .catch((error: unknown) => {
+        // Loud per AGENTS rule 2; the fallback guess stays selectable.
+        toastError('Could not auto-detect the entity kind — pick one below', error);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [recordedKind, state.name, contextParagraphs, premise]);
   async function createStub(): Promise<void> {
     setBusy(true);
     try {
@@ -147,7 +172,10 @@ export function StubPopover({
             <Select
               value={kind}
               onValueChange={(next) => {
-                if (next !== null) setKind(next);
+                if (next !== null) {
+                  userPickedRef.current = true;
+                  setKind(next);
+                }
               }}
             >
               <SelectTrigger id="stub-kind" size="sm" className="flex-1">

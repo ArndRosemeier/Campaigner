@@ -62,9 +62,14 @@ const PREMISE = [
   'The [[Undercroft]] door is locked.',
   '[[Kael]] watches the gate.',
   '[[Bram]] polls the tide table.',
+  '[[The Tide Bell]] tolls at dusk.',
 ].join(' ');
 
-/** Kael + Bram are unresolved npcs, Undercroft an unresolved location. */
+/**
+ * Kael + Bram are unresolved npcs, Undercroft an unresolved location — kinds
+ * RECORDED BY THE GENERATOR (08 §M4-C). "The Tide Bell" has no record (the
+ * user typed it later): it is not batchable, only stub-able per row.
+ */
 function moduleFixture(campaignId: Id): Module {
   const base = createModule({
     campaignId,
@@ -89,6 +94,11 @@ function moduleFixture(campaignId: Id): Module {
       ],
     },
     parts: [],
+    entityKinds: [
+      { name: 'Undercroft', kind: 'location' },
+      { name: 'Kael', kind: 'npc' },
+      { name: 'Bram', kind: 'npc' },
+    ],
   });
 }
 
@@ -148,13 +158,20 @@ describe('useModuleEntities', () => {
     render(<EntriesHarness module={moduleFixture(campaignId)} artifacts={[mira]} />);
 
     const rows = screen.getAllByTestId('hook-entry');
-    expect(rows.map((row) => row.textContent)).toEqual(['Mira', 'Undercroft', 'Kael', 'Bram']);
+    expect(rows.map((row) => row.textContent)).toEqual([
+      'Mira',
+      'Undercroft',
+      'Kael',
+      'Bram',
+      'The Tide Bell',
+    ]);
     expect(rows[0]).toHaveAttribute('data-resolved', 'true');
     expect(rows[0]).toHaveAttribute('data-total', '2');
     expect(rows[1]).toHaveAttribute('data-resolved', 'false');
     expect(rows[1]).toHaveAttribute('data-total', '2');
     expect(rows[2]).toHaveAttribute('data-total', '1');
     expect(rows[3]).toHaveAttribute('data-total', '1');
+    expect(rows[4]).toHaveAttribute('data-total', '1');
   });
 });
 
@@ -183,23 +200,30 @@ describe('EntityPanel', () => {
       />,
     );
 
-    expect(screen.getByText('1 detailed · 4 mentioned')).toBeInTheDocument();
+    expect(screen.getByText('1 detailed · 5 mentioned')).toBeInTheDocument();
 
     const rows = screen.getAllByTestId('entity-row');
-    expect(rows).toHaveLength(4);
+    expect(rows).toHaveLength(5);
     expect(rows[0]).toHaveTextContent('Mira');
     expect(rows[0]).toHaveAttribute('data-resolved', 'true');
     expect(rows[1]).toHaveTextContent('Undercroft');
     expect(rows[1]).not.toHaveAttribute('data-resolved');
-    expect(rows[1]).toHaveTextContent('stub');
+    // Unresolved rows show the kind the GENERATOR recorded (08 §M4-C) —
+    // never the client heuristic; a name without a record shows 'stub'.
+    expect(rows[1]).toHaveTextContent('location');
     expect(rows[1]).toHaveTextContent('×2');
     expect(rows[2]).toHaveTextContent('Kael');
+    expect(rows[2]).toHaveTextContent('npc');
     expect(rows[3]).toHaveTextContent('Bram');
+    expect(rows[4]).toHaveTextContent('The Tide Bell');
+    expect(rows[4]).toHaveTextContent('stub');
 
     expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 2 npc');
     expect(screen.getByTestId('batch-location')).toHaveTextContent('Generate 1 location');
+    // Names without a recorded kind are not batchable — no guessed buckets.
     expect(screen.queryByTestId('batch-faction')).not.toBeInTheDocument();
     expect(screen.queryByTestId('batch-note')).not.toBeInTheDocument();
+    expect(screen.getAllByTestId(/batch-/)).toHaveLength(2);
 
     // Resolved rows scroll the reader; unresolved rows open the stub popover.
     await user.click(screen.getByRole('button', { name: /Mira/ }));

@@ -9,10 +9,13 @@ import { updateSettings } from '@/db/settingsRepo';
 import { createModule, moduleSpineSchema, type Campaign, type Id } from '@/domain';
 import {
   cancelModuleGen,
+  classifyEntityKind,
+  classifyModuleEntities,
   generateMissingParts,
   ModuleBusyError,
   normalizePartMarkdown,
   parseSpine,
+  parseSpineEntities,
   rewritePart,
   runParts,
   runSpine,
@@ -23,7 +26,8 @@ import { clearDatabase } from '../db/helpers';
  * Module Designer generator (08-MODULE-DESIGNER M4-B) with a mocked chat:
  * spine success/invalid-JSON failure, sequential parts with continuity,
  * failed-part continuation, short-output retry, generateMissingParts,
- * rewritePart, cancel rewinds, and the ModuleBusyError guard.
+ * rewritePart, cancel rewinds, the ModuleBusyError guard, and the
+ * model-decided entity kinds (08 §M4-C).
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -73,11 +77,22 @@ const VALID_SPINE = {
       levelUpTrigger: 'The cult is broken.',
     },
   ],
+  // 08 §M4-C: the model declares each entity's kind when it invents the name.
+  entities: [
+    { name: 'Warden Bellamy', kind: 'npc' },
+    { name: 'The Drowned Cathedral', kind: 'location' },
+    { name: 'The Tide Cult', kind: 'faction' },
+  ],
 };
 
 /** Module prose well above the 100-char floor, with a findable marker. */
 function partMarkdown(marker: string): string {
   return `${marker}: The tide withdraws and the streets shine wet under a pale sun. `.repeat(4);
+}
+
+/** Part prose that wiki-links the given names (for entity-kind flows). */
+function partWithNames(marker: string, names: string[]): string {
+  return `${partMarkdown(marker)} Mentioned here: ${names.map((name) => `[[${name}]]`).join(' and ')}.`;
 }
 
 async function seedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
@@ -186,7 +201,10 @@ describe('moduleGen pure helpers', () => {
     const spine = parseSpine(
       `Here is the spine you asked for:\n${JSON.stringify(VALID_SPINE)}\nLet me know if you want changes.`,
     );
-    expect(spine).toEqual(VALID_SPINE);
+    // The spine schema strips the sibling `entities` record (08 §M4-C).
+    expect(spine.premise).toBe(VALID_SPINE.premise);
+    expect(spine.themes).toEqual(VALID_SPINE.themes);
+    expect(spine.partPlan).toEqual(VALID_SPINE.partPlan);
   });
 
   it('parseSpine throws loudly when the reply contains no JSON object', () => {
@@ -225,8 +243,10 @@ describe('runSpine', () => {
 
     expect(finished.status).toBe('draft');
     expect(finished.errorMessage).toBe('');
-    expect(finished.spine).toEqual(VALID_SPINE);
+    expect(finished.spine?.premise).toBe(VALID_SPINE.premise);
     expect(finished.spine?.partPlan).toHaveLength(3);
+    // The model-declared entity kinds land on the module row (08 §M4-C).
+    expect(finished.entityKinds).toEqual(VALID_SPINE.entities);
 
     expect(chatMock).toHaveBeenCalledTimes(1);
     const firstCall = chatMock.mock.calls[0];
@@ -265,6 +285,38 @@ describe('runSpine', () => {
     await expect(runSpine(moduleId, campaign)).rejects.toThrow('Refusing to regenerate a spine');
 
     expect(chatMock).not.toHaveBeenCalled();
+  }, 20000);
+});
+
+describe('entity kinds — spine record (08 §M4-C)', () => {
+  it('parseSpineEntities reads the model-declared entity list', () => {
+    const raw = JSON.stringify(VALID_SPINE);
+    expect(parseSpineEntities(raw)).toEqual(VALID_SPINE.entities);
+  });
+
+  it('parseSpineEntities rejects a reply without entities or with a foreign kind', () => {
+    const { entities: _entities, ...spineOnly } = VALID_SPINE;
+    expect(() => parseSpineEntities(JSON.stringify(spineOnly))).toThrow();
+    const foreignKind = JSON.stringify({
+      ...VALID_SPINE,
+      entities: [{ name: 'The Barque', kind: 'vehicle' }],
+    });
+    expect(() => parseSpineEntities(foreignKind)).toThrow();
+  });
+
+  it('runSpine retries once when the entities list is missing, then succeeds', async () => {
+    const { campaign, moduleId } = await seedModule();
+    const { entities: _entities, ...spineOnly } = VALID_SPINE;
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(spineOnly))
+      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE));
+
+    const finished = await runSpine(moduleId, campaign);
+
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(userMessagesOf(1)).toContain('Your previous reply was invalid JSON');
+    expect(finished.status).toBe('draft');
+    expect(finished.entityKinds).toEqual(VALID_SPINE.entities);
   }, 20000);
 });
 
@@ -495,5 +547,109 @@ describe('ModuleBusyError', () => {
     const finished = await first;
     expect(finished.status).toBe('draft');
     expect(finished.spine).not.toBeNull();
+  }, 20000);
+});
+
+describe('entity kinds — prose classification (08 §M4-C)', () => {
+  it('classifyModuleEntities batch-classifies only unrecorded names and merges them', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    // One name already recorded by the spine pass must not be re-asked.
+    await patchModule(moduleId, { entityKinds: [{ name: 'Warden Bellamy', kind: 'npc' }] });
+    await seedReadyPart(
+      moduleId,
+      0,
+      partWithNames('PART-ONE', ['The Undercroft', 'The Tide Cult']),
+    );
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        entities: [
+          { name: 'The Undercroft', kind: 'location' },
+          { name: 'The Tide Cult', kind: 'faction' },
+        ],
+      }),
+    );
+
+    await classifyModuleEntities(moduleId);
+
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    const [messages, options] = chatMock.mock.calls[0] ?? [];
+    expect(options?.responseFormat).toBe('json');
+    const prompt = messages?.find((message) => message.role === 'user')?.content ?? '';
+    expect(prompt).toContain('The Undercroft');
+    expect(prompt).toContain('The Tide Cult');
+    expect(prompt).not.toContain('Warden Bellamy');
+    const after = await getModule(moduleId);
+    expect(after?.entityKinds).toEqual([
+      { name: 'Warden Bellamy', kind: 'npc' },
+      { name: 'The Undercroft', kind: 'location' },
+      { name: 'The Tide Cult', kind: 'faction' },
+    ]);
+  }, 20000);
+
+  it('classifyModuleEntities is a no-op (no chat) when every name has a record', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael']));
+    await patchModule(moduleId, { entityKinds: [{ name: 'kael', kind: 'npc' }] });
+
+    await classifyModuleEntities(moduleId);
+
+    expect(chatMock).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('classifyModuleEntities throws when the reply omits a requested name', async () => {
+    const { moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['The Undercroft', 'The Tide Cult']));
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({ entities: [{ name: 'The Undercroft', kind: 'location' }] }),
+    );
+
+    await expect(classifyModuleEntities(moduleId)).rejects.toThrow('omitted');
+  }, 20000);
+
+  it('runParts classifies prose-invented names after the run; a failure keeps the module ready and toasts', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Kael']))
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['The Undercroft']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', []))
+      .mockRejectedValueOnce(new Error('classification provider down'));
+
+    const finished = await runParts(moduleId, campaign);
+
+    // Three part calls + one batched classification call.
+    expect(chatMock).toHaveBeenCalledTimes(4);
+    expect(finished.status).toBe('ready');
+    expect(finished.parts.every((part) => part.status === 'ready')).toBe(true);
+    // The classification failure is loud but does NOT sink the finished run.
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not classify entity types — pick kinds manually when stubbing',
+      expect.any(Error),
+    );
+    expect(finished.entityKinds).toEqual([]);
+  }, 20000);
+
+  it('classifyEntityKind answers a single hand-typed name with its context', async () => {
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({ entities: [{ name: 'Kael', kind: 'npc' }] }),
+    );
+
+    const kind = await classifyEntityKind('Kael', 'Kael guards the gate at night.', 'A haunted keep.');
+
+    expect(kind).toBe('npc');
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain('Kael guards the gate at night.');
+    expect(prompt).toContain('A haunted keep.');
+  }, 20000);
+
+  it('classifyEntityKind throws when the reply does not answer for the name', async () => {
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({ entities: [{ name: 'Someone Else', kind: 'npc' }] }),
+    );
+
+    await expect(classifyEntityKind('Kael', '', '')).rejects.toThrow('did not answer');
   }, 20000);
 });

@@ -71,6 +71,49 @@ export const modulePartSchema = z.object({
 
 export type ModulePart = z.infer<typeof modulePartSchema>;
 
+/**
+ * The kinds the generator can declare for entities it introduces (08 §M4-C:
+ * the model decides the type when it invents the name — never a client-side
+ * heuristic). These are the stub-able artifact kinds.
+ */
+export const ENTITY_KINDS = ['npc', 'location', 'faction', 'note'] as const;
+
+export type EntityKind = (typeof ENTITY_KINDS)[number];
+
+/** One model-recorded entity type: a wiki-link name and its kind. */
+export const moduleEntityKindSchema = z.object({
+  /** The name as first written in the module text (wiki-link form). */
+  name: z.string().trim().min(1),
+  kind: z.enum(ENTITY_KINDS),
+});
+
+export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
+
+/** Case-insensitive lookup of a recorded entity kind (undefined = unknown). */
+export function entityKindFor(
+  entityKinds: readonly ModuleEntityKind[],
+  name: string,
+): EntityKind | undefined {
+  const target = name.trim().toLowerCase();
+  if (target === '') return undefined;
+  return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.kind;
+}
+
+/** Merges new name→kind records into an existing list, case-insensitively. */
+export function mergeEntityKinds(
+  existing: readonly ModuleEntityKind[],
+  additions: readonly ModuleEntityKind[],
+): ModuleEntityKind[] {
+  const merged = existing.map((entry) => ({ ...entry }));
+  for (const addition of additions) {
+    const name = addition.name.trim();
+    if (name === '') continue;
+    const known = merged.find((entry) => entry.name.trim().toLowerCase() === name.toLowerCase());
+    if (known === undefined) merged.push({ name, kind: addition.kind });
+  }
+  return merged;
+}
+
 export const moduleSchema = z
   .object({
     ...BaseEntitySchema.shape,
@@ -87,6 +130,9 @@ export const moduleSchema = z
     parts: z.array(modulePartSchema),
     status: moduleStatusSchema,
     errorMessage: z.string(),
+    /** Entity types the generator recorded for names it introduced
+     * (08 §M4-C). Names typed by the user later have no record here. */
+    entityKinds: z.array(moduleEntityKindSchema).max(400).default([]),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',
@@ -128,6 +174,7 @@ export function createModule(input: NewModule): Module {
     parts: [],
     status: 'draft',
     errorMessage: '',
+    entityKinds: [],
   });
 }
 

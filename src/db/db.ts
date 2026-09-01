@@ -27,6 +27,8 @@ import type { Id } from '@/domain';
  *
  * Version 6 (08-MODULE-DESIGNER M4-A): new `modules` table; artifacts gain
  * `aliases: []`.
+ *
+ * Version 7 (08-MODULE-DESIGNER M4-C): modules gain `entityKinds: []`.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -169,6 +171,30 @@ export class CampaignerDB extends Dexie {
         const artifacts = tx.table('artifacts');
         await artifacts.toCollection().modify((artifact: Record<string, unknown>) => {
           if (artifact.aliases === undefined) artifact.aliases = [];
+        });
+      });
+    // M4-C (08-MODULE-DESIGNER): modules gain `entityKinds` (the entity types
+    // the generator records for names it introduces) — pre-M4-C rows default
+    // to [] (no heuristic is invented for them).
+    this.version(7)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const modules = tx.table('modules');
+        await modules.toCollection().modify((module: Record<string, unknown>) => {
+          if (module.entityKinds === undefined) module.entityKinds = [];
         });
       });
   }

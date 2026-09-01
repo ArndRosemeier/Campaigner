@@ -5,14 +5,13 @@ import { ChevronDownIcon, ChevronRightIcon, SparklesIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { Artifact, Campaign, Id, Module } from '@/domain';
-import { moduleTagFor } from '@/domain';
+import { entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { listPersonas } from '@/db/personaRepo';
 import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
 import {
   buildEntityBrief,
-  guessKindFromSentence,
   STUB_KINDS,
   STUB_PERSONA_SLUGS,
   type StubKind,
@@ -109,9 +108,13 @@ export function EntityPanel({
   const mentioned = entries.length;
   const detailed = entries.filter((entry) => entry.resolved).length;
   const unresolved = entries.filter((entry) => !entry.resolved);
+  // Batch buckets use the kinds the GENERATOR recorded (08 §M4-C) — never a
+  // client heuristic. Names without a record are not batchable; clicking
+  // their row classifies/asks in the stub popover instead.
   const unresolvedByKind = new Map<StubKind, EntityEntry[]>();
   for (const entry of unresolved) {
-    const kind = guessKindFromSentence(entry.sentence);
+    const kind = entityKindFor(module.entityKinds, entry.name);
+    if (kind === undefined) continue;
     const list = unresolvedByKind.get(kind) ?? [];
     list.push(entry);
     unresolvedByKind.set(kind, list);
@@ -267,7 +270,7 @@ export function EntityPanel({
                   </Badge>
                 ) : (
                   <Badge variant="outline" className="shrink-0 text-[10px]">
-                    stub
+                    {entityKindFor(module.entityKinds, entry.name) ?? 'stub'}
                   </Badge>
                 )}
                 <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>
