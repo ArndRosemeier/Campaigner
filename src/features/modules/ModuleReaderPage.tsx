@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { Link, useLocation, useParams } from 'react-router-dom';
 import {
@@ -37,6 +37,7 @@ import { useModule } from '@/features/modules/hooks';
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
+import { ReaderSearch } from '@/features/modules/reader-search';
 import { SpineCheckpoint } from '@/features/modules/spine-checkpoint';
 import { StubPopover, type StubPopoverState } from '@/features/modules/stub-popover';
 import { sentenceAround, surroundingParagraphs } from '@/lib/wikilinks';
@@ -70,6 +71,8 @@ export function ModuleReaderPage(): JSX.Element {
   const [linkTargetName, setLinkTargetName] = useState<string | null>(null);
   const [peekId, setPeekId] = useState<Id | null>(null);
   const [tocOpen, setTocOpen] = useState(true);
+  /** The scrollable document — ReaderSearch walks its rendered text. */
+  const documentRef = useRef<HTMLDivElement>(null);
   const [rewriteTarget, setRewriteTarget] = useState<number | null>(null);
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [editPartIndex, setEditPartIndex] = useState<number | null>(null);
@@ -201,6 +204,7 @@ export function ModuleReaderPage(): JSX.Element {
           className="w-56 shrink-0 overflow-y-auto border-r bg-card px-3 py-4 text-sm"
           data-testid="module-toc"
         >
+          <ReaderSearch containerRef={documentRef} />
           <Button
             variant="ghost"
             size="xs"
@@ -269,7 +273,7 @@ export function ModuleReaderPage(): JSX.Element {
       )}
 
       {/* Document */}
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={documentRef} className="min-h-0 flex-1 overflow-y-auto">
         <article className="mx-auto max-w-[70ch] px-6 py-10 text-[15px] leading-relaxed">
           <header className="mb-8 border-b pb-4">
             <ModuleTitleInput module={module} />

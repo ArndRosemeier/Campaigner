@@ -142,3 +142,13 @@
 .progress-indeterminate {
   animation: progress-slide 1.4s ease-in-out infinite;
 }
+
+/* Reader search (08-MODULE-DESIGNER M4-C): transient highlight on the block
+   containing the active match. Applied imperatively by ReaderSearch on an
+   existing element — React owns the tree, so only the class comes and goes. */
+.search-hit {
+  outline: 2px solid #f59e0b;
+  outline-offset: 2px;
+  border-radius: 3px;
+  background-color: rgb(245 158 11 / 0.12);
+}

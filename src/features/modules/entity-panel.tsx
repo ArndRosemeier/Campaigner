@@ -1,12 +1,20 @@
 import { useMemo, useState } from 'react';
 import type { JSX } from 'react';
-import { ChevronDownIcon, ChevronRightIcon, SparklesIcon } from 'lucide-react';
+import {
+  ArrowDownAZIcon,
+  ArrowDownUpIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+  SparklesIcon,
+  StarIcon,
+} from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type { Artifact, Campaign, Id, Module } from '@/domain';
 import { entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
+import { patchModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
@@ -34,11 +42,13 @@ import { cn } from '@/lib/utils';
 
 /**
  * Entity panel (08-MODULE-DESIGNER M4-C): the right sidebar of the module
- * reader. Lists every wiki-link in the module (resolved first, then
- * unresolved) with occurrence counts, the "N mentioned · M detailed" progress
- * line, and the M4-C batch action "Generate all unresolved of kind…". A
- * resolved row opens the entity card (peek modal); an unresolved row opens
- * the stub popover.
+ * reader. Two lists — FOCUSED entities on top (the ones the table cares
+ * about right now), then everything else, separated by a divider — with a
+ * star toggle per row to move between them (persisted on the module row),
+ * a sort button (first mention / alphabetical), occurrence counts, the
+ * "N mentioned · M detailed" progress line, and the batch action "Generate
+ * all unresolved of kind…". A resolved row opens the entity card (peek
+ * modal); an unresolved row opens the stub popover.
  */
 
 export interface EntityPanelProps {
@@ -100,11 +110,8 @@ export function useModuleEntities(
         sentence: sentenceAround(firstDoc?.markdown ?? '', name),
       };
     });
-    // Resolved first, then by total mentions descending.
-    entries.sort((a, b) => {
-      if (a.resolved !== b.resolved) return a.resolved ? -1 : 1;
-      return b.total - a.total;
-    });
+    // First-mention order (premise first, then parts by plan index) — the
+    // 'mention' sort mode; the panel re-sorts per `module.entitySort`.
     return { entries, documents };
   }, [module, artifacts]);
 }
@@ -142,6 +149,44 @@ export function EntityPanel({
 
   /** Full module text for the brief context. */
   const moduleText = documents.map((document) => document.markdown).join('\n\n');
+
+  // Focused / unfocused groups (08 §M4-C), each in the current sort order.
+  // Focus matches are case-insensitive — wiki-links resolve that way.
+  const sortedEntries = useMemo(() => {
+    if (module.entitySort === 'alphabetical') {
+      return [...entries].sort((a, b) => a.name.localeCompare(b.name));
+    }
+    return entries; // 'mention' = first-mention order, as extracted
+  }, [entries, module.entitySort]);
+  const isFocused = (name: string): boolean =>
+    module.focusedEntities.some((focused) => focused.trim().toLowerCase() === name.toLowerCase());
+  const focusedEntries = sortedEntries.filter((entry) => isFocused(entry.name));
+  const unfocusedEntries = sortedEntries.filter((entry) => !isFocused(entry.name));
+
+  /** Moves an entity between the focused and unfocused lists (persisted). */
+  async function toggleFocus(name: string): Promise<void> {
+    const next = isFocused(name)
+      ? module.focusedEntities.filter(
+          (focused) => focused.trim().toLowerCase() !== name.toLowerCase(),
+        )
+      : [...module.focusedEntities, name];
+    try {
+      await patchModule(module.id, { focusedEntities: next });
+    } catch (error) {
+      toastError(`Could not update the focus for "${name}"`, error);
+    }
+  }
+
+  /** Cycles the entity sort mode (persisted). */
+  async function toggleSort(): Promise<void> {
+    try {
+      await patchModule(module.id, {
+        entitySort: module.entitySort === 'mention' ? 'alphabetical' : 'mention',
+      });
+    } catch (error) {
+      toastError('Could not save the sort order', error);
+    }
+  }
 
   async function generateBatch(kind: StubKind): Promise<void> {
     const targets = unresolvedByKind.get(kind) ?? [];
@@ -295,7 +340,7 @@ export function EntityPanel({
 
       {!collapsed && (
         <>
-          <div className="flex flex-wrap gap-1 border-b px-3 py-2">
+          <div className="flex flex-wrap items-center gap-1 border-b px-3 py-2">
             {STUB_KINDS.map((kind) => {
               const targets = unresolvedByKind.get(kind) ?? [];
               if (targets.length === 0) return null;
@@ -315,6 +360,27 @@ export function EntityPanel({
                 </Button>
               );
             })}
+            <Button
+              variant="ghost"
+              size="xs"
+              className="ml-auto"
+              data-testid="entity-sort"
+              aria-label={
+                module.entitySort === 'mention'
+                  ? 'Sorted by first mention — sort alphabetically'
+                  : 'Sorted alphabetically — sort by first mention'
+              }
+              onClick={() => {
+                void toggleSort();
+              }}
+            >
+              {module.entitySort === 'alphabetical' ? (
+                <ArrowDownAZIcon aria-hidden data-icon="inline-start" />
+              ) : (
+                <ArrowDownUpIcon aria-hidden data-icon="inline-start" />
+              )}
+              {module.entitySort === 'alphabetical' ? 'A–Z' : 'First mention'}
+            </Button>
           </div>
 
           <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 text-sm">
@@ -323,45 +389,123 @@ export function EntityPanel({
                 No wiki-links yet. Write [[Names]] in the premise or parts.
               </p>
             )}
-            {entries.map((entry) => (
-              <button
-                key={entry.name}
-                type="button"
-                data-testid="entity-row"
-                data-resolved={entry.resolved || undefined}
-                className={cn(
-                  'flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent',
-                  !entry.resolved && 'text-muted-foreground',
-                )}
-                onClick={(event) => {
-                  if (entry.resolved && entry.artifact !== undefined) {
-                    onOpenCard(entry.artifact);
-                  } else {
-                    onStub(entry.name, { x: event.clientX, y: event.clientY });
-                  }
-                }}
-              >
-                <span className="min-w-0 flex-1 truncate">{entry.name}</span>
-                {entry.ambiguous && (
-                  <span title="Multiple artifacts match this name" aria-hidden>
-                    ⚠
-                  </span>
-                )}
-                {entry.resolved ? (
-                  <Badge variant="secondary" className="shrink-0 text-[10px]">
-                    {entry.artifact?.kind}
-                  </Badge>
-                ) : (
-                  <Badge variant="outline" className="shrink-0 text-[10px]">
-                    {entityKindFor(module.entityKinds, entry.name) ?? 'stub'}
-                  </Badge>
-                )}
-                <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>
-              </button>
-            ))}
+            {focusedEntries.length > 0 && (
+              <section data-testid="focused-group" aria-label="Focused entities">
+                <p className="px-1 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
+                  Focused · {focusedEntries.length}
+                </p>
+                <ul>
+                  {focusedEntries.map((entry) => (
+                    <EntityRow
+                      key={entry.name}
+                      entry={entry}
+                      focused
+                      module={module}
+                      onOpenCard={onOpenCard}
+                      onStub={onStub}
+                      onToggleFocus={() => {
+                        void toggleFocus(entry.name);
+                      }}
+                    />
+                  ))}
+                </ul>
+              </section>
+            )}
+            {focusedEntries.length > 0 && <hr className="my-2 border-border" />}
+            <section
+              data-testid="unfocused-group"
+              aria-label={focusedEntries.length > 0 ? 'Other entities' : 'Entities'}
+            >
+              {focusedEntries.length > 0 && (
+                <p className="px-1 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
+                  Unfocused · {unfocusedEntries.length}
+                </p>
+              )}
+              <ul>
+                {unfocusedEntries.map((entry) => (
+                  <EntityRow
+                    key={entry.name}
+                    entry={entry}
+                    focused={false}
+                    module={module}
+                    onOpenCard={onOpenCard}
+                    onStub={onStub}
+                    onToggleFocus={() => {
+                      void toggleFocus(entry.name);
+                    }}
+                  />
+                ))}
+              </ul>
+            </section>
           </div>
         </>
       )}
     </aside>
+  );
+}
+
+function EntityRow({
+  entry,
+  focused,
+  module,
+  onOpenCard,
+  onStub,
+  onToggleFocus,
+}: {
+  entry: EntityEntry;
+  focused: boolean;
+  module: Module;
+  onOpenCard: (artifact: Artifact) => void;
+  onStub: (name: string, anchor: { x: number; y: number }) => void;
+  onToggleFocus: () => void;
+}): JSX.Element {
+  return (
+    <li className="flex items-center">
+      <button
+        type="button"
+        data-testid="entity-row"
+        data-resolved={entry.resolved || undefined}
+        className={cn(
+          'flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent',
+          !entry.resolved && 'text-muted-foreground',
+        )}
+        onClick={(event) => {
+          if (entry.resolved && entry.artifact !== undefined) {
+            onOpenCard(entry.artifact);
+          } else {
+            onStub(entry.name, { x: event.clientX, y: event.clientY });
+          }
+        }}
+      >
+        <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+        {entry.ambiguous && (
+          <span title="Multiple artifacts match this name" aria-hidden>
+            ⚠
+          </span>
+        )}
+        {entry.resolved ? (
+          <Badge variant="secondary" className="shrink-0 text-[10px]">
+            {entry.artifact?.kind}
+          </Badge>
+        ) : (
+          <Badge variant="outline" className="shrink-0 text-[10px]">
+            {entityKindFor(module.entityKinds, entry.name) ?? 'stub'}
+          </Badge>
+        )}
+        <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>
+      </button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className={cn('shrink-0', focused ? 'text-amber-500' : 'text-muted-foreground/40')}
+        aria-label={focused ? `Unfocus ${entry.name}` : `Focus ${entry.name}`}
+        aria-pressed={focused}
+        data-testid="focus-toggle"
+        data-name={entry.name}
+        onClick={onToggleFocus}
+      >
+        <StarIcon aria-hidden className={cn('size-4', focused && 'fill-current')} />
+      </Button>
+    </li>
   );
 }

@@ -31,6 +31,11 @@ export const moduleStatusSchema = z.enum(['draft', 'generating', 'ready', 'faile
 
 export type ModuleStatus = z.infer<typeof moduleStatusSchema>;
 
+/** Entity panel ordering (08 §M4-C): first appearance in the document, or A–Z. */
+export const moduleEntitySortSchema = z.enum(['mention', 'alphabetical']);
+
+export type ModuleEntitySort = z.infer<typeof moduleEntitySortSchema>;
+
 export const modulePartStatusSchema = z.enum(['pending', 'generating', 'ready', 'failed']);
 
 export type ModulePartStatus = z.infer<typeof modulePartStatusSchema>;
@@ -133,6 +138,10 @@ export const moduleSchema = z
     /** Entity types the generator recorded for names it introduced
      * (08 §M4-C). Names typed by the user later have no record here. */
     entityKinds: z.array(moduleEntityKindSchema).max(400).default([]),
+    /** Names focused in play — the entity panel's top group (08 §M4-C). */
+    focusedEntities: z.array(z.string()).max(400).default([]),
+    /** How the entity panel orders entities (08 §M4-C). */
+    entitySort: moduleEntitySortSchema.default('mention'),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',
@@ -175,6 +184,8 @@ export function createModule(input: NewModule): Module {
     status: 'draft',
     errorMessage: '',
     entityKinds: [],
+    focusedEntities: [],
+    entitySort: 'mention',
   });
 }
 

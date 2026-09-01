@@ -10,14 +10,24 @@ import { NotFoundError } from '@/lib/errors';
  * the same validated save so a half-written row can never persist.
  */
 
+/**
+ * Parses on read so rows written before a schema addition pick up new
+ * defaulted fields (e.g. `focusedEntities`, `entitySort`) — and an invalid
+ * row fails loudly instead of leaking a partial type (AGENTS rule 1).
+ */
+function parseModuleRow(row: Module): Module {
+  return moduleSchema.parse(row);
+}
+
 export async function getModule(id: Id): Promise<Module | undefined> {
-  return db.modules.get(id);
+  const row = await db.modules.get(id);
+  return row === undefined ? undefined : parseModuleRow(row);
 }
 
 /** All modules of a campaign, newest first. */
 export async function listModulesByCampaign(campaignId: Id): Promise<Module[]> {
   const rows = await db.modules.where('campaignId').equals(campaignId).toArray();
-  return rows.sort((a, b) => b.updatedAt - a.updatedAt);
+  return rows.map(parseModuleRow).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** Creates a module row (factory builds + validates). */

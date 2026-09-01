@@ -429,4 +429,55 @@ describe('ModuleReaderPage', () => {
     expect(within(peek).getByText('Old Tower')).toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
+
+  it('moves an entity into the Focused group and back via the star toggle', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    expect(screen.queryByTestId('focused-group')).not.toBeInTheDocument();
+    await user.click(
+      await screen.findByRole('button', { name: 'Focus Old Tower' }, { timeout: 10_000 }),
+    );
+
+    // The patch flows back through the module live query and regroups live.
+    const focused = await screen.findByTestId('focused-group', {}, { timeout: 10_000 });
+    expect(within(focused).getByTestId('entity-row')).toHaveTextContent('Old Tower');
+
+    await user.click(within(focused).getByRole('button', { name: 'Unfocus Old Tower' }));
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('focused-group')).not.toBeInTheDocument();
+      },
+      { timeout: 10_000 },
+    );
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('searches the rendered module text and jumps between matches', async () => {
+    // jsdom does not implement scrollIntoView; the search uses it to bring the
+    // active match into view.
+    Element.prototype.scrollIntoView = vi.fn();
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const input = await screen.findByTestId('reader-search-input', {}, { timeout: 10_000 });
+    await user.type(input, 'lantern');
+
+    // Exactly one occurrence: part 0's "A lantern still burns…".
+    await waitFor(() => {
+      expect(screen.getByTestId('reader-search-count')).toHaveTextContent('1 / 1');
+    });
+    await user.click(screen.getByTestId('reader-search-next'));
+    expect(document.querySelector('.search-hit')).not.toBeNull();
+
+    // Cycling wraps around on a single match; clearing resets everything.
+    await user.click(screen.getByTestId('reader-search-next'));
+    expect(screen.getByTestId('reader-search-count')).toHaveTextContent('1 / 1');
+    await user.click(screen.getByTestId('reader-search-clear'));
+    expect(screen.getByTestId('reader-search-count')).toHaveTextContent('–');
+    expect(document.querySelector('.search-hit')).toBeNull();
+    await flushAsyncUpdates();
+  }, 20_000);
 });

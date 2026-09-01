@@ -1,11 +1,12 @@
 import 'fake-indexeddb/auto';
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { getModule, saveModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
@@ -165,7 +166,7 @@ describe('useModuleEntities', () => {
   beforeEach(clearDatabase);
   afterEach(cleanup);
 
-  it('lists resolved entities first, then unresolved ones by total mentions descending', () => {
+  it('lists entities in first-mention order (premise first, then parts by plan index)', () => {
     const campaignId = newId();
     const mira = buildArtifact({ campaignId, kind: 'npc', name: 'Mira' });
 
@@ -200,7 +201,7 @@ describe('EntityPanel', () => {
   });
   afterEach(cleanup);
 
-  it('renders resolved rows first with kind badges, unresolved stub rows, and per-kind batch buttons', async () => {
+  it('renders entity rows in mention order with kind badges, unresolved stub rows, and per-kind batch buttons', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
@@ -242,16 +243,114 @@ describe('EntityPanel', () => {
     expect(screen.queryByTestId('batch-note')).not.toBeInTheDocument();
     expect(screen.getAllByTestId(/batch-/)).toHaveLength(2);
 
-    // Resolved rows open the entity card; unresolved rows open the stub popover.
-    await user.click(screen.getByRole('button', { name: /Mira/ }));
+    // Resolved rows open the entity card; unresolved rows open the stub
+    // popover. (Star toggles have their own labels — pick rows by content.)
+    const rowByName = (name: string): HTMLElement => {
+      const row = screen
+        .getAllByTestId('entity-row')
+        .find((candidate) => candidate.textContent.includes(name));
+      if (row === undefined) throw new Error(`No entity row for ${name}`);
+      return row;
+    };
+    await user.click(rowByName('Mira'));
     expect(onOpenCard).toHaveBeenCalledTimes(1);
     expect(onOpenCard).toHaveBeenCalledWith(mira);
-    await user.click(screen.getByRole('button', { name: /Kael/ }));
+    await user.click(rowByName('Kael'));
     expect(onOpenCard).toHaveBeenCalledTimes(1);
     const stubCall = onStub.mock.calls.at(0);
     expect(stubCall?.[0]).toBe('Kael');
     expect(stubCall?.[1]?.x).toEqual(expect.any(Number));
     expect(stubCall?.[1]?.y).toEqual(expect.any(Number));
+  });
+
+  it('sorts alphabetically when the module says so; the sort button persists the toggle', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({ ...base, entitySort: 'alphabetical' });
+    await saveModule(module);
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[mira]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    const rows = screen.getAllByTestId('entity-row');
+    expect(rows).toHaveLength(5);
+    expect(rows[0]).toHaveTextContent('Bram');
+    expect(rows[1]).toHaveTextContent('Kael');
+    expect(rows[2]).toHaveTextContent('Mira');
+    expect(rows[3]).toHaveTextContent('The Tide Bell');
+    expect(rows[4]).toHaveTextContent('Undercroft');
+    expect(screen.getByTestId('entity-sort')).toHaveTextContent('A–Z');
+
+    // Toggling persists the OTHER mode on the module row.
+    await user.click(screen.getByTestId('entity-sort'));
+    const saved = await getModule(module.id);
+    expect(saved?.entitySort).toBe('mention');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('groups focused entities first (case-insensitive) and persists focus toggles', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const base = moduleFixture(campaign.id);
+    // Stored lowercase on purpose: focus matching is case-insensitive, like
+    // wiki-link resolution.
+    const module = moduleSchema.parse({ ...base, focusedEntities: ['kael'] });
+    await saveModule(module);
+
+    const harness = (
+      <EntityPanel
+        module={module}
+        artifacts={[mira]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />
+    );
+    const view = render(harness);
+
+    const focused = screen.getByTestId('focused-group');
+    const focusedRows = within(focused).getAllByTestId('entity-row');
+    expect(focusedRows).toHaveLength(1);
+    expect(focusedRows[0]).toHaveTextContent('Kael');
+    expect(
+      within(focused).getByRole('button', { name: 'Unfocus Kael' }),
+    ).toHaveAttribute('aria-pressed', 'true');
+
+    // Unfocused keeps mention order minus the focused entity.
+    const rest = within(screen.getByTestId('unfocused-group')).getAllByTestId('entity-row');
+    expect(rest[0]).toHaveTextContent('Mira');
+    expect(rest[1]).toHaveTextContent('Undercroft');
+    expect(rest[2]).toHaveTextContent('Bram');
+    expect(rest[3]).toHaveTextContent('The Tide Bell');
+
+    // Unfocusing persists an empty list…
+    await user.click(within(focused).getByRole('button', { name: 'Unfocus Kael' }));
+    expect((await getModule(module.id))?.focusedEntities).toEqual([]);
+    // …and focusing from a fresh render (the prop updates via live query).
+    const updated = moduleSchema.parse({ ...base, focusedEntities: [] });
+    await saveModule(updated);
+    view.rerender(
+      <EntityPanel
+        module={updated}
+        artifacts={[mira]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Focus Bram' }));
+    expect((await getModule(module.id))?.focusedEntities).toEqual(['Bram']);
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it('runs one batch chain for an unresolved kind with the stub persona and tags the produced artifact', async () => {

@@ -78,7 +78,10 @@ editor header as a chip input next to tags ("also known as").
 The module is **front and center**: a single scrollable document view, prose
 width (~70ch), large type, parts as chapters (H1 = part title with level
 band badge), spine premise as an intro section. Sticky mini-ToC on the left
-(part titles, click to scroll). Edit affordance per part: an ✎ toggle that
+(part titles, click to scroll) with a **search box on top**: matches are
+located in the rendered document; next/previous (and Enter/Shift+Enter)
+cycle through them, scrolling the active match into view and flashing a
+highlight on its containing block. Edit affordance per part: an ✎ toggle that
 swaps that part to the markdown textarea (same component as artifact bodies),
 save on blur → `saveModule`.
 
@@ -190,9 +193,15 @@ pass 1.
 ### Entity panel
 
 Reader sidebar (right, collapsible): "Entities" — all wiki-links across the
-module, grouped Resolved / Unresolved, with occurrence counts and a progress
-line ("14 mentioned · 5 detailed"). Clicking a resolved row opens the entity
-card (peek modal); unresolved rows offer the same actions as the stub popover.
+module in TWO lists: **Focused** on top (the entities the table cares about
+right now), then **Unfocused**, separated by a divider. Each row has a star
+toggle to move between the lists (persisted on the module row as
+`focusedEntities`, matched case-insensitively). A sort button switches the
+order inside both groups between **first mention** (document order, persisted
+as `entitySort: 'mention'`) and **alphabetical** (`'alphabetical'`), with a
+"N mentioned · M detailed" progress line. Clicking a resolved row opens the
+entity card (peek modal); unresolved rows offer the same actions as the stub
+popover.
 
 ### Stub popover (click on an unresolved chip)
 
