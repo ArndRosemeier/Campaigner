@@ -12,7 +12,7 @@ import {
   MAX_REVISIONS_PER_ARTIFACT,
 } from '@/domain';
 import { db } from '@/db/db';
-import { pruneUnreferencedImages } from '@/db/imageRepo';
+import { deleteImageIfUnreferenced, pruneUnreferencedImages } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
 /** Who is saving, and (for persona saves) which run produced the content. */
@@ -103,6 +103,50 @@ export async function updateArtifact(
     await writeRevision(next, meta);
     return next;
   });
+}
+
+/**
+ * User-initiated image removal (M4-C; the editor's Images section uses the
+ * same contract): detaches the image from the artifact and scrubs the id
+ * from the artifact's own revision snapshots, so the blob becomes truly
+ * unreferenced and the confirmed delete actually frees it. History stays
+ * restorable — restored revisions simply show the entity without the
+ * deleted image. The blob row is deleted unless something else (another
+ * artifact or another artifact's revisions) still references it.
+ */
+export async function removeImageFromArtifact(artifactId: Id, imageId: Id): Promise<void> {
+  await db.transaction('rw', db.artifacts, db.revisions, async () => {
+    const current = await db.artifacts.get(artifactId);
+    if (current === undefined) throw new NotFoundError('Artifact', artifactId);
+    if (current.imageIds.includes(imageId) || current.coverImageId === imageId) {
+      await updateArtifact(artifactId, {
+        imageIds: current.imageIds.filter((id) => id !== imageId),
+        coverImageId: current.coverImageId === imageId ? null : current.coverImageId,
+      });
+    }
+    const revisions = await db.revisions.where('artifactId').equals(artifactId).toArray();
+    for (const revision of revisions) {
+      // Read defensively (pre-M3 snapshots lack both fields — see
+      // referencedImageIds); rows are not schema-parsed on load.
+      const snapshot = revision.snapshot as {
+        imageIds?: Id[];
+        coverImageId?: Id | null;
+      } | null;
+      if (snapshot === null) continue;
+      const inList = (snapshot.imageIds ?? []).includes(imageId);
+      const isCover = snapshot.coverImageId === imageId;
+      if (!inList && !isCover) continue;
+      await db.revisions.put({
+        ...revision,
+        snapshot: {
+          ...snapshot,
+          ...(inList ? { imageIds: (snapshot.imageIds ?? []).filter((id) => id !== imageId) } : {}),
+          ...(isCover ? { coverImageId: null } : {}),
+        } as unknown as Artifact,
+      });
+    }
+  });
+  await deleteImageIfUnreferenced(imageId);
 }
 
 /**

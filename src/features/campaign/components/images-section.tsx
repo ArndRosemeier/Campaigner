@@ -4,7 +4,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { ImageIcon, PlusIcon, SparklesIcon, StarIcon, Trash2Icon } from 'lucide-react';
 
 import { artifactRepo } from '@/db';
-import { createImage, deleteImageIfUnreferenced, listImagesByIds } from '@/db/imageRepo';
+import { removeImageFromArtifact } from '@/db/artifactRepo';
+import { createImage, listImagesByIds } from '@/db/imageRepo';
 import type { Artifact, Id, StoredImage } from '@/domain';
 import { Button } from '@/components/ui/button';
 import {
@@ -16,6 +17,7 @@ import {
 import { toastError, toastSuccess } from '@/lib/toast';
 import { intakeImage } from '@/lib/imageIntake';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
+import { LightboxImage } from '@/features/images/lightbox-image';
 import { useImageUrl } from '@/features/images/use-image-url';
 
 /**
@@ -79,14 +81,10 @@ export function ImagesSection({ artifact }: { artifact: Artifact }): JSX.Element
 
   async function removeImage(imageId: Id): Promise<void> {
     try {
-      const imageIds = artifact.imageIds.filter((id) => id !== imageId);
-      await artifactRepo.updateArtifact(artifact.id, {
-        imageIds,
-        coverImageId: artifact.coverImageId === imageId ? null : artifact.coverImageId,
-      });
-      // Blob is deleted only when nothing else (artifact or revision) refers
-      // to it (07-MILESTONE-3 M3-A §Storage).
-      await deleteImageIfUnreferenced(imageId);
+      // Shared contract with the module reader's image checkbox (M4-C):
+      // detach + scrub this artifact's revision snapshots, then delete the
+      // blob when nothing else references it.
+      await removeImageFromArtifact(artifact.id, imageId);
       setLightboxId(null);
     } catch (error) {
       toastError('Could not remove image', error);
@@ -222,14 +220,4 @@ function GalleryThumb({ imageId }: { imageId: Id }): JSX.Element | null {
   return <img src={url} alt="Artifact image" width={64} height={64} className="size-16 object-cover" />;
 }
 
-function LightboxImage({ imageId }: { imageId: Id }): JSX.Element | null {
-  const url = useImageUrl(imageId);
-  if (url === null) return null;
-  return (
-    <img
-      src={url}
-      alt="Artifact image, large view"
-      className="max-h-96 w-auto self-center rounded-md border object-contain"
-    />
-  );
-}
+

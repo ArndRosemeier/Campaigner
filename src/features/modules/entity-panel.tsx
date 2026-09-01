@@ -5,17 +5,29 @@ import {
   ArrowDownUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  ImageIcon,
   SparklesIcon,
   StarIcon,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import type { Artifact, Campaign, Id, Module } from '@/domain';
 import { entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
+import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { patchModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
+import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
 import { runEngine } from '@/llm/runEngine';
@@ -36,7 +48,7 @@ import {
   sentenceAround,
   surroundingParagraphs,
 } from '@/lib/wikilinks';
-import { toastError } from '@/lib/toast';
+import { toastError, toastSuccess } from '@/lib/toast';
 import { useProgressStore } from '@/lib/progress';
 import { cn } from '@/lib/utils';
 
@@ -49,7 +61,17 @@ import { cn } from '@/lib/utils';
  * "N mentioned · M detailed" progress line, and the batch action "Generate
  * all unresolved of kind…". A resolved row opens the entity card (peek
  * modal); an unresolved row opens the stub popover.
+ *
+ * IMAGES mode (M4-C, module-mode-as-play): the "Images" button swaps the row
+ * stars for checkboxes — checked = the entity has an image, indeterminate =
+ * queued for the background image queue, unchecked = none. Checking queues a
+ * generation (one image per entity, attached as cover); unchecking a QUEUED
+ * entity just removes it from the queue, while unchecking an entity WITH an
+ * image asks for confirmation before deleting it.
  */
+
+/** What the checkbox shows for an entity in images mode. */
+type EntityImageState = 'has' | 'queued' | 'none';
 
 export interface EntityPanelProps {
   module: Module;
@@ -126,9 +148,17 @@ export function EntityPanel({
   const { entries, documents } = useModuleEntities(module, artifacts);
   const [collapsed, setCollapsed] = useState(false);
   const [batching, setBatching] = useState<StubKind | null>(null);
+  const [imageMode, setImageMode] = useState(false);
+  /** Entity awaiting confirmation to delete its image (images mode). */
+  const [pendingImageDelete, setPendingImageDelete] = useState<{
+    name: string;
+    artifact: Artifact;
+  } | null>(null);
   const progressStart = useProgressStore((state) => state.start);
   const progressUpdate = useProgressStore((state) => state.update);
   const progressFinish = useProgressStore((state) => state.finish);
+  const queuedJobs = useEntityImageQueue((state) => state.queued);
+  const activeJob = useEntityImageQueue((state) => state.active);
 
   const mentioned = entries.length;
   const detailed = entries.filter((entry) => entry.resolved).length;
@@ -185,6 +215,55 @@ export function EntityPanel({
       });
     } catch (error) {
       toastError('Could not save the sort order', error);
+    }
+  }
+
+  /** Checkbox state for an entity in images mode. */
+  function imageStateFor(entry: EntityEntry): EntityImageState {
+    const artifact = entry.artifact;
+    if (artifact !== undefined && (artifact.coverImageId !== null || artifact.imageIds.length > 0)) {
+      return 'has';
+    }
+    if (
+      (activeJob !== null && activeJob.campaignId === campaign.id && activeJob.name === entry.name) ||
+      queuedJobs.some((job) => job.campaignId === campaign.id && job.name === entry.name)
+    ) {
+      return 'queued';
+    }
+    return 'none';
+  }
+
+  /** Checkbox click in images mode: queue, unqueue, or confirm deletion. */
+  function requestImageToggle(entry: EntityEntry): void {
+    const artifact = entry.artifact;
+    if (artifact === undefined) return; // disabled checkbox — nothing to attach to
+    if (imageStateFor(entry) === 'has') {
+      setPendingImageDelete({ name: entry.name, artifact });
+      return;
+    }
+    const job = { campaignId: campaign.id, moduleId: module.id, name: entry.name };
+    if (imageStateFor(entry) === 'queued') {
+      useEntityImageQueue.getState().dequeue(job);
+      return;
+    }
+    useEntityImageQueue.getState().enqueue([job]);
+  }
+
+  /** The confirmed deletion: detach (and scrub from this artifact's
+   * revision snapshots), then drop the blob when nothing else wants it. */
+  async function confirmImageDelete(): Promise<void> {
+    const pending = pendingImageDelete;
+    if (pending === null) return;
+    setPendingImageDelete(null);
+    const artifact = pending.artifact;
+    const firstImageId = artifact.imageIds.at(0) ?? null;
+    const imageId = artifact.coverImageId ?? firstImageId;
+    if (imageId === null) return;
+    try {
+      await removeImageFromArtifact(artifact.id, imageId);
+      toastSuccess(`Image for "${pending.name}" deleted`);
+    } catch (error) {
+      toastError(`Could not delete the image for "${pending.name}"`, error);
     }
   }
 
@@ -341,6 +420,18 @@ export function EntityPanel({
       {!collapsed && (
         <>
           <div className="flex flex-wrap items-center gap-1 border-b px-3 py-2">
+            <Button
+              variant={imageMode ? 'secondary' : 'outline'}
+              size="xs"
+              aria-pressed={imageMode}
+              data-testid="entity-images"
+              onClick={() => {
+                setImageMode((value) => !value);
+              }}
+            >
+              <ImageIcon aria-hidden data-icon="inline-start" />
+              Images
+            </Button>
             {STUB_KINDS.map((kind) => {
               const targets = unresolvedByKind.get(kind) ?? [];
               if (targets.length === 0) return null;
@@ -401,10 +492,15 @@ export function EntityPanel({
                       entry={entry}
                       focused
                       module={module}
+                      imageMode={imageMode}
+                      imageState={imageStateFor(entry)}
                       onOpenCard={onOpenCard}
                       onStub={onStub}
                       onToggleFocus={() => {
                         void toggleFocus(entry.name);
+                      }}
+                      onImageToggle={() => {
+                        requestImageToggle(entry);
                       }}
                     />
                   ))}
@@ -428,10 +524,15 @@ export function EntityPanel({
                     entry={entry}
                     focused={false}
                     module={module}
+                    imageMode={imageMode}
+                    imageState={imageStateFor(entry)}
                     onOpenCard={onOpenCard}
                     onStub={onStub}
                     onToggleFocus={() => {
                       void toggleFocus(entry.name);
+                    }}
+                    onImageToggle={() => {
+                      requestImageToggle(entry);
                     }}
                   />
                 ))}
@@ -440,6 +541,45 @@ export function EntityPanel({
           </div>
         </>
       )}
+      <Dialog
+        open={pendingImageDelete !== null}
+        onOpenChange={(open) => {
+          if (!open) setPendingImageDelete(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-sm" data-testid="image-delete-dialog">
+          <DialogHeader>
+            <DialogTitle>
+              Delete the image for “{pendingImageDelete?.name}”?
+            </DialogTitle>
+            <DialogDescription>
+              The image is removed from this entity and its files are deleted.
+              This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setPendingImageDelete(null);
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              data-testid="confirm-image-delete"
+              onClick={() => {
+                void confirmImageDelete();
+              }}
+            >
+              Delete image
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </aside>
   );
 }
@@ -448,16 +588,23 @@ function EntityRow({
   entry,
   focused,
   module,
+  imageMode,
+  imageState,
   onOpenCard,
   onStub,
   onToggleFocus,
+  onImageToggle,
 }: {
   entry: EntityEntry;
   focused: boolean;
   module: Module;
+  /** Images mode swaps the star for the image checkbox (M4-C). */
+  imageMode: boolean;
+  imageState: EntityImageState;
   onOpenCard: (artifact: Artifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
   onToggleFocus: () => void;
+  onImageToggle: () => void;
 }): JSX.Element {
   return (
     <li className="flex items-center">
@@ -494,18 +641,44 @@ function EntityRow({
         )}
         <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>
       </button>
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className={cn('shrink-0', focused ? 'text-amber-500' : 'text-muted-foreground/40')}
-        aria-label={focused ? `Unfocus ${entry.name}` : `Focus ${entry.name}`}
-        aria-pressed={focused}
-        data-testid="focus-toggle"
-        data-name={entry.name}
-        onClick={onToggleFocus}
-      >
-        <StarIcon aria-hidden className={cn('size-4', focused && 'fill-current')} />
-      </Button>
+      {imageMode ? (
+        <Checkbox
+          className="mr-2 shrink-0"
+          checked={imageState === 'has'}
+          indeterminate={imageState === 'queued'}
+          disabled={entry.artifact === undefined}
+          title={
+            entry.artifact === undefined
+              ? 'Detail this entity first — images attach to its artifact'
+              : undefined
+          }
+          aria-label={
+            imageState === 'has'
+              ? `${entry.name} has an image — uncheck to delete it`
+              : imageState === 'queued'
+                ? `${entry.name} is queued for an image — uncheck to cancel`
+                : `Generate an image for ${entry.name}`
+          }
+          data-testid="entity-image-check"
+          data-name={entry.name}
+          onCheckedChange={() => {
+            onImageToggle();
+          }}
+        />
+      ) : (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className={cn('shrink-0', focused ? 'text-amber-500' : 'text-muted-foreground/40')}
+          aria-label={focused ? `Unfocus ${entry.name}` : `Focus ${entry.name}`}
+          aria-pressed={focused}
+          data-testid="focus-toggle"
+          data-name={entry.name}
+          onClick={onToggleFocus}
+        >
+          <StarIcon aria-hidden className={cn('size-4', focused && 'fill-current')} />
+        </Button>
+      )}
     </li>
   );
 }

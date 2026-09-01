@@ -115,17 +115,9 @@ describe('images ui', () => {
     const artifacts = await act(async () => db.artifacts.toArray());
     expect(artifacts[0]?.imageIds).toEqual([]);
     expect(artifacts[0]?.coverImageId).toBeNull();
-    // …but the blob survives: revision snapshots still reference it and a
-    // restore would re-attach it (07-MILESTONE-3 M3-A: the reference check
-    // covers artifacts AND revisions).
-    expect(await getImage(imageId)).toBeDefined();
-
-    // Deleting the whole artifact prunes the now-orphaned blobs. The write
-    // re-fires live queries, so run it inside act.
-    const { deleteArtifact } = await import('@/db/artifactRepo');
-    await act(async () => {
-      await deleteArtifact(artifacts[0]?.id ?? '');
-    });
+    // …and the blob is freed: a user-initiated delete scrubs the id from
+    // this artifact's revision snapshots too (M4-C amendment), so a restore
+    // shows the entity without the deleted image instead of dangling.
     await waitFor(
       async () => {
         expect(await getImage(imageId)).toBeUndefined();

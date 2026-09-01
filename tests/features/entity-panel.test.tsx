@@ -4,11 +4,13 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { createImage, getImage } from '@/db/imageRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
+import { updateSettings } from '@/db/settingsRepo';
 import {
   createArtifact as buildArtifact,
   createModule,
@@ -21,11 +23,31 @@ import {
   type Persona,
 } from '@/domain';
 import { EntityPanel, useModuleEntities } from '@/features/modules/entity-panel';
+import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { useProgressStore } from '@/lib/progress';
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+
+// The image queue's LLM/image entry points — the panel test drives the queue
+// with real Dexie rows but mocked generation.
+vi.mock('@/llm/openrouter', () => ({
+  chat: vi.fn(),
+  MissingApiKeyError: class MissingApiKeyError extends Error {},
+  OpenRouterError: class OpenRouterError extends Error {},
+  listModels: vi.fn(),
+  fetchWithHeadersTimeout: vi.fn(),
+}));
+vi.mock('@/llm/imageGen', () => ({ generateImages: vi.fn() }));
+vi.mock('@/lib/imageIntake', () => ({ intakeImage: vi.fn() }));
+
+const { chat } = await import('@/llm/openrouter');
+const chatMock = vi.mocked(chat);
+const { generateImages } = await import('@/llm/imageGen');
+const generateImagesMock = vi.mocked(generateImages);
+const { intakeImage } = await import('@/lib/imageIntake');
+const intakeImageMock = vi.mocked(intakeImage);
 
 const { toastError } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
@@ -197,6 +219,10 @@ describe('EntityPanel', () => {
     chainMocks.getState.mockReset();
     chainMocks.listeners.length = 0;
     useProgressStore.getState().reset();
+    useEntityImageQueue.setState({ queued: [], active: null });
+    chatMock.mockReset();
+    generateImagesMock.mockReset();
+    intakeImageMock.mockReset();
     toastErrorMock.mockClear();
   });
   afterEach(cleanup);
@@ -351,6 +377,103 @@ describe('EntityPanel', () => {
     await user.click(screen.getByRole('button', { name: 'Focus Bram' }));
     expect((await getModule(module.id))?.focusedEntities).toEqual(['Bram']);
     expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('images mode: checkbox states queue generation, and deletion needs confirmation', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await seedBuiltInPersonas();
+    await updateSettings({ imagesEnabled: true });
+    chatMock.mockResolvedValue(
+      JSON.stringify({ prompt: 'A portrait', negative: '', styleNotes: 'ink' }),
+    );
+    generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01 });
+    intakeImageMock.mockResolvedValue({
+      blob: new Blob(['intake']),
+      mimeType: 'image/webp',
+      width: 64,
+      height: 64,
+    });
+
+    const miraStale = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const undercroft = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Undercroft',
+    });
+    const existing = await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['mira-img'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 4,
+      height: 4,
+      source: 'uploaded',
+    });
+    const mira = await updateArtifact(miraStale.id, {
+      imageIds: [existing.id],
+      coverImageId: existing.id,
+    });
+
+    render(
+      <EntityPanel
+        module={moduleFixture(campaign.id)}
+        artifacts={[mira, undercroft]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByTestId('entity-images'));
+
+
+    // Mira has an image → checked; Undercroft is resolved without one;
+    // Kael is unresolved → the checkbox is disabled (nothing to attach to).
+    expect(
+      screen.getByRole('checkbox', { name: 'Mira has an image — uncheck to delete it' }),
+    ).toHaveAttribute('aria-checked', 'true');
+    const undercroftCheck = screen.getByRole('checkbox', {
+      name: 'Generate an image for Undercroft',
+    });
+    expect(undercroftCheck).not.toBeDisabled();
+    expect(
+      screen.getByRole('checkbox', { name: 'Generate an image for Kael' }),
+    ).toHaveAttribute('aria-disabled', 'true');
+
+    // Checking Undercroft enqueues it; the queue generates and attaches.
+    await user.click(undercroftCheck);
+    await waitFor(async () => {
+      const saved = await getArtifact(undercroft.id);
+      expect(saved?.imageIds).toHaveLength(1);
+      expect(saved?.coverImageId).not.toBeNull();
+    });
+    expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+
+    // Unchecking the entity WITH an image asks before deleting…
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Mira has an image — uncheck to delete it' }),
+    );
+    expect(screen.getByTestId('image-delete-dialog')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('image-delete-dialog')).not.toBeInTheDocument();
+    });
+    expect((await getArtifact(mira.id))?.imageIds).toHaveLength(1);
+
+    // …and confirming detaches it and deletes the now-unreferenced file.
+    await user.click(
+      screen.getByRole('checkbox', { name: 'Mira has an image — uncheck to delete it' }),
+    );
+    await user.click(screen.getByTestId('confirm-image-delete'));
+    await waitFor(async () => {
+      const saved = await getArtifact(mira.id);
+      expect(saved?.imageIds).toHaveLength(0);
+      expect(saved?.coverImageId).toBeNull();
+    });
+    // The deletion detaches first, then frees the blob — poll for both.
+    await waitFor(async () => {
+      expect(await getImage(existing.id)).toBeUndefined();
+    });
   });
 
   it('runs one batch chain for an unresolved kind with the stub persona and tags the produced artifact', async () => {

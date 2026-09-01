@@ -134,6 +134,12 @@ pauses only on `needs_review`; that gets this one documented exception).
   other; the run shows the spent `usage.cost`.
 - Deleting an artifact does not delete an image still referenced by one of its
   revisions; deleting the last referencing artifact removes the blob.
+- **M4-C amendment (user-initiated deletes)**: `removeImageFromArtifact`
+  (shared by the editor's Images section and the module reader's image
+  checkboxes) detaches the image AND scrubs the id from the artifact's own
+  revision snapshots, so a confirmed delete actually frees the blob while
+  other artifacts'/revisions' references still block deletion. Restored
+  history shows the entity without the deleted image.
 - Zip export/import round-trips an image; plain JSON export omits binaries and
   the dialog says so. Schema-migration defaults are covered by `pnpm test`.
 

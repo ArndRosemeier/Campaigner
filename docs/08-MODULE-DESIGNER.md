@@ -96,8 +96,10 @@ a remark step or pre-tokenizer):
 Session-Mode card components — portrait, summary, kind data, stat block,
 click-to-reveal secrets). Esc / click-outside dismisses back to the exact
 scroll position. Wiki-links inside the modal body push onto an in-modal
-breadcrumb stack (Back button, Esc pops one level). Footer: "Open in
-workspace" + "Focus in Play".
+breadcrumb stack (Back button, Esc pops one level). The entity's image
+(cover or first gallery image) is shown as a banner above the card; clicking
+it opens a fullscreen lightbox. Footer: "Open in workspace" (the "Focus in
+Play" button was removed — module mode IS the play mode).
 
 The same wiki-link rendering must also apply to artifact `body` markdown
 everywhere it is rendered (workspace preview, Play mode) — one shared
@@ -203,6 +205,30 @@ as `entitySort: 'mention'`) and **alphabetical** (`'alphabetical'`), with a
 entity card (peek modal); unresolved rows offer the same actions as the stub
 popover.
 
+**Images mode** (module-mode-as-play): the "Images" button above the entities
+swaps the row stars for a checkbox per entry —
+- **checked** = the entity's artifact has an image (`coverImageId` or
+  `imageIds`);
+- **indeterminate** = the entity is queued in the background image queue;
+- **unchecked** = no image. Unresolved entities have the checkbox disabled
+  (there is no artifact to attach an image to).
+
+Checking an entity enqueues a background generation (`entity-image-queue.ts`,
+one sequential pump): prompt draft via the Illustrator persona's contract
+(`imagePromptDraftSchema`, one JSON-repair retry — mirroring
+`runEngine.runPromptDraft`), then `generateImages` → `intakeImage` →
+`createImage` (source `generated`) → attached to the artifact as the cover
+when it had none. The queue deliberately does NOT go through the persona run
+pipeline: the Illustrator's pick step always pauses for a user decision
+(07 §M3-A), which an unattended queue cannot do. Progress rides the shared
+dock (`module-entity-images-<moduleId>`, done/total + per-entity detail);
+the reader stays fully usable. Failures are loud toasts and never stop the
+queue; entities that already gained an image meanwhile are skipped silently.
+Unchecking a QUEUED entity just removes it from the queue (aborting if it is
+the in-flight job) — no confirm; unchecking an entity WITH an image asks for
+confirmation first (`removeImageFromArtifact`: detach + scrub the artifact's
+revision snapshots + delete the blob when nothing else references it).
+
 ### Stub popover (click on an unresolved chip)
 
 - **Create stub**: kind picker (npc/location/faction/note; preselected from
@@ -247,8 +273,8 @@ failed runs; continue).
   occurrence wins). `mdToPdfmake` must handle the `[[...]]` tokens (render
   display text, bold).
 - **Play mode**: quick-find gains modules/parts as a third result group;
-  selecting scrolls the reader. Module reader's peek-modal "Focus in Play"
-  sets play focus.
+  selecting scrolls the reader. (The peek-modal "Focus in Play" button was
+  removed when module mode became the play mode — M4-C.)
 - **Retire the old forge**: delete `moduleForge.ts`, its UI entry points and
   tests; keep `chainRunner` (used by writers' room and M4-C batch). Keep the
   writers' room feature untouched. Remove forge-only persona briefs; keep all

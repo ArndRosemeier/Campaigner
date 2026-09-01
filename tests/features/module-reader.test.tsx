@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { modulePath } from '@/app/routes';
-import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { createImage } from '@/db/imageRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
@@ -427,6 +428,48 @@ describe('ModuleReaderPage', () => {
 
     const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
     expect(within(peek).getByText('Old Tower')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('shows the entity image in the card with a fullscreen view (and no play focus)', async () => {
+    const user = userEvent.setup();
+    // jsdom lacks object URL support; the hooks revoke what they create.
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => `blob:mock-${Math.random()}`),
+      configurable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true });
+
+    const { campaignId, moduleId } = await seedReaderModule();
+    const artifacts = await listArtifactsByCampaign(campaignId);
+    const tower = artifacts.find((artifact) => artifact.name === 'Old Tower');
+    if (tower === undefined) throw new Error('Old Tower artifact missing from the seed');
+    const stored = await createImage({
+      campaignId,
+      blob: new Blob(['tower-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 8,
+      height: 8,
+      source: 'uploaded',
+    });
+    await updateArtifact(tower.id, { imageIds: [stored.id], coverImageId: stored.id });
+
+    renderAppAt(modulePath(campaignId, moduleId));
+    const rows = await screen.findAllByTestId('entity-row', {}, { timeout: 10_000 });
+    const towerRow = rows.find((row) => row.textContent.includes('Old Tower'));
+    if (towerRow === undefined) throw new Error('Old Tower row not found in the entity panel');
+    await user.click(towerRow);
+
+    const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
+    // Play-mode retirement: the "Focus in Play" button is gone.
+    expect(screen.queryByRole('button', { name: 'Focus in Play' })).not.toBeInTheDocument();
+    // The image banner shows the entity's cover image; clicking it opens the
+    // fullscreen lightbox.
+    const banner = await within(peek).findByTestId('peek-image', {}, { timeout: 5_000 });
+    await user.click(banner);
+    expect(
+      await screen.findByTestId('peek-image-fullscreen', {}, { timeout: 5_000 }),
+    ).toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
 

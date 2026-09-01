@@ -1,23 +1,25 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeftIcon, MapPinIcon, SquareArrowOutUpRightIcon } from 'lucide-react';
+import { ArrowLeftIcon, SquareArrowOutUpRightIcon } from 'lucide-react';
 
-import { artifactPath, playPath } from '@/app/routes';
+import { artifactPath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
 import type { Artifact, Id } from '@/domain';
 import { NpcCard, EncounterCard, Portrait } from '@/features/play/artifact-cards';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
-import { usePlayStore } from '@/features/play/playStore';
+import { LightboxImage } from '@/features/images/lightbox-image';
+import { useImageUrl } from '@/features/images/use-image-url';
 
 /**
  * Peek modal (08-MODULE-DESIGNER M4-A): renders the read-only artifact card
- * (the Session-Mode card components) for a wiki-link target. Wiki-links
- * inside the pushed body push onto an in-modal breadcrumb stack — Back pops
- * one level, Esc pops one level first and only closes at the root; closing
- * always returns to the exact scroll position (the reader is untouched).
+ * (the Session-Mode card components) for a wiki-link target, with the
+ * entity's image banner (fullscreen on click, M4-C). Wiki-links inside the
+ * pushed body push onto an in-modal breadcrumb stack — Back pops one level,
+ * Esc pops one level first and only closes at the root; closing always
+ * returns to the exact scroll position (the reader is untouched).
  */
 
 export interface PeekModalProps {
@@ -37,8 +39,8 @@ export function PeekModal({
   campaignId,
 }: PeekModalProps): JSX.Element {
   const navigate = useNavigate();
-  const setFocus = usePlayStore((state) => state.setFocus);
   const [stack, setStack] = useState<Id[]>([artifact.id]);
+  const [fullscreenImageId, setFullscreenImageId] = useState<Id | null>(null);
 
   // A new peek from the document resets the breadcrumb stack.
   useEffect(() => {
@@ -102,13 +104,21 @@ export function PeekModal({
               This artifact no longer exists (it may have been deleted).
             </p>
           ) : (
-            <PeekBody
-              artifact={current}
-              artifacts={artifacts}
-              onOpenArtifact={(next) => {
-                push(next.id);
-              }}
-            />
+            <>
+              <PeekImage
+                artifact={current}
+                onFullscreen={(imageId) => {
+                  setFullscreenImageId(imageId);
+                }}
+              />
+              <PeekBody
+                artifact={current}
+                artifacts={artifacts}
+                onOpenArtifact={(next) => {
+                  push(next.id);
+                }}
+              />
+            </>
           )}
         </div>
         <Separator />
@@ -126,22 +136,61 @@ export function PeekModal({
               <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
               Open in workspace
             </Button>
-            <Button
-              size="sm"
-              onClick={() => {
-                setFocus(campaignId, current.id);
-                onOpenChange(false);
-                navigate(playPath(campaignId));
-              }}
-              data-testid="peek-focus-play"
-            >
-              <MapPinIcon aria-hidden data-icon="inline-start" />
-              Focus in Play
-            </Button>
           </div>
         )}
       </DialogContent>
+      {fullscreenImageId !== null && (
+        <Dialog
+          open
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setFullscreenImageId(null);
+          }}
+        >
+          <DialogContent
+            className="flex max-h-[90vh] items-center justify-center sm:max-w-3xl"
+            data-testid="peek-image-fullscreen"
+          >
+            <DialogTitle className="sr-only">Image full screen</DialogTitle>
+            <LightboxImage imageId={fullscreenImageId} />
+          </DialogContent>
+        </Dialog>
+      )}
     </Dialog>
+  );
+}
+
+/**
+ * The entity's image banner (M4-C): the cover image (or the first gallery
+ * image) shown prominently; click opens the fullscreen lightbox. Absent when
+ * the entity has no image.
+ */
+function PeekImage({
+  artifact,
+  onFullscreen,
+}: {
+  artifact: Artifact;
+  onFullscreen: (imageId: Id) => void;
+}): JSX.Element | null {
+  const firstImageId = artifact.imageIds.at(0) ?? null;
+  const imageId = artifact.coverImageId ?? firstImageId;
+  const url = useImageUrl(imageId);
+  if (imageId === null || url === null) return null;
+  return (
+    <button
+      type="button"
+      className="mb-2 block w-full cursor-zoom-in"
+      aria-label={`Show ${artifact.name}'s image full screen`}
+      data-testid="peek-image"
+      onClick={() => {
+        onFullscreen(imageId);
+      }}
+    >
+      <img
+        src={url}
+        alt={`Image of ${artifact.name}`}
+        className="max-h-56 w-full rounded-md border object-cover"
+      />
+    </button>
   );
 }
 
