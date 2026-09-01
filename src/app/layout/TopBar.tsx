@@ -8,6 +8,7 @@ import { ROUTES, campaignIdFromPath, playPath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { LanguageSelect } from '@/features/settings/language-select';
+import { TopBarNewModuleButton } from '@/features/modules/top-bar-new-module';
 import { cn } from '@/lib/utils';
 
 /**
@@ -54,13 +55,16 @@ export function TopBar(): JSX.Element {
             page's top bar and persisted in the settings row. */}
         <LanguageSelect compact />
         {campaignIdFromPath(pathname) !== undefined && (
-          <NavLink
-            to={playPath(campaignIdFromPath(pathname) ?? '')}
-            className={buttonVariants({ variant: 'secondary', size: 'sm' })}
-            aria-label="Play"
-          >
-            ▶ Play
-          </NavLink>
+          <>
+            <TopBarNewModuleButton campaignId={campaignIdFromPath(pathname) ?? ''} />
+            <NavLink
+              to={playPath(campaignIdFromPath(pathname) ?? '')}
+              className={buttonVariants({ variant: 'secondary', size: 'sm' })}
+              aria-label="Play"
+            >
+              ▶ Play
+            </NavLink>
+          </>
         )}
         <HelpButton label="Campaigner" />
         <ThemeToggle />

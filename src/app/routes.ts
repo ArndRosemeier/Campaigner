@@ -20,6 +20,10 @@ export const ROUTES = {
   play: '/c/:campaignId/play',
   /** Deliverable builder for module PDFs (M3-D). */
   deliverables: '/c/:campaignId/deliverables',
+  /** Module list (M4). */
+  modules: '/c/:campaignId/modules',
+  /** Module reader for one module (M4). */
+  module: '/c/:campaignId/m/:moduleId',
   /** Rules library (books list + browser). */
   rules: '/rules',
   /** Settings page. */
@@ -47,6 +51,25 @@ export function deliverablesPath(campaignId: string): `/c/${string}/deliverables
   return `/c/${encodeURIComponent(campaignId)}/deliverables`;
 }
 
+/** Path of the module list for a given campaign (M4). */
+export function modulesPath(campaignId: string): `/c/${string}/modules` {
+  return `/c/${encodeURIComponent(campaignId)}/modules`;
+}
+
+/**
+ * Path of the module reader (M4). An optional part index becomes a
+ * `#part-<index>` hash the reader scrolls to (quick-find "select scrolls the
+ * reader").
+ */
+export function modulePath(
+  campaignId: string,
+  moduleId: string,
+  partIndex?: number,
+): `/c/${string}/m/${string}` {
+  const hash = partIndex === undefined ? '' : `#part-${String(partIndex)}`;
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}${hash}`;
+}
+
 /** Path of the workspace screen for a given campaign. */
 export function workspacePath(campaignId: string): `/c/${string}` {
   return `/c/${encodeURIComponent(campaignId)}`;
@@ -68,6 +91,8 @@ export function campaignIdFromPath(pathname: string): string | undefined {
     matchPath(ROUTES.graph, pathname)?.params.campaignId ??
     matchPath(ROUTES.play, pathname)?.params.campaignId ??
     matchPath(ROUTES.deliverables, pathname)?.params.campaignId ??
+    matchPath(ROUTES.modules, pathname)?.params.campaignId ??
+    matchPath(ROUTES.module, pathname)?.params.campaignId ??
     matchPath(ROUTES.workspace, pathname)?.params.campaignId
   );
 }

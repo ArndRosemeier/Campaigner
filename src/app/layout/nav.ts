@@ -1,4 +1,4 @@
-import { ROUTES, deliverablesPath, workspacePath } from '@/app/routes';
+import { ROUTES, deliverablesPath, modulesPath, workspacePath } from '@/app/routes';
 
 /** One primary navigation entry in the top bar (05-UI.md §Top bar). */
 export interface NavItem {
@@ -23,6 +23,9 @@ export function navItems(campaignId: string | undefined): readonly NavItem[] {
     campaignId === undefined
       ? { label: 'Workspace', to: ROUTES.campaignPicker, end: true }
       : { label: 'Workspace', to: workspacePath(campaignId), end: false },
+    ...(campaignId === undefined
+      ? []
+      : [{ label: 'Modules', to: modulesPath(campaignId), end: false }]),
     ...(campaignId === undefined
       ? []
       : [{ label: 'Deliverables', to: deliverablesPath(campaignId), end: false }]),

@@ -8,6 +8,8 @@ import { GraphPage } from '@/features/campaign/GraphPage';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
 import { PlayPage } from '@/features/play/PlayPage';
 import { DeliverablesPage } from '@/features/deliverables/DeliverablesPage';
+import { ModuleReaderPage } from '@/features/modules/ModuleReaderPage';
+import { ModulesListPage } from '@/features/modules/ModulesListPage';
 import { RulesPage } from '@/features/rules/RulesPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 
@@ -39,6 +41,8 @@ export function createAppRouter(): AppRouter {
           { path: ROUTES.graph, element: <GraphPage /> },
           { path: ROUTES.play, element: <PlayPage /> },
           { path: ROUTES.deliverables, element: <DeliverablesPage /> },
+          { path: ROUTES.modules, element: <ModulesListPage /> },
+          { path: ROUTES.module, element: <ModuleReaderPage /> },
           { path: ROUTES.rules, element: <RulesPage /> },
           { path: ROUTES.settings, element: <SettingsPage /> },
           { path: '*', element: <NotFoundPage /> },

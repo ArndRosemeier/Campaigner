@@ -1,0 +1,309 @@
+import 'fake-indexeddb/auto';
+
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { RouterProvider } from 'react-router-dom';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { createAppRouter } from '@/app/router';
+import { modulePath } from '@/app/routes';
+import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createCampaign } from '@/db/campaignRepo';
+import { getModule, saveModule } from '@/db/moduleRepo';
+import { seedBuiltInPersonas } from '@/db/seed';
+import { createModule, modulePartSchema, moduleSpineSchema, type Campaign, type Id } from '@/domain';
+import { clearDatabase } from '../db/helpers';
+import { flushAsyncUpdates } from '../helpers/flush';
+
+/**
+ * Module reader (08-MODULE-DESIGNER M4-A): document rendering (title, badges,
+ * premise chips, part sections, failed-part card), the mini-ToC scroll, the
+ * per-part hand edit (save on blur → `edited: true`), the rewrite confirmation
+ * dialog for hand-edited parts, and the stub popover behind an unresolved chip
+ * (create artifact with the `module:<title>` tag → chip resolves).
+ */
+
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+
+// Only the LLM entry points are mocked; `moduleGenEvents` (the in-memory
+// streaming emitter the reader subscribes to) stays real via the spread.
+vi.mock('@/llm/moduleGen', async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...(actual as object),
+    runSpine: vi.fn(),
+    runParts: vi.fn(),
+    approveSpineAndRun: vi.fn(),
+    retrySpine: vi.fn(),
+    discardSpine: vi.fn(),
+    cancelModuleGen: vi.fn(),
+    generateMissingParts: vi.fn(),
+    rewritePart: vi.fn(),
+    createModuleAndRun: vi.fn(),
+  };
+});
+
+const { rewritePart } = await import('@/llm/moduleGen');
+const rewriteMock = vi.mocked(rewritePart);
+const { toastSuccess } = await import('@/lib/toast');
+const toastSuccessMock = vi.mocked(toastSuccess);
+
+const MODULE_TITLE = 'The Drowned Vault';
+
+const PREMISE =
+  'The party is hired to recover a drowned relic from the [[Old Tower]], where the [[Missing Person]] was last seen.';
+
+function renderAppAt(path: string): void {
+  window.history.replaceState(null, '', path);
+  render(<RouterProvider router={createAppRouter()} />);
+}
+
+async function seedReaderModule(options: { part0Edited?: boolean } = {}): Promise<{
+  campaign: Campaign;
+  campaignId: Id;
+  moduleId: Id;
+}> {
+  await seedBuiltInPersonas();
+  const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+  await createArtifact({
+    campaignId: campaign.id,
+    kind: 'location',
+    name: 'Old Tower',
+    summary: 'A crumbling watchtower above the ford.',
+  });
+  const draft = createModule({
+    campaignId: campaign.id,
+    title: MODULE_TITLE,
+    concept: 'A flooded vault beneath a watchtower.',
+    levelMin: 1,
+    levelMax: 3,
+    tone: '',
+    sizeDial: 'standard',
+  });
+  const spine = moduleSpineSchema.parse({
+    premise: PREMISE,
+    themes: ['bargains', 'rising water'],
+    partPlan: [
+      {
+        title: 'The Gate Bargain',
+        levelBand: '1',
+        synopsis: 'The party negotiates entry with the tower keeper.',
+        levelUpTrigger: 'The gate opens.',
+      },
+      {
+        title: 'Into the Vault',
+        levelBand: '2–3',
+        synopsis: 'The vault floods as the relic is recovered.',
+        levelUpTrigger: 'The relic is recovered.',
+      },
+    ],
+  });
+  const saved = await saveModule({
+    ...draft,
+    status: 'ready',
+    spine,
+    parts: [
+      modulePartSchema.parse({
+        planIndex: 0,
+        markdown:
+          'The party climbs to the [[Old Tower]] before dawn. A lantern still burns in the top room.',
+        status: 'ready',
+        errorMessage: '',
+        edited: options.part0Edited ?? false,
+      }),
+      modulePartSchema.parse({
+        planIndex: 1,
+        markdown: '',
+        status: 'failed',
+        errorMessage: 'boom',
+        edited: false,
+      }),
+    ],
+  });
+  return { campaign, campaignId: campaign.id, moduleId: saved.id };
+}
+
+/** Waits for the reader to mount and returns the `#part-0` section. */
+async function findPartSection(partIndex: number): Promise<HTMLElement> {
+  await screen.findByTestId('module-reader', {}, { timeout: 10_000 });
+  return waitFor(() => {
+    const section = document.getElementById(`part-${String(partIndex)}`);
+    if (section === null) throw new Error(`part-${String(partIndex)} not mounted yet`);
+    return section;
+  });
+}
+
+beforeEach(clearDatabase);
+
+afterEach(() => {
+  vi.clearAllMocks();
+  vi.restoreAllMocks();
+});
+
+describe('ModuleReaderPage', () => {
+  it('renders title, level badges, premise wiki chips, part sections and the failed-part card', async () => {
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    expect(
+      await screen.findByLabelText('Module title', {}, { timeout: 10_000 }),
+    ).toHaveValue(MODULE_TITLE);
+    expect(screen.getByText('Levels 1–3')).toBeInTheDocument();
+    expect(screen.getByText('Standard')).toBeInTheDocument();
+    expect(screen.getByText('ready')).toBeInTheDocument();
+
+    // Premise: [[Old Tower]] resolves against the seeded artifact, [[Missing
+    // Person]] has no artifact yet and stays an unresolved stub chip.
+    const intro = document.getElementById('module-intro');
+    if (intro === null) throw new Error('module-intro section missing');
+    const premiseChips = within(intro).getAllByTestId('wiki-chip');
+    expect(
+      premiseChips.some((chip) => chip.getAttribute('data-wiki-name') === 'Old Tower'),
+    ).toBe(true);
+    expect(within(intro).getByTestId('wiki-chip-unresolved')).toHaveAttribute(
+      'data-wiki-name',
+      'Missing Person',
+    );
+
+    // Part sections carry the plan titles as H1s; part 0 shows its markdown.
+    const part0 = document.getElementById('part-0');
+    const part1 = document.getElementById('part-1');
+    if (part0 === null || part1 === null) throw new Error('part sections missing');
+    expect(within(part0).getByRole('heading', { name: 'The Gate Bargain' })).toBeInTheDocument();
+    expect(within(part0).getByText('Levels 1')).toBeInTheDocument();
+    expect(within(part0).getByTestId('part-body')).toHaveTextContent('lantern still burns');
+    expect(within(part1).getByRole('heading', { name: 'Into the Vault' })).toBeInTheDocument();
+    expect(within(part1).getByText('Levels 2–3')).toBeInTheDocument();
+
+    // The failed part is a loud card with the persisted error and a Retry.
+    const failed = screen.getByTestId('part-failed');
+    expect(failed).toHaveTextContent('boom');
+    expect(within(failed).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('lists the plan titles in the ToC and scrolls to a part on click', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findPartSection(0);
+
+    const toc = screen.getByTestId('module-toc');
+    expect(within(toc).getByText('Intro')).toBeInTheDocument();
+    expect(within(toc).getByText('1 · The Gate Bargain')).toBeInTheDocument();
+    expect(within(toc).getByText('2–3 · Into the Vault')).toBeInTheDocument();
+
+    // tests/setup.ts stubs Element.scrollIntoView (jsdom lacks it) — spy on
+    // the stub to assert the reader actually scrolls to the section.
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView');
+    await user.click(within(toc).getByRole('button', { name: '2–3 · Into the Vault' }));
+    expect(scrollSpy).toHaveBeenCalledWith({ behavior: 'smooth' });
+    scrollSpy.mockRestore();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('saves a part hand edit on blur, persisting the new markdown with edited: true', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const part0 = await findPartSection(0);
+    await user.click(within(part0).getByTestId('part-edit'));
+
+    // The textarea opens prefilled with the part's markdown (save on blur).
+    const textarea = await within(part0).findByRole('textbox', {}, { timeout: 5_000 });
+    const edited =
+      'The party climbs to the [[Old Tower]] at midnight. The vault door hums below the floor.';
+    fireEvent.change(textarea, { target: { value: edited } });
+    fireEvent.blur(textarea);
+
+    // The edit lands on the module row, flagged as hand-edited.
+    await waitFor(
+      async () => {
+        const row = await getModule(moduleId);
+        const part = row?.parts.find((entry) => entry.planIndex === 0);
+        expect(part?.markdown).toBe(edited);
+        expect(part?.edited).toBe(true);
+        expect(part?.status).toBe('ready');
+      },
+      { timeout: 10_000 },
+    );
+    expect(toastSuccessMock).toHaveBeenCalledWith('Part saved');
+
+    // The reader leaves edit mode and renders the saved text again.
+    expect(await screen.findByTestId('part-body', {}, { timeout: 5_000 })).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('confirms a rewrite of the hand-edited part: warning, inert Cancel, confirm calls rewritePart', async () => {
+    const user = userEvent.setup();
+    // The part is marked edited first (the persisting edit path itself is
+    // covered by the test above).
+    const { campaign, campaignId, moduleId } = await seedReaderModule({ part0Edited: true });
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findPartSection(0);
+
+    await user.click(screen.getByTestId('part-rewrite'));
+    const dialog = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
+    // Hand-edited warning is shown before the destructive rewrite.
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('hand-edited');
+
+    // Cancel closes without touching the generator.
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('rewrite-dialog')).not.toBeInTheDocument();
+    });
+    expect(rewriteMock).not.toHaveBeenCalled();
+
+    // Confirming calls the generator for exactly this part (planIndex 0).
+    await user.click(screen.getByTestId('part-rewrite'));
+    const dialog2 = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
+    await user.click(within(dialog2).getByRole('button', { name: 'Rewrite part' }));
+    expect(rewriteMock).toHaveBeenCalledTimes(1);
+    expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('creates a stub from an unresolved chip and the chip resolves once the artifact exists', async () => {
+    const user = userEvent.setup();
+    const { campaign, campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
+    expect(chip).toHaveAttribute('data-wiki-name', 'Missing Person');
+    await user.click(chip);
+
+    // The popover opens with the link name prefilled.
+    const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
+    expect(within(popover).getByLabelText('Name')).toHaveValue('Missing Person');
+
+    await user.click(within(popover).getByTestId('stub-create'));
+
+    // The stub artifact exists with the module tag and the first-occurrence
+    // sentence as summary.
+    await waitFor(
+      async () => {
+        const rows = await listArtifactsByCampaign(campaignId);
+        const stub = rows.find((row) => row.name === 'Missing Person');
+        expect(stub?.campaignId).toBe(campaign.id);
+        expect(stub?.tags).toEqual([`module:${MODULE_TITLE}`]);
+        expect(stub?.summary).toContain('Missing Person was last seen');
+      },
+      { timeout: 10_000 },
+    );
+
+    // The popover closes and the chip now renders resolved.
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('stub-popover')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('wiki-chip-unresolved')).not.toBeInTheDocument();
+      },
+      { timeout: 10_000 },
+    );
+    const resolvedChips = screen.getAllByTestId('wiki-chip');
+    expect(
+      resolvedChips.some((resolved) => resolved.getAttribute('data-wiki-name') === 'Missing Person'),
+    ).toBe(true);
+    await flushAsyncUpdates();
+  }, 20_000);
+});
