@@ -9,6 +9,7 @@ import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { TopBarNewModuleButton } from '@/features/modules/top-bar-new-module';
+import { QuickFindTopBarButton } from '@/features/quickfind/quickfind-topbar-button';
 import { cn } from '@/lib/utils';
 
 /**
@@ -51,6 +52,7 @@ export function TopBar(): JSX.Element {
       </nav>
 
       <div className="ml-auto flex items-center gap-1">
+        <QuickFindTopBarButton />
         {/* Generation language (default English) — choosable on the main
             page's top bar and persisted in the settings row. */}
         <LanguageSelect compact />
