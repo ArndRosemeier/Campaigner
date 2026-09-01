@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { DownloadIcon, FolderOpenIcon, SaveIcon } from 'lucide-react';
 
 import { buildBackup, backupFileName, importBackup } from '@/lib/backup';
 import { pickBackupFile, saveBlobToDisk, supportsFilePickers } from '@/lib/filePicker';
+import { storagePersistedStatus } from '@/lib/deviceCapabilities';
 import { useProgressStore } from '@/lib/progress';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { Button } from '@/components/ui/button';
@@ -24,6 +25,38 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+
+/**
+ * Storage-persistence status line (05-UI.md §Tablet): shows whether the
+ * browser committed to keeping the IndexedDB (requested on app start).
+ * Null status = API unavailable → the line simply does not render.
+ */
+function StorageStatus(): JSX.Element | null {
+  const [persisted, setPersisted] = useState<boolean | null>(null);
+  useEffect(() => {
+    let active = true;
+    void storagePersistedStatus()
+      .then((status) => {
+        if (active) setPersisted(status);
+      })
+      // A failed status probe only hides this informational line — there is
+      // no data or user action behind it, so no toast is warranted.
+      .catch(() => {
+        if (active) setPersisted(null);
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+  if (persisted === null) return null;
+  return (
+    <p className="text-xs text-muted-foreground" data-testid="storage-persistence">
+      {persisted
+        ? 'Storage is persistent — the browser will not evict your data.'
+        : 'Storage is best-effort — install Campaigner to your home screen so the browser cannot clean it up.'}
+    </p>
+  );
+}
 
 /**
  * Backup & restore (M4-C): saves the ENTIRE app state (every IndexedDB
@@ -129,6 +162,7 @@ export function BackupSection(): JSX.Element {
           {restoring ? 'Restoring…' : 'Load everything'}
         </Button>
       </CardContent>
+      <StorageStatus />
       <AlertDialog
         open={pendingFile !== null}
         onOpenChange={(next) => {

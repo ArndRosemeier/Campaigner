@@ -6,10 +6,13 @@ import { TopBar } from '@/app/layout/TopBar';
 import { useThemeSync } from '@/app/theme/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
+import { InstallHint } from '@/app/layout/install-hint';
+import { OrientationGate } from '@/app/layout/orientation-gate';
 import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { failRunningRuns } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
+import { ensurePersistentStorage } from '@/lib/deviceCapabilities';
 import { toastError } from '@/lib/toast';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
@@ -20,6 +23,11 @@ import { useHelpStore } from '@/help/helpStore';
  * Hosts the app-wide TooltipProvider and the single Toaster (errors surface
  * through `lib/toast.ts` only). On start, runs left 'running' by a reload are
  * marked failed (04-LLM-PERSONAS "Interrupted by reload").
+ *
+ * Tablet/PWA frame (05-UI.md §Tablet): the shell pads itself with the
+ * platform safe-area insets (landscape iPad notches sit on the left/right
+ * edges), the OrientationGate hard-blocks portrait/narrow viewports, and the
+ * one-time install hint explains home-screen installation.
  */
 export function AppShell(): JSX.Element {
   useThemeSync();
@@ -54,15 +62,25 @@ export function AppShell(): JSX.Element {
   void seedBuiltInPersonas().catch((error: unknown) => {
     toastError('Could not load built-in personas — generation stays unavailable', error);
   });
+  // Persistence request: best-effort on first run; denial is not an error but
+  // its status is shown in Settings → Backup & restore.
+  void ensurePersistentStorage().catch((error: unknown) => {
+    toastError('Could not request persistent storage', error);
+  });
 
   return (
     <TooltipProvider>
-      <div className="flex h-dvh flex-col">
+      <div className="flex h-dvh flex-col pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+        <OrientationGate />
+        <InstallHint />
         <TopBar />
         <main className="min-h-0 flex-1">
           <Outlet />
         </main>
-        <Toaster position="bottom-right" />
+        <Toaster
+          position="bottom-right"
+          offset={{ bottom: 'max(env(safe-area-inset-bottom), 1rem)' }}
+        />
         <ProgressDock />
         <HelpDialog />
         <QuickFindHotkey />

@@ -15,7 +15,7 @@ export function ProgressDock(): JSX.Element | null {
 
   return (
     <div
-      className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center p-4"
+      className="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center p-4 pb-[calc(1rem+env(safe-area-inset-bottom))]"
       data-testid="progress-dock"
     >
       <div className="pointer-events-auto flex w-full max-w-xl flex-col gap-4 rounded-lg border bg-popover p-4 shadow-lg">
