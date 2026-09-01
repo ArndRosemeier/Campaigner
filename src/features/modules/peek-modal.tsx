@@ -224,12 +224,14 @@ function PeekBody({
     <div className="flex flex-col gap-2" data-testid="peek-body">
       <div className="flex items-start gap-3">
         <Portrait artifact={artifact} />
-        <div className="min-w-0">
+        {/* flex-1 + min-w-0 so the summary flows inside the card instead of
+            stretching the row into a horizontal scrollbar (M4-C). */}
+        <div className="min-w-0 flex-1">
           <p className="text-xs tracking-wide text-muted-foreground uppercase">
             {artifact.kind}
           </p>
           {artifact.summary !== '' && (
-            <p className="text-sm text-muted-foreground">{artifact.summary}</p>
+            <p className="text-sm break-words text-muted-foreground">{artifact.summary}</p>
           )}
         </div>
       </div>

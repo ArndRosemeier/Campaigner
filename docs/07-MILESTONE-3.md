@@ -225,11 +225,12 @@ Three zones:
    recent foci (last 5, clickable). "Set focus…" opens the quick-find.
 2. **Context grid** (main): everything **one link-hop** from the focus
    (both directions — incoming and outgoing links), grouped by kind:
-   - *NPCs here*: card = portrait, name, role, one-line summary; expand →
-     personality/voiceNotes/motivation; **secrets rendered as click-to-reveal
-     blurred blocks** (screen-peek safe); "Stats" expands the stat-block card.
-   - *Encounters*: card with difficulty badge; expand → resolved stat blocks
-     (reuse M3-B panel).
+   - *NPCs here*: card = portrait, name, role, one-line summary;
+     personality/voiceNotes/motivation rendered directly (M4-C: no "More"
+     expander — the reader scrolls); **secrets rendered as click-to-reveal
+     blurred blocks** (screen-peek safe); the stat-block card renders inline.
+   - *Encounters*: card with difficulty badge; resolved stat blocks rendered
+     directly (reuse M3-B panel).
    - *Connected locations*: compact cards; **clicking one moves the focus**
      (this is the navigation model — the link graph as a map).
    - *Factions / Notes / Plot arcs*: collapsed rows, expand on click.

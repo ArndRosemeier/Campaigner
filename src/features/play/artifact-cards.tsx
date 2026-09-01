@@ -28,76 +28,50 @@ export function NpcCard({
   /** Optional pencil jump into the workspace editor. */
   onOpenEditor?: ((artifact: Artifact) => void) | undefined;
 }): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
-  const [showStats, setShowStats] = useState(false);
   const data = npc.data;
+  // M4-C: everything is presented directly (the reader scrolls) — no
+  // "More" expander, no "Stats" toggle.
   return (
     <div className="flex flex-col gap-2 rounded-md border p-3" data-testid="play-npc-card">
       <div className="flex items-start gap-3">
         <Portrait artifact={npc} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className="font-semibold">{npc.name}</span>
+            <span className="min-w-0 break-words font-semibold">{npc.name}</span>
             {data.role !== '' && <Badge variant="secondary">{data.role}</Badge>}
           </div>
-          {npc.summary !== '' && <p className="text-sm text-muted-foreground">{npc.summary}</p>}
+          {npc.summary !== '' && (
+            <p className="text-sm break-words text-muted-foreground">{npc.summary}</p>
+          )}
         </div>
         {onOpenEditor !== undefined && <EditorJump artifact={npc} onOpenEditor={onOpenEditor} />}
       </div>
-      {expanded && (
-        <div className="flex flex-col gap-2 text-sm">
-          {data.personality !== '' && (
-            <p>
-              <span className="font-medium">Personality: </span>
-              {data.personality}
-            </p>
-          )}
-          {data.motivation !== '' && (
-            <p>
-              <span className="font-medium">Motivation: </span>
-              {data.motivation}
-            </p>
-          )}
-          {data.voiceNotes !== '' && (
-            <p>
-              <span className="font-medium">Voice: </span>
-              {data.voiceNotes}
-            </p>
-          )}
-          {data.secrets !== '' && <SecretBlock secret={data.secrets} />}
-          {data.statBlock !== null && (
-            <div className="flex flex-col gap-1">
-              <Button
-                variant="outline"
-                size="xs"
-                className="self-start"
-                aria-label="Stats"
-                onClick={() => {
-                  setShowStats((value) => !value);
-                }}
-              >
-                {showStats ? 'Hide stats' : 'Stats'}
-              </Button>
-              {showStats && (
-                <div className="text-base">
-                  <StatsCard statBlock={data.statBlock} name={npc.name} />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      <Button
-        variant="ghost"
-        size="xs"
-        className="self-start"
-        aria-label={expanded ? `Collapse ${npc.name}` : `Expand ${npc.name}`}
-        onClick={() => {
-          setExpanded((value) => !value);
-        }}
-      >
-        {expanded ? 'Less' : 'More'}
-      </Button>
+      <div className="flex flex-col gap-2 text-sm">
+        {data.personality !== '' && (
+          <p>
+            <span className="font-medium">Personality: </span>
+            {data.personality}
+          </p>
+        )}
+        {data.motivation !== '' && (
+          <p>
+            <span className="font-medium">Motivation: </span>
+            {data.motivation}
+          </p>
+        )}
+        {data.voiceNotes !== '' && (
+          <p>
+            <span className="font-medium">Voice: </span>
+            {data.voiceNotes}
+          </p>
+        )}
+        {data.secrets !== '' && <SecretBlock secret={data.secrets} />}
+        {data.statBlock !== null && (
+          <div className="text-base">
+            <StatsCard statBlock={data.statBlock} name={npc.name} />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -145,12 +119,12 @@ export function EncounterCard({
   encounter: Artifact & { kind: 'encounter'; data: EncounterArtifactData };
   onOpenEditor?: ((artifact: Artifact) => void) | undefined;
 }): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
   const data = encounter.data;
+  // M4-C: the resolved stat blocks render directly — no "More" expander.
   return (
     <div className="flex flex-col gap-2 rounded-md border p-3" data-testid="play-encounter-card">
       <div className="flex items-center gap-2">
-        <span className="font-semibold">{encounter.name}</span>
+        <span className="min-w-0 break-words font-semibold">{encounter.name}</span>
         {data.difficulty !== '' && <Badge variant="destructive">{data.difficulty}</Badge>}
         {data.levelHint !== '' && <Badge variant="outline">{data.levelHint}</Badge>}
         {onOpenEditor !== undefined && (
@@ -160,20 +134,9 @@ export function EncounterCard({
         )}
       </div>
       {encounter.summary !== '' && (
-        <p className="text-sm text-muted-foreground">{encounter.summary}</p>
+        <p className="text-sm break-words text-muted-foreground">{encounter.summary}</p>
       )}
-      {expanded && <MonsterStatblocksPanel monsters={data.monsters} />}
-      <Button
-        variant="ghost"
-        size="xs"
-        className="self-start"
-        aria-label={expanded ? `Collapse ${encounter.name}` : `Expand ${encounter.name}`}
-        onClick={() => {
-          setExpanded((value) => !value);
-        }}
-      >
-        {expanded ? 'Less' : 'More'}
-      </Button>
+      <MonsterStatblocksPanel monsters={data.monsters} />
     </div>
   );
 }

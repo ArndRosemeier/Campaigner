@@ -127,17 +127,16 @@ describe('play mode', () => {
     // Default focus: the first location.
     expect(await screen.findByRole('heading', { name: 'Old Tower' }, { timeout: 5_000 })).toBeInTheDocument();
 
-    // NPCs here: expand → fields, click-to-reveal secret.
+    // NPCs here: all fields render directly (M4-C — no "More" expander);
+    // the secret is click-to-reveal.
     const npcCard = screen.getByTestId('play-npc-card');
-    await user.click(within(npcCard).getByRole('button', { name: 'Expand Vexra' }));
     expect(within(npcCard).getByText('Cold, precise.')).toBeInTheDocument();
     const secret = within(npcCard).getByTestId('play-secret');
     expect(secret).toHaveTextContent('harbourmaster');
     await user.click(secret); // reveal
 
-    // Encounters: expand → resolved stat blocks (NPC link).
+    // Encounters: resolved stat blocks render directly (NPC link).
     const encounterCard = screen.getByTestId('play-encounter-card');
-    await user.click(within(encounterCard).getByRole('button', { name: 'Expand Pier Ambush' }));
     await within(encounterCard).findByText('NPC: Vexra');
 
     // Connected locations: clicking a neighbor moves the focus.
