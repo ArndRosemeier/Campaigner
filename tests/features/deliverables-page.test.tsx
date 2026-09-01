@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -50,7 +50,7 @@ async function statblockChunkId(): Promise<Id> {
   return chunks[0]?.id ?? '';
 }
 
-async function seed(): Promise<{ campaignId: Id; sessionId: Id }> {
+async function seed(): Promise<{ campaignId: Id; sessionId: Id; towerId: Id }> {
   await seedBuiltInPersonas();
   const campaign = await createCampaign({ name: 'Module Campaign', system: 'dnd5e' });
   const tower = await createArtifact({
@@ -71,7 +71,7 @@ async function seed(): Promise<{ campaignId: Id; sessionId: Id }> {
     links: [{ targetId: session.id, relation: 'in-session' }, { targetId: tower.id, relation: 'at' }],
   });
   void statblockChunkId;
-  return { campaignId: campaign.id, sessionId: session.id };
+  return { campaignId: campaign.id, sessionId: session.id, towerId: tower.id };
 }
 
 describe('deliverables builder', () => {
@@ -116,28 +116,61 @@ describe('deliverables builder', () => {
     ).toBe(true);
   });
 
-  it('seeds the outline from Module Forge output (arc/session chapters + galleries)', async () => {
+  it('seeds the outline from a module (premise intro, one chapter per part with entities)', async () => {
     const user = userEvent.setup();
-    const { campaignId } = await seed();
+    const { campaignId, towerId } = await seed();
+    // A module with a spine and one generated part that wiki-links Old Tower.
+    const moduleRepo = await import('@/db/moduleRepo');
+    const domain = await import('@/domain');
+    const draft = domain.createModule({
+      campaignId,
+      title: 'The Drowned Chapel',
+      concept: 'A flooded chapel hides a cult.',
+      levelMin: 1,
+      levelMax: 3,
+      tone: 'eerie',
+      sizeDial: 'sketch',
+    });
+    const spine = domain.moduleSpineSchema.parse({
+      premise: 'The chapel floods at high tide; [[Old Tower]] looms above.',
+      themes: ['drowning', 'secrets'],
+      partPlan: [
+        { title: 'Arrival', levelBand: '1st', synopsis: 'The party arrives.', levelUpTrigger: '' },
+      ],
+    });
+    await moduleRepo.saveModule({
+      ...draft,
+      spine,
+      parts: [
+        domain.modulePartSchema.parse({
+          planIndex: 0,
+          markdown:
+            "The party reaches the chapel and meets [[Old Tower]]'s keeper. The tide swallows the path.",
+          status: 'ready',
+          errorMessage: '',
+          edited: false,
+        }),
+      ],
+    });
     renderAppAt(deliverablesPath(campaignId));
 
     await user.click(await screen.findByRole('button', { name: 'New deliverable' }, { timeout: 5_000 }));
-    await user.click(await screen.findByRole('button', { name: 'Seed from Module Forge output' }, { timeout: 5_000 }));
+    await user.click(await screen.findByRole('button', { name: 'Seed from module' }, { timeout: 5_000 }));
+    await user.click(await screen.findByTestId('seed-module-dialog', {}, { timeout: 5_000 })
+      .then((dialog) => within(dialog).findByRole('button', { name: /The Drowned Chapel/ })));
 
     await waitFor(async () => {
       const stored = await listDeliverablesByCampaign(campaignId);
       const outline = stored[0]?.outline ?? [];
-      const sessionChapter = outline.find(
-        (node) => node.type === 'chapter' && node.title === 'Session 1',
-      );
-      const seededChildren =
-        sessionChapter?.type === 'chapter' ? sessionChapter.children : [];
-      expect(seededChildren.length).toBeGreaterThan(0);
-      expect(seededChildren.every((child) => child.type === 'artifact')).toBe(true);
-      expect(outline.some((node) => node.type === 'gallery')).toBe(true);
+      expect(outline.some((node) => node.type === 'text')).toBe(true);
+      const chapter = outline.find((node) => node.type === 'chapter');
+      const children = chapter?.type === 'chapter' ? chapter.children : [];
+      expect(children.some((child) => child.type === 'text')).toBe(true);
+      expect(
+        children.some((child) => child.type === 'artifact' && child.artifactId === towerId),
+      ).toBe(true);
     });
-
-  });
+  }, 15_000);
 
   it('generates a PDF download when asked', async () => {
     const user = userEvent.setup();
@@ -159,5 +192,8 @@ describe('deliverables builder', () => {
       { timeout: 20_000 },
     );
     expect(createObjectUrl).toHaveBeenCalled();
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    });
   }, 30_000);
 });

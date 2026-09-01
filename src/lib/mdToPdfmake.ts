@@ -5,7 +5,8 @@ import type { Content } from 'pdfmake/interfaces';
  * h1–h3, bullet/numbered lists, and blockquotes (→ bordered, shaded, italic
  * "read aloud" boxes — the module convention that marks player-facing prose).
  * HTML fragments and tables are IGNORED (documented limit); fenced code
- * blocks render as plain monospaced paragraphs.
+ * blocks render as plain monospaced paragraphs. Wiki-links (08 M4-D)
+ * `[[Name]]` / `[[Name|display]]` render as bold display text.
  */
 
 export interface InlineRun {
@@ -21,14 +22,17 @@ export type MdBlock =
   | { kind: 'quote'; runs: InlineRun[] }
   | { kind: 'fence'; text: string };
 
-/** Parses inline `**bold**`, `*italic*` / `_italic_`, and `` `code` `` runs. */
+const WIKI_TOKEN = /\[\[([^\]|]+)(?:\|([^\]]+))?\]\]/;
+
+/** Parses inline `**bold**`, `*italic*` / `_italic_`, `` `code` ``, and
+ * `[[wiki-links]]` (→ bold display text) runs. */
 export function parseInline(text: string): InlineRun[] {
   const runs: InlineRun[] = [];
   const pattern = /(\*\*[^*]+\*\*)|(\*[^*\n]+\*)|(_[^_\n]+_)|(`[^`]+`)/g;
   let last = 0;
   for (const match of text.matchAll(pattern)) {
     const index = match.index;
-    if (index > last) runs.push({ text: text.slice(last, index) });
+    if (index > last) pushWithWiki(text.slice(last, index), runs);
     const token = match[0];
     if (token.startsWith('**')) {
       runs.push({ text: token.slice(2, -2), bold: true });
@@ -39,8 +43,23 @@ export function parseInline(text: string): InlineRun[] {
     }
     last = index + token.length;
   }
-  if (last < text.length) runs.push({ text: text.slice(last) });
+  if (last < text.length) pushWithWiki(text.slice(last), runs);
   return runs.length === 0 ? [{ text: '' }] : runs;
+}
+
+/** Appends a text slice, turning any `[[wiki-link]]` into a bold run. */
+function pushWithWiki(text: string, runs: InlineRun[]): void {
+  let rest = text;
+  for (;;) {
+    const match = WIKI_TOKEN.exec(rest);
+    if (match?.index === undefined) break;
+    if (match.index > 0) runs.push({ text: rest.slice(0, match.index) });
+    const name = (match[1] ?? '').trim();
+    const display = (match[2] ?? '').trim();
+    runs.push({ text: display === '' ? name : display, bold: true });
+    rest = rest.slice(match.index + match[0].length);
+  }
+  if (rest !== '') runs.push({ text: rest });
 }
 
 /** Strips HTML tags and table rows (documented renderer limit). */

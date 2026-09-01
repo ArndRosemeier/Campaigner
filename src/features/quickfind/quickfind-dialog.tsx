@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import MiniSearch from 'minisearch';
+import { BookOpenIcon } from 'lucide-react';
 
-import type { Artifact, Id, RuleChunk } from '@/domain';
+import type { Artifact, Id, Module, RuleChunk } from '@/domain';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { searchRules, type SearchHit } from '@/search';
 import { Button } from '@/components/ui/button';
@@ -18,10 +19,11 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 
 /**
  * Quick-find command palette (07-MILESTONE-3 M3-C, Ctrl+K): one input over
- * campaign artifacts (name/tags/summary via MiniSearch) and rule chunks
- * (existing searchRules), in two result groups. Enter on an artifact sets
- * focus (play) or opens the editor (workspace); Enter on a chunk expands an
- * inline preview with "Pin to Assistant".
+ * campaign artifacts (name/tags/summary via MiniSearch), modules and their
+ * parts (M4-D) and rule chunks (existing searchRules), in three result
+ * groups. Enter on an artifact sets focus (play) or opens the editor
+ * (workspace); Enter on a module/part scrolls the module reader; Enter on a
+ * chunk expands an inline preview with "Pin to Assistant".
  */
 
 export type QuickFindMode = 'play' | 'workspace';
@@ -30,15 +32,52 @@ interface ArtifactHit {
   artifact: Artifact;
 }
 
+/** One module/part match ("selecting scrolls the reader"). */
+export interface ModuleHit {
+  module: Module;
+  /** Undefined = the module itself; else the part index. */
+  partIndex?: number | undefined;
+}
+
+/** Case-insensitive substring match over module title + part titles/bands. */
+export function matchModules(
+  query: string,
+  modules: readonly Module[],
+  limit = 8,
+): ModuleHit[] {
+  const text = query.trim().toLowerCase();
+  if (text === '') return [];
+  const hits: ModuleHit[] = [];
+  for (const module of modules) {
+    if (module.title.toLowerCase().includes(text) && hits.length < limit) {
+      hits.push({ module });
+    }
+    const plan = module.spine?.partPlan ?? [];
+    for (const [partIndex, part] of plan.entries()) {
+      if (hits.length >= limit) break;
+      const haystack =
+        `${part.title} ${part.levelBand} ${part.synopsis}`.toLowerCase();
+      if (haystack.includes(text)) {
+        hits.push({ module, partIndex });
+      }
+    }
+  }
+  return hits.slice(0, limit);
+}
+
 export interface QuickFindDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   artifacts: readonly Artifact[];
   mode: QuickFindMode;
+  /** Campaign modules + parts (M4-D). Omit → no module group. */
+  modules?: readonly Module[] | undefined;
   /** Play mode: receives the picked artifact to set focus. */
   onPickArtifact?: (artifact: Artifact) => void;
   /** Workspace mode: caller navigates to the artifact editor. */
   onWorkspaceArtifact?: (artifact: Artifact) => void;
+  /** Module/part pick: caller scrolls the module reader. */
+  onPickModule?: (moduleId: Id, partIndex: number | undefined) => void;
 }
 
 export function QuickFindDialog({
@@ -46,12 +85,15 @@ export function QuickFindDialog({
   onOpenChange,
   artifacts,
   mode,
+  modules,
   onPickArtifact,
   onWorkspaceArtifact,
+  onPickModule,
 }: QuickFindDialogProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [artifactHits, setArtifactHits] = useState<ArtifactHit[]>([]);
   const [ruleHits, setRuleHits] = useState<SearchHit[]>([]);
+  const [moduleHits, setModuleHits] = useState<ModuleHit[]>([]);
   const [expandedChunkId, setExpandedChunkId] = useState<Id | null>(null);
   const pin = usePinnedChunksStore((state) => state.pin);
   const index = useRef<MiniSearch<Artifact> | null>(null);
@@ -75,6 +117,7 @@ export function QuickFindDialog({
     setQuery('');
     setArtifactHits([]);
     setRuleHits([]);
+    setModuleHits([]);
     setExpandedChunkId(null);
   }, [open, artifacts]);
 
@@ -84,6 +127,7 @@ export function QuickFindDialog({
     if (text === '') {
       setArtifactHits([]);
       setRuleHits([]);
+      setModuleHits([]);
       return;
     }
     const ids = index.current?.search(text).slice(0, 10).map((hit) => String(hit.id)) ?? [];
@@ -93,6 +137,7 @@ export function QuickFindDialog({
         return artifact === undefined ? [] : [{ artifact }];
       }),
     );
+    setModuleHits(matchModules(text, modules ?? []));
     let cancelled = false;
     void searchRules(text, { limit: 8 }).then((hits) => {
       if (!cancelled) setRuleHits(hits);
@@ -100,7 +145,7 @@ export function QuickFindDialog({
     return () => {
       cancelled = true;
     };
-  }, [query, open, artifactById]);
+  }, [query, open, artifactById, modules]);
 
   function pickArtifact(artifact: Artifact): void {
     if (mode === 'play') {
@@ -111,12 +156,17 @@ export function QuickFindDialog({
     onWorkspaceArtifact?.(artifact);
   }
 
+  function pickModule(hit: ModuleHit): void {
+    onPickModule?.(hit.module.id, hit.partIndex);
+    onOpenChange(false);
+  }
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xl" data-testid="quickfind-dialog">
         <DialogTitle>Quick find</DialogTitle>
         <DialogDescription>
-          Search artifacts and rules for this campaign.
+          Search artifacts, modules and rules for this campaign.
         </DialogDescription>
         <Command shouldFilter={false}>
           <CommandInput
@@ -141,6 +191,38 @@ export function QuickFindDialog({
                     <span className="truncate">
                       {artifact.name}
                       <span className="ml-2 text-xs text-muted-foreground">{artifact.kind}</span>
+                    </span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            {moduleHits.length > 0 && (
+              <CommandGroup heading="Modules">
+                {moduleHits.map((hit, hitIndex) => (
+                  <CommandItem
+                    key={`${hit.module.id}-${String(hit.partIndex ?? 'm')}-${String(hitIndex)}`}
+                    value={`${hit.module.id}-${String(hit.partIndex ?? 'm')}`}
+                    data-testid="quickfind-module"
+                    onSelect={() => {
+                      pickModule(hit);
+                    }}
+                  >
+                    <BookOpenIcon aria-hidden className="mr-2 size-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate">
+                      {hit.module.title}
+                      {hit.partIndex === undefined ? (
+                        <span className="ml-2 text-xs text-muted-foreground">module</span>
+                      ) : (
+                        (() => {
+                          const part = hit.module.spine?.partPlan[hit.partIndex];
+                          return (
+                            <span className="ml-2 text-xs text-muted-foreground">
+                              Part {String((hit.partIndex ?? 0) + 1)}: {part?.levelBand ?? ''} ·{' '}
+                              {part?.title ?? ''}
+                            </span>
+                          );
+                        })()
+                      )}
                     </span>
                   </CommandItem>
                 ))}

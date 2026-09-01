@@ -61,7 +61,20 @@ client-side — no backend, no accounts.
 8. **Manage embeddings** on the _Rules_ page: the embeddings panel shows how
    many chunks are embedded for the current model and lets you embed the whole
    library at once or clear the cache.
-9. Everything persists locally in IndexedDB and survives reloads.
+9. **Design a module** (markdown-first adventure authoring): create one from
+   the top bar or the _Modules_ page. Campaigner drafts a **spine** (premise +
+   part plan) for your approval, then generates each **part** in order, each
+   seeing the parts before it for continuity. The **reader** presents the
+   module as one document with a table of contents, per-part editing and
+   rewriting, and an **entity panel** of every mentioned character, place,
+   faction or item. `[[Names]]` in the text render as chips: green chips peek
+   the linked artifact (or jump to it in Play), dashed chips let you create a
+   stub, generate it with a matching persona, or link an existing artifact.
+   Batch-generate all unresolved entities of a kind from the entity panel;
+   produced artifacts are tagged `module:<title>`. _Deliverables → Seed from
+   module_ turns a finished module into a printable outline (premise intro,
+   one chapter per part with its resolved entities).
+10. Everything persists locally in IndexedDB and survives reloads.
 
 **In-app help:** press <kbd>?</kbd> anywhere (or the ? button in the top bar)
 for searchable help, and every screen's header has a small ? button that opens

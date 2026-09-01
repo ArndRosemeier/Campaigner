@@ -8,15 +8,12 @@ import {
   PlayIcon,
   PlusIcon,
   RotateCcwIcon,
-  SparklesIcon,
   Trash2Icon,
 } from 'lucide-react';
 import { toastError } from '@/lib/toast';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Checkbox } from '@/components/ui/checkbox';
-import { Textarea } from '@/components/ui/textarea';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -28,9 +25,7 @@ import {
 } from '@/components/ui/select';
 import type { Autonomy, Campaign, Id } from '@/domain';
 import { chainRunner, type ChainState } from '@/llm/chainRunner';
-import { DEFAULT_MODULE_OPTIONS, moduleForge, type ForgeState } from '@/llm/moduleForge';
 import { runEngine } from '@/llm/runEngine';
-import { HelpButton } from '@/help/HelpButton';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
@@ -58,14 +53,8 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
   const [chain, setChain] = useState<ChainState>(chainRunner.getState());
   const [autonomy, setAutonomy] = useState<Autonomy>('auto');
   const [steps, setSteps] = useState<{ personaId: Id; brief: string }[]>([]);
-  const [forge, setForge] = useState<ForgeState>(moduleForge.getState());
-  const [concept, setConcept] = useState('');
-  const [refinePass, setRefinePass] = useState(true);
 
   useEffect(() => chainRunner.on(setChain), []);
-  useEffect(() => moduleForge.on(setForge), []);
-
-  const forgeBusy = forge.phase === 'generating' || forge.phase === 'refining';
 
   /** Artifact id → name, for naming what each finished step produced. */
   const artifactNames = useLiveQuery(async () => {
@@ -97,93 +86,6 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="writers-room">
-      <section className="flex flex-col gap-2 rounded-lg border p-3" data-testid="module-forge">
-        <h2 className="flex items-center gap-1 text-sm font-semibold">
-          Module forge
-          <HelpButton topic="module" label="module forge" />
-        </h2>
-        <p className="text-xs text-muted-foreground">
-          One click generates a whole module — arc, sessions, locations, factions, NPCs, encounters
-          — then a continuity pass refines flagged parts. Refinements appear as new artifacts next
-          to the originals.
-        </p>
-        <Textarea
-          value={concept}
-          placeholder="Module concept — e.g. 'A smuggling ring in a flooded mining town hides an older cult; the party arrives as a festival begins.'"
-          aria-label="Module concept"
-          className="min-h-16 text-sm"
-          onChange={(event) => {
-            setConcept(event.target.value);
-          }}
-        />
-        <label className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Checkbox
-            checked={refinePass}
-            onCheckedChange={(checked) => {
-              if (typeof checked === 'boolean') setRefinePass(checked);
-            }}
-          />
-          Continuity review + automatic refinement pass
-        </label>
-        <div className="flex gap-2">
-          <Button
-            data-testid="forge-module"
-            disabled={forgeBusy || busy || concept.trim() === '' || personas === undefined}
-            onClick={() => {
-              void moduleForge
-                .run(
-                  campaign,
-                  personas ?? [],
-                  { ...DEFAULT_MODULE_OPTIONS, concept, refinePass },
-                  pinned.map((chunk) => chunk.id),
-                )
-                .catch((error: unknown) => {
-                  toastError('The module forge crashed', error);
-                });
-            }}
-          >
-            <SparklesIcon aria-hidden data-icon="inline-start" />
-            Generate module
-          </Button>
-          {forgeBusy && (
-            <Button
-              variant="outline"
-              onClick={() => {
-                moduleForge.cancel();
-              }}
-            >
-              <BanIcon aria-hidden data-icon="inline-start" />
-              Stop
-            </Button>
-          )}
-        </div>
-        {forge.phase !== 'idle' && (
-          <p className="text-xs text-muted-foreground" data-testid="forge-status">
-            {forge.phase === 'generating' && forgeStatusLine(forge, 'Generating module')}
-            {forge.phase === 'refining' && forgeStatusLine(forge, 'Refinement pass')}
-            {forge.phase === 'completed' &&
-              `Module complete — ${forge.chain.steps.filter((s) => s.artifactId !== null).length} artifacts generated.`}
-            {forge.phase === 'failed' && forgeFailureLine(forge)}
-            {forge.phase === 'cancelled' && 'The forge was stopped.'}
-          </p>
-        )}
-        {forge.phase === 'failed' && (
-          <Button
-            variant="outline"
-            size="sm"
-            className="self-start"
-            data-testid="retry-forge"
-            onClick={() => {
-              void moduleForge.retry().catch((error: unknown) => {
-                toastError('Could not retry the forge', error);
-              });
-            }}
-          >
-            <RotateCcwIcon aria-hidden data-icon="inline-start" />
-            Retry failed step
-          </Button>
-        )}
-      </section>
       <p className="text-xs text-muted-foreground">
         Chain personas into a pipeline — each step sees the artifacts of the steps before it.
       </p>
@@ -403,14 +305,6 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
   );
 }
 
-/** Status line for a busy forge: "Generating module — step 3 of 11: Key location 1". */
-function forgeStatusLine(forge: ForgeState, phaseLabel: string): string {
-  const { steps, currentIndex } = forge.chain;
-  const current = steps[currentIndex];
-  const title = current?.title ?? 'preparing…';
-  return `${phaseLabel} — step ${currentIndex + 1} of ${steps.length}: ${title}`;
-}
-
 const TOKEN_PREVIEW_CHARS = 400;
 
 /**
@@ -440,11 +334,4 @@ function RunTokenPreview({ runId }: { runId: Id }): JSX.Element {
       {text.trim() === '' ? '…writing' : text}
     </pre>
   );
-}
-
-/** Failure line for the forge: names the step that failed (when known). */
-function forgeFailureLine(forge: ForgeState): string {
-  const failed = forge.chain.steps.find((step) => step.status === 'failed');
-  const title = failed?.title ?? 'a step';
-  return `The forge failed at "${title}" — everything before it is kept. Retry continues from that step; the failed run stays in the Runs tab with its error.`;
 }

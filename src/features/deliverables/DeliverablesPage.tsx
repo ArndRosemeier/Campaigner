@@ -7,6 +7,14 @@ import { toast } from 'sonner';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -17,7 +25,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import type { Artifact, Deliverable, OutlineNode } from '@/domain';
+import type { Artifact, Deliverable, Module, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
 import { db } from '@/db/db';
 import {
@@ -27,6 +35,8 @@ import {
   updateDeliverable,
 } from '@/db/deliverableRepo';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { useModules } from '@/features/modules/hooks';
+import { seedOutlineFromModule } from '@/features/deliverables/seed-from-module';
 import { buildModulePdf } from '@/lib/modulePdf';
 import { generatePdfBlob } from '@/lib/pdfExport';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
@@ -68,8 +78,7 @@ function withChildrenAtPath(
 export function DeliverablesPage(): JSX.Element {
   const { campaignId = '' } = useParams<{ campaignId: string }>();
   const deliverables = useLiveQuery(
-    () => listDeliverablesByCampaign(campaignId),
-    [campaignId],
+    () => listDeliverablesByCampaign(campaignId),    [campaignId],
   );
   const artifacts = useLiveQuery(
     () => listArtifactsByCampaign(campaignId),
@@ -83,6 +92,7 @@ export function DeliverablesPage(): JSX.Element {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
+  const [seedDialogOpen, setSeedDialogOpen] = useState(false);
 
   const selected = deliverables?.find((entry) => entry.id === selectedId) ?? deliverables?.[0];
 
@@ -122,37 +132,15 @@ export function DeliverablesPage(): JSX.Element {
     }
   }
 
-  /** Seed from Module Forge output: chapter per session group, arc as lead,
-   * gallery appendices (07-MILESTONE-3 M3-D builder UI). */
-  function seedFromForge(): void {
-    if (selected === undefined || artifacts === undefined) return;
-    const byCreated = (a: Artifact, b: Artifact): number => a.createdAt - b.createdAt;
-    const arc = artifacts.find((artifact) => artifact.kind === 'plotarc');
-    const sessions = artifacts.filter((artifact) => artifact.kind === 'session').sort(byCreated);
-    const outline: OutlineNode[] = [];
-    if (arc !== undefined) {
-      outline.push({
-        type: 'chapter',
-        title: 'Overview',
-        children: [{ type: 'artifact', artifactId: arc.id, include: fullInclude() }],
-      });
-    }
-    for (const session of sessions) {
-      outline.push({
-        type: 'chapter',
-        title: session.name,
-        children: artifacts
-          .filter((artifact) => artifact.links.some((link) => link.targetId === session.id))
-          .map((artifact) => ({
-            type: 'artifact' as const,
-            artifactId: artifact.id,
-            include: fullInclude(),
-          })),
-      });
-    }
-    outline.push({ type: 'gallery', gallery: 'npcs' }, { type: 'gallery', gallery: 'treasure' });
+  /** "Seed from module" (08-M4-D): pick a module, map premise → intro text
+   * node, each part → chapter (part markdown + resolved entity artifact
+   * nodes, deduped first-occurrence-wins). Replaces the outline. */
+  function seedFromModule(module: Module): void {
+    if (selected === undefined) return;
+    const outline = seedOutlineFromModule(module, artifacts ?? []);
     void updateDeliverable(selected.id, { outline });
-    toast.success('Outline seeded from Module Forge output');
+    setSeedDialogOpen(false);
+    toast.success(`Outline seeded from “${module.title}”`);
   }
 
   function addNode(target: PickerTarget, node: OutlineNode): void {
@@ -282,13 +270,13 @@ export function DeliverablesPage(): JSX.Element {
               <Button
                 variant="outline"
                 size="sm"
-                aria-label="Seed from Module Forge output"
-                disabled={(artifacts ?? []).every((artifact) => artifact.kind !== 'session')}
+                aria-label="Seed from module"
+                data-testid="seed-from-module"
                 onClick={() => {
-                  seedFromForge();
+                  setSeedDialogOpen(true);
                 }}
               >
-                Seed from Module Forge
+                Seed from module
               </Button>
               <Button
                 size="sm"
@@ -345,7 +333,74 @@ export function DeliverablesPage(): JSX.Element {
           }}
         />
       )}
+
+      {seedDialogOpen && (
+        <SeedModulePickerDialog
+          campaignId={campaignId}
+          onClose={() => {
+            setSeedDialogOpen(false);
+          }}
+          onSeed={(module) => {
+            seedFromModule(module);
+          }}
+        />
+      )}
     </div>
+  );
+}
+
+/**
+ * Module picker for "Seed from module" (08-M4-D). Owns its module query so
+ * the main builder page stays query-light; mounted only while open.
+ */
+function SeedModulePickerDialog({
+  campaignId,
+  onClose,
+  onSeed,
+}: {
+  campaignId: string;
+  onClose: () => void;
+  onSeed: (module: Module) => void;
+}): JSX.Element {
+  const modules = useModules(campaignId === '' ? undefined : campaignId);
+  return (
+    <Dialog open onOpenChange={onClose}>
+      <DialogContent className="sm:max-w-md" data-testid="seed-module-dialog">
+        <DialogHeader>
+          <DialogTitle>Seed from module</DialogTitle>
+          <DialogDescription>
+            Pick the module to build this outline from — the premise becomes the intro, every part
+            becomes a chapter with its resolved entities attached. This replaces the current
+            outline.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex flex-col gap-1">
+          {(modules ?? []).map((module) => (
+            <button
+              key={module.id}
+              type="button"
+              className="rounded-md border px-2 py-1.5 text-left text-sm hover:bg-accent"
+              onClick={() => {
+                onSeed(module);
+              }}
+            >
+              <span className="font-medium">{module.title}</span>
+              <span className="ml-2 text-xs text-muted-foreground">
+                {module.spine === null ? 'no spine yet' : `${module.spine.partPlan.length} parts`}
+              </span>
+            </button>
+          ))}
+          {(modules ?? []).length === 0 && (
+            <p className="text-sm text-muted-foreground">No modules in this campaign yet.</p>
+          )}
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

@@ -3,10 +3,9 @@ import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Markdown from 'react-markdown';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { CheckIcon, EyeIcon, PencilIcon, PinIcon } from 'lucide-react';
+import { CheckIcon, PinIcon } from 'lucide-react';
 
 import { artifactPath } from '@/app/routes';
-import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -16,17 +15,11 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type {
-  Artifact,
-  EncounterArtifactData,
-  NpcArtifactData,
-  SessionArtifactData,
-  StatBlock,
-} from '@/domain';
+import type { Artifact, SessionArtifactData } from '@/domain';
 import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
-import { MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
-import { StatBlockCard } from '@/features/campaign/components/stat-block';
+import { CollapsibleRow, EncounterCard, NpcCard } from '@/features/play/artifact-cards';
+import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { usePlayStore } from '@/features/play/playStore';
 import { useQuickFindStore } from '@/features/quickfind/quickfindStore';
 
@@ -70,6 +63,8 @@ export function PlayPage(): JSX.Element {
           <>
             <FocusHeader
               focus={focus}
+              artifacts={artifacts ?? []}
+              campaignId={campaignId}
               history={play.focusHistory
                 .map((id) => byId.get(id))
                 .filter((artifact): artifact is Artifact => artifact !== undefined)}
@@ -83,7 +78,6 @@ export function PlayPage(): JSX.Element {
             <ContextGrid
               focus={focus}
               artifacts={artifacts ?? []}
-              campaignId={campaignId}
               onSetFocus={(artifact) => {
                 setFocus(campaignId, artifact.id);
               }}
@@ -101,15 +95,20 @@ export function PlayPage(): JSX.Element {
 
 function FocusHeader({
   focus,
+  artifacts,
+  campaignId,
   history,
   onBackTo,
   onSetFocus,
 }: {
   focus: Artifact;
+  artifacts: readonly Artifact[];
+  campaignId: string;
   history: Artifact[];
   onBackTo: (artifact: Artifact) => void;
   onSetFocus: () => void;
 }): JSX.Element {
+  const setFocus = usePlayStore((state) => state.setFocus);
   return (
     <header className="border-b px-6 py-4">
       <nav aria-label="Recent foci" className="mb-2 flex flex-wrap items-center gap-1">
@@ -140,7 +139,13 @@ function FocusHeader({
       </div>
       {focus.body !== '' && (
         <div className="prose-sm mt-3 max-w-3xl [&_blockquote]:border-l-4 [&_blockquote]:border-accent [&_blockquote]:bg-accent/20 [&_blockquote]:px-3 [&_blockquote]:py-2 [&_blockquote]:italic">
-          <Markdown>{focus.body}</Markdown>
+          <WikiMarkdown
+            value={focus.body}
+            artifacts={artifacts}
+            onOpenArtifact={(artifact) => {
+              setFocus(campaignId, artifact.id);
+            }}
+          />
         </div>
       )}
     </header>
@@ -162,13 +167,11 @@ function CoverImage({ artifactId, name }: { artifactId: string | null; name: str
 function ContextGrid({
   focus,
   artifacts,
-  campaignId,
   onSetFocus,
   onOpenEditor,
 }: {
   focus: Artifact;
   artifacts: readonly Artifact[];
-  campaignId: string;
   onSetFocus: (artifact: Artifact) => void;
   onOpenEditor: (artifact: Artifact) => void;
 }): JSX.Element {
@@ -189,7 +192,7 @@ function ContextGrid({
         <h2 className="text-sm font-semibold text-muted-foreground">NPCs here</h2>
         {npcs.length === 0 && <p className="text-sm text-muted-foreground">None linked.</p>}
         {npcs.map((npc) => (
-          <NpcCard key={npc.id} npc={npc} campaignId={campaignId} onOpenEditor={onOpenEditor} />
+          <NpcCard key={npc.id} npc={npc} onOpenEditor={onOpenEditor} />
         ))}
       </section>
 
@@ -197,12 +200,7 @@ function ContextGrid({
         <h2 className="text-sm font-semibold text-muted-foreground">Encounters</h2>
         {encounters.length === 0 && <p className="text-sm text-muted-foreground">None linked.</p>}
         {encounters.map((encounter) => (
-          <EncounterCard
-            key={encounter.id}
-            encounter={encounter}
-            campaignId={campaignId}
-            onOpenEditor={onOpenEditor}
-          />
+          <EncounterCard key={encounter.id} encounter={encounter} onOpenEditor={onOpenEditor} />
         ))}
       </section>
 
@@ -234,188 +232,6 @@ function ContextGrid({
         </section>
       )}
     </main>
-  );
-}
-
-function EditorJump({ artifact, onOpenEditor }: { artifact: Artifact; onOpenEditor: (artifact: Artifact) => void }): JSX.Element {
-  return (
-    <Button
-      variant="ghost"
-      size="icon-sm"
-      aria-label={`Open ${artifact.name} in workspace`}
-      onClick={() => {
-        onOpenEditor(artifact);
-      }}
-    >
-      <PencilIcon aria-hidden className="size-3.5" />
-    </Button>
-  );
-}
-
-function NpcCard({
-  npc,
-  campaignId,
-  onOpenEditor,
-}: {
-  npc: Artifact;
-  campaignId: string;
-  onOpenEditor: (artifact: Artifact) => void;
-}): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
-  const [showStats, setShowStats] = useState(false);
-  const data = npc.data as NpcArtifactData;
-  void campaignId;
-  return (
-    <div className="flex flex-col gap-2 rounded-md border p-3" data-testid="play-npc-card">
-      <div className="flex items-start gap-3">
-        <Portrait artifact={npc} />
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="font-semibold">{npc.name}</span>
-            {data.role !== '' && <Badge variant="secondary">{data.role}</Badge>}
-          </div>
-          {npc.summary !== '' && <p className="text-sm text-muted-foreground">{npc.summary}</p>}
-        </div>
-        <EditorJump artifact={npc} onOpenEditor={onOpenEditor} />
-      </div>
-      {expanded && (
-        <div className="flex flex-col gap-2 text-sm">
-          {data.personality !== '' && <p><span className="font-medium">Personality: </span>{data.personality}</p>}
-          {data.motivation !== '' && <p><span className="font-medium">Motivation: </span>{data.motivation}</p>}
-          {data.voiceNotes !== '' && <p><span className="font-medium">Voice: </span>{data.voiceNotes}</p>}
-          {data.secrets !== '' && <SecretBlock secret={data.secrets} />}
-          {data.statBlock !== null && (
-            <div className="flex flex-col gap-1">
-              <Button
-                variant="outline"
-                size="xs"
-                className="self-start"
-                aria-label="Stats"
-                onClick={() => {
-                  setShowStats((value) => !value);
-                }}
-              >
-                {showStats ? 'Hide stats' : 'Stats'}
-              </Button>
-              {showStats && (
-                <div className="text-base">
-                  <StatsCard statBlock={data.statBlock} name={npc.name} />
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
-      <Button
-        variant="ghost"
-        size="xs"
-        className="self-start"
-        aria-label={expanded ? `Collapse ${npc.name}` : `Expand ${npc.name}`}
-        onClick={() => {
-          setExpanded((value) => !value);
-        }}
-      >
-        {expanded ? 'Less' : 'More'}
-      </Button>
-    </div>
-  );
-}
-
-function Portrait({ artifact }: { artifact: Artifact }): JSX.Element | null {
-  const url = useImageUrl(artifact.coverImageId);
-  if (url === null) return null;
-  return <img src={url} alt={`Portrait of ${artifact.name}`} className="size-12 rounded-md object-cover" />;
-}
-
-function SecretBlock({ secret }: { secret: string }): JSX.Element {
-  const [revealed, setRevealed] = useState(false);
-  return (
-    <button
-      type="button"
-      className={`relative flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-left ${
-        revealed ? '' : 'select-none blur-sm'
-      }`}
-      aria-label={revealed ? 'Secret (click to hide)' : 'Secret (click to reveal)'}
-      onClick={() => {
-        setRevealed((value) => !value);
-      }}
-      data-testid="play-secret"
-    >
-      <EyeIcon aria-hidden className="size-4 shrink-0 blur-0" />
-      <span className={revealed ? '' : 'blur-sm'}>{secret}</span>
-    </button>
-  );
-}
-
-function StatsCard({ statBlock, name }: { statBlock: StatBlock; name: string }): JSX.Element {
-  return <StatBlockCard statBlock={statBlock} name={name} />;
-}
-
-function EncounterCard({
-  encounter,
-  campaignId,
-  onOpenEditor,
-}: {
-  encounter: Artifact;
-  campaignId: string;
-  onOpenEditor: (artifact: Artifact) => void;
-}): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
-  const data = encounter.data as EncounterArtifactData;
-  void campaignId;
-  return (
-    <div className="flex flex-col gap-2 rounded-md border p-3" data-testid="play-encounter-card">
-      <div className="flex items-center gap-2">
-        <span className="font-semibold">{encounter.name}</span>
-        {data.difficulty !== '' && <Badge variant="destructive">{data.difficulty}</Badge>}
-        {data.levelHint !== '' && <Badge variant="outline">{data.levelHint}</Badge>}
-        <div className="ml-auto">
-          <EditorJump artifact={encounter} onOpenEditor={onOpenEditor} />
-        </div>
-      </div>
-      {encounter.summary !== '' && <p className="text-sm text-muted-foreground">{encounter.summary}</p>}
-      {expanded && <MonsterStatblocksPanel monsters={data.monsters} />}
-      <Button
-        variant="ghost"
-        size="xs"
-        className="self-start"
-        aria-label={expanded ? `Collapse ${encounter.name}` : `Expand ${encounter.name}`}
-        onClick={() => {
-          setExpanded((value) => !value);
-        }}
-      >
-        {expanded ? 'Less' : 'More'}
-      </Button>
-    </div>
-  );
-}
-
-function CollapsibleRow({
-  artifact,
-  onOpenEditor,
-}: {
-  artifact: Artifact;
-  onOpenEditor: (artifact: Artifact) => void;
-}): JSX.Element {
-  const [expanded, setExpanded] = useState(false);
-  return (
-    <div className="flex flex-col gap-1 rounded-md border p-3">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          className="min-w-0 flex-1 text-left"
-          aria-label={`Expand ${artifact.name}`}
-          onClick={() => {
-            setExpanded((value) => !value);
-          }}
-        >
-          <span className="font-semibold">{artifact.name}</span>
-          <span className="ml-2 text-xs text-muted-foreground">{artifact.kind}</span>
-        </button>
-        <EditorJump artifact={artifact} onOpenEditor={onOpenEditor} />
-      </div>
-      {expanded && artifact.summary !== '' && <p className="text-sm">{artifact.summary}</p>}
-    </div>
   );
 }
 

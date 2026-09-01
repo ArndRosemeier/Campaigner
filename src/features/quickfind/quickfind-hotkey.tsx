@@ -3,8 +3,9 @@ import type { JSX } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { ROUTES, artifactPath, campaignIdFromPath } from '@/app/routes';
+import { ROUTES, artifactPath, campaignIdFromPath, modulePath } from '@/app/routes';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { useModules } from '@/features/modules/hooks';
 import { usePlayStore } from '@/features/play/playStore';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { useQuickFindStore } from '@/features/quickfind/quickfindStore';
@@ -12,7 +13,8 @@ import { useQuickFindStore } from '@/features/quickfind/quickfindStore';
 /**
  * App-mounted Ctrl+K quick-find (07-MILESTONE-3 M3-C): listens globally,
  * resolves the campaign from the URL, and dispatches picks — in play mode a
- * pick sets the focus, in the workspace it opens the artifact editor.
+ * pick sets the focus, in the workspace it opens the artifact editor; a
+ * module/part pick navigates to the reader and scrolls (08-M4-D).
  */
 export function QuickFindHotkey(): JSX.Element | null {
   const { pathname } = useLocation();
@@ -27,6 +29,7 @@ export function QuickFindHotkey(): JSX.Element | null {
     () => (campaignId === undefined ? Promise.resolve([]) : listArtifactsByCampaign(campaignId)),
     [campaignId],
   );
+  const modules = useModules(campaignId);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {
@@ -50,6 +53,7 @@ export function QuickFindHotkey(): JSX.Element | null {
         if (!next) close();
       }}
       artifacts={artifacts ?? []}
+      modules={modules ?? []}
       mode={playMode ? 'play' : 'workspace'}
       onPickArtifact={(artifact) => {
         setFocus(campaignId, artifact.id);
@@ -57,6 +61,10 @@ export function QuickFindHotkey(): JSX.Element | null {
       onWorkspaceArtifact={(artifact) => {
         close();
         navigate(artifactPath(campaignId, artifact.id));
+      }}
+      onPickModule={(moduleId, partIndex) => {
+        close();
+        navigate(modulePath(campaignId, moduleId, partIndex));
       }}
     />
   );

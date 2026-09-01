@@ -4,7 +4,7 @@ import { generationLanguageLabel } from '@/domain/settings';
  * Generation-language enforcement: every LLM prompt sent through the
  * OpenRouter client carries a system-level directive requiring all generated
  * content in the language chosen in settings (default English). Injected at
- * the single `chat()` choke point so run engine, module forge chains, image
+ * the single `chat()` choke point so run engine, module generator, image
  * prompt drafting, and rule Q&A are all covered.
  */
 
