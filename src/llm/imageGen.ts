@@ -38,7 +38,14 @@ interface ImageApiResponse {
 /**
  * Generates `n` images for `prompt` with the given model. Each returned Blob
  * carries the API-reported media type (defaulting to image/webp).
+ *
+ * Headers timeout: image generation is NOT streaming — the API sends no
+ * response headers until the picture is fully rendered, so the shared 60s
+ * chat headers timeout aborted most generations mid-flight. Images get 5
+ * minutes (M4-C: users reported frequent 60s timeouts).
  */
+export const IMAGE_HEADERS_TIMEOUT_MS = 5 * 60 * 1000;
+
 export async function generateImages(
   prompt: string,
   n: number,
@@ -58,6 +65,7 @@ export async function generateImages(
     `${OPENROUTER_BASE}/images`,
     init,
     opts.retryBackoffs ?? DEFAULT_RETRY_BACKOFFS_MS,
+    IMAGE_HEADERS_TIMEOUT_MS,
   );
 
   let json: ImageApiResponse;
