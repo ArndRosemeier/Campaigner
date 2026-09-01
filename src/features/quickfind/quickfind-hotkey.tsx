@@ -32,7 +32,12 @@ export function QuickFindHotkey(): JSX.Element | null {
   const modules = useModules(campaignId);
 
   useEffect(() => {
-    function onKeyDown(event: KeyboardEvent): void {
+    function onKeyDown(event: Event): void {
+      // A window-level listener receives whatever is dispatched under the
+      // 'keydown' type — not every such event is a real KeyboardEvent (e.g.
+      // synthetic plain Events), and assuming so crashes here (runtime
+      // `event.key` undefined despite the DOM type saying string).
+      if (!(event instanceof KeyboardEvent)) return;
       if (event.key.toLowerCase() !== 'k' || !(event.ctrlKey || event.metaKey)) return;
       if (campaignId === undefined) return;
       event.preventDefault();

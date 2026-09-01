@@ -200,4 +200,24 @@ describe('QuickFindHotkey', () => {
     expect(window.location.pathname).toBe(`/c/${campaign.id}/m/${module.id}`);
     expect(await screen.findByTestId('module-reader', {}, { timeout: 5_000 })).toBeInTheDocument();
   });
+
+  it('ignores synthetic keydown events that are not real KeyboardEvents', async () => {
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
+
+    window.history.replaceState(null, '', playPath(campaign.id));
+    render(<RouterProvider router={createAppRouter()} />);
+    expect(
+      await screen.findByRole('heading', { name: 'Old Tower' }, { timeout: 5_000 }),
+    ).toBeInTheDocument();
+
+    // A window-level listener receives whatever is dispatched under the
+    // 'keydown' type; a plain Event has no `.key`, which used to crash the
+    // handler (TypeError reading 'toLowerCase') on every such event.
+    expect(() => {
+      window.dispatchEvent(new Event('keydown'));
+    }).not.toThrow();
+    expect(screen.queryByTestId('quickfind-dialog')).not.toBeInTheDocument();
+  });
 });

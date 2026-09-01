@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
-import { chat, listModels, MissingApiKeyError } from '@/llm/openrouter';
+import { chat, fetchWithRetries, listModels, MissingApiKeyError } from '@/llm/openrouter';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): SSE streaming, retries, typed
@@ -139,5 +139,52 @@ describe('listModels', () => {
 
     const models = await listModels();
     expect(models.map((model) => model.id)).toEqual(['a/b', 'c/d']);
+  });
+});
+
+describe('fetchWithRetries headers timeout', () => {
+  it('aborts loudly when response headers never arrive', async () => {
+    // A fetch that never resolves used to hang the run forever: browsers
+    // impose no fetch timeout and the stream-stall watchdog only starts once
+    // headers exist ("Generating…" forever — 04-LLM-PERSONAS). Real fetch
+    // rejects when its signal aborts; the mock mirrors that contract.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: { signal: AbortSignal }) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal.addEventListener('abort', () => {
+            const reason: unknown = init.signal.reason;
+            reject(reason instanceof Error ? reason : new Error(String(reason)));
+          });
+        }),
+      ),
+    );
+
+    await expect(
+      fetchWithRetries('https://openrouter.ai/api/v1/chat/completions', { method: 'POST' }, [], 30),
+    ).rejects.toThrow(/timed out.*no response headers/iu);
+  });
+
+  it('keeps honoring the caller abort signal before headers arrive', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: { signal: AbortSignal }) =>
+        new Promise<Response>((_resolve, reject) => {
+          init?.signal.addEventListener('abort', () => {
+            const reason: unknown = init.signal.reason;
+            reject(reason instanceof Error ? reason : new Error(String(reason)));
+          });
+        }),
+      ),
+    );
+    const caller = new AbortController();
+    const pending = fetchWithRetries(
+      'https://openrouter.ai/api/v1/chat/completions',
+      { method: 'POST', signal: caller.signal },
+      [],
+      10_000,
+    );
+    caller.abort();
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
   });
 });

@@ -106,12 +106,10 @@ export async function fetchWithRetries(
   url: string,
   init: RequestInit & { signal?: AbortSignal | undefined },
   backoffs: readonly number[],
+  headersTimeoutMs: number = DEFAULT_HEADERS_TIMEOUT_MS,
 ): Promise<Response> {
   for (let attempt = 0; ; attempt += 1) {
-    const response = await fetch(url, {
-      ...init,
-      ...(init.signal !== undefined ? { signal: init.signal } : {}),
-    });
+    const response = await fetchWithHeadersTimeout(url, init, headersTimeoutMs);
     if (response.ok) return response;
     const retryable = response.status === 429 || response.status >= 500;
     const backoff = backoffs[attempt];
@@ -119,6 +117,44 @@ export async function fetchWithRetries(
       throw new OpenRouterError(response.status, await response.text());
     }
     await sleep(backoff, init.signal);
+  }
+}
+
+/**
+ * A fetch that never receives response HEADERS hangs forever (browsers impose
+ * no timeout, and the stream-stall watchdog only starts once headers exist) —
+ * the "Generating… forever" failure mode. The request is aborted loudly after
+ * `headersTimeoutMs`; the caller's abort signal keeps working for the body.
+ */
+export const DEFAULT_HEADERS_TIMEOUT_MS = 60_000;
+
+async function fetchWithHeadersTimeout(
+  url: string,
+  init: RequestInit & { signal?: AbortSignal | undefined },
+  headersTimeoutMs: number,
+): Promise<Response> {
+  const controller = new AbortController();
+  const onCallerAbort = (): void => {
+    controller.abort(init.signal?.reason);
+  };
+  if (init.signal !== undefined) {
+    if (init.signal.aborted) onCallerAbort();
+    else init.signal.addEventListener('abort', onCallerAbort, { once: true });
+  }
+  const timer = setTimeout(() => {
+    controller.abort(
+      new DOMException(
+        `OpenRouter request timed out: no response headers within ${String(Math.round(headersTimeoutMs / 1000))}s — check your connection and retry`,
+        'TimeoutError',
+      ),
+    );
+  }, headersTimeoutMs);
+  try {
+    // Headers only: once fetch resolves, the timer is cleared — body streaming
+    // is governed by the caller's signal and the stream-stall watchdog.
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -1,4 +1,4 @@
-import { toastError } from '@/lib/toast';
+import { toastErrorPersistent } from '@/lib/toast';
 
 /**
  * Global handlers for errors that escape feature-level catches (00-OVERVIEW
@@ -16,13 +16,13 @@ export function installGlobalErrorHandlers(): void {
   window.addEventListener('error', (event) => {
     // Resource-load errors (img/script) without an error object are noise.
     const detail = event.error instanceof Error ? event.error : undefined;
-    toastError('Unexpected error', detail ?? event.message);
+    toastErrorPersistent('Unexpected error', detail ?? event.message);
   });
 
   window.addEventListener('unhandledrejection', (event: PromiseRejectionEvent) => {
     event.preventDefault();
     const reason: unknown = event.reason;
-    toastError(
+    toastErrorPersistent(
       'Unhandled error in a background task',
       reason instanceof Error ? reason : undefined,
     );
