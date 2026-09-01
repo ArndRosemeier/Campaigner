@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -21,6 +21,8 @@ import {
 } from '@/domain';
 import { EntityPanel, useModuleEntities } from '@/features/modules/entity-panel';
 import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
+import { ProgressDock } from '@/features/progress/progress-dock';
+import { useProgressStore } from '@/lib/progress';
 import {
   type ChainState,
   type ChainStepInput,
@@ -45,13 +47,20 @@ const chainMocks = vi.hoisted(() => ({
     ) => Promise<ChainState>
   >(),
   getState: vi.fn<() => ChainState>(),
+  /** Subscribed listeners, so tests can drive chain state like the real runner. */
+  listeners: [] as ((state: ChainState) => void)[],
 }));
 
 vi.mock('@/llm/chainRunner', () => ({
   chainRunner: {
     run: chainMocks.run,
     getState: chainMocks.getState,
-    on: vi.fn(() => () => undefined),
+    on: vi.fn((listener: (state: ChainState) => void) => {
+      chainMocks.listeners.push(listener);
+      return () => {
+        chainMocks.listeners = chainMocks.listeners.filter((registered) => registered !== listener);
+      };
+    }),
   },
 }));
 
@@ -180,6 +189,8 @@ describe('EntityPanel', () => {
   beforeEach(() => {
     chainMocks.run.mockReset();
     chainMocks.getState.mockReset();
+    chainMocks.listeners.length = 0;
+    useProgressStore.getState().reset();
   });
   afterEach(cleanup);
 
@@ -298,5 +309,73 @@ describe('EntityPanel', () => {
       const tagged = await getArtifact(produced.id);
       expect(tagged?.tags).toContain('module:Ember Crypt');
     });
+  });
+
+  it('reports batch progress to the app-wide dock while the chain runs', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await seedBuiltInPersonas();
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const produced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Kael the Watcher',
+    });
+
+    // Deferred chain: the batch hangs until the test releases it, so the
+    // mid-run dock state is observable.
+    let releaseChain!: (state: ChainState) => void;
+    const chainDone = new Promise<ChainState>((resolve) => {
+      releaseChain = resolve;
+    });
+    chainMocks.run.mockImplementation(() => chainDone);
+
+    render(
+      <>
+        <EntityPanel
+          module={moduleFixture(campaign.id)}
+          artifacts={[mira]}
+          campaign={campaign}
+          onStub={vi.fn()}
+          onScrollTo={vi.fn()}
+        />
+        {/* The dock mounts app-wide from AppShell; the store is the seam. */}
+        <ProgressDock />
+      </>,
+    );
+    await user.click(screen.getByTestId('batch-npc'));
+
+    // The dock shows the batch job once the batch starts — a bare disabled
+    // button is not a progress experience (00-OVERVIEW).
+    await waitFor(() => {
+      expect(screen.getByTestId('progress-label')).toHaveTextContent('Generating 2 npcs');
+    });
+
+    // Chain running on the first step: the detail names the entity being
+    // detailed and the bar sits at that entity's coarse fraction.
+    act(() => {
+      for (const listener of chainMocks.listeners) {
+        listener({
+          steps: [
+            { runId: 'run-kael', status: 'running', artifactId: null, title: 'Detail: Kael' },
+            { runId: null, status: 'pending', artifactId: null, title: 'Detail: Bram' },
+          ],
+          currentIndex: 0,
+          status: 'running',
+        });
+      }
+    });
+    expect(screen.getByTestId('progress-detail')).toHaveTextContent('Generating Kael…');
+    expect(screen.getByTestId('progress-bar')).toHaveAttribute('aria-valuenow', '0');
+
+    // Release the chain: completed steps advance the bar; when the batch
+    // ends the dock disappears and the store is drained.
+    act(() => {
+      releaseChain(completedChainState(produced));
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('progress-dock')).not.toBeInTheDocument();
+    });
+    expect(useProgressStore.getState().jobs).toEqual([]);
   });
 });

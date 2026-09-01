@@ -10,6 +10,7 @@ import { artifactRepo } from '@/db';
 import { listPersonas } from '@/db/personaRepo';
 import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
+import { runEngine } from '@/llm/runEngine';
 import {
   buildEntityBrief,
   STUB_KINDS,
@@ -24,6 +25,7 @@ import {
   surroundingParagraphs,
 } from '@/lib/wikilinks';
 import { toastError } from '@/lib/toast';
+import { useProgressStore } from '@/lib/progress';
 import { cn } from '@/lib/utils';
 
 /**
@@ -43,6 +45,24 @@ export interface EntityPanelProps {
   /** Scrolls the reader to the first occurrence of a name. */
   onScrollTo: (name: string) => void;
 }
+
+/** Plural bucket label for the progress bar ("Generating 3 npcs"). */
+const KIND_PLURALS: Record<StubKind, string> = {
+  npc: 'npcs',
+  location: 'locations',
+  faction: 'factions',
+  note: 'notes',
+};
+
+/** Humanized run-step names for the progress detail line. */
+const RUN_STEP_LABELS: Record<string, string> = {
+  retrieve: 'gathering context',
+  draft: 'drafting',
+  statblock: 'building the statblock',
+  finalize: 'writing the artifact',
+  gather: 'gathering sources',
+  check: 'checking',
+};
 
 interface EntityEntry {
   name: string;
@@ -104,6 +124,9 @@ export function EntityPanel({
   const { entries, documents } = useModuleEntities(module, artifacts);
   const [collapsed, setCollapsed] = useState(false);
   const [batching, setBatching] = useState<StubKind | null>(null);
+  const progressStart = useProgressStore((state) => state.start);
+  const progressUpdate = useProgressStore((state) => state.update);
+  const progressFinish = useProgressStore((state) => state.finish);
 
   const mentioned = entries.length;
   const detailed = entries.filter((entry) => entry.resolved).length;
@@ -129,6 +152,37 @@ export function EntityPanel({
     const targets = unresolvedByKind.get(kind) ?? [];
     if (targets.length === 0) return;
     setBatching(kind);
+    const jobId = `module-entities-${module.id}-${kind}`;
+    const total = targets.length;
+    progressStart(jobId, `Generating ${String(total)} ${KIND_PLURALS[kind]}`);
+    // Live detail for the dock: the chain runner names the entity currently
+    // being detailed, the run engine names the step inside it ("drafting") —
+    // multi-minute work must never look like a hang (00-OVERVIEW).
+    let currentEntry = '';
+    let currentRunId: Id | null = null;
+    // Targets finished across chain invocations (the loop re-chains past
+    // failed steps) — keeps the bar monotonic.
+    let completed = 0;
+    const unsubscribeChain = chainRunner.on((state) => {
+      const step = state.steps[state.currentIndex];
+      if (state.status === 'running' && step?.status === 'running' && step.runId !== null) {
+        currentRunId = step.runId;
+        if (step.title !== null) {
+          currentEntry = step.title.replace(/^Detail: /u, '');
+          progressUpdate(jobId, {
+            detail: `Generating ${currentEntry}…`,
+            progress: (completed + state.currentIndex) / total,
+          });
+        }
+      }
+    });
+    const unsubscribeRun = runEngine.on((event) => {
+      if (event.kind !== 'step' || event.runId !== currentRunId) return;
+      if (event.status === 'running' && event.stepName !== undefined) {
+        const label = RUN_STEP_LABELS[event.stepName] ?? event.stepName;
+        progressUpdate(jobId, { detail: `${currentEntry} — ${label}…` });
+      }
+    });
     try {
       const personas = await listPersonas();
       const persona =
@@ -158,6 +212,8 @@ export function EntityPanel({
         for (const step of result.steps) {
           if (step.artifactId !== null) producedIds.push(step.artifactId);
         }
+        completed += result.steps.filter((step) => step.status === 'completed').length;
+        progressUpdate(jobId, { progress: completed / total });
         const failedIndex = result.steps.findIndex((step) => step.status === 'failed');
         if (result.status === 'completed') break;
         if (result.status === 'cancelled') break;
@@ -181,6 +237,9 @@ export function EntityPanel({
     } catch (error) {
       toastError('Batch generation failed', error);
     } finally {
+      unsubscribeChain();
+      unsubscribeRun();
+      progressFinish(jobId);
       setBatching(null);
     }
   }

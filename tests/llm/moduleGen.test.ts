@@ -21,6 +21,7 @@ import {
   runSpine,
 } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
+import { useProgressStore } from '@/lib/progress';
 
 /**
  * Module Designer generator (08-MODULE-DESIGNER M4-B) with a mocked chat:
@@ -651,5 +652,64 @@ describe('entity kinds — prose classification (08 §M4-C)', () => {
     );
 
     await expect(classifyEntityKind('Kael', '', '')).rejects.toThrow('did not answer');
+  }, 20000);
+});
+
+describe('progress dock reporting', () => {
+  beforeEach(() => {
+    useProgressStore.getState().reset();
+  });
+
+  it('runSpine reports an indeterminate outline job and drains it on finish', async () => {
+    const { campaign, moduleId } = await seedModule();
+    const deferred = deferredChat();
+    chatMock.mockImplementationOnce(() => deferred.promise);
+
+    const pending = guard(runSpine(moduleId, campaign));
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs).toHaveLength(1);
+    });
+    // No measurable sub-steps in the outline pass → indeterminate sweep.
+    const job = useProgressStore.getState().jobs[0];
+    expect(job?.label).toBe('Designing the module outline');
+    expect(job?.detail).toContain('premise');
+    expect(job?.progress).toBeNull();
+
+    deferred.resolve(JSON.stringify(VALID_SPINE));
+    await pending;
+    expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 20000);
+
+  it('runParts reports per-part progress and drains it on finish', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    const first = deferredChat();
+    const second = deferredChat();
+    chatMock
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise)
+      .mockResolvedValueOnce(partMarkdown('PART-THREE'));
+
+    const pending = guard(runParts(moduleId, campaign));
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs).toHaveLength(1);
+    });
+    expect(useProgressStore.getState().jobs[0]).toMatchObject({
+      label: 'Writing 3 module parts',
+      detail: 'Writing part 1 of 3: The Sunken Quarter',
+      progress: 0,
+    });
+
+    first.resolve(partMarkdown('PART-ONE'));
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs[0]).toMatchObject({
+        detail: 'Writing part 2 of 3: The Drowned Cathedral',
+        progress: 1 / 3,
+      });
+    });
+
+    second.resolve(partMarkdown('PART-TWO'));
+    await pending;
+    expect(useProgressStore.getState().jobs).toEqual([]);
   }, 20000);
 });

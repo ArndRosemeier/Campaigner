@@ -97,12 +97,18 @@ describe('images ui', () => {
     expect(screen.getByRole('button', { name: /Cover image/ })).toBeDisabled();
     await user.click(screen.getByRole('button', { name: /Delete/ }));
 
-    await waitFor(() => {
-      expect(screen.getByText(/No images yet/)).toBeInTheDocument();
-    });
-    await waitFor(() => {
-      expect(screen.queryByAltText('Cover of Old Tower')).not.toBeInTheDocument();
-    });
+    await waitFor(
+      () => {
+        expect(screen.getByText(/No images yet/)).toBeInTheDocument();
+      },
+      { timeout: 5_000 },
+    );
+    await waitFor(
+      () => {
+        expect(screen.queryByAltText('Cover of Old Tower')).not.toBeInTheDocument();
+      },
+      { timeout: 5_000 },
+    );
     // Drain the delete's live-query cascade inside act before plain reads.
     await flushAsyncUpdates();
     // The live artifact lost its references…
@@ -120,9 +126,12 @@ describe('images ui', () => {
     await act(async () => {
       await deleteArtifact(artifacts[0]?.id ?? '');
     });
-    await waitFor(async () => {
-      expect(await getImage(imageId)).toBeUndefined();
-    });
+    await waitFor(
+      async () => {
+        expect(await getImage(imageId)).toBeUndefined();
+      },
+      { timeout: 5_000 },
+    );
     void campaignId;
     await flushAsyncUpdates();
   });

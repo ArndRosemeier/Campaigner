@@ -5,6 +5,8 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowDownIcon, ArrowUpIcon, PlusIcon, TrashIcon } from 'lucide-react';
 import { toast } from 'sonner';
 
+import { useProgressStore } from '@/lib/progress';
+
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -116,6 +118,9 @@ export function DeliverablesPage(): JSX.Element {
 
   async function generate(deliverable: Deliverable): Promise<void> {
     setGenerating(true);
+    const progress = useProgressStore.getState();
+    const jobId = `deliverable-${deliverable.id}`;
+    progress.start(jobId, `Building PDF: ${deliverable.title}`, 'Laying out the document…');
     try {
       const blob = await buildModulePdf(deliverable, artifacts ?? [], generatePdfBlob);
       const url = URL.createObjectURL(blob);
@@ -128,6 +133,7 @@ export function DeliverablesPage(): JSX.Element {
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'PDF generation failed');
     } finally {
+      progress.finish(jobId);
       setGenerating(false);
     }
   }

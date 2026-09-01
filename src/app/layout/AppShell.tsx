@@ -7,6 +7,7 @@ import { useThemeSync } from '@/app/theme/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
+import { ProgressDock } from '@/features/progress/progress-dock';
 import { failRunningRuns } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { toastError } from '@/lib/toast';
@@ -62,6 +63,7 @@ export function AppShell(): JSX.Element {
           <Outlet />
         </main>
         <Toaster position="bottom-right" />
+        <ProgressDock />
         <HelpDialog />
         <QuickFindHotkey />
       </div>

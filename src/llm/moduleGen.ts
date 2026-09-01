@@ -8,6 +8,7 @@ import { chat, MissingApiKeyError, type ChatMessage } from '@/llm/openrouter';
 import { searchRules } from '@/search';
 import { extractWikiLinks, surroundingParagraphs } from '@/lib/wikilinks';
 import { toastError } from '@/lib/toast';
+import { useProgressStore } from '@/lib/progress';
 import { z } from 'zod';
 
 /**
@@ -100,6 +101,11 @@ export async function runSpine(
   options: SpineRunOptions = {},
 ): Promise<Module> {
   const controller = controllerFor(moduleId);
+  // App-wide progress dock (00-OVERVIEW): an outline pass has no measurable
+  // sub-steps, so the bar sweeps while the detail line says what is running.
+  const progress = useProgressStore.getState();
+  const jobId = `module-spine-${moduleId}`;
+  progress.start(jobId, 'Designing the module outline', 'Asking for premise, themes and part plan…');
   try {
     const module = await getModule(moduleId);
     if (module === undefined) throw new Error('Module to generate no longer exists');
@@ -155,6 +161,7 @@ export async function runSpine(
     await failModule(moduleId, error);
     throw error;
   } finally {
+    progress.finish(jobId);
     controllers.delete(moduleId);
     moduleGenEvents.emit({ kind: 'done', moduleId });
   }
@@ -275,6 +282,10 @@ export async function runParts(
   options: PartsRunOptions = {},
 ): Promise<Module> {
   const controller = controllerFor(moduleId);
+  // App-wide progress dock (00-OVERVIEW): parts are a known-length list, so
+  // the bar fills per part and the detail names the part being written.
+  const progress = useProgressStore.getState();
+  const jobId = `module-parts-${moduleId}`;
   try {
     const settings = await getSettings();
     const module = await requireModule(moduleId);
@@ -282,9 +293,21 @@ export async function runParts(
 
     const planIndexes =
       options.planIndexes ?? module.spine.partPlan.map((_, index) => index);
+    const total = planIndexes.length;
+    progress.start(
+      jobId,
+      `Writing ${String(total)} module part${total === 1 ? '' : 's'}`,
+      'Starting the first part…',
+    );
+    let index = 0;
     for (const planIndex of planIndexes) {
       const target = await requireModule(moduleId);
       if (target.spine === null) throw new Error('The spine was removed mid-generation');
+      const title = target.spine.partPlan[planIndex]?.title ?? `Part ${String(planIndex + 1)}`;
+      progress.update(jobId, {
+        progress: index / total,
+        detail: `Writing part ${String(index + 1)} of ${String(total)}: ${title}`,
+      });
       try {
         await generatePart(
           moduleId,
@@ -305,9 +328,12 @@ export async function runParts(
         // The failed part is persisted with its error by generatePart; the
         // chain continues with the next part (08 §M4-B).
       }
+      index += 1;
+      progress.update(jobId, { progress: index / total });
     }
 
     const result = await patchModule(moduleId, { status: 'ready', errorMessage: '' });
+    progress.update(jobId, { progress: 1, detail: 'Recording entity types…' });
     // Entity kinds for names invented in prose (08 §M4-C): one batched call
     // after the parts land. A classification failure is loud (toast) but
     // must NOT fail the completed run — the popover stays user-editable.
@@ -333,6 +359,7 @@ export async function runParts(
     await failModule(moduleId, error);
     throw error;
   } finally {
+    progress.finish(jobId);
     controllers.delete(moduleId);
     moduleGenEvents.emit({ kind: 'done', moduleId });
   }

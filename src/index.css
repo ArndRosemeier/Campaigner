@@ -128,3 +128,17 @@
     @apply font-sans;
   }
 }
+
+/* Progress dock: indeterminate sweep — a third-width fill slides the full
+   track, left to right, for tasks with unknown progress (00-OVERVIEW). */
+@keyframes progress-slide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(300%);
+  }
+}
+.progress-indeterminate {
+  animation: progress-slide 1.4s ease-in-out infinite;
+}

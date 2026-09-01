@@ -76,7 +76,7 @@ export type ImageStepName = (typeof IMAGE_STEP_NAMES)[number];
 
 export type EngineEvent =
   | { kind: 'run'; runId: Id; status: PersonaRun['status'] }
-  | { kind: 'step'; runId: Id; stepIndex: number; status: RunStep['status'] }
+  | { kind: 'step'; runId: Id; stepIndex: number; status: RunStep['status']; stepName?: string | undefined }
   | { kind: 'token'; runId: Id; stepIndex: number; delta: string };
 
 type Listener = (event: EngineEvent) => void;
@@ -287,7 +287,13 @@ export class RunEngine {
       return;
     }
     await this.updateStep(runId, target, { status: 'approved' });
-    this.emit({ kind: 'step', runId, stepIndex: target, status: 'approved' });
+    this.emit({
+      kind: 'step',
+      runId,
+      stepIndex: target,
+      status: 'approved',
+      stepName: run.steps[target]?.name,
+    });
     void this.executeFrom(runId, target + 1, input).catch((error: unknown) => {
       void this.fail(runId, error);
     });
@@ -310,7 +316,13 @@ export class RunEngine {
       return;
     }
     await this.updateStep(runId, stepIndex, { userEdit, status: 'approved' });
-    this.emit({ kind: 'step', runId, stepIndex, status: 'approved' });
+    this.emit({
+      kind: 'step',
+      runId,
+      stepIndex,
+      status: 'approved',
+      stepName: run.steps[stepIndex]?.name,
+    });
     void this.executeFrom(runId, stepIndex + 1, input).catch((error: unknown) => {
       void this.fail(runId, error);
     });
@@ -383,7 +395,7 @@ export class RunEngine {
         };
         steps[i] = step;
         await updateRun(runId, { steps: [...steps] });
-        this.emit({ kind: 'step', runId, stepIndex: i, status: 'running' });
+        this.emit({ kind: 'step', runId, stepIndex: i, status: 'running', stepName: name });
 
         const outcome = await this.runStep(
           runId,
@@ -400,7 +412,13 @@ export class RunEngine {
           status: outcome.runStatus ?? 'running',
           resultArtifactId: outcome.artifactId ?? run.resultArtifactId,
         });
-        this.emit({ kind: 'step', runId, stepIndex: i, status: outcome.step.status });
+        this.emit({
+          kind: 'step',
+          runId,
+          stepIndex: i,
+          status: outcome.step.status,
+          stepName: name,
+        });
 
         if (outcome.runStatus !== undefined && outcome.runStatus !== 'running') {
           this.emit({ kind: 'run', runId, status: outcome.runStatus });

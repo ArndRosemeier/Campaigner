@@ -83,6 +83,14 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 - Every entity has `id: string` (UUID), `createdAt: number`, `updatedAt: number`
   (epoch ms).
 - Errors shown to users via a single toast helper in `/src/lib/toast.ts`.
+- **Progress feedback (binding)**: anything that can run longer than a couple
+  of seconds (LLM runs, batch generation, PDF builds) reports through the
+  shared store `/src/lib/progress.ts` (`useProgressStore`); the app-wide
+  `<ProgressDock />` mounted in AppShell renders every running job as a
+  bottom-docked bar — determinate fill when progress is known (0..1), an
+  animated sweep when it is not — with a label naming the task and a detail
+  line describing the current step. A bare disabled button or button label
+  swap ("Generating…") is not a progress experience.
 - **No silent fallbacks (binding)**: when data, parsing, or a step fails, the
   code must propagate a loud error — never substitute placeholder output.
   Forbidden: finalizing artifacts from empty/failed drafts, placeholder
