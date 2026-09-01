@@ -32,6 +32,16 @@ import { flushAsyncUpdates } from '../helpers/flush';
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
+// The popover's "Generate" runs a real chain → real runEngine; only the LLM
+// entry point is mocked (embeddings stays inert: no rulebooks are seeded).
+vi.mock('@/llm/openrouter', () => ({
+  chat: vi.fn(),
+  MissingApiKeyError: class MissingApiKeyError extends Error {},
+  OpenRouterError: class OpenRouterError extends Error {},
+  listModels: vi.fn(),
+  fetchWithHeadersTimeout: vi.fn(),
+}));
+
 // Only the LLM entry points are mocked; `moduleGenEvents` (the in-memory
 // streaming emitter the reader subscribes to) stays real via the spread.
 vi.mock('@/llm/moduleGen', async (importOriginal) => {
@@ -56,6 +66,8 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
 const { rewritePart, classifyEntityKind } = await import('@/llm/moduleGen');
 const rewriteMock = vi.mocked(rewritePart);
 const classifyEntityKindMock = vi.mocked(classifyEntityKind);
+const { chat } = await import('@/llm/openrouter');
+const chatMock = vi.mocked(chat);
 const { toastSuccess } = await import('@/lib/toast');
 const toastSuccessMock = vi.mocked(toastSuccess);
 
@@ -344,6 +356,59 @@ describe('ModuleReaderPage', () => {
     expect(within(popover).getByText('faction')).toBeInTheDocument();
     // …and the popover never asks the model again for a recorded name.
     expect(classifyEntityKindMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('generates an entity IN PLACE from the popover — no navigation, chip resolves', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule({
+      entityKinds: [{ name: 'Missing Person', kind: 'note' }],
+    });
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        name: 'Missing Person',
+        summary: 'Seen near the tower.',
+        suggestedTags: [],
+        body: '# Missing Person\nThey never came down.',
+      }),
+    );
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });
+    await user.click(chip);
+    const popover = await screen.findByTestId('stub-popover', {}, { timeout: 5_000 });
+    await user.click(within(popover).getByTestId('stub-generate'));
+
+    // The chain → runEngine → database path produces the artifact with the
+    // module tag (same machinery as the batch).
+    await waitFor(
+      async () => {
+        const rows = await listArtifactsByCampaign(campaignId);
+        const produced = rows.find((row) => row.name === 'Missing Person');
+        expect(produced?.kind).toBe('note');
+        expect(produced?.tags).toContain(`module:${MODULE_TITLE}`);
+      },
+      { timeout: 10_000 },
+    );
+
+    // The chip resolves WITHOUT leaving the reader: the old behavior navigated
+    // to the workspace, which looked like the app closing the view.
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('stub-popover')).not.toBeInTheDocument();
+        expect(screen.queryByTestId('wiki-chip-unresolved')).not.toBeInTheDocument();
+      },
+      { timeout: 10_000 },
+    );
+    const resolvedChips = screen.getAllByTestId('wiki-chip');
+    expect(
+      resolvedChips.some(
+        (resolved) => resolved.getAttribute('data-wiki-name') === 'Missing Person',
+      ),
+    ).toBe(true);
+    // The module reader is still the mounted page (title input + toast).
+    expect(screen.getByTestId('module-title')).toHaveValue(MODULE_TITLE);
+    expect(toastSuccessMock).toHaveBeenCalledWith('"Missing Person" detailed');
     await flushAsyncUpdates();
   }, 20_000);
 });

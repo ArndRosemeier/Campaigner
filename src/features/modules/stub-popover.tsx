@@ -1,9 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { UserPlusIcon, UsersIcon, Wand2Icon, XIcon } from 'lucide-react';
 
-import { workspacePath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -14,15 +12,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { EntityKind, Id } from '@/domain';
+import type { Campaign, EntityKind } from '@/domain';
 import { artifactRepo } from '@/db';
 import { classifyEntityKind } from '@/llm/moduleGen';
+import { generateSingleEntity } from '@/features/modules/entity-detail';
 import {
-  buildEntityBrief,
   guessKindFromSentence,
   STUB_KINDS,
-  STUB_PERSONA_SLUGS,
-  usePersonaBriefRequest,
   type StubKind,
 } from '@/features/modules/persona-request';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -55,7 +51,7 @@ export interface StubPopoverProps {
   contextParagraphs: string;
   premise: string;
   moduleTag: string;
-  campaignId: Id;
+  campaign: Campaign;
   /** The kind the generator recorded for this name, when it knows one. */
   recordedKind?: EntityKind | undefined;
   onClose: () => void;
@@ -69,13 +65,11 @@ export function StubPopover({
   contextParagraphs,
   premise,
   moduleTag,
-  campaignId,
+  campaign,
   recordedKind,
   onClose,
   onLinkExisting,
 }: StubPopoverProps): JSX.Element {
-  const navigate = useNavigate();
-  const requestPersona = usePersonaBriefRequest((store) => store.requestPersona);
   // The kind is the MODEL's record when it exists; hand-typed names get a
   // one-shot classification call (regex below is only the instant
   // placeholder while that call is in flight — 08 §M4-C).
@@ -105,7 +99,7 @@ export function StubPopover({
     setBusy(true);
     try {
       await artifactRepo.createArtifact({
-        campaignId,
+        campaignId: campaign.id,
         kind,
         name: name.trim(),
         summary: sentence,
@@ -120,16 +114,36 @@ export function StubPopover({
     }
   }
 
-  function generateWithPersona(): void {
-    requestPersona({
-      personaSlug: STUB_PERSONA_SLUGS[kind],
-      kind,
-      brief: buildEntityBrief(name.trim(), contextParagraphs, premise),
-      moduleTag,
-      campaignId,
-    });
-    navigate(workspacePath(campaignId));
-    onClose();
+  const [generating, setGenerating] = useState(false);
+
+  /**
+   * Generates in place (08-MODULE-DESIGNER M4-C): the reader used to navigate
+   * to the workspace with a prefilled persona panel — from the reader it
+   * looked like the app closed the view and did nothing. Now the same chain
+   * machinery as the batch runs here, visible on the shared progress bar.
+   */
+  async function generateInPlace(): Promise<void> {
+    setGenerating(true);
+    try {
+      const result = await generateSingleEntity({
+        campaign,
+        kind,
+        name: name.trim(),
+        contextParagraphs,
+        premise,
+        moduleTag,
+      });
+      if (!result.ok) {
+        toastError(`Could not generate "${name.trim()}"`, result.error);
+        return; // keep the popover open — the user may retry or create a stub
+      }
+      toastSuccess(`"${name.trim()}" detailed`);
+      onClose();
+    } catch (error) {
+      toastError(`Could not generate "${name.trim()}"`, error);
+    } finally {
+      setGenerating(false);
+    }
   }
 
   return (
@@ -203,11 +217,12 @@ export function StubPopover({
           <Button
             size="sm"
             variant="outline"
-            disabled={name.trim() === ''}
-            onClick={generateWithPersona}
+            disabled={generating || busy || name.trim() === ''}
+            data-testid="stub-generate"
+            onClick={() => void generateInPlace()}
           >
             <Wand2Icon aria-hidden data-icon="inline-start" />
-            Generate with persona
+            {generating ? 'Generating…' : 'Generate'}
           </Button>
           <Button
             size="sm"

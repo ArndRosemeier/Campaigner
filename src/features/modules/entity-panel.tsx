@@ -12,6 +12,10 @@ import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
 import { runEngine } from '@/llm/runEngine';
 import {
+  alignEntityName,
+  RUN_STEP_LABELS,
+} from '@/features/modules/entity-detail';
+import {
   buildEntityBrief,
   STUB_KINDS,
   STUB_PERSONA_SLUGS,
@@ -52,16 +56,6 @@ const KIND_PLURALS: Record<StubKind, string> = {
   location: 'locations',
   faction: 'factions',
   note: 'notes',
-};
-
-/** Humanized run-step names for the progress detail line. */
-const RUN_STEP_LABELS: Record<string, string> = {
-  retrieve: 'gathering context',
-  draft: 'drafting',
-  statblock: 'building the statblock',
-  finalize: 'writing the artifact',
-  gather: 'gathering sources',
-  check: 'checking',
 };
 
 interface EntityEntry {
@@ -194,7 +188,7 @@ export function EntityPanel({
       }
       let remaining: EntityEntry[] = targets;
       const producedIds: Id[] = [];
-      const failedEntities: string[] = [];
+      const succeeded = new Set<string>();
       // One chain over all targets; chain semantics keep completed steps and
       // show failed runs in the Runs tab. On a failed step the batch
       // CONTINUES with the remaining names (fresh chain).
@@ -219,14 +213,17 @@ export function EntityPanel({
           if (entry === undefined) continue;
           if (step.status === 'completed' && step.artifactId !== null) {
             producedIds.push(step.artifactId);
+            succeeded.add(entry.name);
             try {
               await alignEntityName(step.artifactId, entry.name);
             } catch (error) {
               toastError(`Could not align the artifact name for "${entry.name}"`, error);
             }
-          } else {
-            failedEntities.push(entry.name);
           }
+          // Non-completed steps are NOT counted as failures here: the chain
+          // stops at the first failure and reports the not-yet-run steps as
+          // 'pending' — counting them double-counted every retry round ("12
+          // of 9 failed"). Real failures are computed after the loop.
         }
         completed += result.steps.filter((step) => step.status === 'completed').length;
         progressUpdate(jobId, { progress: completed / total });
@@ -252,10 +249,12 @@ export function EntityPanel({
       }
       // Failed entities are loud: the bar finishing must not look like
       // success when some runs died (their detail lives in the Runs tab).
+      // Ground truth = every target WITHOUT a produced artifact.
+      const failedEntities = targets.filter((target) => !succeeded.has(target.name));
       if (failedEntities.length > 0) {
         toastError(
           `${String(failedEntities.length)} of ${String(total)} ${KIND_PLURALS[kind]} failed to generate — ` +
-            `see the Runs tab (${failedEntities.join(', ')})`,
+            `see the Runs tab (${failedEntities.map((entry) => entry.name).join(', ')})`,
         );
       }
     } catch (error) {
@@ -267,24 +266,6 @@ export function EntityPanel({
       setBatching(null);
     }
   }
-
-/**
- * Renames the produced artifact to the EXACT entity name (wiki-links resolve
- * by name/alias), keeping the model's invented name as an alias so nothing
- * authored is lost.
- */
-async function alignEntityName(artifactId: Id, entityName: string): Promise<void> {
-  const artifact = await artifactRepo.getArtifact(artifactId);
-  if (artifact === undefined) return;
-  if (artifact.name.trim().toLowerCase() === entityName.trim().toLowerCase()) return;
-  const model_name = artifact.name;
-  const aliases = artifact.aliases.some(
-    (alias) => alias.trim().toLowerCase() === model_name.trim().toLowerCase(),
-  )
-    ? artifact.aliases
-    : [...artifact.aliases, model_name];
-  await artifactRepo.updateArtifact(artifactId, { name: entityName, aliases });
-}
 
   return (
     <aside

@@ -202,11 +202,17 @@ unresolved rows offer the same actions as the stub popover.
   always user-confirmable), creates a minimal artifact (name = link
   name, summary = the sentence containing the first occurrence, tag
   `module:<title>`). Chip turns resolved immediately.
-- **Generate with persona**: opens the persona panel prefilled — persona
-  matching the chosen kind, brief = link name + the paragraphs surrounding
-  its occurrences (cap ~1200 chars) + module premise. The normal run
-  pipeline (with its autonomy setting) does the rest. On finalize the chip
-  resolves. Add `module:<title>` tag on the produced artifact.
+- **Generate**: runs the persona chain IN PLACE (one step, auto autonomy —
+  the same machinery as the batch) with the shared progress bar
+  (00-OVERVIEW §binding progress). Brief = link name + the paragraphs
+  surrounding its occurrences (cap ~1200 chars) + module premise. On
+  finalize the produced artifact is aligned to the exact link name (the
+  model's invented name is kept as an alias) and tagged `module:<title>`;
+  the chip resolves via the live query. A failed run stays loud: toast +
+  the failed row in the Runs tab. (This used to navigate to the workspace
+  with a prefilled persona panel — from the reader it was
+  indistinguishable from the app closing the view and doing nothing; the
+  navigation bridge is removed.)
 - **Link existing…**: quick-find over campaign artifacts; picking one adds
   the link name to that artifact's `aliases` (this is how near-miss names get
   bound without editing text).
@@ -251,8 +257,9 @@ failed runs; continue).
 - Part 2 rewrite with instruction "make the villain a child" changes only
   part 2.
 - Clicking `[[Harbormaster Ilse]]` (unresolved) → create stub → chip turns
-  solid; "Generate with persona" produces a full NPC whose card opens in the
-  peek modal from the reading position, dismissible with Esc.
+  solid; "Generate" produces a full NPC in place (progress bar runs, no
+  navigation) whose card opens in the peek modal from the reading position,
+  dismissible with Esc.
 - Killing the network mid-pass-1 yields a failed part with a Retry button and
   a completed rest-of-module; nothing silently placeholders (AGENTS rule 1).
 - No numeric entity quotas exist anywhere in the new UI.

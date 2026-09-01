@@ -397,6 +397,90 @@ describe('EntityPanel', () => {
     });
   });
 
+  it('does not count not-yet-run steps as failures when a chain stops early', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await seedBuiltInPersonas();
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const kaelProduced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Kael the Watcher',
+    });
+    const coraProduced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Cora of the Crypt',
+    });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({
+      ...base,
+      spine: {
+        ...base.spine,
+        premise: `${PREMISE} [[Cora]] tends the graves.`,
+      },
+      entityKinds: [...base.entityKinds, { name: 'Cora', kind: 'npc' }],
+    });
+
+    // The REAL chain runner pre-fills every step as 'pending' and stops at
+    // the first failure. Counting non-completed steps said "12 of 9 failed"
+    // when 2 runs died — every retry round recounted the pending tail.
+    chainMocks.run
+      .mockResolvedValueOnce({
+        steps: [
+          {
+            runId: 'run-kael',
+            status: 'completed',
+            artifactId: kaelProduced.id,
+            title: 'Detail: Kael',
+          },
+          { runId: 'run-bram', status: 'failed', artifactId: null, title: 'Detail: Bram' },
+          { runId: null, status: 'pending', artifactId: null, title: 'Detail: Cora' },
+        ],
+        currentIndex: 2,
+        status: 'failed',
+      })
+      .mockResolvedValueOnce({
+        steps: [
+          {
+            runId: 'run-cora',
+            status: 'completed',
+            artifactId: coraProduced.id,
+            title: 'Detail: Cora',
+          },
+        ],
+        currentIndex: 1,
+        status: 'completed',
+      });
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[mira]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onScrollTo={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByTestId('batch-npc'));
+
+    // Exactly the entities without a produced artifact — no pending recount.
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        '1 of 3 npcs failed to generate — see the Runs tab (Bram)',
+      );
+    });
+    expect(chainMocks.run).toHaveBeenCalledTimes(2);
+    await waitFor(async () => {
+      const cora = await getArtifact(coraProduced.id);
+      expect(cora?.name).toBe('Cora');
+      expect(cora?.tags).toContain('module:Ember Crypt');
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 3 npc');
+    });
+  });
+
   it('reports batch progress to the app-wide dock while the chain runs', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });

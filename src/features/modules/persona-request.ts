@@ -1,47 +1,12 @@
-import { create } from 'zustand';
-
-import type { ArtifactKind, EntityKind, Id } from '@/domain';
+import type { ArtifactKind, EntityKind } from '@/domain';
 import { ENTITY_KINDS } from '@/domain';
 
 /**
- * "Generate with persona" request bridge (08-MODULE-DESIGNER M4-C): the
- * module reader asks the workspace persona panel for a prefilled run — the
- * panel lives on another route, so the request rides a zustand store
- * (mirrors the illustration-request pattern). The normal run pipeline, with
- * its autonomy setting, does the rest; the panel stamps the produced
- * artifact with `moduleTag` on finalize.
+ * Stub-kind constants and brief builders for the entity workflow
+ * (08-MODULE-DESIGNER M4-C). Single-entity generation itself lives in
+ * `entity-detail.ts` (in place, shared progress bar); the batch lives in the
+ * entity panel.
  */
-
-export interface PersonaBriefRequest {
-  /** Preferred persona slug ('npc-smith'…), resolved when personas load. */
-  personaSlug: string;
-  /** Stub kind of the entity (fallback persona match by producesKind). */
-  kind: StubKind;
-  /** The fully built brief (link name + context paragraphs + premise). */
-  brief: string;
-  /** Tag stamped on the produced artifact, e.g. `module:<title>`. */
-  moduleTag: string;
-  /** Campaign the run must start in (guard against stale requests). */
-  campaignId: Id;
-  /** Bumped on every request so repeat requests re-trigger the effect. */
-  requestedAt: number;
-}
-
-interface PersonaRequestStore {
-  request: PersonaBriefRequest | null;
-  requestPersona: (request: Omit<PersonaBriefRequest, 'requestedAt'>) => void;
-  clear: () => void;
-}
-
-export const usePersonaBriefRequest = create<PersonaRequestStore>((set) => ({
-  request: null,
-  requestPersona: (request) => {
-    set({ request: { ...request, requestedAt: Date.now() } });
-  },
-  clear: () => {
-    set({ request: null });
-  },
-}));
 
 /** Stub-able kinds — the entity kinds the generator records (08 §M4-C). */
 export const STUB_KINDS = ENTITY_KINDS;

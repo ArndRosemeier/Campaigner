@@ -428,7 +428,7 @@ export function ModuleReaderPage(): JSX.Element {
           contextParagraphs={moduleContextFor(stub.name, module)}
           premise={module.spine?.premise ?? ''}
           moduleTag={moduleTagFor(module.title)}
-          campaignId={campaignId}
+          campaign={campaign}
           recordedKind={entityKindFor(currentModule.entityKinds, stub.name)}
           onClose={() => {
             setStub(null);
