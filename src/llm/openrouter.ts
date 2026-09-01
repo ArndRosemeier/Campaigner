@@ -125,13 +125,15 @@ export async function fetchWithRetries(
  * no timeout, and the stream-stall watchdog only starts once headers exist) —
  * the "Generating… forever" failure mode. The request is aborted loudly after
  * `headersTimeoutMs`; the caller's abort signal keeps working for the body.
+ * Shared: chat/image retries AND the embeddings endpoint (a black-holed
+ * embedding request used to hang runEngine's retrieve/draft steps forever).
  */
 export const DEFAULT_HEADERS_TIMEOUT_MS = 60_000;
 
-async function fetchWithHeadersTimeout(
+export async function fetchWithHeadersTimeout(
   url: string,
   init: RequestInit & { signal?: AbortSignal | undefined },
-  headersTimeoutMs: number,
+  headersTimeoutMs: number = DEFAULT_HEADERS_TIMEOUT_MS,
 ): Promise<Response> {
   const controller = new AbortController();
   const onCallerAbort = (): void => {

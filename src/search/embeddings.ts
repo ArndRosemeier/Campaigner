@@ -2,6 +2,7 @@ import { db } from '@/db/db';
 import { getSettings } from '@/db/settingsRepo';
 import type { RuleChunk } from '@/domain';
 import { listAllChunks } from '@/db/chunkRepo';
+import { fetchWithHeadersTimeout } from '@/llm/openrouter';
 import { toastError } from '@/lib/toast';
 
 /**
@@ -46,14 +47,20 @@ interface EmbeddingResponse {
 
 async function requestEmbeddings(inputs: string[]): Promise<number[][]> {
   const settings = await getSettings();
-  const response = await fetch(OPENROUTER_EMBEDDINGS_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${settings.openRouterApiKey}`,
+  // Headers timeout: a black-holed embedding request used to hang the whole
+  // runEngine pipeline (retrieve/draft call searchRules) forever — the throw
+  // lands in tryEmbeddings, which falls back to keyword search (03-RETRIEVAL).
+  const response = await fetchWithHeadersTimeout(
+    OPENROUTER_EMBEDDINGS_URL,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${settings.openRouterApiKey}`,
+      },
+      body: JSON.stringify({ model: settings.embeddingModel, input: inputs }),
     },
-    body: JSON.stringify({ model: settings.embeddingModel, input: inputs }),
-  });
+  );
   if (!response.ok) {
     throw new Error(`embedding request failed (${String(response.status)})`);
   }
