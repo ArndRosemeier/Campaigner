@@ -129,3 +129,85 @@ describe('v1 → v4 migration', () => {
     await db.delete();
   });
 });
+
+describe('v5 → v6 migration', () => {
+  it('creates the modules table and backfills artifact.aliases to []', async () => {
+    // Build a v5-only database (before the Module Designer existed) with
+    // artifacts that have no `aliases` field, then close it.
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(5).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-0000000000a4',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      kind: 'note',
+      name: 'Pre-v6 note',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      imageIds: [],
+      coverImageId: null,
+      currentRevision: 1,
+      data: {},
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-0000000000a5',
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      kind: 'npc',
+      name: 'Pre-v6 npc',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      imageIds: [],
+      coverImageId: null,
+      currentRevision: 1,
+      data: { goals: '', methods: '', resources: '', ranks: [] },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-6 upgrade and creates
+    // the empty modules table.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const note = await db.artifacts.get('00000000-0000-4000-8000-0000000000a4');
+    const npc = await db.artifacts.get('00000000-0000-4000-8000-0000000000a5');
+    expect(note?.aliases).toEqual([]);
+    expect(npc?.aliases).toEqual([]);
+
+    const { artifactSchema, createModule } = await import('@/domain');
+    expect(artifactSchema.parse(note).aliases).toEqual([]);
+
+    // The new table accepts a module row built by the domain factory.
+    const firstModule = createModule({
+      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      title: 'First Module',
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'standard',
+    });
+    await db.modules.put(firstModule);
+    expect((await db.modules.get(firstModule.id))?.title).toBe('First Module');
+
+    await db.delete();
+  });
+});

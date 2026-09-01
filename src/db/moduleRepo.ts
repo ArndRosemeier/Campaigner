@@ -1,0 +1,70 @@
+import type { Id, Module, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
+import { moduleSchema } from '@/domain';
+import { db } from '@/db/db';
+import { NotFoundError } from '@/lib/errors';
+
+/**
+ * Module repo (08-MODULE-DESIGNER M4-A): CRUD plus `saveModule` (full-row
+ * validate + put). Modules are NOT revisioned — parts are individually
+ * regenerable, that is the undo. Status churn during generation goes through
+ * the same validated save so a half-written row can never persist.
+ */
+
+export async function getModule(id: Id): Promise<Module | undefined> {
+  return db.modules.get(id);
+}
+
+/** All modules of a campaign, newest first. */
+export async function listModulesByCampaign(campaignId: Id): Promise<Module[]> {
+  const rows = await db.modules.where('campaignId').equals(campaignId).toArray();
+  return rows.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Creates a module row (factory builds + validates). */
+export async function createModule(module: Module): Promise<Module> {
+  const valid = moduleSchema.parse({ ...module, updatedAt: Date.now() });
+  await db.modules.put(valid);
+  return valid;
+}
+
+/**
+ * The canonical save: full-row validate + put with a fresh `updatedAt`.
+ * Overwrites the row wholesale — callers must pass the complete module (read
+ * via `getModule`/live query or produced by `patchModule`).
+ */
+export async function saveModule(module: Module): Promise<Module> {
+  const valid = moduleSchema.parse({ ...module, updatedAt: Date.now() });
+  await db.modules.put(valid);
+  return valid;
+}
+
+/** Race-safe read-modify-write patch (statuses, parts, spine…). */
+export async function patchModule(id: Id, patch: ModulePatch): Promise<Module> {
+  return db.transaction('rw', db.modules, async () => {
+    const current = await db.modules.get(id);
+    if (current === undefined) throw new NotFoundError('Module', id);
+    return saveModule({ ...current, ...patch });
+  });
+}
+
+/** Replaces the approved spine (checkpoint edits) without touching parts. */
+export async function saveSpine(id: Id, spine: ModuleSpine): Promise<Module> {
+  return patchModule(id, { spine });
+}
+
+/** Replaces the part plan only (spine premise/themes kept). */
+export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module> {
+  return db.transaction('rw', db.modules, async () => {
+    const current = await db.modules.get(id);
+    if (current === undefined) throw new NotFoundError('Module', id);
+    if (current.spine === null) {
+      throw new Error('Cannot save a part plan on a module without a spine');
+    }
+    return saveModule({ ...current, spine: { ...current.spine, partPlan } });
+  });
+}
+
+/** Deletes a module row. Idempotent. */
+export async function deleteModule(id: Id): Promise<void> {
+  await db.modules.delete(id);
+}

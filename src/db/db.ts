@@ -6,6 +6,7 @@ import type {
   Campaign,
   ChunkEmbedding,
   Deliverable,
+  Module,
   Persona,
   PersonaRun,
   RuleChunk,
@@ -23,6 +24,9 @@ import type { Id } from '@/domain';
  * `imageIds`/`coverImageId`; runs gain `targetArtifactId`. Existing rows get
  * defaults in the upgrade function — existing version blocks are never
  * mutated.
+ *
+ * Version 6 (08-MODULE-DESIGNER M4-A): new `modules` table; artifacts gain
+ * `aliases: []`.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -35,6 +39,7 @@ export class CampaignerDB extends Dexie {
   personas!: Table<Persona, Id>;
   runs!: Table<PersonaRun, Id>;
   deliverables!: Table<Deliverable, Id>;
+  modules!: Table<Module, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -142,6 +147,29 @@ export class CampaignerDB extends Dexie {
         runs: 'id, campaignId, personaId, status, updatedAt',
         deliverables: 'id, campaignId',
         settings: 'id',
+      });
+    // M4-A (08-MODULE-DESIGNER): new `modules` table; artifacts gain the
+    // `aliases` list (wiki-link alternate names) — existing rows default to [].
+    this.version(6)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const artifacts = tx.table('artifacts');
+        await artifacts.toCollection().modify((artifact: Record<string, unknown>) => {
+          if (artifact.aliases === undefined) artifact.aliases = [];
+        });
       });
   }
 }

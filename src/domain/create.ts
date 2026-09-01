@@ -103,6 +103,8 @@ export interface CreateArtifactInput<K extends ArtifactKind = ArtifactKind> {
   kind: K;
   name: string;
   tags?: readonly string[];
+  /** Alternate names module wiki-links resolve against (M4-A). */
+  aliases?: readonly string[];
   summary?: string;
   body?: string;
   links?: readonly ArtifactLink[];
@@ -122,6 +124,7 @@ export function createArtifact(input: CreateArtifactInput): Artifact {
     kind: input.kind,
     name: input.name,
     tags: [...(input.tags ?? [])],
+    aliases: [...(input.aliases ?? [])],
     summary: input.summary ?? '',
     body: input.body ?? '',
     links: [...(input.links ?? [])],

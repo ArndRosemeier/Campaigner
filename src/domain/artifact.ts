@@ -53,6 +53,8 @@ const artifactBaseShape = {
   kind: artifactKindSchema,
   name: z.string().min(1),
   tags: z.array(z.string()),
+  /** Alternate names module wiki-links may resolve against (M4-A). */
+  aliases: z.array(z.string()),
   /** 1–3 sentences, shown in tree tooltips. */
   summary: z.string(),
   /** Markdown — the main free-text content. */
@@ -73,6 +75,8 @@ export interface ArtifactBase extends BaseEntity {
   kind: ArtifactKind;
   name: string;
   tags: string[];
+  /** Alternate names module wiki-links may resolve against (M4-A). */
+  aliases: string[];
   summary: string;
   body: string;
   links: ArtifactLink[];
@@ -273,6 +277,7 @@ export type Artifact = z.infer<typeof artifactSchema>;
 export interface ArtifactPatch {
   name?: string;
   tags?: string[];
+  aliases?: string[];
   summary?: string;
   body?: string;
   links?: ArtifactLink[];

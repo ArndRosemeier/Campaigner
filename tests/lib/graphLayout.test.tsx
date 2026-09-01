@@ -39,6 +39,7 @@ describe('layoutGraph', () => {
       campaignId,
       kind,
       name,
+      aliases: [],
       tags: [],
       summary: '',
       body: '',
