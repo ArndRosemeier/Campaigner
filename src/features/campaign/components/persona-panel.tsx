@@ -30,13 +30,14 @@ import { toastError, toastSuccess } from '@/lib/toast';
 import { Textarea } from '@/components/ui/textarea';
 import { HelpButton } from '@/help/HelpButton';
 import { ROUTES, artifactPath } from '@/app/routes';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { getArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, Id, Persona, PersonaRun } from '@/domain';
 import { runEngine } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
+import { usePersonaBriefRequest } from '@/features/modules/persona-request';
 import { ImageThumb } from '@/features/images/image-thumb';
 import { WritersRoom } from '@/features/campaign/components/writers-room';
 
@@ -45,6 +46,35 @@ const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
   { value: 'review', label: 'Review' },
   { value: 'auto', label: 'Auto' },
 ];
+
+/**
+ * Watches a run started from a module request (M4-C) and stamps the produced
+ * artifact with the `module:<title>` tag when the run finalizes. Event-driven
+ * via runEngine (no polling); unsubscribes on the first terminal status.
+ */
+function tagRunArtifact(runId: Id, tag: string): void {
+  const unsubscribe = runEngine.on((event) => {
+    if (event.kind !== 'run' || event.runId !== runId) return;
+    if (event.status === 'completed') {
+      unsubscribe();
+      void (async () => {
+        try {
+          const run = await getRun(runId);
+          const artifactId = run?.resultArtifactId ?? null;
+          if (artifactId === null) return;
+          const artifact = await getArtifact(artifactId);
+          if (artifact !== undefined && !artifact.tags.includes(tag)) {
+            await updateArtifact(artifactId, { tags: [...artifact.tags, tag] });
+          }
+        } catch (error) {
+          toastError('Could not tag the module artifact', error);
+        }
+      })();
+    } else if (event.status === 'failed' || event.status === 'cancelled') {
+      unsubscribe();
+    }
+  });
+}
 
 const STATUS_LABELS: Record<PersonaRun['status'], string> = {
   running: 'running',
@@ -79,6 +109,10 @@ export function PersonaPanel({
   const requestArtifactId = useIllustrationRequest((state) => state.artifactId);
   const requestedAt = useIllustrationRequest((state) => state.requestedAt);
   const clearRequest = useIllustrationRequest((state) => state.clear);
+  const moduleRequest = usePersonaBriefRequest((state) => state.request);
+  const clearModuleRequest = usePersonaBriefRequest((state) => state.clear);
+  /** Run started from a module request → tag its artifact on finalize. */
+  const [moduleTagPending, setModuleTagPending] = useState<string | null>(null);
 
   const selectedPersona = personas?.find((persona) => persona.id === personaId);
   const isReview = selectedPersona?.mode === 'review';
@@ -97,8 +131,30 @@ export function PersonaPanel({
     clearRequest();
   }, [requestArtifactId, requestedAt, personas, clearRequest]);
 
+  // "Generate with persona" from the module reader (M4-C): prefill the
+  // requesting kind's persona + the built brief and focus the Assistant tab.
+  // The user's normal run pipeline (autonomy setting, checkpoints) does the
+  // rest; the produced artifact is tagged `module:<title>` on finalize.
+  useEffect(() => {
+    if (moduleRequest === null) return;
+    if (moduleRequest.campaignId !== campaign.id) {
+      clearModuleRequest();
+      return;
+    }
+    const persona =
+      personas?.find((candidate) => candidate.slug === moduleRequest.personaSlug) ??
+      personas?.find((candidate) => candidate.producesKind === moduleRequest.kind);
+    if (persona === undefined) return; // personas not loaded yet
+    setPersonaId(persona.id);
+    setBrief(moduleRequest.brief);
+    setModuleTagPending(moduleRequest.moduleTag);
+    setTab('assistant');
+    clearModuleRequest();
+  }, [moduleRequest, personas, campaign.id, clearModuleRequest]);
+
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
+    const tag = moduleTagPending;
     if (needsTarget) {
       if (targetArtifactId === '') return;
       const runId = await runEngine.startRun({
@@ -110,6 +166,7 @@ export function PersonaPanel({
         targetArtifactId,
       });
       setActiveRunId(runId);
+      if (tag !== null) tagRunArtifact(runId, tag);
       return;
     }
     const runId = await runEngine.startRun({
@@ -120,6 +177,7 @@ export function PersonaPanel({
       pinnedChunkIds: pinned.map((chunk) => chunk.id),
     });
     setActiveRunId(runId);
+    if (tag !== null) tagRunArtifact(runId, tag);
   }
 
   return (

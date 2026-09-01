@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
   ContextMenu,
@@ -81,6 +82,8 @@ export function CampaignTree({
   const [closedKinds, setClosedKinds] = useState<ReadonlySet<ArtifactKind>>(new Set());
   const [renameTarget, setRenameTarget] = useState<Artifact | null>(null);
   const [renameValue, setRenameValue] = useState('');
+  /** "Add old name as alias" (default on) so module wiki-links keep resolving. */
+  const [renameKeepAlias, setRenameKeepAlias] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<Artifact | null>(null);
   const navigate = useNavigate();
 
@@ -120,7 +123,15 @@ export function CampaignTree({
     setRenameTarget(null);
     if (name === '' || name === target.name) return; // never commit an empty name
     try {
-      await artifactRepo.updateArtifact(target.id, { name });
+      // Renaming (M4-A): offer keeping the old name as an alias so existing
+      // module text keeps resolving — never rewrite the text itself. The new
+      // name absorbs any alias that already spells it (no redundant alias).
+      const withOldName =
+        renameKeepAlias && !target.aliases.some((alias) => alias.toLowerCase() === target.name.toLowerCase())
+          ? [...target.aliases, target.name]
+          : target.aliases;
+      const aliases = withOldName.filter((alias) => alias.toLowerCase() !== name.toLowerCase());
+      await artifactRepo.updateArtifact(target.id, { name, aliases });
       toastSuccess('Renamed');
     } catch (error) {
       toastError('Rename failed', error);
@@ -279,6 +290,15 @@ export function CampaignTree({
                   setRenameValue(event.target.value);
                 }}
               />
+              <label className="flex items-center gap-2 text-sm" data-testid="rename-alias">
+                <Checkbox
+                  checked={renameKeepAlias}
+                  onCheckedChange={(checked) => {
+                    setRenameKeepAlias(checked);
+                  }}
+                />
+                Add “{renameTarget.name}” as alias (module links keep resolving)
+              </label>
               <DialogFooter>
                 <Button
                   type="button"
