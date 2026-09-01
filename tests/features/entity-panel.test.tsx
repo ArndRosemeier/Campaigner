@@ -23,6 +23,11 @@ import { EntityPanel, useModuleEntities } from '@/features/modules/entity-panel'
 import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { useProgressStore } from '@/lib/progress';
+
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+
+const { toastError } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
 import {
   type ChainState,
   type ChainStepInput,
@@ -135,19 +140,19 @@ function EntriesHarness({
   );
 }
 
-function completedChainState(produced: Artifact): ChainState {
+function completedChainState(kaelProduced: Artifact, bramProduced: Artifact): ChainState {
   return {
     steps: [
       {
         runId: 'run-kael',
         status: 'completed',
-        artifactId: produced.id,
+        artifactId: kaelProduced.id,
         title: 'Detail: Kael',
       },
       {
         runId: 'run-bram',
         status: 'completed',
-        artifactId: produced.id,
+        artifactId: bramProduced.id,
         title: 'Detail: Bram',
       },
     ],
@@ -191,6 +196,7 @@ describe('EntityPanel', () => {
     chainMocks.getState.mockReset();
     chainMocks.listeners.length = 0;
     useProgressStore.getState().reset();
+    toastErrorMock.mockClear();
   });
   afterEach(cleanup);
 
@@ -258,8 +264,13 @@ describe('EntityPanel', () => {
       kind: 'npc',
       name: 'Kael the Watcher',
     });
+    const bramProduced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Bram of the Tide',
+    });
 
-    const chainState = completedChainState(produced);
+    const chainState = completedChainState(produced, bramProduced);
     chainMocks.run.mockResolvedValue(chainState);
     chainMocks.getState.mockReturnValue(chainState);
 
@@ -309,6 +320,123 @@ describe('EntityPanel', () => {
       const tagged = await getArtifact(produced.id);
       expect(tagged?.tags).toContain('module:Ember Crypt');
     });
+    // Drain the batch to its end so no trailing state update (the
+    // finally-block setBatching) leaks into the next test.
+    await waitFor(() => {
+      expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 2 npc');
+    });
+    // The artifact is aligned to the EXACT entity name so [[Kael]] resolves;
+    // the model's invented name survives as an alias.
+    const aligned = await getArtifact(produced.id);
+    expect(aligned?.name).toBe('Kael');
+    expect(aligned?.aliases).toContain('Kael the Watcher');
+    const bramAligned = await getArtifact(bramProduced.id);
+    expect(bramAligned?.name).toBe('Bram');
+  });
+
+  it('renames nothing when the model already used the exact entity name', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await seedBuiltInPersonas();
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const produced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Kael',
+    });
+    const bramProduced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Bram',
+    });
+
+    chainMocks.run.mockResolvedValue(completedChainState(produced, bramProduced));
+    chainMocks.getState.mockReturnValue(completedChainState(produced, bramProduced));
+
+    render(
+      <EntityPanel
+        module={moduleFixture(campaign.id)}
+        artifacts={[mira]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onScrollTo={vi.fn()}
+      />,
+    );
+    // Everything the batch does happens inside act — wait for the batch to
+    // END (button label restores) so the finally-block update is covered too.
+    await act(async () => {
+      await user.click(screen.getByTestId('batch-npc'));
+      await waitFor(() => {
+        expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 2 npc');
+      });
+    });
+    const saved = await getArtifact(produced.id);
+    expect(saved?.name).toBe('Kael');
+    expect(saved?.aliases).toEqual([]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  });
+
+  it('reports entities whose runs failed instead of finishing silently', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await seedBuiltInPersonas();
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const bramProduced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Bram of the Tide',
+    });
+
+    // First chain: Kael's run fails. Second chain (the loop retries with the
+    // remaining names): Bram completes.
+    chainMocks.run
+      .mockResolvedValueOnce({
+        steps: [
+          { runId: 'run-kael', status: 'failed', artifactId: null, title: 'Detail: Kael' },
+        ],
+        currentIndex: 1,
+        status: 'failed',
+      })
+      .mockResolvedValueOnce({
+        steps: [
+          {
+            runId: 'run-bram',
+            status: 'completed',
+            artifactId: bramProduced.id,
+            title: 'Detail: Bram',
+          },
+        ],
+        currentIndex: 1,
+        status: 'completed',
+      });
+
+    render(
+      <EntityPanel
+        module={moduleFixture(campaign.id)}
+        artifacts={[mira]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onScrollTo={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByTestId('batch-npc'));
+
+    // Kael is named loudly; Bram was still generated on the retry chain.
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        '1 of 2 npcs failed to generate — see the Runs tab (Kael)',
+      );
+    });
+    expect(chainMocks.run).toHaveBeenCalledTimes(2);
+    await waitFor(async () => {
+      const saved = await getArtifact(bramProduced.id);
+      expect(saved?.name).toBe('Bram');
+      expect(saved?.tags).toContain('module:Ember Crypt');
+    });
+    // Drain to the batch end — no trailing updates for the next test.
+    await waitFor(() => {
+      expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 2 npc');
+    });
   });
 
   it('reports batch progress to the app-wide dock while the chain runs', async () => {
@@ -320,6 +448,11 @@ describe('EntityPanel', () => {
       campaignId: campaign.id,
       kind: 'npc',
       name: 'Kael the Watcher',
+    });
+    const bramProduced = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Bram of the Tide',
     });
 
     // Deferred chain: the batch hangs until the test releases it, so the
@@ -371,7 +504,7 @@ describe('EntityPanel', () => {
     // Release the chain: completed steps advance the bar; when the batch
     // ends the dock disappears and the store is drained.
     act(() => {
-      releaseChain(completedChainState(produced));
+      releaseChain(completedChainState(produced, bramProduced));
     });
     await waitFor(() => {
       expect(screen.queryByTestId('progress-dock')).not.toBeInTheDocument();

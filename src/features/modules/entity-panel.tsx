@@ -194,6 +194,7 @@ export function EntityPanel({
       }
       let remaining: EntityEntry[] = targets;
       const producedIds: Id[] = [];
+      const failedEntities: string[] = [];
       // One chain over all targets; chain semantics keep completed steps and
       // show failed runs in the Runs tab. On a failed step the batch
       // CONTINUES with the remaining names (fresh chain).
@@ -209,8 +210,23 @@ export function EntityPanel({
           autonomy: 'auto' as const,
         }));
         const result = await chainRunner.run(campaign, personas, steps, 'auto', []);
-        for (const step of result.steps) {
-          if (step.artifactId !== null) producedIds.push(step.artifactId);
+        // Align produced artifacts with their entity (index-parallel): the
+        // wiki-link resolves by EXACT name, so an artifact the model named
+        // "Kael Ashbound…" would never link back to [[Kael]] — enforce the
+        // entity name and keep the model's name as an alias.
+        for (const [index, step] of result.steps.entries()) {
+          const entry = remaining[index];
+          if (entry === undefined) continue;
+          if (step.status === 'completed' && step.artifactId !== null) {
+            producedIds.push(step.artifactId);
+            try {
+              await alignEntityName(step.artifactId, entry.name);
+            } catch (error) {
+              toastError(`Could not align the artifact name for "${entry.name}"`, error);
+            }
+          } else {
+            failedEntities.push(entry.name);
+          }
         }
         completed += result.steps.filter((step) => step.status === 'completed').length;
         progressUpdate(jobId, { progress: completed / total });
@@ -234,6 +250,14 @@ export function EntityPanel({
           toastError('Could not tag a produced artifact', error);
         }
       }
+      // Failed entities are loud: the bar finishing must not look like
+      // success when some runs died (their detail lives in the Runs tab).
+      if (failedEntities.length > 0) {
+        toastError(
+          `${String(failedEntities.length)} of ${String(total)} ${KIND_PLURALS[kind]} failed to generate — ` +
+            `see the Runs tab (${failedEntities.join(', ')})`,
+        );
+      }
     } catch (error) {
       toastError('Batch generation failed', error);
     } finally {
@@ -243,6 +267,24 @@ export function EntityPanel({
       setBatching(null);
     }
   }
+
+/**
+ * Renames the produced artifact to the EXACT entity name (wiki-links resolve
+ * by name/alias), keeping the model's invented name as an alias so nothing
+ * authored is lost.
+ */
+async function alignEntityName(artifactId: Id, entityName: string): Promise<void> {
+  const artifact = await artifactRepo.getArtifact(artifactId);
+  if (artifact === undefined) return;
+  if (artifact.name.trim().toLowerCase() === entityName.trim().toLowerCase()) return;
+  const model_name = artifact.name;
+  const aliases = artifact.aliases.some(
+    (alias) => alias.trim().toLowerCase() === model_name.trim().toLowerCase(),
+  )
+    ? artifact.aliases
+    : [...artifact.aliases, model_name];
+  await artifactRepo.updateArtifact(artifactId, { name: entityName, aliases });
+}
 
   return (
     <aside

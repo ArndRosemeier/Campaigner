@@ -85,6 +85,9 @@ export function buildEntityBrief(
     `Detail the entity "${name}" for this module. It appears in the module text below — match it exactly by name.`,
     contextParagraphs === '' ? null : `Where it is mentioned:\n\n${contextParagraphs}`,
     premise === '' ? null : `Module premise for context:\n\n${premise}`,
+    // The artifact is linked back from the module's wiki-link, which resolves
+    // by exact name — the name field must be verbatim; epithets go in the body.
+    `The artifact "name" field must be exactly "${name}" — verbatim, with no epithets, titles, or additions (put those in the body).`,
     'Do not invent unrelated sub-plots; make this entity serve the module text.',
   ]
     .filter((part) => part !== null)
