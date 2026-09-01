@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import type { JSX } from 'react';
-import { EyeIcon, PencilIcon } from 'lucide-react';
+import { PencilIcon } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -72,7 +72,12 @@ export function NpcCard({
             {data.voiceNotes}
           </p>
         )}
-        {data.secrets !== '' && <SecretBlock secret={data.secrets} />}
+        {data.secrets !== '' && (
+          <p>
+            <span className="font-medium">Secret: </span>
+            {data.secrets}
+          </p>
+        )}
         {data.statBlock !== null && (
           <div className="text-base">
             <StatsCard statBlock={data.statBlock} name={npc.name} />
@@ -92,26 +97,6 @@ export function Portrait({ artifact }: { artifact: Artifact }): JSX.Element | nu
       alt={`Portrait of ${artifact.name}`}
       className="size-12 rounded-md object-cover"
     />
-  );
-}
-
-export function SecretBlock({ secret }: { secret: string }): JSX.Element {
-  const [revealed, setRevealed] = useState(false);
-  return (
-    <button
-      type="button"
-      className={`relative flex items-center gap-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-left ${
-        revealed ? '' : 'select-none blur-sm'
-      }`}
-      aria-label={revealed ? 'Secret (click to hide)' : 'Secret (click to reveal)'}
-      onClick={() => {
-        setRevealed((value) => !value);
-      }}
-      data-testid="play-secret"
-    >
-      <EyeIcon aria-hidden className="size-4 shrink-0 blur-0" />
-      <span className={revealed ? '' : 'blur-sm'}>{secret}</span>
-    </button>
   );
 }
 

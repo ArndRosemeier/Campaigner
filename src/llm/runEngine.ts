@@ -634,6 +634,16 @@ export class RunEngine {
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
       buildStatblockCitationSection(context.statblockTitles),
+      // M4-C: secrets and stat blocks are the generator's call, not a
+      // requirement — not every character has a secret, and contacts or
+      // merchants don't need stats.
+      kind === 'npc'
+        ? [
+            'Field guidance for this NPC:',
+            '- "secrets": fill ONLY when this character genuinely has a secret that matters to the story; otherwise use an empty string. Never invent one for its own sake — the GM sees everything anyway.',
+            '- "needsStatBlock": true only when the character is likely to fight or their stats matter at the table (adversaries, rivals, guards, bosses); false for contacts, merchants, innkeepers, informants, quest-givers.',
+          ].join('\n')
+        : null,
       `Reply with ONLY a JSON object with exactly these fields: ${JSON.stringify(contract.keys)}`,
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     ]
@@ -717,6 +727,20 @@ export class RunEngine {
     extraInstruction: string,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     debugLog('run', 'statblock start');
+    // M4-C: the draft decides whether this character needs stats at all —
+    // generating a full stat block for a contact or merchant is wasted
+    // effort. The step is marked skipped (visible in the run row).
+    const draftDecision = this.effectiveDraft(steps);
+    if (draftDecision?.needsStatBlock === false) {
+      debugLog('run', 'statblock skipped: draft marked needsStatBlock=false');
+      return {
+        step: this.finishStep(
+          steps[stepIndex],
+          { skipped: 'the draft marked this character as not needing a stat block' },
+          'skipped',
+        ),
+      };
+    }
     const settings = await getSettings();
     const draft = this.effectiveDraft(steps);
     const levelHint = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';

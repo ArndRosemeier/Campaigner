@@ -6,6 +6,7 @@ import {
   BanIcon,
   CheckIcon,
   CircleDotIcon,
+  MinusIcon,
   PencilIcon,
   PlayIcon,
   RotateCcwIcon,
@@ -585,6 +586,9 @@ function StepIcon({ status }: { status: PersonaRun['steps'][number]['status'] })
   }
   if (status === 'rejected') {
     return <CircleDotIcon aria-hidden className="size-3.5 text-destructive" />;
+  }
+  if (status === 'skipped') {
+    return <MinusIcon aria-hidden className="size-3.5 text-muted-foreground" />;
   }
   return <CircleDotIcon aria-hidden className="size-3.5 text-muted-foreground" />;
 }

@@ -41,6 +41,7 @@ const DRAFT = {
   motivation: 'Territory',
   secrets: 'None',
   voiceNotes: 'Snarls',
+  needsStatBlock: true,
 };
 
 const STATBLOCK = {

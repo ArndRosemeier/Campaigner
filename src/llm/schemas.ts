@@ -72,6 +72,9 @@ export const npcDraftSchema = z.object({
   motivation: z.string(),
   secrets: z.string(),
   voiceNotes: z.string(),
+  /** M4-C: the draft decides — false skips the statblock step entirely
+   * (contacts/merchants/innkeepers don't need one; wasted effort). */
+  needsStatBlock: z.boolean(),
 });
 
 export type NpcDraft = z.infer<typeof npcDraftSchema>;

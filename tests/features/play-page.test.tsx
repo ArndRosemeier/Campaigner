@@ -128,12 +128,10 @@ describe('play mode', () => {
     expect(await screen.findByRole('heading', { name: 'Old Tower' }, { timeout: 5_000 })).toBeInTheDocument();
 
     // NPCs here: all fields render directly (M4-C — no "More" expander);
-    // the secret is click-to-reveal.
+    // secrets are plain text — this is a master tool.
     const npcCard = screen.getByTestId('play-npc-card');
     expect(within(npcCard).getByText('Cold, precise.')).toBeInTheDocument();
-    const secret = within(npcCard).getByTestId('play-secret');
-    expect(secret).toHaveTextContent('harbourmaster');
-    await user.click(secret); // reveal
+    expect(within(npcCard).getByText(/harbourmaster/)).toBeInTheDocument();
 
     // Encounters: resolved stat blocks render directly (NPC link).
     const encounterCard = screen.getByTestId('play-encounter-card');

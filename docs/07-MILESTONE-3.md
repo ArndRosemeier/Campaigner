@@ -226,9 +226,12 @@ Three zones:
 2. **Context grid** (main): everything **one link-hop** from the focus
    (both directions — incoming and outgoing links), grouped by kind:
    - *NPCs here*: card = portrait, name, role, one-line summary;
-     personality/voiceNotes/motivation rendered directly (M4-C: no "More"
-     expander — the reader scrolls); **secrets rendered as click-to-reveal
-     blurred blocks** (screen-peek safe); the stat-block card renders inline.
+     personality/voiceNotes/motivation/secrets rendered directly (M4-C: no
+     "More" expander — the reader scrolls, and this is a master tool: secrets
+     display plainly, no enforced blur/reveal); the stat-block card renders
+     inline when the character has one (M4-C: the draft decides
+     `needsStatBlock` — contacts/merchants skip it entirely, the run row
+     shows the step as skipped).
    - *Encounters*: card with difficulty badge; resolved stat blocks rendered
      directly (reuse M3-B panel).
    - *Connected locations*: compact cards; **clicking one moves the focus**

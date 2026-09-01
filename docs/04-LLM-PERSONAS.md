@@ -103,8 +103,12 @@ Steps for every persona (M1):
 
 `NpcDraftSchema`: `{ name, summary, role, appearance, personality, motivation,
 secrets, voiceNotes, suggestedTags: string[], body }` — all strings; `body` is
-markdown for the artifact body. (Location/Faction draft schemas mirror their
-`data` fields; define them in M1 too, they're cheap.)
+markdown for the artifact body. M4-C amendments: `secrets` is the generator's
+choice, not a requirement (empty string when the character has none — never
+invented for its own sake), and `needsStatBlock: boolean` lets the draft skip
+the statblock step entirely for characters whose stats don't matter at the
+table (contacts, merchants, innkeepers). (Location/Faction draft schemas
+mirror their `data` fields; define them in M1 too, they're cheap.)
 
 ### Autonomy semantics
 

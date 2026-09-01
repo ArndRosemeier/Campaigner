@@ -48,6 +48,7 @@ const VALID_DRAFT = {
   motivation: 'Prove her elixirs work.',
   secrets: 'She is out of the good reagents.',
   voiceNotes: 'Fast, cackling.',
+  needsStatBlock: true,
 };
 
 const VALID_STATBLOCK = {

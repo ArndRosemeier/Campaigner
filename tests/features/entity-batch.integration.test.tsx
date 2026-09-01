@@ -98,6 +98,7 @@ const draft = {
   motivation: 'Keep the crypt sealed.',
   secrets: 'He heard the bell beneath the sea.',
   voiceNotes: 'Short sentences; counts exits while speaking.',
+  needsStatBlock: true,
 };
 
 const statblock = {

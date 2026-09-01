@@ -17,7 +17,14 @@ export const runStatusSchema = z.enum([
 
 export type RunStatus = z.infer<typeof runStatusSchema>;
 
-export const runStepStatusSchema = z.enum(['pending', 'running', 'done', 'approved', 'rejected']);
+export const runStepStatusSchema = z.enum([
+  'pending',
+  'running',
+  'done',
+  'approved',
+  'rejected',
+  'skipped',
+]);
 
 export type RunStepStatus = z.infer<typeof runStepStatusSchema>;
 
