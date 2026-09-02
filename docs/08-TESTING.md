@@ -103,6 +103,10 @@ test) · ❌ gap.
 | Quick-find (Ctrl+K): artifact pick, rule preview/pin | `play-page.test`, `deliverables-page.test`, `ui-smoke.test` | ✅ |
 | Graph page: layout, click-through | `graphLayout.test` | ✅ |
 | Play page: focus, context grid, scenes, quick log | `play-page.test` | ✅ |
+| Table surface (M5-D): player-safe DOM, drag/tap, HP ownership writes, initiative roll/prune/restore, downed overlay, stage reset | `battle-surface.test` | ✅ |
+| Battle engine goldens (M5-B): HP ownership split, initiative sort/prune/adjust, veil coverage/resize, grid snap, staging-ground spawn, gesture gates | `battle-engine.test` | ✅ |
+| Battle persistence (M5-B): ensureBattle lazy create, normalize-on-write, scrub-on-delete, v8→v9 migration | `battleRepo.test`, `migration.test` | ✅ |
+| Battle seeding (M5-C): roster expansion (npc-ref/inline/rulebook/statless), map resolution, PC auto-include, Run-battle button | `battleSeed.test` | ✅ |
 | Deliverables: outline editing, seed-from-forge | `deliverables-page.test` | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, danger zone | `settings-page.test` | ✅ |

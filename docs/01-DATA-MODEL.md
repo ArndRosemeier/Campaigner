@@ -356,6 +356,27 @@ export class CampaignerDB extends Dexie {
         settings:   'id',
       })
       .upgrade(async (tx) => { /* imageIds [], coverImageId null, targetArtifactId null */ });
+
+    // M5-B (09-MILESTONE-5): new battles table — one live battle per session
+    // (id, campaignId, sessionId). Version 9's upgrade backfills the M5-C
+    // fields the schema now expects: encounter artifacts gain
+    // `mapImageId: null` and images gain `role: 'artwork'` (map-role images
+    // take a 4096px intake cap and are the only battlemap pickers offer).
+    this.version(9).stores({
+      campaigns:  'id, name',
+      artifacts:  'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions:  'id, artifactId, [artifactId+revision]',
+      images:     'id, campaignId',
+      rulebooks:  'id, system, status',
+      chunks:     'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas:   'id, &slug',
+      runs:       'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules:    'id, campaignId, updatedAt',
+      battles:    'id, campaignId, sessionId',
+      settings:   'id',
+    });
   }
 }
 export const db = new CampaignerDB();
