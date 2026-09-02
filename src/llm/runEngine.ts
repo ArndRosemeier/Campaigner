@@ -504,11 +504,13 @@ export class RunEngine {
 
     const controller = new AbortController();
     this.controllers.set(runId, controller);
+    let activeStepName: StepName | null = null;
 
     try {
       for (let i = startIndex; i < kinds.length; i += 1) {
         const name = kinds[i];
         if (name === undefined) break;
+        activeStepName = name;
         if (this.cancelRequested.has(runId)) {
           await updateRun(runId, { status: 'cancelled' });
           this.emit({ kind: 'run', runId, status: 'cancelled' });
@@ -601,6 +603,9 @@ export class RunEngine {
       ) {
         await updateRun(runId, { status: 'cancelled' });
         this.emit({ kind: 'run', runId, status: 'cancelled' });
+      } else if (input.persona.mode === 'encounter' && activeStepName !== null) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`Encounter step "${activeStepName}" failed: ${message}`, { cause: error });
       } else {
         throw error;
       }
@@ -1430,6 +1435,14 @@ export class RunEngine {
     const selected = keep[0];
     if (selected === undefined || !candidates.includes(selected)) {
       throw new Error('Selected battlemap is not a candidate from this run');
+    }
+    // Map approval is the last human boundary before finalize. Validate every
+    // prerequisite here so a corrupt/rejected earlier step stays reviewable
+    // instead of failing asynchronously after the user clicks Use map.
+    this.effectiveEncounterBrief(run.steps);
+    this.effectiveEncounterLayout(run.steps);
+    if ((await getImage(selected)) === undefined) {
+      throw new Error('The selected battlemap image no longer exists; regenerate the map candidates');
     }
     await this.updateStep(runId, stepIndex, {
       userEdit: { keep: [selected] },

@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { getImage } from '@/db/imageRepo';
-import { getRun } from '@/db/runRepo';
+import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { coarseStructure } from '@/llm/encounterVision';
 import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
@@ -196,6 +196,28 @@ describe('Encounter Cartographer run', () => {
     const run = await getRun(runId);
     expect(run?.status).toBe('awaiting_user');
     expect(run?.steps.at(-1)?.status).toBe('done');
+  });
+
+  it('checks brief/layout prerequisites again when the user approves a map', async () => {
+    const { campaign, cartographer } = await setup();
+    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    const candidates = await approveUntilPick(runId, runInput);
+    const run = await getRun(runId);
+    if (run === undefined) throw new Error('run missing');
+    await updateRun(runId, {
+      steps: run.steps.map((step) =>
+        step.name === 'layout' ? { ...step, output: {} } : step,
+      ),
+    });
+
+    await expect(runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput)).rejects.toThrow(
+      'Encounter layout step has no valid approved output',
+    );
+    const after = await getRun(runId);
+    expect(after?.status).toBe('awaiting_user');
+    expect(after?.steps.find((step) => step.name === 'pick')?.userEdit).toBeNull();
   });
 
   it('auto autonomy selects candidate one and completes without a pick pause', async () => {
