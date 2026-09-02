@@ -13,6 +13,7 @@ import type {
 import { useImageUrl } from '@/features/images/use-image-url';
 import { MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
+import { RunBattleButton } from '@/features/play/run-battle';
 
 /**
  * The read-only Session-Mode cards (07-MILESTONE-3 M3-C), extracted so the
@@ -127,11 +128,10 @@ export function EncounterCard({
             {data.levelHint}
           </Badge>
         )}
-        {onOpenEditor !== undefined && (
-          <div className="ml-auto">
-            <EditorJump artifact={encounter} onOpenEditor={onOpenEditor} />
-          </div>
-        )}
+        <div className="ml-auto flex items-center gap-1.5">
+          <RunBattleButton campaignId={encounter.campaignId} encounter={encounter} />
+          {onOpenEditor !== undefined && <EditorJump artifact={encounter} onOpenEditor={onOpenEditor} />}
+        </div>
       </div>
       {encounter.summary !== '' && (
         <p className="text-sm break-words text-muted-foreground">{encounter.summary}</p>

@@ -19,6 +19,7 @@ import {
 } from '@/domain';
 import { Badge } from '@/components/ui/badge';
 import { HelpButton } from '@/help/HelpButton';
+import { RunBattleButton } from '@/features/play/run-battle';
 import { buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -244,6 +245,9 @@ export function ArtifactEditor({
             rev {artifact.currentRevision}
           </Badge>
           <RevisionDropdown artifactId={artifact.id} onOpen={setRevisionView} />
+          {artifact.kind === 'encounter' && (
+            <RunBattleButton campaignId={artifact.campaignId} encounter={artifact} />
+          )}
           <HelpButton topic="editor" label="artifact editor" className="ml-auto" />
           <span
             data-testid="save-state"

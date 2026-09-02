@@ -1,11 +1,11 @@
 import { useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ImageIcon, PlusIcon, SparklesIcon, StarIcon, Trash2Icon } from 'lucide-react';
+import { ImageIcon, MapIcon, PlusIcon, SparklesIcon, StarIcon, Trash2Icon } from 'lucide-react';
 
 import { artifactRepo } from '@/db';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
-import { createImage, listImagesByIds } from '@/db/imageRepo';
+import { createImage, listImagesByIds, setImageRole } from '@/db/imageRepo';
 import type { Artifact, Id, StoredImage } from '@/domain';
 import { Button } from '@/components/ui/button';
 import {
@@ -76,6 +76,67 @@ export function ImagesSection({ artifact }: { artifact: Artifact }): JSX.Element
       await artifactRepo.updateArtifact(artifact.id, { coverImageId: imageId });
     } catch (error) {
       toastError('Could not set cover image', error);
+    }
+  }
+
+  const isEncounter = artifact.kind === 'encounter';
+  const mapImageId = isEncounter && artifact.data.mapImageId !== null ? artifact.data.mapImageId : null;
+  const mapUploadRef = useRef<HTMLInputElement | null>(null);
+
+  /** Uploads a battlemap: intake keeps 4096px (role 'map'), then stamps the
+   * encounter's `mapImageId` (M5-C). */
+  async function handleMapFiles(files: FileList | null): Promise<void> {
+    if (files === null || artifact.kind !== 'encounter') return;
+    const file = Array.from(files).find((entry) => entry.type.startsWith('image/'));
+    if (file === undefined) return;
+    setBusy(true);
+    try {
+      const intake = await intakeImage(file, { role: 'map' });
+      const stored = await createImage({
+        campaignId: artifact.campaignId,
+        blob: intake.blob,
+        mimeType: intake.mimeType,
+        width: intake.width,
+        height: intake.height,
+        source: 'uploaded',
+        role: 'map',
+      });
+      await artifactRepo.updateArtifact(artifact.id, {
+        imageIds: [...artifact.imageIds, stored.id],
+        coverImageId: artifact.coverImageId ?? stored.id,
+        data: { ...artifact.data, mapImageId: stored.id },
+      });
+      toastSuccess('Battlemap added');
+    } catch (error) {
+      toastError('Battlemap upload failed', error);
+    } finally {
+      setBusy(false);
+      if (mapUploadRef.current !== null) mapUploadRef.current.value = '';
+    }
+  }
+
+  async function setBattlemapNull(): Promise<void> {
+    if (artifact.kind !== 'encounter') return;
+    try {
+      await artifactRepo.updateArtifact(artifact.id, {
+        data: { ...artifact.data, mapImageId: null },
+      });
+    } catch (error) {
+      toastError('Could not clear the battlemap', error);
+    }
+  }
+
+  /** Uses an existing gallery image as the battlemap (promotes role 'map'). */
+  async function setBattlemap(imageId: Id): Promise<void> {
+    if (artifact.kind !== 'encounter') return;
+    try {
+      await setImageRole(imageId, 'map');
+      await artifactRepo.updateArtifact(artifact.id, {
+        data: { ...artifact.data, mapImageId: imageId },
+      });
+      toastSuccess('Battlemap set');
+    } catch (error) {
+      toastError('Could not set the battlemap', error);
     }
   }
 
@@ -158,6 +219,59 @@ export function ImagesSection({ artifact }: { artifact: Artifact }): JSX.Element
         </p>
       )}
 
+      {isEncounter && (
+        <div className="flex flex-col gap-1.5 rounded-md border p-2" data-testid="battlemap-section">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-medium">Battlemap</h3>
+            <div className="flex gap-1.5">
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  mapUploadRef.current?.click();
+                }}
+                disabled={busy}
+                data-testid="upload-battlemap"
+              >
+                <MapIcon aria-hidden data-icon="inline-start" />
+                Upload battlemap
+              </Button>
+              {mapImageId !== null && (
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  className="text-destructive"
+                  onClick={() => {
+                    void setBattlemapNull();
+                  }}
+                  data-testid="clear-battlemap"
+                >
+                  Clear
+                </Button>
+              )}
+            </div>
+          </div>
+          {mapImageId === null ? (
+            <p className="text-xs text-muted-foreground">
+              No battlemap — the battle runs on a viewport board until one is set.
+            </p>
+          ) : (
+            <p className="text-xs text-muted-foreground">
+              The battlemap seeds the table surface (map-role images keep up to 4096px).
+            </p>
+          )}
+          <input
+            ref={mapUploadRef}
+            type="file"
+            accept="image/*"
+            className="hidden"
+            onChange={(event) => {
+              void handleMapFiles(event.target.files);
+            }}
+          />
+        </div>
+      )}
+
       <Dialog
         open={lightboxId !== null}
         onOpenChange={(open) => {
@@ -185,6 +299,18 @@ export function ImagesSection({ artifact }: { artifact: Artifact }): JSX.Element
                   <StarIcon aria-hidden data-icon="inline-start" />
                   {artifact.coverImageId === lightboxImage.id ? 'Cover image' : 'Set as cover'}
                 </Button>
+                {isEncounter && artifact.data.mapImageId !== lightboxImage.id && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      void setBattlemap(lightboxImage.id);
+                    }}
+                  >
+                    <MapIcon aria-hidden data-icon="inline-start" />
+                    Set as battlemap
+                  </Button>
+                )}
                 <Button
                   variant="outline"
                   size="sm"

@@ -23,6 +23,8 @@ export interface NewStoredImage {
   prompt?: string;
   model?: string;
   source: 'generated' | 'uploaded';
+  /** M5-C: `map` images are battlemaps — bigger intake cap, map pickers only. */
+  role?: 'artwork' | 'map';
 }
 
 export async function createImage(input: NewStoredImage): Promise<StoredImage> {
@@ -37,9 +39,16 @@ export async function createImage(input: NewStoredImage): Promise<StoredImage> {
     prompt: input.prompt ?? '',
     model: input.model ?? '',
     source: input.source,
+    ...(input.role === undefined ? {} : { role: input.role }),
   });
   await db.images.put(image);
   return image;
+}
+
+/** Promotes/demotes an image's role (M5-C): setting an artwork image as a
+ * battlemap promotes it so map pickers offer it. */
+export async function setImageRole(id: Id, role: 'artwork' | 'map'): Promise<void> {
+  await db.images.update(id, { role });
 }
 
 export async function getImage(id: Id): Promise<StoredImage | undefined> {

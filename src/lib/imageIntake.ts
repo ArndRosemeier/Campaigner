@@ -1,4 +1,4 @@
-import { IMAGE_MAX_LONG_EDGE } from '@/domain';
+import { IMAGE_MAX_LONG_EDGE, MAP_IMAGE_MAX_LONG_EDGE } from '@/domain';
 
 /**
  * Image intake (07-MILESTONE-3 M3-A §Storage): every image that enters the
@@ -46,9 +46,13 @@ function canvasToBlob(
  */
 export async function intakeImage(
   source: Blob,
-  opts: { maxLongEdge?: number } = {},
+  opts: { maxLongEdge?: number; role?: 'artwork' | 'map' } = {},
 ): Promise<IntakeResult> {
-  const maxLongEdge = opts.maxLongEdge ?? IMAGE_MAX_LONG_EDGE;
+  // Map-role images (M5-C) keep more resolution: a full-table map at the
+  // artwork cap is unreadably blurry on a tablet.
+  const maxLongEdge =
+    opts.maxLongEdge ??
+    (opts.role === 'map' ? MAP_IMAGE_MAX_LONG_EDGE : IMAGE_MAX_LONG_EDGE);
   const orientation = { imageOrientation: 'from-image' } as ImageBitmapOptions;
   const bitmap = await createImageBitmap(source, orientation);
   try {
