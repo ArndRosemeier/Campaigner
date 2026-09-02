@@ -112,7 +112,7 @@ describe('workspace tree scope control', () => {
     await user.click(screen.getByTestId('scope-toggle-global'));
     await screen.findByText('Library');
     await flushAsyncUpdates();
-  });
+  }, 20000);
 
   it('does not offer publishing for non-library kinds', async () => {
     const user = userEvent.setup();

@@ -31,8 +31,9 @@ describe('moduleSchema.entityKinds', () => {
   });
 
   it('validates recorded kinds against the stub-able enum', () => {
-    expect(() => moduleEntityKindSchema.parse({ name: 'Kael', kind: 'encounter' })).toThrow();
+    expect(() => moduleEntityKindSchema.parse({ name: 'Kael', kind: 'plotarc' })).toThrow();
     expect(moduleEntityKindSchema.parse({ name: 'Kael', kind: 'npc' }).kind).toBe('npc');
+    expect(moduleEntityKindSchema.parse({ name: 'Bridge Ambush', kind: 'encounter' }).kind).toBe('encounter');
   });
 
   it('defaults absorbed to an empty list (fix-01)', () => {

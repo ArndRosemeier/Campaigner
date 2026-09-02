@@ -17,6 +17,7 @@ export const STUB_PERSONA_SLUGS: Readonly<Record<StubKind, string>> = {
   location: 'worldbuilder',
   faction: 'faction-designer',
   note: 'plot-architect',
+  encounter: 'encounter-smith',
 };
 
 /**

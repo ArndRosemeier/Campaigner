@@ -95,7 +95,7 @@ describe('editor surfaces', () => {
       '## Brew\nBrews deeply.',
     );
     await flushAsyncUpdates();
-  });
+  }, 20000);
 
   it('tag editor adds, deduplicates case-insensitively, and removes tags', async () => {
     const user = userEvent.setup();

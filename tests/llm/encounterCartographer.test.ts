@@ -23,6 +23,10 @@ vi.mock('@/llm/openrouter', () => ({
 
 const chatMock = vi.mocked(chat);
 
+function waitForRun(assertion: () => void | Promise<void>) {
+  return waitFor(assertion, { timeout: 15000 });
+}
+
 const INLINE_STATBLOCK = {
   system: 'dnd5e', level: '1', size: 'Medium', creatureType: 'humanoid', ac: 12,
   acNote: '', hp: 7, hpFormula: '2d6', speed: '30 ft.',
@@ -105,19 +109,19 @@ afterEach(() => {
 });
 
 async function approveUntilPick(runId: string, runInput: StartRunInput): Promise<string[]> {
-  await waitFor(async () => {
+  await waitForRun(async () => {
     const run = await getRun(runId);
     expect(run?.status).toBe('awaiting_user');
     expect(run?.steps.at(-1)?.name).toBe('brief');
   });
   await runEngine.approve(runId, runInput);
-  await waitFor(async () => {
+  await waitForRun(async () => {
     const run = await getRun(runId);
     expect(run?.status).toBe('awaiting_user');
     expect(run?.steps.at(-1)?.name).toBe('layout');
   });
   await runEngine.approve(runId, runInput);
-  await waitFor(async () => {
+  await waitForRun(async () => {
     const run = await getRun(runId);
     expect(run?.status).toBe('awaiting_user');
     expect(run?.steps.at(-1)?.name).toBe('pick');
@@ -137,7 +141,7 @@ describe('Encounter Cartographer run', () => {
     expect(useProgressStore.getState().jobs[0]?.detail).toContain('Waiting');
 
     await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
-    await waitFor(async () => {
+    await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
     const run = await getRun(runId);
@@ -155,7 +159,7 @@ describe('Encounter Cartographer run', () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
     const runId = await runEngine.startRun({ ...input(campaign, cartographer), autonomy: 'auto' });
-    await waitFor(async () => {
+    await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
     const run = await getRun(runId);
@@ -186,7 +190,7 @@ describe('Encounter Cartographer run', () => {
     const runId = await runEngine.startRun(runInput);
     const candidates = await approveUntilPick(runId, runInput);
     await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
-    await waitFor(async () => {
+    await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
 
@@ -209,22 +213,22 @@ describe('Encounter Cartographer run', () => {
     });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
-    await waitFor(async () => {
+    await waitForRun(async () => {
       expect((await getRun(runId))?.steps.at(-1)?.name).toBe('brief');
     });
     await runEngine.approve(runId, runInput);
-    await waitFor(async () => {
+    await waitForRun(async () => {
       expect((await getRun(runId))?.steps.at(-1)?.name).toBe('layout');
     });
     await runEngine.approve(runId, runInput);
-    await waitFor(async () => {
+    await waitForRun(async () => {
       const run = await getRun(runId);
       expect(run?.status).toBe('needs_review');
       expect(run?.steps.at(-1)?.name).toBe('verify');
       expect(run?.steps.at(-1)?.status).toBe('rejected');
     });
     await runEngine.approve(runId, runInput);
-    await waitFor(async () => {
+    await waitForRun(async () => {
       expect((await getRun(runId))?.steps.at(-1)?.name).toBe('pick');
     });
   });
@@ -237,7 +241,7 @@ describe('Encounter Cartographer run', () => {
       return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true });
     });
     const runId = await runEngine.startRun({ ...input(campaign, cartographer), autonomy: 'auto' });
-    await waitFor(async () => {
+    await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('failed');
     });
     expect((await getRun(runId))?.errorMessage).toContain('verification threshold');

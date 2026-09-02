@@ -29,6 +29,7 @@ const STUB_KIND_LABELS: Readonly<Record<StubKind, string>> = {
   location: 'Location',
   faction: 'Faction',
   note: 'Note',
+  encounter: 'Encounter',
 };
 
 /**

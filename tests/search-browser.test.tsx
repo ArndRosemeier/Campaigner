@@ -44,7 +44,7 @@ describe('rules search browser', () => {
     fireEvent.change(input);
     await waitFor(() => {
       expect(screen.getByText('ready')).toBeInTheDocument();
-    });
+    }, { timeout: 15000 });
 
     const search = screen.getByTestId('rules-search');
     await user.type(search, 'grapple');

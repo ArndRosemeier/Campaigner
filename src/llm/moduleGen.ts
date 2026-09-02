@@ -243,11 +243,11 @@ async function spineMessages(
       '- Every level in the range must be covered by exactly one part.',
       '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up).',
       '- Introduce as many locations, NPCs and factions as the story needs — you are not required to detail any of them.',
-      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "faction" (an organization or group), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title.',
+      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "faction" (an organization or group), "encounter" (a named combat or tactical set piece), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title.',
       '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
     ].join('\n'),
     extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
-    'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "faction" | "note" }] } — partPlan length 1..20, one entity entry per named entity.',
+    'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "faction" | "note" | "encounter" }] } — partPlan length 1..20, one entity entry per named entity.',
   ]
     .filter((part) => part !== null)
     .join('\n\n');
@@ -593,10 +593,10 @@ function normalizationMessages(
       '- "canonical" is the exact spelling of the entity this name refers to: the name itself, another listed name (the canonical form of a variant), or an existing artifact\'s exact name. Never a name that appears nowhere in the inputs. Canonical spellings are final — never A → B when B maps elsewhere.',
       '- Merge only when confident the names refer to the same entity (same person, place, organization, or thing). A role or title attached to the same person ("Guard Halmund" / "Harbormaster Ilse") maps onto the person\'s canonical name; similar names for different beings never merge.',
       '- A name that exactly matches an existing artifact\'s name maps to itself.',
-      '- "kind" describes the canonical entity: "npc" = a person or creature the party meets; "location" = a place; "faction" = an organization or group; "note" = anything else (items, rumors, mysteries, plot devices).',
+      '- "kind" describes the canonical entity: "npc" = a person or creature the party meets; "location" = a place; "faction" = an organization or group; "encounter" = a named combat or tactical set piece; "note" = anything else (items, rumors, mysteries, plot devices).',
     ].join('\n'),
     'Entities:\n' + lines.join('\n'),
-    'Reply with ONLY a JSON object: { "entities": [{ "name": string, "canonical": string, "kind": "npc" | "location" | "faction" | "note" }] } — one entry per listed entity.',
+    'Reply with ONLY a JSON object: { "entities": [{ "name": string, "canonical": string, "kind": "npc" | "location" | "faction" | "note" | "encounter" }] } — one entry per listed entity.',
   ]
     .filter((part) => part !== null)
     .join('\n\n');

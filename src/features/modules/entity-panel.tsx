@@ -30,6 +30,7 @@ import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
+import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
 import { normalizeModuleEntityNames } from '@/llm/moduleGen';
@@ -101,6 +102,7 @@ const KIND_PLURALS: Record<StubKind, string> = {
   location: 'locations',
   faction: 'factions',
   note: 'notes',
+  encounter: 'encounters',
 };
 
 interface EntityEntry {
@@ -171,6 +173,10 @@ export function EntityPanel({
   const progressFinish = useProgressStore((state) => state.finish);
   const queuedJobs = useEntityImageQueue((state) => state.queued);
   const activeJob = useEntityImageQueue((state) => state.active);
+  const enqueueEncounterMaps = useEncounterMapQueue((state) => state.enqueue);
+  const retryFailedEncounterMaps = useEncounterMapQueue((state) => state.retryFailed);
+  const allFailedEncounterMaps = useEncounterMapQueue((state) => state.failed);
+  const failedEncounterMaps = allFailedEncounterMaps.filter((job) => job.moduleId === module.id);
   /** fix-01: the consent review dialog is open. */
   const [proposalsOpen, setProposalsOpen] = useState(false);
   /** fix-01: the normalization pass is running (Retry / manual run). */
@@ -189,6 +195,12 @@ export function EntityPanel({
   const mentioned = entries.length;
   const detailed = entries.filter((entry) => entry.resolved).length;
   const unresolved = entries.filter((entry) => !entry.resolved);
+  const encountersNeedingMaps = artifacts.filter(
+    (artifact) =>
+      artifact.kind === 'encounter' &&
+      artifact.moduleId === module.id &&
+      (artifact.data.layout === null || artifact.data.mapImageId === null),
+  );
   // Batch buckets use the kinds the GENERATOR recorded (08 §M4-C) — never a
   // client heuristic. Names without a record are not batchable; clicking
   // their row classifies/asks in the stub popover instead.
@@ -561,6 +573,38 @@ export function EntityPanel({
               <ImageIcon aria-hidden data-icon="inline-start" />
               Images
             </Button>
+            {encountersNeedingMaps.length > 0 && (
+              <Button
+                variant="outline"
+                size="xs"
+                data-testid="generate-encounter-maps"
+                onClick={() => {
+                  enqueueEncounterMaps(
+                    encountersNeedingMaps.map((encounter) => ({
+                      campaignId: module.campaignId,
+                      moduleId: module.id,
+                      artifactId: encounter.id,
+                      name: encounter.name,
+                    })),
+                  );
+                }}
+              >
+                <ImageIcon aria-hidden data-icon="inline-start" />
+                Generate {encountersNeedingMaps.length} encounter map{encountersNeedingMaps.length === 1 ? '' : 's'}
+              </Button>
+            )}
+            {failedEncounterMaps.length > 0 && (
+              <Button
+                variant="destructive"
+                size="xs"
+                data-testid="retry-encounter-maps"
+                onClick={() => {
+                  retryFailedEncounterMaps(module.id);
+                }}
+              >
+                Retry {failedEncounterMaps.length} failed map{failedEncounterMaps.length === 1 ? '' : 's'}
+              </Button>
+            )}
             {STUB_KINDS.map((kind) => {
               const targets = unresolvedByKind.get(kind) ?? [];
               if (targets.length === 0) return null;

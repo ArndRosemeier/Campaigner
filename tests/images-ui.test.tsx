@@ -142,7 +142,7 @@ describe('images ui', () => {
     const targetSelect = await screen.findByRole('combobox', { name: 'Artifact to illustrate' });
     expect(targetSelect.textContent).toContain('Old Tower');
     expect(screen.getByTestId('start-run')).toBeEnabled();
-  });
+  }, 20000);
 
   it('encounter battlemap action pre-selects the Cartographer regeneration flow', async () => {
     const user = userEvent.setup();
@@ -165,7 +165,7 @@ describe('images ui', () => {
     expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
     expect(screen.getByTestId('start-run')).toBeEnabled();
     await flushAsyncUpdates();
-  });
+  }, 20000);
 
   it('settings expose the image generation toggle and model', async () => {
     renderAppAt('/settings');

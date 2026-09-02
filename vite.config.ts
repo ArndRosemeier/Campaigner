@@ -33,6 +33,10 @@ export default defineConfig(({ mode }) => {
       setupFiles: ['tests/setup.ts'],
       include: ['tests/**/*.test.{ts,tsx}'],
       css: false,
+      // jsdom + PDF/image suites are memory-heavy; unbounded workers caused
+      // event-loop starvation and false 5s timeouts on constrained CI/dev VMs.
+      maxWorkers: 4,
+      testTimeout: 20_000,
     },
   };
 });

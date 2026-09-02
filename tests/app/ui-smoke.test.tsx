@@ -221,7 +221,7 @@ describe('route smoke sweep', () => {
       // Leave the editor so the next kind mounts fresh.
       expect(screen.getByTestId('revision-badge').textContent).toBe('rev 1');
     }
-  });
+  }, 20000);
 
   it('opens quick-find on the workspace and closes it', async () => {
     const user = userEvent.setup();

@@ -258,6 +258,9 @@ describe('EntityPanel', () => {
       />,
     );
 
+    expect(await screen.findByTestId('generate-encounter-maps')).toHaveTextContent(
+      'Generate 1 encounter map',
+    );
     await user.click(await screen.findByTestId('run-battle'));
     await waitFor(async () => {
       const battle = await db.battles.where('moduleId').equals(module.id).first();

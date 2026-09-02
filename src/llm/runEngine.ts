@@ -137,6 +137,8 @@ export interface StartRunInput {
   targetArtifactId?: Id;
   /** Encounter generator aspect; persisted on the run for pauses/retries. */
   encounterMapAspect?: EncounterMapAspect;
+  /** Module post-pass: one candidate, no user checkpoints. */
+  unattended?: boolean;
 }
 
 /** Fetches context artifacts for the prompt (name + summary + body excerpt). */
@@ -340,6 +342,8 @@ export class RunEngine {
     this.cancelRequested.delete(run.id);
     if (input.persona.mode === 'encounter') {
       this.encounterLayoutVariants.set(run.id, 0);
+    }
+    if (input.persona.mode === 'encounter' && input.unattended !== true) {
       useProgressStore.getState().start(
         encounterProgressId(run.id),
         input.targetArtifactId === undefined ? 'Generating encounter map' : 'Regenerating encounter map',
@@ -1278,7 +1282,7 @@ export class RunEngine {
       'No text, labels, grid lines, numbers, tokens, miniatures or watermark.',
       parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
     ].filter((part) => part !== null && part !== '').join(' ');
-    const generated = await encounterRunAdapters.generateImages(prompt, 2, {
+    const generated = await encounterRunAdapters.generateImages(prompt, input.unattended === true ? 1 : 2, {
       model: settings.imageModel,
       signal,
       inputReferences: [{ dataUrl: schematic.dataUrl }],
