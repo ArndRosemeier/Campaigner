@@ -1,10 +1,10 @@
-import type { Artifact, Battle, BattleToken, Id, SeedFighter } from '@/domain';
+import type { AnyArtifact, Battle, BattleToken, Id, SeedFighter } from '@/domain';
 import { GRID_SIZE_DEFAULT, newId } from '@/domain';
 import { ensurePcTokens, fallbackSpawnPoint, stagingGroundAt, tokenFromFighter } from '@/domain/battle/board';
 import { abilityModifier } from '@/domain/statblock';
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
-import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { ensureBattle, getBattle, patchBattle, saveBattleBoard } from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
@@ -13,7 +13,7 @@ import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
  * Seeding a battle from an encounter artifact (09-MILESTONE-5 M5-C):
  * "Run battle" expands the designed roster into portrait tokens, resolves
  * the battlemap, and hands the board to the table surface (live: false
- * until "Show battle"). One live battle per session — seeding an already
+ * until the table opens). One live battle per module — seeding an already
  * running battle REPLACES it (the UI confirms; the stage snapshot is
  * discarded).
  *
@@ -36,8 +36,9 @@ function defaultStagingGround(): ReturnType<typeof stagingGroundAt> {
  * the cover of a linked location when that cover is map-role, else no map
  * (viewport board — the source behavior for mapless encounters).
  */
-async function resolveMapImageId(encounter: Artifact): Promise<Id | null> {
-  if (encounter.kind !== 'encounter') return null;
+async function resolveMapImageId(
+  encounter: AnyArtifact & { kind: 'encounter' },
+): Promise<Id | null> {
   if (encounter.data.mapImageId !== null) {
     return encounter.data.mapImageId;
   }
@@ -61,10 +62,10 @@ export interface SeedReport {
 
 export async function seedBattleFromEncounter(
   campaignId: Id,
-  sessionId: Id,
+  moduleId: Id,
   encounterArtifactId: Id,
 ): Promise<SeedReport> {
-  const encounter = await getArtifact(encounterArtifactId);
+  const encounter = await getAnyArtifact(encounterArtifactId);
   if (encounter === undefined) throw new NotFoundError('Encounter artifact', encounterArtifactId);
   if (encounter.kind !== 'encounter') {
     throw new Error(`Artifact “${encounter.name}” is not an encounter`);
@@ -147,10 +148,10 @@ export async function seedBattleFromEncounter(
     pcFightersOf(artifacts),
   );
 
-  // Seeding REPLACES any running battle for the session (the UI confirms):
+  // Seeding REPLACES any running battle for the module (the UI confirms):
   // fresh board, no stage snapshot, provenance + frozen seed stats stamped
   // BEFORE the normalized save (the stats lookup drives HP clamping).
-  const battle = await ensureBattle(campaignId, sessionId);
+  const battle = await ensureBattle(campaignId, moduleId);
   await patchBattle(battle.id, { encounterArtifactId, seedFighters });
   await saveBattleBoard(battle.id, board);
   const saved = await getBattle(battle.id);

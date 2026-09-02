@@ -9,8 +9,8 @@ import { getCampaign } from '@/db/campaignRepo';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 
 /**
- * Top-bar "New Module" entry (08-MODULE-DESIGNER M4-B: creation entry points
- * are the modules list page "plus entry in the top bar next to Play").
+ * Top-bar "New Module" entry (08-MODULE-DESIGNER M4-B), sharing the
+ * creation dialog used by the modules list.
  * Opens the same creation dialog as the list page.
  */
 export function TopBarNewModuleButton({ campaignId }: { campaignId: Id }): JSX.Element | null {

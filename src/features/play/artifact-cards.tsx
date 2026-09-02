@@ -13,7 +13,6 @@ import type {
 import { useImageUrl } from '@/features/images/use-image-url';
 import { MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
-import { RunBattleButton } from '@/features/play/run-battle';
 
 /**
  * The read-only Session-Mode cards (07-MILESTONE-3 M3-C), extracted so the
@@ -129,11 +128,6 @@ export function EncounterCard({
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-1.5">
-          {/* A global encounter has no campaign anchor to run from — the
-              module-anchored "Run battle" arrives with M6-E. */}
-          {encounter.campaignId !== null && (
-            <RunBattleButton campaignId={encounter.campaignId} encounter={encounter} />
-          )}
           {onOpenEditor !== undefined && <EditorJump artifact={encounter} onOpenEditor={onOpenEditor} />}
         </div>
       </div>

@@ -39,6 +39,7 @@ const SETTINGS_BASE = {
     workspace: { global: false, campaign: true, module: true },
     moduleView: { global: true, campaign: true, module: true },
   },
+  retiredSessionNotesRemoved: 0,
 };
 
 beforeEach(async () => {

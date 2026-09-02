@@ -11,6 +11,7 @@ import { getModule, saveModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
+import { db } from '@/db/db';
 import {
   createArtifact as buildArtifact,
   createModule,
@@ -228,6 +229,41 @@ describe('EntityPanel', () => {
     toastErrorMock.mockClear();
   });
   afterEach(cleanup);
+
+  it('seeds a module-anchored battle from an encounter row', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Battle campaign', system: 'dnd5e' });
+    const base = moduleFixture(campaign.id);
+    const module = moduleSchema.parse({
+      ...base,
+      spine: {
+        ...base.spine,
+        premise: 'Face [[Bridge Ambush]].',
+      },
+      entityKinds: [],
+    });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Bridge Ambush',
+    });
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[encounter]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    await user.click(await screen.findByTestId('run-battle'));
+    await waitFor(async () => {
+      const battle = await db.battles.where('moduleId').equals(module.id).first();
+      expect(battle?.encounterArtifactId).toBe(encounter.id);
+    });
+  });
 
   it('renders entity rows in mention order with kind badges, unresolved stub rows, and per-kind batch buttons', async () => {
     const user = userEvent.setup();

@@ -14,7 +14,6 @@ export const ARTIFACT_KINDS = [
   'note',
   'encounter',
   'plotarc',
-  'session',
 ] as const;
 
 export const artifactKindSchema = z.enum(ARTIFACT_KINDS);
@@ -30,7 +29,6 @@ export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
   note: 'Notes',
   encounter: 'Encounters',
   plotarc: 'Plot Arcs',
-  session: 'Sessions',
 };
 
 /** Singular labels, for badges and toasts ("NPC created"). */
@@ -42,7 +40,6 @@ export const ARTIFACT_KIND_SINGULAR: Readonly<Record<ArtifactKind, string>> = {
   note: 'Note',
   encounter: 'Encounter',
   plotarc: 'Plot arc',
-  session: 'Session',
 };
 
 export const artifactLinkSchema = z.object({
@@ -211,28 +208,6 @@ export const plotArcDataSchema = z.object({
 
 export type PlotArcArtifactData = z.infer<typeof plotArcDataSchema>;
 
-export const sessionDataSchema = z.object({
-  /** Display label, e.g. '12' or '2025-01-31'. */
-  sessionNumber: z.string(),
-  recap: z.string(),
-  /** Prep checklist for the next session. */
-  prep: z.array(z.string()),
-  /** Unresolved threads carried forward. */
-  openThreads: z.array(z.string()),
-  /** Play-mode scene checklist (M3-C); artifactId optionally jumps focus. */
-  scenes: z.array(
-    z.object({
-      title: z.string(),
-      done: z.boolean(),
-      artifactId: z.uuid().nullable(),
-    }),
-  ),
-  /** Quick session log (M3-C): markdown lines `- HH:MM <text>`, appended on Enter. */
-  log: z.string(),
-});
-
-export type SessionArtifactData = z.infer<typeof sessionDataSchema>;
-
 export type ArtifactData =
   | PcArtifactData
   | NpcArtifactData
@@ -240,8 +215,7 @@ export type ArtifactData =
   | FactionArtifactData
   | NoteArtifactData
   | EncounterArtifactData
-  | PlotArcArtifactData
-  | SessionArtifactData;
+  | PlotArcArtifactData;
 
 // --- Discriminated artifact union -------------------------------------------
 
@@ -287,12 +261,6 @@ export const plotArcArtifactSchema = z.object({
   data: plotArcDataSchema,
 });
 
-export const sessionArtifactSchema = z.object({
-  ...artifactBaseShape,
-  kind: z.literal('session'),
-  data: sessionDataSchema,
-});
-
 export const artifactSchema = z.discriminatedUnion('kind', [
   pcArtifactSchema,
   npcArtifactSchema,
@@ -301,7 +269,6 @@ export const artifactSchema = z.discriminatedUnion('kind', [
   noteArtifactSchema,
   encounterArtifactSchema,
   plotArcArtifactSchema,
-  sessionArtifactSchema,
 ]);
 
 export type PcArtifact = z.infer<typeof pcArtifactSchema>;
@@ -311,7 +278,6 @@ export type FactionArtifact = z.infer<typeof factionArtifactSchema>;
 export type NoteArtifact = z.infer<typeof noteArtifactSchema>;
 export type EncounterArtifact = z.infer<typeof encounterArtifactSchema>;
 export type PlotArcArtifact = z.infer<typeof plotArcArtifactSchema>;
-export type SessionArtifact = z.infer<typeof sessionArtifactSchema>;
 export type Artifact = z.infer<typeof artifactSchema>;
 
 // --- Global artifacts (10-MILESTONE-6) ---------------------------------------

@@ -15,7 +15,7 @@ import { BaseEntitySchema, type Id } from '@/domain/entity';
  * - Covered/hidden tokens are removed from the DOM and pruned from
  *   initiative — that IS the player-safe mechanic.
  * - Initiative bonus is frozen onto the token at roll time.
- * - One live battle per session, created lazily, deleted when it empties.
+ * - One live battle per module, created lazily, deleted when it empties.
  */
 
 export const battleTokenIdSchema = z.uuid();
@@ -156,8 +156,8 @@ export type BattleBoard = z.infer<typeof battleBoardSchema>;
 export const battleSchema = z.object({
   ...BaseEntitySchema.shape,
   campaignId: z.uuid(),
-  /** The session artifact this battle belongs to (Play's active session). */
-  sessionId: z.uuid(),
+  /** The module/play-view this live battle belongs to (10-MILESTONE-6 D10). */
+  moduleId: z.uuid(),
   /** The encounter artifact that seeded it (provenance), or null. */
   encounterArtifactId: z.uuid().nullable(),
   board: battleBoardSchema,

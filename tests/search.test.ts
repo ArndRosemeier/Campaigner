@@ -65,6 +65,7 @@ async function enableEmbeddings(): Promise<void> {
       workspace: { global: false, campaign: true, module: true },
       moduleView: { global: true, campaign: true, module: true },
     },
+    retiredSessionNotesRemoved: 0,
     language: 'en' as const,
   });
 }

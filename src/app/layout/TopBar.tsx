@@ -4,7 +4,7 @@ import { NavLink, useLocation } from 'react-router-dom';
 import { CampaignSwitcher } from '@/app/layout/CampaignSwitcher';
 import { navItems } from '@/app/layout/nav';
 import { ThemeToggle } from '@/app/layout/ThemeToggle';
-import { ROUTES, campaignIdFromPath, playPath } from '@/app/routes';
+import { ROUTES, campaignIdFromPath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { LanguageSelect } from '@/features/settings/language-select';
@@ -57,16 +57,7 @@ export function TopBar(): JSX.Element {
             page's top bar and persisted in the settings row. */}
         <LanguageSelect compact />
         {campaignIdFromPath(pathname) !== undefined && (
-          <>
-            <TopBarNewModuleButton campaignId={campaignIdFromPath(pathname) ?? ''} />
-            <NavLink
-              to={playPath(campaignIdFromPath(pathname) ?? '')}
-              className={buttonVariants({ variant: 'secondary', size: 'sm' })}
-              aria-label="Play"
-            >
-              ▶ Play
-            </NavLink>
-          </>
+          <TopBarNewModuleButton campaignId={campaignIdFromPath(pathname) ?? ''} />
         )}
         <HelpButton label="Campaigner" />
         <ThemeToggle />

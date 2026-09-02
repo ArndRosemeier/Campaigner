@@ -57,7 +57,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
   tree: {
     title: 'Artifact library (left pane)',
     summary:
-      'The tree holds all artifacts of the campaign, grouped by kind: NPCs, locations, factions, notes, encounters, plot arcs and sessions.',
+      'The tree holds campaign and module artifacts by kind, plus the optional shared Library group.',
     tips: [
       'Create: the + button next to each kind header.',
       'Open: click a row to load it into the editor.',
@@ -67,7 +67,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'Link graph: the button under the filter opens a visual map of all links between artifacts.',
     ],
     keywords:
-      'artifacts npc location faction note encounter plot arc session delete rename duplicate',
+      'artifacts npc location faction note encounter plot arc library scope delete rename',
   },
   editor: {
     title: 'Artifact editor (middle pane)',
@@ -78,7 +78,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'History (clock icon): every save snapshots a revision — open the dialog to inspect or restore any older snapshot.',
       'Tags group artifacts and feed the tree filter.',
       'Links connect artifacts (e.g. NPC "lives in" location). Links created here appear in the link graph and can be exported.',
-      'Kind-specific sections: NPCs can carry a full stat block; encounters have monsters and tactics; plot arcs have beats; sessions have prep and open threads.',
+      'Kind-specific sections: NPCs can carry a full stat block; encounters have monsters and tactics; plot arcs have beats and hooks.',
       'When a persona run finishes, its draft lands in the editor — accept, edit further, or discard it.',
     ],
     keywords: 'autosave revisions restore tags links statblock draft',
@@ -86,7 +86,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
   assistant: {
     title: 'Assistant (personas)',
     summary:
-      'Personas are writing specialists (NPC Smith, Location Architect, Faction Designer, Plot Architect, Session Chronicler, Continuity Editor) that draft or review artifacts using pinned rule text.',
+      'Personas are writing specialists (NPC Smith, Location Architect, Faction Designer, Plot Architect, Encounter Smith, Continuity Editor) that draft or review artifacts using pinned rule text.',
     tips: [
       'Pick a persona, an autonomy mode, and write a brief: Manual pauses for your approval on every step, Review runs through but pauses on problems, Auto runs to completion.',
       'Review personas (Continuity Editor) check an existing artifact for contradictions and write a continuity report — pick the artifact to check instead of writing a brief.',
@@ -102,7 +102,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'Chain personas into a pipeline: each step drafts an artifact, and later steps receive earlier outputs as context.',
     tips: [
       'Add steps, each with its own persona, autonomy mode and brief.',
-      'Typical chain: Plot Architect (arc) → Session Chronicler (session) → NPC Smith (villain) — later steps see what earlier ones produced.',
+      'Typical chain: Plot Architect (arc) → Encounter Smith (set piece) → NPC Smith (villain) — later steps see what earlier ones produced.',
       'A chain pauses when a Manual/Review step asks for input; resolve it in the Assistant tab, then Resume the chain here.',
       'If a step fails, completed steps are kept as context — "Retry failed step" re-runs only that step and continues the chain. The failed run stays in the Runs tab with its error.',
       'Stop cancels the chain after the current step.',
@@ -116,7 +116,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
     tips: [
       'New Module (top bar or the Modules page) drafts a spine first: premise + part plan, each part with a level band. Approve it, then parts generate one by one, each seeing the previous parts for continuity.',
       'The reader shows the module as one document: a table of contents on the left, the prose in the middle, and an entity panel on the right listing every mentioned character, place, faction or item.',
-      '[[Names]] in the text become colored chips: green means the artifact exists (click to peek, double-pane icon to jump in Play), dashed means unresolved — click it to create a stub, generate it with a matching persona, or link an existing artifact.',
+      '[[Names]] in the text become colored chips: a solid chip means the artifact exists and opens a peek; a dashed chip is unresolved and can create, generate, or link an artifact.',
       'Every part can be edited in place (✎) and rewritten (↺) with an optional instruction; rewriting a hand-edited part asks first. Failed parts show a Retry button without touching the rest.',
       'The entity panel can batch-generate all unresolved entities of one kind with the matching personas; produced artifacts are tagged module:<title> so the tree filter can isolate them.',
       'Deliverables → "Seed from module" turns a finished module into a printable outline: premise as intro, one chapter per part with its resolved entities attached.',

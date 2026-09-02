@@ -19,7 +19,7 @@ import {
   XIcon,
 } from 'lucide-react';
 
-import type { Artifact, Battle, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
+import type { AnyArtifact, Battle, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
 import { nextTokenScale, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import {
@@ -47,9 +47,8 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
-import { usePlayStore } from '@/features/play/playStore';
 import { useImageUrl } from '@/features/images/use-image-url';
-import { useBattleState, useActiveSessionId } from './use-battle';
+import { useBattleState } from './use-battle';
 import { InitiativeSidebar } from './initiative-sidebar';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,10 +92,8 @@ interface LiveDrag {
 }
 
 export function BattleSurface(): JSX.Element {
-  const { campaignId = '' } = useParams();
+  const { campaignId = '', moduleId = '' } = useParams();
   const navigate = useNavigate();
-  const playActiveSessionId = usePlayStore((state) => state.stateOf(campaignId).activeSessionId);
-  const sessionId = useActiveSessionId(campaignId, playActiveSessionId);
 
   const [boardSize, setBoardSize] = useState({ w: 0, h: 0 });
   const [zoom, setZoom] = useState(1);
@@ -116,7 +113,7 @@ export function BattleSurface(): JSX.Element {
 
   const { battle, stats, coveredTokenIds, artifacts } = useBattleState(
     campaignId,
-    sessionId,
+    moduleId,
     boardSize.w,
     boardSize.h,
   );
@@ -451,7 +448,7 @@ export function BattleSurface(): JSX.Element {
         className="flex h-full flex-col items-center justify-center gap-3 bg-zinc-950 text-zinc-300"
         data-testid="battle-surface-empty"
       >
-        <p>No battle is seeded for this session yet.</p>
+        <p>No battle is seeded for this module yet.</p>
         <p className="text-sm text-zinc-500">Open an encounter card and press “Run battle” first.</p>
         <Button
           variant="outline"
@@ -460,7 +457,7 @@ export function BattleSurface(): JSX.Element {
             navigate(-1);
           }}
         >
-          Back to Play
+          Back to module
         </Button>
       </div>
     );
@@ -844,7 +841,7 @@ function MapLayer({ imageId }: { imageId: Id }): JSX.Element | null {
 interface TokenViewProps {
   token: BattleToken;
   board: { w: number; h: number };
-  artifact: Artifact | undefined;
+  artifact: AnyArtifact | undefined;
   stats: FighterStatsLookup;
   selected: boolean;
   isActiveTurn: boolean;

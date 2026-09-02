@@ -50,7 +50,7 @@ async function statblockChunkId(): Promise<Id> {
   return chunks[0]?.id ?? '';
 }
 
-async function seed(): Promise<{ campaignId: Id; sessionId: Id; towerId: Id }> {
+async function seed(): Promise<{ campaignId: Id; towerId: Id }> {
   await seedBuiltInPersonas();
   const campaign = await createCampaign({ name: 'Module Campaign', system: 'dnd5e' });
   const tower = await createArtifact({
@@ -58,20 +58,14 @@ async function seed(): Promise<{ campaignId: Id; sessionId: Id; towerId: Id }> {
     kind: 'location',
     name: 'Old Tower',
   });
-  const session = await createArtifact({
-    campaignId: campaign.id,
-    kind: 'session',
-    name: 'Session 1',
-    data: { sessionNumber: '1', recap: '', prep: [], openThreads: [], scenes: [], log: '' },
-  });
   await createArtifact({
     campaignId: campaign.id,
     kind: 'encounter',
     name: 'Pier Ambush',
-    links: [{ targetId: session.id, relation: 'in-session' }, { targetId: tower.id, relation: 'at' }],
+    links: [{ targetId: tower.id, relation: 'at' }],
   });
   void statblockChunkId;
-  return { campaignId: campaign.id, sessionId: session.id, towerId: tower.id };
+  return { campaignId: campaign.id, towerId: tower.id };
 }
 
 describe('deliverables builder', () => {

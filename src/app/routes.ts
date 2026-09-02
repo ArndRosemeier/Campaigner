@@ -16,10 +16,8 @@ export const ROUTES = {
   artifact: '/c/:campaignId/a/:artifactId',
   /** Link graph for a campaign (M2). */
   graph: '/c/:campaignId/graph',
-  /** Session Mode play view (M3-C). */
-  play: '/c/:campaignId/play',
-  /** Table surface for the session's live battle (M5-D). */
-  battle: '/c/:campaignId/play/battle',
+  /** Table surface for a module's live battle (M6-E). */
+  battle: '/c/:campaignId/m/:moduleId/battle',
   /** Deliverable builder for module PDFs (M3-D). */
   deliverables: '/c/:campaignId/deliverables',
   /** Module list (M4). */
@@ -43,14 +41,12 @@ export function graphPath(campaignId: string): `/c/${string}/graph` {
   return `/c/${encodeURIComponent(campaignId)}/graph`;
 }
 
-/** Path of the Session Mode play view for a given campaign (M3-C). */
-export function playPath(campaignId: string): `/c/${string}/play` {
-  return `/c/${encodeURIComponent(campaignId)}/play`;
-}
-
-/** Path of the table surface for a campaign's live battle (M5-D). */
-export function battlePath(campaignId: string): `/c/${string}/play/battle` {
-  return `/c/${encodeURIComponent(campaignId)}/play/battle`;
+/** Path of the table surface for a module's live battle (M6-E). */
+export function battlePath(
+  campaignId: string,
+  moduleId: string,
+): `/c/${string}/m/${string}/battle` {
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/battle`;
 }
 
 /** Path of the deliverable builder for a given campaign (M3-D). */
@@ -96,7 +92,6 @@ export function campaignIdFromPath(pathname: string): string | undefined {
   return (
     matchPath(ROUTES.artifact, pathname)?.params.campaignId ??
     matchPath(ROUTES.graph, pathname)?.params.campaignId ??
-    matchPath(ROUTES.play, pathname)?.params.campaignId ??
     matchPath(ROUTES.battle, pathname)?.params.campaignId ??
     matchPath(ROUTES.deliverables, pathname)?.params.campaignId ??
     matchPath(ROUTES.modules, pathname)?.params.campaignId ??

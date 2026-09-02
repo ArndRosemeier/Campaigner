@@ -4,19 +4,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
-import { getBattleBySession } from '@/db/battleRepo';
+import { getBattleByModule } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { db } from '@/db/db';
 import { createImage } from '@/db/imageRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc } from '@/db/fighterStats';
 import { fighterTokens } from '@/domain/battle/board';
 import type { Artifact, Id, StatBlock } from '@/domain';
 import { newId, statBlockSchema } from '@/domain';
 import { clearDatabase } from './helpers';
-import { render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
-import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Seeding a battle from an encounter artifact (09-MILESTONE-5 M5-C): roster
@@ -207,11 +202,11 @@ describe('roster expansion', () => {
     const encounter = await addEncounter({
       monsters: [{ name: 'Troll', count: 1, source: { type: 'npc-ref', artifactId: npc.id } }],
     });
-    const sessionId = newId();
-    const first = await seedBattleFromEncounter(campaignId, sessionId, encounter.id);
+    const moduleId = newId();
+    const first = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
     expect(first.battle.encounterArtifactId).toBe(encounter.id);
     // A fresh seed discards any stage snapshot and initiative.
-    const second = await seedBattleFromEncounter(campaignId, sessionId, encounter.id);
+    const second = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
     expect(second.battle.id).toBe(first.battle.id);
     expect(second.battle.board.stage).toBeNull();
     expect(second.battle.board.initiativeOrder).toEqual([]);
@@ -276,12 +271,12 @@ describe('map resolution', () => {
     expect(seededMapless.battle.board.mapImageId).toBeNull();
   });
 
-  it('keeps the battle row reachable by session after seeding', async () => {
+  it('keeps the battle row reachable by module after seeding', async () => {
     const encounter = await addEncounter();
-    const sessionId = newId();
-    const { battle } = await seedBattleFromEncounter(campaignId, sessionId, encounter.id);
-    const bySession = await getBattleBySession(sessionId);
-    expect(bySession?.id).toBe(battle.id);
+    const moduleId = newId();
+    const { battle } = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
+    const byModule = await getBattleByModule(moduleId);
+    expect(byModule?.id).toBe(battle.id);
   });
 });
 
@@ -296,33 +291,5 @@ describe('pc stats resolution', () => {
     expect(stats?.initiativeBonus).toBe(8);
     expect(stats?.maxHp).toBe(20);
     expect(stats?.currentHp).toBe(20);
-  });
-});
-
-describe('Run battle button', () => {
-  it('seeds the battle from the editor header and reports the row', async () => {
-    const user = userEvent.setup();
-    const campaign = await createCampaign({ name: 'Button campaign', system: 'dnd5e' });
-    campaignId = campaign.id;
-    const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin', count: 2, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } }],
-    });
-    render(
-      <ArtifactEditor
-        artifact={encounter}
-        campaignId={campaign.id}
-        campaignArtifacts={[encounter]}
-        campaignSystem={campaign.system}
-      />,
-    );
-    await user.click(screen.getByTestId('run-battle'));
-    await flushAsyncUpdates();
-    // The session did not exist — resolveSessionId created one and seeded.
-    const battles = await db.battles.toArray();
-    expect(battles).toHaveLength(1);
-    const battle = battles[0];
-    if (battle === undefined) throw new Error('battle row missing');
-    expect(battle.encounterArtifactId).toBe(encounter.id);
-    expect(battle.seedFighters).toHaveLength(2);
   });
 });

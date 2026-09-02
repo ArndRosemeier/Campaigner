@@ -3,6 +3,7 @@ import { moduleSchema } from '@/domain';
 import { db } from '@/db/db';
 import { deleteArtifact, listArtifactsByModule } from '@/db/artifactRepo';
 import { NotFoundError } from '@/lib/errors';
+import { deleteBattlesByModule } from '@/db/battleRepo';
 
 /**
  * Module repo (08-MODULE-DESIGNER M4-A): CRUD plus `saveModule` (full-row
@@ -88,6 +89,9 @@ export async function deleteModule(
   ownedArtifacts: 'cascade' | 'keep',
 ): Promise<void> {
   const ownedRows = await listArtifactsByModule(id);
+  // Battles are live play state, not authored module content; neither delete
+  // branch can leave one pointing at a removed module.
+  await deleteBattlesByModule(id);
   if (ownedArtifacts === 'keep') {
     // Module-owned rows carry the module's campaignId, so clearing the
     // module binding drops them back into plain campaign ownership with

@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { modulePath } from '@/app/routes';
+import { battlePath, modulePath } from '@/app/routes';
 import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
@@ -178,6 +178,10 @@ describe('ModuleReaderPage', () => {
     expect(screen.getByText('Levels 1–3')).toBeInTheDocument();
     expect(screen.getByText('Standard')).toBeInTheDocument();
     expect(screen.getByText('ready')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Battle table' })).toHaveAttribute(
+      'href',
+      battlePath(campaignId, moduleId),
+    );
 
     // Premise: [[Old Tower]] resolves against the seeded artifact, [[Missing
     // Person]] has no artifact yet and stays an unresolved stub chip.

@@ -11,7 +11,7 @@ import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo'
 import { stampNewEntity } from '@/domain/entity';
 
 /**
- * Battle persistence (09-MILESTONE-5 M5-B): one live battle per session,
+ * Battle persistence (10-MILESTONE-6 M6-E): one live battle per module,
  * created lazily on first mutation, deleted when it empties. Every write is
  * NORMALIZED (the analog of the source's `normalizeEncounter` /
  * `fillTokenCurrentHp`): NPC token HP re-filled/clamped from the backing
@@ -19,8 +19,8 @@ import { stampNewEntity } from '@/domain/entity';
  * [0, maxHp]. UI reads via useLiveQuery; drag commits are single repo calls.
  */
 
-/** Mutable battle fields; identity (`campaignId`/`sessionId`) is immutable. */
-export type BattlePatch = Partial<Omit<Battle, 'id' | 'campaignId' | 'sessionId'>>;
+/** Mutable battle fields; identity (`campaignId`/`moduleId`) is immutable. */
+export type BattlePatch = Partial<Omit<Battle, 'id' | 'campaignId' | 'moduleId'>>;
 
 /** Full-row save: parse-normalizes and applies normalize-on-write. */
 export async function saveBattle(battle: Battle): Promise<Battle> {
@@ -30,11 +30,11 @@ export async function saveBattle(battle: Battle): Promise<Battle> {
 }
 
 /**
- * One live battle per session (source rule: no "create" action exists).
+ * One live battle per module (the module reader is the play view).
  * Returns the existing row or lazily creates an empty prep board.
  */
-export async function ensureBattle(campaignId: Id, sessionId: Id): Promise<Battle> {
-  const existing = await db.battles.where('sessionId').equals(sessionId).first();
+export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle> {
+  const existing = await db.battles.where('moduleId').equals(moduleId).first();
   if (existing !== undefined) {
     return existing;
   }
@@ -42,7 +42,7 @@ export async function ensureBattle(campaignId: Id, sessionId: Id): Promise<Battl
   const created: Battle = {
     ...stamp,
     campaignId,
-    sessionId,
+    moduleId,
     encounterArtifactId: null,
     seedFighters: [],
     board: {
@@ -67,8 +67,8 @@ export async function getBattle(id: Id): Promise<Battle | undefined> {
   return db.battles.get(id);
 }
 
-export async function getBattleBySession(sessionId: Id): Promise<Battle | undefined> {
-  return db.battles.where('sessionId').equals(sessionId).first();
+export async function getBattleByModule(moduleId: Id): Promise<Battle | undefined> {
+  return db.battles.where('moduleId').equals(moduleId).first();
 }
 
 /** Race-safe read-modify-write with normalize-on-write (module pattern). */
@@ -80,7 +80,7 @@ export async function patchBattle(id: Id, patch: BattlePatch): Promise<Battle> {
     const current = await db.battles.get(id);
     if (current === undefined) throw new NotFoundError('Battle', id);
     // Identity fields are immutable; the board is merged wholesale by the caller.
-    return saveBattle({ ...current, ...patch, campaignId: current.campaignId, sessionId: current.sessionId });
+    return saveBattle({ ...current, ...patch, campaignId: current.campaignId, moduleId: current.moduleId });
   });
 }
 
@@ -159,9 +159,9 @@ export async function scrubArtifactFromBattles(campaignId: Id, artifactId: Id): 
   }
 }
 
-/** Deleting a session artifact drops its battle (one live battle per session). */
-export async function deleteBattlesBySession(sessionId: Id): Promise<void> {
-  await db.battles.where('sessionId').equals(sessionId).delete();
+/** Deleting a module drops its live battle state. */
+export async function deleteBattlesByModule(moduleId: Id): Promise<void> {
+  await db.battles.where('moduleId').equals(moduleId).delete();
 }
 
 /**

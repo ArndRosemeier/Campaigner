@@ -37,7 +37,6 @@ import {
   npcDraftSchema,
   pcDraftSchema,
   plotArcDraftSchema,
-  sessionDraftSchema,
   continuityReportSchema,
 } from '@/llm/schemas';
 import type { ImagePromptDraft } from '@/llm/schemas';
@@ -152,8 +151,6 @@ function draftContractFor(kind: ArtifactKind): DraftContract {
       return { schema: encounterDraftSchema, keys: Object.keys(encounterDraftSchema.shape) };
     case 'plotarc':
       return { schema: plotArcDraftSchema, keys: Object.keys(plotArcDraftSchema.shape) };
-    case 'session':
-      return { schema: sessionDraftSchema, keys: Object.keys(sessionDraftSchema.shape) };
   }
 }
 
@@ -238,15 +235,6 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
           : [],
         hooks: Array.isArray(draft.hooks) ? (draft.hooks as string[]) : [],
         climax: asString(draft.climax),
-      };
-    case 'session':
-      return {
-        sessionNumber: asString(draft.sessionNumber),
-        recap: asString(draft.recap),
-        prep: Array.isArray(draft.prep) ? (draft.prep as string[]) : [],
-        openThreads: Array.isArray(draft.openThreads) ? (draft.openThreads as string[]) : [],
-        scenes: [],
-        log: '',
       };
   }
 }

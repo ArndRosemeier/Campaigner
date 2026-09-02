@@ -12,7 +12,7 @@ import {
 import {
   deleteBattleIfEmpty,
   ensureBattle,
-  getBattleBySession,
+  getBattleByModule,
   patchBattle,
   resetBattleToStage,
   saveBattleBoard,
@@ -25,7 +25,7 @@ import { newId, statBlockSchema } from '@/domain';
 import { clearDatabase } from './helpers';
 
 /**
- * Battle persistence (09-MILESTONE-5 M5-B): one live battle per session
+ * Battle persistence (10-MILESTONE-6 M6-E): one live battle per module
  * (lazy create), normalize-on-write (PC tokens ensured, NPC instance HP
  * re-filled/clamped), scrub-on-delete (empty battles delete themselves), and
  * the stage reset path.
@@ -101,15 +101,15 @@ async function addNpc(name: string, over: Partial<StatBlock> = {}): Promise<stri
 }
 
 describe('ensureBattle', () => {
-  it('lazily creates exactly one empty battle per session', async () => {
-    const sessionId = newId();
-    const first = await ensureBattle(campaignId, sessionId);
+  it('lazily creates exactly one empty battle per module', async () => {
+    const moduleId = newId();
+    const first = await ensureBattle(campaignId, moduleId);
     expect(first.board.live).toBe(false);
     expect(first.board.tokens).toEqual([]);
     expect(first.encounterArtifactId).toBeNull();
-    const second = await ensureBattle(campaignId, sessionId);
+    const second = await ensureBattle(campaignId, moduleId);
     expect(second.id).toBe(first.id);
-    expect(await getBattleBySession(sessionId)).toBeDefined();
+    expect(await getBattleByModule(moduleId)).toBeDefined();
     const other = await ensureBattle(campaignId, newId());
     expect(other.id).not.toBe(first.id);
   });
@@ -130,8 +130,8 @@ function requireStats(lookup: FighterStatsLookup, id: string): FighterStats {
 describe('normalize-on-write', () => {
   it('re-ensures a token for every statful PC artifact on every write', async () => {
     const pcId = await addPc('Serren');
-    const sessionId = newId();
-    const battle = await ensureBattle(campaignId, sessionId);
+    const moduleId = newId();
+    const battle = await ensureBattle(campaignId, moduleId);
     expect(fighterTokens(battle.board).map((token) => token.artifactId)).toEqual([pcId]);
     // A second PC joins the party → the next write spawns it too.
     await addPc('Mira');
@@ -230,7 +230,7 @@ describe('scrub on artifact delete', () => {
     };
     await saveBattleBoard(battle.id, { ...battle.board, tokens: [...battle.board.tokens, npcToken] });
     await deleteArtifact(npcId);
-    const after = await getBattleBySession(battle.sessionId);
+    const after = await getBattleByModule(battle.moduleId);
     expect(after?.board.tokens.map((token) => token.artifactId)).toEqual([pcId]);
     expect(after?.board.initiativeOrder).toEqual([]);
   });
@@ -240,19 +240,12 @@ describe('scrub on artifact delete', () => {
     const battle = await ensureBattle(campaignId, newId());
     const token = tokenFromFighter(npcId, { kind: 'npc', name: 'Goblin', maxHp: 7 }, 0, true, null);
     await saveBattleBoard(battle.id, { ...battle.board, tokens: [token] });
-    const before = await getBattleBySession(battle.sessionId);
+    const before = await getBattleByModule(battle.moduleId);
     expect(before !== undefined && !isBattleEmpty(before)).toBe(true);
     await deleteArtifact(npcId);
-    expect(await getBattleBySession(battle.sessionId)).toBeUndefined();
+    expect(await getBattleByModule(battle.moduleId)).toBeUndefined();
   });
 
-  it('drops a session artifact’s battle', async () => {
-    const session = await createArtifact({ campaignId, kind: 'session', name: 'S1' });
-    await ensureBattle(campaignId, session.id);
-    expect(await getBattleBySession(session.id)).toBeDefined();
-    await deleteArtifact(session.id);
-    expect(await getBattleBySession(session.id)).toBeUndefined();
-  });
 });
 
 describe('stage reset', () => {
@@ -297,7 +290,7 @@ describe('deleteBattleIfEmpty', () => {
     const battle = await ensureBattle(campaignId, newId());
     await patchBattle(battle.id, { encounterArtifactId: newId() });
     await deleteBattleIfEmpty(battle.id);
-    expect(await getBattleBySession(battle.sessionId)).toBeDefined();
+    expect(await getBattleByModule(battle.moduleId)).toBeDefined();
   });
 
   it('resolves a global library monster and keeps its HP token-owned (10-MILESTONE-6 C)', async () => {

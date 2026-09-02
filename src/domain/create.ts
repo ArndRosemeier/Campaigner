@@ -33,7 +33,6 @@ export const DEFAULT_ARTIFACT_NAMES: Readonly<Record<ArtifactKind, string>> = {
   note: 'New Note',
   encounter: 'New Encounter',
   plotarc: 'New Plot Arc',
-  session: 'New Session',
 };
 
 export function defaultArtifactName(kind: ArtifactKind): string {
@@ -104,8 +103,6 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
       };
     case 'plotarc':
       return { arcType: '', premise: '', stakes: '', beats: [], hooks: [], climax: '' };
-    case 'session':
-      return { sessionNumber: '', recap: '', prep: [], openThreads: [], scenes: [], log: '' };
   }
 }
 

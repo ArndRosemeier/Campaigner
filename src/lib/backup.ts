@@ -2,7 +2,13 @@ import { unzipSync, zipSync, strToU8 } from 'fflate';
 import { z } from 'zod';
 
 import { db } from '@/db/db';
-import { settingsSchema, storedImageSchema, type StoredImage } from '@/domain';
+import {
+  anyArtifactSchema,
+  battleSchema,
+  settingsSchema,
+  storedImageSchema,
+  type StoredImage,
+} from '@/domain';
 import { imageFileExtension } from '@/lib/exportImport';
 
 /**
@@ -118,10 +124,11 @@ export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportRe
       );
     }
   }
-  // Validate settings up front so a corrupt backup fails before the wipe.
-  for (const row of parsed.data.settings ?? []) {
-    settingsSchema.parse(row);
-  }
+  // Validate current authored/play schemas up front so a pre-v11 backup with
+  // retired session rows or session-anchored battles fails before the wipe.
+  for (const row of parsed.data.settings ?? []) settingsSchema.parse(row);
+  for (const row of parsed.data.artifacts ?? []) anyArtifactSchema.parse(row);
+  for (const row of parsed.data.battles ?? []) battleSchema.parse(row);
   for (const row of parsed.data.images ?? []) {
     const meta = storedImageSchema.parse({ ...row, bytes: new Uint8Array() });
     const file = files[`images/${meta.id}.${imageFileExtension(meta.mimeType)}`];

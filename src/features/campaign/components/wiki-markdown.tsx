@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * The shared wiki-link markdown renderer (08-MODULE-DESIGNER M4-A): ONE
- * component used by the module reader, the artifact editor preview, Play mode
+ * component used by the module reader and artifact editor preview
  * and the peek modal. Resolved `[[links]]` render as kind-colored chips (with
  * a cover micro-thumb when present), unresolved ones as dashed muted chips,
  * ambiguous ones with a ⚠ tooltip listing the candidates.
@@ -38,7 +38,6 @@ const KIND_CHIP_CLASSES: Readonly<Record<ArtifactKind, string>> = {
   note: 'border-neutral-500/50 bg-neutral-500/10 text-neutral-800 dark:text-neutral-200',
   encounter: 'border-red-500/50 bg-red-500/10 text-red-800 dark:text-red-200',
   plotarc: 'border-violet-500/50 bg-violet-500/10 text-violet-800 dark:text-violet-200',
-  session: 'border-cyan-500/50 bg-cyan-500/10 text-cyan-800 dark:text-cyan-200',
 };
 
 export function WikiMarkdown({
@@ -176,7 +175,6 @@ const ARTICLE_KIND_LABEL: Readonly<Record<ArtifactKind, string>> = {
   note: 'Note',
   encounter: 'Encounter',
   plotarc: 'Plot arc',
-  session: 'Session',
 };
 
 const CHIP_BASE =

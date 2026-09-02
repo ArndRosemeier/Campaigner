@@ -21,6 +21,7 @@ import {
 } from '@/db/moduleRepo';
 import { createArtifact, getArtifact, listRevisions, saveArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
+import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
 import { clearDatabase, expectNotFound } from './helpers';
 
 /**
@@ -189,8 +190,11 @@ describe('moduleRepo', () => {
       buildModule({ campaignId: newId(), title: 'Doomed', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
     );
 
+    await ensureBattle(created.campaignId, created.id);
+    expect(await getBattleByModule(created.id)).toBeDefined();
     await deleteModule(created.id, 'keep');
     expect(await getModule(created.id)).toBeUndefined();
+    expect(await getBattleByModule(created.id)).toBeUndefined();
 
     await deleteModule(created.id, 'keep');
     expect(await listModulesByCampaign(created.campaignId)).toEqual([]);

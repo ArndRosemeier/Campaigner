@@ -17,7 +17,7 @@ import {
   globalArtifactSchema,
 } from '@/domain';
 import { db } from '@/db/db';
-import { deleteBattlesBySession, scrubArtifactFromBattles } from '@/db/battleRepo';
+import { scrubArtifactFromBattles } from '@/db/battleRepo';
 import { deleteImageIfUnreferenced, pruneUnreferencedImages } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
@@ -426,12 +426,9 @@ export async function deleteArtifact(id: Id): Promise<void> {
     // Image blobs the deleted artifact was the last referencer of are
     // pruned (M3-A): the check covers remaining artifacts and revisions.
     if (artifact !== undefined) {
-      // M5-B: battles reference pc/npc artifacts as tokens and sessions as
-      // owners — a deleted fighter scrubs its tokens (empty battles delete
-      // themselves); a deleted session drops its battle.
-      if (artifact.kind === 'session') {
-        await deleteBattlesBySession(id);
-      } else if (artifact.campaignId === null) {
+      // Battles reference pc/npc artifacts as tokens. A deleted fighter
+      // scrubs its tokens; empty battles delete themselves.
+      if (artifact.campaignId === null) {
         // Global artifact (M6): no campaign prune reaches its library images,
         // so check each now that the row and revisions are gone. Shared image
         // ids survive until their last global referencer is deleted.

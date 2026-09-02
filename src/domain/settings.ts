@@ -99,6 +99,8 @@ export const settingsSchema = z.object({
       workspace: defaultScopeToggles('workspace'),
       moduleView: defaultScopeToggles('moduleView'),
     }),
+  /** v11 migration notice, consumed once by AppShell after it is shown. */
+  retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -118,5 +120,6 @@ export function defaultSettings(): Settings {
       workspace: defaultScopeToggles('workspace'),
       moduleView: defaultScopeToggles('moduleView'),
     },
+    retiredSessionNotesRemoved: 0,
   };
 }

@@ -172,16 +172,6 @@ export const plotArcDraftSchema = z.object({
 
 export type PlotArcDraft = z.infer<typeof plotArcDraftSchema>;
 
-export const sessionDraftSchema = z.object({
-  ...draftBase,
-  sessionNumber: z.string(),
-  recap: z.string(),
-  prep: stringArray(),
-  openThreads: stringArray(),
-});
-
-export type SessionDraft = z.infer<typeof sessionDraftSchema>;
-
 /** Continuity Editor report (06-MILESTONES M2): issues found in a target. */
 export const continuityReportSchema = z.object({
   verdict: z.enum(['consistent', 'issues_found']),

@@ -219,16 +219,6 @@ function dataSections(
       ...artifact.data.hooks.map((hook): Content => ({ text: [{ text: 'Hook: ', bold: true }, { text: hook }] })),
       labeledSection('Climax', artifact.data.climax),
     );
-  } else if (artifact.kind === 'session') {
-    pushSections(
-      out,
-      labeledSection('Session', artifact.data.sessionNumber),
-      labeledSection('Recap', artifact.data.recap),
-      ...artifact.data.prep.map((item): Content => ({ text: [{ text: 'Prep: ', bold: true }, { text: item }] })),
-      ...artifact.data.openThreads.map((thread): Content => ({
-        text: [{ text: 'Open thread: ', bold: true }, { text: thread }],
-      })),
-    );
   } else {
     void artifact;
   }

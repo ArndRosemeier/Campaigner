@@ -26,7 +26,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
  * chunk expands an inline preview with "Pin to Assistant".
  */
 
-export type QuickFindMode = 'play' | 'workspace';
+export type QuickFindMode = 'picker' | 'workspace';
 
 interface ArtifactHit {
   artifact: AnyArtifact;
@@ -73,7 +73,7 @@ export interface QuickFindDialogProps {
   mode: QuickFindMode;
   /** Campaign modules + parts (M4-D). Omit → no module group. */
   modules?: readonly Module[] | undefined;
-  /** Play mode: receives the picked artifact to set focus. */
+  /** Picker mode: receives the picked artifact without navigation. */
   onPickArtifact?: (artifact: AnyArtifact) => void;
   /** Workspace mode: caller navigates to the artifact editor. */
   onWorkspaceArtifact?: (artifact: AnyArtifact) => void;
@@ -149,7 +149,7 @@ export function QuickFindDialog({
   }, [query, open, artifactById, modules]);
 
   function pickArtifact(artifact: AnyArtifact): void {
-    if (mode === 'play') {
+    if (mode === 'picker') {
       onPickArtifact?.(artifact);
       onOpenChange(false);
       return;

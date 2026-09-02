@@ -13,7 +13,8 @@ import { ProgressDock } from '@/features/progress/progress-dock';
 import { failRunningRuns } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { ensurePersistentStorage } from '@/lib/deviceCapabilities';
-import { toastError } from '@/lib/toast';
+import { toastError, toastInfo } from '@/lib/toast';
+import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
 
@@ -32,6 +33,21 @@ import { useHelpStore } from '@/help/helpStore';
 export function AppShell(): JSX.Element {
   useThemeSync();
   const openHelp = useHelpStore((state) => state.openHelp);
+
+  useEffect(() => {
+    void readSettings()
+      .then(async (settings) => {
+        const removed = settings.retiredSessionNotesRemoved;
+        if (removed === 0) return;
+        toastInfo(
+          `${String(removed)} session ${removed === 1 ? 'note' : 'notes'} from the retired play view ${removed === 1 ? 'was' : 'were'} removed`,
+        );
+        await updateSettings({ retiredSessionNotesRemoved: 0 });
+      })
+      .catch((error: unknown) => {
+        toastError('Could not report the play-view migration', error);
+      });
+  }, []);
 
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent): void {

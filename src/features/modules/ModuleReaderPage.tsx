@@ -9,10 +9,11 @@ import {
   PencilIcon,
   PlayIcon,
   RotateCcwIcon,
+  SwordsIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { modulesPath } from '@/app/routes';
+import { battlePath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -214,6 +215,16 @@ export function ModuleReaderPage(): JSX.Element {
           >
             <ArrowLeftIcon aria-hidden data-icon="inline-start" />
             All modules
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            className="mb-3 w-full"
+            render={<Link to={battlePath(campaignId, moduleId)} />}
+            nativeButton={false}
+          >
+            <SwordsIcon aria-hidden data-icon="inline-start" />
+            Battle table
           </Button>
           <p className="mb-1 px-1 text-xs tracking-wide text-muted-foreground uppercase">
             Contents
@@ -801,7 +812,7 @@ function LinkExistingPicker(props: {
         if (!open) props.onClose();
       }}
       artifacts={scoped}
-      mode="play"
+      mode="picker"
       onPickArtifact={props.onPick}
     />
   );

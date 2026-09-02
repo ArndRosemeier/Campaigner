@@ -53,6 +53,7 @@ import {
   surroundingParagraphs,
 } from '@/lib/wikilinks';
 import { toastError, toastSuccess } from '@/lib/toast';
+import { RunBattleButton } from '@/features/play/run-battle';
 import { useProgressStore } from '@/lib/progress';
 import { cn } from '@/lib/utils';
 
@@ -844,6 +845,13 @@ function EntityRow({
         )}
         <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>
       </button>
+      {entry.artifact?.kind === 'encounter' && !imageMode && (
+        <RunBattleButton
+          campaignId={module.campaignId}
+          moduleId={module.id}
+          encounter={entry.artifact}
+        />
+      )}
       {entry.artifact !== undefined && !imageMode && entry.artifact.moduleId !== null && (
         <Button
           variant="ghost"

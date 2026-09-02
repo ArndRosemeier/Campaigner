@@ -330,7 +330,7 @@ export function DeliverablesPage(): JSX.Element {
             if (!open) setPickerTarget(null);
           }}
           artifacts={artifacts}
-          mode="play"
+          mode="picker"
           onPickArtifact={(artifact) => {
             addNode(pickerTarget, {
               type: 'artifact',

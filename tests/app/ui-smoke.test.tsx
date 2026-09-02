@@ -8,7 +8,6 @@ import {
   ROUTES,
   deliverablesPath,
   graphPath,
-  playPath,
   workspacePath,
 } from '@/app/routes';
 import { ARTIFACT_KINDS, type ArtifactKind, ruleChunkSchema, stampNewEntity } from '@/domain';
@@ -43,7 +42,6 @@ const KIND_NAMES: Record<ArtifactKind, string> = {
   note: 'Rumors',
   encounter: 'Dock Ambush',
   plotarc: 'The Sunken Crown',
-  session: 'Session 1',
 };
 
 let world: { campaignId: string } = { campaignId: '' };
@@ -259,19 +257,9 @@ describe('route smoke sweep', () => {
     );
   });
 
-  it('play page mounts with the default focus', { timeout: 30_000 }, async () => {
-    renderAppAt(playPath(world.campaignId));
-
-    expect(await screen.findByTestId('play-page', {}, { timeout: 10_000 })).toBeInTheDocument();
-    // The focus name legitimately appears in the focus header and in the
-    // context grid (connected locations) — assert it is present, not unique.
-    const focusHeadings = await screen.findAllByRole(
-      'heading',
-      { name: 'Old Docks' },
-      { timeout: 10_000 },
-    );
-    expect(focusHeadings.length).toBeGreaterThan(0);
-    expect(await screen.findByTestId('session-rail', {}, { timeout: 10_000 })).toBeInTheDocument();
+  it('retired play route falls through to 404', async () => {
+    renderAppAt(`/c/${world.campaignId}/play`);
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument();
   });
 
   it('deliverables page mounts', async () => {

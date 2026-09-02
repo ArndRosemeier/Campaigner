@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { playPath } from '@/app/routes';
+import { artifactPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
@@ -80,7 +80,7 @@ function renderQuickFindDialog(
       onOpenChange={vi.fn()}
       artifacts={artifacts}
       modules={modules}
-      mode="play"
+      mode="picker"
       onPickModule={onPickModule}
     />,
   );
@@ -214,20 +214,18 @@ describe('QuickFindHotkey', () => {
   beforeEach(clearDatabase);
   afterEach(cleanup);
 
-  it('opens with Ctrl+K on a play route and navigates to the reader part hash on pick', {
+  it('opens with Ctrl+K on a campaign route and navigates to the reader part hash on pick', {
     timeout: 20_000,
   }, async () => {
     const user = userEvent.setup();
     await seedBuiltInPersonas();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
+    const location = await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
     const module = await saveModule(moduleFixture(campaign.id));
 
-    window.history.replaceState(null, '', playPath(campaign.id));
+    window.history.replaceState(null, '', artifactPath(campaign.id, location.id));
     render(<RouterProvider router={createAppRouter()} />);
-    expect(
-      await screen.findByRole('heading', { name: 'Old Tower' }, { timeout: 5_000 }),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId('artifact-editor', {}, { timeout: 5_000 })).toBeInTheDocument();
 
     await user.keyboard('{Control>}k{/Control}');
     const dialog = await screen.findByTestId('quickfind-dialog', {}, { timeout: 5_000 });
@@ -245,13 +243,11 @@ describe('QuickFindHotkey', () => {
   it('ignores synthetic keydown events that are not real KeyboardEvents', async () => {
     await seedBuiltInPersonas();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
+    const location = await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
 
-    window.history.replaceState(null, '', playPath(campaign.id));
+    window.history.replaceState(null, '', artifactPath(campaign.id, location.id));
     render(<RouterProvider router={createAppRouter()} />);
-    expect(
-      await screen.findByRole('heading', { name: 'Old Tower' }, { timeout: 5_000 }),
-    ).toBeInTheDocument();
+    expect(await screen.findByTestId('artifact-editor', {}, { timeout: 5_000 })).toBeInTheDocument();
 
     // A window-level listener receives whatever is dispatched under the
     // 'keydown' type; a plain Event has no `.key`, which used to crash the

@@ -17,12 +17,10 @@ import {
   type NpcArtifactData,
   type PcArtifactData,
   type PlotArcArtifactData,
-  type SessionArtifactData,
 } from '@/domain';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
-import { RunBattleButton } from '@/features/play/run-battle';
 import { useModules } from '@/features/modules/hooks';
 import { buttonVariants } from '@/components/ui/button';
 import {
@@ -41,7 +39,6 @@ import {
   PcForm,
   NoteForm,
   PlotArcForm,
-  SessionForm,
 } from '@/features/campaign/components/kind-forms';
 import { LinksSection } from '@/features/campaign/components/links-section';
 import { ImagesSection } from '@/features/campaign/components/images-section';
@@ -76,7 +73,6 @@ type FactionDraft = CommonDraft & { kind: 'faction'; data: FactionArtifactData }
 type NoteDraft = CommonDraft & { kind: 'note'; data: Record<string, never> };
 type EncounterDraft = CommonDraft & { kind: 'encounter'; data: EncounterArtifactData };
 type PlotArcDraft = CommonDraft & { kind: 'plotarc'; data: PlotArcArtifactData };
-type SessionDraft = CommonDraft & { kind: 'session'; data: SessionArtifactData };
 export type ArtifactDraft =
   | PcDraft
   | NpcDraft
@@ -84,8 +80,7 @@ export type ArtifactDraft =
   | FactionDraft
   | NoteDraft
   | EncounterDraft
-  | PlotArcDraft
-  | SessionDraft;
+  | PlotArcDraft;
 
 function draftFrom(artifact: AnyArtifact): ArtifactDraft {
   const common: CommonDraft = {
@@ -110,8 +105,6 @@ function draftFrom(artifact: AnyArtifact): ArtifactDraft {
       return { ...common, kind: 'encounter', data: structuredClone(artifact.data) };
     case 'plotarc':
       return { ...common, kind: 'plotarc', data: structuredClone(artifact.data) };
-    case 'session':
-      return { ...common, kind: 'session', data: structuredClone(artifact.data) };
   }
 }
 
@@ -258,9 +251,6 @@ export function ArtifactEditor({
               Global
             </Badge>
           )}
-          {artifact.kind === 'encounter' && artifact.campaignId !== null && (
-            <RunBattleButton campaignId={artifact.campaignId} encounter={artifact} />
-          )}
           <ScopeAction artifact={artifact} />
           <HelpButton topic="editor" label="artifact editor" className="ml-auto" />
           <span
@@ -356,14 +346,6 @@ export function ArtifactEditor({
                 data={draft.data}
                 onChange={(data) => {
                   setDraft((previous) => ({ ...previous, kind: 'plotarc', data }));
-                }}
-              />
-            )}
-            {draft.kind === 'session' && (
-              <SessionForm
-                data={draft.data}
-                onChange={(data) => {
-                  setDraft((previous) => ({ ...previous, kind: 'session', data }));
                 }}
               />
             )}

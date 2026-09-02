@@ -11,7 +11,6 @@ import type { AnyArtifact,
   NpcArtifactData,
   PcArtifactData,
   PlotArcArtifactData,
-  SessionArtifactData,
   StatBlock,
 } from '@/domain';
 import { blankStatBlock } from '@/domain';
@@ -602,54 +601,6 @@ export function PlotArcForm({ data, onChange }: PlotArcFormProps) {
         value={data.climax}
         onChange={(climax) => {
           patch({ climax });
-        }}
-      />
-    </div>
-  );
-}
-
-export interface SessionFormProps {
-  data: SessionArtifactData;
-  onChange: (data: SessionArtifactData) => void;
-}
-
-export function SessionForm({ data, onChange }: SessionFormProps) {
-  function patch(next: Partial<SessionArtifactData>): void {
-    onChange({ ...data, ...next });
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <Field label="Session number">
-        <Input
-          value={data.sessionNumber}
-          className="h-7 text-sm"
-          onChange={(event) => {
-            patch({ sessionNumber: event.target.value });
-          }}
-        />
-      </Field>
-      <TextAreaField
-        label="Recap"
-        value={data.recap}
-        onChange={(recap) => {
-          patch({ recap });
-        }}
-      />
-      <StringListEditor
-        label="Prep"
-        items={data.prep}
-        itemPlaceholder="Prep item…"
-        onChange={(prep) => {
-          patch({ prep });
-        }}
-      />
-      <StringListEditor
-        label="Open threads"
-        items={data.openThreads}
-        itemPlaceholder="Unresolved thread…"
-        onChange={(openThreads) => {
-          patch({ openThreads });
         }}
       />
     </div>

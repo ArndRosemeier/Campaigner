@@ -295,6 +295,52 @@ export class CampaignerDB extends Dexie {
           if (artifact.moduleId === undefined) artifact.moduleId = null;
         });
       });
+
+    // M6-E (10-MILESTONE-6): the module reader becomes the only play view.
+    // Live battles cannot be truthfully re-anchored from retired session
+    // artifacts, so v11 clears them. Session notes are retired and their
+    // removal count is persisted for a one-time user-visible notice.
+    this.version(11)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('battles').clear();
+        const artifacts = tx.table('artifacts');
+        const sessions = (await artifacts.where('kind').equals('session').toArray()) as {
+          id: Id;
+        }[];
+        const sessionIds = sessions.map((session) => session.id);
+        if (sessionIds.length > 0) {
+          await tx.table('revisions').where('artifactId').anyOf(sessionIds).delete();
+          await artifacts
+            .toCollection()
+            .modify((artifact: { links?: { targetId: Id; relation: string }[] }) => {
+              if (artifact.links === undefined) return;
+              artifact.links = artifact.links.filter((link) => !sessionIds.includes(link.targetId));
+            });
+          await artifacts.bulkDelete(sessionIds);
+        }
+        const settings = tx.table('settings');
+        const existing = (await settings.get('settings')) as Record<string, unknown> | undefined;
+        await settings.put({
+          ...(existing ?? {}),
+          id: 'settings',
+          retiredSessionNotesRemoved: sessionIds.length,
+        });
+      });
   }
 }
 

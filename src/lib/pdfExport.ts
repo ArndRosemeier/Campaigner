@@ -221,19 +221,6 @@ function dataSections(artifact: Artifact): object[] {
       ]);
       break;
     }
-    case 'session': {
-      add('Session details', [
-        labelValue('Session', artifact.data.sessionNumber),
-        labelValue('Recap', artifact.data.recap),
-        ...(artifact.data.prep.length > 0
-          ? [{ text: 'Prep', style: 'subheading' }, ...listItems(artifact.data.prep)]
-          : []),
-        ...(artifact.data.openThreads.length > 0
-          ? [{ text: 'Open threads', style: 'subheading' }, ...listItems(artifact.data.openThreads)]
-          : []),
-      ]);
-      break;
-    }
     case 'note':
       break;
   }
@@ -270,7 +257,6 @@ const ARTIFACT_KIND_LABELS: Readonly<Record<Artifact['kind'], string>> = {
   note: 'Note',
   encounter: 'Encounter',
   plotarc: 'Plot arc',
-  session: 'Session',
 };
 
 /** Cover image node: centered, scaled to fit ≤480pt width (M3-A). */

@@ -20,7 +20,6 @@ const KIND_COLORS: Readonly<Record<ArtifactKind, string>> = {
   note: '#d8b4fe',
   encounter: '#fdba74',
   plotarc: '#fde047',
-  session: '#a5b4fc',
 };
 
 /**

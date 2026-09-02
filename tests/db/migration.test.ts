@@ -11,8 +11,8 @@ import { describe, expect, it } from 'vitest';
  * defaults.
  */
 
-describe('v1 → v4 migration', () => {
-  it('fills image, monster-source, and session defaults on rows written by version 1', async () => {
+describe('v1 → current migration', () => {
+  it('fills surviving defaults and removes retired session notes', async () => {
     // Build a v1-only database with pre-M3 rows, then close it.
     const legacy = new Dexie('campaigner');
     legacy.version(1).stores({
@@ -116,10 +116,9 @@ describe('v1 → v4 migration', () => {
       type: 'none',
     });
 
-    // v1 → v4: pre-M3-C sessions gain the play checklist and log defaults.
-    const session = await db.artifacts.get('00000000-0000-4000-8000-0000000000a3');
-    expect(session?.kind === 'session' && session.data.scenes).toEqual([]);
-    expect(session?.kind === 'session' && session.data.log).toBe('');
+    // v11 retires session artifacts and records the loud startup notice.
+    expect(await db.artifacts.get('00000000-0000-4000-8000-0000000000a3')).toBeUndefined();
+    expect((await db.settings.get('settings'))?.retiredSessionNotesRemoved).toBe(1);
 
     // The upgraded rows validate against the current domain schemas.
     const { artifactSchema, personaRunSchema } = await import('@/domain');
@@ -471,6 +470,129 @@ describe('v9 → v10 migration', () => {
     const parsed = artifactSchema.parse(row);
     expect(artifactScope(parsed)).toBe('campaign');
 
+    await db.delete();
+  }, 20000);
+});
+
+describe('v10 → v11 migration', () => {
+  it('clears battles, removes session notes, records the count, and preserves authored rows', async () => {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(10).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, sessionId',
+      settings: 'id',
+    });
+    await legacy.open();
+    const campaignId = '00000000-0000-4000-8000-000000000c11';
+    const moduleId = '00000000-0000-4000-8000-000000000b11';
+    const sessionId = '00000000-0000-4000-8000-000000000a11';
+    const noteId = '00000000-0000-4000-8000-000000000d11';
+    await legacy.table('campaigns').put({
+      id: campaignId,
+      name: 'Migration campaign',
+      system: 'dnd5e',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('modules').put({
+      id: moduleId,
+      campaignId,
+      title: 'Preserved module',
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'sketch',
+      spine: null,
+      parts: [],
+      entityKinds: [],
+      focusedEntities: [],
+      entitySort: 'appearance',
+      entityNamesNormalized: false,
+      entityNormalizationError: '',
+      entityRewriteProposals: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('artifacts').bulkPut([
+      {
+        id: sessionId,
+        campaignId,
+        moduleId: null,
+        kind: 'session',
+        name: 'Retired session',
+        tags: [],
+        aliases: [],
+        summary: '',
+        body: '',
+        links: [],
+        currentRevision: 1,
+        imageIds: [],
+        coverImageId: null,
+        data: { sessionNumber: '1', recap: '', prep: [], openThreads: [], scenes: [], log: '' },
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: noteId,
+        campaignId,
+        moduleId,
+        kind: 'note',
+        name: 'Preserved note',
+        tags: [],
+        aliases: [],
+        summary: '',
+        body: '',
+        links: [{ targetId: sessionId, relation: 'formerly' }],
+        currentRevision: 1,
+        imageIds: [],
+        coverImageId: null,
+        data: {},
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ]);
+    await legacy.table('revisions').put({
+      id: '00000000-0000-4000-8000-000000000e11',
+      artifactId: sessionId,
+      revision: 1,
+      snapshot: {},
+      source: 'user',
+      runId: null,
+      createdAt: 1,
+    });
+    await legacy.table('battles').put({
+      id: '00000000-0000-4000-8000-000000000f11',
+      campaignId,
+      sessionId,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('settings').put({ id: 'settings', openRouterApiKey: '' });
+    legacy.close();
+
+    const { db } = await import('@/db/db');
+    await db.open();
+    expect(await db.battles.count()).toBe(0);
+    expect(await db.artifacts.get(sessionId)).toBeUndefined();
+    expect(await db.revisions.where('artifactId').equals(sessionId).count()).toBe(0);
+    const note = await db.artifacts.get(noteId);
+    expect(note?.name).toBe('Preserved note');
+    expect(note?.moduleId).toBe(moduleId);
+    expect(note?.links).toEqual([]);
+    expect((await db.modules.get(moduleId))?.title).toBe('Preserved module');
+    expect((await db.settings.get('settings'))?.retiredSessionNotesRemoved).toBe(1);
     await db.delete();
   }, 20000);
 });

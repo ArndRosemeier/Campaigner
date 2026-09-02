@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
-import { matchPath, useLocation, useNavigate } from 'react-router-dom';
-import { ROUTES, artifactPath, campaignIdFromPath, modulePath } from '@/app/routes';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { artifactPath, campaignIdFromPath, modulePath } from '@/app/routes';
 import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
 import { listModulesByCampaign } from '@/db/moduleRepo';
 import { readSettings } from '@/db/settingsRepo';
 import type { AnyArtifact, Module } from '@/domain';
 import { toastError } from '@/lib/toast';
-import { usePlayStore } from '@/features/play/playStore';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { useQuickFindStore } from '@/features/quickfind/quickfindStore';
 
@@ -45,7 +44,7 @@ export function QuickFindHotkey(): JSX.Element | null {
   if (campaignId === undefined) return null;
 
   if (!open) return null;
-  return <QuickFindResults campaignId={campaignId} playMode={matchPlay(pathname)} close={close} />;
+  return <QuickFindResults campaignId={campaignId} close={close} />;
 }
 
 /**
@@ -55,11 +54,9 @@ export function QuickFindHotkey(): JSX.Element | null {
  */
 function QuickFindResults(props: {
   campaignId: string;
-  playMode: boolean;
   close: () => void;
 }): JSX.Element | null {
   const navigate = useNavigate();
-  const setFocus = usePlayStore((state) => state.setFocus);
   const [snapshot, setSnapshot] = useState<{
     artifacts: AnyArtifact[];
     modules: Module[];
@@ -89,10 +86,7 @@ function QuickFindResults(props: {
       }}
       artifacts={snapshot.artifacts}
       modules={snapshot.modules}
-      mode={props.playMode ? 'play' : 'workspace'}
-      onPickArtifact={(artifact) => {
-        setFocus(props.campaignId, artifact.id);
-      }}
+      mode="workspace"
       onWorkspaceArtifact={(artifact) => {
         props.close();
         navigate(artifactPath(props.campaignId, artifact.id));
@@ -120,8 +114,4 @@ async function loadQuickFindSnapshot(campaignId: string): Promise<{
   );
   if (scopes.global) artifacts.push(...(await listGlobalArtifacts()));
   return { artifacts, modules };
-}
-
-function matchPlay(pathname: string): boolean {
-  return matchPath(ROUTES.play, pathname) !== null;
 }
