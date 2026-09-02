@@ -767,9 +767,13 @@ function StreamingCard({ label, tail }: { label: string; tail: string }): JSX.El
         <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
         {label}
       </p>
-      <pre className="mt-2 max-h-48 overflow-hidden font-mono text-xs whitespace-pre-wrap text-muted-foreground">
-        {tail.trim() === '' ? '…' : tail}
-      </pre>
+      {/* Fixed height + bottom-anchored: the box occupies its final size from
+          the first token, so streaming never reflows the surrounding document
+          (a growing box made the whole module jitter), and clipping at the
+          TOP keeps the newest text visible like a terminal tail. */}
+      <div className="mt-2 flex h-48 flex-col justify-end overflow-hidden font-mono text-xs text-muted-foreground">
+        <pre className="shrink-0 whitespace-pre-wrap">{tail.trim() === '' ? '…' : tail}</pre>
+      </div>
     </div>
   );
 }
