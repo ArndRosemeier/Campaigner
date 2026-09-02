@@ -4,6 +4,7 @@
  */
 export * from '@/domain/artifact';
 export * from '@/domain/artifactRevision';
+export * from '@/domain/battle';
 export * from '@/domain/campaign';
 export * from '@/domain/create';
 export * from '@/domain/deliverable';

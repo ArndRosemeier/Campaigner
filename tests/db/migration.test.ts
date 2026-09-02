@@ -28,7 +28,7 @@ describe('v1 → v4 migration', () => {
     });
     await legacy.open();
     await legacy.table('campaigns').put({
-      id: '00000000-0000-4000-8000-0000000000c1',
+      id: '00000000-0000-4000-8000-000000000c01',
       name: 'Legacy',
       system: 'dnd5e',
       description: '',
@@ -37,7 +37,7 @@ describe('v1 → v4 migration', () => {
     });
     await legacy.table('artifacts').put({
       id: '00000000-0000-4000-8000-0000000000a1',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       kind: 'note',
       name: 'Old note',
       tags: [],
@@ -52,7 +52,7 @@ describe('v1 → v4 migration', () => {
     // Pre-M3-B encounter: monster entries have no `source` yet.
     await legacy.table('artifacts').put({
       id: '00000000-0000-4000-8000-0000000000a2',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       kind: 'encounter',
       name: 'Old ambush',
       tags: [],
@@ -74,7 +74,7 @@ describe('v1 → v4 migration', () => {
     // Pre-M3-C session: no scenes/log yet.
     await legacy.table('artifacts').put({
       id: '00000000-0000-4000-8000-0000000000a3',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       kind: 'session',
       name: 'Old session',
       tags: [],
@@ -88,7 +88,7 @@ describe('v1 → v4 migration', () => {
     });
     await legacy.table('runs').put({
       id: '00000000-0000-4000-8000-0000000000d1',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       personaId: '00000000-0000-4000-8000-0000000000e1',
       autonomy: 'manual',
       status: 'completed',
@@ -152,7 +152,7 @@ describe('v5 → v6 migration', () => {
     await legacy.open();
     await legacy.table('artifacts').put({
       id: '00000000-0000-4000-8000-0000000000a4',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       kind: 'note',
       name: 'Pre-v6 note',
       tags: [],
@@ -168,7 +168,7 @@ describe('v5 → v6 migration', () => {
     });
     await legacy.table('artifacts').put({
       id: '00000000-0000-4000-8000-0000000000a5',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       kind: 'npc',
       name: 'Pre-v6 npc',
       tags: [],
@@ -198,7 +198,7 @@ describe('v5 → v6 migration', () => {
 
     // The new table accepts a module row built by the domain factory.
     const firstModule = createModule({
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       title: 'First Module',
       concept: '',
       levelMin: 1,
@@ -235,7 +235,7 @@ describe('v6 → v7 migration', () => {
     await legacy.open();
     await legacy.table('modules').put({
       id: '00000000-0000-4000-8000-0000000000b1',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       title: 'Pre-v7 module',
       concept: '',
       levelMin: 1,
@@ -288,7 +288,7 @@ describe('v7 → v8 migration', () => {
     await legacy.open();
     await legacy.table('modules').put({
       id: '00000000-0000-4000-8000-0000000000b2',
-      campaignId: '00000000-0000-4000-8000-0000000000c1',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
       title: 'Pre-v8 module',
       concept: '',
       levelMin: 1,
@@ -320,6 +320,89 @@ describe('v7 → v8 migration', () => {
     const parsed = moduleSchema.parse(module);
     expect(parsed.entityNamesNormalized).toBe(false);
     expect(parsed.entityKinds).toEqual([{ name: 'Kael', kind: 'npc', absorbed: [] }]);
+
+    await db.delete();
+  }, 20000);
+});
+
+describe('v8 → v9 migration', () => {
+  it('creates the battles table and backfills encounter mapImageId + image role', async () => {
+    // Build a v8 database (pre-M5): encounters have no mapImageId, images
+    // have no role, battles do not exist.
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(8).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-000000000e02',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
+      kind: 'encounter',
+      name: 'Old encounter',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      coverImageId: null,
+      imageIds: [],
+      aliases: [],
+      currentRevision: 1,
+      createdAt: 1,
+      updatedAt: 1,
+      data: {
+        difficulty: 'medium',
+        levelHint: '1',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+      },
+    });
+    await legacy.table('images').put({
+      id: '00000000-0000-4000-8000-000000000a03',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: 'image/webp',
+      width: 100,
+      height: 100,
+      prompt: '',
+      model: '',
+      source: 'uploaded',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-9 upgrade: the battles
+    // table exists, the encounter gains mapImageId: null, the image gains
+    // role 'artwork'.
+    const { db } = await import('@/db/db');
+    await db.open();
+    expect(await db.battles.count()).toBe(0);
+
+    const { artifactSchema } = await import('@/domain');
+    const artifact = await db.artifacts.get('00000000-0000-4000-8000-000000000e02');
+    expect(artifact?.kind).toBe('encounter');
+    const parsed = artifactSchema.parse(artifact);
+    if (parsed.kind !== 'encounter') throw new Error('wrong kind');
+    expect(parsed.data.mapImageId).toBeNull();
+
+    const image = await db.images.get('00000000-0000-4000-8000-000000000a03');
+    // The bytes round-trip through structured clone; the role default is
+    // what the migration adds — assert it directly.
+    expect(image?.role).toBe('artwork');
 
     await db.delete();
   }, 20000);

@@ -43,6 +43,7 @@ describe('encounter / plotarc / session kinds', () => {
         terrain: 'river crossing',
         tactics: 'hit and run',
         treasure: 'none',
+        mapImageId: null,
       },
     });
     const stored = await getArtifact(encounter.id);
@@ -66,6 +67,7 @@ describe('encounter / plotarc / session kinds', () => {
           terrain: '',
           tactics: '',
           treasure: '',
+          mapImageId: null,
         },
       }),
     ).rejects.toThrow();

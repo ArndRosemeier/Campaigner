@@ -185,6 +185,8 @@ export const encounterDataSchema = z.object({
   terrain: z.string(),
   tactics: z.string(),
   treasure: z.string(),
+  /** The designed battlemap (M5-C), set from the existing image pipeline. */
+  mapImageId: z.uuid().nullable().default(null),
 });
 
 export type EncounterArtifactData = z.infer<typeof encounterDataSchema>;

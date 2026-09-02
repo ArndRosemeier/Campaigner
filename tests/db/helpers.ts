@@ -17,6 +17,7 @@ export async function clearDatabase(): Promise<void> {
     db.deliverables.clear(),
     db.images.clear(),
     db.modules.clear(),
+    db.battles.clear(),
     db.settings.clear(),
   ]);
 }

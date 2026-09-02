@@ -77,6 +77,7 @@ async function seed(): Promise<{ deliverable: Deliverable; npcId: string; gmNote
       terrain: 'wet planks',
       tactics: 'surround and drag under',
       treasure: 'silver bell charm',
+      mapImageId: null,
     },
     links: [{ targetId: location.id, relation: 'at' }],
   });

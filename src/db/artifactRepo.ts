@@ -12,6 +12,7 @@ import {
   MAX_REVISIONS_PER_ARTIFACT,
 } from '@/domain';
 import { db } from '@/db/db';
+import { deleteBattlesBySession, scrubArtifactFromBattles } from '@/db/battleRepo';
 import { deleteImageIfUnreferenced, pruneUnreferencedImages } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
@@ -208,7 +209,7 @@ export async function getRevision(
 
 /** Deletes an artifact and its revision history. Idempotent. */
 export async function deleteArtifact(id: Id): Promise<void> {
-  await db.transaction('rw', db.artifacts, db.revisions, db.images, async () => {
+  await db.transaction('rw', db.artifacts, db.revisions, db.images, db.battles, async () => {
     const artifact = await db.artifacts.get(id);
     await db.revisions.where('artifactId').equals(id).delete();
     await db.artifacts.delete(id);
@@ -227,6 +228,14 @@ export async function deleteArtifact(id: Id): Promise<void> {
     // Image blobs the deleted artifact was the last referencer of are
     // pruned (M3-A): the check covers remaining artifacts and revisions.
     if (artifact !== undefined) {
+      // M5-B: battles reference pc/npc artifacts as tokens and sessions as
+      // owners — a deleted fighter scrubs its tokens (empty battles delete
+      // themselves); a deleted session drops its battle.
+      if (artifact.kind === 'session') {
+        await deleteBattlesBySession(id);
+      } else {
+        await scrubArtifactFromBattles(artifact.campaignId, id);
+      }
       await pruneUnreferencedImages(artifact.campaignId);
     }
   });

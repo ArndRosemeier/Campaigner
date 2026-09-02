@@ -70,6 +70,7 @@ describe('encounter form monster sources', () => {
       terrain: '',
       tactics: '',
       treasure: '',
+      mapImageId: null,
     };
     render(
       <EncounterForm
@@ -100,6 +101,7 @@ describe('encounter form monster sources', () => {
       terrain: '',
       tactics: '',
       treasure: '',
+      mapImageId: null,
     };
     let latest: EncounterArtifactData | null = null;
 

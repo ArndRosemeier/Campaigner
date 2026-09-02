@@ -94,6 +94,7 @@ async function seed(): Promise<{ campaignId: Id; encounterId: Id; sessionId: Id;
       terrain: '',
       tactics: '',
       treasure: '',
+      mapImageId: null,
     },
     links: [{ targetId: tower.id, relation: 'at' }],
   });

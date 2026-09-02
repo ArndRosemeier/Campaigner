@@ -3,6 +3,7 @@ import Dexie, { type Table } from 'dexie';
 import type {
   Artifact,
   ArtifactRevision,
+  Battle,
   Campaign,
   ChunkEmbedding,
   Deliverable,
@@ -29,6 +30,13 @@ import type { Id } from '@/domain';
  * `aliases: []`.
  *
  * Version 7 (08-MODULE-DESIGNER M4-C): modules gain `entityKinds: []`.
+ *
+ * Version 8 (fix-01): modules gain the name-normalization pass state.
+ *
+ * Version 9 (09-MILESTONE-5 M5-B): new `battles` table (one live battle per
+ * session); encounter artifacts gain `mapImageId: null` and images gain
+ * `role: 'artwork'` (M5-C backfills; the `pc` artifact kind needs no
+ * migration).
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -42,6 +50,7 @@ export class CampaignerDB extends Dexie {
   runs!: Table<PersonaRun, Id>;
   deliverables!: Table<Deliverable, Id>;
   modules!: Table<Module, Id>;
+  battles!: Table<Battle, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -221,6 +230,40 @@ export class CampaignerDB extends Dexie {
           if (module.entityNamesNormalized === undefined) module.entityNamesNormalized = false;
           if (module.entityNormalizationError === undefined) module.entityNormalizationError = '';
           if (module.entityRewriteProposals === undefined) module.entityRewriteProposals = null;
+        });
+      });
+    // M5 (09-MILESTONE-5): new `battles` table (one live battle per session).
+    // M5-C schema backfills: encounter artifacts gain `mapImageId: null`
+    // (the designed battlemap) and images gain `role: 'artwork'` (map-role
+    // images bypass the 1600px intake re-encode). The `pc` artifact kind
+    // needs no migration.
+    this.version(9)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, sessionId',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const artifacts = tx.table('artifacts');
+        await artifacts.toCollection().modify((artifact: Record<string, unknown>) => {
+          if (artifact.kind === 'encounter' && artifact.data !== undefined && artifact.data !== null) {
+            const data = artifact.data as Record<string, unknown>;
+            if (data.mapImageId === undefined) data.mapImageId = null;
+          }
+        });
+        const images = tx.table('images');
+        await images.toCollection().modify((image: Record<string, unknown>) => {
+          if (image.role === undefined) image.role = 'artwork';
         });
       });
   }
