@@ -3,9 +3,9 @@ import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import Markdown from 'react-markdown';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { CheckIcon, PinIcon } from 'lucide-react';
+import { CheckIcon, PinIcon, SwordsIcon } from 'lucide-react';
 
-import { artifactPath } from '@/app/routes';
+import { battlePath, artifactPath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -17,6 +17,7 @@ import {
 } from '@/components/ui/select';
 import type { Artifact, SessionArtifactData } from '@/domain';
 import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { getBattleBySession } from '@/db/battleRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { CollapsibleRow, EncounterCard, NpcCard } from '@/features/play/artifact-cards';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
@@ -40,6 +41,20 @@ export function PlayPage(): JSX.Element {
   const setFocus = usePlayStore((state) => state.setFocus);
   const backTo = usePlayStore((state) => state.backTo);
   const openQuickFind = useQuickFindStore((state) => state.openQuickFind);
+  // M5-D: a seeded battle for the active session offers the table surface.
+  const seededBattle = useLiveQuery(
+    async () => {
+      const sessionId =
+        play.activeSessionId ??
+        (artifacts ?? []).find((artifact) => artifact.kind === 'session')?.id ??
+        null;
+      if (sessionId === null) return undefined;
+      const battle = await getBattleBySession(sessionId);
+      if (battle === undefined) return undefined;
+      return battle.board.tokens.length > 0 || battle.encounterArtifactId !== null ? battle : undefined;
+    },
+    [campaignId, play.activeSessionId, artifacts],
+  );
 
   const byId = useMemo(
     () => new Map((artifacts ?? []).map((artifact) => [artifact.id, artifact])),
@@ -61,6 +76,20 @@ export function PlayPage(): JSX.Element {
           </div>
         ) : (
           <>
+            {seededBattle !== undefined && (
+              <div className="border-b p-2">
+                <Button
+                  size="sm"
+                  data-testid="show-battle"
+                  onClick={() => {
+                    navigate(battlePath(campaignId));
+                  }}
+                >
+                  <SwordsIcon aria-hidden data-icon="inline-start" />
+                  Show battle
+                </Button>
+              </div>
+            )}
             <FocusHeader
               focus={focus}
               artifacts={artifacts ?? []}
