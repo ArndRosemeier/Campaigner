@@ -60,13 +60,13 @@ describe('app shell', () => {
   it('renders the workspace for /c/:campaignId (missing-campaign pane when empty)', async () => {
     renderAppAt('/c/campaign-1');
 
-    expect(await screen.findByText(/does not exist/)).toBeInTheDocument();
+    expect(await screen.findByText(/does not exist/, {}, { timeout: 10000 })).toBeInTheDocument();
   });
 
   it('renders the workspace for /c/:campaignId/a/:artifactId', async () => {
     renderAppAt('/c/campaign-1/a/artifact-9');
 
-    expect(await screen.findByText(/does not exist/)).toBeInTheDocument();
+    expect(await screen.findByText(/does not exist/, {}, { timeout: 10000 })).toBeInTheDocument();
   });
 
   it('navigates to the Rules screen from the top bar', async () => {

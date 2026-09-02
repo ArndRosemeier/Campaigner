@@ -41,8 +41,50 @@ export function renderSchematic(
     context.lineWidth = Math.max(2, Math.floor(cellPx / 12));
     for (const rect of room.rects) strokeRect(context, rect, cellPx);
   }
+  drawDoorGaps(context, layout, cellPx);
 
   return { dataUrl: canvas.toDataURL('image/png'), width, height };
+}
+
+function drawDoorGaps(
+  context: CanvasRenderingContext2D,
+  layout: EncounterLayout,
+  cellPx: number,
+): void {
+  const roomCells = new Set<string>();
+  for (const room of layout.rooms) {
+    for (const rect of room.rects) addRectCells(roomCells, rect);
+  }
+  const thickness = Math.max(2, Math.floor(cellPx / 8));
+  const opening = cellPx * 0.55;
+  context.fillStyle = '#d1d5db';
+  for (const corridor of layout.corridors) {
+    const corridorCells = new Set<string>();
+    for (const rect of corridor.rects) addRectCells(corridorCells, rect);
+    for (const key of corridorCells) {
+      const [xText, yText] = key.split(',');
+      const x = Number(xText);
+      const y = Number(yText);
+      if (roomCells.has(`${String(x - 1)},${String(y)}`)) {
+        context.fillRect(x * cellPx - thickness / 2, y * cellPx + (cellPx - opening) / 2, thickness, opening);
+      }
+      if (roomCells.has(`${String(x + 1)},${String(y)}`)) {
+        context.fillRect((x + 1) * cellPx - thickness / 2, y * cellPx + (cellPx - opening) / 2, thickness, opening);
+      }
+      if (roomCells.has(`${String(x)},${String(y - 1)}`)) {
+        context.fillRect(x * cellPx + (cellPx - opening) / 2, y * cellPx - thickness / 2, opening, thickness);
+      }
+      if (roomCells.has(`${String(x)},${String(y + 1)}`)) {
+        context.fillRect(x * cellPx + (cellPx - opening) / 2, (y + 1) * cellPx - thickness / 2, opening, thickness);
+      }
+    }
+  }
+}
+
+function addRectCells(cells: Set<string>, rect: LayoutRect): void {
+  for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) cells.add(`${String(x)},${String(y)}`);
+  }
 }
 
 function browserCanvas(width: number, height: number): HTMLCanvasElement {

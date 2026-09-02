@@ -149,6 +149,7 @@ describe('Encounter Cartographer run', () => {
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     expect(artifact.data.layout?.rooms).toHaveLength(2);
     expect(artifact.data.mapImageId).toBe(candidates[0]);
+    expect(artifact.data.monsters[0]?.source.type).toBe('inline');
     expect(artifact.imageIds).toContain(candidates[0]);
     expect((await getImage(candidates[0] ?? ''))?.role).toBe('map');
     expect(await getImage(candidates[1] ?? '')).toBeUndefined();

@@ -23,7 +23,7 @@ export interface EncounterMapVerification {
 
 /** Deterministic coarse classes against which the vision response is judged. */
 export function coarseStructure(layout: EncounterLayout): StructureGrid {
-  const stride = Math.max(2, Math.ceil(layout.gridW / 12), Math.ceil(layout.gridH / 9));
+  const stride = coarseStride(layout);
   const cols = Math.ceil(layout.gridW / stride);
   const rows = Math.ceil(layout.gridH / stride);
   const floor = new Set<string>();
@@ -49,6 +49,34 @@ export function coarseStructure(layout: EncounterLayout): StructureGrid {
     }
   }
   return { cols, rows, cells };
+}
+
+/** Coarse cells containing corridor/room openings; stylization may vary there. */
+export function coarseDoorIndexes(layout: EncounterLayout): Set<number> {
+  const stride = coarseStride(layout);
+  const cols = Math.ceil(layout.gridW / stride);
+  const roomCells = new Set<string>();
+  for (const room of layout.rooms) addRects(roomCells, room.rects);
+  const doors = new Set<number>();
+  for (const corridor of layout.corridors) {
+    const corridorCells = new Set<string>();
+    addRects(corridorCells, corridor.rects);
+    for (const key of corridorCells) {
+      const [xText, yText] = key.split(',');
+      const x = Number(xText);
+      const y = Number(yText);
+      const touchesRoom = [
+        `${String(x + 1)},${String(y)}`,
+        `${String(x - 1)},${String(y)}`,
+        `${String(x)},${String(y + 1)}`,
+        `${String(x)},${String(y - 1)}`,
+      ].some((neighbor) => roomCells.has(neighbor));
+      if (touchesRoom) {
+        doors.add(Math.floor(y / stride) * cols + Math.floor(x / stride));
+      }
+    }
+  }
+  return doors;
 }
 
 export function compareStructureGrids(
@@ -137,7 +165,7 @@ export async function verifyEncounterMap(input: {
   return compareStructureGrids(
     expected,
     parsed.data,
-    input.excludedIndexes ?? new Set(),
+    input.excludedIndexes ?? coarseDoorIndexes(input.layout),
   );
 }
 
@@ -157,6 +185,10 @@ function parseGrid(
   } catch (error) {
     return { success: false, error: error instanceof Error ? error.message : String(error) };
   }
+}
+
+function coarseStride(layout: EncounterLayout): number {
+  return Math.max(2, Math.ceil(layout.gridW / 12), Math.ceil(layout.gridH / 9));
 }
 
 function addRects(cells: Set<string>, rects: readonly { x: number; y: number; w: number; h: number }[]): void {

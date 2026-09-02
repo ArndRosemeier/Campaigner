@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { newId, packRooms } from '@/domain';
 import {
+  coarseDoorIndexes,
   coarseStructure,
   compareStructureGrids,
   verifyEncounterMap,
@@ -52,6 +53,7 @@ describe('encounter map vision verification', () => {
     expect(expected.cells).toHaveLength(expected.cols * expected.rows);
     expect(expected.cells).toContain('floor');
     expect(expected.cells).toContain('void');
+    expect(coarseDoorIndexes(layout()).size).toBeGreaterThan(0);
   });
 
   it('flags mismatches above 12% and excludes declared door cells', () => {
