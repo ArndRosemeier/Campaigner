@@ -4,7 +4,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { Deliverable, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
-import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import {
+  createArtifact,
+  listArtifactsByCampaign,
+  listGlobalArtifacts,
+  publishToLibrary,
+} from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createDeliverable } from '@/db/deliverableRepo';
 import { buildModuleDefinition, buildModulePdf } from '@/lib/modulePdf';
@@ -149,6 +154,51 @@ describe('buildModuleDefinition', () => {
     expect(text).toContain('silver bell charm');
     // Dangling artifact node → visible placeholder, not a failure.
     expect(text).toContain('missing artifact');
+  });
+
+  it('includes library artifacts only when the outline explicitly names them', async () => {
+    const campaign = await createCampaign({ name: 'Explicit globals', system: 'dnd5e' });
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Owned Scout',
+      body: 'Owned scout detail.',
+    });
+    const global = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Library Scout',
+      body: 'Library scout detail.',
+    });
+    await publishToLibrary(global.id);
+    const artifacts = [
+      ...(await listArtifactsByCampaign(campaign.id)),
+      ...(await listGlobalArtifacts()),
+    ];
+    const base: Deliverable = {
+      id: '00000000-0000-4000-8000-0000000000d2',
+      campaignId: campaign.id,
+      title: 'Scope Test',
+      subtitle: '',
+      audience: 'gm',
+      coverImageId: null,
+      outline: [{ type: 'gallery', gallery: 'npcs' }],
+      createdAt: 1,
+      updatedAt: 1,
+    };
+
+    const implicitText = textOf(buildModuleDefinition(base, artifacts));
+    expect(implicitText).toContain('Owned scout detail.');
+    expect(implicitText).not.toContain('Library scout detail.');
+
+    const explicit: Deliverable = {
+      ...base,
+      outline: [
+        { type: 'artifact', artifactId: global.id, include: fullInclude() },
+        { type: 'gallery', gallery: 'npcs' },
+      ],
+    };
+    expect(textOf(buildModuleDefinition(explicit, artifacts))).toContain(global.name);
   });
 
   it('strips secrets, tactics/treasure, notes, and gm-only artifacts for players', async () => {

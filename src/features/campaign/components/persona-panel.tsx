@@ -31,7 +31,7 @@ import { toastError, toastSuccess } from '@/lib/toast';
 import { Textarea } from '@/components/ui/textarea';
 import { HelpButton } from '@/help/HelpButton';
 import { ROUTES, artifactPath } from '@/app/routes';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, Id, Persona, PersonaRun } from '@/domain';
@@ -69,6 +69,11 @@ export function PersonaPanel({
 }): JSX.Element {
   const personas = useLiveQuery(() => listPersonas(), []);
   const campaignArtifacts = useLiveQuery(() => listArtifactsByCampaign(campaign.id), [campaign.id]);
+  const globalArtifacts = useLiveQuery(() => listGlobalArtifacts(), []);
+  const targetArtifacts = useMemo(
+    () => [...(campaignArtifacts ?? []), ...(globalArtifacts ?? [])],
+    [campaignArtifacts, globalArtifacts],
+  );
   const [personaId, setPersonaId] = useState<string>('');
   const [autonomy, setAutonomy] = useState<Autonomy>('manual');
   const [brief, setBrief] = useState('');
@@ -203,7 +208,10 @@ export function PersonaPanel({
                 <Select
                   value={targetArtifactId}
                   items={Object.fromEntries(
-                    (campaignArtifacts ?? []).map((artifact) => [artifact.id, artifact.name]),
+                    targetArtifacts.map((artifact) => [
+                      artifact.id,
+                      artifact.campaignId === null ? `${artifact.name} — Global` : artifact.name,
+                    ]),
                   )}
                   onValueChange={(value) => {
                     if (value !== null) setTargetArtifactId(value);
@@ -216,9 +224,10 @@ export function PersonaPanel({
                     <SelectValue placeholder="Choose an artifact" />
                   </SelectTrigger>
                   <SelectContent>
-                    {(campaignArtifacts ?? []).map((artifact) => (
+                    {targetArtifacts.map((artifact) => (
                       <SelectItem key={artifact.id} value={artifact.id}>
                         {artifact.name}
+                        {artifact.campaignId === null ? ' — Global' : ''}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -321,6 +330,13 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
     () => (run === undefined ? undefined : getPersona(run.personaId)),
     [run === undefined ? undefined : run.personaId],
   );
+  const target = useLiveQuery(
+    () =>
+      run?.targetArtifactId === null || run?.targetArtifactId === undefined
+        ? undefined
+        : getAnyArtifact(run.targetArtifactId),
+    [run?.targetArtifactId],
+  );
   const [streamed, setStreamed] = useState('');
   const streamRef = useRef<HTMLPreElement | null>(null);
 
@@ -356,6 +372,11 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
         >
           {STATUS_LABELS[run.status]}
         </Badge>
+        {target?.campaignId === null && (
+          <Badge variant="outline" data-testid="run-global-badge">
+            Global
+          </Badge>
+        )}
         {run.errorMessage !== '' && <span className="text-destructive">{run.errorMessage}</span>}
       </div>
 
@@ -787,6 +808,10 @@ function safeJson(text: string): unknown {
 function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
   const runs = useLiveQuery(() => listRunsByCampaign(campaignId), [campaignId]);
   const personas = useLiveQuery(() => listPersonas(), []);
+  const globalIds = useLiveQuery(
+    async () => new Set((await listGlobalArtifacts()).map((artifact) => artifact.id)),
+    [],
+  );
   const [openRunId, setOpenRunId] = useState<string | null>(null);
   const openRun = useLiveQuery(
     () => (openRunId === null ? undefined : getRun(openRunId)),
@@ -826,6 +851,9 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
               <span className="flex items-center gap-2">
                 <span className="font-medium">{persona?.name ?? 'Persona'}</span>
                 <Badge variant="outline">{STATUS_LABELS[run.status]}</Badge>
+                {run.targetArtifactId !== null && globalIds?.has(run.targetArtifactId) === true && (
+                  <Badge variant="outline">Global</Badge>
+                )}
               </span>
               <span className="truncate text-muted-foreground">{run.userBrief}</span>
               <span className="text-muted-foreground">{stamp}</span>

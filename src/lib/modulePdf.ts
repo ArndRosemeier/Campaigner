@@ -402,7 +402,17 @@ export function buildModuleDefinition(
 ): TDocumentDefinitions {
   const outlineArtifactIds = new Set<string>();
   collectOutlineArtifactIds(deliverable.outline, outlineArtifactIds);
-  const ctx: RenderContext = { deliverable, artifacts, images, outlineArtifactIds };
+  // Owned rows may feed generated gallery/ledger nodes. Library rows enter
+  // PDF context only when the outline names them explicitly (M6-D).
+  const visibleArtifacts = artifacts.filter(
+    (artifact) => artifact.campaignId !== null || outlineArtifactIds.has(artifact.id),
+  );
+  const ctx: RenderContext = {
+    deliverable,
+    artifacts: visibleArtifacts,
+    images,
+    outlineArtifactIds,
+  };
   const state: WalkState = { content: [], chapter: null };
 
   const cover: Content[] = [

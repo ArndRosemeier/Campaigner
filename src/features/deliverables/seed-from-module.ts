@@ -26,7 +26,9 @@ export function seedOutlineFromModule(
     for (const link of extractWikiLinks(part.markdown)) {
       const resolution = resolveWikiLink(link.name, artifacts);
       const artifact = resolution.artifact;
-      if (artifact === undefined || seen.has(artifact.id)) continue;
+      // Library rows are never pulled into a deliverable implicitly; users
+      // may add them explicitly through the artifact picker (M6-D).
+      if (artifact?.campaignId === undefined || artifact.campaignId === null || seen.has(artifact.id)) continue;
       seen.add(artifact.id);
       children.push({ type: 'artifact', artifactId: artifact.id, include: fullInclude() });
     }

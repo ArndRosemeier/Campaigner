@@ -4,7 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createPersona, type Persona } from '@/domain';
-import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import {
+  createArtifact,
+  getArtifact,
+  listArtifactsByCampaign,
+  publishToLibrary,
+} from '@/db/artifactRepo';
+import { updateSettings } from '@/db/settingsRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import { runEngine } from '@/llm/runEngine';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
@@ -233,6 +239,54 @@ describe('runEngine', () => {
     expect(run?.errorMessage).toContain('Step "statblock" rejected');
     expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
   }, 20000);
+
+  it('reviews a global target with scope-gated global context and a campaign-anchored run', async () => {
+    const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
+    if (editor === undefined) throw new Error('continuity-editor persona missing');
+    const campaign = await createCampaign({ name: 'Global Review', system: 'dnd5e' });
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Library Target',
+      body: 'The target body.',
+    });
+    const context = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Library Context',
+      body: 'The context body.',
+    });
+    await publishToLibrary(target.id);
+    await publishToLibrary(context.id);
+    await updateSettings({
+      artifactScopes: {
+        workspace: { global: true, campaign: true, module: true },
+        moduleView: { global: true, campaign: true, module: true },
+      },
+    });
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({ verdict: 'consistent', summary: 'All consistent.', issues: [] }),
+    );
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona: editor,
+      autonomy: 'auto',
+      brief: 'review the library target',
+      pinnedChunkIds: [],
+      targetArtifactId: target.id,
+    });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const run = await getRun(runId);
+    expect(run?.campaignId).toBe(campaign.id);
+    expect(JSON.stringify(chatMock.mock.calls[0])).toContain('Library Target');
+    expect(JSON.stringify(chatMock.mock.calls[0])).toContain('Library Context');
+    const report = (await listArtifactsByCampaign(campaign.id))[0];
+    expect(report?.kind).toBe('note');
+    expect(report?.links[0]?.targetId).toBe(target.id);
+  });
 
   it('review finalize refuses placeholder output when step edits are garbage', async () => {
     // Editing the check step to garbage and approving used to produce a

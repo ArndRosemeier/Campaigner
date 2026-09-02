@@ -24,6 +24,7 @@ import {
 } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule } from '@/db/moduleRepo';
+import { pruneUnreferencedImages } from '@/db/imageRepo';
 import { createModule as createModuleSchema } from '@/domain';
 import { db } from '@/db/db';
 import { clearDatabase, expectNotFound } from './helpers';
@@ -426,6 +427,32 @@ describe('ownership queries (M6-A)', () => {
 
     const note = await createArtifact({ campaignId, kind: 'note', name: 'Private note' });
     await expect(publishToLibrary(note.id)).rejects.toThrow(/only npcs, locations, factions and encounters/);
+  });
+
+  it('keeps global images out of campaign prune and removes them with the library row', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Library image owner' });
+    const imageId = newId();
+    await db.images.put({
+      id: imageId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      bytes: new Uint8Array([9]),
+      mimeType: 'image/png',
+      width: 1,
+      height: 1,
+      prompt: '',
+      model: '',
+      source: 'uploaded',
+      role: 'artwork',
+    });
+    await updateArtifact(npc.id, { imageIds: [imageId] });
+    await publishToLibrary(npc.id);
+
+    await pruneUnreferencedImages(campaignId);
+    expect((await db.images.get(imageId))?.campaignId).toBeNull();
+    await deleteArtifact(npc.id);
+    expect(await db.images.get(imageId)).toBeUndefined();
   });
 
   it('lists referencing campaigns before adopting a library row away', async () => {

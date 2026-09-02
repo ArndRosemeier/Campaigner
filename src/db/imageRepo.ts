@@ -53,6 +53,12 @@ export async function setImageRole(id: Id, role: 'artwork' | 'map'): Promise<voi
   await db.images.update(id, { role });
 }
 
+/** Re-anchor generated/uploaded images when their artifact crosses scope. */
+export async function reanchorImages(ids: readonly Id[], campaignId: Id | null): Promise<void> {
+  if (ids.length === 0) return;
+  await db.images.where('id').anyOf([...new Set(ids)]).modify({ campaignId });
+}
+
 export async function getImage(id: Id): Promise<StoredImage | undefined> {
   return db.images.get(id);
 }

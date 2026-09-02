@@ -9,9 +9,16 @@ import type {
   RunStep,
   StatBlock,
 } from '@/domain';
-import { createArtifact, getArtifact, listArtifactsByCampaign, listArtifactsByIds, updateArtifact } from '@/db/artifactRepo';
+import {
+  createArtifact,
+  getAnyArtifact,
+  listArtifactsByCampaign,
+  listArtifactsByIds,
+  listGlobalArtifacts,
+  updateArtifact,
+} from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
-import { createImage, deleteUnreferencedImages } from '@/db/imageRepo';
+import { createImage, deleteUnreferencedImages, reanchorImages } from '@/db/imageRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -833,10 +840,15 @@ export class RunEngine {
     input: StartRunInput,
   ): Promise<{ step: RunStep }> {
     const targetId = input.targetArtifactId;
-    const artifacts = await listArtifactsByCampaign(input.campaign.id);
-    const target =
-      targetId === undefined ? undefined : artifacts.find((artifact) => artifact.id === targetId);
-    const others = artifacts
+    const [artifacts, settings, target] = await Promise.all([
+      listArtifactsByCampaign(input.campaign.id),
+      getSettings(),
+      targetId === undefined ? undefined : getAnyArtifact(targetId),
+    ]);
+    const visibleGlobals = settings.artifactScopes.workspace.global
+      ? await listGlobalArtifacts()
+      : [];
+    const others = [...artifacts, ...visibleGlobals]
       .filter((artifact) => artifact.id !== targetId)
       .map((artifact) => ({
         id: artifact.id,
@@ -955,7 +967,7 @@ export class RunEngine {
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     const settings = await getSettings();
     const targetId = input.targetArtifactId ?? null;
-    const target = targetId === null ? undefined : await getArtifact(targetId);
+    const target = targetId === null ? undefined : await getAnyArtifact(targetId);
     if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
     const instruction = [
       `Artifact: ${target.name} (${target.kind})`,
@@ -1095,12 +1107,15 @@ export class RunEngine {
     if (run?.status !== 'awaiting_user') return;
     const targetId = run.targetArtifactId;
     if (targetId === null) throw new Error('image run has no target artifact');
-    const target = await getArtifact(targetId);
+    const target = await getAnyArtifact(targetId);
     if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
 
     const existing = new Set(target.imageIds);
     const kept = keep.filter((id) => !existing.has(id));
-    const updated = await updateArtifact(targetId, {
+    // A run stays anchored to its campaign, but kept images become library
+    // images before they are attached to a global target (D2/D9).
+    if (target.campaignId === null) await reanchorImages(kept, null);
+    await updateArtifact(targetId, {
       imageIds: [...target.imageIds, ...kept],
       coverImageId: target.coverImageId ?? keep[0] ?? null,
     });
@@ -1116,13 +1131,15 @@ export class RunEngine {
     const candidates = Array.isArray(pickOutput.candidates)
       ? (pickOutput.candidates as Id[])
       : [];
-    // A completed run's artifact is owned by the campaign it ran in — a
-    // global artifact here would mean the finalize step was misused.
-    if (updated.campaignId === null) {
-      throw new Error(`Run ${runId} finalized a global artifact — refusing to prune images.`);
-    }
-    await deleteUnreferencedImages(updated.campaignId, candidates);
-    await updateRun(runId, { status: 'completed', resultArtifactId: updated.id });
+    // Discarded candidates remain campaign-anchored. Pass only discards:
+    // kept global images were re-anchored above and campaign reference scans
+    // intentionally cannot see them.
+    const keepIds = new Set(keep);
+    await deleteUnreferencedImages(
+      run.campaignId,
+      candidates.filter((id) => !keepIds.has(id)),
+    );
+    await updateRun(runId, { status: 'completed', resultArtifactId: targetId });
     this.emit({ kind: 'run', runId, status: 'completed' });
   }
 

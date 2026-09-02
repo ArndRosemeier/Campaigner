@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { waitFor } from '@testing-library/react';
 
-import { createArtifact, getArtifact } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, getArtifact, publishToLibrary } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage, getImage, listImagesByIds } from '@/db/imageRepo';
 import { getRun } from '@/db/runRepo';
@@ -215,6 +215,45 @@ describe('illustrator run (image persona)', () => {
     expect(target?.coverImageId).toBe(first);
     expect(await getImage(first)).toBeDefined();
     expect(await getImage(second)).toBeUndefined(); // discard pruned
+  });
+
+  it('targets a global artifact while the run stays campaign-anchored', async () => {
+    const { campaignId, persona, targetId } = await seed();
+    await publishToLibrary(targetId);
+    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('library-keep'), fakeImageBytes('library-discard')],
+      costUsd: null,
+      cappedToOne: false,
+    });
+
+    const runId = await runEngine.startRun(input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+    await runEngine.editStep(
+      runId,
+      0,
+      { parsed: VALID_PROMPT_DRAFT },
+      input(campaignId, persona, targetId),
+    );
+    await waitFor(async () => {
+      expect((await getRun(runId))?.steps).toHaveLength(3);
+    });
+    const candidates = (await getRun(runId))?.steps[1]?.output as { imageIds: Id[] };
+    const [first, second] = candidates.imageIds;
+    if (first === undefined || second === undefined) throw new Error('expected 2 candidates');
+
+    await runEngine.pickImages(runId, [first]);
+    const run = await getRun(runId);
+    expect(run?.status).toBe('completed');
+    expect(run?.campaignId).toBe(campaignId);
+    expect(run?.resultArtifactId).toBe(targetId);
+    const global = await getAnyArtifact(targetId);
+    expect(global?.campaignId).toBeNull();
+    expect(global?.imageIds).toEqual([first]);
+    expect((await getImage(first))?.campaignId).toBeNull();
+    expect(await getImage(second)).toBeUndefined();
   });
 
   it('pickImages with an empty keep discards all candidates and keeps the artifact untouched', async () => {

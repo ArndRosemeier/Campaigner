@@ -30,7 +30,7 @@ import { Switch } from '@/components/ui/switch';
 import type { AnyArtifact, Deliverable, Module, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
 import { db } from '@/db/db';
-import { useScopedArtifacts } from '@/features/campaign/hooks';
+import { useArtifacts, useGlobalArtifacts } from '@/features/campaign/hooks';
 import {
   createDeliverable,
   deleteDeliverable,
@@ -82,7 +82,12 @@ export function DeliverablesPage(): JSX.Element {
   const deliverables = useLiveQuery(
     () => listDeliverablesByCampaign(campaignId),    [campaignId],
   );
-  const artifacts = useScopedArtifacts('workspace', campaignId);
+  const ownedArtifacts = useArtifacts(campaignId);
+  const globalArtifacts = useGlobalArtifacts();
+  // Globals are available only to the explicit "+ Artifact" picker. Module
+  // seeding below receives owned rows only, so it never pulls library content
+  // into a deliverable implicitly (10-MILESTONE-6 D).
+  const artifacts = [...(ownedArtifacts ?? []), ...(globalArtifacts ?? [])];
   const images = useLiveQuery(
     () => db.images.where('campaignId').equals(campaignId).toArray(),
     [campaignId],
@@ -119,7 +124,7 @@ export function DeliverablesPage(): JSX.Element {
     const jobId = `deliverable-${deliverable.id}`;
     progress.start(jobId, `Building PDF: ${deliverable.title}`, 'Laying out the document…');
     try {
-      const blob = await buildModulePdf(deliverable, artifacts ?? [], generatePdfBlob);
+      const blob = await buildModulePdf(deliverable, artifacts, generatePdfBlob);
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -140,7 +145,7 @@ export function DeliverablesPage(): JSX.Element {
    * nodes, deduped first-occurrence-wins). Replaces the outline. */
   function seedFromModule(module: Module): void {
     if (selected === undefined) return;
-    const outline = seedOutlineFromModule(module, artifacts ?? []);
+    const outline = seedOutlineFromModule(module, ownedArtifacts ?? []);
     void updateDeliverable(selected.id, { outline });
     setSeedDialogOpen(false);
     toast.success(`Outline seeded from “${module.title}”`);
@@ -308,7 +313,7 @@ export function DeliverablesPage(): JSX.Element {
 
           <OutlineEditor
             nodes={selected.outline}
-            artifacts={artifacts ?? []}
+            artifacts={artifacts}
             onChange={(outline) => {
               void updateDeliverable(selected.id, { outline });
             }}
@@ -324,7 +329,7 @@ export function DeliverablesPage(): JSX.Element {
           onOpenChange={(open) => {
             if (!open) setPickerTarget(null);
           }}
-          artifacts={artifacts ?? []}
+          artifacts={artifacts}
           mode="play"
           onPickArtifact={(artifact) => {
             addNode(pickerTarget, {

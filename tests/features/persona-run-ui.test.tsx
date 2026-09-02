@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
 import { artifactPath } from '@/app/routes';
-import { createArtifact } from '@/db/artifactRepo';
+import { createArtifact, publishToLibrary } from '@/db/artifactRepo';
 import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
@@ -383,7 +383,12 @@ describe('PersonaPanel run lifecycle', () => {
       mode: 'image',
       builtIn: true,
     });
-    await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'The Lighthouse' });
+    const lighthouse = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'The Lighthouse',
+    });
+    await publishToLibrary(lighthouse.id);
     chatMock.mockResolvedValueOnce(
       JSON.stringify({
         prompt: 'A storm-lashed lighthouse',
@@ -412,8 +417,9 @@ describe('PersonaPanel run lifecycle', () => {
     await user.click(await screen.findByRole('option', { name: illustrator.name }));
     const targetSelect = await screen.findByRole('combobox', { name: 'Artifact to illustrate' });
     await user.click(targetSelect);
-    await user.click(await screen.findByRole('option', { name: 'The Lighthouse' }));
+    await user.click(await screen.findByRole('option', { name: 'The Lighthouse — Global' }));
     await user.click(screen.getByTestId('start-run'));
+    expect(await screen.findByTestId('run-global-badge')).toHaveTextContent('Global');
 
     // The draft pauses; continue with the drafted prompt.
     const edit = await screen.findByTestId('image-prompt-edit', {}, { timeout: 10_000 });
