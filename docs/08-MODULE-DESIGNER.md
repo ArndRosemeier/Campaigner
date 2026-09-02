@@ -30,6 +30,7 @@ interface Module extends BaseEntity {
   parts: ModulePart[];          // embedded; ordered
   status: 'draft' | 'generating' | 'ready' | 'failed';
   errorMessage: string;
+  includePriorModules: boolean; // opt-in: prior modules in the generator context
 }
 interface ModuleSpine {
   premise: string;              // markdown, a few paragraphs
@@ -122,7 +123,13 @@ Progress/state live on the Module row itself (statuses above), observed via
 Input: concept, levelMin/Max, tone, sizeDial, campaign (name, system,
 description), and — when the campaign has artifacts — a compact index of
 existing artifacts (name, kind, one-line summary; cap 60 entries) so the
-module can reuse the campaign's world.
+module can reuse the campaign's world. **Opt-in continuity:** when the module
+row has `includePriorModules` (set at creation), the prompt additionally
+carries the campaign's other modules — premise + written part texts, drafts
+included, ordered oldest first, per-part/per-module/total char caps, oldest
+dropped first on overflow — labeled as settled history to continue, never
+retcon. The section is omitted when the flag is off (default) or no other
+module has any text.
 
 Prompt requirements (verbatim intent, exact wording up to implementer):
 - Propose `partPlan` covering the level range: **default one part per level;
@@ -157,7 +164,9 @@ For part i, the user message contains:
 3. one-line synopses of ALL parts (so later parts can be foreshadowed),
 4. this part's plan entry (title, band, synopsis, levelUpTrigger),
 5. rule excerpts: `searchRules(partSynopsis, { limit: 4 })` for grounding,
-6. writing instructions:
+6. the same opt-in prior-modules context as pass 0 (when
+   `includePriorModules` is set) — cross-module continuity for the prose,
+7. writing instructions:
    - free-form GM-facing markdown, `##`/`###` headings allowed (H1 is added
      by the reader), read-aloud text as blockquotes,
    - **wiki-link every proper noun** (NPCs, locations, factions, artifacts,
@@ -187,9 +196,12 @@ confirm dialog when the part was hand-edited since generation.
 
 "New Module" (modules list page `/c/:campaignId/modules`, plus entry in the
 top bar next to Play): dialog with concept textarea, level range (two numeric
-steppers 1–20, max ≥ min), tone input, size dial (3-way toggle). No other
-knobs. Creates the Module row and immediately runs pass 0 → spine approval →
-pass 1.
+steppers 1–20, max ≥ min), tone input, size dial (3-way toggle), and the
+opt-in **"Continue from previous modules"** checkbox (disabled with a hint
+until some other module of the campaign has text; the flag persists on the
+module row, so later spine retries / part rewrites keep the continuity
+context). Creates the Module row and immediately runs pass 0 → spine
+approval → pass 1.
 
 ---
 

@@ -468,6 +468,12 @@ export class CampaignerDB extends Dexie {
       battles:   'id, campaignId, moduleId',
       // all other stores unchanged
     });
+
+    // Opt-in cross-module continuity: modules gain includePriorModules:false.
+    this.version(13).stores({
+      modules:   'id, campaignId, updatedAt',
+      // all other stores unchanged
+    });
   }
 }
 export const db = new CampaignerDB();

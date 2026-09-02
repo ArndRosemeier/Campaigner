@@ -37,6 +37,9 @@ import type { Id } from '@/domain';
  * session); encounter artifacts gain `mapImageId: null` and images gain
  * `role: 'artwork'` (M5-C backfills; the `pc` artifact kind needs no
  * migration).
+ *
+ * Version 13 (08-MODULE-DESIGNER M4-B): modules gain the opt-in
+ * `includePriorModules: false` continuity flag.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -373,6 +376,31 @@ export class CampaignerDB extends Dexie {
             if (battle.board.mapLayout === undefined) battle.board.mapLayout = null;
           },
         );
+      });
+
+    // Opt-in cross-module continuity (08-MODULE-DESIGNER M4-B): modules gain
+    // `includePriorModules: false` — pre-v13 rows never opted in.
+    this.version(13)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const modules = tx.table('modules');
+        await modules.toCollection().modify((module: Record<string, unknown>) => {
+          if (module.includePriorModules === undefined) module.includePriorModules = false;
+        });
       });
   }
 }

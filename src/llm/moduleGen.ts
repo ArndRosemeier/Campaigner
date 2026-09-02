@@ -1,7 +1,7 @@
 import type { Campaign, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
 import { createModule, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
 import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
-import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
+import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
@@ -217,6 +217,88 @@ function jsonBody(raw: string): string {
   return jsonText;
 }
 
+// --- Prior-module continuity (opt-in) -----------------------------------------
+
+/**
+ * Caps for the prior-modules context section (08 §M4-B): one part's markdown,
+ * one module's whole block, and the joined section. Bounded context keeps a
+ * many-module campaign from ballooning every call.
+ */
+export const PRIOR_PART_CHAR_CAP = 4000;
+export const PRIOR_MODULE_CHAR_CAP = 8000;
+export const PRIOR_MODULES_TOTAL_CAP = 24000;
+
+/** True when the module carries any generator-authored text at all. */
+function hasPriorText(module: Module): boolean {
+  return (module.spine?.premise ?? '') !== '' || module.parts.some((part) => part.markdown !== '');
+}
+
+/** Hard-truncates with a visible marker — never a silent cut. */
+function truncate(text: string, cap: number): string {
+  return text.length <= cap ? text : `${text.slice(0, cap)}…[truncated]`;
+}
+
+/** One prior module's block: title, premise, then its written parts in order. */
+function priorModuleBlock(module: Module): string {
+  const lines: string[] = [];
+  lines.push(`## ${module.title} (levels ${String(module.levelMin)}–${String(module.levelMax)})`);
+  const premise = module.spine?.premise ?? '';
+  if (premise !== '') lines.push(`Premise:\n${truncate(premise, PRIOR_PART_CHAR_CAP)}`);
+  const planTitles = module.spine?.partPlan ?? [];
+  const blockParts: string[] = [];
+  for (const part of [...module.parts].sort((a, b) => a.planIndex - b.planIndex)) {
+    if (part.markdown === '') continue;
+    const title = planTitles[part.planIndex]?.title ?? `Part ${String(part.planIndex + 1)}`;
+    blockParts.push(
+      `### Part ${String(part.planIndex + 1)}: ${title}\n${truncate(part.markdown, PRIOR_PART_CHAR_CAP)}`,
+    );
+  }
+  if (blockParts.length > 0) lines.push(blockParts.join('\n\n'));
+  return truncate(lines.join('\n\n'), PRIOR_MODULE_CHAR_CAP);
+}
+
+/**
+ * Builds the prior-modules context section (08 §M4-B opt-in continuity): the
+ * campaign's other modules that carry any authored text — premise, part texts,
+ * drafts included — in story order (oldest first). When the total cap would
+ * overflow, the OLDEST modules are dropped first (recent history matters most
+ * for continuity). Returns null when nothing qualifies — the section is then
+ * omitted entirely; an empty set is not an error.
+ */
+export function priorModulesContext(priors: readonly Module[]): string | null {
+  const blocks = [...priors]
+    .sort((a, b) => a.createdAt - b.createdAt)
+    .filter(hasPriorText)
+    .map(priorModuleBlock);
+  const kept: string[] = [];
+  let total = 0;
+  for (let index = blocks.length - 1; index >= 0; index -= 1) {
+    const block = blocks[index];
+    if (block === undefined) continue;
+    if (total + block.length > PRIOR_MODULES_TOTAL_CAP) continue;
+    kept.unshift(block);
+    total += block.length;
+  }
+  if (kept.length === 0) return null;
+  return [
+    'Previous modules of this campaign, oldest first — settled history. ' +
+      'Build on their events and open threads, reuse their established names exactly, and never retcon them:',
+    kept.join('\n\n'),
+  ].join('\n\n');
+}
+
+/**
+ * Loads the campaign's other modules for the opt-in continuity context. The
+ * flag off short-circuits to [] (previous behavior, byte-for-byte); a failed
+ * read propagates — an opted-in run must not silently generate without the
+ * context it promised (AGENTS rule 1).
+ */
+async function priorModulesOf(module: Module): Promise<Module[]> {
+  if (!module.includePriorModules) return [];
+  const modules = await listModulesByCampaign(module.campaignId);
+  return modules.filter((candidate) => candidate.id !== module.id);
+}
+
 async function spineMessages(
   module: Module,
   campaign: Campaign,
@@ -230,6 +312,7 @@ async function spineMessages(
           .slice(0, 60)
           .map((artifact) => `- ${artifact.name} (${artifact.kind})${artifact.summary === '' ? '' : ` — ${artifact.summary}`}`)
           .join('\n')}`;
+  const priorContext = priorModulesContext(await priorModulesOf(module));
 
   const levelCount = module.levelMax - module.levelMin + 1;
   const instruction = [
@@ -237,6 +320,7 @@ async function spineMessages(
     `Module concept: ${module.concept}`,
     `Party levels ${module.levelMin}–${module.levelMax}${module.tone === '' ? '' : `; tone: ${module.tone}`}`,
     index,
+    priorContext,
     [
       'Design the module spine. Cover the whole level range with parts, in order:',
       `- Default one part per level; you MAY merge adjacent levels into one part when the story is better served (levels ${module.levelMin}–${module.levelMax} → about ${levelCount} parts or fewer).`,
@@ -494,6 +578,7 @@ async function partCall(
     campaignNames.length === 0
       ? null
       : `Existing campaign entities (reuse by exact name where they fit):\n${campaignNames.join('\n')}`;
+  const priorContext = priorModulesContext(await priorModulesOf(module));
 
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
@@ -509,6 +594,7 @@ async function partCall(
     ruleExcerpts,
     glossary,
     campaignIndex,
+    priorContext,
     [
       'Writing instructions:',
       '- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).',
@@ -930,6 +1016,8 @@ export async function createModuleAndRun(
     levelMax: number;
     tone: string;
     sizeDial: Module['sizeDial'];
+    /** Opt-in cross-module continuity (08 §M4-B): prior modules in context. */
+    includePriorModules?: boolean;
   },
 ): Promise<Id> {
   const created = createModule(input);

@@ -683,3 +683,58 @@ describe('v11 → v12 migration', () => {
     await db.delete();
   }, 20000);
 });
+
+describe('v12 → v13 migration', () => {
+  it('backfills module.includePriorModules to false on pre-v13 rows', async () => {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(12).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, moduleId',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('modules').put({
+      id: '00000000-0000-4000-8000-0000000000b3',
+      campaignId: '00000000-0000-4000-8000-0000000000c3',
+      title: 'Pre-v13 module',
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      tone: '',
+      sizeDial: 'standard',
+      spine: null,
+      parts: [],
+      status: 'draft',
+      errorMessage: '',
+      entityKinds: [],
+      focusedEntities: [],
+      entitySort: 'mention',
+      entityNamesNormalized: false,
+      entityNormalizationError: '',
+      entityRewriteProposals: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-13 upgrade.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const module = await db.modules.get('00000000-0000-4000-8000-0000000000b3');
+    expect(module?.includePriorModules).toBe(false);
+    const { moduleSchema } = await import('@/domain');
+    expect(moduleSchema.parse(module).id).toBe('00000000-0000-4000-8000-0000000000b3');
+    await db.delete();
+  }, 20000);
+});

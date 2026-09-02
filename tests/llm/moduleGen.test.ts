@@ -7,7 +7,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { createArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
-import { createModule, moduleSpineSchema, type Campaign, type Id } from '@/domain';
+import { createModule, modulePartSchema, moduleSpineSchema, type Campaign, type Id, type Module } from '@/domain';
 import {
   cancelModuleGen,
   classifyEntityName,
@@ -17,6 +17,9 @@ import {
   normalizePartMarkdown,
   parseSpine,
   parseSpineEntities,
+  PRIOR_MODULE_CHAR_CAP,
+  PRIOR_PART_CHAR_CAP,
+  priorModulesContext,
   rewritePart,
   runParts,
   runSpine,
@@ -729,6 +732,188 @@ describe('entity name normalization (fix-01)', () => {
       expect.any(Error),
     );
   }, 20000);
+});
+
+describe('prior-module continuity (opt-in, 08 §M4-B)', () => {
+  /** A prior module of the same campaign with premise + one written part. */
+  async function seedPriorModule(campaignId: Id): Promise<Id> {
+    const draft = createModule({
+      campaignId,
+      title: 'The Salt Ward',
+      concept: 'The chapter before this one.',
+      levelMin: 1,
+      levelMax: 2,
+      tone: '',
+      sizeDial: 'sketch',
+    });
+    const saved = await saveModule(draft);
+    await patchModule(saved.id, {
+      spine: moduleSpineSchema.parse({
+        premise: 'The Salt Ward burned on the first night of the tide.',
+        themes: ['salt'],
+        partPlan: [
+          { title: 'The Burning Ward', levelBand: '1', synopsis: 'Fire on the docks.', levelUpTrigger: 'The ward falls.' },
+        ],
+      }),
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          markdown: partMarkdown('PRIOR-PART-MARKER'),
+          status: 'ready',
+          errorMessage: '',
+          edited: false,
+        }),
+      ],
+    });
+    return saved.id;
+  }
+
+  it('includes prior modules in the spine prompt when opted in, excluding the module itself', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await patchModule(moduleId, { includePriorModules: true });
+    await seedPriorModule(campaign.id);
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE))
+      .mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+
+    await runSpine(moduleId, campaign);
+
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain('Previous modules of this campaign');
+    expect(prompt).toContain('The Salt Ward');
+    expect(prompt).toContain('The Salt Ward burned on the first night of the tide.');
+    expect(prompt).toContain('PRIOR-PART-MARKER');
+    // The module itself is never part of its own prior context.
+    expect(prompt).not.toContain('## The Drowned Bell');
+  }, 20000);
+
+  it('omits the section when the flag is off (default)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await patchModule(moduleId, { includePriorModules: false });
+    await seedPriorModule(campaign.id);
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE))
+      .mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+
+    await runSpine(moduleId, campaign);
+
+    expect(userPromptOf(0)).not.toContain('Previous modules of this campaign');
+  }, 20000);
+
+  it('parts prompts include prior modules when opted in', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await patchModule(moduleId, { includePriorModules: true });
+    await seedSpine(moduleId);
+    await seedPriorModule(campaign.id);
+    chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+
+    await runParts(moduleId, campaign, { planIndexes: [0] });
+
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain('Previous modules of this campaign');
+    expect(prompt).toContain('PRIOR-PART-MARKER');
+  }, 20000);
+});
+
+describe('priorModulesContext (pure builder)', () => {
+  const CAMPAIGN = '00000000-0000-4000-8000-0000000000c9';
+
+  /** A prior module with optional premise and one written part. */
+  function priorWith(
+    title: string,
+    createdAt: number,
+    options: { premise?: string; partChars?: number } = {},
+  ): Module {
+    const draft = createModule({
+      campaignId: CAMPAIGN,
+      title,
+      concept: '',
+      levelMin: 1,
+      levelMax: 2,
+      sizeDial: 'standard',
+    });
+    const parts =
+      options.partChars === undefined
+        ? []
+        : [
+            modulePartSchema.parse({
+              planIndex: 0,
+              markdown: 'x'.repeat(options.partChars),
+              status: 'ready',
+              errorMessage: '',
+              edited: false,
+            }),
+          ];
+    const spine =
+      options.premise === undefined
+        ? null
+        : moduleSpineSchema.parse({
+            premise: options.premise,
+            themes: [],
+            partPlan: [
+              { title: 'Only', levelBand: '1', synopsis: 'Only part.', levelUpTrigger: 'End.' },
+            ],
+          });
+    return { ...draft, createdAt, spine, parts };
+  }
+
+  it('returns null when no prior module carries text', () => {
+    expect(priorModulesContext([])).toBeNull();
+    expect(priorModulesContext([priorWith('Empty', 1), priorWith('Also empty', 2)])).toBeNull();
+  });
+
+  it('includes premise-only and parts-only drafts alike', () => {
+    const context = priorModulesContext([
+      priorWith('Premise Only', 1, { premise: 'A premise without parts.' }),
+      priorWith('Parts Only', 2, { partChars: 120 }),
+    ]);
+    expect(context).toContain('Premise Only');
+    expect(context).toContain('A premise without parts.');
+    expect(context).toContain('Parts Only');
+  });
+
+  it('truncates long part text with a visible marker', () => {
+    const context = priorModulesContext([
+      priorWith('Big', 1, { premise: 'P', partChars: PRIOR_PART_CHAR_CAP + 500 }),
+    ]);
+    expect(context).toContain('…[truncated]');
+    expect(context).not.toContain('x'.repeat(PRIOR_PART_CHAR_CAP + 500));
+  });
+
+  it('caps one module’s whole block when many parts would overflow it', () => {
+    const draft = priorWith('Huge', 1);
+    const parts = [0, 1, 2].map((planIndex) =>
+      modulePartSchema.parse({
+        planIndex,
+        markdown: 'y'.repeat(PRIOR_PART_CHAR_CAP),
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    );
+    const context = priorModulesContext([{ ...draft, parts }]);
+    expect(context).toContain('…[truncated]');
+    // The whole block (plus the section header) stays near the per-module cap.
+    expect(context?.length).toBeLessThanOrEqual(PRIOR_MODULE_CHAR_CAP + 300);
+  });
+
+  it('drops the OLDEST modules first when the total cap overflows', () => {
+    const priors = ['M1', 'M2', 'M3', 'M4', 'M5', 'M6', 'M7'].map((title, index) =>
+      priorWith(title, index + 1, { partChars: PRIOR_PART_CHAR_CAP }),
+    );
+    const context = priorModulesContext(priors);
+    expect(context).not.toContain('M1');
+    expect(context).toContain('M7');
+  });
+
+  it('orders kept modules oldest first regardless of input order', () => {
+    const context = priorModulesContext([
+      priorWith('Beta', 2, { premise: 'Beta premise.' }),
+      priorWith('Alpha', 1, { premise: 'Alpha premise.' }),
+    ]);
+    if (context === null) throw new Error('context missing');
+    expect(context.indexOf('Alpha')).toBeLessThan(context.indexOf('Beta'));
+  });
 });
 
 describe('progress dock reporting', () => {

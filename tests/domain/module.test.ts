@@ -70,6 +70,28 @@ describe('moduleSchema normalization state (fix-01)', () => {
   });
 });
 
+describe('moduleSchema.includePriorModules', () => {
+  const base = {
+    campaignId: '00000000-0000-4000-8000-0000000000c1',
+    title: 'Test Module',
+    concept: '',
+    levelMin: 1,
+    levelMax: 3,
+    sizeDial: 'standard' as const,
+  };
+
+  it('defaults to false (opt-in continuity) and honors the explicit flag', () => {
+    expect(createModule(base).includePriorModules).toBe(false);
+    expect(createModule({ ...base, includePriorModules: true }).includePriorModules).toBe(true);
+  });
+
+  it('moduleSchema.parse fills the default for pre-v13 rows', () => {
+    const module = createModule(base);
+    const parsed = moduleSchema.parse({ ...module, includePriorModules: undefined });
+    expect(parsed.includePriorModules).toBe(false);
+  });
+});
+
 describe('entityKindFor', () => {
   const records: ModuleEntityKind[] = [
     { name: 'Harbormaster Ilse', kind: 'npc', absorbed: [] },

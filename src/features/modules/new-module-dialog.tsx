@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { MinusIcon, PlusIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -18,14 +20,15 @@ import { Textarea } from '@/components/ui/textarea';
 import type { Campaign, ModuleSizeDial } from '@/domain';
 import { MODULE_SIZE_LABELS } from '@/domain';
 import { modulePath } from '@/app/routes';
+import { listModulesByCampaign } from '@/db/moduleRepo';
 import { createModuleAndRun } from '@/llm/moduleGen';
 import { toastError } from '@/lib/toast';
 
 /**
  * "New Module" creation dialog (08-MODULE-DESIGNER M4-B): concept, level
- * range (two steppers, max ≥ min), tone, size dial — no other knobs. Creates
- * the Module row and immediately runs pass 0; the reader then shows the
- * spine-approval checkpoint.
+ * range (two steppers, max ≥ min), tone, size dial — plus the opt-in
+ * cross-module continuity checkbox. Creates the Module row and immediately
+ * runs pass 0; the reader then shows the spine-approval checkpoint.
  */
 
 const SIZES: readonly ModuleSizeDial[] = ['sketch', 'standard', 'detailed'];
@@ -47,7 +50,19 @@ export function NewModuleDialog({
   const [levelMax, setLevelMax] = useState(3);
   const [tone, setTone] = useState('');
   const [sizeDial, setSizeDial] = useState<ModuleSizeDial>('standard');
+  const [includePriorModules, setIncludePriorModules] = useState(false);
   const [starting, setStarting] = useState(false);
+
+  // The opt-in continuity checkbox is only meaningful when some other module
+  // of this campaign actually carries authored text (premise or parts).
+  const priorModules = useLiveQuery(
+    () => listModulesByCampaign(campaign.id),
+    [campaign.id],
+  );
+  const hasPriorText = (priorModules ?? []).some(
+    (module) =>
+      (module.spine?.premise ?? '') !== '' || module.parts.some((part) => part.markdown !== ''),
+  );
 
   const canStart = concept.trim() !== '' && !starting;
 
@@ -62,6 +77,7 @@ export function NewModuleDialog({
         levelMax: Math.max(levelMax, levelMin),
         tone: tone.trim(),
         sizeDial,
+        includePriorModules,
       });
       onOpenChange(false);
       navigate(modulePath(campaign.id, moduleId));
@@ -151,6 +167,30 @@ export function NewModuleDialog({
               Target part length: sketch ≈ 400–700 words, standard ≈ 800–1500, detailed ≈
               1500–2500.
             </p>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="module-include-prior"
+              checked={includePriorModules}
+              disabled={!hasPriorText}
+              onCheckedChange={(checked) => {
+                setIncludePriorModules(checked);
+              }}
+            />
+            <div className="flex flex-col gap-0.5">
+              <Label
+                htmlFor="module-include-prior"
+                className={hasPriorText ? '' : 'text-muted-foreground'}
+              >
+                Continue from previous modules
+              </Label>
+              <p className="text-xs text-muted-foreground">
+                {hasPriorText
+                  ? 'Give the generator the other modules of this campaign — premises and part texts, drafts included — as settled history to continue.'
+                  : 'No previous modules with text in this campaign yet.'}
+              </p>
+            </div>
           </div>
         </div>
 

@@ -148,6 +148,11 @@ export const moduleSchema = z
       )
       .nullable()
       .default(null),
+    /** Opt-in continuity (08 §M4-B): when true, the spine and parts passes
+     * receive the campaign's other modules (premise + part texts, drafts
+     * included, capped) as settled history. Off = the previous behavior,
+     * byte-for-byte. */
+    includePriorModules: z.boolean().default(false),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',
@@ -169,6 +174,8 @@ export interface NewModule {
   levelMax: number;
   tone?: string;
   sizeDial: ModuleSizeDial;
+  /** Opt-in: feed the campaign's other modules to the generator (08 §M4-B). */
+  includePriorModules?: boolean;
 }
 
 export function createModule(input: NewModule): Module {
@@ -195,6 +202,7 @@ export function createModule(input: NewModule): Module {
     entityNamesNormalized: false,
     entityNormalizationError: '',
     entityRewriteProposals: null,
+    includePriorModules: input.includePriorModules ?? false,
   });
 }
 

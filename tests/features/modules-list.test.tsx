@@ -171,6 +171,65 @@ describe('ModulesListPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('offers prior-module continuity and passes the opt-in to the generator', async () => {
+    const user = userEvent.setup();
+    // 'Vault of Whispers' carries a premise + written parts, so the opt-in
+    // continuity checkbox is offered.
+    const { campaignId } = await seedModules();
+    renderAppAt(modulesPath(campaignId));
+    await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByTestId('new-module'));
+    const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Continue from previous modules' });
+    await waitFor(() => {
+      expect(checkbox).toBeEnabled();
+    });
+
+    await user.click(checkbox);
+    expect(checkbox).toBeChecked();
+    await user.type(within(dialog).getByLabelText('Concept'), 'A new chapter of the story.');
+    createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
+    await user.click(within(dialog).getByTestId('start-module'));
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+    expect(createModuleAndRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ includePriorModules: true }),
+    );
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('starts with continuity off and disables it when no prior module has text', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
+    renderAppAt(modulesPath(campaign.id));
+    await screen.findByTestId('new-module', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByTestId('new-module'));
+    const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+    const checkbox = within(dialog).getByRole('checkbox', { name: 'Continue from previous modules' });
+    // Base UI checkbox: the disabled state is aria-disabled, not [disabled].
+    expect(checkbox).toHaveAttribute('aria-disabled', 'true');
+    expect(
+      within(dialog).getByText('No previous modules with text in this campaign yet.'),
+    ).toBeInTheDocument();
+
+    // Creation still works, and the flag is passed as off.
+    await user.type(within(dialog).getByLabelText('Concept'), 'The very first chapter.');
+    createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
+    await user.click(within(dialog).getByTestId('start-module'));
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+    expect(createModuleAndRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ includePriorModules: false }),
+    );
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('deletes a module after confirmation and removes the row from the DB', async () => {
     const user = userEvent.setup();
     const { campaignId, failedId } = await seedModules();
