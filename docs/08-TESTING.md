@@ -79,35 +79,36 @@ test) · ❌ gap.
 
 | Surface (05-UI §) | Covered by | State |
 |---|---|---|
-| Top bar: nav links, campaign switcher, theme toggle, language select | `app-shell.test` | ✅ |
-| Top bar: ▶ Play button | `play-page.test` | ✅ |
+| Top bar: nav links, campaign switcher, theme/language, no retired Play action | `app-shell.test`, `ui-smoke.test` | ✅ |
 | Help button + dialog | `help.test` | ✅ |
 | Campaign picker: cards, create dialog, delete confirm | `campaign-picker.test` | ✅ |
 | Campaign tree: rows, selection, `+` buttons, delete confirm | `workspace.test` | ✅ |
-| Campaign tree: filter, collapse, row tooltip, context menu, rename dialog, Link graph | `ui-smoke.test` | ✅ (was ❌) |
+| Ownership scopes: persisted toggles, module groups, Library group, publish/adopt confirms | `tree-scope.test`, `artifactRepo.test`, `moduleRepo.test` | ✅ |
+| Campaign tree: filter, collapse, row tooltip, context menu, rename dialog, Link graph | `ui-smoke.test` | ✅ |
 | Workspace: three resizable panes, welcome center | `workspace.test`, `ui-smoke.test` | ✅ |
 | Editor: name autosave, revision creation, empty-name guard | `editor-autosave.test`, `m2kinds.test` | ✅ |
 | Editor: revision dropdown → snapshot dialog → **restore** | `editor-surfaces.test` | ✅ (was ❌) |
 | Editor: markdown **preview toggle** | `editor-surfaces.test` | ✅ (was ❌) |
 | Editor: tag editor chips | `editor-surfaces.test` | ✅ (was 🟡) |
-| Editor: kind forms (npc/location/faction/encounter/plotarc/session) | `editor-autosave` (npc), `encounter-form` (encounter), `m2kinds` (session), `ui-smoke` (all kinds mount) | 🟡 forms beyond encounter/session |
+| Editor: surviving kind forms (pc/npc/location/faction/note/encounter/plotarc) | `editor-autosave`, `encounter-form`, `m2kinds`, `ui-smoke` | 🟡 forms beyond npc/encounter |
 | Editor: **stat block card + edit toggle** | card/form UI `editor-surfaces.test`, resolve pipeline `encounter-form` | ✅ (was ❌) |
 | Editor: links section rows (combobox add/remove, dangling targets) | `editor-surfaces.test` | ✅ (was 🟡) |
 | Editor: images section, cover, lightbox | `images-ui.test` | ✅ |
 | Editor: **export dialog** / single-artifact export UI | `export-dialog.test` (through the picker ⋮ menu) | ✅ (was ❌) |
 | Editor: **monster source** UI | resolve pipeline `encounterResolve.test` | ❌ UI controls |
 | Persona panel: assistant tab, disabled-without-key hint | `workspace.test` | ✅ |
-| Persona panel: run lifecycle UI (pause actions, edit rescue, retry, cancel, completed link) | `persona-run-ui.test` (mocked chat) | ✅ (was ❌) |
+| Persona panel: run lifecycle, global targets/badge, image ownership | `persona-run-ui.test`, `imageRun.test`, `runEngine.test` | ✅ |
 | Persona panel: runs list + delete | `workspace.test` | ✅ |
 | Writers' room: step plan, badges, live tail | `module-forge.test` | ✅ |
-| Quick-find (Ctrl+K): artifact pick, rule preview/pin | `play-page.test`, `deliverables-page.test`, `ui-smoke.test` | ✅ |
+| Quick-find (Ctrl+K): scoped artifacts, Library labels, module navigation, rule preview/pin | `quickfind-modules.test`, `quickfind-topbar.test`, `ui-smoke.test` | ✅ |
 | Graph page: layout, click-through | `graphLayout.test` | ✅ |
-| Play page: focus, context grid, scenes, quick log | `play-page.test` | ✅ |
-| Table surface (M5-D): player-safe DOM, drag/tap, HP ownership writes, initiative roll/prune/restore, downed overlay, stage reset | `battle-surface.test` | ✅ |
-| Battle engine goldens (M5-B): HP ownership split, initiative sort/prune/adjust, veil coverage/resize, grid snap, staging-ground spawn, gesture gates | `battle-engine.test` | ✅ |
-| Battle persistence (M5-B): ensureBattle lazy create, normalize-on-write, scrub-on-delete, v8→v9 migration | `battleRepo.test`, `migration.test` | ✅ |
-| Battle seeding (M5-C): roster expansion (npc-ref/inline/rulebook/statless), map resolution, PC auto-include, Run-battle button | `battleSeed.test` | ✅ |
-| Deliverables: outline editing, seed-from-forge | `deliverables-page.test` | ✅ |
+| Module reader as play view: battle link and encounter-row seed action | `module-reader.test`, `entity-panel.test` | ✅ |
+| Table surface: module route, player-safe DOM, drag/tap, HP ownership, initiative, stage reset | `battle-surface.test` | ✅ |
+| Battle engine goldens: HP split, initiative, veils, grid snap, staging ground | `battle-engine.test` | ✅ |
+| Battle persistence: module lazy-create/normalize/scrub/delete and v10→v11 clearing | `battleRepo.test`, `moduleRepo.test`, `migration.test` | ✅ |
+| Battle seeding: roster expansion, global refs, map resolution, PC auto-include | `battleSeed.test`, `entity-panel.test` | ✅ |
+| Play retirement: `/play` 404, no session kind, one-time v11 notice | `ui-smoke.test`, `m2kinds.test`, `migration-notice.test` | ✅ |
+| Deliverables: outline editing, owned module seeding, explicit-only globals | `deliverables-page.test`, `seed-from-module.test`, `modulePdf.test` | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
 | Settings: key, models, personas, language, danger zone | `settings-page.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |

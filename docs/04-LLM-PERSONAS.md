@@ -50,7 +50,6 @@ are not chainable (chainRunner/moduleForge reject them).
 | faction-designer | Faction Designer  | faction      | generate | Factions with goals, methods, ranks     |
 | plot-architect   | Plot Architect    | note         | generate | Adventure/campaign arcs and hooks       |
 | arc-weaver       | Arc Weaver        | plotarc      | generate | Plot arcs with beats, stakes, climax    |
-| session-chronicler | Session Chronicler | session   | generate | Ready-to-run session plans              |
 | encounter-smith  | Encounter Smith   | encounter    | generate | Balanced encounters with monsters       |
 | continuity-editor | Continuity Editor | note        | review   | Reports contradictions in an artifact   |
 | illustrator      | Illustrator       | —            | image    | Drafts an image prompt and generates candidate images for an artifact (M3-A) |

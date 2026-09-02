@@ -29,28 +29,39 @@ type GameSystem = 'dnd5e' | 'pathfinder2e' | 'cosmere' | 'generic-d20' | 'other'
 
 ### Artifact (the central content unit)
 
-One table, discriminated by `kind`. Milestone 1 implements kinds
-`npc | location | faction | note`; the union is designed to grow
-(`encounter | plotarc | session | handout` in M2).
+One table, discriminated by `kind`. Current kinds are `pc | npc | location |
+faction | note | encounter | plotarc`; the retired `session` kind is removed in
+v11. Ownership scope is **derived**, never stored separately:
+
+- `campaignId === null && moduleId === null` → Global library,
+- `campaignId !== null && moduleId === null` → Campaign,
+- `campaignId !== null && moduleId !== null` → Module.
+
+Only `npc | location | faction | encounter` may be global. A global PC is
+invalid because its persistent HP belongs to one campaign.
 
 ```ts
 interface ArtifactBase extends BaseEntity {
-  campaignId: Id;
+  campaignId: Id | null;
+  moduleId: Id | null;
   kind: ArtifactKind;
   name: string;
   tags: string[];
-  summary: string;              // 1–3 sentences, shown in tree tooltips
-  body: string;                 // markdown, the main free-text content
-  links: ArtifactLink[];        // outgoing links
-  currentRevision: number;      // starts at 1
-  imageIds: Id[];               // referenced images (images table), gallery order (M3-A)
-  coverImageId: Id | null;      // cover thumbnail for tree/PDF (M3-A)
+  aliases: string[];
+  summary: string;
+  body: string;                 // markdown
+  links: ArtifactLink[];
+  currentRevision: number;
+  imageIds: Id[];
+  coverImageId: Id | null;
 }
-type ArtifactKind = 'npc' | 'location' | 'faction' | 'note';
+type ArtifactKind = 'pc' | 'npc' | 'location' | 'faction' | 'note' |
+  'encounter' | 'plotarc';
+type ArtifactScope = 'global' | 'campaign' | 'module';
 
 interface ArtifactLink {
-  targetId: Id;                 // another Artifact
-  relation: string;             // free text, e.g. 'member-of', 'located-in', 'ally-of'
+  targetId: Id;
+  relation: string;
 }
 ```
 
@@ -91,7 +102,14 @@ interface NoteArtifact extends ArtifactBase {
   kind: 'note';
   data: Record<string, never>;  // body/tags only
 }
-type Artifact = NpcArtifact | LocationArtifact | FactionArtifact | NoteArtifact;
+// The runtime zod discriminated union also includes PC, Encounter and PlotArc.
+type Artifact = PcArtifact | NpcArtifact | LocationArtifact | FactionArtifact |
+  NoteArtifact | EncounterArtifact | PlotArcArtifact;
+type GlobalArtifact = Extract<Artifact, { kind: 'npc' | 'location' | 'faction' | 'encounter' }> & {
+  campaignId: null;
+  moduleId: null;
+};
+type AnyArtifact = Artifact | GlobalArtifact;
 ```
 
 ### StatBlock (normalized d20)
@@ -270,6 +288,24 @@ at ≤ 45% width, NPC gallery + treasure ledger appendices, "missing artifact"
 placeholders for dangling references). Renderer: `/src/lib/modulePdf.ts` +
 `/src/lib/mdToPdfmake.ts`.
 
+### Battle (M5, re-anchored in M6-E)
+
+A battle is ephemeral table state owned by one module, not authored content.
+`campaignId` remains the campaign anchor; `moduleId` is unique in practice via
+`ensureBattle(campaignId, moduleId)`. NPC HP lives on tokens, while PC HP stays
+on the campaign PC artifact. `seedFighters` freezes stats only for inline or
+rulebook monsters that have no artifact row.
+
+```ts
+interface Battle extends BaseEntity {
+  campaignId: Id;
+  moduleId: Id;
+  encounterArtifactId: Id | null;
+  board: BattleBoard;
+  seedFighters: SeedFighter[];
+}
+```
+
 ### StoredImage (M3-A)
 
 Binary payloads live in their own table; artifacts reference them by id
@@ -280,7 +316,7 @@ references it anymore (reference-counted deletion in `imageRepo`).
 
 ```ts
 interface StoredImage extends BaseEntity {
-  campaignId: Id;
+  campaignId: Id | null;        // null when owned by a global artifact
   bytes: Uint8Array;            // re-encoded at intake: EXIF-safe decode, ≤1600px long edge
   mimeType: string;             // actually encoded format ('image/webp' target, PNG fallback)
   width: number;
@@ -303,9 +339,11 @@ interface Settings {
   imageModel: string;           // default 'google/gemini-2.5-flash-image' (M3-A)
   imagesEnabled: boolean;       // default false — image generation is opt-in (M3-A)
   language: 'en'|'de'|'fr'|'es'|'it'|'pt'|'nl'|'pl'|'ru'|'ja'|'zh';
-                                // generation language, default 'en' — enforced
-                                // in every chat completion via a system
-                                // directive (see /src/llm/language.ts)
+  artifactScopes: {
+    workspace: { global: boolean; campaign: boolean; module: boolean };
+    moduleView: { global: boolean; campaign: boolean; module: boolean };
+  };
+  retiredSessionNotesRemoved: number; // v11 startup notice, consumed to 0
 }
 ```
 
@@ -316,7 +354,7 @@ import Dexie, { type Table } from 'dexie';
 
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
-  artifacts!: Table<Artifact, Id>;
+  artifacts!: Table<AnyArtifact, Id>;
   revisions!: Table<ArtifactRevision, Id>;
   images!: Table<StoredImage, Id>;      // M3-A
   rulebooks!: Table<Rulebook, Id>;
@@ -324,6 +362,8 @@ export class CampaignerDB extends Dexie {
   embeddings!: Table<ChunkEmbedding, string>;
   personas!: Table<Persona, Id>;
   runs!: Table<PersonaRun, Id>;
+  modules!: Table<Module, Id>;
+  battles!: Table<Battle, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -374,8 +414,24 @@ export class CampaignerDB extends Dexie {
       runs:       'id, campaignId, personaId, status, updatedAt',
       deliverables: 'id, campaignId',
       modules:    'id, campaignId, updatedAt',
-      battles:    'id, campaignId, sessionId',
+      battles:    'id, campaignId, sessionId', // frozen historical v9 shape
       settings:   'id',
+    });
+
+    // M6-A: ownership indexes and moduleId:null backfill.
+    this.version(10).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, sessionId',
+      // all other stores unchanged
+    });
+
+    // M6-E: module reader is the play view. Upgrade clears live battles,
+    // deletes retired session artifacts/revisions, scrubs their links and
+    // records the count for a one-time startup toast.
+    this.version(11).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, moduleId',
+      // all other stores unchanged
     });
   }
 }

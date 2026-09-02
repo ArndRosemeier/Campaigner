@@ -83,6 +83,8 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 - All cross-module data shapes come from `/src/domain`; features never define
   their own copies of entity types.
 - All IndexedDB access goes through `/src/db`; components never import Dexie.
+- **The module reader is the play view**: there is no standalone `/play`
+  screen or `session` artifact kind; live battles are owned by modules.
 - All LLM/JSON boundaries validated with zod `safeParse`; on failure the run
   enters a `needs_review` state (manual/review autonomy) or **fails with an
   `errorMessage`** (auto autonomy) — it never silently continues to produce
