@@ -1,4 +1,4 @@
-import type { Artifact } from '@/domain';
+import type { AnyArtifact, Id } from '@/domain';
 
 /**
  * Wiki-link syntax & resolution (08-MODULE-DESIGNER M4-A, pure): markdown
@@ -83,21 +83,45 @@ export function rewriteWikiLinkTargets(markdown: string, rewrites: readonly Link
     .join('');
 }
 
-/** One resolution outcome for a wiki-link name against the campaign artifacts. */
+/** One resolution outcome for a wiki-link name against the artifacts of the
+ * resolution domain (campaign rows + globals; scope-filtered by the caller). */
 export interface WikiLinkResolution {
   status: 'resolved' | 'unresolved' | 'ambiguous';
-  /** For resolved/ambiguous: the winning artifact (first by updatedAt desc). */
-  artifact: Artifact | undefined;
-  /** For ambiguous: every candidate, newest first. */
-  candidates: Artifact[];
+  /** For resolved/ambiguous: the winning artifact. */
+  artifact: AnyArtifact | undefined;
+  /** For ambiguous: every candidate of the winning scope tier, newest first. */
+  candidates: AnyArtifact[];
+}
+
+/** Resolution context (10-MILESTONE-6 D8): inside a module's text its own
+ * entities win; everywhere else plain owned rows beat the global library. */
+export interface WikiLinkContext {
+  /** The module whose text is being resolved, when resolving module text. */
+  moduleId?: Id | undefined;
+}
+
+/** Scope tier for precedence: lower wins. With a module context the module's
+ * own entities tier above the rest of the campaign; global rows always last.
+ * Bare names resolve across scopes by this order — no cross-scope
+ * ambiguity warnings (D8); within one tier the fix-01 behavior applies. */
+function scopeTier(artifact: AnyArtifact, context: WikiLinkContext | undefined): number {
+  if (artifact.campaignId === null) return 2;
+  if (context?.moduleId !== undefined && artifact.moduleId === context.moduleId) return 0;
+  return 1;
 }
 
 /**
  * Resolves a wiki-link name case-insensitively: exact artifact `name` first,
- * then aliases. Ties on `updatedAt` keep list order — callers pass artifacts
- * sorted `updatedAt` desc (or any deterministic order).
+ * then aliases. Candidates are grouped by scope tier (D8) — the winner comes
+ * from the best tier, ties within a tier on `updatedAt` desc. Ambiguity is a
+ * WITHIN-TIER property: multiple candidates in the best tier are ambiguous,
+ * while a single candidate in any tier resolves outright.
  */
-export function resolveWikiLink(name: string, artifacts: readonly Artifact[]): WikiLinkResolution {
+export function resolveWikiLink(
+  name: string,
+  artifacts: readonly AnyArtifact[],
+  context?: WikiLinkContext,
+): WikiLinkResolution {
   const target = name.trim().toLowerCase();
   if (target === '') return { status: 'unresolved', artifact: undefined, candidates: [] };
 
@@ -107,18 +131,28 @@ export function resolveWikiLink(name: string, artifacts: readonly Artifact[]): W
   );
   // An artifact can match BOTH by name and by alias (e.g. its own old name
   // kept as an alias) — dedupe by id so it is one candidate, not two.
-  const seen = new Set<Artifact['id']>();
-  const candidates = newestFirst(
-    [...byName, ...byAlias].filter((artifact) => {
-      if (seen.has(artifact.id)) return false;
-      seen.add(artifact.id);
-      return true;
-    }),
-  );
+  const seen = new Set<AnyArtifact['id']>();
+  const matched = [...byName, ...byAlias].filter((artifact) => {
+    if (seen.has(artifact.id)) return false;
+    seen.add(artifact.id);
+    return true;
+  });
 
-  if (candidates.length === 0) {
+  if (matched.length === 0) {
     return { status: 'unresolved', artifact: undefined, candidates: [] };
   }
+
+  // Group by scope tier; the best tier decides. Within a tier: newest first.
+  const tiers = new Map<number, AnyArtifact[]>();
+  for (const artifact of matched) {
+    const tier = scopeTier(artifact, context);
+    const list = tiers.get(tier) ?? [];
+    list.push(artifact);
+    tiers.set(tier, list);
+  }
+  const bestTier = Math.min(...tiers.keys());
+  const candidates = newestFirst(tiers.get(bestTier) ?? []);
+
   return {
     status: candidates.length > 1 ? 'ambiguous' : 'resolved',
     artifact: candidates[0],
@@ -127,7 +161,7 @@ export function resolveWikiLink(name: string, artifacts: readonly Artifact[]): W
 }
 
 /** Sorts artifacts by `updatedAt` desc without mutating the input. */
-function newestFirst(artifacts: Artifact[]): Artifact[] {
+function newestFirst(artifacts: AnyArtifact[]): AnyArtifact[] {
   return [...artifacts].sort((a, b) => b.updatedAt - a.updatedAt);
 }
 

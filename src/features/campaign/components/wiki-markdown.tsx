@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import type { JSX, ReactNode } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 
-import type { Artifact, ArtifactKind, Id } from '@/domain';
+import type { AnyArtifact, ArtifactKind, Id } from '@/domain';
 import { ImageThumb } from '@/features/images/image-thumb';
 import { remarkWikiLinks } from '@/lib/remark-wikilinks';
 import { resolveWikiLink } from '@/lib/wikilinks';
@@ -19,9 +19,9 @@ import { cn } from '@/lib/utils';
 export interface WikiMarkdownProps {
   value: string;
   /** Campaign artifacts to resolve link names against. */
-  artifacts: readonly Artifact[];
+  artifacts: readonly AnyArtifact[];
   /** Resolved-chip click (peek modal, focus jump…). Omit → inert chip. */
-  onOpenArtifact?: ((artifact: Artifact) => void) | undefined;
+  onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
   /**
    * Unresolved-chip click (stub popover). The anchor is the chip's client
    * position, for popover placement. Omit → inert chip.
@@ -75,8 +75,8 @@ function wikiUrlTransform(url: string): string {
 }
 
 function wikiAnchorComponent(context: {
-  artifacts: readonly Artifact[];
-  onOpenArtifact?: ((artifact: Artifact) => void) | undefined;
+  artifacts: readonly AnyArtifact[];
+  onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
   onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
 }): (props: { href?: string | undefined; children?: ReactNode }) => JSX.Element {  return function WikiAnchor({ href, children }) {
     if (!href?.startsWith('#wiki:')) {
@@ -101,8 +101,8 @@ function WikiChip({
   name: string;
   display: string;
   context: {
-    artifacts: readonly Artifact[];
-    onOpenArtifact?: ((artifact: Artifact) => void) | undefined;
+    artifacts: readonly AnyArtifact[];
+    onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
     onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
   };
 }): JSX.Element {

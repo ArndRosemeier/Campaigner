@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { artifactScope, newId, type Artifact } from '@/domain';
 import {
+  adoptIntoCampaign,
   countArtifactsByCampaign,
   createArtifact,
   deleteArtifact,
@@ -14,11 +15,14 @@ import {
   listArtifactsByModule,
   listGlobalArtifacts,
   listRevisions,
+  moveToModule,
   restoreRevision,
   saveArtifact,
   updateArtifact,
 } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { createModule } from '@/db/moduleRepo';
+import { createModule as createModuleSchema } from '@/domain';
 import { db } from '@/db/db';
 import { clearDatabase, expectNotFound } from './helpers';
 
@@ -219,6 +223,40 @@ describe('ownership queries (M6-A)', () => {
   const campaignId = '00000000-0000-4000-8000-000000000c01';
   const moduleId = '00000000-0000-4000-8000-0000000000b1';
 
+  /** Writes a global library npc directly — the publish writer lands in
+   * M6-C, but the scope queries/moves must behave around such rows now. */
+  async function putGlobalNpc(id: string): Promise<void> {
+    const { anyArtifactSchema } = await import('@/domain');
+    await db.artifacts.put(
+      anyArtifactSchema.parse({
+        id,
+        createdAt: 1,
+        updatedAt: 1,
+        campaignId: null,
+        moduleId: null,
+        kind: 'npc',
+        name: 'Library troll',
+        tags: [],
+        aliases: [],
+        summary: '',
+        body: '',
+        links: [],
+        currentRevision: 1,
+        imageIds: [],
+        coverImageId: null,
+        data: {
+          role: '',
+          appearance: '',
+          personality: '',
+          motivation: '',
+          secrets: '',
+          voiceNotes: '',
+          statBlock: null,
+        },
+      }),
+    );
+  }
+
   /** Writes rows directly — the scope-move writers land in M6-B/C; the
    * queries must be correct for rows of every scope from day one. */
   async function putRows(rows: unknown[]): Promise<void> {
@@ -305,5 +343,103 @@ describe('ownership queries (M6-A)', () => {
     const ownedFirst = owned[0];
     if (ownedFirst === undefined) throw new Error('no owned rows returned');
     expect((await getArtifact(ownedFirst.id))?.name).toBe(ownedFirst.name);
+  });
+
+  it('moveToModule moves within the campaign and refuses everything else', async () => {
+    const targetModule = await createModule(
+      createModuleSchema({
+        campaignId,
+        title: 'Ember Crypt',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const owned = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Kael',
+    });
+
+    // Happy path: campaign-owned → module-owned, same campaign.
+    const moved = await moveToModule(owned.id, targetModule.id);
+    expect(moved.moduleId).toBe(targetModule.id);
+    expect(moved.campaignId).toBe(campaignId);
+    // The move is a user save — revision history records it.
+    expect(moved.currentRevision).toBe(2);
+
+    // Cross-campaign modules are refused loudly (images/battles key on the
+    // old campaignId).
+    const foreignCampaign = await createCampaign({ name: 'X', system: 'dnd5e' });
+    const foreignModule = await createModule(
+      createModuleSchema({
+        campaignId: foreignCampaign.id,
+        title: 'Far Away',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    await expect(moveToModule(owned.id, foreignModule.id)).rejects.toThrow(/another campaign/);
+
+    // Global rows have no module to move into.
+    const globalId = '00000000-0000-4000-8000-00000000b010';
+    await putGlobalNpc(globalId);
+    await expect(moveToModule(globalId, targetModule.id)).rejects.toThrow(
+      /adopt it into a campaign/,
+    );
+  });
+
+  it('adoptIntoCampaign clears the module binding; globals need a target', async () => {
+    const owned = await createArtifact({
+      campaignId,
+      moduleId,
+      kind: 'npc',
+      name: 'Kael',
+    });
+
+    const adopted = await adoptIntoCampaign(owned.id);
+    expect(adopted.moduleId).toBeNull();
+    expect(adopted.campaignId).toBe(campaignId);
+    expect(adopted.id).toBe(owned.id);
+
+    // A foreign campaignId is refused — adoption never re-anchors an owned row.
+    const otherCampaign = await createCampaign({ name: 'Other', system: 'dnd5e' });
+    await expect(adoptIntoCampaign(owned.id, otherCampaign.id)).rejects.toThrow(/another campaign/);
+
+    // A global row adopts INTO a campaign in one write.
+    const globalId = '00000000-0000-4000-8000-00000000b001';
+    await putGlobalNpc(globalId);
+    const adoptedGlobal = await adoptIntoCampaign(globalId, campaignId);
+    expect(adoptedGlobal.campaignId).toBe(campaignId);
+    expect(adoptedGlobal.moduleId).toBeNull();
+    expect(await getAnyArtifact(globalId)).toBeDefined();
+
+    // …and refuses without an explicit target.
+    const { anyArtifactSchema: schema } = await import('@/domain');
+    const orphanId = '00000000-0000-4000-8000-00000000b002';
+    await db.artifacts.put(
+      schema.parse({
+        id: orphanId,
+        createdAt: 1,
+        updatedAt: 1,
+        campaignId: null,
+        moduleId: null,
+        kind: 'faction',
+        name: 'Library cult',
+        tags: [],
+        aliases: [],
+        summary: '',
+        body: '',
+        links: [],
+        currentRevision: 1,
+        imageIds: [],
+        coverImageId: null,
+        data: { goals: '', methods: '', resources: '', ranks: [] },
+      }),
+    );
+    await expect(adoptIntoCampaign(orphanId)).rejects.toThrow(/pick a campaign/);
   });
 });

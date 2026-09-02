@@ -16,6 +16,7 @@ import {
   createModule,
   moduleSchema,
   newId,
+  type AnyArtifact,
   type Artifact,
   type Autonomy,
   type Id,
@@ -233,7 +234,7 @@ describe('EntityPanel', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
     const onStub = vi.fn<(name: string, anchor: { x: number; y: number }) => void>();
-    const onOpenCard = vi.fn<(artifact: Artifact) => void>();
+    const onOpenCard = vi.fn<(artifact: AnyArtifact) => void>();
 
     render(
       <EntityPanel
@@ -497,9 +498,10 @@ describe('EntityPanel', () => {
     chainMocks.run.mockResolvedValue(chainState);
     chainMocks.getState.mockReturnValue(chainState);
 
+    const module = moduleFixture(campaign.id);
     render(
       <EntityPanel
-        module={moduleFixture(campaign.id)}
+        module={module}
         artifacts={[mira]}
         campaign={campaign}
         onStub={vi.fn()}
@@ -538,11 +540,16 @@ describe('EntityPanel', () => {
     expect(runCall?.[3]).toBe('auto');
     expect(runCall?.[4]).toEqual([]);
 
-    // After the chain completes, the produced artifacts gain the module tag.
+    // After the chain completes, the produced artifacts gain the module tag
+    // AND the owning module (10-MILESTONE-6 M6-B — ownership is written,
+    // never inferred from the tag).
     await waitFor(async () => {
       const tagged = await getArtifact(produced.id);
       expect(tagged?.tags).toContain('module:Ember Crypt');
+      expect(tagged?.moduleId).toBe(module.id);
     });
+    const bramScoped = await getArtifact(bramProduced.id);
+    expect(bramScoped?.moduleId).toBe(module.id);
     // Drain the batch to its end so no trailing state update (the
     // finally-block setBatching) leaks into the next test.
     await waitFor(() => {

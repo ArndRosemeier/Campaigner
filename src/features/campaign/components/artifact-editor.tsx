@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { HistoryIcon } from 'lucide-react';
 
 import { artifactRepo } from '@/db';
+import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
 import {
   ARTIFACT_KIND_SINGULAR,
   type Artifact,
@@ -18,8 +19,10 @@ import {
   type SessionArtifactData,
 } from '@/domain';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { HelpButton } from '@/help/HelpButton';
 import { RunBattleButton } from '@/features/play/run-battle';
+import { useModules } from '@/features/modules/hooks';
 import { buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -248,6 +251,7 @@ export function ArtifactEditor({
           {artifact.kind === 'encounter' && (
             <RunBattleButton campaignId={artifact.campaignId} encounter={artifact} />
           )}
+          <ScopeAction artifact={artifact} />
           <HelpButton topic="editor" label="artifact editor" className="ml-auto" />
           <span
             data-testid="save-state"
@@ -416,6 +420,71 @@ function RevisionDropdown({ artifactId, onOpen }: RevisionDropdownProps) {
         {(revisions ?? []).length === 0 && (
           <DropdownMenuItem disabled>No revisions yet</DropdownMenuItem>
         )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
+/**
+ * Scope action (10-MILESTONE-6 M6-B): a campaign-owned artifact can move into
+ * any module of its own campaign; a module-owned artifact can be adopted back
+ * into plain campaign ownership. Both keep id, links, revisions and images —
+ * only the ownership fields change — so no confirm dialog is needed; the
+ * toast reports where the artifact now lives.
+ */
+function ScopeAction({ artifact }: { artifact: Artifact }) {
+  const modules = useModules(artifact.campaignId);
+  const ownedModuleId = artifact.moduleId;
+
+  if (ownedModuleId !== null) {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        data-testid="scope-adopt"
+        onClick={() => {
+          adoptIntoCampaign(artifact.id)
+            .then((moved) => {
+              toastSuccess(`"${moved.name}" is owned by the campaign again`);
+            })
+            .catch((error: unknown) => {
+              toastError('Could not adopt the artifact into the campaign', error);
+            });
+        }}
+      >
+        Adopt into campaign
+      </Button>
+    );
+  }
+
+  const candidates = modules ?? [];
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        className={buttonVariants({ variant: 'ghost', size: 'sm' })}
+        data-testid="scope-move"
+        disabled={candidates.length === 0}
+      >
+        Move to module…
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        {candidates.map((module) => (
+          <DropdownMenuItem
+            key={module.id}
+            data-testid={`scope-move-${module.id}`}
+            onClick={() => {
+              moveToModule(artifact.id, module.id)
+                .then((moved) => {
+                  toastSuccess(`"${moved.name}" is now owned by "${module.title}"`);
+                })
+                .catch((error: unknown) => {
+                  toastError('Could not move the artifact into the module', error);
+                });
+            }}
+          >
+            {module.title}
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   );

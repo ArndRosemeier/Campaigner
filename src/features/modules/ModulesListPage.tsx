@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -19,6 +19,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { MODULE_SIZE_LABELS, type Module } from '@/domain';
 import { getCampaign } from '@/db/campaignRepo';
+import { listArtifactsByModule } from '@/db/artifactRepo';
 import { deleteModule } from '@/db/moduleRepo';
 import { useModules } from '@/features/modules/hooks';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
@@ -38,6 +39,37 @@ export function ModulesListPage(): JSX.Element {
   );
   const [dialogOpen, setDialogOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Module | null>(null);
+  /** Artifacts owned by the delete target — the cascade/keep choice (D5). */
+  const [ownedCount, setOwnedCount] = useState<number | null>(null);
+
+  useEffect(() => {
+    setOwnedCount(null);
+    if (deleteTarget === null) return;
+    let alive = true;
+    listArtifactsByModule(deleteTarget.id)
+      .then((rows) => {
+        if (alive) setOwnedCount(rows.length);
+      })
+      .catch((error: unknown) => {
+        toastError('Could not count the artifacts owned by the module', error);
+      });
+    return () => {
+      alive = false;
+    };
+  }, [deleteTarget]);
+
+  /** Runs one delete branch (10-MILESTONE-6 D5): the user picked what happens
+   * to the owned artifacts; the module row always goes. */
+  function runDelete(target: Module, ownedArtifacts: 'cascade' | 'keep'): void {
+    setDeleteTarget(null);
+    deleteModule(target.id, ownedArtifacts)
+      .then(() => {
+        toastSuccess('Module deleted');
+      })
+      .catch((error: unknown) => {
+        toastError('Could not delete the module', error);
+      });
+  }
 
   if (modules === undefined || campaign === undefined) {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
@@ -116,26 +148,40 @@ export function ModulesListPage(): JSX.Element {
           <AlertDialogHeader>
             <AlertDialogTitle>Delete “{deleteTarget?.title}”?</AlertDialogTitle>
             <AlertDialogDescription>
-              The module document and its parts are deleted. Artifacts created from it stay.
+              The module document and its parts are deleted.
+              {ownedCount === null
+                ? ' Counting the artifacts this module owns…'
+                : ownedCount === 0
+                  ? ' This module owns no artifacts.'
+                  : ` This module owns ${String(ownedCount)} artifact${ownedCount === 1 ? '' : 's'}. Choose what happens to them:`}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
+            {ownedCount !== null && ownedCount > 0 && (
+              <AlertDialogAction
+                data-testid="delete-module-keep"
+                onClick={() => {
+                  const target = deleteTarget;
+                  if (target === null) return;
+                  runDelete(target, 'keep');
+                }}
+              >
+                Keep {String(ownedCount)} artifact{ownedCount === 1 ? '' : 's'}
+              </AlertDialogAction>
+            )}
             <AlertDialogAction
+              className={ownedCount !== null && ownedCount > 0 ? 'text-destructive' : undefined}
+              data-testid="delete-module-confirm"
               onClick={() => {
                 const target = deleteTarget;
                 if (target === null) return;
-                setDeleteTarget(null);
-                deleteModule(target.id)
-                  .then(() => {
-                    toastSuccess('Module deleted');
-                  })
-                  .catch((error: unknown) => {
-                    toastError('Could not delete the module', error);
-                  });
+                runDelete(target, ownedCount !== null && ownedCount > 0 ? 'cascade' : 'keep');
               }}
             >
-              Delete
+              {ownedCount !== null && ownedCount > 0
+                ? `Delete module and ${String(ownedCount)} artifact${ownedCount === 1 ? '' : 's'}`
+                : 'Delete'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

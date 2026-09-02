@@ -7,7 +7,7 @@ import { artifactPath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { Separator } from '@/components/ui/separator';
-import type { Artifact, Id } from '@/domain';
+import type { AnyArtifact, Id } from '@/domain';
 import { NpcCard, EncounterCard, Portrait } from '@/features/play/artifact-cards';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { ZoomableImage } from '@/features/images/zoomable-image';
@@ -24,8 +24,8 @@ import { useImageUrl } from '@/features/images/use-image-url';
 
 export interface PeekModalProps {
   /** The artifact currently peeked (drives the stack root). */
-  artifact: Artifact;
-  artifacts: readonly Artifact[];
+  artifact: AnyArtifact;
+  artifacts: readonly AnyArtifact[];
   open: boolean;
   onOpenChange: (open: boolean) => void;
   campaignId: Id;
@@ -187,7 +187,7 @@ function PeekImage({
   artifact,
   onFullscreen,
 }: {
-  artifact: Artifact;
+  artifact: AnyArtifact;
   onFullscreen: (imageId: Id) => void;
 }): JSX.Element | null {
   const firstImageId = artifact.imageIds.at(0) ?? null;
@@ -219,9 +219,9 @@ function PeekBody({
   artifacts,
   onOpenArtifact,
 }: {
-  artifact: Artifact;
-  artifacts: readonly Artifact[];
-  onOpenArtifact: (artifact: Artifact) => void;
+  artifact: AnyArtifact;
+  artifacts: readonly AnyArtifact[];
+  onOpenArtifact: (artifact: AnyArtifact) => void;
 }): JSX.Element {
   if (artifact.kind === 'npc') {
     return <NpcCard npc={artifact} />;

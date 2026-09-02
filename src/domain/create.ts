@@ -111,6 +111,10 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
 
 export interface CreateArtifactInput<K extends ArtifactKind = ArtifactKind> {
   campaignId: Id;
+  /** The owning module, when the creator is a module designer surface
+   * (10-MILESTONE-6 M6-B) — ownership is written at creation, never
+   * inferred from a tag. */
+  moduleId?: Id;
   kind: K;
   name: string;
   tags?: readonly string[];
@@ -133,7 +137,7 @@ export function createArtifact(input: CreateArtifactInput): Artifact {
   const artifact = {
     ...stamp,
     campaignId: input.campaignId,
-    moduleId: null,
+    moduleId: input.moduleId ?? null,
     kind: input.kind,
     name: input.name,
     tags: [...(input.tags ?? [])],

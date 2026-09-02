@@ -12,7 +12,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { Campaign, EntityKind } from '@/domain';
+import type { Campaign, EntityKind, Id } from '@/domain';
 import { artifactRepo } from '@/db';
 import { classifyEntityName } from '@/llm/moduleGen';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -56,6 +56,8 @@ export interface StubPopoverProps {
   contextParagraphs: string;
   premise: string;
   moduleTag: string;
+  /** The creating module — the stub is OWNED by it (10-MILESTONE-6 M6-B). */
+  moduleId: Id;
   campaign: Campaign;
   /** The kind the generator recorded for this name, when it knows one. */
   recordedKind?: EntityKind | undefined;
@@ -70,6 +72,7 @@ export function StubPopover({
   contextParagraphs,
   premise,
   moduleTag,
+  moduleId,
   campaign,
   recordedKind,
   onClose,
@@ -163,6 +166,7 @@ export function StubPopover({
     try {
       await artifactRepo.createArtifact({
         campaignId: campaign.id,
+        moduleId,
         kind,
         name: name.trim(),
         summary: sentence,
@@ -200,6 +204,7 @@ export function StubPopover({
         contextParagraphs,
         premise,
         moduleTag,
+        moduleId,
       });
       if (!result.ok) {
         toastError(`Could not generate "${name.trim()}"`, result.error);

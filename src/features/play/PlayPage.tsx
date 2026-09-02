@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { Artifact, SessionArtifactData } from '@/domain';
+import type { AnyArtifact, Artifact, SessionArtifactData } from '@/domain';
 import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { getBattleBySession } from '@/db/battleRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
@@ -200,9 +200,9 @@ function ContextGrid({
   onOpenEditor,
 }: {
   focus: Artifact;
-  artifacts: readonly Artifact[];
-  onSetFocus: (artifact: Artifact) => void;
-  onOpenEditor: (artifact: Artifact) => void;
+  artifacts: readonly AnyArtifact[];
+  onSetFocus: (artifact: AnyArtifact) => void;
+  onOpenEditor: (artifact: AnyArtifact) => void;
 }): JSX.Element {
   const outIds = new Set(focus.links.map((link) => link.targetId));
   const neighbors = artifacts.filter(

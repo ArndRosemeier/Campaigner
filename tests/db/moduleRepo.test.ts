@@ -19,6 +19,7 @@ import {
   savePartPlan,
   saveSpine,
 } from '@/db/moduleRepo';
+import { createArtifact, getArtifact, listRevisions, saveArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import { clearDatabase, expectNotFound } from './helpers';
 
@@ -188,10 +189,70 @@ describe('moduleRepo', () => {
       buildModule({ campaignId: newId(), title: 'Doomed', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
     );
 
-    await deleteModule(created.id);
+    await deleteModule(created.id, 'keep');
     expect(await getModule(created.id)).toBeUndefined();
 
-    await deleteModule(created.id);
+    await deleteModule(created.id, 'keep');
     expect(await listModulesByCampaign(created.campaignId)).toEqual([]);
   });
+
+  describe('owned-artifacts disposal (10-MILESTONE-6 D5)', () => {
+    beforeEach(clearDatabase);
+
+    it("'keep' releases the module's artifacts into campaign ownership", async () => {
+      const campaignId = newId();
+      const created = await createModule(
+        buildModule({ campaignId, title: 'Ember Crypt', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+      );
+      const owned = await createArtifact({
+        campaignId,
+        moduleId: created.id,
+        kind: 'npc',
+        name: 'Kael',
+      });
+      await createArtifact({ campaignId, kind: 'note', name: 'Free note' });
+
+      await deleteModule(created.id, 'keep');
+
+      expect(await getModule(created.id)).toBeUndefined();
+      const released = await getArtifact(owned.id);
+      expect(released?.moduleId).toBeNull();
+      // The campaign anchor survives the release.
+      expect(released?.campaignId).toBe(campaignId);
+      expect((await listArtifactsByCampaignRows(campaignId)).map((row) => row.name).sort()).toEqual([
+        'Free note',
+        'Kael',
+      ]);
+    });
+
+    it("'cascade' deletes the module's artifacts with their revisions", async () => {
+      const campaignId = newId();
+      const created = await createModule(
+        buildModule({ campaignId, title: 'Ember Crypt', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+      );
+      const owned = await createArtifact({
+        campaignId,
+        moduleId: created.id,
+        kind: 'npc',
+        name: 'Kael',
+      });
+      await saveArtifact(owned, { source: 'user' });
+      const free = await createArtifact({ campaignId, kind: 'note', name: 'Free note' });
+
+      await deleteModule(created.id, 'cascade');
+
+      expect(await getModule(created.id)).toBeUndefined();
+      expect(await getArtifact(owned.id)).toBeUndefined();
+      expect(await listRevisions(owned.id)).toEqual([]);
+      // Other campaign artifacts are untouched.
+      expect((await getArtifact(free.id))?.name).toBe('Free note');
+    });
+  });
 });
+
+/** Module rows + owned rows of a campaign, like the module reader would see
+ * them (listArtifactsByCampaign includes module-owned rows). */
+async function listArtifactsByCampaignRows(campaignId: string) {
+  const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+  return listArtifactsByCampaign(campaignId);
+}

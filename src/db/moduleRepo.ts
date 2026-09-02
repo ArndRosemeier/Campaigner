@@ -1,6 +1,7 @@
 import type { Id, Module, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
 import { moduleSchema } from '@/domain';
 import { db } from '@/db/db';
+import { deleteArtifact, listArtifactsByModule } from '@/db/artifactRepo';
 import { NotFoundError } from '@/lib/errors';
 
 /**
@@ -74,7 +75,29 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
   });
 }
 
-/** Deletes a module row. Idempotent. */
-export async function deleteModule(id: Id): Promise<void> {
+/**
+ * Deletes a module row and disposes of the artifacts it owns (10-MILESTONE-6
+ * D5): `'cascade'` deletes them (with their revisions/images scrub), `'keep'`
+ * releases them into campaign ownership (`moduleId: null`, campaign anchor
+ * stays). The choice is explicit and loud — the confirm dialog in the module
+ * list is the only caller — so a silent orphaning or a silent wipe can
+ * never happen by accident.
+ */
+export async function deleteModule(
+  id: Id,
+  ownedArtifacts: 'cascade' | 'keep',
+): Promise<void> {
+  const ownedRows = await listArtifactsByModule(id);
+  if (ownedArtifacts === 'keep') {
+    // Module-owned rows carry the module's campaignId, so clearing the
+    // module binding drops them back into plain campaign ownership with
+    // their images/links/revisions untouched.
+    await db.artifacts.where('moduleId').equals(id).modify({ moduleId: null });
+    await db.modules.delete(id);
+    return;
+  }
+  for (const artifact of ownedRows) {
+    await deleteArtifact(artifact.id);
+  }
   await db.modules.delete(id);
 }

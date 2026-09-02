@@ -25,7 +25,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { Artifact, Campaign, Id, Module, ModulePart } from '@/domain';
+import type { AnyArtifact, Artifact, Campaign, Id, Module, ModulePart } from '@/domain';
 import { MODULE_SIZE_LABELS, entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
@@ -432,6 +432,7 @@ export function ModuleReaderPage(): JSX.Element {
           contextParagraphs={moduleContextFor(stub.name, module)}
           premise={module.spine?.premise ?? ''}
           moduleTag={moduleTagFor(module.title)}
+          moduleId={currentModule.id}
           campaign={campaign}
           recordedKind={entityKindFor(currentModule.entityKinds, stub.name)}
           onClose={() => {
@@ -592,7 +593,7 @@ function IntroBlock({
 }: {
   premise: string;
   artifacts: readonly Artifact[];
-  onOpenArtifact: (artifact: Artifact) => void;
+  onOpenArtifact: (artifact: AnyArtifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
 }): JSX.Element {
   return (
@@ -657,7 +658,7 @@ function PartBody({
   editDraft: string;
   onEditDraftChange: (value: string) => void;
   onEditBlur: () => void;
-  onOpenArtifact: (artifact: Artifact) => void;
+  onOpenArtifact: (artifact: AnyArtifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
   onRetry: () => void;
   onRewrite: () => void;

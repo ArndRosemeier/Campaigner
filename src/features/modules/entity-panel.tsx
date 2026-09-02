@@ -5,6 +5,7 @@ import {
   ArrowDownUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
+  FolderInputIcon,
   ImageIcon,
   SparklesIcon,
   StarIcon,
@@ -21,8 +22,9 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { Artifact, Campaign, Id, Module } from '@/domain';
+import type { AnyArtifact, Campaign, Id, Module } from '@/domain';
 import { entityKindFor, moduleTagFor } from '@/domain';
+import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { artifactRepo } from '@/db';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
@@ -84,12 +86,12 @@ type EntityImageState = 'has' | 'queued' | 'none';
 
 export interface EntityPanelProps {
   module: Module;
-  artifacts: readonly Artifact[];
+  artifacts: readonly AnyArtifact[];
   campaign: Campaign;
   /** Opens the stub popover for an unresolved name. */
   onStub: (name: string, anchor: { x: number; y: number }) => void;
   /** Opens the entity card (peek modal) for a resolved entity. */
-  onOpenCard: (artifact: Artifact) => void;
+  onOpenCard: (artifact: AnyArtifact) => void;
 }
 
 /** Plural bucket label for the progress bar ("Generating 3 npcs"). */
@@ -104,7 +106,7 @@ interface EntityEntry {
   name: string;
   resolved: boolean;
   ambiguous: boolean;
-  artifact: Artifact | undefined;
+  artifact: AnyArtifact | undefined;
   occurrences: { where: string; count: number }[];
   total: number;
   sentence: string;
@@ -112,7 +114,7 @@ interface EntityEntry {
 
 export function useModuleEntities(
   module: Module,
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
 ): { entries: EntityEntry[]; documents: { where: string; markdown: string }[] } {
   return useMemo(() => {
     const documents = [
@@ -126,7 +128,7 @@ export function useModuleEntities(
       (link) => link.name,
     );
     const entries = names.map((name) => {
-      const resolution = resolveWikiLink(name, artifacts);
+      const resolution = resolveWikiLink(name, artifacts, { moduleId: module.id });
       const occurrences = countOccurrences(name, documents);
       const firstDoc = documents.find((document) =>
         countOccurrences(name, [document]).length > 0,
@@ -161,7 +163,7 @@ export function EntityPanel({
   /** Entity awaiting confirmation to delete its image (images mode). */
   const [pendingImageDelete, setPendingImageDelete] = useState<{
     name: string;
-    artifact: Artifact;
+    artifact: AnyArtifact;
   } | null>(null);
   const progressStart = useProgressStore((state) => state.start);
   const progressUpdate = useProgressStore((state) => state.update);
@@ -445,17 +447,19 @@ export function EntityPanel({
         // Skip everything up to and including the failed step, keep going.
         remaining = remaining.slice(failedIndex + 1);
       }
-      // Stamp the produced artifacts with the module tag.
+      // Stamp the produced artifacts with their owning module (M6-B) and
+      // the compatibility tag.
       for (const artifactId of producedIds) {
         try {
           const artifact = await artifactRepo.getArtifact(artifactId);
-          if (artifact !== undefined && !artifact.tags.includes(moduleTag)) {
+          if (artifact !== undefined && (artifact.moduleId !== module.id || !artifact.tags.includes(moduleTag))) {
             await artifactRepo.updateArtifact(artifactId, {
-              tags: [...artifact.tags, moduleTag],
+              moduleId: module.id,
+              tags: artifact.tags.includes(moduleTag) ? artifact.tags : [...artifact.tags, moduleTag],
             });
           }
         } catch (error) {
-          toastError('Could not tag a produced artifact', error);
+          toastError('Could not scope a produced artifact', error);
         }
       }
       // Failed entities are loud: the bar finishing must not look like
@@ -803,7 +807,7 @@ function EntityRow({
   /** Images mode swaps the star for the image checkbox (M4-C). */
   imageMode: boolean;
   imageState: EntityImageState;
-  onOpenCard: (artifact: Artifact) => void;
+  onOpenCard: (artifact: AnyArtifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
   onToggleFocus: () => void;
   onImageToggle: () => void;
@@ -843,6 +847,30 @@ function EntityRow({
         )}
         <span className="shrink-0 text-xs text-muted-foreground">×{entry.total}</span>
       </button>
+      {entry.artifact !== undefined && !imageMode && entry.artifact.moduleId !== null && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 text-muted-foreground/40 hover:text-foreground"
+          aria-label={`Adopt ${entry.name} into the campaign`}
+          title="Adopt into campaign — moves the artifact out of this module's ownership (its links here stay)"
+          data-testid="entity-adopt"
+          data-name={entry.name}
+          onClick={() => {
+            const artifact = entry.artifact;
+            if (artifact === undefined) return;
+            adoptIntoCampaign(artifact.id)
+              .then((moved) => {
+                toastSuccess(`"${moved.name}" is owned by the campaign again`);
+              })
+              .catch((error: unknown) => {
+                toastError('Could not adopt the artifact into the campaign', error);
+              });
+          }}
+        >
+          <FolderInputIcon aria-hidden className="size-4" />
+        </Button>
+      )}
       {imageMode ? (
         <Checkbox
           className="mr-2 shrink-0"

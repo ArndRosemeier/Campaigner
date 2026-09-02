@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { Artifact, Id, Persona } from '@/domain';
+import type { AnyArtifact, Id, Persona } from '@/domain';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { createImage } from '@/db/imageRepo';
 import { listPersonas } from '@/db/personaRepo';
@@ -160,7 +160,9 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
       throw new Error('Image generation is disabled — enable it in Settings');
     }
     const artifacts = await listArtifactsByCampaign(job.campaignId);
-    const artifact = resolveWikiLink(job.name, artifacts).artifact;
+    const artifact = resolveWikiLink(job.name, artifacts, {
+      moduleId: job.moduleId,
+    }).artifact;
     if (artifact === undefined) {
       throw new Error('no artifact exists for this entity yet — detail it first');
     }
@@ -220,7 +222,7 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
  * instruction and one-repair-retry policy (auto-attach queue variant). */
 async function draftPrompt(
   illustrator: Persona,
-  artifact: Artifact,
+  artifact: AnyArtifact,
   defaultChatModel: string,
   signal: AbortSignal,
 ): Promise<ImagePromptDraft> {

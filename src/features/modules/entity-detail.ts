@@ -59,6 +59,8 @@ export interface GenerateSingleEntityInput {
   premise: string;
   /** Tag stamped on the produced artifact, e.g. `module:<title>`. */
   moduleTag: string;
+  /** The owning module — the produced artifact is OWNED by it (M6-B). */
+  moduleId: Id;
 }
 
 export type GenerateSingleEntityResult =
@@ -73,7 +75,7 @@ export type GenerateSingleEntityResult =
 export async function generateSingleEntity(
   input: GenerateSingleEntityInput,
 ): Promise<GenerateSingleEntityResult> {
-  const { campaign, kind, name, contextParagraphs, premise, moduleTag } = input;
+  const { campaign, kind, name, contextParagraphs, premise, moduleTag, moduleId } = input;
   const jobId = `module-entity-${campaign.id}-${name}`;
   const progressStart = useProgressStore.getState().start;
   const progressUpdate = useProgressStore.getState().update;
@@ -126,9 +128,10 @@ export async function generateSingleEntity(
     }
     await alignEntityName(artifactId, name);
     const artifact = await artifactRepo.getArtifact(artifactId);
-    if (artifact !== undefined && !artifact.tags.includes(moduleTag)) {
+    if (artifact !== undefined && (artifact.moduleId !== moduleId || !artifact.tags.includes(moduleTag))) {
       await artifactRepo.updateArtifact(artifactId, {
-        tags: [...artifact.tags, moduleTag],
+        moduleId,
+        tags: artifact.tags.includes(moduleTag) ? artifact.tags : [...artifact.tags, moduleTag],
       });
     }
     progressUpdate(jobId, { progress: 1 });

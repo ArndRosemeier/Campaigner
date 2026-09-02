@@ -5,7 +5,7 @@ import { PencilIcon } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import type {
-  Artifact,
+  AnyArtifact,
   EncounterArtifactData,
   NpcArtifactData,
   StatBlock,
@@ -25,9 +25,9 @@ export function NpcCard({
   npc,
   onOpenEditor,
 }: {
-  npc: Artifact & { kind: 'npc'; data: NpcArtifactData };
+  npc: AnyArtifact & { kind: 'npc'; data: NpcArtifactData };
   /** Optional pencil jump into the workspace editor. */
-  onOpenEditor?: ((artifact: Artifact) => void) | undefined;
+  onOpenEditor?: ((artifact: AnyArtifact) => void) | undefined;
 }): JSX.Element {
   const data = npc.data;
   // M4-C: everything is presented directly (the reader scrolls) — no
@@ -89,7 +89,7 @@ export function NpcCard({
   );
 }
 
-export function Portrait({ artifact }: { artifact: Artifact }): JSX.Element | null {
+export function Portrait({ artifact }: { artifact: AnyArtifact }): JSX.Element | null {
   const url = useImageUrl(artifact.coverImageId);
   if (url === null) return null;
   return (
@@ -109,8 +109,8 @@ export function EncounterCard({
   encounter,
   onOpenEditor,
 }: {
-  encounter: Artifact & { kind: 'encounter'; data: EncounterArtifactData };
-  onOpenEditor?: ((artifact: Artifact) => void) | undefined;
+  encounter: AnyArtifact & { kind: 'encounter'; data: EncounterArtifactData };
+  onOpenEditor?: ((artifact: AnyArtifact) => void) | undefined;
 }): JSX.Element {
   const data = encounter.data;
   // M4-C: the resolved stat blocks render directly — no "More" expander.
@@ -129,7 +129,11 @@ export function EncounterCard({
           </Badge>
         )}
         <div className="ml-auto flex items-center gap-1.5">
-          <RunBattleButton campaignId={encounter.campaignId} encounter={encounter} />
+          {/* A global encounter has no campaign anchor to run from — the
+              module-anchored "Run battle" arrives with M6-E. */}
+          {encounter.campaignId !== null && (
+            <RunBattleButton campaignId={encounter.campaignId} encounter={encounter} />
+          )}
           {onOpenEditor !== undefined && <EditorJump artifact={encounter} onOpenEditor={onOpenEditor} />}
         </div>
       </div>
@@ -145,8 +149,8 @@ export function CollapsibleRow({
   artifact,
   onOpenEditor,
 }: {
-  artifact: Artifact;
-  onOpenEditor?: ((artifact: Artifact) => void) | undefined;
+  artifact: AnyArtifact;
+  onOpenEditor?: ((artifact: AnyArtifact) => void) | undefined;
 }): JSX.Element {
   const [expanded, setExpanded] = useState(false);
   return (
@@ -176,8 +180,8 @@ function EditorJump({
   artifact,
   onOpenEditor,
 }: {
-  artifact: Artifact;
-  onOpenEditor: (artifact: Artifact) => void;
+  artifact: AnyArtifact;
+  onOpenEditor: (artifact: AnyArtifact) => void;
 }): JSX.Element {
   return (
     <Button

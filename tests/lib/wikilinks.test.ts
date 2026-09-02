@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Artifact } from '@/domain';
+import { anyArtifactSchema, type AnyArtifact, type Artifact } from '@/domain';
 import {
   countOccurrences,
   extractWikiLinks,
@@ -22,14 +22,19 @@ import {
 let fixtureSeq = 0;
 
 /** Builds a valid `note` artifact; unique ids keep ambiguity tests honest. */
-function makeNote(fields: { name: string; updatedAt: number; aliases?: string[] }): Artifact {
+function makeNote(fields: {
+  name: string;
+  updatedAt: number;
+  aliases?: string[];
+  moduleId?: string | null;
+}): Artifact {
   fixtureSeq += 1;
   return {
     id: `00000000-0000-4000-8000-${String(fixtureSeq).padStart(12, '0')}`,
     createdAt: 1000,
     updatedAt: fields.updatedAt,
     campaignId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-    moduleId: null,
+    moduleId: fields.moduleId ?? null,
     kind: 'note',
     name: fields.name,
     tags: [],
@@ -42,6 +47,46 @@ function makeNote(fields: { name: string; updatedAt: number; aliases?: string[] 
     coverImageId: null,
     data: {},
   };
+}
+
+/** Builds a global library row (globals are never `note` kind). */
+function makeGlobal(fields: {
+  name: string;
+  updatedAt: number;
+  kind: 'npc' | 'location' | 'faction';
+}): AnyArtifact {
+  fixtureSeq += 1;
+  const data = {
+    npc: {
+      role: '',
+      appearance: '',
+      personality: '',
+      motivation: '',
+      secrets: '',
+      voiceNotes: '',
+      statBlock: null,
+    },
+    location: { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] },
+    faction: { goals: '', methods: '', resources: '', ranks: [] },
+  }[fields.kind];
+  return anyArtifactSchema.parse({
+    id: `00000000-0000-4000-8000-${String(fixtureSeq).padStart(12, '0')}`,
+    createdAt: 1000,
+    updatedAt: fields.updatedAt,
+    campaignId: null,
+    moduleId: null,
+    kind: fields.kind,
+    name: fields.name,
+    tags: [],
+    aliases: [],
+    summary: `Summary of ${fields.name}.`,
+    body: '',
+    links: [],
+    currentRevision: 1,
+    imageIds: [],
+    coverImageId: null,
+    data,
+  });
 }
 
 describe('extractWikiLinks', () => {
@@ -170,6 +215,54 @@ describe('resolveWikiLink', () => {
     const pool = [older, newer];
     resolveWikiLink('alice', pool);
     expect(pool).toEqual([older, newer]);
+  });
+});
+
+describe('scope precedence (10-MILESTONE-6 D8)', () => {
+  const MODULE = '00000000-0000-4000-8000-0000000000b1';
+
+  it('module context: the own-module entity wins over a campaign-owned namesake', () => {
+    const own = makeNote({ name: 'Seggel', updatedAt: 100, moduleId: MODULE });
+    const campaignRow = makeNote({ name: 'Seggel', updatedAt: 999 });
+    const result = resolveWikiLink('Seggel', [campaignRow, own], { moduleId: MODULE });
+    expect(result.status).toBe('resolved');
+    expect(result.artifact?.id).toBe(own.id);
+    expect(result.candidates).toHaveLength(1);
+  });
+
+  it('module context: a campaign-owned entity beats a global library namesake', () => {
+    const campaignRow = makeNote({ name: 'The Rusty Tankard', updatedAt: 100 });
+    const globalRow = makeGlobal({ name: 'The Rusty Tankard', updatedAt: 999, kind: 'faction' });
+    const result = resolveWikiLink('The Rusty Tankard', [globalRow, campaignRow], {
+      moduleId: MODULE,
+    });
+    expect(result.status).toBe('resolved');
+    expect(result.artifact?.id).toBe(campaignRow.id);
+  });
+
+  it('without a module context, owned rows beat the global library', () => {
+    const campaignRow = makeNote({ name: 'Old Mine', updatedAt: 100 });
+    const globalRow = makeGlobal({ name: 'Old Mine', updatedAt: 999, kind: 'location' });
+    const result = resolveWikiLink('Old Mine', [globalRow, campaignRow]);
+    expect(result.status).toBe('resolved');
+    expect(result.artifact?.id).toBe(campaignRow.id);
+  });
+
+  it('ambiguity stays a within-tier property (fix-01 behavior)', () => {
+    const newer = makeNote({ name: 'Twins', updatedAt: 200 });
+    const older = makeNote({ name: 'Twins', updatedAt: 100 });
+    const result = resolveWikiLink('Twins', [older, newer], { moduleId: MODULE });
+    expect(result.status).toBe('ambiguous');
+    expect(result.candidates.map((candidate) => candidate.id)).toEqual([newer.id, older.id]);
+  });
+
+  it('a lower tier never silences a higher-tier ambiguity', () => {
+    const first = makeNote({ name: 'Goblin', updatedAt: 200 });
+    const second = makeNote({ name: 'Goblin', updatedAt: 100 });
+    const globalRow = makeGlobal({ name: 'Goblin', updatedAt: 999, kind: 'npc' });
+    const result = resolveWikiLink('Goblin', [globalRow, second, first], { moduleId: MODULE });
+    expect(result.status).toBe('ambiguous');
+    expect(result.candidates.every((candidate) => candidate.campaignId !== null)).toBe(true);
   });
 });
 

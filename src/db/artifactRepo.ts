@@ -226,6 +226,55 @@ export async function duplicateArtifact(id: Id): Promise<Artifact> {
   });
 }
 
+/**
+ * Moves an owned artifact into a module of its own campaign (10-MILESTONE-6
+ * M6-B). The target module must exist and share the artifact's campaign
+ * anchor — a cross-campaign move would strand images and battle rows that
+ * key on the old campaignId, so it is refused loudly, not clamped.
+ */
+export async function moveToModule(id: Id, moduleId: Id): Promise<Artifact> {
+  const artifact = await db.artifacts.get(id);
+  if (!artifact) throw new NotFoundError('Artifact', id);
+  if (artifact.campaignId === null) {
+    throw new Error(
+      'A global library entry cannot move into a module — adopt it into a campaign first.',
+    );
+  }
+  const targetModule = await db.modules.get(moduleId);
+  if (targetModule === undefined) throw new NotFoundError('Module', moduleId);
+  if (targetModule.campaignId !== artifact.campaignId) {
+    throw new Error(
+      `"${targetModule.title}" belongs to another campaign — artifacts can only move into modules of their own campaign.`,
+    );
+  }
+  return updateArtifact(id, { moduleId });
+}
+
+/**
+ * Returns an artifact to campaign ownership. A module-owned row keeps its
+ * campaign anchor and only clears the module binding (M6-B). A global
+ * library entry needs an explicit target campaign to adopt into (M6-C —
+ * its `campaignId: null` becomes a real anchor in the same write).
+ */
+export async function adoptIntoCampaign(id: Id, campaignId?: Id): Promise<Artifact> {
+  const artifact = await db.artifacts.get(id);
+  if (!artifact) throw new NotFoundError('Artifact', id);
+  if (artifact.campaignId === null) {
+    if (campaignId === undefined) {
+      throw new Error(
+        `"${artifact.name}" lives in the global library — pick a campaign to adopt it into.`,
+      );
+    }
+    return updateArtifact(id, { campaignId, moduleId: null });
+  }
+  if (campaignId !== undefined && campaignId !== artifact.campaignId) {
+    throw new Error(
+      `"${artifact.name}" is anchored to another campaign and cannot be adopted there.`,
+    );
+  }
+  return updateArtifact(id, { moduleId: null });
+}
+
 export async function listRevisions(artifactId: Id): Promise<ArtifactRevision[]> {
   const rows = await db.revisions.where('artifactId').equals(artifactId).toArray();
   return rows.sort((a, b) => b.revision - a.revision);
