@@ -203,6 +203,23 @@ function buildStatblockCitationSection(statblockTitles: readonly string[]): stri
   ].join('\n');
 }
 
+/**
+ * The exact inline stat-block shape encounter personas must embed when no
+ * rulebook excerpt matches. Shared by the statblock step and the Cartographer
+ * brief so the contract is spelled out identically in both prompts.
+ */
+function statBlockSchemaHint(system: string): string {
+  return (
+    `{ "system": "${system}", "level": string, "size": string, "creatureType": string, "ac": number, ` +
+    '"acNote": string, "hp": number, "hpFormula": string, "speed": string, ' +
+    '"abilities": { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, ' +
+    '"saves": string, "skills": string, "senses": string, "languages": string, ' +
+    '"traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], ' +
+    '"reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], ' +
+    '"extras": Record<string,string> }'
+  );
+}
+
 function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): ArtifactData {
   switch (kind) {
     case 'pc':
@@ -298,12 +315,41 @@ function encounterSourceIssues(
 }
 
 /**
+ * Every roster entry must be assigned to exactly one room — the same rule
+ * `validateEncounterLayout` enforces later. Checking it at the brief boundary
+ * turns a downstream run-killing layout error into a repairable issue.
+ */
+function encounterCoverageIssues(brief: EncounterGeneratorBrief, rosterLength: number): string[] {
+  const assignment = new Map<number, number>();
+  for (const room of brief.rooms) {
+    for (const index of room.monsterIndexes) {
+      assignment.set(index, (assignment.get(index) ?? 0) + 1);
+    }
+  }
+  const issues: string[] = [];
+  for (let index = 0; index < rosterLength; index += 1) {
+    if (assignment.get(index) !== 1) {
+      issues.push(`rooms: roster entry ${String(index)} must belong to exactly one room`);
+    }
+  }
+  return issues;
+}
+
+/**
  * Parses a Cartographer brief reply. Never swallows the reason: a failed parse
  * returns the schema issues (path + message) so they reach the model's repair
  * turn and the user's review card instead of dying in a bare `null`.
+ *
+ * `dropInlineStats` (regenerate mode): the roster is replaced verbatim from
+ * the target encounter right after validation, stat sources included, so
+ * embedded `statBlock`/`sourceChunkIndex` fields carry no information and are
+ * stripped before the schema runs — the model echoing a stub block there must
+ * not fail the map over data the contract discards. Fresh runs keep strict
+ * validation: their inline stat blocks become the artifact's source data.
  */
 function parseEncounterBrief(
   raw: string,
+  opts: { dropInlineStats?: boolean } = {},
 ): { brief: EncounterGeneratorBrief; issues: [] } | { brief: null; issues: string[] } {
   const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
   if (jsonText === '') return { brief: null, issues: ['the reply contained no JSON object'] };
@@ -312,6 +358,18 @@ function parseEncounterBrief(
     json = JSON.parse(jsonText);
   } catch (error) {
     return { brief: null, issues: [`invalid JSON: ${error instanceof Error ? error.message : String(error)}`] };
+  }
+  if (opts.dropInlineStats === true && json !== null && typeof json === 'object' && Array.isArray((json as { monsters?: unknown }).monsters)) {
+    const record = json as { monsters: unknown[] };
+    record.monsters = record.monsters.map((monster) =>
+      monster !== null && typeof monster === 'object'
+        ? {
+            name: (monster as { name?: unknown }).name,
+            count: (monster as { count?: unknown }).count,
+            notes: (monster as { notes?: unknown }).notes,
+          }
+        : monster,
+    );
   }
   const result = encounterGeneratorBriefSchema.safeParse(json);
   if (result.success) return { brief: result.data, issues: [] };
@@ -956,7 +1014,7 @@ export class RunEngine {
       context.excerpts === ''
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
-      `Reply with ONLY a JSON object matching this COMPLETE schema: { "system": "${input.campaign.system}", "level": string, "size": string, "creatureType": string, "ac": number, "acNote": string, "hp": number, "hpFormula": string, "speed": string, "abilities": { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, "saves": string, "skills": string, "senses": string, "languages": string, "traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], "reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], "extras": Record<string,string> }. Include every field; use empty strings or arrays only when a section truly does not apply.`,
+      `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(input.campaign.system)}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     ]
       .filter((part) => part !== null)
@@ -1210,15 +1268,22 @@ export class RunEngine {
     }
     const context = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const retrieval = await this.retrieveContext(input);
-    const rosterContract = target?.kind === 'encounter'
-      ? `Regeneration target roster (preserve this exact order, names and counts): ${JSON.stringify(
-          target.data.monsters.map((monster) => ({
+    const targetRoster = target?.kind === 'encounter' ? target.data.monsters : undefined;
+    const rosterContract = targetRoster !== undefined
+      ? `Regeneration target roster — reply with these EXACT entries, same order, same names and counts (name/count/notes only; never add sourceChunkIndex or statBlock, the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
+          targetRoster.map((monster) => ({
             name: monster.name,
             count: monster.count,
             notes: monster.notes,
           })),
         )}`
       : 'Design a concrete monster roster appropriate to the requested difficulty.';
+    const monsterFieldSpec = targetRoster !== undefined
+      ? 'monsters [{name,count,notes}] (the target roster copied verbatim)'
+      : 'monsters [{name,count,notes,sourceChunkIndex? or statBlock?}]';
+    const inlineStatHint = targetRoster === undefined && retrieval.statblockChunkIds.length === 0
+      ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
+      : null;
     const contract = [
       input.brief,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
@@ -1228,7 +1293,8 @@ export class RunEngine {
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
       buildStatblockCitationSection(retrieval.statblockTitles),
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
-      'Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, monsters [{name,count,notes,sourceChunkIndex? or statBlock?}], rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}], entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.',
+      inlineStatHint,
+      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}] (1–9 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
     ].filter((part) => part !== null).join('\n\n');
     const messages: ChatMessage[] = [
       { role: 'system', content: input.persona.systemPrompt },
@@ -1246,25 +1312,40 @@ export class RunEngine {
     // Roster sources are only checked for fresh encounters: a regenerate run
     // replaces the roster with the target's verbatim entries below.
     const evaluate = (reply: string): { brief: EncounterGeneratorBrief | null; issues: string[] } => {
-      const result = parseEncounterBrief(reply);
+      const result = parseEncounterBrief(reply, { dropInlineStats: targetRoster !== undefined });
       if (result.brief === null) return result;
-      const sourceIssues = target === undefined
-        ? encounterSourceIssues(result.brief, retrieval.statblockChunkIds)
-        : [];
-      return sourceIssues.length === 0 ? result : { brief: null, issues: sourceIssues };
+      if (targetRoster !== undefined) {
+        if (result.brief.monsters.length !== targetRoster.length) {
+          return {
+            brief: null,
+            issues: [
+              `monsters: the target roster has exactly ${String(targetRoster.length)} entries — copy it verbatim in the same order (your reply listed ${String(result.brief.monsters.length)})`,
+            ],
+          };
+        }
+        const coverage = encounterCoverageIssues(result.brief, targetRoster.length);
+        return coverage.length === 0 ? result : { brief: null, issues: coverage };
+      }
+      const sourceIssues = encounterSourceIssues(result.brief, retrieval.statblockChunkIds);
+      if (sourceIssues.length > 0) return { brief: null, issues: sourceIssues };
+      const coverage = encounterCoverageIssues(result.brief, result.brief.monsters.length);
+      return coverage.length === 0 ? result : { brief: null, issues: coverage };
     };
     let raw = await chat(messages, chatOptions);
     let evaluated = evaluate(raw);
     if (evaluated.brief === null) {
       // One repair turn that names every problem — a bare "the schema failed"
       // made the model repeat the same mistake three runs in a row.
+      const statHintForRepair = targetRoster === undefined && evaluated.issues.some((issue) => issue.includes('statBlock'))
+        ? `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system)}.`
+        : '';
       raw = await chat(
         [
           ...messages,
           { role: 'assistant', content: raw },
           {
             role: 'user',
-            content: `Your reply failed the encounter-brief contract:\n- ${evaluated.issues.join('\n- ')}\nReturn the corrected JSON object only, with every field present and valid room/roster indexes.`,
+            content: `Your reply failed the encounter-brief contract:\n- ${evaluated.issues.join('\n- ')}\nReturn the corrected JSON object only, with every field present and valid room/roster indexes.${statHintForRepair}`,
           },
         ],
         chatOptions,
@@ -1278,10 +1359,10 @@ export class RunEngine {
       };
     }
     let parsed: EncounterGeneratorBrief = evaluated.brief;
-    if (target?.kind === 'encounter') {
+    if (targetRoster !== undefined) {
       parsed = {
         ...parsed,
-        monsters: target.data.monsters.map((monster) => ({
+        monsters: targetRoster.map((monster) => ({
           name: monster.name,
           count: monster.count,
           notes: monster.notes,

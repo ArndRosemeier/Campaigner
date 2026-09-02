@@ -351,6 +351,91 @@ describe('Encounter Cartographer run', () => {
     expect(updated.data.mapImageId).toBe(candidates[0]);
   });
 
+  it('ignores inline stat-block stubs when regenerating an existing encounter', async () => {
+    const { campaign, cartographer } = await setup();
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Stub Source Encounter',
+      body: 'Existing prose.',
+      links: [],
+      data: {
+        difficulty: 'old', levelHint: '2',
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', source: { type: 'none' } }],
+        terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
+        mapImageId: null, layout: null,
+      },
+    });
+    // The model echoes the roster but decorates it with a stub inline stat
+    // block — irrelevant in regenerate mode, where sources are preserved.
+    chatMock.mockResolvedValueOnce(JSON.stringify({
+      ...BRIEF,
+      monsters: [{ name: 'Wrong Rename', count: 9, notes: '', statBlock: {} }],
+    }));
+    const runInput = input(campaign, cartographer, target.id);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+      expect(run?.steps[0]?.status).toBe('done');
+    });
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    const output = (await getRun(runId))?.steps[0]?.output as {
+      parsed: { monsters: { name: string; count: number; notes: string }[] };
+    };
+    expect(output.parsed.monsters).toEqual([{ name: 'Original Ogre', count: 1, notes: 'keep' }]);
+  });
+
+  it('rejects a regenerate brief whose roster length diverges from the target', async () => {
+    const { campaign, cartographer } = await setup();
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Roster Length Encounter',
+      body: 'Existing prose.',
+      links: [],
+      data: {
+        difficulty: 'old', levelHint: '2',
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', source: { type: 'none' } }],
+        terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
+        mapImageId: null, layout: null,
+      },
+    });
+    chatMock.mockResolvedValue(JSON.stringify({
+      ...BRIEF,
+      monsters: [
+        { name: 'Cultist A', count: 1, notes: '' },
+        { name: 'Cultist B', count: 1, notes: '' },
+      ],
+    }));
+    const runInput = input(campaign, cartographer, target.id);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('needs_review');
+    });
+    const step = (await getRun(runId))?.steps[0];
+    expect(rejectionIssues(step ?? { output: null })).toEqual([
+      'monsters: the target roster has exactly 1 entries — copy it verbatim in the same order (your reply listed 2)',
+    ]);
+  });
+
+  it('reports unplaced roster entries as a repairable issue instead of a layout failure', async () => {
+    const { campaign, cartographer } = await setup();
+    chatMock.mockResolvedValue(JSON.stringify({
+      ...BRIEF,
+      rooms: BRIEF.rooms.map((room) => ({ ...room, monsterIndexes: [] })),
+    }));
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('needs_review');
+    });
+    const step = (await getRun(runId))?.steps[0];
+    expect(rejectionIssues(step ?? { output: null })).toEqual([
+      'rooms: roster entry 0 must belong to exactly one room',
+    ]);
+  });
+
   it('stops a manual run for review when the map drifts', async () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));

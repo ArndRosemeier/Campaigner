@@ -71,6 +71,15 @@ mode: run row per state change, event emitter for streaming, autonomy via
   repair turn quotes them to the model, and a still-rejected step persists
   them as `output.issues` (next to `raw`) so the review card lists them.
   A rejected brief cannot be approved (04 §Autonomy); Retry and Edit remain.
+- In **regenerate mode** the model's monster entries carry no stat data: the
+  roster (with its stat sources) is preserved verbatim from the target, so
+  embedded `statBlock`/`sourceChunkIndex` fields are stripped before
+  validation and the prompt asks for `name/count/notes` only. The model's
+  roster must match the target's length, and every roster entry must belong
+  to exactly one room — both checked at the brief boundary (repairable) so
+  they never surface later as run-killing layout errors. Fresh encounters
+  without rulebook excerpts get the **complete inline stat-block shape** in
+  the prompt; a partial block stays a validation failure.
 - `layout` is **pure code** (next section): the LLM never emits coordinates.
   A bounded retry ladder (re-pack with jitter, max 3 attempts, shrinking room
   size classes) ends in a failed run — never a placeholder layout.
