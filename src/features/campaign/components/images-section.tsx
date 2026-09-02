@@ -230,7 +230,7 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
                 variant="outline"
                 size="xs"
                 onClick={() => {
-                  requestEncounterMap(artifact.id);
+                  requestEncounterMap(artifact.id, mapImageId !== null);
                 }}
                 data-testid="generate-encounter-map"
               >
@@ -269,9 +269,27 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
               No battlemap — the battle runs on a viewport board until one is set.
             </p>
           ) : (
-            <p className="text-xs text-muted-foreground">
-              The battlemap seeds the table surface (map-role images keep up to 4096px).
-            </p>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="overflow-hidden rounded-md border"
+                aria-label="Open battlemap"
+                onClick={() => {
+                  setLightboxId(mapImageId);
+                }}
+              >
+                <GalleryThumb imageId={mapImageId} />
+              </button>
+              <p className="text-xs text-muted-foreground">
+                Battlemap on file — click to view. It seeds the table surface
+                (map-role images keep up to 4096px)
+                {artifact.data.layout !== null
+                  ? ` together with the room layout (${artifact.data.layout.rooms.length} ${
+                      artifact.data.layout.rooms.length === 1 ? 'room' : 'rooms'
+                    }, one veil each).`
+                  : '.'}
+              </p>
+            </div>
           )}
           <input
             ref={mapUploadRef}

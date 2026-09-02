@@ -222,8 +222,11 @@ room like everyone else. `layout === null` encounters seed exactly as today.
   (regenerate instead — D2's "later refinements" = edit the roster/brief and
   re-run).
 - Standalone entry points: persona panel (new encounter from a brief) and the
-  encounter editor's Battlemap section (**Generate battlemap & layout** /
-  **Regenerate** — sits beside today's Upload battlemap).
+  encounter editor's Battlemap section (**Generate layout & map** /
+  **Regenerate** — sits beside today's Upload battlemap). The section previews
+  the map on file (click → lightbox) with the stored layout's room count; the
+  pre-filled brief words the run as "Generate…" for a mapless encounter and
+  "Regenerate…" only when a map exists.
 
 ## Module generation integration (the unattended path)
 

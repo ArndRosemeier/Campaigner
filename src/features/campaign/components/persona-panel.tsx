@@ -89,6 +89,7 @@ export function PersonaPanel({
   const requestedAt = useIllustrationRequest((state) => state.requestedAt);
   const clearRequest = useIllustrationRequest((state) => state.clear);
   const encounterRequestId = useEncounterGenerationRequest((state) => state.artifactId);
+  const encounterRequestRegenerate = useEncounterGenerationRequest((state) => state.regenerate);
   const encounterRequestedAt = useEncounterGenerationRequest((state) => state.requestedAt);
   const clearEncounterRequest = useEncounterGenerationRequest((state) => state.clear);
   const settings = useLiveQuery(() => readSettings(), []);
@@ -117,10 +118,17 @@ export function PersonaPanel({
     if (cartographer === undefined) return;
     setPersonaId(cartographer.id);
     setTargetArtifactId(encounterRequestId);
-    setBrief('Regenerate this encounter map while preserving its authored roster and prose.');
+    // Word the brief truthfully: an encounter without a battlemap is a first
+    // generation, not a regeneration — "regenerate" made it sound like a map
+    // already existed.
+    setBrief(
+      encounterRequestRegenerate
+        ? 'Regenerate this encounter map while preserving its authored roster and prose.'
+        : 'Generate a battlemap and room layout for this encounter.',
+    );
     setTab('assistant');
     clearEncounterRequest();
-  }, [encounterRequestId, encounterRequestedAt, personas, clearEncounterRequest]);
+  }, [encounterRequestId, encounterRequestRegenerate, encounterRequestedAt, personas, clearEncounterRequest]);
 
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
@@ -322,7 +330,8 @@ export function PersonaPanel({
                 </Select>
                 {targetArtifactId !== '' && (
                   <p className="text-xs text-amber-600" data-testid="encounter-regenerate-target">
-                    Regenerating the selected encounter; name, prose, links and roster are preserved.
+                    Runs against the selected encounter; name, prose, links and roster are
+                    preserved, layout and map are replaced.
                   </p>
                 )}
               </div>

@@ -144,7 +144,7 @@ describe('images ui', () => {
     expect(screen.getByTestId('start-run')).toBeEnabled();
   }, 20000);
 
-  it('encounter battlemap action pre-selects the Cartographer regeneration flow', async () => {
+  it('encounter battlemap action pre-selects the Cartographer for a first generation', async () => {
     const user = userEvent.setup();
     await seedBuiltInPersonas();
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
@@ -162,8 +162,60 @@ describe('images ui', () => {
       expect(personaSelect.textContent).toContain('Encounter Cartographer');
     });
     expect(screen.getByTestId('encounter-regenerate-target')).toBeInTheDocument();
+    // No map on file yet — the pre-filled brief must not claim "regenerate".
+    expect(screen.getByLabelText('Brief')).toHaveValue(
+      'Generate a battlemap and room layout for this encounter.',
+    );
     expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
     expect(screen.getByTestId('start-run')).toBeEnabled();
+    await flushAsyncUpdates();
+  }, 20000);
+
+  it('encounter battlemap action words the brief as regeneration when a map exists', async () => {
+    const user = userEvent.setup();
+    await seedBuiltInPersonas();
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
+    const campaign = await createCampaign({ name: 'Maps II', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Bridge Ambush II',
+    });
+    const image = await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['map-bytes'], { type: 'image/webp' }),
+      mimeType: 'image/webp',
+      width: 2304,
+      height: 1728,
+      source: 'generated',
+      role: 'map',
+    });
+    await updateArtifact(encounter.id, {
+      imageIds: [image.id],
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: image.id,
+        layout: null,
+      },
+    });
+    renderAppAt(artifactPath(campaign.id, encounter.id));
+
+    await user.click(await screen.findByTestId('generate-encounter-map'));
+    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
+    await waitFor(() => {
+      expect(personaSelect.textContent).toContain('Encounter Cartographer');
+    });
+    expect(screen.getByLabelText('Brief')).toHaveValue(
+      'Regenerate this encounter map while preserving its authored roster and prose.',
+    );
+    // The editor shows the map on file instead of the "no battlemap" note.
+    expect(screen.getByRole('button', { name: 'Open battlemap' })).toBeInTheDocument();
+    expect(screen.queryByText(/No battlemap/)).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20000);
 
