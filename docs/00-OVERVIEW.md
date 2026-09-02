@@ -70,6 +70,7 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 - `08-TESTING.md`    — UI test-coverage matrix, console-hygiene guard, route sweep
 - `08-MODULE-DESIGNER.md` — M4 feature spec (module designer v2, wiki-links, entity workflow)
 - `09-MILESTONE-5.md` — M5 feature spec (party/`pc` artifacts + live battles ported from GM Cockpit's encounter mechanism)
+- `10-MILESTONE-6.md` — M6 feature spec (three ownership scopes — global/campaign/module — scope control, and the play-view retirement: battles anchor to modules, `session` kind removed)
 - `fix-*.md` — fix specs: one focused defect each (problem, root causes, binding
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard
