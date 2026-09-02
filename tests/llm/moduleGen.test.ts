@@ -145,10 +145,18 @@ async function seedReadyPart(
   await patchModule(moduleId, { parts });
 }
 
+/** Text-only view of a possibly multimodal message. */
+function messageText(content: Parameters<typeof chat>[0][number]['content']): string {
+  return typeof content === 'string'
+    ? content
+    : content.flatMap((part) => (part.type === 'text' ? [part.text] : [])).join('\n');
+}
+
 /** The user message of the n-th chat call ('' when the call is missing). */
 function userPromptOf(callIndex: number): string {
   const messages = chatMock.mock.calls[callIndex]?.[0];
-  return messages?.find((message) => message.role === 'user')?.content ?? '';
+  const content = messages?.find((message) => message.role === 'user')?.content;
+  return content === undefined ? '' : messageText(content);
 }
 
 /** All user-message content of the n-th chat call, joined — retry nudges are
@@ -157,7 +165,7 @@ function userMessagesOf(callIndex: number): string {
   const messages = chatMock.mock.calls[callIndex]?.[0] ?? [];
   return messages
     .filter((message) => message.role === 'user')
-    .map((message) => message.content)
+    .map((message) => messageText(message.content))
     .join('\n\n');
 }
 

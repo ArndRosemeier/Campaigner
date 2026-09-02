@@ -26,6 +26,8 @@ export interface GenerateImagesOptions {
   model: string;
   signal?: AbortSignal | undefined;
   retryBackoffs?: readonly number[];
+  /** Structure-first image edits (encounter schematic → stylized map). */
+  inputReferences?: readonly { dataUrl: string }[];
 }
 
 /** Decodes base64 image bytes from the API response. */
@@ -79,7 +81,20 @@ async function postImages(
   const init: RequestInit & { signal?: AbortSignal | undefined } = {
     method: 'POST',
     headers: openRouterHeaders(settings.openRouterApiKey),
-    body: JSON.stringify({ model: opts.model, prompt, n, output_format: 'webp' }),
+    body: JSON.stringify({
+      model: opts.model,
+      prompt,
+      n,
+      output_format: 'webp',
+      ...(opts.inputReferences === undefined
+        ? {}
+        : {
+            input_references: opts.inputReferences.map((reference) => ({
+              type: 'image_url',
+              image_url: { url: reference.dataUrl },
+            })),
+          }),
+    }),
   };
   if (opts.signal !== undefined) init.signal = opts.signal;
   return fetchWithRetries(

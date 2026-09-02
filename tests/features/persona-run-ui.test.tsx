@@ -354,6 +354,8 @@ describe('PersonaPanel run lifecycle', () => {
       },
       { timeout: 15_000 },
     );
+    // Capture the final live-query emission inside act before raw DB reads.
+    await flushAsyncUpdates();
     const run = await getRun(await onlyRunId());
     const resultId = run?.resultArtifactId;
     if (resultId === null || resultId === undefined) throw new Error('no result artifact');

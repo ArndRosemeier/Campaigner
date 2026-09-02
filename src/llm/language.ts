@@ -11,7 +11,7 @@ import { generationLanguageLabel } from '@/domain/settings';
 /** Structural shape of a chat message (mirrors openrouter's ChatMessage). */
 export interface DirectiveMessage {
   role: 'system' | 'user' | 'assistant';
-  content: string;
+  content: string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[];
 }
 
 /** The system-level instruction enforcing the generation language. */
@@ -44,7 +44,12 @@ export function applyLanguageDirective<M extends DirectiveMessage>(
   if (lastSystemIndex === -1) {
     return [{ role: 'system', content: directive } as M, ...messages];
   }
-  return messages.map((message, i) =>
-    i === lastSystemIndex ? { ...message, content: `${message.content}\n\n${directive}` } : message,
-  );
+  return messages.map((message, i) => {
+    if (i !== lastSystemIndex) return message;
+    const content =
+      typeof message.content === 'string'
+        ? `${message.content}\n\n${directive}`
+        : [...message.content, { type: 'text' as const, text: directive }];
+    return { ...message, content };
+  });
 }

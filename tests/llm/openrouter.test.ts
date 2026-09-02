@@ -81,6 +81,36 @@ describe('chat', () => {
     expect(body.model).toBe('m');
   });
 
+  it('serializes multimodal image parts without flattening them', async () => {
+    const fetchMock = vi.fn((_url: unknown, _init?: { body?: string }) =>
+      Promise.resolve(sseResponse([{ choices: [{ delta: { content: 'ok' } }] }])),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    await chat(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'Compare these maps' },
+            { type: 'image_url', image_url: { url: 'data:image/webp;base64,map' } },
+          ],
+        },
+      ],
+      { model: 'vision', temperature: 0 },
+      [],
+    );
+
+    const init = fetchMock.mock.calls[0]?.[1] as { body?: string } | undefined;
+    const body = JSON.parse(init?.body ?? '{}') as {
+      messages?: { role: string; content: unknown }[];
+    };
+    const user = body.messages?.find((message) => message.role === 'user');
+    expect(user?.content).toEqual([
+      { type: 'text', text: 'Compare these maps' },
+      { type: 'image_url', image_url: { url: 'data:image/webp;base64,map' } },
+    ]);
+  });
+
   it('throws MissingApiKeyError without a key', async () => {
     await saveSettings({ ...SETTINGS, openRouterApiKey: '' });
     const fetchMock = vi.fn();

@@ -37,7 +37,13 @@ const CAP_400_BODY =
 
 interface CapturedCall {
   url: string;
-  body: { model: string; prompt: string; n: number; output_format: string };
+  body: {
+    model: string;
+    prompt: string;
+    n: number;
+    output_format: string;
+    input_references?: { type: string; image_url: { url: string } }[];
+  };
 }
 
 function captureFetch(responses: (Response | ((call: CapturedCall) => Response))[]): CapturedCall[] {
@@ -100,6 +106,22 @@ describe('image candidate-count caps', () => {
     expect(result.images).toHaveLength(1);
     expect(calls).toHaveLength(1);
     expect(calls[0]?.body.n).toBe(1);
+  });
+
+  it('sends structure reference images through OpenRouter input_references', async () => {
+    responses.push(imageResponse());
+    const calls = captureFetch(responses);
+    await generateImages('stylize this map', 1, {
+      model: 'reference-test/model',
+      inputReferences: [{ dataUrl: 'data:image/png;base64,schematic' }],
+    });
+
+    expect(calls[0]?.body.input_references).toEqual([
+      {
+        type: 'image_url',
+        image_url: { url: 'data:image/png;base64,schematic' },
+      },
+    ]);
   });
 
   it('fails loudly on any other 400 — no retry', async () => {
