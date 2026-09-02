@@ -23,6 +23,11 @@ export interface SearchOptions {
   chunkTypes?: ChunkType[] | undefined;
   /** Default 12. */
   limit?: number | undefined;
+  /**
+   * Fires while the lazy semantic backfill embeds missing chunks — the
+   * whole-library first-search backfill can otherwise look like a hung run.
+   */
+  onEmbeddingProgress?: ((done: number, total: number) => void) | undefined;
 }
 
 export interface SearchHit {
@@ -66,7 +71,7 @@ export async function searchRules(query: string, opts: SearchOptions = {}): Prom
 
     const [queryVector, vectors] = await Promise.all([
       embedQuery(trimmed),
-      ensureEmbeddings(candidates),
+      ensureEmbeddings(candidates, opts.onEmbeddingProgress),
     ]);
     return rankSemantic(candidates, vectors, queryVector);
   });

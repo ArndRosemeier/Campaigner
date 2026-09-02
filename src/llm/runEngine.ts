@@ -800,6 +800,7 @@ export class RunEngine {
   }
 
   private async retrieveContext(
+    runId: Id,
     input: StartRunInput,
   ): Promise<{
     chunkIds: Id[];
@@ -809,56 +810,77 @@ export class RunEngine {
     statblockChunkIds: Id[];
     statblockTitles: string[];
   }> {
-    const query = `${input.brief} (${GAME_SYSTEM_LABELS[input.campaign.system]})`;
-    const hits = await searchRules(query, { limit: 8 });
-    const pinned = await getChunksByIds([...input.pinnedChunkIds]);
-    const merged: Id[] = [...pinned.map((chunk) => chunk.id)];
-    // M3-B: the Encounter Designer gets a second search restricted to
-    // statblock chunks so it can cite real bestiary entries.
-    const statblockChunkIds: Id[] = [];
-    if (input.persona.producesKind === 'encounter') {
-      const statHits = await searchRules(query, { limit: 6, chunkTypes: ['statblock'] });
-      for (const hit of statHits) {
-        if (!merged.includes(hit.chunk.id)) {
-          merged.push(hit.chunk.id);
-          statblockChunkIds.push(hit.chunk.id);
+    // First semantic search after enabling embeddings backfills the whole
+    // library — minutes of embedding requests before the first LLM call. The
+    // dock job appears with the first batch, so a warm cache shows nothing.
+    const contextJobId = `run-context-${runId}`;
+    const onEmbeddingProgress = (done: number, total: number): void => {
+      const store = useProgressStore.getState();
+      // start() replaces any job with the same id — idempotent per tick.
+      store.start(contextJobId, 'Preparing context', 'embedding rulebook excerpts…');
+      store.update(contextJobId, {
+        detail: `embedding rulebook excerpts (${String(done)}/${String(total)})`,
+        progress: total === 0 ? null : done / total,
+      });
+    };
+    try {
+      const query = `${input.brief} (${GAME_SYSTEM_LABELS[input.campaign.system]})`;
+      const hits = await searchRules(query, { limit: 8, onEmbeddingProgress });
+      const pinned = await getChunksByIds([...input.pinnedChunkIds]);
+      const merged: Id[] = [...pinned.map((chunk) => chunk.id)];
+      // M3-B: the Encounter Designer gets a second search restricted to
+      // statblock chunks so it can cite real bestiary entries.
+      const statblockChunkIds: Id[] = [];
+      if (input.persona.producesKind === 'encounter') {
+        const statHits = await searchRules(query, {
+          limit: 6,
+          chunkTypes: ['statblock'],
+          onEmbeddingProgress,
+        });
+        for (const hit of statHits) {
+          if (!merged.includes(hit.chunk.id)) {
+            merged.push(hit.chunk.id);
+            statblockChunkIds.push(hit.chunk.id);
+          }
         }
       }
+      for (const hit of hits) {
+        if (merged.length >= 12) break;
+        if (!merged.includes(hit.chunk.id)) merged.push(hit.chunk.id);
+      }
+      const chunks = await getChunksByIds(merged);
+      const books = await listRulebooks();
+      const titleById = new Map(books.map((book) => [book.id, book.title]));
+      const titles = chunks.map(
+        (chunk) => `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart}`,
+      );
+      const excerpts = chunks
+        .map((chunk, i) => {
+          const where = titles[i] ?? '';
+          const heading = chunk.headingPath.join(' > ');
+          return `[${where}] ${heading}\n${chunk.text}`;
+        })
+        .join('\n\n');
+      const statblockChunks = statblockChunkIds
+        .map((id) => chunks.find((chunk) => chunk.id === id))
+        .filter((chunk): chunk is (typeof chunks)[number] => chunk !== undefined);
+      const statblockTitles = statblockChunks.map(
+        (chunk) =>
+          `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart} — ${chunk.headingPath.join(' > ')}`,
+      );
+      return { chunkIds: merged, titles, excerpts, statblockChunkIds, statblockTitles };
+    } finally {
+      useProgressStore.getState().finish(contextJobId);
     }
-    for (const hit of hits) {
-      if (merged.length >= 12) break;
-      if (!merged.includes(hit.chunk.id)) merged.push(hit.chunk.id);
-    }
-    const chunks = await getChunksByIds(merged);
-    const books = await listRulebooks();
-    const titleById = new Map(books.map((book) => [book.id, book.title]));
-    const titles = chunks.map(
-      (chunk) => `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart}`,
-    );
-    const excerpts = chunks
-      .map((chunk, i) => {
-        const where = titles[i] ?? '';
-        const heading = chunk.headingPath.join(' > ');
-        return `[${where}] ${heading}\n${chunk.text}`;
-      })
-      .join('\n\n');
-    const statblockChunks = statblockChunkIds
-      .map((id) => chunks.find((chunk) => chunk.id === id))
-      .filter((chunk): chunk is (typeof chunks)[number] => chunk !== undefined);
-    const statblockTitles = statblockChunks.map(
-      (chunk) =>
-        `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart} — ${chunk.headingPath.join(' > ')}`,
-    );
-    return { chunkIds: merged, titles, excerpts, statblockChunkIds, statblockTitles };
   }
 
   private async runRetrieve(
-    _runId: Id,
+    runId: Id,
     stepIndex: number,
     steps: RunStep[],
     input: StartRunInput,
   ): Promise<{ step: RunStep }> {
-    const context = await this.retrieveContext(input);
+    const context = await this.retrieveContext(runId, input);
     debugLog('run', `retrieve done: ${String(context.chunkIds.length)} chunks selected`);
     const step = this.finishStep(steps[stepIndex], {
       chunkIds: context.chunkIds,
@@ -877,7 +899,7 @@ export class RunEngine {
     extraInstruction: string,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     const settings = await getSettings();
-    const context = await this.retrieveContext(input);
+    const context = await this.retrieveContext(runId, input);
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not draft artifacts');
     const contract = draftContractFor(kind);
@@ -1007,7 +1029,7 @@ export class RunEngine {
     const settings = await getSettings();
     const draft = this.effectiveDraft(steps);
     const levelHint = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';
-    const context = await this.retrieveContext(input);
+    const context = await this.retrieveContext(runId, input);
     const instruction = [
       `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelHint === '' ? '' : ` at level ${levelHint}`}, grounded in the rule excerpts.`,
       input.brief,
@@ -1267,7 +1289,7 @@ export class RunEngine {
       throw new Error(`"${target.name}" is not an encounter and cannot be regenerated`);
     }
     const context = await loadContextArtifacts(input.contextArtifactIds ?? []);
-    const retrieval = await this.retrieveContext(input);
+    const retrieval = await this.retrieveContext(runId, input);
     const targetRoster = target?.kind === 'encounter' ? target.data.monsters : undefined;
     if (targetRoster?.length === 0) {
       throw new Error(

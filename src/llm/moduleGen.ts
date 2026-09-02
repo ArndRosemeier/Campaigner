@@ -489,6 +489,14 @@ export async function runParts(
               partReporter.onToken(delta);
             },
             onActivity: partReporter.onActivity,
+            // Embedding backfill on the part's retrieval path is reported on
+            // the same job; the stream reporter overwrites the detail on the
+            // first token/activity tick, so no staleness.
+            onEmbeddingProgress: (done, total) => {
+              progress.update(jobId, {
+                detail: `Embedding rulebook excerpts (${String(done)}/${String(total)})…`,
+              });
+            },
           },
         );
       } catch (error) {
@@ -593,6 +601,12 @@ interface PartCallOptions {
   onToken: ((delta: string) => void) | undefined;
   /** Liveness probe from the chat stream (see streamDetailReporter). */
   onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
+  /**
+   * Fires while the part's rule-excerpt search backfills missing embeddings —
+   * the first search after enabling embeddings can otherwise sit minutes
+   * before the part's chat call starts, with the dock claiming it is writing.
+   */
+  onEmbeddingProgress?: ((done: number, total: number) => void) | undefined;
 }
 
 /** One part generation recipe: context assembly + call + validation. */
@@ -620,7 +634,7 @@ async function partCall(
     .map((entry, index) => `${index + 1}. [${entry.levelBand}] ${entry.title} — ${entry.synopsis}`)
     .join('\n');
 
-  const ruleExcerpts = await ruleExcerptSection(plan.synopsis);
+  const ruleExcerpts = await ruleExcerptSection(plan.synopsis, options.onEmbeddingProgress);
 
   // fix-01: the writer sees the canonical glossary (the normalized spine
   // records) plus the campaign artifact index, so it reuses exact spellings
@@ -979,8 +993,12 @@ export async function classifyEntityName(
   return { kind: match.kind, canonical: match.canonical };
 }
 
-/** Rule excerpts for grounding (empty library → no section, not an error). */async function ruleExcerptSection(query: string): Promise<string | null> {
-  const hits = await searchRules(query, { limit: 4 });
+/** Rule excerpts for grounding (empty library → no section, not an error). */
+async function ruleExcerptSection(
+  query: string,
+  onEmbeddingProgress?: (done: number, total: number) => void,
+): Promise<string | null> {
+  const hits = await searchRules(query, { limit: 4, onEmbeddingProgress });
   if (hits.length === 0) return null;
   return `Rule excerpts for grounding:\n${hits
     .map((hit) => `[${hit.chunk.headingPath.join(' > ')}]\n${hit.chunk.text}`)

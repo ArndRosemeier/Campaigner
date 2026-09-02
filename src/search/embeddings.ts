@@ -12,8 +12,17 @@ import { toastError } from '@/lib/toast';
  */
 
 const OPENROUTER_EMBEDDINGS_URL = 'https://openrouter.ai/api/v1/embeddings';
-const MAX_BATCH = 64;
+/**
+ * Inputs per request: 16 × up to 6000 chars ≈ ~24k tokens. Larger requests
+ * (the old 64 ≈ ~100k tokens) sat a long time in provider queues per call,
+ * and the batches ran strictly sequentially — the first semantic search after
+ * enabling embeddings re-embedded whole books on the run's critical path, in
+ * visible-to-nobody minutes before the first LLM call.
+ */
+const MAX_BATCH = 16;
 const MAX_CHARS = 6000;
+/** Concurrent embedding requests (worker-pool width). */
+export const EMBED_CONCURRENCY = 4;
 
 /** Cache key: same text embedded under different models must not collide. */
 export function embeddingKey(contentHash: string, model: string): string {
@@ -136,26 +145,41 @@ export async function ensureEmbeddings(
   }
 
   let done = chunks.length - missing.length;
+  // Worker pool: several small requests in flight beat one giant sequential
+  // queue — same semantics and cost, a fraction of the wall time.
+  const batches: RuleChunk[][] = [];
   for (let i = 0; i < missing.length; i += MAX_BATCH) {
     const batch = missing.slice(i, i + MAX_BATCH);
-    const inputs = batch.map((chunk) => chunk.text.slice(0, MAX_CHARS));
-    const vectors = await requestEmbeddings(inputs);
-    const rows = batch.map((chunk, j) => ({
-      contentHash: embeddingKey(chunk.contentHash, model),
-      model,
-      vector: vectors[j] ?? [],
-    }));
-    await db.embeddings.bulkPut(rows);
-    for (let j = 0; j < batch.length; j += 1) {
-      const chunk = batch[j];
-      const vector = vectors[j];
-      if (chunk !== undefined && vector !== undefined) {
-        result.set(chunk.contentHash, new Float32Array(vector));
-      }
-    }
-    done += batch.length;
-    onProgress?.(done, chunks.length);
+    if (batch.length > 0) batches.push(batch);
   }
+  let nextBatch = 0;
+  const runWorker = async (): Promise<void> => {
+    while (nextBatch < batches.length) {
+      const batch = batches[nextBatch];
+      nextBatch += 1;
+      if (batch === undefined) return;
+      const inputs = batch.map((chunk) => chunk.text.slice(0, MAX_CHARS));
+      const vectors = await requestEmbeddings(inputs);
+      const rows = batch.map((chunk, j) => ({
+        contentHash: embeddingKey(chunk.contentHash, model),
+        model,
+        vector: vectors[j] ?? [],
+      }));
+      await db.embeddings.bulkPut(rows);
+      for (let j = 0; j < batch.length; j += 1) {
+        const chunk = batch[j];
+        const vector = vectors[j];
+        if (chunk !== undefined && vector !== undefined) {
+          result.set(chunk.contentHash, new Float32Array(vector));
+        }
+      }
+      done += batch.length;
+      onProgress?.(done, chunks.length);
+    }
+  };
+  await Promise.all(
+    Array.from({ length: Math.min(EMBED_CONCURRENCY, batches.length) }, () => runWorker()),
+  );
   return result;
 }
 

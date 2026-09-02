@@ -31,15 +31,22 @@ async function searchRules(query: string, opts?: SearchOptions): Promise<SearchH
   header `Authorization: Bearer <key>`.
 - **Lazy embedding strategy** (cost control): chunks are embedded on demand,
   not at ingest. `ensureEmbeddings(chunks: RuleChunk[])` checks the
-  `embeddings` table by `contentHash`, batches missing texts (≤ 64 per request,
-  each text truncated to 6000 chars), stores results. Query embedding is
-  requested per search (1 short input, negligible cost).
-- Semantic search in M1 embeds only the **keyword pre-filter set**: take the
-  top 100 keyword hits (or all chunks of the selected books if < 2000 total),
-  ensure their embeddings, then cosine-similarity rank against the query
-  vector. This avoids embedding entire books up front. A "Embed whole book"
-  button in the rules browser triggers full `ensureEmbeddings` for a book with
-  a progress indicator.
+  `embeddings` table by `contentHash`, batches missing texts (≤ 16 per request,
+  each text truncated to 6000 chars ≈ ~24k tokens — giant requests sat long in
+  provider queues), and runs up to 4 requests concurrently (worker pool), then
+  stores results. Query embedding is requested per search (1 short input,
+  negligible cost).
+- Semantic search embeds the **candidate set**: the top 100 keyword hits (or
+  all chunks of the selected books when the library is < 2000 chunks — chosen
+  for recall at M1 scale). **This makes the first semantic search after
+  enabling embeddings (ingesting new chunks, switching the embedding model) a
+  whole-library backfill on the run's critical path** — minutes before the
+  first LLM call if the book is large. Mitigations: the request pool above
+  (≈ an order of magnitude faster than the old sequential 64-input batches),
+  a "Embed whole book" button in the rules browser for pre-embedding with a
+  progress indicator, and an optional `onEmbeddingProgress` callback on
+  `searchRules` — the run engine surfaces the backfill as a "Preparing
+  context" entry on the progress dock so the wait is visible.
 - Cosine similarity over `Float32Array`s; plain loop is fine at this scale.
 
 ## Fusion
