@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -121,7 +121,7 @@ describe('SettingsPage', () => {
     );
     expect(manifestText).not.toContain('sk-must-not-travel');
 
-    render(<SettingsPage />);
+    const rendered = render(<SettingsPage />);
 
     // SAVE: the zip reaches the fallback (download) with the right name.
     await user.click(await screen.findByTestId('backup-save'));
@@ -138,12 +138,13 @@ describe('SettingsPage', () => {
     expect(savedManifest.format).toBe('campaigner-backup');
     expect(savedManifest.data?.campaigns?.[0]?.name).toBe('Backed Up');
 
-    // LOAD: pick a file, confirm the replace, and the campaign comes back.
-    // clearDatabase is a raw await — drain its live-query updates via act.
-    await act(async () => {
-      await clearDatabase();
-    });
+    // LOAD: unmount settings before the raw database wipe so its live-query
+    // controls cannot receive teardown updates outside act, then remount for
+    // the actual restore interaction.
+    rendered.unmount();
+    await clearDatabase();
     expect(await db.campaigns.get(campaign.id)).toBeUndefined();
+    render(<SettingsPage />);
     vi
       .spyOn(filePicker, 'pickBackupFile')
       .mockResolvedValue(new File([bytes as BlobPart], 'backup.zip', { type: 'application/zip' }));

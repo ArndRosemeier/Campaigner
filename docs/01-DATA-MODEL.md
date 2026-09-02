@@ -160,9 +160,35 @@ interface MonsterEntry { name: string; count: number; notes: string; source: Mon
 ```
 
 Dexie upgrade `version(3)` fills `source: { type: 'none' }` on pre-M3-B
-encounter rows. The Encounter Designer cites ingested stat-block excerpts via
-`sourceChunkIndex` in its draft, which finalize maps back to
-`{ type: 'rulebook', chunkId }` (see 04-LLM-PERSONAS.md).
+encounter rows. Encounter personas cite ingested stat-block excerpts via
+`sourceChunkIndex`, which finalize maps back to `{ type: 'rulebook', chunkId }`.
+
+### Encounter layouts (v12)
+
+`EncounterArtifactData` adds `layout: EncounterLayout | null`; uploaded maps
+remain null. Generated geometry is authoritative JSON: 12–40-cell grids,
+1–3 rectangle room unions, one interior `mobsRect` per room, one spawn room,
+and one-cell corridor rectangle paths. `monsterIndexes` point into the
+encounter roster. Validation rejects overlaps, invalid bounds, disconnected
+rooms/corridors, missing roster assignments and insufficient mob capacity.
+
+```ts
+interface EncounterLayout {
+  gridW: number;
+  gridH: number;
+  theme: string;
+  rooms: {
+    id: Id; name: string; rects: LayoutRect[]; mobsRect: LayoutRect;
+    description: string; monsterIndexes: number[]; spawn: boolean;
+  }[];
+  corridors: { a: Id; b: Id; rects: LayoutRect[] }[];
+}
+```
+
+Battle boards add `mapLayout: { cols: number; rows: number } | null`. Generated
+battles stamp it from the encounter; table snapping, grid tracks, token sizing
+and veil dimensions derive from normalized layout cells rather than viewport
+pixels. Room placements are recomputed from roster counts when seeding.
 
 ### ArtifactRevision
 
@@ -343,6 +369,7 @@ interface Settings {
     workspace: { global: boolean; campaign: boolean; module: boolean };
     moduleView: { global: boolean; campaign: boolean; module: boolean };
   };
+  encounterMapAspect: '4:3' | '16:9' | '1:1';
   retiredSessionNotesRemoved: number; // v11 startup notice, consumed to 0
 }
 ```
@@ -429,6 +456,14 @@ export class CampaignerDB extends Dexie {
     // deletes retired session artifacts/revisions, scrubs their links and
     // records the count for a one-time startup toast.
     this.version(11).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, moduleId',
+      // all other stores unchanged
+    });
+
+    // Encounter generator: indexes are unchanged. The upgrade only backfills
+    // encounter.data.layout and battle.board.mapLayout to null.
+    this.version(12).stores({
       artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
       battles:   'id, campaignId, moduleId',
       // all other stores unchanged

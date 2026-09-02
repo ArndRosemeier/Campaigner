@@ -340,6 +340,7 @@ describe('HP ownership split writes', () => {
     expect(serren.data.currentHp).toBe(15);
     battle = await currentBattle(moduleId);
     expect(battle.board.tokens.find((token) => token.label === 'Serren')?.currentHp).toBeNull();
+    await flushAsyncUpdates();
   });
 
   it('shows the downed overlay when a token hits 0 HP', async () => {

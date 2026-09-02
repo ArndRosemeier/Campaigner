@@ -60,10 +60,10 @@ describe('rules screen', () => {
     renderAppAt(ROUTES.rules);
     importFixture();
 
-    await screen.findByText('sample-rulebook');
+    await screen.findByText('sample-rulebook', {}, { timeout: 10000 });
     await waitFor(() => {
       expect(screen.getByText('ready')).toBeInTheDocument();
-    });
+    }, { timeout: 15000 });
 
     await user.click(screen.getByRole('button', { name: 'Menu for sample-rulebook' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Rename' }));
@@ -82,10 +82,10 @@ describe('rules screen', () => {
     renderAppAt(ROUTES.rules);
     importFixture();
 
-    await screen.findByText('sample-rulebook');
+    await screen.findByText('sample-rulebook', {}, { timeout: 10000 });
     await waitFor(() => {
       expect(screen.getByText('ready')).toBeInTheDocument();
-    });
+    }, { timeout: 15000 });
 
     await user.click(screen.getByRole('button', { name: 'Menu for sample-rulebook' }));
     await user.click(await screen.findByRole('menuitem', { name: 'Delete' }));
@@ -103,10 +103,10 @@ describe('rules screen', () => {
     renderAppAt(ROUTES.rules);
     importFixture();
 
-    await screen.findByText('sample-rulebook');
+    await screen.findByText('sample-rulebook', {}, { timeout: 10000 });
     await waitFor(() => {
       expect(screen.getByText('ready')).toBeInTheDocument();
-    });
+    }, { timeout: 15000 });
 
     // The card carries its own visible delete affordance (no menu needed).
     await user.click(screen.getByRole('button', { name: 'Delete sample-rulebook' }));

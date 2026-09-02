@@ -93,20 +93,23 @@ test) · ❌ gap.
 | Editor: surviving kind forms (pc/npc/location/faction/note/encounter/plotarc) | `editor-autosave`, `encounter-form`, `m2kinds`, `ui-smoke` | 🟡 forms beyond npc/encounter |
 | Editor: **stat block card + edit toggle** | card/form UI `editor-surfaces.test`, resolve pipeline `encounter-form` | ✅ (was ❌) |
 | Editor: links section rows (combobox add/remove, dangling targets) | `editor-surfaces.test` | ✅ (was 🟡) |
-| Editor: images section, cover, lightbox | `images-ui.test` | ✅ |
+| Editor: images, cover/lightbox, encounter generator handoff | `images-ui.test` | ✅ |
 | Editor: **export dialog** / single-artifact export UI | `export-dialog.test` (through the picker ⋮ menu) | ✅ (was ❌) |
 | Editor: **monster source** UI | resolve pipeline `encounterResolve.test` | ❌ UI controls |
 | Persona panel: assistant tab, disabled-without-key hint | `workspace.test` | ✅ |
-| Persona panel: run lifecycle, global targets/badge, image ownership | `persona-run-ui.test`, `imageRun.test`, `runEngine.test` | ✅ |
+| Persona panel: run lifecycle, global targets/badge, image ownership, Cartographer layout review | `persona-run-ui.test`, `imageRun.test`, `runEngine.test`, `encounterCartographer.test` | ✅ |
 | Persona panel: runs list + delete | `workspace.test` | ✅ |
 | Writers' room: step plan, badges, live tail | `module-forge.test` | ✅ |
 | Quick-find (Ctrl+K): scoped artifacts, Library labels, module navigation, rule preview/pin | `quickfind-modules.test`, `quickfind-topbar.test`, `ui-smoke.test` | ✅ |
 | Graph page: layout, click-through | `graphLayout.test` | ✅ |
 | Module reader as play view: battle link and encounter-row seed action | `module-reader.test`, `entity-panel.test` | ✅ |
-| Table surface: module route, player-safe DOM, drag/tap, HP ownership, initiative, stage reset | `battle-surface.test` | ✅ |
-| Battle engine goldens: HP split, initiative, veils, grid snap, staging ground | `battle-engine.test` | ✅ |
-| Battle persistence: module lazy-create/normalize/scrub/delete and v10→v11 clearing | `battleRepo.test`, `moduleRepo.test`, `migration.test` | ✅ |
-| Battle seeding: roster expansion, global refs, map resolution, PC auto-include | `battleSeed.test`, `entity-panel.test` | ✅ |
+| Table surface: module route, player-safe DOM, drag/tap, HP ownership, initiative, stage reset, layout-cell grid metrics | `battle-surface.test` | ✅ |
+| Battle engine goldens: HP split, initiative, veils, legacy/layout snapping, staging ground | `battle-engine.test` | ✅ |
+| Battle persistence: module lifecycle, v10→v11 clearing, v11→v12 layout defaults | `battleRepo.test`, `moduleRepo.test`, `migration.test` | ✅ |
+| Battle seeding: roster expansion, room placement/veils, entry-room PCs, map fallback | `battleSeed.test`, `entity-panel.test` | ✅ |
+| Encounter layout engine: packing ladder, structural validation, doors, placement, veils, schematic | `encounterMap.test` | ✅ |
+| Encounter clients: input references, exact aspect, multimodal verify/repair/threshold | `image-caps.test`, `imageAspect.test`, `encounterVision.test` | ✅ |
+| Encounter module queue: one-candidate auto, continue-on-failure, failed-only retry | `encounter-map-queue.test`, `entity-panel.test` | ✅ |
 | Play retirement: `/play` 404, no session kind, one-time v11 notice | `ui-smoke.test`, `m2kinds.test`, `migration-notice.test` | ✅ |
 | Deliverables: outline editing, owned module seeding, explicit-only globals | `deliverables-page.test`, `seed-from-module.test`, `modulePdf.test` | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
@@ -152,6 +155,7 @@ exactly the class the review was after:
 
 ## Gate
 
-`pnpm lint && pnpm typecheck && pnpm test` — the test step now fails on any
-console noise in any flow, on any route that stopped mounting, and on any
-regression of the Base UI composition patterns the sweep pins.
+`pnpm lint && pnpm typecheck && pnpm test` — the test step fails on console
+noise, routes that stop mounting, and Base UI composition regressions. Vitest
+uses at most four workers and a 20-second default test timeout: jsdom plus
+PDF/image workers otherwise starve event loops on constrained CI/agent VMs.

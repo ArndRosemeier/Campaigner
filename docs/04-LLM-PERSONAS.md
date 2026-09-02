@@ -51,8 +51,21 @@ are not chainable (chainRunner/moduleForge reject them).
 | plot-architect   | Plot Architect    | note         | generate | Adventure/campaign arcs and hooks       |
 | arc-weaver       | Arc Weaver        | plotarc      | generate | Plot arcs with beats, stakes, climax    |
 | encounter-smith  | Encounter Smith   | encounter    | generate | Balanced encounters with monsters       |
+| encounter-cartographer | Encounter Cartographer | encounter | encounter | Complete room layouts and generated battlemaps |
 | continuity-editor | Continuity Editor | note        | review   | Reports contradictions in an artifact   |
 | illustrator      | Illustrator       | —            | image    | Drafts an image prompt and generates candidate images for an artifact (M3-A) |
+
+### Encounter Cartographer pipeline
+
+Mode `encounter` runs fixed steps `brief → layout → schematic → stylize →
+verify → pick → finalize`. The LLM brief contains roster sources, room purpose,
+adjacency and roster indexes but no coordinates. Pure code packs and validates
+geometry; the schematic becomes an image input reference; a multimodal vision
+check classifies a coarse floor/wall/void grid and flags mismatches above 12%.
+Manual runs pause at brief, layout and map pick; auto picks candidate one.
+Regeneration preserves artifact identity, prose, links and roster while
+replacing layout/map. Module batches request one candidate and continue after
+per-encounter failures. All long paths report through the shared progress dock.
 
 NPC Smith `systemPrompt` (verbatim):
 

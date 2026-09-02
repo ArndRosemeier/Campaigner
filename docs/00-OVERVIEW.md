@@ -13,7 +13,10 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
    All LLM calls go through **OpenRouter** with a user-supplied API key.
 3. **User-in-the-loop**: every generation pipeline has checkpoints; the user
    chooses per run whether to approve every step, only flagged steps, or none.
-4. **Local-first storage**: everything lives in **IndexedDB** (via Dexie.js).
+4. **Generated encounters**: Encounter Cartographer creates sourced rosters,
+   deterministic room geometry, structure-verified battlemaps and room-veiled
+   module battles; module queues can generate missing maps unattended.
+5. **Local-first storage**: everything lives in **IndexedDB** (via Dexie.js).
    No backend. Export all or parts of the work as JSON or PDF.
 
 ## Technology decisions (FINAL — do not revisit)

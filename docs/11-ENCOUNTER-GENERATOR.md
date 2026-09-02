@@ -247,7 +247,14 @@ encounter. Image calls ride the existing 5-minute headers timeout. Progress
 docks on the shared `useProgressStore` job for batch, on run steps for
 interactive runs.
 
-## Build order
+## Implementation record
+
+Implemented in full on the M6 baseline: deterministic layout and schematic,
+Dexie v12, room-aware seeding, reference-image/vision clients, interactive
+Cartographer runs, layout-anchored battle metrics, and the unattended module
+queue. The gate is 90 test files / 576 tests at completion.
+
+## Build order (completed)
 
 - **A** — Layout engine (pure) + tests (packing, validation ladder, inscribed
   rect, placement, veil derivation, schematic geometry).

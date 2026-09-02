@@ -86,9 +86,10 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
   assistant: {
     title: 'Assistant (personas)',
     summary:
-      'Personas are writing specialists (NPC Smith, Location Architect, Faction Designer, Plot Architect, Encounter Smith, Continuity Editor) that draft or review artifacts using pinned rule text.',
+      'Personas are writing specialists (NPC Smith, Location Architect, Faction Designer, Plot Architect, Encounter Smith, Encounter Cartographer, Continuity Editor) that draft or review artifacts using pinned rule text.',
     tips: [
       'Pick a persona, an autonomy mode, and write a brief: Manual pauses for your approval on every step, Review runs through but pauses on problems, Auto runs to completion.',
+      'Encounter Cartographer turns a brief into a sourced roster, deterministic room layout and structure-verified battlemap; regenerating an encounter preserves its authored prose and roster.',
       'Review personas (Continuity Editor) check an existing artifact for contradictions and write a continuity report — pick the artifact to check instead of writing a brief.',
       'Add "Artifacts created earlier" to give the persona extra context from this campaign.',
       'While a run streams you can approve, retry with an edited brief, or cancel. Manual mode waits for you between steps.',
@@ -118,7 +119,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'The reader shows the module as one document: a table of contents on the left, the prose in the middle, and an entity panel on the right listing every mentioned character, place, faction or item.',
       '[[Names]] in the text become colored chips: a solid chip means the artifact exists and opens a peek; a dashed chip is unresolved and can create, generate, or link an artifact.',
       'Every part can be edited in place (✎) and rewritten (↺) with an optional instruction; rewriting a hand-edited part asks first. Failed parts show a Retry button without touching the rest.',
-      'The entity panel can batch-generate all unresolved entities of one kind with the matching personas; produced artifacts are tagged module:<title> so the tree filter can isolate them.',
+      'The entity panel can batch-generate unresolved entities, including encounter stubs. “Generate encounter maps” runs the Cartographer unattended for mapless module encounters and keeps failures retryable.',
       'Deliverables → "Seed from module" turns a finished module into a printable outline: premise as intro, one chapter per part with its resolved entities attached.',
     ],
     keywords: 'module wiki links spine parts entities stub batch pdf deliverable',
