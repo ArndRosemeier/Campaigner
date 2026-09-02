@@ -156,7 +156,16 @@ export const encounterDraftSchema = z.object({
 
 export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
 
-/** Encounter Cartographer's coordinate-free design brief. */
+/** Models often send indexes/counts as "2"; accept numeric strings. */
+const rosterIndex = z.coerce.number().int().nonnegative();
+
+/**
+ * Encounter Cartographer's coordinate-free design brief. Formatting
+ * variants that carry the same meaning are coerced (numeric strings, a
+ * missing guidance field) — `negative`/`styleNotes` are optional enrichment
+ * per 07 §M3-A, never empty-required. Everything semantic (roster, rooms,
+ * indexes, connectivity) stays strict and is reported as named issues.
+ */
 export const encounterGeneratorBriefSchema = z
   .object({
     name: z.string().min(1),
@@ -167,28 +176,28 @@ export const encounterGeneratorBriefSchema = z
     terrain: z.string(),
     tactics: z.string(),
     treasure: z.string(),
-    theme: z.string(),
-    styleNotes: z.string(),
-    negative: z.string(),
+    theme: z.string().min(1),
+    styleNotes: z.string().default(''),
+    negative: z.string().default(''),
     monsters: z.array(
       z.object({
         name: z.string().min(1),
-        count: z.number().int().positive(),
-        notes: z.string(),
-        sourceChunkIndex: z.number().int().nonnegative().optional(),
+        count: z.coerce.number().int().positive(),
+        notes: z.string().default(''),
+        sourceChunkIndex: rosterIndex.optional(),
         statBlock: statBlockSchema.optional(),
       }),
     ).min(1),
     rooms: z.array(
       z.object({
         name: z.string().min(1),
-        description: z.string(),
+        description: z.string().default(''),
         size: z.enum(['small', 'medium', 'large']),
-        monsterIndexes: z.array(z.number().int().nonnegative()),
-        adjacentRoomIndexes: z.array(z.number().int().nonnegative()),
+        monsterIndexes: z.array(rosterIndex),
+        adjacentRoomIndexes: z.array(rosterIndex),
       }),
     ).min(1).max(9),
-    entryRoomIndex: z.number().int().nonnegative(),
+    entryRoomIndex: rosterIndex,
   })
   .superRefine((brief, context) => {
     if (brief.entryRoomIndex >= brief.rooms.length) {

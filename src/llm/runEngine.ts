@@ -272,22 +272,65 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
   }
 }
 
-function encounterSourcesValid(
+/**
+ * Cartographer monsters must resolve to a stat block: a cited excerpt index
+ * that exists, or an inline block. Returns one named issue per offender so
+ * the repair prompt and the review UI can say exactly what is missing.
+ */
+function encounterSourceIssues(
   brief: EncounterGeneratorBrief,
   statblockChunkIds: readonly Id[],
-): boolean {
-  return brief.monsters.every((monster) =>
-    monster.statBlock !== undefined ||
-    (monster.sourceChunkIndex !== undefined && statblockChunkIds[monster.sourceChunkIndex] !== undefined),
-  );
+): string[] {
+  const issues: string[] = [];
+  for (const [index, monster] of brief.monsters.entries()) {
+    if (monster.statBlock !== undefined) continue;
+    if (monster.sourceChunkIndex === undefined) {
+      issues.push(
+        `monsters[${String(index)}] "${monster.name}": add sourceChunkIndex citing a listed stat-block excerpt, or an inline statBlock`,
+      );
+    } else if (statblockChunkIds[monster.sourceChunkIndex] === undefined) {
+      issues.push(
+        `monsters[${String(index)}] "${monster.name}": sourceChunkIndex ${String(monster.sourceChunkIndex)} is not in the excerpt list (0–${String(statblockChunkIds.length - 1)})`,
+      );
+    }
+  }
+  return issues;
 }
 
-function parseEncounterBrief(raw: string): EncounterGeneratorBrief | null {
+/**
+ * Parses a Cartographer brief reply. Never swallows the reason: a failed parse
+ * returns the schema issues (path + message) so they reach the model's repair
+ * turn and the user's review card instead of dying in a bare `null`.
+ */
+function parseEncounterBrief(
+  raw: string,
+): { brief: EncounterGeneratorBrief; issues: [] } | { brief: null; issues: string[] } {
+  const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
+  if (jsonText === '') return { brief: null, issues: ['the reply contained no JSON object'] };
+  let json: unknown;
   try {
-    return encounterGeneratorBriefSchema.parse(JSON.parse(raw) as unknown);
-  } catch {
-    return null;
+    json = JSON.parse(jsonText);
+  } catch (error) {
+    return { brief: null, issues: [`invalid JSON: ${error instanceof Error ? error.message : String(error)}`] };
   }
+  const result = encounterGeneratorBriefSchema.safeParse(json);
+  if (result.success) return { brief: result.data, issues: [] };
+  return {
+    brief: null,
+    issues: result.error.issues.map(
+      (issue) => `${issue.path.length === 0 ? 'brief' : issue.path.join('.')}: ${issue.message}`,
+    ),
+  };
+}
+
+/**
+ * Named reasons a rejected step recorded alongside its raw reply (`issues`),
+ * for the failure message and the review card. Steps that predate the field
+ * yield an empty list.
+ */
+export function rejectionIssues(step: Pick<RunStep, 'output'>): string[] {
+  const issues = (step.output as { issues?: unknown } | null | undefined)?.issues;
+  return Array.isArray(issues) ? issues.filter((issue): issue is string => typeof issue === 'string') : [];
 }
 
 /** Draft fields are schema-validated strings; coerce defensively. */
@@ -575,9 +618,12 @@ export class RunEngine {
         // output (e.g. an empty artifact named after the persona — the
         // "Worldbuilder"-class bug).
         if (outcome.step.status === 'rejected' && input.autonomy === 'auto') {
+          const issues = rejectionIssues(outcome.step);
           const reason =
             `Step "${name}" rejected: the model reply could not be parsed into the required ` +
-            `JSON shape after one automatic retry. The run failed without saving partial results — ` +
+            `JSON shape after one automatic retry` +
+            (issues.length === 0 ? '' : ` (${issues.join('; ')})`) +
+            `. The run failed without saving partial results — ` +
             `run it again, or use manual/review autonomy to keep the raw reply for editing.`;
           await updateRun(runId, { status: 'failed', errorMessage: reason, steps: [...steps] });
           this.draftRetried.delete(runId);
@@ -1188,43 +1234,50 @@ export class RunEngine {
       { role: 'system', content: input.persona.systemPrompt },
       { role: 'user', content: contract },
     ];
-    let raw = await chat(messages, {
+    const chatOptions = {
       model: input.persona.model || settings.defaultChatModel,
       temperature: input.persona.temperature,
-      responseFormat: 'json',
+      responseFormat: 'json' as const,
       signal,
-      onToken: (delta) => {
+      onToken: (delta: string) => {
         this.emit({ kind: 'token', runId, stepIndex, delta });
       },
-    });
-    let parsed = parseEncounterBrief(raw);
-    if (target === undefined && parsed !== null && !encounterSourcesValid(parsed, retrieval.statblockChunkIds)) parsed = null;
-    if (parsed === null) {
+    };
+    // Roster sources are only checked for fresh encounters: a regenerate run
+    // replaces the roster with the target's verbatim entries below.
+    const evaluate = (reply: string): { brief: EncounterGeneratorBrief | null; issues: string[] } => {
+      const result = parseEncounterBrief(reply);
+      if (result.brief === null) return result;
+      const sourceIssues = target === undefined
+        ? encounterSourceIssues(result.brief, retrieval.statblockChunkIds)
+        : [];
+      return sourceIssues.length === 0 ? result : { brief: null, issues: sourceIssues };
+    };
+    let raw = await chat(messages, chatOptions);
+    let evaluated = evaluate(raw);
+    if (evaluated.brief === null) {
+      // One repair turn that names every problem — a bare "the schema failed"
+      // made the model repeat the same mistake three runs in a row.
       raw = await chat(
         [
           ...messages,
           { role: 'assistant', content: raw },
-          { role: 'user', content: 'The reply failed the required encounter-brief schema. Return corrected JSON only, with valid room and roster indexes.' },
+          {
+            role: 'user',
+            content: `Your reply failed the encounter-brief contract:\n- ${evaluated.issues.join('\n- ')}\nReturn the corrected JSON object only, with every field present and valid room/roster indexes.`,
+          },
         ],
-        {
-          model: input.persona.model || settings.defaultChatModel,
-          temperature: input.persona.temperature,
-          responseFormat: 'json',
-          signal,
-          onToken: (delta) => {
-        this.emit({ kind: 'token', runId, stepIndex, delta });
-      },
-        },
+        chatOptions,
       );
-      parsed = parseEncounterBrief(raw);
-      if (target === undefined && parsed !== null && !encounterSourcesValid(parsed, retrieval.statblockChunkIds)) parsed = null;
+      evaluated = evaluate(raw);
     }
-    if (parsed === null) {
+    if (evaluated.brief === null) {
       return {
-        step: this.finishStep(steps[stepIndex], { raw }, 'rejected'),
+        step: this.finishStep(steps[stepIndex], { raw, issues: evaluated.issues }, 'rejected'),
         ...(input.autonomy === 'auto' ? {} : { runStatus: 'needs_review' as const }),
       };
     }
+    let parsed: EncounterGeneratorBrief = evaluated.brief;
     if (target?.kind === 'encounter') {
       parsed = {
         ...parsed,

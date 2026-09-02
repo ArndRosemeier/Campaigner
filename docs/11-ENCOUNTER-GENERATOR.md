@@ -62,6 +62,15 @@ mode: run row per state change, event emitter for streaming, autonomy via
 - `brief` reads the campaign context like other personas (retrieval + linked
   artifacts) and — in regenerate mode — the existing encounter artifact
   (roster verbatim; the LLM may not rename roster entries).
+- `brief` validation is **strict on meaning, tolerant on formatting**: numeric
+  strings for counts/indexes are coerced, `styleNotes`/`negative`/`notes`/
+  `description` default to `''` when omitted (guidance, not data). Roster,
+  rooms, index bounds, connectivity and — for fresh encounters — resolvable
+  stat-block sources stay hard requirements. A failed parse produces **named
+  issues** (`path: message`, or `monsters[i] "Name": …` for sources); the one
+  repair turn quotes them to the model, and a still-rejected step persists
+  them as `output.issues` (next to `raw`) so the review card lists them.
+  A rejected brief cannot be approved (04 §Autonomy); Retry and Edit remain.
 - `layout` is **pure code** (next section): the LLM never emits coordinates.
   A bounded retry ladder (re-pack with jitter, max 3 attempts, shrinking room
   size classes) ends in a failed run — never a placeholder layout.

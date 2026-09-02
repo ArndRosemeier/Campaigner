@@ -35,7 +35,7 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, EncounterLayout, Id, Persona, PersonaRun } from '@/domain';
-import { runEngine } from '@/llm/runEngine';
+import { rejectionIssues, runEngine } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
 import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
@@ -986,13 +986,24 @@ function RunActions({
   // exceeded the drift threshold and the user may deliberately continue.
   const canApprove =
     step.status !== 'rejected' || (personaRow?.mode === 'encounter' && step.name === 'verify');
+  const issues = canApprove ? [] : rejectionIssues(step);
 
   return (
     <div className="flex flex-col gap-2">
       {!canApprove && (
-        <p className="text-xs text-destructive">
-          This step did not produce valid data. Retry it, or edit the JSON before continuing.
-        </p>
+        <div className="flex flex-col gap-1 text-xs text-destructive" data-testid="step-rejection">
+          <p>
+            The model's reply did not match the required shape, even after one automatic
+            correction. Retry (optionally with an extra instruction), or edit the JSON.
+          </p>
+          {issues.length > 0 && (
+            <ul className="list-disc pl-4 font-mono text-[11px]">
+              {issues.map((issue) => (
+                <li key={issue}>{issue}</li>
+              ))}
+            </ul>
+          )}
+        </div>
       )}
       {editMode ? (
         <div className="flex flex-col gap-1.5">

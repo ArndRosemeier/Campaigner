@@ -9,7 +9,7 @@ import { getImage } from '@/db/imageRepo';
 import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { coarseStructure } from '@/llm/encounterVision';
-import { encounterRunAdapters, runEngine, type StartRunInput } from '@/llm/runEngine';
+import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
 import { createPersona, defaultSettings, newId, type Persona } from '@/domain';
 import { clearDatabase } from '../db/helpers';
@@ -175,6 +175,88 @@ describe('Encounter Cartographer run', () => {
     const run = await getRun(runId);
     expect(run?.status).toBe('needs_review');
     expect(run?.steps).toHaveLength(1);
+  });
+
+  it('tells the model and the user exactly why a brief was rejected', async () => {
+    const { campaign, cartographer } = await setup();
+    // First reply: a monster with neither excerpt nor inline stat block and a
+    // room pointing outside the roster. Repair reply: the same, so the step
+    // is rejected with the reasons persisted on the step.
+    const broken = {
+      ...BRIEF,
+      monsters: [{ name: 'Ash Cultist', count: 2, notes: '' }],
+      rooms: [
+        { ...BRIEF.rooms[0], monsterIndexes: [] },
+        { ...BRIEF.rooms[1], monsterIndexes: [3] },
+      ],
+    };
+    chatMock.mockResolvedValue(JSON.stringify(broken));
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('needs_review');
+    });
+
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const repairMessages = chatMock.mock.calls[1]?.[0] ?? [];
+    const repairTurn = repairMessages.at(-1);
+    expect(repairTurn?.role).toBe('user');
+    expect(typeof repairTurn?.content).toBe('string');
+    expect(repairTurn?.content).toContain('rooms.1.monsterIndexes: monster index is outside roster');
+
+    const step = (await getRun(runId))?.steps[0];
+    expect(step?.status).toBe('rejected');
+    expect(rejectionIssues(step ?? { output: null })).toEqual([
+      'rooms.1.monsterIndexes: monster index is outside roster',
+    ]);
+  });
+
+  it('reports a missing stat-block source by monster instead of a bare schema failure', async () => {
+    const { campaign, cartographer } = await setup();
+    const missingSource = {
+      ...BRIEF,
+      monsters: [{ name: 'Ash Cultist', count: 2, notes: '' }],
+    };
+    chatMock.mockResolvedValue(JSON.stringify(missingSource));
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('needs_review');
+    });
+    const step = (await getRun(runId))?.steps[0];
+    expect(rejectionIssues(step ?? { output: null })).toEqual([
+      'monsters[0] "Ash Cultist": add sourceChunkIndex citing a listed stat-block excerpt, or an inline statBlock',
+    ]);
+  });
+
+  it('accepts numeric strings and a missing guidance field from the model', async () => {
+    const { campaign, cartographer } = await setup();
+    const loose: Record<string, unknown> = {
+      ...BRIEF,
+      monsters: [{ ...BRIEF.monsters[0], count: '2' }],
+      rooms: BRIEF.rooms.map((room) => ({
+        ...room,
+        monsterIndexes: room.monsterIndexes.map(String),
+        adjacentRoomIndexes: room.adjacentRoomIndexes.map(String),
+      })),
+      entryRoomIndex: '0',
+    };
+    delete loose.negative;
+    chatMock.mockResolvedValueOnce(JSON.stringify(loose));
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+      expect(run?.steps[0]?.status).toBe('done');
+    });
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    const output = (await getRun(runId))?.steps[0]?.output as {
+      parsed: { monsters: { count: number }[]; entryRoomIndex: number; negative: string };
+    };
+    expect(output.parsed.monsters[0]?.count).toBe(2);
+    expect(output.parsed.entryRoomIndex).toBe(0);
+    expect(output.parsed.negative).toBe('');
   });
 
   it('validates a layout edit before downstream steps can observe it', async () => {
