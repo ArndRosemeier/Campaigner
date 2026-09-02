@@ -388,7 +388,7 @@ describe('EntityPanel', () => {
     chatMock.mockResolvedValue(
       JSON.stringify({ prompt: 'A portrait', negative: '', styleNotes: 'ink' }),
     );
-    generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01 });
+    generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01, cappedToOne: false });
     intakeImageMock.mockResolvedValue({
       blob: new Blob(['intake']),
       mimeType: 'image/webp',

@@ -426,6 +426,13 @@ function ImageRunActions({
   }, [paused, draftStep]);
 
   const pickCandidates = ((pickStep?.output as { candidates?: unknown } | null | undefined)?.candidates ?? []) as Id[];
+  // The generate step persists a notice when the model caps candidates at 1
+  // (imageGen's n-retry) — shown so a single candidate is never a surprise.
+  const generateOutput = run.steps.find((step) => step.name === 'generate')?.output as
+    | { notice?: unknown }
+    | null
+    | undefined;
+  const capNotice = typeof generateOutput?.notice === 'string' ? generateOutput.notice : null;
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
     return (
@@ -501,7 +508,17 @@ function ImageRunActions({
       )}
 
       {generating && (
-        <p className="text-xs text-muted-foreground">Generating 2 candidate images…</p>
+        // No count claimed: whether the model yields 1 or 2 candidates is
+        // only known once the request lands (some models cap n at 1).
+        <p className="text-xs text-muted-foreground" data-testid="image-generating">
+          Generating candidate images…
+        </p>
+      )}
+
+      {capNotice !== null && (
+        <p className="text-xs text-amber-600 dark:text-amber-400" data-testid="image-cap-notice">
+          {capNotice}
+        </p>
       )}
 
       {paused && pickStep?.status === 'done' && (

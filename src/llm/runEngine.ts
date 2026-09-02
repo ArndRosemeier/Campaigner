@@ -1063,7 +1063,13 @@ export class RunEngine {
       });
       imageIds.push(stored.id);
     }
-    const step = this.finishStep(steps[stepIndex], { imageIds, costUsd: generated.costUsd });
+    // The model capping candidates at 1 (e.g. x-ai/grok-imagine-image-2.0)
+    // is a degradation the user must see (AGENTS rule 1): persist a notice
+    // on the step — the run panel renders it next to the pick UI.
+    const notice = generated.cappedToOne
+      ? `“${settings.imageModel}” generates one image per request — this run produced a single candidate.`
+      : null;
+    const step = this.finishStep(steps[stepIndex], { imageIds, costUsd: generated.costUsd, notice });
     return { step };
   }
 

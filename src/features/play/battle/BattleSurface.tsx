@@ -831,7 +831,6 @@ function useInitiativeReconcile(
     void commit((current) => ({ ...current, tokens, initiativeOrder: order }));
     // `battle.board` identity changes on every commit; the reconcile is
     // idempotent (prune + newcomers), and the epoch re-runs it after drags.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [battle, coveredTokenIds, stats, commit]);
 }
 

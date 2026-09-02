@@ -182,6 +182,8 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
     ]
       .filter((part) => part !== null)
       .join('\n');
+    // n=1: candidate-count caps (imageGen's n-retry, cappedToOne) cannot
+    // trigger on this path — the queue only ever asks for one image.
     const generated = await generateImages(finalPrompt, 1, {
       model: settings.imageModel,
       signal: controller.signal,

@@ -129,6 +129,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: 0.021,
+    cappedToOne: false,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -183,6 +184,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: null,
+    cappedToOne: false,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -221,6 +223,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('only')],
       costUsd: null,
+    cappedToOne: false,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -266,6 +269,37 @@ describe('illustrator run (image persona)', () => {
       expect(run?.status).toBe('failed');
     });
     expect((await getRun(runId))?.errorMessage).toContain('disabled');
+  });
+
+  it('surfaces a candidate-cap notice when the model yields a single image', async () => {
+    // x-ai/grok-imagine-image-2.0-class models cap n at 1: imageGen retries
+    // and reports cappedToOne — the run must NOT continue silently.
+    const { campaignId, persona, targetId } = await seed();
+    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('single')],
+      costUsd: 0.011,
+      cappedToOne: true,
+    });
+
+    const runId = await runEngine.startRun(input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+    await runEngine.editStep(runId, 0, { parsed: VALID_PROMPT_DRAFT }, input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps).toHaveLength(3);
+      expect(run?.status).toBe('awaiting_user');
+    });
+
+    const run = await getRun(runId);
+    const output = run?.steps[1]?.output as { imageIds: Id[]; notice: string | null };
+    expect(output.imageIds).toHaveLength(1);
+    // The degradation is persisted on the step — the run panel renders it.
+    expect(output.notice).toContain('single candidate');
+    expect((run?.steps[2]?.output as { candidates: Id[] }).candidates).toHaveLength(1);
   });
 });
 

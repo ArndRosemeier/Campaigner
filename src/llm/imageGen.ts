@@ -14,6 +14,12 @@ export interface GeneratedImages {
   images: Blob[];
   /** Total generation cost in USD from the API's usage object, if reported. */
   costUsd: number | null;
+  /**
+   * True when the model rejected the requested candidate count (its provider
+   * caps `n` at 1) and the request was retried with a single image. Callers
+   * MUST surface this — AGENTS rule 1 forbids silent degradations.
+   */
+  cappedToOne: boolean;
 }
 
 export interface GenerateImagesOptions {
@@ -36,8 +42,14 @@ interface ImageApiResponse {
 }
 
 /**
- * Generates `n` images for `prompt` with the given model. Each returned Blob
- * carries the API-reported media type (defaulting to image/webp).
+ * Generates up to `n` images for `prompt` with the given model. Each returned
+ * Blob carries the API-reported media type (defaulting to image/webp).
+ *
+ * Some models (e.g. `x-ai/grok-imagine-image-2.0`) only support `n: 1`. When
+ * OpenRouter rejects the requested count with a 400 naming the parameter, the
+ * request is retried ONCE with a single image and `cappedToOne: true` — the
+ * caller must surface the degradation (AGENTS rule 1: no silent fallbacks).
+ * Any other 400 fails loudly.
  *
  * Headers timeout: image generation is NOT streaming — the API sends no
  * response headers until the picture is fully rendered, so the shared 60s
@@ -45,6 +57,38 @@ interface ImageApiResponse {
  * minutes (M4-C: users reported frequent 60s timeouts).
  */
 export const IMAGE_HEADERS_TIMEOUT_MS = 5 * 60 * 1000;
+
+/** Matches 400 bodies like `... supports the requested parameter(s): n "2"` —
+ * i.e. the rejection is about the candidate count, not the prompt or model. */
+const N_UNSUPPORTED_PATTERN = /parameter\(s\):?[^]*\bn\b/i;
+
+/**
+ * Models observed to cap `n` at 1. After the first rejection the request is
+ * sent with a single image right away — skipping the doomed 400 round-trip —
+ * while still reporting `cappedToOne` so the UI can tell the user. Session
+ * memory only; a settings change or reload starts fresh.
+ */
+const cappedToOneModels = new Set<string>();
+
+async function postImages(
+  prompt: string,
+  n: number,
+  opts: GenerateImagesOptions,
+  settings: { openRouterApiKey: string },
+): Promise<Response> {
+  const init: RequestInit & { signal?: AbortSignal | undefined } = {
+    method: 'POST',
+    headers: openRouterHeaders(settings.openRouterApiKey),
+    body: JSON.stringify({ model: opts.model, prompt, n, output_format: 'webp' }),
+  };
+  if (opts.signal !== undefined) init.signal = opts.signal;
+  return fetchWithRetries(
+    `${OPENROUTER_BASE}/images`,
+    init,
+    opts.retryBackoffs ?? DEFAULT_RETRY_BACKOFFS_MS,
+    IMAGE_HEADERS_TIMEOUT_MS,
+  );
+}
 
 export async function generateImages(
   prompt: string,
@@ -54,19 +98,37 @@ export async function generateImages(
   const settings = await getSettings();
   if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
 
-  const init: RequestInit & { signal?: AbortSignal | undefined } = {
-    method: 'POST',
-    headers: openRouterHeaders(settings.openRouterApiKey),
-    body: JSON.stringify({ model: opts.model, prompt, n, output_format: 'webp' }),
-  };
-  if (opts.signal !== undefined) init.signal = opts.signal;
-
-  const response = await fetchWithRetries(
-    `${OPENROUTER_BASE}/images`,
-    init,
-    opts.retryBackoffs ?? DEFAULT_RETRY_BACKOFFS_MS,
-    IMAGE_HEADERS_TIMEOUT_MS,
-  );
+  let response: Response;
+  let cappedToOne = false;
+  if (n > 1 && cappedToOneModels.has(opts.model)) {
+    // Known cap (learned from a previous rejection): ask for one image
+    // immediately and report it — the caller still surfaces the degradation.
+    cappedToOne = true;
+    response = await postImages(prompt, 1, opts, settings);
+  } else {
+    try {
+      response = await postImages(prompt, n, opts, settings);
+    } catch (error) {
+      // The provider caps n at 1: retry once with a single candidate, mark
+      // the model, and report the cap (never a silent degrade).
+      if (
+        !(error instanceof OpenRouterError) ||
+        error.status !== 400 ||
+        n <= 1 ||
+        !N_UNSUPPORTED_PATTERN.test(error.bodyText)
+      ) {
+        throw error;
+      }
+      cappedToOne = true;
+      cappedToOneModels.add(opts.model);
+      response = await postImages(prompt, 1, opts, settings);
+    }
+  }
+  if (!response.ok) {
+    // Re-read the body of a non-JSON/failed retry — fetchWithRetries already
+    // threw for the first attempt, so this is the retried request's error.
+    throw new OpenRouterError(response.status, await response.text());
+  }
 
   let json: ImageApiResponse;
   try {
@@ -86,5 +148,5 @@ export async function generateImages(
   }
 
   const cost = json.usage?.cost;
-  return { images, costUsd: typeof cost === 'number' ? cost : null };
+  return { images, costUsd: typeof cost === 'number' ? cost : null, cappedToOne };
 }

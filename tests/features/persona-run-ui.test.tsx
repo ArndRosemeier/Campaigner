@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
 import { artifactPath } from '@/app/routes';
+import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
@@ -34,8 +35,21 @@ vi.mock('@/llm/openrouter', () => ({
   listModels: vi.fn(),
 }));
 
+vi.mock('@/llm/imageGen', () => ({
+  generateImages: vi.fn(),
+}));
+
+vi.mock('@/lib/imageIntake', () => ({
+  intakeImage: vi.fn(),
+  blobToScaledDataUrl: vi.fn(),
+}));
+
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
+const { generateImages } = await import('@/llm/imageGen');
+const generateImagesMock = vi.mocked(generateImages);
+const { intakeImage } = await import('@/lib/imageIntake');
+const intakeImageMock = vi.mocked(intakeImage);
 
 const VALID_DRAFT = {
   name: 'Grix',
@@ -120,6 +134,8 @@ async function onlyRunId(): Promise<string> {
 beforeEach(clearDatabase);
 afterEach(() => {
   chatMock.mockReset();
+  generateImagesMock.mockReset();
+  intakeImageMock.mockReset();
   vi.restoreAllMocks();
 });
 
@@ -345,6 +361,71 @@ describe('PersonaPanel run lifecycle', () => {
     expect(await screen.findByText('completed', {}, { timeout: 5_000 })).toBeInTheDocument();
     const link = await screen.findByRole('button', { name: 'Open artifact' });
     expect(link).toHaveAttribute('href', artifactPath(campaign.id, resultId));
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('image run: a candidate-count cap shows a visible notice next to the pick', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const settings = await import('@/db/settingsRepo');
+    const { defaultSettings } = await import('@/domain');
+    await settings.saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+      imageModel: 'cap-test/panel-model',
+    });
+    const illustrator = await createPersona({
+      slug: 'illustrator-ui',
+      name: 'Illustrator',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'The Lighthouse' });
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        prompt: 'A storm-lashed lighthouse',
+        negative: 'text',
+        styleNotes: 'oil painting',
+      }),
+    );
+    // The model capped n at 1 (imageGen reports it; the engine persists the
+    // notice) — the panel must SHOW it, not quietly present one candidate.
+    generateImagesMock.mockResolvedValue({
+      images: [new Blob(['one'], { type: 'image/webp' })],
+      costUsd: 0.01,
+      cappedToOne: true,
+    });
+    intakeImageMock.mockImplementation((blob: Blob) =>
+      Promise.resolve({ blob, width: 64, height: 64, mimeType: 'image/webp' }),
+    );
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: illustrator.name }));
+    const targetSelect = await screen.findByRole('combobox', { name: 'Artifact to illustrate' });
+    await user.click(targetSelect);
+    await user.click(await screen.findByRole('option', { name: 'The Lighthouse' }));
+    await user.click(screen.getByTestId('start-run'));
+
+    // The draft pauses; continue with the drafted prompt.
+    const edit = await screen.findByTestId('image-prompt-edit', {}, { timeout: 10_000 });
+    await user.click(within(edit).getByTestId('continue-image'));
+
+    // Pick pause: the cap notice is on the page and the pick holds 1 candidate.
+    const pick = await screen.findByTestId('image-pick', {}, { timeout: 10_000 });
+    await flushAsyncUpdates(); // settle the candidates' async ImageThumb loads
+    expect(screen.getByTestId('image-cap-notice').textContent).toContain('single candidate');
+    expect(within(pick).getAllByRole('button', { name: /Candidate / })).toHaveLength(1);
+    const run = await getRun(await onlyRunId());
+    expect((run?.steps[1]?.output as { notice: string | null }).notice).toContain('single candidate');
     await flushAsyncUpdates();
   }, 30000);
 });
