@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
-import { chat, fetchWithRetries, listModels, MissingApiKeyError } from '@/llm/openrouter';
+import { chat, fetchWithRetries, listModels, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): SSE streaming, retries, typed
@@ -13,7 +13,7 @@ import { chat, fetchWithRetries, listModels, MissingApiKeyError } from '@/llm/op
  */
 
 interface SseEvent {
-  choices?: { delta?: { content?: string } }[];
+  choices?: { delta?: { content?: string; reasoning?: string } }[];
 }
 
 function sseResponse(events: SseEvent[]): Response {
@@ -25,6 +25,30 @@ function sseResponse(events: SseEvent[]): Response {
       }
       controller.enqueue(encoder.encode('data: [DONE]\n\n'));
       controller.close();
+    },
+  });
+  return new Response(stream, { status: 200 });
+}
+
+/**
+ * A stream that enqueues its events on a real-timer schedule and keeps the
+ * connection open between them — the 1s watchdog (and with it the
+ * `onActivity` liveness probe) can only be observed while the stream runs.
+ * `event: null` closes the stream.
+ */
+function timedSseResponse(steps: { delayMs: number; event: SseEvent | null }[]): Response {
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const step of steps) {
+        setTimeout(() => {
+          if (step.event === null) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(step.event)}\n\n`));
+        }, step.delayMs);
+      }
     },
   });
   return new Response(stream, { status: 200 });
@@ -81,6 +105,69 @@ describe('chat', () => {
     expect(body.stream).toBe(true);
     expect(body.model).toBe('m');
   });
+
+  it('reports "thinking" activity while only reasoning deltas arrive', async () => {
+    // Reasoning deltas never reach onToken; the liveness probe is the only
+    // way a caller can tell a thinking model from a dead connection.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, _init?: unknown) =>
+        Promise.resolve(
+          timedSseResponse([
+            { delayMs: 10, event: { choices: [{ delta: { reasoning: 'pondering the premise' } }] } },
+            { delayMs: 1300, event: { choices: [{ delta: { content: '{"premise"' } }] } },
+            { delayMs: 1450, event: null },
+          ]),
+        ),
+      ),
+    );
+
+    const activities: ChatStreamActivity[] = [];
+    const result = await chat([{ role: 'user', content: 'hi' }], {
+      model: 'm',
+      temperature: 0.7,
+      onActivity: (activity) => {
+        activities.push(activity);
+      },
+    }, [1, 1]);
+
+    expect(result).toBe('{"premise"');
+    // The 1s watchdog ticked while only reasoning had arrived.
+    const thinking = activities.find((activity) => activity.phase === 'thinking');
+    expect(thinking).toBeDefined();
+    expect(thinking?.receivedChars).toBe(0);
+    expect(thinking?.elapsedMs).toBeGreaterThan(0);
+  }, 10_000);
+
+  it('reports waiting before the first byte and content phases with char counts', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, _init?: unknown) =>
+        Promise.resolve(
+          timedSseResponse([
+            // Silent for >1s: the first watchdog tick must report "waiting".
+            { delayMs: 1350, event: { choices: [{ delta: { content: 'abcdef' } }] } },
+            // Hold the stream open past the next tick so a "content" sample lands.
+            { delayMs: 2350, event: null },
+          ]),
+        ),
+      ),
+    );
+
+    const activities: ChatStreamActivity[] = [];
+    const result = await chat([{ role: 'user', content: 'hi' }], {
+      model: 'm',
+      temperature: 0.7,
+      onActivity: (activity) => {
+        activities.push(activity);
+      },
+    }, [1, 1]);
+
+    expect(result).toBe('abcdef');
+    expect(activities.some((activity) => activity.phase === 'waiting')).toBe(true);
+    const content = activities.find((activity) => activity.phase === 'content');
+    expect(content?.receivedChars).toBe(6);
+  }, 10_000);
 
   it('serializes multimodal image parts without flattening them', async () => {
     const fetchMock = vi.fn((_url: unknown, _init?: { body?: string }) =>

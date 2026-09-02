@@ -200,8 +200,13 @@ steppers 1–20, max ≥ min), tone input, size dial (3-way toggle), and the
 opt-in **"Continue from previous modules"** checkbox (disabled with a hint
 until some other module of the campaign has text; the flag persists on the
 module row, so later spine retries / part rewrites keep the continuity
-context). Creates the Module row and immediately runs pass 0 → spine
-approval → pass 1.
+context). Creates the Module row and navigates to the reader **immediately** —
+pass 0 runs there, where the reader is its live progress surface: streaming
+card, Stop button, and a progress dock that reports what the stream is doing
+(char counts while the answer streams, "the model is thinking (Ns)" while a
+reasoning model works before its first delta, "no answer yet (Ns)" while the
+provider is silent). The dialog never blocks on the LLM. A failed first spine
+shows its recorded error in the reader with an in-place **Retry spine draft**.
 
 ---
 

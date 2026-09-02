@@ -8,6 +8,7 @@ import {
   LoaderCircleIcon,
   PencilIcon,
   PlayIcon,
+  RefreshCwIcon,
   RotateCcwIcon,
   SwordsIcon,
   TriangleAlertIcon,
@@ -47,6 +48,7 @@ import {
   generateMissingParts,
   moduleGenEvents,
   rewritePart,
+  retrySpine,
 } from '@/llm/moduleGen';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -328,6 +330,35 @@ export function ModuleReaderPage(): JSX.Element {
           {module.spine === null ? (
             busy ? (
               <StreamingCard label="Drafting the spine…" tail={tails.spine ?? ''} />
+            ) : module.status === 'failed' ? (
+              // A failed first spine is actionable, not a dead end: the
+              // generator recorded the error on the row (AGENTS rule 2) and
+              // Retry re-runs pass 0 in place.
+              <section
+                className="rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
+                data-testid="spine-failed"
+              >
+                <p className="font-medium">The spine draft failed.</p>
+                {module.errorMessage !== '' && (
+                  <p className="mt-1 text-muted-foreground" data-testid="spine-failed-error">
+                    {module.errorMessage}
+                  </p>
+                )}
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="mt-3"
+                  data-testid="retry-spine"
+                  onClick={() => {
+                    void retrySpine(currentModule.id, currentCampaign).catch((error: unknown) => {
+                      toastError('Could not retry the spine draft', error);
+                    });
+                  }}
+                >
+                  <RefreshCwIcon aria-hidden data-icon="inline-start" />
+                  Retry spine draft
+                </Button>
+              </section>
             ) : (
               <section className="rounded-lg border border-dashed p-4 text-sm text-muted-foreground">
                 This module has no spine yet — open the{' '}

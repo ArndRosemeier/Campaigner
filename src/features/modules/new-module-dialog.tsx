@@ -26,9 +26,10 @@ import { toastError } from '@/lib/toast';
 
 /**
  * "New Module" creation dialog (08-MODULE-DESIGNER M4-B): concept, level
- * range (two steppers, max ≥ min), tone, size dial — plus the opt-in
- * cross-module continuity checkbox. Creates the Module row and immediately
- * runs pass 0; the reader then shows the spine-approval checkpoint.
+ * range (two steppers, max ≥ min), tone, size dial, the opt-in cross-module
+ * continuity checkbox. Creates the Module row and navigates to the reader
+ * immediately — the spine draft runs there, with its live streaming card,
+ * Stop button and progress dock; the dialog never blocks on the LLM.
  */
 
 const SIZES: readonly ModuleSizeDial[] = ['sketch', 'standard', 'detailed'];
@@ -82,10 +83,10 @@ export function NewModuleDialog({
       onOpenChange(false);
       navigate(modulePath(campaign.id, moduleId));
     } catch (error) {
-      // The module row carries the failure (status failed + errorMessage);
-      // still navigate so the user sees it in the reader.
-      toastError('The spine draft failed — check the module reader', error);
-      onOpenChange(false);
+      // Only creation-setup failures land here (e.g. the row could not be
+      // saved); the spine draft reports its own failures on the module row
+      // and via toast, and the reader shows them with a Retry.
+      toastError('The module could not be created', error);
     } finally {
       setStarting(false);
     }
@@ -199,7 +200,7 @@ export function NewModuleDialog({
             Cancel
           </Button>
           <Button disabled={!canStart} onClick={() => void start()} data-testid="start-module">
-            {starting ? 'Drafting spine…' : 'Draft spine'}
+            {starting ? 'Creating…' : 'Draft spine'}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -64,9 +64,10 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
   };
 });
 
-const { rewritePart, classifyEntityName } = await import('@/llm/moduleGen');
+const { rewritePart, classifyEntityName, retrySpine } = await import('@/llm/moduleGen');
 const rewriteMock = vi.mocked(rewritePart);
 const classifyEntityNameMock = vi.mocked(classifyEntityName);
+const retrySpineMock = vi.mocked(retrySpine);
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 const { toastSuccess } = await import('@/lib/toast');
@@ -599,6 +600,38 @@ describe('ModuleReaderPage', () => {
     await user.click(screen.getByTestId('reader-search-clear'));
     expect(screen.getByTestId('reader-search-count')).toHaveTextContent('–');
     expect(document.querySelector('.search-hit')).toBeNull();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('shows a failed first spine with its error and an in-place Retry', async () => {
+    const user = userEvent.setup();
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const draft = createModule({
+      campaignId: campaign.id,
+      title: 'Doomed Draft',
+      concept: 'A spine whose provider exploded.',
+      levelMin: 1,
+      levelMax: 2,
+      sizeDial: 'sketch',
+    });
+    const failed = await saveModule({
+      ...draft,
+      status: 'failed',
+      errorMessage: 'the provider exploded mid-draft',
+    });
+    renderAppAt(modulePath(campaign.id, failed.id));
+
+    // The mocked retrySpine resolves; the component attaches .catch to it.
+    retrySpineMock.mockResolvedValue(undefined);
+    expect(await screen.findByTestId('spine-failed', {}, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.getByTestId('spine-failed-error')).toHaveTextContent(
+      'the provider exploded mid-draft',
+    );
+
+    await user.click(screen.getByTestId('retry-spine'));
+    expect(retrySpineMock).toHaveBeenCalledTimes(1);
+    expect(retrySpineMock).toHaveBeenCalledWith(failed.id, expect.anything());
     await flushAsyncUpdates();
   }, 20_000);
 });

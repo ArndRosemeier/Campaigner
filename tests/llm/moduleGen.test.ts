@@ -11,6 +11,7 @@ import { createModule, modulePartSchema, moduleSpineSchema, type Campaign, type 
 import {
   cancelModuleGen,
   classifyEntityName,
+  createModuleAndRun,
   generateMissingParts,
   ModuleBusyError,
   normalizeModuleEntityNames,
@@ -921,8 +922,7 @@ describe('progress dock reporting', () => {
     useProgressStore.getState().reset();
   });
 
-  it('runSpine reports an indeterminate outline job and drains it on finish', async () => {
-    const { campaign, moduleId } = await seedModule();
+  it('runSpine reports an indeterminate outline job and drains it on finish', async () => {    const { campaign, moduleId } = await seedModule();
     const deferred = deferredChat();
     chatMock.mockImplementationOnce(() => deferred.promise);
     // fix-01: the entity normalization call follows the parsed spine.
@@ -974,5 +974,79 @@ describe('progress dock reporting', () => {
     second.resolve(partMarkdown('PART-TWO'));
     await pending;
     expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 20000);
+
+  it('runSpine keeps the dock alive while the model only thinks (reasoning deltas)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    // Reasoning deltas never reach onToken — the liveness probe is the only
+    // signal while the model works; the dock detail must reflect it.
+    const deferred = deferredChat();
+    chatMock.mockImplementationOnce((_messages, options) => {
+      options.onActivity?.({ elapsedMs: 5000, receivedChars: 0, phase: 'thinking' });
+      return deferred.promise;
+    });
+    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+
+    const pending = guard(runSpine(moduleId, campaign));
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs).toHaveLength(1);
+    });
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs[0]?.detail).toContain('the model is thinking');
+    });
+
+    deferred.resolve(JSON.stringify(VALID_SPINE));
+    await pending;
+    expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 20000);
+
+  it('runSpine counts received chars on the dock while the answer streams', async () => {
+    const { campaign, moduleId } = await seedModule();
+    const deferred = deferredChat();
+    chatMock.mockImplementationOnce((_messages, options) => {
+      options.onToken?.('{"premise"');
+      return deferred.promise;
+    });
+    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+
+    const pending = guard(runSpine(moduleId, campaign));
+    await waitFor(() => {
+      expect(useProgressStore.getState().jobs[0]?.detail).toContain('10 chars received');
+    });
+
+    deferred.resolve(JSON.stringify(VALID_SPINE));
+    await pending;
+  }, 20000);
+});
+
+describe('createModuleAndRun (non-blocking creation)', () => {
+  it('creates the row and starts pass 0 without waiting for the spine', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    // The spine call hangs until cancelled — createModuleAndRun must still
+    // resolve so the dialog can navigate to the reader (the live surface).
+    chatMock.mockImplementationOnce((_messages, options) => chatUntilAborted(options.signal));
+
+    const moduleId = await createModuleAndRun(campaign, {
+      campaignId: campaign.id,
+      title: 'Started, Not Awaited',
+      concept: 'A module whose spine runs in the background.',
+      levelMin: 1,
+      levelMax: 2,
+      tone: '',
+      sizeDial: 'sketch',
+    });
+
+    const created = await getModule(moduleId);
+    expect(created?.title).toBe('Started, Not Awaited');
+    await waitFor(async () => {
+      expect((await getModule(moduleId))?.status).toBe('generating');
+    });
+
+    // Cleanup: abort the in-flight spine; the run rewinds the row to draft.
+    cancelModuleGen(moduleId);
+    await waitFor(async () => {
+      expect((await getModule(moduleId))?.status).toBe('draft');
+    });
+    expect(chatMock).toHaveBeenCalledTimes(1);
   }, 20000);
 });

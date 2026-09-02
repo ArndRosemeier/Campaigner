@@ -40,6 +40,18 @@ export interface ChatMessage {
   content: string | ChatContentPart[];
 }
 
+/** What a streamed call is doing right now (see ChatOptions.onActivity). */
+export interface ChatStreamActivity {
+  /** Milliseconds since the stream started. */
+  elapsedMs: number;
+  /** Content characters received so far (reasoning deltas excluded). */
+  receivedChars: number;
+  /** waiting = no bytes yet; thinking = reasoning deltas arriving; content =
+   * answer deltas arriving. Reasoning deltas are deliberately NOT onToken —
+   * this probe is the only way a caller can show life during a long think. */
+  phase: 'waiting' | 'thinking' | 'content';
+}
+
 export interface ChatOptions {
   model: string;
   temperature: number;
@@ -48,6 +60,10 @@ export interface ChatOptions {
   signal?: AbortSignal | undefined;
   /** Streaming callback, invoked once per content delta. */
   onToken?: ((delta: string) => void) | undefined;
+  /** Liveness probe, emitted by the 1s watchdog while the stream is open.
+   * Lets a caller keep a progress surface alive during long quiet stretches
+   * (queued providers, reasoning models thinking before the first delta). */
+  onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
 }
 
 /** Spec backoff schedule for 429/5xx retries (04 spec: 2s, 8s). */
@@ -122,7 +138,11 @@ export async function chat(
     init,
     retryBackoffs,
   );
-  return readStream(response, opts.onToken, { stallTimeoutMs, contentStallMs, maxDurationMs });
+  return readStream(response, opts.onToken, {
+    stallTimeoutMs,
+    contentStallMs,
+    maxDurationMs,
+  }, opts.onActivity);
 }
 
 /** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */
@@ -261,12 +281,14 @@ async function readStream(
     contentStallMs: number;
     maxDurationMs: number;
   },
+  onActivity: ((activity: ChatStreamActivity) => void) | undefined,
 ): Promise<string> {
   if (response.body === null) throw new OpenRouterError(response.status, 'empty response body');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const parser = new SseEventParser();
   let full = '';
+  let reasoned = false;
   let lastActivity = Date.now();
   let lastContentAt = Date.now();
   const startedAt = Date.now();
@@ -274,6 +296,13 @@ async function readStream(
 
   const watchdog = setInterval(() => {
     const now = Date.now();
+    // Liveness probe first: a caller showing progress must hear from us every
+    // tick, whatever else the watchdog decides about the stream's health.
+    onActivity?.({
+      elapsedMs: now - startedAt,
+      receivedChars: full.length,
+      phase: full.length > 0 ? 'content' : reasoned ? 'thinking' : 'waiting',
+    });
     // Order matters for the post-loop diagnosis: the FIRST tripped limit
     // describes the failure (silence vs keep-alive-only vs plain too long).
     if (now - lastActivity > stallTimeoutMs) {
@@ -313,10 +342,12 @@ async function readStream(
       };
       delta = parsed.choices?.[0]?.delta?.content;
       // Reasoning deltas are progress (the model is working) even though they
-      // are not part of the JSON reply — they count toward content activity.
+      // are not part of the JSON reply — they count toward content activity
+      // and switch the liveness probe to "thinking".
       const reasoning =
         parsed.choices?.[0]?.delta?.reasoning ?? parsed.choices?.[0]?.delta?.reasoning_content;
       if (typeof reasoning === 'string' && reasoning !== '') {
+        reasoned = true;
         lastContentAt = Date.now();
       }
       finishReason = parsed.choices?.[0]?.finish_reason;

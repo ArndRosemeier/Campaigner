@@ -5,7 +5,7 @@ import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
-import { chat, MissingApiKeyError, type ChatMessage } from '@/llm/openrouter';
+import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { searchRules } from '@/search';
 import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
 import { toastError } from '@/lib/toast';
@@ -82,6 +82,46 @@ function isAbort(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
 
+/**
+ * Live dock detail for one streamed LLM call (00-OVERVIEW: multi-minute work
+ * must never look like a hang). The spine and part passes feed the stream's
+ * `onToken`/`onActivity` events through this reporter; it throttles dock
+ * updates to ~3/s (deltas arrive in bursts) and renders either the received
+ * char count or what the model is doing right now — reasoning deltas never
+ * reach `onToken`, so a thinking model would otherwise look frozen for
+ * minutes.
+ */
+function streamDetailReporter(
+  jobId: string,
+  baseDetail: string,
+): {
+  onToken: (delta: string) => void;
+  onActivity: (activity: ChatStreamActivity) => void;
+} {
+  let chars = 0;
+  let lastAt = 0;
+  const report = (detail: string): void => {
+    const now = Date.now();
+    if (now - lastAt < 400) return;
+    lastAt = now;
+    useProgressStore.getState().update(jobId, { detail });
+  };
+  return {
+    onToken: (delta) => {
+      chars += delta.length;
+      report(`${baseDetail} — ${String(chars)} chars received`);
+    },
+    onActivity: (activity: ChatStreamActivity) => {
+      const seconds = Math.round(activity.elapsedMs / 1000);
+      if (activity.phase === 'thinking') {
+        report(`${baseDetail} — the model is thinking (${String(seconds)}s)`);
+      } else if (activity.phase === 'waiting' && seconds >= 5) {
+        report(`${baseDetail} — no answer yet (${String(seconds)}s)`);
+      }
+    },
+  };
+}
+
 // --- Pass 0 — spine ----------------------------------------------------------
 
 export interface SpineRunOptions {
@@ -118,14 +158,24 @@ export async function runSpine(
     const settings = await getSettings();
     const messages = await spineMessages(module, campaign, options.extraInstruction ?? '');
 
+    // Live dock detail: the spine call can sit minutes on a queued provider or
+    // a reasoning model before the first delta — the reporter keeps the dock
+    // honest about what is happening (00-OVERVIEW).
+    const reporter = streamDetailReporter(jobId, 'Asking for premise, themes and part plan…');
+    const streamHandlers = {
+      onToken: (delta: string): void => {
+        moduleGenEvents.emit({ kind: 'spine-token', moduleId, delta });
+        reporter.onToken(delta);
+      },
+      onActivity: reporter.onActivity,
+    };
+
     let raw = await chat(messages, {
       model: settings.defaultChatModel,
       temperature: 0.8,
       responseFormat: 'json',
       signal: controller.signal,
-      onToken: (delta) => {
-        moduleGenEvents.emit({ kind: 'spine-token', moduleId, delta });
-      },
+      ...streamHandlers,
     });
 
     let spine: ModuleSpine;
@@ -149,6 +199,7 @@ export async function runSpine(
           temperature: 0.8,
           responseFormat: 'json',
           signal: controller.signal,
+          ...streamHandlers,
         },
       );
       spine = parseSpine(raw);
@@ -417,6 +468,12 @@ export async function runParts(
         progress: index / total,
         detail: `Writing part ${String(index + 1)} of ${String(total)}: ${title}`,
       });
+      // Live dock detail for the (multi-minute) part call itself: char count
+      // while the answer streams, "thinking…" while reasoning deltas arrive.
+      const partReporter = streamDetailReporter(
+        jobId,
+        `Writing part ${String(index + 1)} of ${String(total)}: ${title}`,
+      );
       try {
         await generatePart(
           moduleId,
@@ -429,7 +486,9 @@ export async function runParts(
             extraInstruction: options.extraInstruction ?? '',
             onToken: (delta) => {
               moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta });
+              partReporter.onToken(delta);
             },
+            onActivity: partReporter.onActivity,
           },
         );
       } catch (error) {
@@ -532,6 +591,8 @@ interface PartCallOptions {
   signal: AbortSignal;
   extraInstruction: string;
   onToken: ((delta: string) => void) | undefined;
+  /** Liveness probe from the chat stream (see streamDetailReporter). */
+  onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
 }
 
 /** One part generation recipe: context assembly + call + validation. */
@@ -627,6 +688,7 @@ async function partCall(
     temperature: 0.8,
     signal: options.signal,
     onToken: options.onToken,
+    onActivity: options.onActivity,
   });
   try {
     return normalizePartMarkdown(raw);
@@ -640,6 +702,7 @@ async function partCall(
         model,
         temperature: 0.8,
         signal: options.signal,
+        onActivity: options.onActivity,
       },
     );
     return normalizePartMarkdown(retry);
@@ -1005,7 +1068,14 @@ export async function discardSpine(moduleId: Id): Promise<void> {
   await patchModule(moduleId, { spine: null, status: 'draft', errorMessage: '' });
 }
 
-/** Creates the module row from the dialog input and immediately runs pass 0. */
+/**
+ * Creates the module row from the dialog input and STARTS pass 0 without
+ * waiting for it: the reader is the spine's live progress surface (streaming
+ * card, Stop button), so the dialog navigates immediately instead of blocking
+ * for minutes on a slow provider or a thinking model. Spine failures are owned
+ * by `runSpine` itself — status `failed` + `errorMessage` on the row and a
+ * toast (AGENTS rule 2) — and surface in the reader with a Retry affordance.
+ */
 export async function createModuleAndRun(
   campaign: Campaign,
   input: {
@@ -1022,6 +1092,6 @@ export async function createModuleAndRun(
 ): Promise<Id> {
   const created = createModule(input);
   const saved = await saveModule(created);
-  await runSpine(saved.id, campaign).catch(() => undefined);
+  void runSpine(saved.id, campaign).catch(() => undefined);
   return saved.id;
 }
