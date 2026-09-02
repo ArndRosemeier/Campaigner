@@ -342,7 +342,7 @@ export class RunEngine {
     if (input.persona.mode === 'encounter' && input.unattended !== true) {
       useProgressStore.getState().start(
         encounterProgressId(run.id),
-        input.targetArtifactId === undefined ? 'Generating encounter map' : 'Regenerating encounter map',
+        'Generating encounter map',
         'Drafting the encounter brief…',
       );
     }
@@ -360,13 +360,23 @@ export class RunEngine {
       (step) => step.status === 'running' || step.status === 'pending',
     );
     const target = stepIndex === -1 ? run.steps.length - 1 : stepIndex;
+    const targetStep = run.steps[target];
+    if (targetStep === undefined) return;
     // Approving a pick without a selection means "keep nothing".
-    if (run.steps[target]?.name === 'pick') {
+    if (targetStep.name === 'pick') {
       if (input.persona.mode === 'encounter') {
         throw new Error('Select one generated battlemap before continuing');
       }
       await this.pickImages(runId, []);
       return;
+    }
+    // A rejected encounter brief contains only raw model text. Previously the
+    // generic Approve button let it through, so the next step parsed
+    // `undefined` and failed with an opaque root-level Zod error. Validate the
+    // effective boundary before changing status or starting another step.
+    if (input.persona.mode === 'encounter') {
+      if (targetStep.name === 'brief') this.effectiveEncounterBrief(run.steps);
+      if (targetStep.name === 'layout') this.effectiveEncounterLayout(run.steps);
     }
     await this.updateStep(runId, target, { status: 'approved' });
     this.emit({
@@ -390,7 +400,9 @@ export class RunEngine {
   ): Promise<void> {
     const run = await getRun(runId);
     if (run === undefined) return;
-    if (run.steps[stepIndex]?.name === 'pick') {
+    const targetStep = run.steps[stepIndex];
+    if (targetStep === undefined) return;
+    if (targetStep.name === 'pick') {
       const keep = (userEdit as { keep?: unknown } | null)?.keep;
       const ids = Array.isArray(keep) ? keep.filter((id): id is Id => typeof id === 'string') : [];
       if (input.persona.mode === 'encounter') {
@@ -399,6 +411,14 @@ export class RunEngine {
         await this.pickImages(runId, ids);
       }
       return;
+    }
+    // User edits are a boundary too: validate encounter wrappers before they
+    // are persisted and before downstream steps can observe them.
+    if (input.persona.mode === 'encounter') {
+      const preview = [...run.steps];
+      preview[stepIndex] = { ...targetStep, userEdit };
+      if (targetStep.name === 'brief') this.effectiveEncounterBrief(preview);
+      if (targetStep.name === 'layout') this.effectiveEncounterLayout(preview);
     }
     await this.updateStep(runId, stepIndex, { userEdit, status: 'approved' });
     this.emit({
@@ -1080,8 +1100,17 @@ export class RunEngine {
       throw new Error('Encounter run has no approved brief');
     }
     const value = effective as { parsed?: unknown; aspect?: unknown; statblockChunkIds?: unknown };
+    const parsed = encounterGeneratorBriefSchema.safeParse(value.parsed);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((issue) => `${issue.path.length === 0 ? 'brief' : issue.path.join('.')}: ${issue.message}`)
+        .join('; ');
+      throw new Error(
+        `Encounter brief step has no valid approved output (${issues}). Retry the brief, or edit it to valid JSON before continuing.`,
+      );
+    }
     return {
-      parsed: encounterGeneratorBriefSchema.parse(value.parsed),
+      parsed: parsed.data,
       aspect: value.aspect === '16:9' || value.aspect === '1:1' ? value.aspect : '4:3',
       statblockChunkIds: Array.isArray(value.statblockChunkIds)
         ? value.statblockChunkIds.filter((id): id is Id => typeof id === 'string')
@@ -1096,7 +1125,16 @@ export class RunEngine {
       throw new Error('Encounter run has no approved layout');
     }
     const value = effective as { layout?: unknown };
-    return encounterLayoutSchema.parse(value.layout);
+    const parsed = encounterLayoutSchema.safeParse(value.layout);
+    if (!parsed.success) {
+      const issues = parsed.error.issues
+        .map((issue) => `${issue.path.length === 0 ? 'layout' : issue.path.join('.')}: ${issue.message}`)
+        .join('; ');
+      throw new Error(
+        `Encounter layout step has no valid approved output (${issues}). Regenerate the layout, or edit it to valid JSON before continuing.`,
+      );
+    }
+    return parsed.data;
   }
 
   private async runEncounterBrief(

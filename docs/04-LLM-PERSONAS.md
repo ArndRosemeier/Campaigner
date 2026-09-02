@@ -129,6 +129,10 @@ After each step completes:
 - `manual` → status `awaiting_user`; user may **approve**, **edit** (replaces
   `userEdit`, used as the step's effective output), **retry** (re-run step,
   optionally with an extra instruction appended to the prompt), or **cancel**.
+  A schema-rejected output cannot be approved as-is: the user must retry or
+  supply an edit that validates at that step boundary. Encounter verification
+  is the exception — `rejected` there means a valid map exceeded the drift
+  threshold and the user may deliberately continue.
 - `review` → pause (`awaiting_user`) only if the step is `needs_review`
   (zod failure) — otherwise continue automatically.
 - `auto` → no user in the loop: a step whose output fails zod validation

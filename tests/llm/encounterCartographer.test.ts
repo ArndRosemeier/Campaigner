@@ -156,6 +156,48 @@ describe('Encounter Cartographer run', () => {
     expect(useProgressStore.getState().jobs).toEqual([]);
   });
 
+  it('does not approve a rejected brief into an opaque downstream failure', async () => {
+    const { campaign, cartographer } = await setup();
+    // Both the initial reply and automatic repair fail the brief schema.
+    chatMock.mockResolvedValue('{}');
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('needs_review');
+      expect(run?.steps.at(-1)?.name).toBe('brief');
+      expect(run?.steps.at(-1)?.status).toBe('rejected');
+    });
+
+    await expect(runEngine.approve(runId, runInput)).rejects.toThrow(
+      'Encounter brief step has no valid approved output',
+    );
+    const run = await getRun(runId);
+    expect(run?.status).toBe('needs_review');
+    expect(run?.steps).toHaveLength(1);
+  });
+
+  it('validates a layout edit before downstream steps can observe it', async () => {
+    const { campaign, cartographer } = await setup();
+    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.steps.at(-1)?.name).toBe('brief');
+    });
+    await runEngine.approve(runId, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.steps.at(-1)?.name).toBe('layout');
+    });
+
+    await expect(runEngine.editStep(runId, 1, {}, runInput)).rejects.toThrow(
+      'Encounter layout step has no valid approved output',
+    );
+    const run = await getRun(runId);
+    expect(run?.status).toBe('awaiting_user');
+    expect(run?.steps.at(-1)?.status).toBe('done');
+  });
+
   it('auto autonomy selects candidate one and completes without a pick pause', async () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));

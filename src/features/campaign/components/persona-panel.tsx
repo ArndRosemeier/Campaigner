@@ -981,9 +981,19 @@ function RunActions({
     );
   }
   if (!paused || input === null || step === undefined) return null;
+  // Rejected LLM output has no validated payload and cannot safely advance.
+  // Encounter verify is the exception: rejection there means a valid map
+  // exceeded the drift threshold and the user may deliberately continue.
+  const canApprove =
+    step.status !== 'rejected' || (personaRow?.mode === 'encounter' && step.name === 'verify');
 
   return (
     <div className="flex flex-col gap-2">
+      {!canApprove && (
+        <p className="text-xs text-destructive">
+          This step did not produce valid data. Retry it, or edit the JSON before continuing.
+        </p>
+      )}
       {editMode ? (
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="step-edit">Edited step output (JSON)</Label>
@@ -1027,18 +1037,20 @@ function RunActions({
       ) : (
         <>
           <div className="flex flex-wrap gap-2">
-            <Button
-              size="sm"
-              onClick={() => {
-                void runEngine.approve(run.id, input).catch((error: unknown) => {
-                  toastError('Could not approve the step', error);
-                });
-              }}
-              data-testid="approve-step"
-            >
-              <CheckIcon aria-hidden data-icon="inline-start" />
-              Approve
-            </Button>
+            {canApprove && (
+              <Button
+                size="sm"
+                onClick={() => {
+                  void runEngine.approve(run.id, input).catch((error: unknown) => {
+                    toastError('Could not approve the step', error);
+                  });
+                }}
+                data-testid="approve-step"
+              >
+                <CheckIcon aria-hidden data-icon="inline-start" />
+                Approve
+              </Button>
+            )}
             <Button
               variant="outline"
               size="sm"
@@ -1050,18 +1062,6 @@ function RunActions({
               <PencilIcon aria-hidden data-icon="inline-start" />
               Edit
             </Button>
-            {run.status === 'needs_review' && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setRetryText((previous) => previous);
-                }}
-              >
-                <RotateCcwIcon aria-hidden data-icon="inline-start" />
-                Retry…
-              </Button>
-            )}
             <Button
               variant="outline"
               size="sm"
