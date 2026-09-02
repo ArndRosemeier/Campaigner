@@ -40,15 +40,16 @@ failures loud; gate + one logical task per commit).
   `'global' | 'campaign' | 'module'`; the single source of truth for UI
   branching (D1).
 - New repo functions: `listGlobalArtifacts()`, `listArtifactsByModule(moduleId)`,
-  `listArtifactsByCampaignIncludingModules(campaignId)` (campaign + module-
-  owned rows of that campaign — what most current call sites keep meaning),
-  `publishToLibrary(id)` (sets campaignId null after the loud confirm),
-  `adoptIntoCampaign(id, campaignId)` (clears moduleId / fills campaignId),
-  `moveToModule(id, moduleId)`.
-- Dexie v10: artifacts gain indexes `moduleId`, `[moduleId+kind]`; images
-  gain nothing yet (see M6-D for `images.campaignId` nullability — it rides
-  with the first global-image write path in M6-D to keep v10 purely
-  additive).
+  `getAnyArtifact(id)`. The write-path moves land with their UI increments —
+  `moveToModule`/adopt-into-campaign in M6-B, `publishToLibrary`/adopt-from-
+  library in M6-C — so no global row can exist before its writer and v10
+  stays purely additive. (`listArtifactsByCampaign` already returns campaign-
+  AND module-owned rows of the campaign — both carry its `campaignId`; the
+  scope control filters client-side via `artifactScope`.)
+- Dexie v10: artifacts gain indexes `moduleId`, `[moduleId+kind]`. Images
+  are untouched here — `images.campaignId` nullability ships in M6-C together
+  with the first global writer (D2 requires it: a published artifact's
+  images must leave the old campaign's prune scope).
 - **v10 upgrade**: backfill `moduleId: null` on every artifact row. No
   existing row is global (campaignId stays non-null), so no other change.
 

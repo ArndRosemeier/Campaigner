@@ -87,7 +87,9 @@ export async function buildCampaignExport(
   opts: { images?: boolean } = {},
 ): Promise<CampaignExport> {
   const campaign = (await db.campaigns.get(campaignId)) ?? null;
-  const all = await db.artifacts.where('campaignId').equals(campaignId).toArray();
+  const all = (await db.artifacts.where('campaignId').equals(campaignId).toArray()).filter(
+    (row): row is Artifact => row.campaignId !== null,
+  );
   const selected =
     artifactIds === undefined ? all : all.filter((artifact) => artifactIds.includes(artifact.id));
   const withRevisions = await Promise.all(

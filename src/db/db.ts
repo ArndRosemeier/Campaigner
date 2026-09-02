@@ -1,7 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 
 import type {
-  Artifact,
+  AnyArtifact,
   ArtifactRevision,
   Battle,
   Campaign,
@@ -40,7 +40,7 @@ import type { Id } from '@/domain';
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
-  artifacts!: Table<Artifact, Id>;
+  artifacts!: Table<AnyArtifact, Id>;
   revisions!: Table<ArtifactRevision, Id>;
   images!: Table<StoredImage, Id>;
   rulebooks!: Table<Rulebook, Id>;
@@ -264,6 +264,35 @@ export class CampaignerDB extends Dexie {
         const images = tx.table('images');
         await images.toCollection().modify((image: Record<string, unknown>) => {
           if (image.role === undefined) image.role = 'artwork';
+        });
+      });
+
+    // M6-A (10-MILESTONE-6): artifacts gain the ownership fields —
+    // `moduleId` (set ⇔ owned by that module) alongside the existing
+    // `campaignId`. Scope is derived from the pair; global artifacts
+    // (campaignId null) arrive in M6-C and simply drop out of the
+    // campaignId indexes. The upgrade backfills `moduleId: null` — no
+    // existing row is module- or global-scoped.
+    this.version(10)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, sessionId',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const artifacts = tx.table('artifacts');
+        await artifacts.toCollection().modify((artifact: Record<string, unknown>) => {
+          if (artifact.moduleId === undefined) artifact.moduleId = null;
         });
       });
   }

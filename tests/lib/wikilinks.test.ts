@@ -29,6 +29,7 @@ function makeNote(fields: { name: string; updatedAt: number; aliases?: string[] 
     createdAt: 1000,
     updatedAt: fields.updatedAt,
     campaignId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+    moduleId: null,
     kind: 'note',
     name: fields.name,
     tags: [],

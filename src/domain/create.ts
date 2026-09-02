@@ -133,6 +133,7 @@ export function createArtifact(input: CreateArtifactInput): Artifact {
   const artifact = {
     ...stamp,
     campaignId: input.campaignId,
+    moduleId: null,
     kind: input.kind,
     name: input.name,
     tags: [...(input.tags ?? [])],

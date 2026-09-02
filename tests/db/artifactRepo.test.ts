@@ -2,14 +2,17 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { newId, type Artifact } from '@/domain';
+import { artifactScope, newId, type Artifact } from '@/domain';
 import {
   countArtifactsByCampaign,
   createArtifact,
   deleteArtifact,
+  getAnyArtifact,
   getArtifact,
   getRevision,
   listArtifactsByCampaign,
+  listArtifactsByModule,
+  listGlobalArtifacts,
   listRevisions,
   restoreRevision,
   saveArtifact,
@@ -207,5 +210,100 @@ describe('deleteArtifact', () => {
     expect(afterNote?.links).toEqual([{ targetId: location.id, relation: 'about' }]);
     expect(await getArtifact(npc.id)).toBeUndefined();
     expect(await listRevisions(npc.id)).toEqual([]);
+  });
+});
+
+describe('ownership queries (M6-A)', () => {
+  beforeEach(clearDatabase);
+
+  const campaignId = '00000000-0000-4000-8000-000000000c01';
+  const moduleId = '00000000-0000-4000-8000-0000000000b1';
+
+  /** Writes rows directly — the scope-move writers land in M6-B/C; the
+   * queries must be correct for rows of every scope from day one. */
+  async function putRows(rows: unknown[]): Promise<void> {
+    const { anyArtifactSchema } = await import('@/domain');
+    for (const row of rows) await db.artifacts.put(anyArtifactSchema.parse(row));
+  }
+
+  function noteRow(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      moduleId: null,
+      kind: 'note',
+      name: 'A note',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: {},
+      ...over,
+    };
+  }
+
+  function globalNpcRow(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: null,
+      moduleId: null,
+      kind: 'npc',
+      name: 'Library troll',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: { role: '', appearance: '', personality: '', motivation: '', secrets: '', voiceNotes: '', statBlock: null },
+      ...over,
+    };
+  }
+
+  it('listArtifactsByCampaign returns campaign- and module-owned rows, never global', async () => {
+    await putRows([
+      noteRow({ name: 'Campaign note' }),
+      noteRow({ id: newId(), name: 'Module note', moduleId }),
+      globalNpcRow(),
+    ]);
+
+    const rows = await listArtifactsByCampaign(campaignId);
+    expect(rows.map((row) => row.name).sort()).toEqual(['Campaign note', 'Module note']);
+    // Module-owned rows are reachable through the module query with the
+    // same anchored campaign.
+    const moduleRows = await listArtifactsByModule(moduleId);
+    expect(moduleRows.map((row) => row.name)).toEqual(['Module note']);
+    expect(moduleRows[0]?.campaignId).toBe(campaignId);
+  });
+
+  it('listGlobalArtifacts returns only the library rows', async () => {
+    await putRows([
+      noteRow({ name: 'Campaign note' }),
+      globalNpcRow(),
+      globalNpcRow({ id: newId(), name: 'Library goblin', kind: 'npc' }),
+    ]);
+
+    const globals = await listGlobalArtifacts();
+    expect(globals.map((row) => row.name).sort()).toEqual(['Library goblin', 'Library troll']);
+    const first = globals[0];
+    if (first === undefined) throw new Error('no global rows returned');
+    expect(artifactScope(first)).toBe('global');
+    // getAnyArtifact sees every scope; getArtifact stays owned-only.
+    expect((await getAnyArtifact(first.id))?.campaignId).toBeNull();
+    expect(await getArtifact(first.id)).toBeUndefined();
+    const owned = await listArtifactsByCampaign(campaignId);
+    const ownedFirst = owned[0];
+    if (ownedFirst === undefined) throw new Error('no owned rows returned');
+    expect((await getArtifact(ownedFirst.id))?.name).toBe(ownedFirst.name);
   });
 });

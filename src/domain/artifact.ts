@@ -55,6 +55,10 @@ export type ArtifactLink = z.infer<typeof artifactLinkSchema>;
 const artifactBaseShape = {
   ...BaseEntitySchema.shape,
   campaignId: z.uuid(),
+  /** M6-A ownership: set ⇔ the artifact belongs to that module (its home
+   * campaign is still `campaignId`); null ⇔ campaign- or global-scoped.
+   * Scope itself is DERIVED (artifactScope) — never a stored enum. */
+  moduleId: z.uuid().nullable().default(null),
   kind: artifactKindSchema,
   name: z.string().min(1),
   tags: z.array(z.string()),
@@ -77,6 +81,8 @@ const artifactBaseShape = {
 /** Fields shared by every artifact kind. */
 export interface ArtifactBase extends BaseEntity {
   campaignId: Id;
+  /** Set ⇔ owned by that module (10-MILESTONE-6 M6-A). */
+  moduleId: Id | null;
   kind: ArtifactKind;
   name: string;
   tags: string[];
@@ -308,7 +314,72 @@ export type PlotArcArtifact = z.infer<typeof plotArcArtifactSchema>;
 export type SessionArtifact = z.infer<typeof sessionArtifactSchema>;
 export type Artifact = z.infer<typeof artifactSchema>;
 
-/** Mutable fields of an artifact; `kind`/`campaignId`/identity are immutable. */
+// --- Global artifacts (10-MILESTONE-6) ---------------------------------------
+
+/** Kinds that may live in the shared library (D6): static descriptions with
+ * nothing per-campaign accumulating on them. A global `pc` is impossible by
+ * design — its current HP lives ON the artifact and would be shared across
+ * campaigns; `session`/`plotarc` are per-campaign by nature; `note` stays
+ * campaign-bound in v1. */
+export const GLOBAL_ARTIFACT_KINDS = ['npc', 'location', 'faction', 'encounter'] as const;
+
+export type GlobalArtifactKind = (typeof GLOBAL_ARTIFACT_KINDS)[number];
+
+export const globalArtifactKindSchema = z.enum(GLOBAL_ARTIFACT_KINDS);
+
+/** Global members mirror the owned ones with `campaignId: null` and
+ * `moduleId: null` — the shape itself encodes the ownership invariant
+ * (global ⇔ no campaign, no module), so no extra refine can drift. */
+const globalBaseShape = {
+  ...artifactBaseShape,
+  campaignId: z.null(),
+  moduleId: z.null(),
+};
+
+const globalNpcArtifactSchema = z.object({ ...globalBaseShape, kind: z.literal('npc'), data: npcDataSchema });
+const globalLocationArtifactSchema = z.object({
+  ...globalBaseShape,
+  kind: z.literal('location'),
+  data: locationDataSchema,
+});
+const globalFactionArtifactSchema = z.object({
+  ...globalBaseShape,
+  kind: z.literal('faction'),
+  data: factionDataSchema,
+});
+const globalEncounterArtifactSchema = z.object({
+  ...globalBaseShape,
+  kind: z.literal('encounter'),
+  data: encounterDataSchema,
+});
+
+export const globalArtifactSchema = z.discriminatedUnion('kind', [
+  globalNpcArtifactSchema,
+  globalLocationArtifactSchema,
+  globalFactionArtifactSchema,
+  globalEncounterArtifactSchema,
+]);
+
+/** Parses either an owned (campaign/module) or a global artifact row — the
+ * shape rejects impossible states: a global `pc`, a global with a `moduleId`,
+ * a global `campaignId` on a non-library kind, or a null campaignId on an
+ * owned kind. */
+export const anyArtifactSchema = z.union([artifactSchema, globalArtifactSchema]);
+
+export type GlobalArtifact = z.infer<typeof globalArtifactSchema>;
+export type AnyArtifact = Artifact | GlobalArtifact;
+
+/** The derived ownership scope (D1): never stored — computed. */
+export function artifactScope(artifact: AnyArtifact): 'global' | 'campaign' | 'module' {
+  if (artifact.campaignId === null) return 'global';
+  return artifact.moduleId === null ? 'campaign' : 'module';
+}
+
+/**
+ * The patch for a scope move (10-MILESTONE-6 M6-B/C): publishing to the
+ * library nulls the campaign anchor, adopting fills it. All other fields
+ * are mutable as before; `kind`/identity stay immutable.
+ */
 export interface ArtifactPatch {
   name?: string;
   tags?: string[];
@@ -321,4 +392,7 @@ export interface ArtifactPatch {
    * deleted by the repo when the last reference goes away. */
   imageIds?: Id[];
   coverImageId?: Id | null;
+  /** M6-B/C scope moves: adopt into a campaign / publish to the library. */
+  campaignId?: Id | null;
+  moduleId?: Id | null;
 }

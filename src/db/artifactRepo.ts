@@ -3,10 +3,12 @@ import {
   createArtifact as buildArtifact,
   newId,
   stampNewEntity,
+  type AnyArtifact,
   type Artifact,
   type ArtifactPatch,
   type ArtifactRevision,
   type CreateArtifactInput,
+  type GlobalArtifact,
   type Id,
   type RevisionSource,
   MAX_REVISIONS_PER_ARTIFACT,
@@ -25,19 +27,48 @@ export interface RevisionMeta {
 const USER_SAVE: RevisionMeta = { source: 'user' };
 
 export async function getArtifact(id: Id): Promise<Artifact | undefined> {
+  const row = await db.artifacts.get(id);
+  // The campaignId index guarantees ownership for campaign-scoped reads;
+  // a global row here would be a caller bug (no global writer exists until
+  // M6-C, which switches cross-scope readers to getAnyArtifact).
+  return row !== undefined && row.campaignId !== null ? row : undefined;
+}
+
+/** Any-scope read (10-MILESTONE-6): owned or global. Cross-scope surfaces
+ * (publish/adopt, the library, battle stat lookup) use this. */
+export async function getAnyArtifact(id: Id): Promise<AnyArtifact | undefined> {
   return db.artifacts.get(id);
 }
 
-/** All artifacts of a campaign, alphabetically by name (tree order). */
-/** bulkGet preserving no particular order; missing ids dropped. */
-export async function listArtifactsByIds(ids: readonly Id[]): Promise<Artifact[]> {
+/** bulkGet preserving no particular order; missing ids dropped. Returns any
+ * scope — callers that require owned rows narrow on `campaignId`. */
+export async function listArtifactsByIds(ids: readonly Id[]): Promise<AnyArtifact[]> {
   const rows = await db.artifacts.bulkGet([...ids]);
-  return rows.filter((row): row is Artifact => row !== undefined);
+  return rows.filter((row): row is AnyArtifact => row !== undefined);
 }
 
 export async function listArtifactsByCampaign(campaignId: Id): Promise<Artifact[]> {
-  const rows = await db.artifacts.where('campaignId').equals(campaignId).toArray();
+  // The campaignId index only contains rows whose campaignId is a valid key
+  // — every hit is owned (campaign- or module-scoped), never global.
+  const rows = (await db.artifacts.where('campaignId').equals(campaignId).toArray()).filter(
+    (row): row is Artifact => row.campaignId !== null,
+  );
   return rows.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Global library rows (10-MILESTONE-6): a full scan — global artifacts are
+ * few and there is no index on a null key. Alphabetical by name. */
+export async function listGlobalArtifacts(): Promise<GlobalArtifact[]> {
+  const rows = await db.artifacts.filter((row) => row.campaignId === null).toArray();
+  return rows.filter((row): row is GlobalArtifact => row.campaignId === null).sort((a, b) => a.name.localeCompare(b.name));
+}
+
+/** Artifacts owned by one module (10-MILESTONE-6). The [moduleId+kind] index
+ * only contains rows with a moduleId key — every hit is module-owned and
+ * therefore campaign-anchored. Alphabetical by name. */
+export async function listArtifactsByModule(moduleId: Id): Promise<Artifact[]> {
+  const rows = await db.artifacts.where('moduleId').equals(moduleId).toArray();
+  return rows.filter((row): row is Artifact => row.campaignId !== null).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function countArtifactsByCampaign(campaignId: Id): Promise<number> {
@@ -233,10 +264,14 @@ export async function deleteArtifact(id: Id): Promise<void> {
       // themselves); a deleted session drops its battle.
       if (artifact.kind === 'session') {
         await deleteBattlesBySession(id);
+      } else if (artifact.campaignId === null) {
+        // Global artifact (M6): it can hold no battle tokens yet — battle
+        // seeding is campaign-scoped until M6-C/D, and its images prune with
+        // the global pass, not a campaign's.
       } else {
         await scrubArtifactFromBattles(artifact.campaignId, id);
+        await pruneUnreferencedImages(artifact.campaignId);
       }
-      await pruneUnreferencedImages(artifact.campaignId);
     }
   });
 }

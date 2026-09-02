@@ -407,3 +407,70 @@ describe('v8 → v9 migration', () => {
     await db.delete();
   }, 20000);
 });
+
+describe('v9 → v10 migration', () => {
+  it('backfills moduleId: null on pre-ownership rows', async () => {
+    // Build a v9 database (the M5 shape — no ownership fields yet) with one
+    // artifact row, then close it.
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(9).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, sessionId',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('campaigns').put({
+      id: '00000000-0000-4000-8000-000000000c01',
+      name: 'Owned',
+      system: 'dnd5e',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-0000000000a4',
+      campaignId: '00000000-0000-4000-8000-000000000c01',
+      kind: 'note',
+      name: 'Pre-ownership note',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: {},
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-10 upgrade: the row
+    // gains `moduleId: null` (campaign-owned) and everything else survives.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const row = await db.artifacts.get('00000000-0000-4000-8000-0000000000a4');
+    expect(row?.moduleId).toBeNull();
+    expect(row?.campaignId).toBe('00000000-0000-4000-8000-000000000c01');
+    expect(row?.name).toBe('Pre-ownership note');
+    // The upgraded row validates against the current owned schema and
+    // derives the campaign scope.
+    const { artifactSchema, artifactScope } = await import('@/domain');
+    const parsed = artifactSchema.parse(row);
+    expect(artifactScope(parsed)).toBe('campaign');
+
+    await db.delete();
+  }, 20000);
+});
