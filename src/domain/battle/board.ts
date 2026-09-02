@@ -20,6 +20,7 @@ import { newId, type Id } from '@/domain/entity';
 export function emptyBoard(): BattleBoard {
   return {
     mapImageId: null,
+    mapLayout: null,
     live: false,
     tokens: [],
     veils: [],
@@ -256,6 +257,7 @@ export function ensurePcTokens(
 export function captureStageSnapshot(board: BattleBoard): StageSnapshot {
   return {
     mapImageId: board.mapImageId,
+    mapLayout: board.mapLayout === null ? null : { ...board.mapLayout },
     gridSize: board.gridSize,
     tokenSize: board.tokenSize,
     tokens: board.tokens.map((token) => ({ ...token, conditions: [...token.conditions] })),
@@ -270,6 +272,7 @@ export function captureStageSnapshot(board: BattleBoard): StageSnapshot {
 export function cloneStageSnapshot(stage: StageSnapshot): StageSnapshot {
   return {
     mapImageId: stage.mapImageId,
+    mapLayout: stage.mapLayout === null ? null : { ...stage.mapLayout },
     gridSize: stage.gridSize,
     tokenSize: stage.tokenSize,
     tokens: stage.tokens.map((token) => ({ ...token, conditions: [...token.conditions] })),
@@ -313,6 +316,7 @@ export function applyStageReset(
   const next: BattleBoard = {
     ...board,
     mapImageId: stage.mapImageId,
+    mapLayout: stage.mapLayout === null ? null : { ...stage.mapLayout },
     gridSize: stage.gridSize,
     tokenSize: stage.tokenSize,
     tokens,

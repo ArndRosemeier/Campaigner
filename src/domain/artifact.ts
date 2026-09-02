@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
 import { statBlockSchema } from '@/domain/statblock';
+import { encounterLayoutSchema } from '@/domain/encounterMap/schema';
 
 /** Artifact kinds; M1 shipped npc/location/faction/note, M2 adds the rest.
  * M5-A puts `pc` first — the campaign tree renders kinds in this order, and
@@ -190,6 +191,8 @@ export const encounterDataSchema = z.object({
   treasure: z.string(),
   /** The designed battlemap (M5-C), set from the existing image pipeline. */
   mapImageId: z.uuid().nullable().default(null),
+  /** Authoritative generated room geometry (v12); null for uploaded maps. */
+  layout: encounterLayoutSchema.nullable().default(null),
 });
 
 export type EncounterArtifactData = z.infer<typeof encounterDataSchema>;

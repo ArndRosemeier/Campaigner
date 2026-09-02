@@ -172,6 +172,23 @@ export function validateEncounterLayout(
     }
   }
 
+  if (rosterCounts.length > 0) {
+    const assignments = new Map<number, number>();
+    for (const room of layout.rooms) {
+      for (const index of room.monsterIndexes) {
+        assignments.set(index, (assignments.get(index) ?? 0) + 1);
+      }
+    }
+    for (let index = 0; index < rosterCounts.length; index += 1) {
+      if (assignments.get(index) !== 1) {
+        issues.push(`roster entry ${String(index)} must belong to exactly one room`);
+      }
+    }
+    for (const index of assignments.keys()) {
+      if (rosterCounts[index] === undefined) issues.push(`room references missing roster entry ${String(index)}`);
+    }
+  }
+
   const roomIds = new Set(layout.rooms.map((room) => room.id));
   const connectedPairs = new Set<string>();
   for (const corridor of layout.corridors) {

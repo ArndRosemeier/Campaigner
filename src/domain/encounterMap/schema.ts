@@ -51,14 +51,57 @@ export const layoutCorridorSchema = z.object({
 });
 export type LayoutCorridor = z.infer<typeof layoutCorridorSchema>;
 
-export const encounterLayoutSchema = z.object({
-  gridW: z.number().int().min(12).max(40),
-  gridH: z.number().int().min(12).max(40),
-  theme: z.string(),
-  rooms: z.array(layoutRoomSchema).min(1).max(9),
-  corridors: z.array(layoutCorridorSchema),
-});
+export const encounterLayoutSchema = z
+  .object({
+    gridW: z.number().int().min(12).max(40),
+    gridH: z.number().int().min(12).max(40),
+    theme: z.string(),
+    rooms: z.array(layoutRoomSchema).min(1).max(9),
+    corridors: z.array(layoutCorridorSchema),
+  })
+  .superRefine((layout, context) => {
+    if (layout.rooms.filter((room) => room.spawn).length !== 1) {
+      context.addIssue({ code: 'custom', message: 'layout must contain exactly one spawn room' });
+    }
+    const owners = new Map<string, string>();
+    for (const room of layout.rooms) {
+      const roomCells = new Set(layoutCells(room.rects));
+      for (const rect of [...room.rects, room.mobsRect]) {
+        if (rect.x + rect.w > layout.gridW || rect.y + rect.h > layout.gridH) {
+          context.addIssue({ code: 'custom', message: `${room.name}: rectangle outside grid` });
+        }
+      }
+      for (const key of roomCells) {
+        if (owners.has(key) && owners.get(key) !== room.id) {
+          context.addIssue({ code: 'custom', message: `${room.name}: overlaps another room` });
+        }
+        owners.set(key, room.id);
+      }
+      for (const key of layoutCells([room.mobsRect])) {
+        if (!roomCells.has(key)) {
+          context.addIssue({ code: 'custom', message: `${room.name}: mobsRect leaves room union` });
+        }
+      }
+    }
+    for (const corridor of layout.corridors) {
+      if (corridor.rects.some((rect) => rect.w !== 1 && rect.h !== 1)) {
+        context.addIssue({ code: 'custom', message: 'corridors must be one cell wide' });
+      }
+    }
+  });
 export type EncounterLayout = z.infer<typeof encounterLayoutSchema>;
+
+function layoutCells(rects: readonly LayoutRect[]): string[] {
+  const cells = new Set<string>();
+  for (const rect of rects) {
+    for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+      for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+        cells.add(`${String(x)},${String(y)}`);
+      }
+    }
+  }
+  return [...cells];
+}
 
 export interface MonsterPlacement {
   roomId: string;

@@ -1,5 +1,5 @@
 import type { AnyArtifact, Battle, BattleToken, Id, SeedFighter } from '@/domain';
-import { GRID_SIZE_DEFAULT, newId } from '@/domain';
+import { GRID_SIZE_DEFAULT, newId, placeMonsters, spawnRoom, veilsFromRooms } from '@/domain';
 import { ensurePcTokens, fallbackSpawnPoint, stagingGroundAt, tokenFromFighter } from '@/domain/battle/board';
 import { abilityModifier } from '@/domain/statblock';
 import { db } from '@/db/db';
@@ -72,6 +72,14 @@ export async function seedBattleFromEncounter(
   }
 
   const mapImageId = await resolveMapImageId(encounter);
+  const layout = encounter.data.layout;
+  const placements = layout === null ? [] : placeMonsters(layout, encounter.data.monsters);
+  const placementByInstance = new Map(
+    placements.map((placement) => [
+      `${String(placement.monsterIndex)}:${String(placement.instanceIndex)}`,
+      placement,
+    ]),
+  );
 
   // Expand the roster (M5-C step 3): each entry with stats produces `count`
   // portrait tokens at fresh max HP (the token instance owns it); statless
@@ -79,11 +87,15 @@ export async function seedBattleFromEncounter(
   const seedFighters: SeedFighter[] = [];
   const statless: string[] = [];
   const rosterTokens: BattleToken[] = [];
-  for (const entry of encounter.data.monsters) {
+  for (const [monsterIndex, entry] of encounter.data.monsters.entries()) {
     const resolved = await resolveMonsterEntryWithRepos(entry);
     for (let index = 1; index <= entry.count; index += 1) {
       const label = entry.count > 1 ? `${entry.name} ${String(index)}` : entry.name;
-      const at = fallbackSpawnPoint(rosterTokens.length);
+      const placement = placementByInstance.get(`${String(monsterIndex)}:${String(index - 1)}`);
+      if (layout !== null && placement === undefined) {
+        throw new Error(`The generated layout has no room cell for ${label}`);
+      }
+      const at = placement ?? fallbackSpawnPoint(rosterTokens.length);
       if (resolved.statBlock === null) {
         statless.push(`${label} (${resolved.origin === '' ? 'no stats' : resolved.origin})`);
         const statlessToken: BattleToken = {
@@ -94,7 +106,7 @@ export async function seedBattleFromEncounter(
           label,
           x: at.x,
           y: at.y,
-          visible: false,
+          visible: layout !== null,
           scale: 1,
           shape: 'portrait',
           color: null,
@@ -122,7 +134,13 @@ export async function seedBattleFromEncounter(
       // tokenFromFighter gives a fresh NPC instance max HP and empty
       // initiative — exactly the seeding rule.
       rosterTokens.push(
-        tokenFromFighter(artifactId, { kind: 'npc', name: label, maxHp }, rosterTokens.length, false, at),
+        tokenFromFighter(
+          artifactId,
+          { kind: 'npc', name: label, maxHp },
+          rosterTokens.length,
+          layout !== null,
+          at,
+        ),
       );
     }
   }
@@ -130,12 +148,25 @@ export async function seedBattleFromEncounter(
   // M5-C step 4: PCs spawn row-major in the staging ground via
   // normalize-on-write; statful only — a statless PC is skipped and badged.
   const artifacts = await listArtifactsByCampaign(campaignId);
+  const entryRoom = layout === null ? undefined : spawnRoom(layout);
+  const stagingGround =
+    layout === null || entryRoom === undefined
+      ? defaultStagingGround()
+      : {
+          x: (entryRoom.mobsRect.x + entryRoom.mobsRect.w / 2) / layout.gridW,
+          y: (entryRoom.mobsRect.y + entryRoom.mobsRect.h / 2) / layout.gridH,
+          // ensurePcTokens fills a 3×3 staging block; scale that block to the
+          // entry room's exact mobsRect even when it is only two cells wide.
+          cellWidth: entryRoom.mobsRect.w / 3 / layout.gridW,
+          cellHeight: entryRoom.mobsRect.h / 3 / layout.gridH,
+        };
   const board = ensurePcTokens(
     {
       mapImageId,
+      mapLayout: layout === null ? null : { cols: layout.gridW, rows: layout.gridH },
       live: false,
       tokens: rosterTokens,
-      veils: [],
+      veils: layout === null ? [] : veilsFromRooms(layout),
       gridSize: GRID_SIZE_DEFAULT,
       tokenSize: 64,
       sceneryMovementLocked: false,
@@ -143,7 +174,7 @@ export async function seedBattleFromEncounter(
       initiativeOrder: [],
       activeIndex: 0,
       stage: null,
-      stagingGround: defaultStagingGround(),
+      stagingGround,
     },
     pcFightersOf(artifacts),
   );

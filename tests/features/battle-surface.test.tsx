@@ -146,6 +146,7 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
       tactics: 'Regenerates — a GM tactic note.',
       treasure: '',
       mapImageId: null,
+      layout: null,
     },
   });
   const module = await saveModule(

@@ -341,6 +341,39 @@ export class CampaignerDB extends Dexie {
           retiredSessionNotesRemoved: sessionIds.length,
         });
       });
+
+    // Encounter generator B (11-ENCOUNTER-GENERATOR): additive authored
+    // layout data plus the battle board's layout-cell dimensions.
+    this.version(12)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('artifacts').where('kind').equals('encounter').modify(
+          (artifact: { data?: Record<string, unknown> }) => {
+            artifact.data ??= {};
+            if (artifact.data.layout === undefined) artifact.data.layout = null;
+          },
+        );
+        await tx.table('battles').toCollection().modify(
+          (battle: { board?: Record<string, unknown> }) => {
+            battle.board ??= {};
+            if (battle.board.mapLayout === undefined) battle.board.mapLayout = null;
+          },
+        );
+      });
   }
 }
 

@@ -100,6 +100,7 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
         tactics: '',
         treasure: '',
         mapImageId: null,
+        layout: null,
       };
     case 'plotarc':
       return { arcType: '', premise: '', stakes: '', beats: [], hooks: [], climax: '' };

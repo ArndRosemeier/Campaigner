@@ -596,3 +596,90 @@ describe('v10 → v11 migration', () => {
     await db.delete();
   }, 20000);
 });
+
+describe('v11 → v12 migration', () => {
+  it('backfills null encounter layout and battle mapLayout without changing rows', async () => {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(11).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, moduleId',
+      settings: 'id',
+    });
+    await legacy.open();
+    const campaignId = '00000000-0000-4000-8000-000000000c12';
+    const moduleId = '00000000-0000-4000-8000-000000000b12';
+    const encounterId = '00000000-0000-4000-8000-000000000a12';
+    await legacy.table('artifacts').put({
+      id: encounterId,
+      campaignId,
+      moduleId,
+      kind: 'encounter',
+      name: 'Pre-layout encounter',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('battles').put({
+      id: '00000000-0000-4000-8000-000000000d12',
+      campaignId,
+      moduleId,
+      encounterArtifactId: encounterId,
+      seedFighters: [],
+      board: {
+        mapImageId: null,
+        live: false,
+        tokens: [],
+        veils: [],
+        gridSize: 72,
+        tokenSize: 64,
+        sceneryMovementLocked: false,
+        initiativeEnabled: false,
+        initiativeOrder: [],
+        activeIndex: 0,
+        stage: null,
+        stagingGround: null,
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    const { db } = await import('@/db/db');
+    await db.open();
+    const encounter = await db.artifacts.get(encounterId);
+    const battle = await db.battles.where('moduleId').equals(moduleId).first();
+    expect(encounter?.kind === 'encounter' ? encounter.data.layout : undefined).toBeNull();
+    expect(battle?.board.mapLayout).toBeNull();
+    const { artifactSchema, battleSchema } = await import('@/domain');
+    expect(artifactSchema.parse(encounter).id).toBe(encounterId);
+    expect(battleSchema.parse(battle).moduleId).toBe(moduleId);
+    await db.delete();
+  }, 20000);
+});

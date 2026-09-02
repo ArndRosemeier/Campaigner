@@ -122,8 +122,15 @@ export const stagingGroundSchema = z.object({
 export type StagingGround = z.infer<typeof stagingGroundSchema>;
 
 /** Saved opening layout for Reset; null until the GM sets the stage. */
+export const battleMapLayoutSchema = z.object({
+  cols: z.number().int().positive(),
+  rows: z.number().int().positive(),
+});
+export type BattleMapLayout = z.infer<typeof battleMapLayoutSchema>;
+
 export const stageSnapshotSchema = z.object({
   mapImageId: z.uuid().nullable(),
+  mapLayout: battleMapLayoutSchema.nullable().default(null),
   gridSize: z.number().min(GRID_SIZE_MIN).max(GRID_SIZE_MAX).nullable(),
   tokenSize: z.number(),
   tokens: z.array(battleTokenSchema),
@@ -135,6 +142,7 @@ export type StageSnapshot = z.infer<typeof stageSnapshotSchema>;
 
 export const battleBoardSchema = z.object({
   mapImageId: z.uuid().nullable(),
+  mapLayout: battleMapLayoutSchema.nullable().default(null),
   /** false = prep scratch, true = on the table. */
   live: z.boolean(),
   tokens: z.array(battleTokenSchema),

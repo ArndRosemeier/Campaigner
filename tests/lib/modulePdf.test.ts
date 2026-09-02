@@ -83,6 +83,7 @@ async function seed(): Promise<{ deliverable: Deliverable; npcId: string; gmNote
       tactics: 'surround and drag under',
       treasure: 'silver bell charm',
       mapImageId: null,
+      layout: null,
     },
     links: [{ targetId: location.id, relation: 'at' }],
   });

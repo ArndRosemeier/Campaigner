@@ -9,8 +9,8 @@ import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc } from '@/db/fighterStats';
 import { fighterTokens } from '@/domain/battle/board';
-import type { Artifact, Id, StatBlock } from '@/domain';
-import { newId, statBlockSchema } from '@/domain';
+import type { Artifact, EncounterLayout, Id, StatBlock } from '@/domain';
+import { newId, packRooms, placeMonsters, statBlockSchema } from '@/domain';
 import { clearDatabase } from './helpers';
 
 /**
@@ -90,6 +90,7 @@ interface SeedOptions {
   mapImageId?: Id | null;
   monsters?: { name: string; count: number; source: Record<string, unknown> }[];
   linkLocationId?: Id;
+  layout?: EncounterLayout | null;
 }
 
 async function addEncounter(over: SeedOptions = {}): Promise<Artifact> {
@@ -110,6 +111,7 @@ async function addEncounter(over: SeedOptions = {}): Promise<Artifact> {
       tactics: '',
       treasure: '',
       mapImageId: over.mapImageId ?? null,
+      layout: over.layout ?? null,
     },
     links: over.linkLocationId === undefined ? [] : [{ targetId: over.linkLocationId, relation: 'at' }],
   });
@@ -210,6 +212,61 @@ describe('roster expansion', () => {
     expect(second.battle.id).toBe(first.battle.id);
     expect(second.battle.board.stage).toBeNull();
     expect(second.battle.board.initiativeOrder).toEqual([]);
+  });
+
+  it('seeds generated room placements, room veils, map dimensions and entry-room PCs', async () => {
+    const roomA = newId();
+    const roomB = newId();
+    const monsters = [
+      { name: 'Goblin', count: 2, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } },
+      { name: 'Ogre', count: 1, source: { type: 'inline', statBlock: statBlock({ hp: 30 }) } },
+    ];
+    const layout = packRooms({
+      theme: 'Ruined gatehouse',
+      aspect: '4:3',
+      entryRoomId: roomA,
+      rosterCounts: monsters.map((monster) => monster.count),
+      rooms: [
+        {
+          id: roomA,
+          name: 'Gate',
+          description: '',
+          size: 'small',
+          monsterIndexes: [],
+          adjacentRoomIds: [roomB],
+        },
+        {
+          id: roomB,
+          name: 'Barracks',
+          description: '',
+          size: 'large',
+          monsterIndexes: [0, 1],
+          adjacentRoomIds: [roomA],
+        },
+      ],
+    });
+    await addPc('Serren');
+    const encounter = await addEncounter({ monsters, layout });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+
+    expect(battle.board.mapLayout).toEqual({ cols: layout.gridW, rows: layout.gridH });
+    expect(battle.board.veils).toHaveLength(layout.rooms.length);
+    expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
+    const expected = placeMonsters(layout, monsters);
+    const npcTokens = battle.board.tokens.filter((token) => token.currentHp !== null);
+    expect(npcTokens.map((token) => [token.x, token.y])).toEqual(
+      expected.map((placement) => [placement.x, placement.y]),
+    );
+    expect(npcTokens.every((token) => token.visible)).toBe(true);
+
+    const entry = layout.rooms.find((room) => room.spawn);
+    if (entry === undefined) throw new Error('spawn room missing');
+    const pc = battle.board.tokens.find((token) => token.currentHp === null && token.artifactId !== null);
+    if (pc === undefined) throw new Error('pc token missing');
+    expect(pc.x).toBeGreaterThanOrEqual(entry.mobsRect.x / layout.gridW);
+    expect(pc.x).toBeLessThanOrEqual((entry.mobsRect.x + entry.mobsRect.w) / layout.gridW);
+    expect(pc.y).toBeGreaterThanOrEqual(entry.mobsRect.y / layout.gridH);
+    expect(pc.y).toBeLessThanOrEqual((entry.mobsRect.y + entry.mobsRect.h) / layout.gridH);
   });
 
   it('rejects non-encounter artifacts (loud, no empty seed)', async () => {

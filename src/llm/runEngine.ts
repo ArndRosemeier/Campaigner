@@ -224,6 +224,7 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         tactics: asString(draft.tactics),
         treasure: asString(draft.treasure),
         mapImageId: null,
+        layout: null,
       };
     case 'plotarc':
       return {
