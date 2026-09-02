@@ -27,16 +27,16 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import type { Artifact, Deliverable, Module, OutlineNode } from '@/domain';
+import type { AnyArtifact, Deliverable, Module, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
 import { db } from '@/db/db';
+import { useScopedArtifacts } from '@/features/campaign/hooks';
 import {
   createDeliverable,
   deleteDeliverable,
   listDeliverablesByCampaign,
   updateDeliverable,
 } from '@/db/deliverableRepo';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useModules } from '@/features/modules/hooks';
 import { seedOutlineFromModule } from '@/features/deliverables/seed-from-module';
 import { buildModulePdf } from '@/lib/modulePdf';
@@ -82,10 +82,7 @@ export function DeliverablesPage(): JSX.Element {
   const deliverables = useLiveQuery(
     () => listDeliverablesByCampaign(campaignId),    [campaignId],
   );
-  const artifacts = useLiveQuery(
-    () => listArtifactsByCampaign(campaignId),
-    [campaignId],
-  );
+  const artifacts = useScopedArtifacts('workspace', campaignId);
   const images = useLiveQuery(
     () => db.images.where('campaignId').equals(campaignId).toArray(),
     [campaignId],
@@ -418,7 +415,7 @@ function OutlineEditor({
   onPickArtifact,
 }: {
   nodes: OutlineNode[];
-  artifacts: readonly Artifact[];
+  artifacts: readonly AnyArtifact[];
   onChange: (nodes: OutlineNode[]) => void;
   path: readonly number[];
   onPickArtifact: (target: readonly number[] | null) => void;

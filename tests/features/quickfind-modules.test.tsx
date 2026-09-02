@@ -12,11 +12,12 @@ import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
+  anyArtifactSchema,
   createArtifact as buildArtifact,
   createModule,
   moduleSchema,
   newId,
-  type Artifact,
+  type AnyArtifact,
   type Id,
   type Module,
 } from '@/domain';
@@ -69,7 +70,7 @@ function moduleFixture(campaignId: Id = FIXTURE_CAMPAIGN_ID): Module {
 }
 
 function renderQuickFindDialog(
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
   modules: readonly Module[],
   onPickModule: (moduleId: Id, partIndex: number | undefined) => void,
 ): void {
@@ -166,6 +167,46 @@ describe('QuickFindDialog modules group', () => {
     expect(screen.queryByTestId('quickfind-module')).not.toBeInTheDocument();
     expect(screen.queryByText('Modules')).not.toBeInTheDocument();
     expect(screen.getByText('Artifacts')).toBeInTheDocument();
+  });
+});
+
+describe('global library hits (10-MILESTONE-6 C)', () => {
+  afterEach(cleanup);
+
+  it('labels a global artifact hit "Library"', async () => {
+    const user = userEvent.setup();
+    const globalNpc = anyArtifactSchema.parse({
+      id: newId(),
+      createdAt: 1000,
+      updatedAt: 1000,
+      campaignId: null,
+      moduleId: null,
+      kind: 'npc',
+      name: 'Wandering Grix',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: {
+        role: '',
+        appearance: '',
+        personality: '',
+        motivation: '',
+        secrets: '',
+        voiceNotes: '',
+        statBlock: null,
+      },
+    });
+    renderQuickFindDialog([globalNpc], [], vi.fn());
+
+    await user.type(screen.getByTestId('quickfind-input'), 'Grix');
+    const artifactItem = await screen.findByTestId('quickfind-artifact');
+    expect(artifactItem).toHaveTextContent('Wandering Grix');
+    expect(artifactItem).toHaveTextContent('Library · npc');
   });
 });
 

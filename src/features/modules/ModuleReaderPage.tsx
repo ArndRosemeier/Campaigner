@@ -30,7 +30,7 @@ import { MODULE_SIZE_LABELS, entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
-import { useArtifacts, useCampaign } from '@/features/campaign/hooks';
+import { useArtifacts, useCampaign, useScopedArtifacts } from '@/features/campaign/hooks';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { useModule } from '@/features/modules/hooks';
@@ -181,7 +181,7 @@ export function ModuleReaderPage(): JSX.Element {
     await rewritePart(moduleId, currentCampaign, index, rewriteInstruction.trim());
   }
 
-  async function linkExisting(artifact: Artifact): Promise<void> {
+  async function linkExisting(artifact: AnyArtifact): Promise<void> {
     const name = linkTargetName;
     if (name === null) return;
     setLinkTargetName(null);
@@ -446,14 +446,12 @@ export function ModuleReaderPage(): JSX.Element {
       )}
 
       {linkTargetName !== null && (
-        <QuickFindDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setLinkTargetName(null);
+        <LinkExistingPicker
+          campaignId={campaignId}
+          onClose={() => {
+            setLinkTargetName(null);
           }}
-          artifacts={artifacts}
-          mode="play"
-          onPickArtifact={(artifact) => {
+          onPick={(artifact) => {
             void linkExisting(artifact);
           }}
         />
@@ -781,6 +779,32 @@ function moduleDocumentText(module: Module): string {
       .sort((a, b) => a.planIndex - b.planIndex)
       .map((part) => part.markdown),
   ].join('\n\n');
+}
+
+/**
+ * Link-existing picker (10-MILESTONE-6 C): lists artifacts according to the
+ * module view's persisted scope control. Keeping these live queries inside
+ * the conditionally mounted picker avoids unrelated reader rerenders while
+ * a wiki-link chip is being clicked.
+ */
+function LinkExistingPicker(props: {
+  campaignId: Id;
+  onClose: () => void;
+  onPick: (artifact: AnyArtifact) => void;
+}): JSX.Element | null {
+  const scoped = useScopedArtifacts('moduleView', props.campaignId);
+  if (scoped === undefined) return null;
+  return (
+    <QuickFindDialog
+      open
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+      artifacts={scoped}
+      mode="play"
+      onPickArtifact={props.onPick}
+    />
+  );
 }
 
 /** Persists one part's hand edit (marks it `edited` for rewrite confirmations). */

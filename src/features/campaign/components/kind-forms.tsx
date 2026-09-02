@@ -3,8 +3,7 @@ import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
-import type {
-  Artifact,
+import type { AnyArtifact,
   EncounterArtifactData,
   FactionArtifactData,
   GameSystem,
@@ -393,7 +392,7 @@ function MonsterListEditor({
   onChange,
 }: {
   monsters: EncounterArtifactData['monsters'];
-  campaignArtifacts: readonly Artifact[];
+  campaignArtifacts: readonly AnyArtifact[];
   onChange: (monsters: EncounterArtifactData['monsters']) => void;
 }) {
   return (
@@ -477,7 +476,7 @@ function MonsterListEditor({
 
 export interface EncounterFormProps {
   data: EncounterArtifactData;
-  campaignArtifacts: readonly Artifact[];
+  campaignArtifacts: readonly AnyArtifact[];
   onChange: (data: EncounterArtifactData) => void;
 }
 

@@ -3,7 +3,7 @@ import type { JSX } from 'react';
 import MiniSearch from 'minisearch';
 import { BookOpenIcon } from 'lucide-react';
 
-import type { Artifact, Id, Module, RuleChunk } from '@/domain';
+import type { AnyArtifact, Artifact, Id, Module, RuleChunk } from '@/domain';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { searchRules, type SearchHit } from '@/search';
 import { Button } from '@/components/ui/button';
@@ -29,7 +29,7 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 export type QuickFindMode = 'play' | 'workspace';
 
 interface ArtifactHit {
-  artifact: Artifact;
+  artifact: AnyArtifact;
 }
 
 /** One module/part match ("selecting scrolls the reader"). */
@@ -68,14 +68,15 @@ export function matchModules(
 export interface QuickFindDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  artifacts: readonly Artifact[];
+  /** Any-scope rows, already filtered by the caller's scope control. */
+  artifacts: readonly AnyArtifact[];
   mode: QuickFindMode;
   /** Campaign modules + parts (M4-D). Omit → no module group. */
   modules?: readonly Module[] | undefined;
   /** Play mode: receives the picked artifact to set focus. */
-  onPickArtifact?: (artifact: Artifact) => void;
+  onPickArtifact?: (artifact: AnyArtifact) => void;
   /** Workspace mode: caller navigates to the artifact editor. */
-  onWorkspaceArtifact?: (artifact: Artifact) => void;
+  onWorkspaceArtifact?: (artifact: AnyArtifact) => void;
   /** Module/part pick: caller scrolls the module reader. */
   onPickModule?: (moduleId: Id, partIndex: number | undefined) => void;
 }
@@ -106,7 +107,7 @@ export function QuickFindDialog({
   // small; a fresh index per open is simpler than invalidation).
   useEffect(() => {
     if (!open) return;
-    const mini = new MiniSearch<Artifact>({
+    const mini = new MiniSearch<AnyArtifact>({
       fields: ['name', 'tags', 'summary'],
       storeFields: ['id'],
       extractField: (artifact, field) =>
@@ -147,7 +148,7 @@ export function QuickFindDialog({
     };
   }, [query, open, artifactById, modules]);
 
-  function pickArtifact(artifact: Artifact): void {
+  function pickArtifact(artifact: AnyArtifact): void {
     if (mode === 'play') {
       onPickArtifact?.(artifact);
       onOpenChange(false);
@@ -170,6 +171,7 @@ export function QuickFindDialog({
         </DialogDescription>
         <Command shouldFilter={false}>
           <CommandInput
+            autoFocus
             placeholder="Search…"
             value={query}
             onValueChange={setQuery}
@@ -190,7 +192,9 @@ export function QuickFindDialog({
                   >
                     <span className="truncate">
                       {artifact.name}
-                      <span className="ml-2 text-xs text-muted-foreground">{artifact.kind}</span>
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {artifact.campaignId === null ? `Library · ${artifact.kind}` : artifact.kind}
+                      </span>
                     </span>
                   </CommandItem>
                 ))}

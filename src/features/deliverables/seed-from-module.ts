@@ -1,4 +1,4 @@
-import type { Artifact, Module, OutlineNode } from '@/domain';
+import type { AnyArtifact, Module, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 
@@ -11,7 +11,7 @@ import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
  */
 export function seedOutlineFromModule(
   module: Module,
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
 ): OutlineNode[] {
   const outline: OutlineNode[] = [];
   if (module.spine !== null && module.spine.premise.trim() !== '') {

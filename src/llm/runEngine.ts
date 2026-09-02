@@ -1116,6 +1116,11 @@ export class RunEngine {
     const candidates = Array.isArray(pickOutput.candidates)
       ? (pickOutput.candidates as Id[])
       : [];
+    // A completed run's artifact is owned by the campaign it ran in — a
+    // global artifact here would mean the finalize step was misused.
+    if (updated.campaignId === null) {
+      throw new Error(`Run ${runId} finalized a global artifact — refusing to prune images.`);
+    }
     await deleteUnreferencedImages(updated.campaignId, candidates);
     await updateRun(runId, { status: 'completed', resultArtifactId: updated.id });
     this.emit({ kind: 'run', runId, status: 'completed' });

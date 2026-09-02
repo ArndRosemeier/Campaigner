@@ -7,7 +7,7 @@ import {
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
 import { buildFighterStatsLookup, isBattleEmpty, pcFightersOf } from '@/db/fighterStats';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
 import { stampNewEntity } from '@/domain/entity';
 
 /**
@@ -105,8 +105,15 @@ export async function resetBattleToStage(id: Id): Promise<Battle> {
   if (battle.board.stage === null) {
     throw new Error('No stage snapshot saved — set the stage before resetting');
   }
-  const artifacts = await listArtifactsByCampaign(battle.campaignId);
-  const stats = buildFighterStatsLookup(battle, artifacts);
+  // Battle stats resolve across scopes (10-MILESTONE-6 C): campaign and
+  // module-owned rows come from the campaign query, library monsters from
+  // the global scan. Only campaign-scoped PCs reach pcFightersOf — a global
+  // pc is unrepresentable, so currentHp ownership is unchanged.
+  const [artifacts, globals] = await Promise.all([
+    listArtifactsByCampaign(battle.campaignId),
+    listGlobalArtifacts(),
+  ]);
+  const stats = buildFighterStatsLookup(battle, [...artifacts, ...globals]);
   const board = applyStageReset(battle.board, battle.board.stage, stats, pcFightersOf(artifacts));
   return saveBattleBoard(id, board);
 }
@@ -164,8 +171,11 @@ export async function deleteBattlesBySession(sessionId: Id): Promise<void> {
  * through `artifactRepo.updateArtifact`).
  */
 async function normalizeBattle(battle: Battle): Promise<Battle> {
-  const artifacts = await listArtifactsByCampaign(battle.campaignId);
-  const stats = buildFighterStatsLookup(battle, artifacts);
+  const [artifacts, globals] = await Promise.all([
+    listArtifactsByCampaign(battle.campaignId),
+    listGlobalArtifacts(),
+  ]);
+  const stats = buildFighterStatsLookup(battle, [...artifacts, ...globals]);
   let board = ensurePcTokens(battle.board, pcFightersOf(artifacts));
   board = fillNpcTokenHp(board, stats);
   return { ...battle, board };

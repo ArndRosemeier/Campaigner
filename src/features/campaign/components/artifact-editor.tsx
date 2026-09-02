@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { HistoryIcon } from 'lucide-react';
 
 import { artifactRepo } from '@/db';
+import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
 import {
   ARTIFACT_KIND_SINGULAR,
-  type Artifact,
+  type AnyArtifact,
   type ArtifactLink,
   type ArtifactRevision,
   type EncounterArtifactData,
@@ -86,7 +87,7 @@ export type ArtifactDraft =
   | PlotArcDraft
   | SessionDraft;
 
-function draftFrom(artifact: Artifact): ArtifactDraft {
+function draftFrom(artifact: AnyArtifact): ArtifactDraft {
   const common: CommonDraft = {
     name: artifact.name,
     tags: [...artifact.tags],
@@ -127,8 +128,11 @@ function draftPatch(draft: ArtifactDraft): {
 }
 
 export interface ArtifactEditorProps {
-  artifact: Artifact;
-  campaignArtifacts: readonly Artifact[];
+  /** Any scope — library rows open here too (10-MILESTONE-6 C, D7). */
+  artifact: AnyArtifact;
+  /** The workspace's campaign (peek navigation stays campaign-anchored). */
+  campaignId: Id;
+  campaignArtifacts: readonly AnyArtifact[];
   campaignSystem: GameSystem;
 }
 
@@ -143,6 +147,7 @@ export interface ArtifactEditorProps {
  */
 export function ArtifactEditor({
   artifact,
+  campaignId,
   campaignArtifacts,
   campaignSystem,
 }: ArtifactEditorProps) {
@@ -248,7 +253,12 @@ export function ArtifactEditor({
             rev {artifact.currentRevision}
           </Badge>
           <RevisionDropdown artifactId={artifact.id} onOpen={setRevisionView} />
-          {artifact.kind === 'encounter' && (
+          {artifact.campaignId === null && (
+            <Badge data-testid="global-badge" className="bg-amber-500/15 text-amber-700 dark:text-amber-400">
+              Global
+            </Badge>
+          )}
+          {artifact.kind === 'encounter' && artifact.campaignId !== null && (
             <RunBattleButton campaignId={artifact.campaignId} encounter={artifact} />
           )}
           <ScopeAction artifact={artifact} />
@@ -386,7 +396,7 @@ export function ArtifactEditor({
           onOpenChange={(open) => {
             if (!open) setPeekedId(null);
           }}
-          campaignId={artifact.campaignId}
+          campaignId={campaignId}
         />
       )}
     </div>
@@ -432,9 +442,32 @@ function RevisionDropdown({ artifactId, onOpen }: RevisionDropdownProps) {
  * only the ownership fields change — so no confirm dialog is needed; the
  * toast reports where the artifact now lives.
  */
-function ScopeAction({ artifact }: { artifact: Artifact }) {
-  const modules = useModules(artifact.campaignId);
+function ScopeAction({ artifact }: { artifact: AnyArtifact }) {
+  const modules = useModules(artifact.campaignId ?? undefined);
   const ownedModuleId = artifact.moduleId;
+  const [adoptOpen, setAdoptOpen] = useState(false);
+
+  if (artifact.campaignId === null) {
+    return (
+      <>
+        <Button
+          variant="ghost"
+          size="sm"
+          data-testid="scope-adopt-global"
+          onClick={() => {
+            setAdoptOpen(true);
+          }}
+        >
+          Adopt into campaign…
+        </Button>
+        <AdoptDialog
+          artifact={artifact}
+          open={adoptOpen}
+          onOpenChange={setAdoptOpen}
+        />
+      </>
+    );
+  }
 
   if (ownedModuleId !== null) {
     return (

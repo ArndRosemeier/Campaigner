@@ -85,6 +85,7 @@ describe('encounter / plotarc / session kinds', () => {
     render(
       <ArtifactEditor
         artifact={artifact}
+        campaignId={campaign.id}
         campaignArtifacts={[artifact]}
         campaignSystem={campaign.system}
       />,

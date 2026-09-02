@@ -3,7 +3,7 @@ import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpenIcon, FileWarningIcon, LinkIcon, PenLineIcon, UsersIcon } from 'lucide-react';
 
-import type { Artifact, Id, MonsterEntry, MonsterSource, StatBlock } from '@/domain';
+import type { AnyArtifact, Id, MonsterEntry, MonsterSource, StatBlock } from '@/domain';
 import { blankStatBlock } from '@/domain';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 import { Badge } from '@/components/ui/badge';
@@ -79,7 +79,7 @@ export function MonsterSourceControls({
   onChange,
 }: {
   entry: MonsterEntry;
-  campaignArtifacts: readonly Artifact[];
+  campaignArtifacts: readonly AnyArtifact[];
   onChange: (next: MonsterEntry) => void;
 }): JSX.Element {
   const [rulebookOpen, setRulebookOpen] = useState(false);

@@ -1,4 +1,5 @@
 import {
+  anyArtifactSchema,
   artifactSchema,
   createArtifact as buildArtifact,
   newId,
@@ -12,6 +13,8 @@ import {
   type Id,
   type RevisionSource,
   MAX_REVISIONS_PER_ARTIFACT,
+  globalArtifactKindSchema,
+  globalArtifactSchema,
 } from '@/domain';
 import { db } from '@/db/db';
 import { deleteBattlesBySession, scrubArtifactFromBattles } from '@/db/battleRepo';
@@ -115,20 +118,81 @@ export async function saveArtifact(
   });
 }
 
-/** Merges a patch and saves it as a new revision (race-safe). */
+/** Merges a patch and saves it as a new revision (race-safe). Works on both
+ * scopes: a global row is parsed against the global shape (M6-C — library
+ * entries are editable, D7); the scope fields themselves are NOT patchable
+ * here — the explicit move/adopt/publish functions own those transitions. */
 export async function updateArtifact(
   id: Id,
   patch: ArtifactPatch,
   meta: RevisionMeta = USER_SAVE,
-): Promise<Artifact> {
+): Promise<AnyArtifact> {
   return db.transaction('rw', db.artifacts, db.revisions, async () => {
     const current = await db.artifacts.get(id);
     if (!current) throw new NotFoundError('Artifact', id);
+    // Scope fields are pinned to the row's current values — a plain patch
+    // never re-anchors an artifact; the explicit move/adopt/publish
+    // functions own those transitions.
+    const scopePatch = { campaignId: current.campaignId, moduleId: current.moduleId };
     // Parse-normalize the merged row: keeps the union sound when `patch.data`
     // replaces the whole data object, and rejects kind/data mismatches.
-    const merged = artifactSchema.parse({ ...current, ...patch });
-    const next = artifactSchema.parse({
+    const merged = anyArtifactSchema.parse({ ...current, ...patch, ...scopePatch });
+    const next = anyArtifactSchema.parse({
       ...merged,
+      currentRevision: current.currentRevision + 1,
+      updatedAt: Date.now(),
+    });
+    if (next.kind !== current.kind) {
+      throw new Error('An artifact update may not change its kind.');
+    }
+    await writeRevision(next, meta);
+    return next;
+  });
+}
+
+/** Applies a scope transition (module move, adoption, publication) as a
+ * revisioned save — the ONLY path that may change `campaignId`/`moduleId`
+ * (10-MILESTONE-6 B/C). Content fields are untouched. */
+async function moveScope(
+  id: Id,
+  changes: { campaignId?: Id | null; moduleId?: Id | null },
+  meta: RevisionMeta = USER_SAVE,
+): Promise<AnyArtifact> {
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    const current = await db.artifacts.get(id);
+    if (!current) throw new NotFoundError('Artifact', id);
+    const next = anyArtifactSchema.parse({
+      ...current,
+      ...changes,
+      currentRevision: current.currentRevision + 1,
+      updatedAt: Date.now(),
+    });
+    await writeRevision(next, meta);
+    return next;
+  });
+}
+
+/**
+ * Assign a generated campaign artifact to its module while preserving the
+ * compatibility tag in the same revision. Plain `updateArtifact` pins scope
+ * fields, so generation writers must use this explicit ownership pathway.
+ */
+export async function stampModuleOwnership(
+  id: Id,
+  moduleId: Id,
+  moduleTag: string,
+  meta: RevisionMeta = USER_SAVE,
+): Promise<Artifact> {
+  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+    const current = await db.artifacts.get(id);
+    if (current === undefined) throw new NotFoundError('Artifact', id);
+    if (current.campaignId === null) {
+      throw new Error('A global library entry cannot be stamped into a module.');
+    }
+    const next = artifactSchema.parse({
+      ...current,
+      moduleId,
+      tags: current.tags.includes(moduleTag) ? current.tags : [...current.tags, moduleTag],
       currentRevision: current.currentRevision + 1,
       updatedAt: Date.now(),
     });
@@ -232,7 +296,7 @@ export async function duplicateArtifact(id: Id): Promise<Artifact> {
  * anchor — a cross-campaign move would strand images and battle rows that
  * key on the old campaignId, so it is refused loudly, not clamped.
  */
-export async function moveToModule(id: Id, moduleId: Id): Promise<Artifact> {
+export async function moveToModule(id: Id, moduleId: Id): Promise<AnyArtifact> {
   const artifact = await db.artifacts.get(id);
   if (!artifact) throw new NotFoundError('Artifact', id);
   if (artifact.campaignId === null) {
@@ -247,7 +311,7 @@ export async function moveToModule(id: Id, moduleId: Id): Promise<Artifact> {
       `"${targetModule.title}" belongs to another campaign — artifacts can only move into modules of their own campaign.`,
     );
   }
-  return updateArtifact(id, { moduleId });
+  return moveScope(id, { moduleId });
 }
 
 /**
@@ -256,7 +320,7 @@ export async function moveToModule(id: Id, moduleId: Id): Promise<Artifact> {
  * library entry needs an explicit target campaign to adopt into (M6-C —
  * its `campaignId: null` becomes a real anchor in the same write).
  */
-export async function adoptIntoCampaign(id: Id, campaignId?: Id): Promise<Artifact> {
+export async function adoptIntoCampaign(id: Id, campaignId?: Id): Promise<AnyArtifact> {
   const artifact = await db.artifacts.get(id);
   if (!artifact) throw new NotFoundError('Artifact', id);
   if (artifact.campaignId === null) {
@@ -265,14 +329,68 @@ export async function adoptIntoCampaign(id: Id, campaignId?: Id): Promise<Artifa
         `"${artifact.name}" lives in the global library — pick a campaign to adopt it into.`,
       );
     }
-    return updateArtifact(id, { campaignId, moduleId: null });
+    // Images follow the artifact out of the library (D2) — they re-anchor
+    // into the adopting campaign and its prune takes them back under its
+    // wing.
+    const imageIds =
+      artifact.coverImageId !== null ? [...artifact.imageIds, artifact.coverImageId] : artifact.imageIds;
+    if (imageIds.length > 0) {
+      await db.images.where('id').anyOf(imageIds).modify({ campaignId });
+    }
+    return moveScope(id, { campaignId, moduleId: null });
   }
   if (campaignId !== undefined && campaignId !== artifact.campaignId) {
     throw new Error(
       `"${artifact.name}" is anchored to another campaign and cannot be adopted there.`,
     );
   }
-  return updateArtifact(id, { moduleId: null });
+  return moveScope(id, { moduleId: null });
+}
+
+/**
+ * Publishes an owned artifact into the global library (10-MILESTONE-6 C,
+ * D6/D7): the row loses both anchors (one artifact, always referenced —
+ * never copied) and its images re-anchor to the library with it (D2), so
+ * the old campaign's prune can no longer delete them. Only the library
+ * kinds may be published (D6); the id, links, revisions and data survive
+ * untouched.
+ */
+export async function publishToLibrary(id: Id): Promise<GlobalArtifact> {
+  const row = await db.artifacts.get(id);
+  if (!row) throw new NotFoundError('Artifact', id);
+  if (row.campaignId === null) {
+    throw new Error(`"${row.name}" is already in the global library.`);
+  }
+  if (!globalArtifactKindSchema.safeParse(row.kind).success) {
+    throw new Error(
+      `"${row.name}" is a ${row.kind} — only npcs, locations, factions and encounters can be published to the library.`,
+    );
+  }
+  // Images travel (D2): re-anchored to the library BEFORE the row moves, so
+  // the campaign's prune (e.g. from a concurrent delete) can never see them
+  // as orphans.
+  const imageIds = row.coverImageId !== null ? [...row.imageIds, row.coverImageId] : row.imageIds;
+  if (imageIds.length > 0) {
+    await db.images.where('id').anyOf(imageIds).modify({ campaignId: null });
+  }
+  const published = await moveScope(id, { campaignId: null, moduleId: null });
+  return globalArtifactSchema.parse(published);
+}
+
+/**
+ * Campaigns whose artifacts link at `id` (the adopt-from-library confirm
+ * lists them: references in other campaigns become unresolved chips when
+ * the row is adopted away — D7, always reference).
+ */
+export async function campaignsReferencingArtifact(id: Id): Promise<Id[]> {
+  const rows = await db.artifacts.toArray();
+  const campaigns = new Set<Id>();
+  for (const row of rows) {
+    if (row.campaignId !== null && row.links.some((link) => link.targetId === id)) {
+      campaigns.add(row.campaignId);
+    }
+  }
+  return [...campaigns];
 }
 
 export async function listRevisions(artifactId: Id): Promise<ArtifactRevision[]> {
@@ -314,9 +432,16 @@ export async function deleteArtifact(id: Id): Promise<void> {
       if (artifact.kind === 'session') {
         await deleteBattlesBySession(id);
       } else if (artifact.campaignId === null) {
-        // Global artifact (M6): it can hold no battle tokens yet — battle
-        // seeding is campaign-scoped until M6-C/D, and its images prune with
-        // the global pass, not a campaign's.
+        // Global artifact (M6): no campaign prune reaches its library images,
+        // so check each now that the row and revisions are gone. Shared image
+        // ids survive until their last global referencer is deleted.
+        const imageIds =
+          artifact.coverImageId !== null
+            ? [...artifact.imageIds, artifact.coverImageId]
+            : artifact.imageIds;
+        for (const imageId of imageIds) {
+          await deleteImageIfUnreferenced(imageId);
+        }
       } else {
         await scrubArtifactFromBattles(artifact.campaignId, id);
         await pruneUnreferencedImages(artifact.campaignId);
@@ -331,7 +456,7 @@ export async function deleteArtifact(id: Id): Promise<void> {
  * `artifacts` + `revisions` (all public functions above provide one) so that
  * overlapping saves serialize instead of clobbering revision numbers.
  */
-async function writeRevision(valid: Artifact, meta: RevisionMeta): Promise<void> {
+async function writeRevision(valid: AnyArtifact, meta: RevisionMeta): Promise<void> {
   const revision: ArtifactRevision = {
     ...stampNewEntity(valid.updatedAt),
     artifactId: valid.id,

@@ -6,7 +6,7 @@ import { ImageIcon, MapIcon, PlusIcon, SparklesIcon, StarIcon, Trash2Icon } from
 import { artifactRepo } from '@/db';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { createImage, listImagesByIds, setImageRole } from '@/db/imageRepo';
-import type { Artifact, Id, StoredImage } from '@/domain';
+import type { AnyArtifact, Id, StoredImage } from '@/domain';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -26,7 +26,7 @@ import { useImageUrl } from '@/features/images/use-image-url';
  * Image changes write straight to the artifact row (imageIds/coverImageId)
  * — they are not part of the markdown autosave draft.
  */
-export function ImagesSection({ artifact }: { artifact: Artifact }): JSX.Element {
+export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Element {
   const images = useLiveQuery(
     () => listImagesByIds(artifact.imageIds),
     [artifact.imageIds.join(',')],

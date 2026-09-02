@@ -38,6 +38,10 @@ const SETTINGS = {
   embeddingsEnabled: false,
   imageModel: 'google/gemini-2.5-flash-image',
   imagesEnabled: false,
+  artifactScopes: {
+    workspace: { global: false, campaign: true, module: true },
+    moduleView: { global: true, campaign: true, module: true },
+  },
   language: 'en' as const,
 };
 

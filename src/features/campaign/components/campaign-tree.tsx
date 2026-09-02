@@ -9,6 +9,11 @@ import {
   WaypointsIcon,
 } from 'lucide-react';
 
+import { useModules } from '@/features/modules/hooks';
+import { useScopeToggles } from '@/features/campaign/hooks';
+import { ScopeControl } from '@/features/campaign/components/scope-control';
+import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
+import { publishToLibrary } from '@/db/artifactRepo';
 import { graphPath, workspacePath } from '@/app/routes';
 import { Link } from 'react-router-dom';
 import { artifactRepo } from '@/db';
@@ -16,9 +21,13 @@ import {
   ARTIFACT_KINDS,
   ARTIFACT_KIND_LABELS,
   ARTIFACT_KIND_SINGULAR,
+  type AnyArtifact,
   type Artifact,
   type ArtifactKind,
+  type GlobalArtifact,
   type Id,
+  defaultScopeToggles,
+  globalArtifactKindSchema,
 } from '@/domain';
 import { defaultArtifactName } from '@/domain';
 import { exportSingleArtifact } from '@/features/campaign/components/export-dialog';
@@ -60,9 +69,54 @@ import { matchesFilter } from '@/features/campaign/filter';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
+/** Shared collapsible group shell for Library / module / kind sections. */
+function TreeGroup({
+  label,
+  count,
+  open,
+  onToggle,
+  children,
+  actions,
+}: {
+  label: string;
+  count: number;
+  open: boolean;
+  onToggle: (group: string, open: boolean) => void;
+  children: React.ReactNode;
+  actions?: React.ReactNode;
+}): JSX.Element {
+  return (
+    <Collapsible
+      open={open}
+      onOpenChange={(nextOpen) => {
+        onToggle(label, nextOpen);
+      }}
+      className="mb-1"
+    >
+      <div className="group flex items-center gap-0.5 rounded-md px-0.5 hover:bg-accent/50">
+        <CollapsibleTrigger className="flex flex-1 items-center gap-1 py-0.5 text-left text-xs font-semibold tracking-wide text-muted-foreground uppercase outline-none hover:text-foreground">
+          {open ? (
+            <ChevronDownIcon aria-hidden className="size-3" />
+          ) : (
+            <ChevronRightIcon aria-hidden className="size-3" />
+          )}
+          {label}
+          <Badge variant="secondary" className="ml-auto">
+            {count}
+          </Badge>
+        </CollapsibleTrigger>
+        {actions}
+      </div>
+      <CollapsibleContent>{children}</CollapsibleContent>
+    </Collapsible>
+  );
+}
+
 export interface CampaignTreeProps {
   campaignId: Id;
   artifacts: readonly Artifact[];
+  /** The global library rows (rendered in their own group, D3). */
+  globals: readonly GlobalArtifact[];
   selectedArtifactId: Id | undefined;
   onSelectArtifact: (artifactId: Id) => void;
 }
@@ -75,22 +129,75 @@ export interface CampaignTreeProps {
 export function CampaignTree({
   campaignId,
   artifacts,
+  globals,
   selectedArtifactId,
   onSelectArtifact,
 }: CampaignTreeProps) {
   const [filter, setFilter] = useState('');
   const [closedKinds, setClosedKinds] = useState<ReadonlySet<ArtifactKind>>(new Set());
-  const [renameTarget, setRenameTarget] = useState<Artifact | null>(null);
+  const [renameTarget, setRenameTarget] = useState<AnyArtifact | null>(null);
   const [renameValue, setRenameValue] = useState('');
   /** "Add old name as alias" (default on) so module wiki-links keep resolving. */
   const [renameKeepAlias, setRenameKeepAlias] = useState(true);
-  const [deleteTarget, setDeleteTarget] = useState<Artifact | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AnyArtifact | null>(null);
+  const [publishTarget, setPublishTarget] = useState<Artifact | null>(null);
+  const [adoptTarget, setAdoptTarget] = useState<GlobalArtifact | null>(null);
+  const [closedGroups, setClosedGroups] = useState<ReadonlySet<string>>(new Set());
+  function setGroupOpenState(group: string, open: boolean): void {
+    setClosedGroups((previous) => {
+      const next = new Set(previous);
+      if (open) next.delete(group);
+      else next.add(group);
+      return next;
+    });
+  }
   const navigate = useNavigate();
+
+  // Toggles load async from settings; render with the workspace defaults
+  // until they arrive (the control flips to the stored value right after).
+  const scopes = useScopeToggles('workspace') ?? defaultScopeToggles('workspace');
+  const modules = useModules(campaignId);
 
   const filtered = useMemo(
     () => artifacts.filter((artifact) => matchesFilter(artifact, filter)),
     [artifacts, filter],
   );
+  const filteredGlobals = useMemo(
+    () => globals.filter((artifact) => matchesFilter(artifact, filter)),
+    [globals, filter],
+  );
+
+  // Scope split (10-MILESTONE-6 D3): the library group, one group per owning
+  // module, and the plain campaign rows in their kind groups. A module-owned
+  // row whose module row is missing (external tampering — both delete paths
+  // clean up ownership) falls back to the plain groups so it stays visible.
+  const moduleTitleById = useMemo(
+    () => new Map((modules ?? []).map((module) => [module.id, module.title])),
+    [modules],
+  );
+  const moduleGroups = useMemo(() => {
+    if (!scopes.module) return [];
+    const byModule = new Map<Id, Artifact[]>();
+    for (const artifact of filtered) {
+      if (artifact.moduleId === null) continue;
+      if (!moduleTitleById.has(artifact.moduleId)) continue;
+      const rows = byModule.get(artifact.moduleId) ?? [];
+      rows.push(artifact);
+      byModule.set(artifact.moduleId, rows);
+    }
+    return [...byModule.entries()].map(([id, rows]) => ({
+      id,
+      title: moduleTitleById.get(id) ?? id,
+      rows,
+    }));
+  }, [filtered, scopes.module, moduleTitleById]);
+  const plainRows = useMemo(() => {
+    const orphans = filtered.filter(
+      (artifact) => artifact.moduleId !== null && !moduleTitleById.has(artifact.moduleId),
+    );
+    return scopes.campaign ? [...filtered.filter((artifact) => artifact.moduleId === null), ...orphans] : [];
+  }, [filtered, scopes.campaign, moduleTitleById]);
+  const libraryRows = scopes.global ? filteredGlobals : [];
 
   async function handleCreate(kind: ArtifactKind): Promise<void> {
     try {
@@ -138,6 +245,23 @@ export function CampaignTree({
     }
   }
 
+  function runPublish(): void {
+    const target = publishTarget;
+    if (target === null) return;
+    setPublishTarget(null);
+    try {
+      void publishToLibrary(target.id)
+        .then((published) => {
+          toastSuccess(`"${published.name}" is shared in the library`);
+        })
+        .catch((error: unknown) => {
+          toastError('Could not publish the artifact', error);
+        });
+    } catch (error) {
+      toastError('Could not publish the artifact', error);
+    }
+  }
+
   async function handleDelete(): Promise<void> {
     const target = deleteTarget;
     if (target === null) return;
@@ -172,6 +296,7 @@ export function CampaignTree({
             setFilter(event.target.value);
           }}
         />
+        <ScopeControl surface="workspace" />
         <div className="mt-1.5 flex items-center gap-1">
           <Button
             variant="outline"
@@ -187,8 +312,87 @@ export function CampaignTree({
         </div>
       </div>
       <div className="flex-1 overflow-y-auto p-2">
+        {libraryRows.length > 0 && (
+          <TreeGroup
+            label="Library"
+            count={libraryRows.length}
+            open={!closedGroups.has('library')}
+            onToggle={setGroupOpenState}
+          >
+            <ul className="mt-0.5">
+              {libraryRows.map((artifact) => (
+                <li key={artifact.id}>
+                  <TreeRow
+                    artifact={artifact}
+                    selected={artifact.id === selectedArtifactId}
+                    onSelect={() => {
+                      onSelectArtifact(artifact.id);
+                    }}
+                    onRename={() => {
+                      setRenameTarget(artifact);
+                      setRenameValue(artifact.name);
+                    }}
+                    onAdopt={() => {
+                      setAdoptTarget(artifact);
+                    }}
+                    onDelete={() => {
+                      setDeleteTarget(artifact);
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </TreeGroup>
+        )}
+        {moduleGroups.map((group) => (
+          <TreeGroup
+            key={group.id}
+            label={group.title}
+            count={group.rows.length}
+            open={!closedGroups.has(group.id)}
+            onToggle={setGroupOpenState}
+          >
+            <ul className="mt-0.5">
+              {group.rows.map((artifact) => (
+                <li key={artifact.id}>
+                  <TreeRow
+                    artifact={artifact}
+                    selected={artifact.id === selectedArtifactId}
+                    onSelect={() => {
+                      onSelectArtifact(artifact.id);
+                    }}
+                    onRename={() => {
+                      setRenameTarget(artifact);
+                      setRenameValue(artifact.name);
+                    }}
+                    onDuplicate={() => void handleDuplicate(artifact)}
+                    onDelete={() => {
+                      setDeleteTarget(artifact);
+                    }}
+                    onExport={() => {
+                      void exportSingleArtifact(artifact);
+                    }}
+                    onExportPdfGm={() => {
+                      void exportArtifactPdfFile(artifact, 'gm');
+                    }}
+                    onExportPdfPlayer={() => {
+                      void exportArtifactPdfFile(artifact, 'player');
+                    }}
+                    onPublish={
+                      globalArtifactKindSchema.safeParse(artifact.kind).success
+                        ? () => {
+                            setPublishTarget(artifact);
+                          }
+                        : undefined
+                    }
+                  />
+                </li>
+              ))}
+            </ul>
+          </TreeGroup>
+        ))}
         {ARTIFACT_KINDS.map((kind) => {
-          const items = filtered.filter((artifact) => artifact.kind === kind);
+          const items = plainRows.filter((artifact) => artifact.kind === kind);
           const open = !closedKinds.has(kind);
           return (
             <Collapsible
@@ -252,6 +456,13 @@ export function CampaignTree({
                           onExportPdfPlayer={() => {
                             void exportArtifactPdfFile(artifact, 'player');
                           }}
+                          onPublish={
+                            globalArtifactKindSchema.safeParse(artifact.kind).success
+                              ? () => {
+                                  setPublishTarget(artifact);
+                                }
+                              : undefined
+                          }
                         />
                       </li>
                     ))}
@@ -262,6 +473,40 @@ export function CampaignTree({
           );
         })}
       </div>
+
+      <AdoptDialog
+        artifact={adoptTarget ?? undefined}
+        open={adoptTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setAdoptTarget(null);
+        }}
+      />
+
+      <AlertDialog
+        open={publishTarget !== null}
+        onOpenChange={(open) => {
+          if (!open) setPublishTarget(null);
+        }}
+      >
+        {publishTarget !== null && (
+          <AlertDialogContent data-testid="publish-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Publish “{publishTarget.name}” to the library?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Shared content — visible and editable from every campaign. It stays one artifact
+                that is always referenced, never copied, and its images move to the library with
+                it.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction data-testid="publish-confirm" onClick={runPublish}>
+                Publish
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        )}
+      </AlertDialog>
 
       <Dialog
         open={renameTarget !== null}
@@ -344,19 +589,23 @@ export function CampaignTree({
 }
 
 interface TreeRowProps {
-  artifact: Artifact;
+  artifact: AnyArtifact;
   selected: boolean;
   onSelect: () => void;
   onRename: () => void;
-  onDuplicate: () => void;
+  onDuplicate?: (() => void) | undefined;
   onDelete: () => void;
-  onExport: () => void;
-  onExportPdfGm: () => void;
-  onExportPdfPlayer: () => void;
+  onExport?: (() => void) | undefined;
+  onExportPdfGm?: (() => void) | undefined;
+  onExportPdfPlayer?: (() => void) | undefined;
+  /** Owned library-kind rows only (D6): publish into the shared library. */
+  onPublish?: (() => void) | undefined;
+  /** Global rows only: adopt into a campaign (C). */
+  onAdopt?: (() => void) | undefined;
 }
 
 /** 16px cover-image thumbnail, shown only when the artifact has one (M3-A). */
-function CoverThumb({ artifact }: { artifact: Artifact }): JSX.Element | null {
+function CoverThumb({ artifact }: { artifact: AnyArtifact }): JSX.Element | null {
   if (artifact.coverImageId === null) return null;
   return (
     <ImageThumb
@@ -378,6 +627,8 @@ function TreeRow({
   onExport,
   onExportPdfGm,
   onExportPdfPlayer,
+  onPublish,
+  onAdopt,
 }: TreeRowProps) {
   return (
     <ContextMenu>
@@ -414,17 +665,34 @@ function TreeRow({
       </Tooltip>
       <ContextMenuContent>
         <ContextMenuItem onClick={onRename}>Rename</ContextMenuItem>
-        <ContextMenuItem
-          onClick={() => {
-            onDuplicate();
-          }}
-        >
-          Duplicate
-        </ContextMenuItem>
+        {onDuplicate !== undefined && (
+          <ContextMenuItem
+            onClick={() => {
+              onDuplicate();
+            }}
+          >
+            Duplicate
+          </ContextMenuItem>
+        )}
+        {onPublish !== undefined && (
+          <ContextMenuItem data-testid="tree-publish" onClick={onPublish}>
+            Publish to library…
+          </ContextMenuItem>
+        )}
+        {onAdopt !== undefined && (
+          <ContextMenuItem data-testid="tree-adopt" onClick={onAdopt}>
+            Adopt into campaign…
+          </ContextMenuItem>
+        )}
+        {onExport !== undefined && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={onExport}>Export as JSON</ContextMenuItem>
+            <ContextMenuItem onClick={onExportPdfGm}>Export PDF (GM notes)</ContextMenuItem>
+            <ContextMenuItem onClick={onExportPdfPlayer}>Export PDF (player handout)</ContextMenuItem>
+          </>
+        )}
         <ContextMenuSeparator />
-        <ContextMenuItem onClick={onExport}>Export as JSON</ContextMenuItem>
-        <ContextMenuItem onClick={onExportPdfGm}>Export PDF (GM notes)</ContextMenuItem>
-        <ContextMenuItem onClick={onExportPdfPlayer}>Export PDF (player handout)</ContextMenuItem>
         <ContextMenuItem className="text-destructive" onClick={onDelete}>
           Delete
         </ContextMenuItem>

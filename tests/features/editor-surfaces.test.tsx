@@ -74,7 +74,7 @@ describe('editor surfaces', () => {
   it('markdown body toggles between editing and rendered preview', async () => {
     const user = userEvent.setup();
     const { npc, forge } = await seedNpc();
-    render(<ArtifactEditor artifact={npc} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={npc} campaignId={npc.campaignId} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
 
     const body = screen.getByPlaceholderText('Free-text content, written in Markdown…');
     await user.clear(body);
@@ -100,7 +100,7 @@ describe('editor surfaces', () => {
   it('tag editor adds, deduplicates case-insensitively, and removes tags', async () => {
     const user = userEvent.setup();
     const { npc, forge } = await seedNpc();
-    render(<ArtifactEditor artifact={npc} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={npc} campaignId={npc.campaignId} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
 
     const input = screen.getByPlaceholderText('Add tag…');
     await user.type(input, 'alchemist{Enter}');
@@ -127,7 +127,7 @@ describe('editor surfaces', () => {
   it('links section adds, renames, and removes links', async () => {
     const user = userEvent.setup();
     const { npc, forge } = await seedNpc();
-    render(<ArtifactEditor artifact={npc} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={npc} campaignId={npc.campaignId} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
 
     // The target select is a Base UI combobox: open, pick 'Forge'.
     await user.click(screen.getByRole('combobox', { name: 'New link target' }));
@@ -157,7 +157,7 @@ describe('editor surfaces', () => {
     const { npc, forge } = await seedNpc({
       links: [{ targetId: '00000000-0000-4000-8000-000000000000', relation: 'enemy-of' }],
     });
-    render(<ArtifactEditor artifact={npc} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={npc} campaignId={npc.campaignId} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
 
     expect(await screen.findByText('(deleted artifact)')).toBeInTheDocument();
     await flushAsyncUpdates();
@@ -166,7 +166,7 @@ describe('editor surfaces', () => {
   it('stat block card renders, the edit form changes values, and it can be removed', async () => {
     const user = userEvent.setup();
     const { npc, forge } = await seedNpc({ statBlock: testStatBlock() });
-    render(<ArtifactEditor artifact={npc} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={npc} campaignId={npc.campaignId} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
 
     // Card view: headline, defenses with note, ability modifiers, traits, extras.
     expect(screen.getByRole('heading', { name: 'Grix' })).toBeInTheDocument();
@@ -211,6 +211,7 @@ describe('editor surfaces', () => {
     render(
       <ArtifactEditor
         artifact={current}
+        campaignId={current.campaignId}
         campaignArtifacts={[current, forge]}
         campaignSystem="dnd5e"
       />,

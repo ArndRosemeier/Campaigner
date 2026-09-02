@@ -10,13 +10,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { Artifact, ArtifactLink, Id } from '@/domain';
+import type { AnyArtifact, ArtifactLink, Id } from '@/domain';
 
 export interface LinksSectionProps {
   links: readonly ArtifactLink[];
   onChange: (links: ArtifactLink[]) => void;
   /** All artifacts of the campaign (candidates + name lookup); self excluded from candidates. */
-  campaignArtifacts: readonly Artifact[];
+  campaignArtifacts: readonly AnyArtifact[];
   selfId: Id;
 }
 

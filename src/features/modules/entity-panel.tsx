@@ -453,10 +453,7 @@ export function EntityPanel({
         try {
           const artifact = await artifactRepo.getArtifact(artifactId);
           if (artifact !== undefined && (artifact.moduleId !== module.id || !artifact.tags.includes(moduleTag))) {
-            await artifactRepo.updateArtifact(artifactId, {
-              moduleId: module.id,
-              tags: artifact.tags.includes(moduleTag) ? artifact.tags : [...artifact.tags, moduleTag],
-            });
+            await artifactRepo.stampModuleOwnership(artifactId, module.id, moduleTag);
           }
         } catch (error) {
           toastError('Could not scope a produced artifact', error);

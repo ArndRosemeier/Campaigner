@@ -16,7 +16,9 @@ import { BaseEntitySchema } from '@/domain/entity';
  */
 export const storedImageSchema = z.object({
   ...BaseEntitySchema.shape,
-  campaignId: z.uuid(),
+  /** `null` for library images (10-MILESTONE-6 D2): a published artifact's
+   * images travel with it and leave the old campaign's prune scope. */
+  campaignId: z.uuid().nullable(),
   /** Binary payload, re-encoded at intake, ≤1600px long edge (maps: ≤4096). */
   bytes: z.custom<Uint8Array<ArrayBuffer>>((value) => value instanceof Uint8Array),
   /** The *actually encoded* format — `image/webp` is the intake target, but

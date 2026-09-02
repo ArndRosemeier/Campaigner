@@ -310,6 +310,7 @@ describe('Run battle button', () => {
     render(
       <ArtifactEditor
         artifact={encounter}
+        campaignId={campaign.id}
         campaignArtifacts={[encounter]}
         campaignSystem={campaign.system}
       />,

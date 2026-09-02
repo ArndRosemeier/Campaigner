@@ -30,8 +30,11 @@ async function sleep(ms: number): Promise<void> {
 beforeEach(clearDatabase);
 afterEach(cleanup);
 
+let campaignId = '';
+
 async function seedNpc(): Promise<string> {
   const campaign = await createCampaign({ name: 'Test', description: '', system: 'dnd5e' });
+  campaignId = campaign.id;
   const artifact = await createArtifact({
     campaignId: campaign.id,
     kind: 'npc',
@@ -51,7 +54,7 @@ describe('ArtifactEditor autosave', () => {
     const id = await seedNpc();
     const row = await loadArtifact(id);
 
-    render(<ArtifactEditor artifact={row} campaignArtifacts={[]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={row} campaignId={campaignId} campaignArtifacts={[]} campaignSystem="dnd5e" />);
     await sleep(1100);
 
     const after = await loadArtifact(id);
@@ -63,7 +66,7 @@ describe('ArtifactEditor autosave', () => {
     const id = await seedNpc();
     const row = await loadArtifact(id);
 
-    render(<ArtifactEditor artifact={row} campaignArtifacts={[]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={row} campaignId={campaignId} campaignArtifacts={[]} campaignSystem="dnd5e" />);
 
     const body = screen.getByPlaceholderText('Free-text content, written in Markdown…');
     fireEvent.change(body, { target: { value: 'Hello world' } });
@@ -89,7 +92,7 @@ describe('ArtifactEditor autosave', () => {
     const id = await seedNpc();
     const row = await loadArtifact(id);
 
-    render(<ArtifactEditor artifact={row} campaignArtifacts={[]} campaignSystem="dnd5e" />);
+    render(<ArtifactEditor artifact={row} campaignId={campaignId} campaignArtifacts={[]} campaignSystem="dnd5e" />);
 
     const nameInput = screen.getByLabelText('Artifact name');
     fireEvent.change(nameInput, { target: { value: '' } });

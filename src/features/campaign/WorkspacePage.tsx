@@ -3,14 +3,14 @@ import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useDefaultLayout } from 'react-resizable-panels';
 
 import { ROUTES, artifactPath } from '@/app/routes';
-import type { Artifact } from '@/domain';
+import type { AnyArtifact } from '@/domain';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { CampaignTree } from '@/features/campaign/components/campaign-tree';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { WelcomePanel } from '@/features/campaign/components/welcome-panel';
-import { useArtifacts, useCampaign } from '@/features/campaign/hooks';
+import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { readSettings } from '@/db/settingsRepo';
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -29,6 +29,7 @@ export function WorkspacePage(): JSX.Element {
   const { campaignId, artifactId } = useParams<{ campaignId: string; artifactId: string }>();
   const campaign = useCampaign(campaignId);
   const artifacts = useArtifacts(campaignId);
+  const globals = useGlobalArtifacts();
   const navigate = useNavigate();
   const layout = useDefaultLayout({
     id: 'campaigner.workspace',
@@ -48,8 +49,13 @@ export function WorkspacePage(): JSX.Element {
     return <p className="p-4 text-sm text-muted-foreground">Loading…</p>;
   }
 
-  const selected: Artifact | undefined =
-    artifactId === undefined ? undefined : artifacts.find((artifact) => artifact.id === artifactId);
+  // The selection may be an owned row OR a library row (both open in the
+  // workspace editor, M6-C).
+  const selected: AnyArtifact | undefined =
+    artifactId === undefined
+      ? undefined
+      : (artifacts.find((artifact) => artifact.id === artifactId) ??
+        (globals ?? []).find((artifact) => artifact.id === artifactId));
 
   return (
     <ResizablePanelGroup
@@ -62,6 +68,7 @@ export function WorkspacePage(): JSX.Element {
         <CampaignTree
           campaignId={campaignId}
           artifacts={artifacts}
+          globals={globals ?? []}
           selectedArtifactId={selected?.id}
           onSelectArtifact={(id) => {
             navigate(artifactPath(campaignId, id));
@@ -74,7 +81,8 @@ export function WorkspacePage(): JSX.Element {
           <ArtifactEditor
             key={selected.id}
             artifact={selected}
-            campaignArtifacts={artifacts}
+            campaignId={campaignId}
+            campaignArtifacts={[...artifacts, ...(globals ?? [])]}
             campaignSystem={campaign.system}
           />
         ) : (

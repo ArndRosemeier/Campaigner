@@ -1,11 +1,12 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router-dom';
-import { useLiveQuery } from 'dexie-react-hooks';
-
 import { ROUTES, artifactPath, campaignIdFromPath, modulePath } from '@/app/routes';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
-import { useModules } from '@/features/modules/hooks';
+import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
+import { listModulesByCampaign } from '@/db/moduleRepo';
+import { readSettings } from '@/db/settingsRepo';
+import type { AnyArtifact, Module } from '@/domain';
+import { toastError } from '@/lib/toast';
 import { usePlayStore } from '@/features/play/playStore';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { useQuickFindStore } from '@/features/quickfind/quickfindStore';
@@ -18,18 +19,10 @@ import { useQuickFindStore } from '@/features/quickfind/quickfindStore';
  */
 export function QuickFindHotkey(): JSX.Element | null {
   const { pathname } = useLocation();
-  const navigate = useNavigate();
   const open = useQuickFindStore((state) => state.open);
   const openQuickFind = useQuickFindStore((state) => state.openQuickFind);
   const close = useQuickFindStore((state) => state.close);
-  const setFocus = usePlayStore((state) => state.setFocus);
   const campaignId = campaignIdFromPath(pathname);
-  const playMode = matchPlay(pathname);
-  const artifacts = useLiveQuery(
-    () => (campaignId === undefined ? Promise.resolve([]) : listArtifactsByCampaign(campaignId)),
-    [campaignId],
-  );
-  const modules = useModules(campaignId);
 
   useEffect(() => {
     function onKeyDown(event: Event): void {
@@ -51,28 +44,82 @@ export function QuickFindHotkey(): JSX.Element | null {
 
   if (campaignId === undefined) return null;
 
+  if (!open) return null;
+  return <QuickFindResults campaignId={campaignId} playMode={matchPlay(pathname)} close={close} />;
+}
+
+/**
+ * Mount search queries only after Ctrl+K opens the dialog, and render the
+ * dialog only after their initial Dexie emissions settle. This prevents a
+ * result node from being replaced between a pointer-down and click.
+ */
+function QuickFindResults(props: {
+  campaignId: string;
+  playMode: boolean;
+  close: () => void;
+}): JSX.Element | null {
+  const navigate = useNavigate();
+  const setFocus = usePlayStore((state) => state.setFocus);
+  const [snapshot, setSnapshot] = useState<{
+    artifacts: AnyArtifact[];
+    modules: Module[];
+  }>();
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadQuickFindSnapshot(props.campaignId)
+      .then((loaded) => {
+        if (!cancelled) setSnapshot(loaded);
+      })
+      .catch((error: unknown) => {
+        if (!cancelled) toastError('Could not load quick find', error);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [props.campaignId]);
+
+  if (snapshot === undefined) return null;
+
   return (
     <QuickFindDialog
-      open={open}
+      open
       onOpenChange={(next) => {
-        if (!next) close();
+        if (!next) props.close();
       }}
-      artifacts={artifacts ?? []}
-      modules={modules ?? []}
-      mode={playMode ? 'play' : 'workspace'}
+      artifacts={snapshot.artifacts}
+      modules={snapshot.modules}
+      mode={props.playMode ? 'play' : 'workspace'}
       onPickArtifact={(artifact) => {
-        setFocus(campaignId, artifact.id);
+        setFocus(props.campaignId, artifact.id);
       }}
       onWorkspaceArtifact={(artifact) => {
-        close();
-        navigate(artifactPath(campaignId, artifact.id));
+        props.close();
+        navigate(artifactPath(props.campaignId, artifact.id));
       }}
       onPickModule={(moduleId, partIndex) => {
-        close();
-        navigate(modulePath(campaignId, moduleId, partIndex));
+        props.close();
+        navigate(modulePath(props.campaignId, moduleId, partIndex));
       }}
     />
   );
+}
+
+async function loadQuickFindSnapshot(campaignId: string): Promise<{
+  artifacts: AnyArtifact[];
+  modules: Module[];
+}> {
+  const [owned, settings, modules] = await Promise.all([
+    listArtifactsByCampaign(campaignId),
+    readSettings(),
+    listModulesByCampaign(campaignId),
+  ]);
+  const scopes = settings.artifactScopes.workspace;
+  const artifacts: AnyArtifact[] = owned.filter((artifact) =>
+    artifact.moduleId !== null ? scopes.module : scopes.campaign,
+  );
+  if (scopes.global) artifacts.push(...(await listGlobalArtifacts()));
+  return { artifacts, modules };
 }
 
 function matchPlay(pathname: string): boolean {

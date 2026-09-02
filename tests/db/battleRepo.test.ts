@@ -2,7 +2,13 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { createArtifact, deleteArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import {
+  createArtifact,
+  deleteArtifact,
+  listArtifactsByCampaign,
+  listGlobalArtifacts,
+  publishToLibrary,
+} from '@/db/artifactRepo';
 import {
   deleteBattleIfEmpty,
   ensureBattle,
@@ -292,5 +298,38 @@ describe('deleteBattleIfEmpty', () => {
     await patchBattle(battle.id, { encounterArtifactId: newId() });
     await deleteBattleIfEmpty(battle.id);
     expect(await getBattleBySession(battle.sessionId)).toBeDefined();
+  });
+
+  it('resolves a global library monster and keeps its HP token-owned (10-MILESTONE-6 C)', async () => {
+    const monster = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Grix',
+      data: {
+        role: '',
+        appearance: '',
+        personality: '',
+        motivation: '',
+        secrets: '',
+        voiceNotes: '',
+        statBlock: statBlock({ hp: 21 }),
+        initiativeOverride: 2,
+      },
+    });
+    await publishToLibrary(monster.id);
+
+    // Published = global: it left the campaign query but stays resolvable
+    // through the merged pool the battle repo uses.
+    expect((await campaignArtifacts()).find((row) => row.id === monster.id)).toBeUndefined();
+    const globals = await listGlobalArtifacts();
+    expect(globals.map((row) => row.id)).toContain(monster.id);
+    const battle = await ensureBattle(campaignId, newId());
+    const stats = buildFighterStatsLookup(battle, [
+      ...(await campaignArtifacts()),
+      ...(await listGlobalArtifacts()),
+    ]);
+    const resolved = stats(monster.id);
+    expect(resolved?.maxHp).toBe(21);
+    expect(resolved?.initiativeBonus).toBe(2);
   });
 });

@@ -1,4 +1,4 @@
-import type { Artifact, Battle, FighterStats, FighterStatsLookup } from '@/domain';
+import type { AnyArtifact, Battle, FighterStats, FighterStatsLookup } from '@/domain';
 import { abilityModifier } from '@/domain/statblock';
 
 /**
@@ -34,7 +34,7 @@ function baseStats(
  * ownership split — PCs keep their HP between battles). Undefined when the
  * statblock is missing (loud warning upstream).
  */
-export function fighterStatsFromPc(artifact: Artifact): FighterStats | undefined {
+export function fighterStatsFromPc(artifact: AnyArtifact): FighterStats | undefined {
   if (artifact.kind !== 'pc' || artifact.data.statBlock === null) {
     return undefined;
   }
@@ -56,7 +56,7 @@ export function fighterStatsFromPc(artifact: Artifact): FighterStats | undefined
  * ALWAYS null here — the token instance owns it; the artifact must never
  * store current HP.
  */
-export function fighterStatsFromNpc(artifact: Artifact): FighterStats | undefined {
+export function fighterStatsFromNpc(artifact: AnyArtifact): FighterStats | undefined {
   if (artifact.kind !== 'npc' || artifact.data.statBlock === null) {
     return undefined;
   }
@@ -72,7 +72,7 @@ export function fighterStatsFromNpc(artifact: Artifact): FighterStats | undefine
 }
 
 /** Resolves any artifact; non-fighter kinds are absent. */
-export function fighterStatsFromArtifact(artifact: Artifact): FighterStats | undefined {
+export function fighterStatsFromArtifact(artifact: AnyArtifact): FighterStats | undefined {
   if (artifact.kind === 'pc') return fighterStatsFromPc(artifact);
   if (artifact.kind === 'npc') return fighterStatsFromNpc(artifact);
   return undefined;
@@ -85,7 +85,7 @@ export function fighterStatsFromArtifact(artifact: Artifact): FighterStats | und
  */
 export function buildFighterStatsLookup(
   battle: Pick<Battle, 'seedFighters'>,
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
 ): FighterStatsLookup {
   const byArtifactId = new Map<string, FighterStats>();
   for (const artifact of artifacts) {
@@ -107,7 +107,7 @@ export function buildFighterStatsLookup(
 
 /** Every statful pc artifact of the campaign (for ensurePcTokens). */
 export function pcFightersOf(
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
 ): { artifactId: string; stats: { kind: 'pc' | 'npc'; name: string; maxHp: number } }[] {
   const out: { artifactId: string; stats: { kind: 'pc' | 'npc'; name: string; maxHp: number } }[] = [];
   for (const artifact of artifacts) {

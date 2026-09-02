@@ -129,10 +129,7 @@ export async function generateSingleEntity(
     await alignEntityName(artifactId, name);
     const artifact = await artifactRepo.getArtifact(artifactId);
     if (artifact !== undefined && (artifact.moduleId !== moduleId || !artifact.tags.includes(moduleTag))) {
-      await artifactRepo.updateArtifact(artifactId, {
-        moduleId,
-        tags: artifact.tags.includes(moduleTag) ? artifact.tags : [...artifact.tags, moduleTag],
-      });
+      await artifactRepo.stampModuleOwnership(artifactId, moduleId, moduleTag);
     }
     progressUpdate(jobId, { progress: 1 });
     return { ok: true, artifactId };

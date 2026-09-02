@@ -1,6 +1,6 @@
 import type { Content, Style, TDocumentDefinitions } from 'pdfmake/interfaces';
 
-import type { Artifact, Deliverable, OutlineNode, StatBlock } from '@/domain';
+import type { AnyArtifact, Deliverable, OutlineNode, StatBlock } from '@/domain';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { getImage } from '@/db/imageRepo';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
@@ -110,7 +110,7 @@ export type ModulePdfImages = Record<string, string | undefined>;
 
 interface RenderContext {
   deliverable: Deliverable;
-  artifacts: readonly Artifact[];
+  artifacts: readonly AnyArtifact[];
   images: ModulePdfImages;
   /** Artifact ids reachable in the outline (for internal links). */
   outlineArtifactIds: Set<string>;
@@ -119,7 +119,7 @@ interface RenderContext {
 /** GM-only tag: artifacts tagged so are skipped for audience 'player'. */
 const GM_ONLY_TAG = 'gm-only';
 
-function isGmOnly(artifact: Artifact): boolean {
+function isGmOnly(artifact: AnyArtifact): boolean {
   return artifact.tags.includes(GM_ONLY_TAG);
 }
 
@@ -141,7 +141,7 @@ interface WalkState {
 
 /** Per-kind labeled data sections (the book's description → creatures → …). */
 function dataSections(
-  artifact: Artifact,
+  artifact: AnyArtifact,
   audience: 'gm' | 'player',
   statBlocks: boolean,
 ): Content[] {
@@ -251,7 +251,7 @@ function monsterHeaderKicker(difficulty: string, levelHint: string): Content | n
   };
 }
 
-function artifactBody(artifact: Artifact, ctx: RenderContext, include: { body: boolean; data: boolean; statBlocks: boolean; images: boolean }): Content[] {
+function artifactBody(artifact: AnyArtifact, ctx: RenderContext, include: { body: boolean; data: boolean; statBlocks: boolean; images: boolean }): Content[] {
   const out: Content[] = [];
   if (include.images && artifact.coverImageId !== null) {
     const dataUrl = ctx.images[artifact.coverImageId];
@@ -397,7 +397,7 @@ function walk(nodes: readonly OutlineNode[], ctx: RenderContext, state: WalkStat
 
 export function buildModuleDefinition(
   deliverable: Deliverable,
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
   images: ModulePdfImages = {},
 ): TDocumentDefinitions {
   const outlineArtifactIds = new Set<string>();
@@ -465,7 +465,7 @@ export function buildModuleDefinition(
 /** Loads all images referenced by the deliverable (cover + artifact covers). */
 async function loadModuleImages(
   deliverable: Deliverable,
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
 ): Promise<ModulePdfImages> {
   const ids = new Set<string>();
   if (deliverable.coverImageId !== null) ids.add(deliverable.coverImageId);
@@ -502,7 +502,7 @@ async function loadModuleImages(
 /** Builds the module PDF blob; pdfmake is loaded lazily by pdfExport's helper. */
 export async function buildModulePdf(
   deliverable: Deliverable,
-  artifacts: readonly Artifact[],
+  artifacts: readonly AnyArtifact[],
   generate: (definition: TDocumentDefinitions) => Promise<Blob>,
 ): Promise<Blob> {
   const images = await loadModuleImages(deliverable, artifacts);
@@ -512,7 +512,7 @@ export async function buildModulePdf(
 
 /** Resolved monsters for an encounter artifact (used by the builder UI preview). */
 export async function resolveEncounterMonsters(
-  artifact: Artifact,
+  artifact: AnyArtifact,
 ): Promise<{ name: string; count: number; origin: string }[]> {
   if (artifact.kind !== 'encounter') return [];
   const resolved = await resolveMonsterEntries(artifact.data.monsters);

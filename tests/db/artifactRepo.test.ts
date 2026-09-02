@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { artifactScope, newId, type Artifact } from '@/domain';
+import { artifactScope, newId, type AnyArtifact } from '@/domain';
 import {
   adoptIntoCampaign,
   countArtifactsByCampaign,
@@ -16,6 +16,8 @@ import {
   listGlobalArtifacts,
   listRevisions,
   moveToModule,
+  publishToLibrary,
+  campaignsReferencingArtifact,
   restoreRevision,
   saveArtifact,
   updateArtifact,
@@ -81,7 +83,7 @@ describe('artifactRepo revisions', () => {
   });
 
   it('keeps at most 50 revisions per artifact (oldest deleted)', async () => {
-    let artifact: Artifact = await createArtifact({
+    let artifact: AnyArtifact = await createArtifact({
       campaignId: newId(),
       kind: 'note',
       name: 'Journal',
@@ -105,7 +107,7 @@ describe('artifactRepo revisions', () => {
   });
 
   it('restores an old snapshot as a NEW revision', async () => {
-    let artifact: Artifact = await createArtifact({
+    let artifact: AnyArtifact = await createArtifact({
       campaignId: newId(),
       kind: 'faction',
       name: 'Guild',
@@ -389,6 +391,62 @@ describe('ownership queries (M6-A)', () => {
     await putGlobalNpc(globalId);
     await expect(moveToModule(globalId, targetModule.id)).rejects.toThrow(
       /adopt it into a campaign/,
+    );
+  });
+
+  it('publishes only library kinds and carries image ownership across publish/adopt', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Grix' });
+    const imageId = newId();
+    await db.images.put({
+      id: imageId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: 'image/png',
+      width: 1,
+      height: 1,
+      prompt: '',
+      model: '',
+      source: 'uploaded',
+      role: 'artwork',
+    });
+    await updateArtifact(npc.id, { imageIds: [imageId], coverImageId: imageId });
+
+    const published = await publishToLibrary(npc.id);
+    expect(published.id).toBe(npc.id);
+    expect(published.campaignId).toBeNull();
+    expect(published.moduleId).toBeNull();
+    expect((await db.images.get(imageId))?.campaignId).toBeNull();
+    expect(await getArtifact(npc.id)).toBeUndefined();
+
+    const adopted = await adoptIntoCampaign(npc.id, campaignId);
+    expect(adopted.campaignId).toBe(campaignId);
+    expect((await db.images.get(imageId))?.campaignId).toBe(campaignId);
+
+    const note = await createArtifact({ campaignId, kind: 'note', name: 'Private note' });
+    await expect(publishToLibrary(note.id)).rejects.toThrow(/only npcs, locations, factions and encounters/);
+  });
+
+  it('lists referencing campaigns before adopting a library row away', async () => {
+    const globalId = '00000000-0000-4000-8000-00000000b003';
+    await putGlobalNpc(globalId);
+    const otherCampaign = await createCampaign({ name: 'Other', system: 'dnd5e' });
+    await createArtifact({
+      campaignId,
+      kind: 'note',
+      name: 'Reference one',
+      links: [{ targetId: globalId, relation: '' }],
+    });
+    await createArtifact({
+      campaignId: otherCampaign.id,
+      kind: 'note',
+      name: 'Reference two',
+      links: [{ targetId: globalId, relation: '' }],
+    });
+
+    expect(new Set(await campaignsReferencingArtifact(globalId))).toEqual(
+      new Set([campaignId, otherCampaign.id]),
     );
   });
 

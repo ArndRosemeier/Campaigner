@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { artifactSchema } from '@/domain/artifact';
+import { anyArtifactSchema } from '@/domain/artifact';
 import { BaseEntitySchema } from '@/domain/entity';
 
 export const revisionSourceSchema = z.enum(['user', 'persona']);
@@ -13,8 +13,8 @@ export const artifactRevisionSchema = z.object({
   artifactId: z.uuid(),
   /** 1-based; matches the artifact's `currentRevision` when written. */
   revision: z.number().int().positive(),
-  /** Deep copy of the artifact at save time. */
-  snapshot: artifactSchema,
+  /** Deep copy of the artifact at save time (any scope, M6-C). */
+  snapshot: anyArtifactSchema,
   /** Who produced this revision. */
   source: revisionSourceSchema,
   /** PersonaRun that produced it, if source === 'persona'. */

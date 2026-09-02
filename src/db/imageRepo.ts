@@ -14,7 +14,9 @@ import { db } from '@/db/db';
  */
 
 export interface NewStoredImage {
-  campaignId: Id;
+  /** `null` = library image (10-MILESTONE-6 D2 — travels with the global
+   * artifact it belongs to). */
+  campaignId: Id | null;
   /** Display payload; stored as clone-safe bytes. */
   blob: Blob;
   mimeType: string;
@@ -68,16 +70,48 @@ export async function deleteImage(id: Id): Promise<void> {
 }
 
 /**
- * Deletes one image only when nothing in its campaign references it anymore
- * (artifacts and revision snapshots). Returns whether it was deleted.
+ * Deletes one image only when nothing references it anymore (artifacts and
+ * revision snapshots of the image's campaign; a library image (campaignId
+ * null, D2) is checked against ALL campaigns, since any of them may link
+ * the artifact carrying it). Returns whether it was deleted.
  */
 export async function deleteImageIfUnreferenced(imageId: Id): Promise<boolean> {
   const image = await db.images.get(imageId);
   if (image === undefined) return false;
-  const referenced = await referencedImageIds(image.campaignId);
+  const referenced =
+    image.campaignId === null
+      ? await referencedImageIdsGlobal()
+      : await referencedImageIds(image.campaignId);
   if (referenced.has(imageId)) return false;
   await db.images.delete(imageId);
   return true;
+}
+
+/**
+ * Reference set across every campaign — for library images whose owning
+ * artifact was published (D2). Local data, full scan is fine.
+ */
+async function referencedImageIdsGlobal(): Promise<Set<Id>> {
+  const [artifacts, revisions] = await Promise.all([
+    db.artifacts.toArray(),
+    db.revisions.toArray(),
+  ]);
+  const referenced = new Set<Id>();
+  for (const artifact of artifacts) {
+    for (const id of artifact.imageIds) referenced.add(id);
+    if (artifact.coverImageId !== null) referenced.add(artifact.coverImageId);
+  }
+  for (const revision of revisions) {
+    const snapshot = revision.snapshot as {
+      imageIds?: Id[];
+      coverImageId?: Id | null;
+    } | null;
+    if (snapshot === null) continue;
+    for (const id of snapshot.imageIds ?? []) referenced.add(id);
+    const cover = snapshot.coverImageId;
+    if (cover !== undefined && cover !== null) referenced.add(cover);
+  }
+  return referenced;
 }
 
 /**

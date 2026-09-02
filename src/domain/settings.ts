@@ -52,6 +52,25 @@ export function generationLanguageLabel(code: string): string {
 export const DEFAULT_CHAT_MODEL = 'anthropic/claude-sonnet-4.5';
 export const DEFAULT_EMBEDDING_MODEL = 'openai/text-embedding-3-small';
 
+/** One surface's artifact-scope filter (10-MILESTONE-6 D3/D4): which
+ * ownership scopes a surface shows. A genuine UI preference — persisted in
+ * settings, never derived from data. */
+export const scopeTogglesSchema = z.object({
+  global: z.boolean(),
+  campaign: z.boolean(),
+  module: z.boolean(),
+});
+
+export type ScopeToggles = z.infer<typeof scopeTogglesSchema>;
+
+/** Workspace surfaces start Campaign + Module (the campaign's own content);
+ * the module view starts with everything visible — it IS the play view (D4). */
+export function defaultScopeToggles(surface: 'workspace' | 'moduleView'): ScopeToggles {
+  return surface === 'workspace'
+    ? { global: false, campaign: true, module: true }
+    : { global: true, campaign: true, module: true };
+}
+
 export const settingsSchema = z.object({
   id: z.literal(SETTINGS_ID),
   /** '' when unset. */
@@ -70,6 +89,16 @@ export const settingsSchema = z.object({
    * completion (see /src/llm/language.ts).
    */
   language: z.enum(GENERATION_LANGUAGE_CODES).default('en'),
+  /** Scope filter per surface (10-MILESTONE-6 D3/D4). */
+  artifactScopes: z
+    .object({
+      workspace: scopeTogglesSchema,
+      moduleView: scopeTogglesSchema,
+    })
+    .default({
+      workspace: defaultScopeToggles('workspace'),
+      moduleView: defaultScopeToggles('moduleView'),
+    }),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -85,5 +114,9 @@ export function defaultSettings(): Settings {
     imageModel: DEFAULT_IMAGE_MODEL,
     imagesEnabled: false,
     language: 'en',
+    artifactScopes: {
+      workspace: defaultScopeToggles('workspace'),
+      moduleView: defaultScopeToggles('moduleView'),
+    },
   };
 }
