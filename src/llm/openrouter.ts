@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import { getSettings } from '@/db/settingsRepo';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
@@ -477,4 +479,44 @@ export async function listImageModels(): Promise<string[]> {
     imageModelIds.push(model.id);
   }
   return imageModelIds.sort();
+}
+
+/** Minimal validated slice of GET /api/v1/models (boundary rule: zod). */
+const visionModelResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      id: z.string(),
+      architecture: z
+        .object({
+          input_modalities: z.array(z.string()),
+          output_modalities: z.array(z.string()),
+        })
+        .optional(),
+    }),
+  ),
+});
+
+/**
+ * Chat models that accept image input (docs/11 §verify): the /models endpoint
+ * is filtered server-side via input_modalities=image; the client-side check
+ * also requires text output, excluding pure image generators. Used by the
+ * "Encounter map verify model" browse list — a non-vision chat model fails
+ * the verify step with "No endpoints found that support image input".
+ */
+export async function listVisionChatModels(): Promise<string[]> {
+  const settings = await getSettings();
+  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
+  const response = await fetch(`${OPENROUTER_BASE}/models?input_modalities=image`, {
+    headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
+  });
+  if (!response.ok) throw new OpenRouterError(response.status, await response.text());
+  const json = visionModelResponseSchema.parse(await response.json());
+  return json.data
+    .filter(
+      (model) =>
+        (model.architecture?.input_modalities.includes('image') ?? false) &&
+        (model.architecture?.output_modalities.includes('text') ?? false),
+    )
+    .map((model) => model.id)
+    .sort();
 }

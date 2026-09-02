@@ -13,7 +13,7 @@ import { readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
 import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from '@/domain/settings';
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
 import { toastError, toastSuccess } from '@/lib/toast';
-import { listImageModels, listModels } from '@/llm/openrouter';
+import { listImageModels, listModels, listVisionChatModels } from '@/llm/openrouter';
 import { ModelInput } from '@/features/settings/model-input';
 
 type TestState =
@@ -199,6 +199,22 @@ export function SettingsSection(): JSX.Element {
             canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
             fetchOptions={listImageModels}
           />
+          <ModelInput
+            id="encounter-verify-model"
+            label="Encounter map verify model"
+            value={current.encounterVerifyModel}
+            onChange={(value) => {
+              void updateSettings({ encounterVerifyModel: value });
+            }}
+            placeholder={current.defaultChatModel}
+            canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+            fetchOptions={listVisionChatModels}
+          />
+          <p className="text-xs text-muted-foreground">
+            The encounter's verify step sends the generated battlemap to a <em>chat</em> model to
+            check it against the room layout — that model must accept image input. Empty = default
+            chat model. The browse list only offers vision-capable models.
+          </p>
         </div>
       </CardContent>
     </Card>

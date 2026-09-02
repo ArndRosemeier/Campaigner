@@ -220,7 +220,10 @@ room like everyone else. `layout === null` encounters seed exactly as today.
 - `openrouter.ts`: `ChatMessage.content` widens to `string | content parts`
   (`{ type: 'text' | 'image_url', … }`) for the `verify` call; response
   parsing unchanged (text-only output expected from the verify model).
-- Verify model: `settings.defaultChatModel` (any vision-capable chat model);
+- Verify model: `settings.encounterVerifyModel` (dedicated setting; its
+  browse list only offers models with `input_modalities=image` and text
+  output), falling back to `settings.defaultChatModel` when empty. A
+  non-vision model fails the step loudly with a pointer to the setting;
   if the model returns invalid JSON the existing one-shot repair retry
   applies, then the step fails loudly.
 

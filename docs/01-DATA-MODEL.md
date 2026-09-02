@@ -366,6 +366,7 @@ interface Settings {
     moduleView: { global: boolean; campaign: boolean; module: boolean };
   };
   encounterMapAspect: '4:3' | '16:9' | '1:1';
+  encounterVerifyModel: string; // '' = use defaultChatModel; verify needs vision (M6)
   retiredSessionNotesRemoved: number; // v11 startup notice, consumed to 0
 }
 ```

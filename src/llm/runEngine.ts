@@ -28,7 +28,7 @@ import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import type { z } from 'zod';
-import { chat, MissingApiKeyError, type ChatMessage } from '@/llm/openrouter';
+import { chat, MissingApiKeyError, OpenRouterError, type ChatMessage } from '@/llm/openrouter';
 import { generateImages } from '@/llm/imageGen';
 import { intakeImage } from '@/lib/imageIntake';
 import {
@@ -1500,6 +1500,12 @@ export class RunEngine {
     const stylize = steps.find((step) => step.name === 'stylize')?.output as { imageIds?: Id[] } | undefined;
     const imageIds = stylize?.imageIds ?? [];
     if (imageIds.length === 0) throw new Error('Encounter stylize step produced no map candidates');
+    // Verify sends the stylized map to a *chat* model (vision call) — not the
+    // image model. The dedicated setting keeps writing and vision models
+    // independent; '' falls back to the default chat model.
+    const verifyModel = settings.encounterVerifyModel !== ''
+      ? settings.encounterVerifyModel
+      : settings.defaultChatModel;
     const verifications = [];
     for (const imageId of imageIds) {
       const image = await getImage(imageId);
@@ -1507,15 +1513,25 @@ export class RunEngine {
       const stylizedDataUrl = await encounterRunAdapters.blobToDataUrl(
         new Blob([image.bytes], { type: image.mimeType }),
       );
-      verifications.push(
-        await encounterRunAdapters.verifyEncounterMap({
-          layout,
-          schematicDataUrl: schematic.dataUrl,
-          stylizedDataUrl,
-          model: settings.defaultChatModel,
-          signal,
-        }),
-      );
+      try {
+        verifications.push(
+          await encounterRunAdapters.verifyEncounterMap({
+            layout,
+            schematicDataUrl: schematic.dataUrl,
+            stylizedDataUrl,
+            model: verifyModel,
+            signal,
+          }),
+        );
+      } catch (error) {
+        if (!(error instanceof OpenRouterError)) throw error;
+        throw new Error(
+          `Map verification model "${verifyModel}" cannot process images: ${error.message} ` +
+            'Pick a vision-capable chat model in Settings → "Encounter map verify model" ' +
+            '(its browse list only offers models that accept image input).',
+          { cause: error },
+        );
+      }
     }
     const needsReview = verifications.some((verification) => verification.needsReview);
     if (needsReview && input.autonomy === 'auto') {

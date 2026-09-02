@@ -102,6 +102,14 @@ export const settingsSchema = z.object({
     }),
   /** Encounter Cartographer layout aspect preference. */
   encounterMapAspect: encounterMapAspectSchema.default('4:3'),
+  /**
+   * Chat model for the encounter verify step (docs/11 §verify). It sends the
+   * generated map image to the model, so it must accept image input. ''
+   * falls back to `defaultChatModel` (a genuine preference default, not a
+   * failure mask — the run fails loudly when the resolved model is not
+   * vision-capable).
+   */
+  encounterVerifyModel: z.string().default(''),
   /** v11 migration notice, consumed once by AppShell after it is shown. */
   retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
 });
@@ -124,6 +132,7 @@ export function defaultSettings(): Settings {
       moduleView: defaultScopeToggles('moduleView'),
     },
     encounterMapAspect: '4:3',
+    encounterVerifyModel: '',
     retiredSessionNotesRemoved: 0,
   };
 }

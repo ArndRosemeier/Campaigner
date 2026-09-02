@@ -436,6 +436,32 @@ describe('Encounter Cartographer run', () => {
     ]);
   });
 
+  it('sends verify to the dedicated vision model, falling back to the chat model', async () => {
+    const { campaign, cartographer } = await setup();
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+      encounterVerifyModel: 'vision/verifier',
+    });
+    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await approveUntilPick(runId, runInput);
+    expect(vi.mocked(encounterRunAdapters.verifyEncounterMap).mock.calls[0]?.[0]?.model).toBe(
+      'vision/verifier',
+    );
+
+    // Empty setting → the default chat model remains the fallback.
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    const fallbackRunId = await runEngine.startRun(runInput);
+    await approveUntilPick(fallbackRunId, runInput);
+    expect(vi.mocked(encounterRunAdapters.verifyEncounterMap).mock.calls.at(-1)?.[0]?.model).toBe(
+      defaultSettings().defaultChatModel,
+    );
+  });
+
   it('stops a manual run for review when the map drifts', async () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
