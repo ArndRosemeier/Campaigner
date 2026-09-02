@@ -11,6 +11,7 @@ export * from '@/domain/deliverable';
 export * from '@/domain/embedding';
 export * from '@/domain/entity';
 export * from '@/domain/entityNormalization';
+export * from '@/domain/encounterMap';
 export * from '@/domain/gameSystem';
 export * from '@/domain/image';
 export * from '@/domain/module';
