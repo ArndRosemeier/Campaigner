@@ -53,9 +53,22 @@ export function useBattleState(
     if (battle === undefined) return covered;
     const board = battle.board;
     if (board.veils.length === 0 || boardWidthPx <= 0 || boardHeightPx <= 0) return covered;
-    const cellPx = veilCellPx(board.gridSize, board.tokenSize);
+    const cellWidthPx = board.mapLayout === null
+      ? veilCellPx(board.gridSize, board.tokenSize)
+      : boardWidthPx / board.mapLayout.cols;
+    const cellHeightPx = board.mapLayout === null
+      ? cellWidthPx
+      : boardHeightPx / board.mapLayout.rows;
     for (const token of board.tokens) {
-      if (portraitCoveredByVeils(token, board.veils, board.tokenSize, cellPx, boardWidthPx, boardHeightPx)) {
+      if (portraitCoveredByVeils(
+        token,
+        board.veils,
+        board.tokenSize,
+        cellWidthPx,
+        boardWidthPx,
+        boardHeightPx,
+        cellHeightPx,
+      )) {
         covered.add(token.id);
       }
     }

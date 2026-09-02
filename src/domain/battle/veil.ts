@@ -46,10 +46,11 @@ export function resizeVeilFromEdge(
   pointer: { x: number; y: number },
   boardWidth: number,
   boardHeight: number,
-  cellPx: number,
+  cellWidthPx: number,
+  cellHeightPx: number = cellWidthPx,
 ): BattleVeil {
-  const cellX = veilSpanNorm(1, cellPx, boardWidth);
-  const cellY = veilSpanNorm(1, cellPx, boardHeight);
+  const cellX = veilSpanNorm(1, cellWidthPx, boardWidth);
+  const cellY = veilSpanNorm(1, cellHeightPx, boardHeight);
   if (edge === 'e' || edge === 'w') {
     const next = resizeAxis(veil.x, veil.widthCells, pointer.x, cellX, edge === 'e' ? 1 : -1);
     return { ...veil, x: next.center, widthCells: next.cells };
@@ -62,16 +63,17 @@ export function portraitCoveredByVeil(
   token: BattleToken,
   veil: BattleVeil,
   unitSize: number,
-  cellPx: number,
+  cellWidthPx: number,
   boardWidth: number,
   boardHeight: number,
+  cellHeightPx: number = cellWidthPx,
 ): boolean {
   if (token.shape !== 'portrait') {
     return false;
   }
   return rectsOverlap(
     tokenRect(token, unitSize, boardWidth, boardHeight),
-    veilRect(veil, cellPx, boardWidth, boardHeight),
+    veilRect(veil, cellWidthPx, boardWidth, boardHeight, cellHeightPx),
   );
 }
 
@@ -79,12 +81,13 @@ export function portraitCoveredByVeils(
   token: BattleToken,
   veils: readonly BattleVeil[],
   unitSize: number,
-  cellPx: number,
+  cellWidthPx: number,
   boardWidth: number,
   boardHeight: number,
+  cellHeightPx: number = cellWidthPx,
 ): boolean {
   for (const veil of veils) {
-    if (portraitCoveredByVeil(token, veil, unitSize, cellPx, boardWidth, boardHeight)) {
+    if (portraitCoveredByVeil(token, veil, unitSize, cellWidthPx, boardWidth, boardHeight, cellHeightPx)) {
       return true;
     }
   }
@@ -115,12 +118,13 @@ function tokenRect(
 
 function veilRect(
   veil: BattleVeil,
-  cellPx: number,
+  cellWidthPx: number,
   boardWidth: number,
   boardHeight: number,
+  cellHeightPx: number = cellWidthPx,
 ): { left: number; right: number; top: number; bottom: number } {
-  const halfX = veilSpanNorm(veil.widthCells, cellPx, boardWidth) / 2;
-  const halfY = veilSpanNorm(veil.heightCells, cellPx, boardHeight) / 2;
+  const halfX = veilSpanNorm(veil.widthCells, cellWidthPx, boardWidth) / 2;
+  const halfY = veilSpanNorm(veil.heightCells, cellHeightPx, boardHeight) / 2;
   return {
     left: veil.x - halfX,
     right: veil.x + halfX,

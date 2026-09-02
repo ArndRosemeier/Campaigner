@@ -45,7 +45,12 @@ import {
   veilCellPx,
   veilSpanNorm,
 } from '@/domain/battle/veil';
-import { snapAxisToGrid, snapPointToGrid, tokenSpanCells } from '@/domain/battle/gridSnap';
+import {
+  snapAxisToGrid,
+  snapAxisToLayoutGrid,
+  snapPointToGrid,
+  tokenSpanCells,
+} from '@/domain/battle/gridSnap';
 import {
   beginBoardGesture,
   beginInitiativeDrag,
@@ -390,6 +395,15 @@ describe('grid snapping', () => {
     expect(snapAxisToGrid(0.31, 720, 72, 1)).toBeCloseTo(252 / 720, 10);
     expect(() => snapAxisToGrid(0.5, 720, 72, 0)).toThrow();
     expect(() => snapAxisToGrid(0.5, 720, 72.5, 1)).toThrow();
+  });
+
+  it('keeps layout-cell snapping identical across viewport sizes', () => {
+    const compact = snapAxisToLayoutGrid(0.31, 24, 1);
+    const desktop = snapAxisToLayoutGrid(0.31, 24, 1);
+    expect(compact).toBe(desktop);
+    expect(compact).toBeCloseTo(7.5 / 24, 10);
+    // A 4-cell room veil always spans 4/24 of the board, regardless of px.
+    expect((4 * (720 / 24)) / 720).toBeCloseTo((4 * (1200 / 24)) / 1200, 10);
   });
 
   it('snaps both axes', () => {

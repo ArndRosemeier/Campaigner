@@ -14,6 +14,7 @@ import type { StatBlock } from '@/domain';
 import { createModule, newId, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { BattleSurface } from '@/features/play/battle/BattleSurface';
+import { battleGridStyle } from '@/domain/battle/gridSnap';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 
@@ -178,6 +179,15 @@ async function currentBattle(moduleId: string) {
   if (battle === undefined) throw new Error('battle row missing');
   return battle;
 }
+
+describe('layout-anchored grid rendering', () => {
+  it('uses normalized layout tracks rather than fixed CSS pixels', () => {
+    expect(battleGridStyle({ cols: 24, rows: 18 }, 72)).toMatchObject({
+      backgroundSize: `${String(100 / 24)}% ${String(100 / 18)}%`,
+    });
+    expect(battleGridStyle(null, 72).backgroundImage).toContain('72px');
+  });
+});
 
 describe('player-safe DOM contract', () => {
   it('renders only board pieces: names, HP, initiative — never stat text or secrets', async () => {

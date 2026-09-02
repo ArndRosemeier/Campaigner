@@ -13,6 +13,47 @@ export function tokenSpanCells(scale: number): number {
   return Math.round(scale);
 }
 
+/** CSS grid tracks: generated layouts are normalized, uploaded maps retain px tracks. */
+export function battleGridStyle(
+  mapLayout: { cols: number; rows: number } | null,
+  gridSize: number | null,
+): { backgroundImage?: string; backgroundSize?: string } {
+  if (mapLayout !== null) {
+    return {
+      backgroundImage:
+        'linear-gradient(to right, rgba(255,255,255,0.14) 1px, transparent 1px), ' +
+        'linear-gradient(to bottom, rgba(255,255,255,0.14) 1px, transparent 1px)',
+      backgroundSize: `${String(100 / mapLayout.cols)}% ${String(100 / mapLayout.rows)}%`,
+    };
+  }
+  if (gridSize === null) return {};
+  return {
+    backgroundImage:
+      'repeating-linear-gradient(0deg, rgba(255,255,255,0.14) 0 1px, transparent 1px ' +
+      String(gridSize) +
+      'px), repeating-linear-gradient(90deg, rgba(255,255,255,0.14) 0 1px, transparent 1px ' +
+      String(gridSize) +
+      'px)',
+  };
+}
+
+/** Layout-backed snapping is viewport-independent: only normalized cell count matters. */
+export function snapAxisToLayoutGrid(
+  norm: number,
+  cellCount: number,
+  spanCells: number,
+): number {
+  if (!Number.isInteger(cellCount) || cellCount <= 0) {
+    throw new Error(`Layout cell count must be a positive integer, got ${String(cellCount)}`);
+  }
+  if (!Number.isInteger(spanCells) || spanCells <= 0) {
+    throw new Error(`Token span must be a positive whole number of cells, got ${String(spanCells)}`);
+  }
+  const half = spanCells / 2;
+  const origin = Math.round(norm * cellCount - half);
+  return (origin + half) / cellCount;
+}
+
 /**
  * Snap a board coordinate (1 = map width/height; may be outside 0–1) to the
  * center of a grid block `spanCells` wide.

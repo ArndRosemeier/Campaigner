@@ -20,7 +20,7 @@ import {
 } from 'lucide-react';
 
 import type { AnyArtifact, Battle, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
-import { nextTokenScale, VEIL_DEFAULT_CELLS } from '@/domain/battle';
+import { nextTokenScale, tokenSizeFittingGrid, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import {
   activeInitiativeTokenId,
@@ -31,7 +31,12 @@ import {
   visibleFighterTokenIds,
 } from '@/domain/battle/initiative';
 import { resizeVeilFromEdge, veilCellPx, type VeilEdge } from '@/domain/battle/veil';
-import { snapAxisToGrid, tokenSpanCells } from '@/domain/battle/gridSnap';
+import {
+  battleGridStyle,
+  snapAxisToGrid,
+  snapAxisToLayoutGrid,
+  tokenSpanCells,
+} from '@/domain/battle/gridSnap';
 import {
   beginBoardGesture,
   endBoardGesture,
@@ -186,8 +191,28 @@ export function BattleSurface(): JSX.Element {
   // Effect logic separated so the render body stays a pure function of state.
   useInitiativeReconcile(battle, stats, coveredTokenIds, commit);
 
-  const cellPx = battle === undefined ? 72 : veilCellPx(battle.board.gridSize, battle.board.tokenSize);
-  const aspect = mapImage === undefined ? 16 / 9 : mapImage.width / mapImage.height;
+  const mapLayout = battle?.board.mapLayout ?? null;
+  const cellWidthPx =
+    mapLayout !== null && boardSize.w > 0
+      ? boardSize.w / mapLayout.cols
+      : battle === undefined
+        ? 72
+        : veilCellPx(battle.board.gridSize, battle.board.tokenSize);
+  const cellHeightPx =
+    mapLayout !== null && boardSize.h > 0 ? boardSize.h / mapLayout.rows : cellWidthPx;
+  const aspect =
+    mapLayout !== null
+      ? mapLayout.cols / mapLayout.rows
+      : mapImage === undefined
+        ? 16 / 9
+        : mapImage.width / mapImage.height;
+
+  useEffect(() => {
+    if (battle === undefined || mapLayout === null || boardSize.w <= 0 || boardSize.h <= 0) return;
+    const desired = tokenSizeFittingGrid(Math.max(1, Math.floor(Math.min(cellWidthPx, cellHeightPx))));
+    if (desired === battle.board.tokenSize) return;
+    void commit((board) => ({ ...board, tokenSize: desired }));
+  }, [battle, mapLayout, boardSize.w, boardSize.h, cellWidthPx, cellHeightPx, commit]);
 
   const displayedTokens = useMemo(() => {
     if (battle === undefined) return [];
@@ -211,15 +236,22 @@ export function BattleSurface(): JSX.Element {
 
   function snapPoint(x: number, y: number): { x: number; y: number } {
     const grid = battle?.board.gridSize;
-    if (grid === undefined || grid === null || boardSize.w === 0) return { x, y };
+    if (battle === undefined || boardSize.w === 0) return { x, y };
+    if (battle.board.mapLayout === null && (grid === undefined || grid === null)) return { x, y };
     const token =
       liveDrag === null
         ? undefined
-        : battle?.board.tokens.find((entry) => entry.id === liveDrag.tokenId);
+        : battle.board.tokens.find((entry) => entry.id === liveDrag.tokenId);
     const span = tokenSpanCells(token?.scale ?? 1);
+    if (battle.board.mapLayout !== null) {
+      return {
+        x: snapAxisToLayoutGrid(x, battle.board.mapLayout.cols, span),
+        y: snapAxisToLayoutGrid(y, battle.board.mapLayout.rows, span),
+      };
+    }
     return {
-      x: snapAxisToGrid(x, boardSize.w, grid, span),
-      y: snapAxisToGrid(y, boardSize.h, grid, span),
+      x: snapAxisToGrid(x, boardSize.w, cellWidthPx, span),
+      y: snapAxisToGrid(y, boardSize.h, cellHeightPx, span),
     };
   }
 
@@ -351,7 +383,15 @@ export function BattleSurface(): JSX.Element {
     event.stopPropagation();
     const at = boardPointFromEvent(event);
     try {
-      const resized = resizeVeilFromEdge(veil, edge, at, boardSize.w, boardSize.h, cellPx);
+      const resized = resizeVeilFromEdge(
+        veil,
+        edge,
+        at,
+        boardSize.w,
+        boardSize.h,
+        cellWidthPx,
+        cellHeightPx,
+      );
       void commit((board) => ({
         ...board,
         veils: board.veils.map((entry) => (entry.id === veil.id ? resized : entry)),
@@ -637,18 +677,12 @@ export function BattleSurface(): JSX.Element {
                 <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#27272a_0%,#18181b_100%)]" />
               )}
               {/* Grid */}
-              {board.gridSize !== null && (
+              {(board.gridSize !== null || board.mapLayout !== null) && (
                 <div
                   aria-hidden
                   className="pointer-events-none absolute inset-0"
-                  style={{
-                    backgroundImage:
-                      'repeating-linear-gradient(0deg, rgba(255,255,255,0.14) 0 1px, transparent 1px ' +
-                      String(board.gridSize) +
-                      'px), repeating-linear-gradient(90deg, rgba(255,255,255,0.14) 0 1px, transparent 1px ' +
-                      String(board.gridSize) +
-                      'px)',
-                  }}
+                  style={battleGridStyle(board.mapLayout, board.gridSize)}
+                  data-testid="battle-grid"
                 />
               )}
               {/* Staging ground */}
@@ -689,7 +723,8 @@ export function BattleSurface(): JSX.Element {
                   key={veil.id}
                   veil={veil}
                   board={boardPx}
-                  cellPx={cellPx}
+                  cellWidthPx={cellWidthPx}
+                  cellHeightPx={cellHeightPx}
                   selected={veil.id === selectedVeilId}
                   resizable={!playerSafe && !board.sceneryMovementLocked}
                   onPointerDown={(event) => {
@@ -946,7 +981,8 @@ function TokenView({
 interface VeilViewProps {
   veil: BattleVeil;
   board: { w: number; h: number };
-  cellPx: number;
+  cellWidthPx: number;
+  cellHeightPx: number;
   selected: boolean;
   resizable: boolean;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -959,7 +995,8 @@ interface VeilViewProps {
 function VeilView({
   veil,
   board,
-  cellPx,
+  cellWidthPx,
+  cellHeightPx,
   selected,
   resizable,
   onPointerDown,
@@ -968,8 +1005,8 @@ function VeilView({
   onResize,
 }: VeilViewProps): JSX.Element | null {
   if (board.w === 0 || board.h === 0) return null;
-  const widthPct = ((veil.widthCells * cellPx) / board.w) * 100;
-  const heightPct = ((veil.heightCells * cellPx) / board.h) * 100;
+  const widthPct = ((veil.widthCells * cellWidthPx) / board.w) * 100;
+  const heightPct = ((veil.heightCells * cellHeightPx) / board.h) * 100;
   const handles: { edge: VeilEdge; className: string }[] = [
     { edge: 'n', className: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2' },
     { edge: 's', className: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2' },
