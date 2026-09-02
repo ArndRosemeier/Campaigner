@@ -248,12 +248,8 @@ describe('ownership queries (M6-A)', () => {
         imageIds: [],
         coverImageId: null,
         data: {
-          role: '',
           appearance: '',
           personality: '',
-          motivation: '',
-          secrets: '',
-          voiceNotes: '',
           statBlock: null,
         },
       }),
@@ -306,7 +302,7 @@ describe('ownership queries (M6-A)', () => {
       currentRevision: 1,
       imageIds: [],
       coverImageId: null,
-      data: { role: '', appearance: '', personality: '', motivation: '', secrets: '', voiceNotes: '', statBlock: null },
+      data: { appearance: '', personality: '', statBlock: null },
       ...over,
     };
   }

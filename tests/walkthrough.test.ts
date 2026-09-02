@@ -35,12 +35,8 @@ const DRAFT = {
   summary: 'The grappling goblin from the rulebook.',
   suggestedTags: ['goblin', 'boss'],
   body: '# Goblin Boss\nUses grapples.',
-  role: 'Boss',
   appearance: 'Soot-stained',
   personality: 'Cruel',
-  motivation: 'Territory',
-  secrets: 'None',
-  voiceNotes: 'Snarls',
   needsStatBlock: true,
 };
 

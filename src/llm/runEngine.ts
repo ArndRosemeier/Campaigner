@@ -217,12 +217,8 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
       };
     case 'npc':
       return {
-        role: asString(draft.role),
         appearance: asString(draft.appearance),
         personality: asString(draft.personality),
-        motivation: asString(draft.motivation),
-        secrets: asString(draft.secrets),
-        voiceNotes: asString(draft.voiceNotes),
         statBlock: null,
       };
     case 'location':
@@ -774,13 +770,11 @@ export class RunEngine {
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
       buildStatblockCitationSection(context.statblockTitles),
-      // M4-C: secrets and stat blocks are the generator's call, not a
-      // requirement — not every character has a secret, and contacts or
-      // merchants don't need stats.
+      // The only NPC-specific guidance left: whether stats matter is the
+      // draft's call, so non-fightable characters skip the statblock step.
       kind === 'npc'
         ? [
             'Field guidance for this NPC:',
-            '- "secrets": fill ONLY when this character genuinely has a secret that matters to the story; otherwise use an empty string. Never invent one for its own sake — the GM sees everything anyway.',
             '- "needsStatBlock": true only when the character is likely to fight or their stats matter at the table (adversaries, rivals, guards, bosses); false for contacts, merchants, innkeepers, informants, quest-givers.',
           ].join('\n')
         : null,

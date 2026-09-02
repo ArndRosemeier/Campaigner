@@ -51,12 +51,8 @@ describe('encounter form monster sources', () => {
       kind: 'npc',
       name: 'Vexra',
       data: {
-        role: '',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: statBlock(),
       },
     });

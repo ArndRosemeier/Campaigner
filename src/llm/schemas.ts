@@ -66,13 +66,9 @@ function namedItemArray(nameKey: 'name' | 'title') {
 
 export const npcDraftSchema = z.object({
   ...draftBase,
-  role: z.string(),
   appearance: z.string(),
   personality: z.string(),
-  motivation: z.string(),
-  secrets: z.string(),
-  voiceNotes: z.string(),
-  /** M4-C: the draft decides — false skips the statblock step entirely
+  /** The draft decides — false skips the statblock step entirely
    * (contacts/merchants/innkeepers don't need one; wasted effort). */
   needsStatBlock: z.boolean(),
 });

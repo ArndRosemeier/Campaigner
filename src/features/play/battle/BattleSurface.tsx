@@ -66,11 +66,11 @@ import { cn } from '@/lib/utils';
  *
  * - The surface renders ONLY the board — map, grid, tokens, veils, staging
  *   ground, initiative sidebar, HP meters, downed overlay. No artifact
- *   bodies, no stat text, no notes, no secrets anywhere in the DOM.
+ *   bodies, no stat text, no GM-only material anywhere in the DOM.
  * - Tokens under a veil/fog and `visible: false` tokens are REMOVED from the
  *   DOM (not dimmed) and pruned from initiative — that IS the mechanic.
- * - Token tap shows name + image + HP only (inspection with secrets happens
- *   back on the GM view, never here).
+ * - Token tap shows name + image + HP only (full inspection happens back on
+ *   the GM view, never here).
  *
  * Interactions: drag with a local live position + a single repo commit on
  * release (8px tap threshold); wheel/button/pinch pan-zoom; veil add/resize;

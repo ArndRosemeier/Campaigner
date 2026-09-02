@@ -18,12 +18,8 @@ import { flushAsyncUpdates } from '../helpers/flush';
  */
 
 const NPC_DATA = {
-  role: 'Boss',
   appearance: 'Small, soot-stained.',
   personality: 'Manic, cheerful.',
-  motivation: 'Prove her elixirs work.',
-  secrets: 'Out of good reagents.',
-  voiceNotes: 'Fast, cackling.',
   statBlock: null,
 };
 

@@ -58,12 +58,8 @@ const VALID_DRAFT = {
   summary: 'A goblin alchemist boss.',
   suggestedTags: ['goblin', 'alchemist'],
   body: '# Grix\nShe brews. She throws.',
-  role: 'Boss',
   appearance: 'Small, soot-stained, goggles.',
   personality: 'Manic, cheerful, volatile.',
-  motivation: 'Prove her elixirs work.',
-  secrets: 'She is out of the good reagents.',
-  voiceNotes: 'Fast, cackling.',
   needsStatBlock: true,
 };
 

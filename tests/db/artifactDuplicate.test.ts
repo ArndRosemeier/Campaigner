@@ -23,12 +23,8 @@ describe('duplicateArtifact', () => {
       tags: ['blacksmith'],
       body: 'A gruff dwarf.',
       data: {
-        role: 'Blacksmith',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: null,
       },
     });

@@ -153,12 +153,8 @@ describe('remaining personas wired', () => {
       summary: 'The watchful keeper of the tide gate.',
       suggestedTags: ['warden'],
       body: '# Kael\nKael keeps the gate and knows who passed at dusk.',
-      role: 'Gate warden',
       appearance: 'Weathered leathers and a brass key-ring.',
       personality: 'Quiet and observant.',
-      motivation: 'Keep the crypt sealed.',
-      secrets: 'He heard the bell beneath the sea.',
-      voiceNotes: 'Short sentences; counts exits while speaking.',
       needsStatBlock: true,
     };
     // This is the OLD prompt's exact shape: it is missing fields the real
@@ -247,19 +243,14 @@ describe('remaining personas wired', () => {
   it('skips the statblock step when the draft marks the character as not needing one', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const persona = personaOf('npc-smith', 'NPC Smith', 'npc');
-    // A contact/merchant: no secret invented (secrets are optional now), no
-    // stat block — the draft decides.
+    // A contact/merchant: no stat block — the draft decides.
     const draft = {
       name: 'Ferryman Ollo',
       summary: 'Rows people across the bay and knows every rumour.',
       suggestedTags: ['contact'],
       body: '# Ferryman Ollo\nOllo takes coin and gossip in equal measure.',
-      role: 'Contact',
       appearance: 'Salt-cured coat, endless grin.',
       personality: 'Chatty, cagey about prices.',
-      motivation: 'Buy his own boat someday.',
-      secrets: '',
-      voiceNotes: 'Drawls.',
       needsStatBlock: false,
     };
     chatMock.mockResolvedValueOnce(JSON.stringify(draft));
@@ -288,7 +279,7 @@ describe('remaining personas wired', () => {
     expect(artifact?.kind).toBe('npc');
     if (artifact?.kind === 'npc') {
       expect(artifact.data.statBlock).toBeNull();
-      expect(artifact.data.secrets).toBe('');
+      expect(artifact.data.appearance).toContain('Salt-cured');
     }
 
     const run = step?.runId === null ? undefined : await getRun(step?.runId ?? '');

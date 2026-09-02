@@ -113,14 +113,15 @@ Steps for every persona (M1):
 
 ### Draft JSON contracts (zod in `/src/llm/schemas.ts`)
 
-`NpcDraftSchema`: `{ name, summary, role, appearance, personality, motivation,
-secrets, voiceNotes, suggestedTags: string[], body }` — all strings; `body` is
-markdown for the artifact body. M4-C amendments: `secrets` is the generator's
-choice, not a requirement (empty string when the character has none — never
-invented for its own sake), and `needsStatBlock: boolean` lets the draft skip
-the statblock step entirely for characters whose stats don't matter at the
-table (contacts, merchants, innkeepers). (Location/Faction draft schemas
-mirror their `data` fields; define them in M1 too, they're cheap.)
+`NpcDraftSchema`: `{ name, summary, appearance, personality,
+suggestedTags: string[], body, needsStatBlock: boolean }` — `body` is markdown
+for the artifact body. The draft contract is deliberately minimal (M4-C
+simplification: role/motivation/secrets/voiceNotes were removed — enforced
+prose fields made every NPC same-shaped); whatever else a character needs
+goes into the free-form `body`. `needsStatBlock` lets the draft skip the
+statblock step entirely for characters whose stats don't matter at the table
+(contacts, merchants, innkeepers). (Location/Faction draft schemas mirror
+their `data` fields; define them in M1 too, they're cheap.)
 
 ### Autonomy semantics
 

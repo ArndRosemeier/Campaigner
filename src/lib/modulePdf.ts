@@ -11,9 +11,10 @@ import { mdToPdfmakeContent } from '@/lib/mdToPdfmake';
  * outline as an adventure-module PDF — cover page, generated ToC, chapter
  * banners with kickers, boxed read-aloud quotes, labeled per-kind sections,
  * two-column stat boxes, images at ≤45% width, and NPC-gallery /
- * treasure-ledger appendices. The GM/player audience switch strips secrets,
- * GM-only nodes, and encounter tactics/treasure. The build never fails on
- * missing data: dangling refs render a visible placeholder.
+ * treasure-ledger appendices. The GM/player audience switch strips GM-only
+ * material (faction methods, encounter tactics/treasure, gm-only artifacts,
+ * notes). The build never fails on missing data: dangling refs render a
+ * visible placeholder.
  */
 
 const ACCENT = '#9a7b4f';
@@ -160,12 +161,8 @@ function dataSections(
   } else if (artifact.kind === 'npc') {
     pushSections(
       out,
-      labeledSection('Role', artifact.data.role),
       labeledSection('Appearance', artifact.data.appearance),
       labeledSection('Personality', artifact.data.personality),
-      labeledSection('Motivation', artifact.data.motivation),
-      labeledSection('Voice', artifact.data.voiceNotes),
-      audience === 'gm' ? labeledSection('Secrets', artifact.data.secrets) : null,
     );
     if (statBlocks && artifact.data.statBlock !== null) {
       pushSections(out, statBoxContent(artifact.data.statBlock, artifact.name));

@@ -44,12 +44,8 @@ const VALID_DRAFT = {
   summary: 'A goblin alchemist boss.',
   suggestedTags: ['goblin', 'alchemist'],
   body: '# Grix\nShe brews. She throws.',
-  role: 'Boss',
   appearance: 'Small, soot-stained, goggles.',
   personality: 'Manic, cheerful, volatile.',
-  motivation: 'Prove her elixirs work.',
-  secrets: 'She is out of the good reagents.',
-  voiceNotes: 'Fast, cackling.',
   needsStatBlock: true,
 };
 
@@ -149,7 +145,7 @@ describe('runEngine', () => {
     expect(artifact?.name).toBe('Grix');
     if (artifact?.kind === 'npc') {
       expect(artifact.data.statBlock?.hp).toBe(22);
-      expect(artifact.data.role).toBe('Boss');
+      expect(artifact.data.personality).toBe('Manic, cheerful, volatile.');
     }
     expect(chatMock).toHaveBeenCalledTimes(2);
   }, 20000);

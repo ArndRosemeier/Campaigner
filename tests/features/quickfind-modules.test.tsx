@@ -192,12 +192,8 @@ describe('global library hits (10-MILESTONE-6 C)', () => {
       imageIds: [],
       coverImageId: null,
       data: {
-        role: '',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: null,
       },
     });

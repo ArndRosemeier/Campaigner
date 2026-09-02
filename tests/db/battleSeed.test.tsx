@@ -75,12 +75,8 @@ async function addNpc(name: string, withStats: boolean): Promise<Artifact> {
     kind: 'npc',
     name,
     data: {
-      role: '',
       appearance: '',
       personality: '',
-      motivation: '',
-      secrets: '',
-      voiceNotes: '',
       statBlock: withStats ? statBlock({ hp: 84 }) : null,
     },
   });

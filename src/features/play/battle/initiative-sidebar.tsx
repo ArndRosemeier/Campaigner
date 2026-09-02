@@ -15,7 +15,7 @@ import { cn } from '@/lib/utils';
  * Initiative sidebar (09-MILESTONE-5 M5-D): turn order with frozen totals,
  * the floating-turn arrow, drag-to-reorder (gated so the reconcile effect
  * never fights the drag), and >>> next turn. Player-safe by contract: it
- * renders ONLY labels, totals, and the turn arrow — no stats, no secrets.
+ * renders ONLY labels, totals, and the turn arrow — no stats, no GM-only material.
  */
 
 export interface InitiativeSidebarProps {

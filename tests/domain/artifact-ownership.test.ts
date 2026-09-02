@@ -56,12 +56,8 @@ function globalNpc(over: Partial<GlobalArtifact> = {}): GlobalArtifact {
     imageIds: [],
     coverImageId: null,
     data: {
-      role: '',
       appearance: '',
       personality: '',
-      motivation: '',
-      secrets: '',
-      voiceNotes: '',
       statBlock: null,
     },
     ...over,

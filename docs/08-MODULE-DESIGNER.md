@@ -94,8 +94,8 @@ a remark step or pre-tokenizer):
 - ambiguous → solid chip with ⚠.
 
 **Peek modal**: a dialog rendering the read-only artifact card (REUSE the
-Session-Mode card components — portrait, summary, kind data, stat block,
-click-to-reveal secrets). Esc / click-outside dismisses back to the exact
+Session-Mode card components — portrait, summary, kind data, stat block).
+Esc / click-outside dismisses back to the exact
 scroll position. Wiki-links inside the modal body push onto an in-modal
 breadcrumb stack (Back button, Esc pops one level). The entity's image
 (cover or first gallery image) is shown as a banner above the card — the

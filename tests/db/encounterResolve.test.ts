@@ -53,12 +53,8 @@ describe('resolveMonsterEntryWithRepos', () => {
       kind: 'npc',
       name: 'Vexra',
       data: {
-        role: 'Antagonist',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: statBlock({ creatureType: 'aberration' }),
       },
     });
@@ -80,12 +76,8 @@ describe('resolveMonsterEntryWithRepos', () => {
       kind: 'npc',
       name: 'Plain Villager',
       data: {
-        role: '',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: null,
       },
     });

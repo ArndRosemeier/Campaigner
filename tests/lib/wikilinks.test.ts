@@ -58,12 +58,8 @@ function makeGlobal(fields: {
   fixtureSeq += 1;
   const data = {
     npc: {
-      role: '',
       appearance: '',
       personality: '',
-      motivation: '',
-      secrets: '',
-      voiceNotes: '',
       statBlock: null,
     },
     location: { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] },

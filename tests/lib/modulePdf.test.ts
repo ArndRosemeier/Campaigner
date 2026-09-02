@@ -60,12 +60,8 @@ async function seed(): Promise<{ deliverable: Deliverable; npcId: string; gmNote
     kind: 'npc',
     name: 'Vexra',
     data: {
-      role: 'Antagonist',
       appearance: 'Hooded',
       personality: 'Cold',
-      motivation: 'Ritual',
-      secrets: 'She fears open water.',
-      voiceNotes: 'Whispers',
       statBlock: statBlockFixture(),
     },
   });
@@ -144,7 +140,7 @@ describe('buildModuleDefinition', () => {
     expect(text).toContain('The Dockyards');
     // Labeled sections + read-aloud box.
     expect(text).toContain('Tactics:');
-    expect(text).toContain('Secrets:');
+    expect(text).toContain('Personality:');
     expect(text).toContain('The tide waits for no one.');
     // Stat box + monster count + cross-reference.
     expect(text).toContain('Dark Devotion');
@@ -202,20 +198,20 @@ describe('buildModuleDefinition', () => {
     expect(textOf(buildModuleDefinition(explicit, artifacts))).toContain(global.name);
   });
 
-  it('strips secrets, tactics/treasure, notes, and gm-only artifacts for players', async () => {
+  it('strips tactics/treasure, notes, and gm-only artifacts for players', async () => {
     const { deliverable, gmNoteId } = await seed();
     const player: Deliverable = { ...deliverable, audience: 'player' };
     const { db } = await import('@/db/db');
     const campaignArtifacts = await listArtifactsByCampaign((await db.campaigns.toArray())[0]?.id ?? '');
     const text = textOf(buildModuleDefinition(player, campaignArtifacts));
 
-    expect(text).not.toContain('She fears open water');
     expect(text).not.toContain('Tactics:');
     expect(text).not.toContain('surround and drag under');
     expect(text).not.toContain('GM cheat sheet');
     expect(text).not.toContain(gmNoteId);
-    // Public prose and read-aloud boxes survive.
+    // Public prose, read-aloud boxes and the NPC basics survive.
     expect(text).toContain('The tower watches the ford.');
+    expect(text).toContain('Appearance:');
     // Treasure LEDGER is back matter and still aggregates encounters.
     expect(text).toContain('silver bell charm');
   });

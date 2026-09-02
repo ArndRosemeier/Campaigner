@@ -72,26 +72,6 @@ export function NpcForm({ artifactName, data, onChange, campaignSystem }: NpcFor
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Role">
-          <Input
-            value={data.role}
-            className="h-7 text-sm"
-            onChange={(event) => {
-              patch({ role: event.target.value });
-            }}
-          />
-        </Field>
-        <Field label="Voice notes">
-          <Input
-            value={data.voiceNotes}
-            className="h-7 text-sm"
-            onChange={(event) => {
-              patch({ voiceNotes: event.target.value });
-            }}
-          />
-        </Field>
-      </div>
       <TextAreaField
         label="Appearance"
         value={data.appearance}
@@ -104,20 +84,6 @@ export function NpcForm({ artifactName, data, onChange, campaignSystem }: NpcFor
         value={data.personality}
         onChange={(personality) => {
           patch({ personality });
-        }}
-      />
-      <TextAreaField
-        label="Motivation"
-        value={data.motivation}
-        onChange={(motivation) => {
-          patch({ motivation });
-        }}
-      />
-      <TextAreaField
-        label="Secrets"
-        value={data.secrets}
-        onChange={(secrets) => {
-          patch({ secrets });
         }}
       />
 

@@ -36,17 +36,7 @@ export function NpcCard({
       <div className="flex items-start gap-3">
         <Portrait artifact={npc} />
         <div className="min-w-0 flex-1">
-          {/* flex-wrap so a long role pill drops below the name instead of
-              squeezing it (the badge is shrink-0 + nowrap: it caused both the
-              horizontal stripe and the vertically-spelled name). */}
-          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            <span className="break-words font-semibold">{npc.name}</span>
-            {data.role !== '' && (
-              <Badge variant="secondary" className="h-auto max-w-full whitespace-normal">
-                {data.role}
-              </Badge>
-            )}
-          </div>
+          <span className="break-words font-semibold">{npc.name}</span>
           {npc.summary !== '' && (
             <p className="text-sm break-words text-muted-foreground">{npc.summary}</p>
           )}
@@ -54,28 +44,16 @@ export function NpcCard({
         {onOpenEditor !== undefined && <EditorJump artifact={npc} onOpenEditor={onOpenEditor} />}
       </div>
       <div className="flex flex-col gap-2 text-sm">
+        {data.appearance !== '' && (
+          <p>
+            <span className="font-medium">Appearance: </span>
+            {data.appearance}
+          </p>
+        )}
         {data.personality !== '' && (
           <p>
             <span className="font-medium">Personality: </span>
             {data.personality}
-          </p>
-        )}
-        {data.motivation !== '' && (
-          <p>
-            <span className="font-medium">Motivation: </span>
-            {data.motivation}
-          </p>
-        )}
-        {data.voiceNotes !== '' && (
-          <p>
-            <span className="font-medium">Voice: </span>
-            {data.voiceNotes}
-          </p>
-        )}
-        {data.secrets !== '' && (
-          <p>
-            <span className="font-medium">Secret: </span>
-            {data.secrets}
           </p>
         )}
         {data.statBlock !== null && (

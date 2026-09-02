@@ -50,12 +50,8 @@ describe('layoutGraph', () => {
       data:
         kind === 'npc'
           ? {
-              role: '',
               appearance: '',
               personality: '',
-              motivation: '',
-              secrets: '',
-              voiceNotes: '',
               statBlock: null,
             }
           : { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] },

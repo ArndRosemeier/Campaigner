@@ -126,12 +126,8 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
     kind: 'npc',
     name: 'Troll',
     data: {
-      role: '',
       appearance: '',
       personality: '',
-      motivation: '',
-      secrets: 'The troll fears fire — a secret.',
-      voiceNotes: '',
       statBlock: statBlock({ hp: 84 }),
     },
   });

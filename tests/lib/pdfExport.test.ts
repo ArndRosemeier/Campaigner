@@ -25,12 +25,8 @@ const NPC = {
   summary: 'A goblin boss with a temper.',
   body: '# Grimm\n\nHe **grapples** first.\n- line one\n- line two',
   data: {
-    role: 'villain',
     appearance: 'Soot-stained',
     personality: 'Cruel',
-    motivation: 'Territory',
-    secrets: 'Fears open water',
-    voiceNotes: 'Snarls',
     statBlock: {
       system: 'dnd5e' as const,
       level: '2',
@@ -60,23 +56,24 @@ function dump(content: unknown): string {
 }
 
 describe('pdf export definitions', () => {
-  it('GM notes include structured data, secrets, and the stat block', () => {
+  it('GM notes include structured data and the stat block', () => {
     const artifact = createArtifact({ ...NPC });
     const doc = buildGmNotesDefinition(artifact);
     const text = dump(doc.content);
-    expect(text).toContain('Secrets');
-    expect(text).toContain('Fears open water');
+    expect(text).toContain('Appearance');
+    expect(text).toContain('Soot-stained');
     expect(text).toContain('Nimble Escape');
     expect(text).toContain('AC 17');
   });
 
-  it('player handout strips markdown and omits secrets and stat block', () => {
+  it('player handout strips markdown and omits structured data and the stat block', () => {
     const artifact = createArtifact({ ...NPC });
     const doc = buildPlayerHandoutDefinition(artifact);
     const text = dump(doc.content);
     expect(text).toContain('He grapples first.');
     expect(text).toContain('line one');
-    expect(text).not.toContain('Secrets');
+    expect(text).not.toContain('NPC details');
+    expect(text).not.toContain('Soot-stained');
     expect(text).not.toContain('Nimble Escape');
     expect(text).not.toContain('AC 17');
   });

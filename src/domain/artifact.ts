@@ -118,13 +118,8 @@ export const pcDataSchema = z.object({
 export type PcArtifactData = z.infer<typeof pcDataSchema>;
 
 export const npcDataSchema = z.object({
-  role: z.string(),
   appearance: z.string(),
   personality: z.string(),
-  motivation: z.string(),
-  secrets: z.string(),
-  /** How to play them at the table. */
-  voiceNotes: z.string(),
   statBlock: statBlockSchema.nullable(),
 });
 

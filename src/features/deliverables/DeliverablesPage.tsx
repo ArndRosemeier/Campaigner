@@ -48,7 +48,7 @@ import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
  * outline editor (nested chapters/parts/artifacts/text/galleries with reorder
  * buttons — no drag-and-drop — and per-artifact include toggles), audience
  * switch, cover picker, and "Generate PDF". The player variant strips
- * secrets/GM-only nodes at render time.
+ * GM-only nodes and GM-only data at render time.
  */
 
 /** The "+ Artifact" picker target: root list, or a chapter/part by path. */

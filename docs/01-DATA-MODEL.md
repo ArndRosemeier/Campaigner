@@ -71,12 +71,8 @@ Kind-specific structured data goes in a `data` field:
 interface NpcArtifact extends ArtifactBase {
   kind: 'npc';
   data: {
-    role: string;               // e.g. 'villain', 'quest giver'
     appearance: string;
     personality: string;
-    motivation: string;
-    secrets: string;
-    voiceNotes: string;         // how to play them at the table
     statBlock: StatBlock | null;
   };
 }

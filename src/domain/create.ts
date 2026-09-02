@@ -77,12 +77,8 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
       };
     case 'npc':
       return {
-        role: '',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: null,
       };
     case 'location':

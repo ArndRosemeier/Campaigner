@@ -39,12 +39,8 @@ describe('export/import', () => {
       summary: 'A goblin boss.',
       body: 'Original body.',
       data: {
-        role: 'villain',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: null,
       },
     });

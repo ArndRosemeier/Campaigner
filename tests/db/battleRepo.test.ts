@@ -88,12 +88,8 @@ async function addNpc(name: string, over: Partial<StatBlock> = {}): Promise<stri
     kind: 'npc',
     name,
     data: {
-      role: '',
       appearance: '',
       personality: '',
-      motivation: '',
-      secrets: '',
-      voiceNotes: '',
       statBlock: statBlock(over),
     },
   });
@@ -299,12 +295,8 @@ describe('deleteBattleIfEmpty', () => {
       kind: 'npc',
       name: 'Grix',
       data: {
-        role: '',
         appearance: '',
         personality: '',
-        motivation: '',
-        secrets: '',
-        voiceNotes: '',
         statBlock: statBlock({ hp: 21 }),
         initiativeOverride: 2,
       },

@@ -56,7 +56,7 @@ export const deliverableSchema = z.object({
   campaignId: z.uuid(),
   title: z.string().min(1),
   subtitle: z.string(),
-  /** player: secrets / GM-only nodes / tactics+treasure stripped at render. */
+  /** player: GM-only nodes / faction methods / tactics+treasure stripped at render. */
   audience: deliverableAudienceSchema,
   coverImageId: z.uuid().nullable(),
   outline: z.array(outlineNodeSchema),

@@ -93,12 +93,8 @@ const draft = {
   summary: 'The watchful keeper of the tide gate.',
   suggestedTags: ['warden'],
   body: '# Kael\nKael keeps the gate and knows who passed at dusk.',
-  role: 'Gate warden',
   appearance: 'Weathered leathers and a brass key-ring.',
   personality: 'Quiet and observant.',
-  motivation: 'Keep the crypt sealed.',
-  secrets: 'He heard the bell beneath the sea.',
-  voiceNotes: 'Short sentences; counts exits while speaking.',
   needsStatBlock: true,
 };
 

@@ -8,7 +8,7 @@ import { blobToScaledDataUrl } from '@/lib/imageIntake';
 /**
  * PDF export (06-MILESTONES M2): pdfmake definitions for the two templates —
  * **GM notes** (everything: body, structured data, stat block, links) and the
- * **player handout** (name, summary, body only — no secrets, no mechanics).
+ * **player handout** (name, summary, body only — no structured data, no mechanics).
  * Definition builders are pure; `exportArtifactPdf` loads pdfmake lazily and
  * resolves the artifact's cover image (M3-A) as a ≤1024px data URL.
  */
@@ -127,12 +127,8 @@ function dataSections(artifact: Artifact): object[] {
     }
     case 'npc': {
       add('NPC details', [
-        labelValue('Role', artifact.data.role),
         labelValue('Appearance', artifact.data.appearance),
         labelValue('Personality', artifact.data.personality),
-        labelValue('Motivation', artifact.data.motivation),
-        labelValue('Secrets', artifact.data.secrets),
-        labelValue('Voice', artifact.data.voiceNotes),
       ]);
       if (artifact.data.statBlock !== null) {
         sections.push(...statBlockSection(artifact.data.statBlock));
@@ -270,7 +266,7 @@ function coverImageNode(cover: PdfCoverImage): Content {
   };
 }
 
-/** GM notes: everything, including secrets and the stat block. */
+/** GM notes: everything, including the structured data and the stat block. */
 export function buildGmNotesDefinition(
   artifact: Artifact,
   cover?: PdfCoverImage | null,
@@ -291,7 +287,7 @@ export function buildGmNotesDefinition(
   return { ...doc, content };
 }
 
-/** Player handout: name, summary, body — no data, no secrets, no mechanics. */
+/** Player handout: name, summary, body — no structured data, no mechanics. */
 export function buildPlayerHandoutDefinition(
   artifact: Artifact,
   cover?: PdfCoverImage | null,

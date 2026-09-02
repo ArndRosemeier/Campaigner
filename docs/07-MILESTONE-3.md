@@ -225,13 +225,11 @@ Three zones:
    recent foci (last 5, clickable). "Set focus…" opens the quick-find.
 2. **Context grid** (main): everything **one link-hop** from the focus
    (both directions — incoming and outgoing links), grouped by kind:
-   - *NPCs here*: card = portrait, name, role, one-line summary;
-     personality/voiceNotes/motivation/secrets rendered directly (M4-C: no
-     "More" expander — the reader scrolls, and this is a master tool: secrets
-     display plainly, no enforced blur/reveal); the stat-block card renders
-     inline when the character has one (M4-C: the draft decides
-     `needsStatBlock` — contacts/merchants skip it entirely, the run row
-     shows the step as skipped).
+   - *NPCs here*: card = portrait, name, one-line summary; appearance and
+     personality rendered directly (M4-C: no "More" expander — the reader
+     scrolls); the stat-block card renders inline when the character has one
+     (M4-C: the draft decides `needsStatBlock` — contacts/merchants skip it
+     entirely, the run row shows the step as skipped).
    - *Encounters*: card with difficulty badge; resolved stat blocks rendered
      directly (reuse M3-B panel).
    - *Connected locations*: compact cards; **clicking one moves the focus**
@@ -323,7 +321,7 @@ box each), `treasure` is the Schätze appendix (a ledger aggregated from the
   ("Durchschnittlich 1", "Ernsthaft 2").
 - **Labeled sections per kind** (the book's per-area structure: description →
   creatures → treasure → development), rendered from kind data:
-  NPC → role / appearance / personality / motivation / voiceNotes / secrets;
+  NPC → appearance / personality;
   Faction → goals / methods / resources / ranks; Encounter → monsters
   (resolved via M3-B, with count badges), then terrain / tactics / treasure as
   labeled paragraphs; PlotArc → premise / stakes / beats / hooks / climax;
@@ -350,7 +348,7 @@ box each), `treasure` is the Schätze appendix (a ledger aggregated from the
 - Markdown → pdfmake via `/src/lib/mdToPdfmake.ts`: paragraphs, bold/italic,
   h1–h3, bullet/numbered lists, blockquote (→ read-aloud box); ignore
   html/tables — document this limit.
-- `audience:'player'`: omit NPC `secrets`, faction `methods`, encounter
+- `audience:'player'`: omit faction `methods`, encounter
   `tactics`/`treasure`, all Notes, and any outline node whose artifact is
   tagged `gm-only`. Read-aloud boxes and public body prose survive — the
   player variant of an area reads like the book's boxed prose, which is
