@@ -90,6 +90,7 @@ export function PersonaPanel({
   const clearRequest = useIllustrationRequest((state) => state.clear);
   const encounterRequestId = useEncounterGenerationRequest((state) => state.artifactId);
   const encounterRequestRegenerate = useEncounterGenerationRequest((state) => state.regenerate);
+  const encounterRequestVariant = useEncounterGenerationRequest((state) => state.variant);
   const encounterRequestedAt = useEncounterGenerationRequest((state) => state.requestedAt);
   const clearEncounterRequest = useEncounterGenerationRequest((state) => state.clear);
   const settings = useLiveQuery(() => readSettings(), []);
@@ -114,21 +115,27 @@ export function PersonaPanel({
 
   useEffect(() => {
     if (encounterRequestId === null) return;
-    const cartographer = personas?.find((persona) => persona.slug === 'encounter-cartographer');
-    if (cartographer === undefined) return;
-    setPersonaId(cartographer.id);
+    const slug =
+      encounterRequestVariant === 'content' ? 'encounter-smith' : 'encounter-cartographer';
+    const persona = personas?.find((candidate) => candidate.slug === slug);
+    if (persona === undefined) return; // personas not loaded yet
+    setPersonaId(persona.id);
     setTargetArtifactId(encounterRequestId);
-    // Word the brief truthfully: an encounter without a battlemap is a first
-    // generation, not a regeneration — "regenerate" made it sound like a map
-    // already existed.
+    // Word the brief truthfully: an encounter without the thing being
+    // generated is a first generation, not a regeneration — "regenerate"
+    // made it sound like one already existed.
     setBrief(
-      encounterRequestRegenerate
-        ? 'Regenerate this encounter map while preserving its authored roster and prose.'
-        : 'Generate a battlemap and room layout for this encounter.',
+      encounterRequestVariant === 'content'
+        ? encounterRequestRegenerate
+          ? 'Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, links and battlemap are preserved.'
+          : 'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, links and battlemap are preserved.'
+        : encounterRequestRegenerate
+          ? 'Regenerate this encounter map while preserving its authored roster and prose.'
+          : 'Generate a battlemap and room layout for this encounter.',
     );
     setTab('assistant');
     clearEncounterRequest();
-  }, [encounterRequestId, encounterRequestRegenerate, encounterRequestedAt, personas, clearEncounterRequest]);
+  }, [encounterRequestId, encounterRequestRegenerate, encounterRequestVariant, encounterRequestedAt, personas, clearEncounterRequest]);
 
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;

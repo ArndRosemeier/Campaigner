@@ -251,12 +251,16 @@ revision snapshots + delete the blob when nothing else references it).
 
 ### Stub popover (click on an unresolved chip)
 
-- **Create stub**: kind picker (npc/location/faction/note; preselected from
+- **Create stub**: kind picker (npc/location/faction/note/encounter;
+  preselected from
   `module.entityKinds` — the type the generator declared when it invented
   the name — or, for hand-typed names, a one-shot model classification;
   always user-confirmable), creates a minimal artifact (name = link
   name, summary = the sentence containing the first occurrence, tag
-  `module:<title>`). Chip turns resolved immediately.
+  `module:<title>`). Chip turns resolved immediately. A stub is not a
+  dead end: the artifact editor fills it with AI later (for encounters:
+  the content section's targeted Encounter-Smith run, docs/11 §entry
+  points).
 - **Generate**: runs the persona chain IN PLACE (one step, auto autonomy —
   the same machinery as the batch) with the shared progress bar
   (00-OVERVIEW §binding progress). Brief = link name + the paragraphs

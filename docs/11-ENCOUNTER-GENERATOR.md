@@ -242,12 +242,19 @@ room like everyone else. `layout === null` encounters seed exactly as today.
   (candidates with overlays). Room rects are **not** hand-editable in v1
   (regenerate instead — D2's "later refinements" = edit the roster/brief and
   re-run).
-- Standalone entry points: persona panel (new encounter from a brief) and the
+- Standalone entry points: persona panel (new encounter from a brief), the
   encounter editor's Battlemap section (**Generate layout & map** /
-  **Regenerate** — sits beside today's Upload battlemap). The section previews
-  the map on file (click → lightbox) with the stored layout's room count; the
-  pre-filled brief words the run as "Generate…" for a mapless encounter and
-  "Regenerate…" only when a map exists.
+  **Regenerate** — sits beside today's Upload battlemap), and the encounter
+  editor's **content** section (**Generate with AI** / two-step
+  **Regenerate with AI**): a targeted Encounter-Smith run that writes roster,
+  terrain, tactics, treasure and prose INTO the existing artifact — preserving
+  its name (the model's name becomes an alias), links, tags, images and
+  battlemap. This is the intended path for module stubs. The Battlemap section
+  refuses an encounter with an empty roster and points at the content run.
+  The battlemap section previews the map on file (click → lightbox) with the
+  stored layout's room count; the pre-filled brief words the run as
+  "Generate…" for a mapless encounter and "Regenerate…" only when a map
+  exists.
 
 ## Module generation integration (the unattended path)
 

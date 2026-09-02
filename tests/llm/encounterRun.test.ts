@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createRulebook } from '@/db/rulebookRepo';
-import { getArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { getRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import {
@@ -211,5 +211,58 @@ describe('encounter runs (M3-B)', () => {
       expect(monsters[1].source.statBlock.creatureType).toBe('humanoid (cultist)');
     }
     expect(monsters[2]?.source).toEqual({ type: 'none' });
+  });
+
+  it('fills a targeted stub encounter in place, preserving identity, links and battlemap', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    const bridge = await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Bridge' });
+    const mapImageId = crypto.randomUUID();
+    const stub = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Ford Ambush',
+      summary: 'Stub summary',
+      tags: ['module:Ruins'],
+      links: [{ targetId: bridge.id, relation: 'at' }],
+      data: {
+        difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
+        mapImageId, layout: null,
+      },
+    });
+    chatMock.mockResolvedValue(JSON.stringify(DRAFT));
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A bridge ambush for level 5',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+      targetArtifactId: stub.id,
+    });
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    expect((await getRun(runId))?.resultArtifactId).toBe(stub.id);
+
+    const updated = await getArtifact(stub.id);
+    // Identity survives: the model's name becomes an alias, module ownership
+    // and links stay, and no second artifact is created.
+    expect(updated?.name).toBe('Ford Ambush');
+    expect(updated?.aliases).toContain('Ambush at the ford');
+    expect(updated?.tags).toEqual(['module:Ruins']);
+    expect(updated?.links).toEqual([{ targetId: bridge.id, relation: 'at' }]);
+    if (updated?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(updated.summary).toBe(DRAFT.summary);
+    expect(updated.body).toBe(DRAFT.body);
+    expect(updated.data.difficulty).toBe('deadly');
+    expect(updated.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+    // The (not yet generated) battlemap is untouched by a content run.
+    expect(updated.data.mapImageId).toBe(mapImageId);
+    expect(updated.data.layout).toBeNull();
   });
 });

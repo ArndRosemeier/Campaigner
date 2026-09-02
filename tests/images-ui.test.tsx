@@ -171,6 +171,30 @@ describe('images ui', () => {
     await flushAsyncUpdates();
   }, 20000);
 
+  it('encounter content action pre-selects the Encounter Smith for a stub', async () => {
+    const user = userEvent.setup();
+    await seedBuiltInPersonas();
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
+    const campaign = await createCampaign({ name: 'Stubs', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Gate Stub',
+    });
+    renderAppAt(artifactPath(campaign.id, encounter.id));
+
+    await user.click(await screen.findByTestId('generate-encounter-content'));
+    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
+    await waitFor(() => {
+      expect(personaSelect.textContent).toContain('Encounter Smith');
+    });
+    expect(screen.getByLabelText('Brief')).toHaveValue(
+      'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, links and battlemap are preserved.',
+    );
+    expect(screen.getByTestId('start-run')).toBeEnabled();
+    await flushAsyncUpdates();
+  }, 20000);
+
   it('encounter battlemap action words the brief as regeneration when a map exists', async () => {
     const user = userEvent.setup();
     await seedBuiltInPersonas();

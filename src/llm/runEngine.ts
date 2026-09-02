@@ -11,7 +11,7 @@ import type {
   RunStep,
   StatBlock,
 } from '@/domain';
-import { encounterLayoutSchema, newId, packRooms, renderSchematic } from '@/domain';
+import { encounterDataSchema, encounterLayoutSchema, newId, packRooms, renderSchematic } from '@/domain';
 import {
   createArtifact,
   getAnyArtifact,
@@ -1269,6 +1269,12 @@ export class RunEngine {
     const context = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const retrieval = await this.retrieveContext(input);
     const targetRoster = target?.kind === 'encounter' ? target.data.monsters : undefined;
+    if (targetRoster?.length === 0) {
+      throw new Error(
+        'This encounter has no monsters yet, so there is no roster to design a map around. ' +
+          'Generate its content first (artifact editor → "Generate with AI") or add monsters manually.',
+      );
+    }
     const rosterContract = targetRoster !== undefined
       ? `Regeneration target roster — reply with these EXACT entries, same order, same names and counts (name/count/notes only; never add sourceChunkIndex or statBlock, the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
           targetRoster.map((monster) => ({
@@ -1960,6 +1966,48 @@ export class RunEngine {
       throw new Error(
         `finalize: the ${kind} draft has no name — refusing to create an unnamed artifact`,
       );
+    }
+    // Generate personas create new artifacts — except an explicitly targeted
+    // encounter run (module stubs): the content is written INTO the existing
+    // artifact, preserving its identity, links, images and battlemap.
+    if (input.targetArtifactId !== undefined) {
+      if (kind !== 'encounter') {
+        throw new Error(
+          `In-place generation targets encounters only — a "${kind}" run cannot fill an existing artifact`,
+        );
+      }
+      const target = await getAnyArtifact(input.targetArtifactId);
+      if (target === undefined) throw new Error('The encounter to fill no longer exists');
+      if (target.kind !== 'encounter') {
+        throw new Error(`"${target.name}" is not an encounter and cannot be filled in place`);
+      }
+      const modelAlias = draftName.trim();
+      const aliases =
+        modelAlias.toLowerCase() === target.name.trim().toLowerCase() ||
+        target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
+          ? target.aliases
+          : [...target.aliases, modelAlias];
+      await updateArtifact(
+        target.id,
+        {
+          summary: asString(draft.summary),
+          body: asString(draft.body),
+          aliases,
+          // Boundary re-validation also restores the encounter narrowing that
+          // `data` (typed as the ArtifactData union) lost at runtime.
+          data: encounterDataSchema.parse({
+            ...data,
+            // Identity of the artifact wins: an existing battlemap survives a
+            // content regeneration untouched.
+            mapImageId: target.data.mapImageId,
+            layout: target.data.layout,
+          }),
+        },
+        { source: 'persona', runId },
+      );
+      const step = this.finishStep(steps[stepIndex], { artifactId: target.id });
+      await updateRun(runId, { resultArtifactId: target.id });
+      return { step, artifactId: target.id };
     }
     const artifact = await createArtifact(
       {

@@ -462,6 +462,28 @@ describe('Encounter Cartographer run', () => {
     );
   });
 
+  it('refuses map generation while the encounter has no roster', async () => {
+    const { campaign, cartographer } = await setup();
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Empty Stub',
+      body: '',
+      links: [],
+      data: {
+        difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
+        mapImageId: null, layout: null,
+      },
+    });
+    const runInput = input(campaign, cartographer, target.id);
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+    expect((await getRun(runId))?.errorMessage).toContain('no monsters yet');
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
   it('stops a manual run for review when the map drifts', async () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));

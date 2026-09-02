@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { HistoryIcon } from 'lucide-react';
+import type { JSX } from 'react';
+import { HistoryIcon, SparklesIcon } from 'lucide-react';
 
 import { artifactRepo } from '@/db';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
+import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
 import {
   ARTIFACT_KIND_SINGULAR,
   type AnyArtifact,
@@ -333,6 +335,9 @@ export function ArtifactEditor({
             )}
             {draft.kind === 'note' && <NoteForm />}
             {draft.kind === 'encounter' && (
+              <EncounterAiSection artifact={artifact} />
+            )}
+            {draft.kind === 'encounter' && (
               <EncounterForm
                 data={draft.data}
                 campaignArtifacts={campaignArtifacts}
@@ -388,6 +393,46 @@ export function ArtifactEditor({
 interface RevisionDropdownProps {
   artifactId: Id;
   onOpen: (revision: ArtifactRevision) => void;
+}
+
+/**
+ * Encounter content hand-off (docs/11 §entry points): a module stub has no
+ * roster, so the battlemap section alone cannot help — this hands off to the
+ * Encounter Smith, whose targeted run writes content INTO this artifact.
+ * Overwriting authored content is a two-step act.
+ */
+function EncounterAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element | null {
+  const requestEncounter = useEncounterGenerationRequest((state) => state.request);
+  const [armed, setArmed] = useState(false);
+  const data = artifact.kind === 'encounter' ? artifact.data : null;
+  if (data === null) return null;
+  const hasContent = data.monsters.length > 0;
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border p-3" data-testid="encounter-ai-section">
+      <p className="text-xs text-muted-foreground">
+        {hasContent
+          ? 'Regenerate roster, terrain, tactics, treasure and prose with the Encounter Smith. Name, links and battlemap are preserved.'
+          : 'This encounter has no content yet — generate roster, terrain, tactics, treasure and prose with the Encounter Smith.'}
+      </p>
+      <Button
+        variant={hasContent && !armed ? 'outline' : 'default'}
+        size="sm"
+        data-testid="generate-encounter-content"
+        onClick={() => {
+          if (hasContent && !armed) {
+            setArmed(true);
+            return;
+          }
+          requestEncounter(artifact.id, hasContent, 'content');
+          setArmed(false);
+        }}
+      >
+        <SparklesIcon aria-hidden data-icon="inline-start" />
+        {!hasContent ? 'Generate with AI' : armed ? 'Overwrite content — confirm?' : 'Regenerate with AI'}
+      </Button>
+    </div>
+  );
 }
 
 function RevisionDropdown({ artifactId, onOpen }: RevisionDropdownProps) {
