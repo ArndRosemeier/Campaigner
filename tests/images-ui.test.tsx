@@ -144,6 +144,29 @@ describe('images ui', () => {
     expect(screen.getByTestId('start-run')).toBeEnabled();
   });
 
+  it('encounter battlemap action pre-selects the Cartographer regeneration flow', async () => {
+    const user = userEvent.setup();
+    await seedBuiltInPersonas();
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
+    const campaign = await createCampaign({ name: 'Maps', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Bridge Ambush',
+    });
+    renderAppAt(artifactPath(campaign.id, encounter.id));
+
+    await user.click(await screen.findByTestId('generate-encounter-map'));
+    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
+    await waitFor(() => {
+      expect(personaSelect.textContent).toContain('Encounter Cartographer');
+    });
+    expect(screen.getByTestId('encounter-regenerate-target')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
+    expect(screen.getByTestId('start-run')).toBeEnabled();
+    await flushAsyncUpdates();
+  });
+
   it('settings expose the image generation toggle and model', async () => {
     renderAppAt('/settings');
     const toggle = await screen.findByTestId('images-enabled');

@@ -160,6 +160,59 @@ export const encounterDraftSchema = z.object({
 
 export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
 
+/** Encounter Cartographer's coordinate-free design brief. */
+export const encounterGeneratorBriefSchema = z
+  .object({
+    name: z.string().min(1),
+    summary: z.string(),
+    body: z.string(),
+    difficulty: z.string(),
+    levelHint: z.string(),
+    terrain: z.string(),
+    tactics: z.string(),
+    treasure: z.string(),
+    theme: z.string(),
+    styleNotes: z.string(),
+    negative: z.string(),
+    monsters: z.array(
+      z.object({
+        name: z.string().min(1),
+        count: z.number().int().positive(),
+        notes: z.string(),
+        sourceChunkIndex: z.number().int().nonnegative().optional(),
+        statBlock: statBlockSchema.optional(),
+      }),
+    ).min(1),
+    rooms: z.array(
+      z.object({
+        name: z.string().min(1),
+        description: z.string(),
+        size: z.enum(['small', 'medium', 'large']),
+        monsterIndexes: z.array(z.number().int().nonnegative()),
+        adjacentRoomIndexes: z.array(z.number().int().nonnegative()),
+      }),
+    ).min(1).max(9),
+    entryRoomIndex: z.number().int().nonnegative(),
+  })
+  .superRefine((brief, context) => {
+    if (brief.entryRoomIndex >= brief.rooms.length) {
+      context.addIssue({ code: 'custom', path: ['entryRoomIndex'], message: 'entry room index is outside rooms' });
+    }
+    for (const [roomIndex, room] of brief.rooms.entries()) {
+      for (const monsterIndex of room.monsterIndexes) {
+        if (monsterIndex >= brief.monsters.length) {
+          context.addIssue({ code: 'custom', path: ['rooms', roomIndex, 'monsterIndexes'], message: 'monster index is outside roster' });
+        }
+      }
+      for (const adjacent of room.adjacentRoomIndexes) {
+        if (adjacent >= brief.rooms.length || adjacent === roomIndex) {
+          context.addIssue({ code: 'custom', path: ['rooms', roomIndex, 'adjacentRoomIndexes'], message: 'adjacent room index is invalid' });
+        }
+      }
+    }
+  });
+export type EncounterGeneratorBrief = z.infer<typeof encounterGeneratorBriefSchema>;
+
 export const plotArcDraftSchema = z.object({
   ...draftBase,
   arcType: z.string(),

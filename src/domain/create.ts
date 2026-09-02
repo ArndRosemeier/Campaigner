@@ -121,6 +121,8 @@ export interface CreateArtifactInput<K extends ArtifactKind = ArtifactKind> {
   summary?: string;
   body?: string;
   links?: readonly ArtifactLink[];
+  imageIds?: readonly Id[];
+  coverImageId?: Id | null;
   data?: ArtifactData;
 }
 
@@ -144,8 +146,8 @@ export function createArtifact(input: CreateArtifactInput): Artifact {
     body: input.body ?? '',
     links: [...(input.links ?? [])],
     currentRevision: 1,
-    imageIds: [],
-    coverImageId: null,
+    imageIds: [...(input.imageIds ?? [])],
+    coverImageId: input.coverImageId ?? null,
     data: input.data ?? blankArtifactData(input.kind),
   };
   // Parse instead of casting: guarantees every artifact entering the DB
@@ -224,8 +226,9 @@ export interface NewPersonaRun {
   autonomy: Autonomy;
   userBrief: string;
   pinnedChunkIds?: readonly Id[];
-  /** Review/image personas: the artifact under review/decoration. */
+  /** Review/image/encounter-regenerate target. */
   targetArtifactId?: Id | null;
+  encounterMapAspect?: '4:3' | '16:9' | '1:1' | null;
 }
 
 export function createPersonaRun(input: NewPersonaRun): PersonaRun {
@@ -241,6 +244,7 @@ export function createPersonaRun(input: NewPersonaRun): PersonaRun {
     steps: [],
     resultArtifactId: null,
     targetArtifactId: input.targetArtifactId ?? null,
+    encounterMapAspect: input.encounterMapAspect ?? null,
     errorMessage: '',
   });
 }

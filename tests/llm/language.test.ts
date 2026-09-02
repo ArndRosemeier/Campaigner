@@ -39,6 +39,7 @@ const SETTINGS_BASE = {
     workspace: { global: false, campaign: true, module: true },
     moduleView: { global: true, campaign: true, module: true },
   },
+  encounterMapAspect: '4:3' as const,
   retiredSessionNotesRemoved: 0,
 };
 

@@ -172,6 +172,9 @@ export class ChainRunner {
       if (persona.mode === 'image') {
         throw new Error(`"${persona.name}" is not chainable — illustrate via the artifact editor`);
       }
+      if (persona.mode === 'encounter') {
+        throw new Error(`"${persona.name}" is not chainable — use the encounter generator`);
+      }
 
       const stepAutonomy = autonomyFor(step, autonomy);
       const input: StartRunInput = {
@@ -341,6 +344,9 @@ export class ChainRunner {
       // never appear in pipelines (07-MILESTONE-3 M3-A).
       if (persona.mode === 'image') {
         throw new Error(`"${persona.name}" is not chainable — illustrate via the artifact editor`);
+      }
+      if (persona.mode === 'encounter') {
+        throw new Error(`"${persona.name}" is not chainable — use the encounter generator`);
       }
 
       const stepAutonomy = autonomyFor(step, autonomy);

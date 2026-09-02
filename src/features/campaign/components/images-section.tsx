@@ -17,6 +17,7 @@ import {
 import { toastError, toastSuccess } from '@/lib/toast';
 import { intakeImage } from '@/lib/imageIntake';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
+import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
 import { LightboxImage } from '@/features/images/lightbox-image';
 import { useImageUrl } from '@/features/images/use-image-url';
 
@@ -36,6 +37,7 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
   const [lightboxId, setLightboxId] = useState<Id | null>(null);
   const [busy, setBusy] = useState(false);
   const requestIllustration = useIllustrationRequest((state) => state.request);
+  const requestEncounterMap = useEncounterGenerationRequest((state) => state.request);
 
   async function handleFiles(files: FileList | null): Promise<void> {
     if (files === null || files.length === 0) return;
@@ -224,6 +226,17 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-medium">Battlemap</h3>
             <div className="flex gap-1.5">
+              <Button
+                variant="outline"
+                size="xs"
+                onClick={() => {
+                  requestEncounterMap(artifact.id);
+                }}
+                data-testid="generate-encounter-map"
+              >
+                <SparklesIcon aria-hidden data-icon="inline-start" />
+                {mapImageId === null ? 'Generate layout & map' : 'Regenerate'}
+              </Button>
               <Button
                 variant="outline"
                 size="xs"

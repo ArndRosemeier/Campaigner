@@ -23,10 +23,10 @@ export const personaSchema = z
      * 'generate' personas create artifacts from a brief (M1 pipeline);
      * 'review' personas check an existing artifact against the campaign and
      * produce a report (M2 Continuity Editor); 'image' personas decorate an
-     * existing artifact with generated images (M3-A Illustrator) and are not
-     * chainable.
+     * existing artifact with generated images (M3-A Illustrator); 'encounter'
+     * produces a complete encounter plus generated room map.
      */
-    mode: z.enum(['generate', 'review', 'image']).default('generate'),
+    mode: z.enum(['generate', 'review', 'image', 'encounter']).default('generate'),
     /** Built-ins are re-seeded on app start if missing (never overwritten). */
     builtIn: z.boolean(),
   })
@@ -35,7 +35,14 @@ export const personaSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['producesKind'],
-        message: 'generate/review personas must declare producesKind',
+        message: 'generate/review/encounter personas must declare producesKind',
+      });
+    }
+    if (persona.mode === 'encounter' && persona.producesKind !== 'encounter') {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['producesKind'],
+        message: 'encounter personas must produce encounters',
       });
     }
   });

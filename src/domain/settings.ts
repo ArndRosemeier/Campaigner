@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
+import { encounterMapAspectSchema } from '@/domain/encounterMap/schema';
 
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
@@ -99,6 +100,8 @@ export const settingsSchema = z.object({
       workspace: defaultScopeToggles('workspace'),
       moduleView: defaultScopeToggles('moduleView'),
     }),
+  /** Encounter Cartographer layout aspect preference. */
+  encounterMapAspect: encounterMapAspectSchema.default('4:3'),
   /** v11 migration notice, consumed once by AppShell after it is shown. */
   retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
 });
@@ -120,6 +123,7 @@ export function defaultSettings(): Settings {
       workspace: defaultScopeToggles('workspace'),
       moduleView: defaultScopeToggles('moduleView'),
     },
+    encounterMapAspect: '4:3',
     retiredSessionNotesRemoved: 0,
   };
 }

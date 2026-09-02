@@ -34,11 +34,14 @@ import { ROUTES, artifactPath } from '@/app/routes';
 import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import type { Autonomy, Campaign, Id, Persona, PersonaRun } from '@/domain';
+import type { Autonomy, Campaign, EncounterLayout, Id, Persona, PersonaRun } from '@/domain';
 import { runEngine } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
+import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
+import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { ImageThumb } from '@/features/images/image-thumb';
+import { useImageUrl } from '@/features/images/use-image-url';
 import { WritersRoom } from '@/features/campaign/components/writers-room';
 
 const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
@@ -85,10 +88,15 @@ export function PersonaPanel({
   const requestArtifactId = useIllustrationRequest((state) => state.artifactId);
   const requestedAt = useIllustrationRequest((state) => state.requestedAt);
   const clearRequest = useIllustrationRequest((state) => state.clear);
+  const encounterRequestId = useEncounterGenerationRequest((state) => state.artifactId);
+  const encounterRequestedAt = useEncounterGenerationRequest((state) => state.requestedAt);
+  const clearEncounterRequest = useEncounterGenerationRequest((state) => state.clear);
+  const settings = useLiveQuery(() => readSettings(), []);
 
   const selectedPersona = personas?.find((persona) => persona.id === personaId);
   const isReview = selectedPersona?.mode === 'review';
   const isImage = selectedPersona?.mode === 'image';
+  const isEncounter = selectedPersona?.mode === 'encounter';
   const needsTarget = isReview || isImage;
 
   // "Illustrate…" from the artifact editor: select the Illustrator persona,
@@ -103,8 +111,32 @@ export function PersonaPanel({
     clearRequest();
   }, [requestArtifactId, requestedAt, personas, clearRequest]);
 
+  useEffect(() => {
+    if (encounterRequestId === null) return;
+    const cartographer = personas?.find((persona) => persona.slug === 'encounter-cartographer');
+    if (cartographer === undefined) return;
+    setPersonaId(cartographer.id);
+    setTargetArtifactId(encounterRequestId);
+    setBrief('Regenerate this encounter map while preserving its authored roster and prose.');
+    setTab('assistant');
+    clearEncounterRequest();
+  }, [encounterRequestId, encounterRequestedAt, personas, clearEncounterRequest]);
+
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
+    if (selectedPersona.mode === 'encounter') {
+      const runId = await runEngine.startRun({
+        campaign,
+        persona: selectedPersona,
+        autonomy,
+        brief,
+        pinnedChunkIds: pinned.map((chunk) => chunk.id),
+        encounterMapAspect: settings?.encounterMapAspect ?? '4:3',
+        ...(targetArtifactId === '' ? {} : { targetArtifactId }),
+      });
+      setActiveRunId(runId);
+      return;
+    }
     if (needsTarget) {
       if (targetArtifactId === '') return;
       const runId = await runEngine.startRun({
@@ -155,7 +187,11 @@ export function PersonaPanel({
               <Select
                 value={personaId}
                 onValueChange={(value) => {
-                  if (value !== null) setPersonaId(value);
+                  if (value === null) return;
+                  setPersonaId(value);
+                  if (personas?.find((persona) => persona.id === value)?.mode === 'encounter') {
+                    setTargetArtifactId('');
+                  }
                 }}
                 items={Object.fromEntries(
                   (personas ?? []).map((persona) => [persona.id, persona.name]),
@@ -261,6 +297,37 @@ export function PersonaPanel({
               </div>
             )}
 
+            {isEncounter && (
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="encounter-aspect">Map aspect</Label>
+                <Select
+                  value={settings?.encounterMapAspect ?? '4:3'}
+                  items={{ '4:3': '4:3', '16:9': '16:9', '1:1': '1:1' }}
+                  onValueChange={(value) => {
+                    if (value === '4:3' || value === '16:9' || value === '1:1') {
+                      void updateSettings({ encounterMapAspect: value }).catch((error: unknown) => {
+                        toastError('Could not save map aspect', error);
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger aria-label="Map aspect">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="4:3">4:3</SelectItem>
+                    <SelectItem value="16:9">16:9</SelectItem>
+                    <SelectItem value="1:1">1:1</SelectItem>
+                  </SelectContent>
+                </Select>
+                {targetArtifactId !== '' && (
+                  <p className="text-xs text-amber-600" data-testid="encounter-regenerate-target">
+                    Regenerating the selected encounter; name, prose, links and roster are preserved.
+                  </p>
+                )}
+              </div>
+            )}
+
             {pinned.length > 0 && (
               <div className="flex flex-col gap-1.5">
                 <Label>Pinned rules ({pinned.length})</Label>
@@ -296,7 +363,7 @@ export function PersonaPanel({
                 data-testid="start-run"
               >
                 <PlayIcon aria-hidden data-icon="inline-start" />
-                {isImage ? 'Illustrate' : 'Start'}
+                {isImage ? 'Illustrate' : isEncounter ? 'Generate encounter' : 'Start'}
               </Button>
             ) : (
               <div className="rounded-md border border-dashed p-2 text-center text-xs text-muted-foreground">
@@ -403,6 +470,8 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
 
       {persona?.mode === 'image' ? (
         <ImageRunActions run={run} campaign={campaign} persona={persona} />
+      ) : persona?.mode === 'encounter' ? (
+        <EncounterRunActions run={run} campaign={campaign} persona={persona} />
       ) : (
         <RunActions run={run} campaign={campaign} />
       )}
@@ -618,6 +687,225 @@ function ImageRunActions({
   );
 }
 
+function EncounterRunActions({
+  run,
+  campaign,
+  persona,
+}: {
+  run: PersonaRun;
+  campaign: Campaign;
+  persona: Persona;
+}): JSX.Element | null {
+  const [selected, setSelected] = useState<Id | null>(null);
+  const layoutStep = run.steps.find((step) => step.name === 'layout');
+  const layoutValue = layoutStep?.userEdit ?? layoutStep?.output;
+  const layout =
+    layoutValue !== null && layoutValue !== undefined && typeof layoutValue === 'object'
+      ? ((layoutValue as { layout?: EncounterLayout }).layout ?? null)
+      : null;
+  const pick = run.steps.find((step) => step.name === 'pick');
+  const candidates =
+    ((pick?.output as { candidates?: Id[] } | null | undefined)?.candidates ?? []);
+  const verification = run.steps.find((step) => step.name === 'verify')?.output as
+    | {
+        verifications?: {
+          mismatchRatio: number;
+          needsReview: boolean;
+          mismatchedIndexes: number[];
+          expected: { cols: number; rows: number };
+        }[];
+      }
+    | undefined;
+  const input = {
+    campaign,
+    persona,
+    autonomy: run.autonomy,
+    brief: run.userBrief,
+    pinnedChunkIds: run.pinnedChunkIds,
+    ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
+    ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+  };
+
+  if (run.status === 'completed' && run.resultArtifactId !== null) {
+    return (
+      <Button render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />} nativeButton={false}>
+        <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
+        Open encounter
+      </Button>
+    );
+  }
+  if (run.status === 'failed' || run.status === 'cancelled') return null;
+
+  if (run.status === 'awaiting_user' && pick?.status === 'done') {
+    return (
+      <div className="flex flex-col gap-2" data-testid="encounter-map-pick">
+        {layout !== null && <EncounterLayoutPreview layout={layout} />}
+        {verification?.verifications?.map((result, index) => (
+          <p key={String(index)} className={result.needsReview ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
+            Candidate {String(index + 1)} structure mismatch: {Math.round(result.mismatchRatio * 100)}%
+          </p>
+        ))}
+        <div className="flex flex-wrap gap-2">
+          {candidates.map((candidateId, candidateIndex) => (
+            <button
+              key={candidateId}
+              type="button"
+              aria-label={`Encounter map candidate ${candidateId}`}
+              aria-pressed={selected === candidateId}
+              className={`rounded-md border p-1 ${selected === candidateId ? 'border-primary ring-2 ring-primary' : ''}`}
+              onClick={() => {
+                setSelected(candidateId);
+              }}
+            >
+              {layout === null ? (
+                <ImageThumb imageId={candidateId} alt="Generated battlemap candidate" size={120} />
+              ) : (
+                <EncounterMapCandidate
+                  imageId={candidateId}
+                  layout={layout}
+                  {...(verification?.verifications?.[candidateIndex] === undefined
+                    ? {}
+                    : { verification: verification.verifications[candidateIndex] })}
+                />
+              )}
+            </button>
+          ))}
+        </div>
+        <Button
+          size="sm"
+          disabled={selected === null}
+          data-testid="keep-encounter-map"
+          onClick={() => {
+            if (selected === null) return;
+            void runEngine.editStep(run.id, pick.index, { keep: [selected] }, input).catch((error: unknown) => {
+              toastError('Could not save the battlemap', error);
+            });
+          }}
+        >
+          <CheckIcon aria-hidden data-icon="inline-start" />
+          Use selected map
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-2" data-testid="encounter-run-actions">
+      {layout !== null && <EncounterLayoutPreview layout={layout} />}
+      {run.status === 'awaiting_user' && layoutStep?.status === 'done' && (
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid="regenerate-layout"
+          onClick={() => {
+            void runEngine.regenerateEncounterLayout(run.id, input).catch((error: unknown) => {
+              toastError('Could not regenerate the layout', error);
+            });
+          }}
+        >
+          <RotateCcwIcon aria-hidden data-icon="inline-start" />
+          Regenerate layout
+        </Button>
+      )}
+      <RunActions run={run} campaign={campaign} />
+    </div>
+  );
+}
+
+function EncounterMapCandidate({
+  imageId,
+  layout,
+  verification,
+}: {
+  imageId: Id;
+  layout: EncounterLayout;
+  verification?: {
+    mismatchedIndexes: number[];
+    expected: { cols: number; rows: number };
+  };
+}): JSX.Element {
+  const url = useImageUrl(imageId);
+  return (
+    <div
+      className="relative w-48 overflow-hidden rounded"
+      style={{ aspectRatio: `${String(layout.gridW)} / ${String(layout.gridH)}` }}
+    >
+      {url !== null && <img src={url} alt="Generated battlemap candidate" className="absolute inset-0 size-full object-fill" />}
+      <EncounterLayoutPreview layout={layout} overlay />
+      {verification?.mismatchedIndexes.map((index) => {
+        const column = index % verification.expected.cols;
+        const row = Math.floor(index / verification.expected.cols);
+        return (
+          <span
+            key={String(index)}
+            className="pointer-events-none absolute bg-destructive/45"
+            style={{
+              left: `${String((column / verification.expected.cols) * 100)}%`,
+              top: `${String((row / verification.expected.rows) * 100)}%`,
+              width: `${String(100 / verification.expected.cols)}%`,
+              height: `${String(100 / verification.expected.rows)}%`,
+            }}
+            data-testid="vision-diff-cell"
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function EncounterLayoutPreview({
+  layout,
+  overlay = false,
+}: {
+  layout: EncounterLayout;
+  overlay?: boolean;
+}): JSX.Element {
+  return (
+    <div
+      className={
+        overlay
+          ? 'pointer-events-none absolute inset-0 overflow-hidden'
+          : 'relative w-full overflow-hidden rounded-md border bg-muted'
+      }
+      style={{ aspectRatio: `${String(layout.gridW)} / ${String(layout.gridH)}` }}
+      data-testid="encounter-layout-preview"
+    >
+      {layout.rooms.flatMap((room) =>
+        room.rects.map((rect, index) => (
+          <div
+            key={`${room.id}-${String(index)}`}
+            className="absolute border border-primary/70 bg-primary/10"
+            style={{
+              left: `${String((rect.x / layout.gridW) * 100)}%`,
+              top: `${String((rect.y / layout.gridH) * 100)}%`,
+              width: `${String((rect.w / layout.gridW) * 100)}%`,
+              height: `${String((rect.h / layout.gridH) * 100)}%`,
+            }}
+            title={room.name}
+          >
+            {index === 0 && (
+              <span className="block truncate bg-background/70 px-0.5 text-[9px]">{room.name}</span>
+            )}
+          </div>
+        )),
+      )}
+      {layout.rooms.map((room) => (
+        <div
+          key={`${room.id}-mobs`}
+          className="pointer-events-none absolute border border-dashed border-destructive/80 bg-destructive/10"
+          style={{
+            left: `${String((room.mobsRect.x / layout.gridW) * 100)}%`,
+            top: `${String((room.mobsRect.y / layout.gridH) * 100)}%`,
+            width: `${String((room.mobsRect.w / layout.gridW) * 100)}%`,
+            height: `${String((room.mobsRect.h / layout.gridH) * 100)}%`,
+          }}
+          title={`${room.name} mob area`}
+        />
+      ))}
+    </div>
+  );
+}
+
 function StepIcon({ status }: { status: PersonaRun['steps'][number]['status'] }): JSX.Element {
   if (status === 'done' || status === 'approved') {
     return <CheckIcon aria-hidden className="size-3.5 text-emerald-500" />;
@@ -659,8 +947,18 @@ function RunActions({
           autonomy: run.autonomy,
           brief: run.userBrief,
           pinnedChunkIds: run.pinnedChunkIds,
+          ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
+          ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
         };
-  }, [personaRow, campaign, run.autonomy, run.userBrief, run.pinnedChunkIds]);
+  }, [
+    personaRow,
+    campaign,
+    run.autonomy,
+    run.userBrief,
+    run.pinnedChunkIds,
+    run.targetArtifactId,
+    run.encounterMapAspect,
+  ]);
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
     return (

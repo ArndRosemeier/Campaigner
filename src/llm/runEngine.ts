@@ -3,12 +3,15 @@ import type {
   ArtifactKind,
   Autonomy,
   Campaign,
+  EncounterLayout,
+  EncounterMapAspect,
   Id,
   Persona,
   PersonaRun,
   RunStep,
   StatBlock,
 } from '@/domain';
+import { encounterLayoutSchema, newId, packRooms, renderSchematic } from '@/domain';
 import {
   createArtifact,
   getAnyArtifact,
@@ -18,7 +21,7 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
-import { createImage, deleteUnreferencedImages, reanchorImages } from '@/db/imageRepo';
+import { createImage, deleteUnreferencedImages, getImage, reanchorImages } from '@/db/imageRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -30,6 +33,7 @@ import { generateImages } from '@/llm/imageGen';
 import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
+  encounterGeneratorBriefSchema,
   factionDraftSchema,
   imagePromptDraftSchema,
   locationDraftSchema,
@@ -39,12 +43,25 @@ import {
   plotArcDraftSchema,
   continuityReportSchema,
 } from '@/llm/schemas';
-import type { ImagePromptDraft } from '@/llm/schemas';
+import type { EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
+import { normalizeImageAspect } from '@/lib/imageAspect';
+import { verifyEncounterMap } from '@/llm/encounterVision';
 
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
 import { toastError } from '@/lib/toast';
+import { useProgressStore } from '@/lib/progress';
+
+/** Testable seams for browser/image work in the encounter pipeline. */
+export const encounterRunAdapters = {
+  renderSchematic,
+  generateImages,
+  normalizeImageAspect,
+  intakeImage,
+  verifyEncounterMap,
+  blobToDataUrl,
+};
 
 /**
  * Persona run engine (04-LLM-PERSONAS.md §Run pipeline): fixed named steps
@@ -69,7 +86,11 @@ export interface StepStatblockOutput {
 }
 
 const STEP_NAMES = ['retrieve', 'draft', 'statblock', 'finalize'] as const;
-export type StepName = (typeof STEP_NAMES)[number] | ReviewStepName | ImageStepName;
+export type StepName =
+  | (typeof STEP_NAMES)[number]
+  | ReviewStepName
+  | ImageStepName
+  | EncounterStepName;
 
 const REVIEW_STEP_NAMES = ['gather', 'check', 'finalize'] as const;
 export type ReviewStepName = (typeof REVIEW_STEP_NAMES)[number];
@@ -81,6 +102,17 @@ export type ReviewStepName = (typeof REVIEW_STEP_NAMES)[number];
  */
 const IMAGE_STEP_NAMES = ['prompt-draft', 'generate', 'pick'] as const;
 export type ImageStepName = (typeof IMAGE_STEP_NAMES)[number];
+
+const ENCOUNTER_STEP_NAMES = [
+  'brief',
+  'layout',
+  'schematic',
+  'stylize',
+  'verify',
+  'pick',
+  'finalize',
+] as const;
+export type EncounterStepName = (typeof ENCOUNTER_STEP_NAMES)[number];
 
 export type EngineEvent =
   | { kind: 'run'; runId: Id; status: PersonaRun['status'] }
@@ -101,8 +133,10 @@ export interface StartRunInput {
    * from the produced artifact.
    */
   contextArtifactIds?: readonly Id[];
-  /** Review personas: the artifact under continuity review. */
+  /** Review/image target or encounter artifact to regenerate. */
   targetArtifactId?: Id;
+  /** Encounter generator aspect; persisted on the run for pauses/retries. */
+  encounterMapAspect?: EncounterMapAspect;
 }
 
 /** Fetches context artifacts for the prompt (name + summary + body excerpt). */
@@ -240,6 +274,24 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
   }
 }
 
+function encounterSourcesValid(
+  brief: EncounterGeneratorBrief,
+  statblockChunkIds: readonly Id[],
+): boolean {
+  return brief.monsters.every((monster) =>
+    monster.statBlock !== undefined ||
+    (monster.sourceChunkIndex !== undefined && statblockChunkIds[monster.sourceChunkIndex] !== undefined),
+  );
+}
+
+function parseEncounterBrief(raw: string): EncounterGeneratorBrief | null {
+  try {
+    return encounterGeneratorBriefSchema.parse(JSON.parse(raw) as unknown);
+  } catch {
+    return null;
+  }
+}
+
 /** Draft fields are schema-validated strings; coerce defensively. */
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -252,6 +304,8 @@ export class RunEngine {
   /** JSON-parse retry state per run (one automatic fix retry per LLM step). */
   private draftRetried = new Set<Id>();
   private statblockRetried = new Set<Id>();
+  private encounterSchematics = new Map<Id, { dataUrl: string; width: number; height: number }>();
+  private encounterLayoutVariants = new Map<Id, number>();
 
   on(listener: Listener): () => void {
     this.listeners.add(listener);
@@ -276,10 +330,22 @@ export class RunEngine {
       userBrief: input.brief,
       pinnedChunkIds: input.pinnedChunkIds,
       targetArtifactId: input.targetArtifactId ?? null,
+      encounterMapAspect:
+        input.persona.mode === 'encounter'
+          ? (input.encounterMapAspect ?? (await getSettings()).encounterMapAspect)
+          : null,
     });
     this.draftRetried.delete(run.id);
     this.statblockRetried.delete(run.id);
     this.cancelRequested.delete(run.id);
+    if (input.persona.mode === 'encounter') {
+      this.encounterLayoutVariants.set(run.id, 0);
+      useProgressStore.getState().start(
+        encounterProgressId(run.id),
+        input.targetArtifactId === undefined ? 'Generating encounter map' : 'Regenerating encounter map',
+        'Drafting the encounter brief…',
+      );
+    }
     void this.executeFrom(run.id, 0, input).catch((error: unknown) => {
       void this.fail(run.id, error);
     });
@@ -296,6 +362,9 @@ export class RunEngine {
     const target = stepIndex === -1 ? run.steps.length - 1 : stepIndex;
     // Approving a pick without a selection means "keep nothing".
     if (run.steps[target]?.name === 'pick') {
+      if (input.persona.mode === 'encounter') {
+        throw new Error('Select one generated battlemap before continuing');
+      }
       await this.pickImages(runId, []);
       return;
     }
@@ -322,10 +391,13 @@ export class RunEngine {
     const run = await getRun(runId);
     if (run === undefined) return;
     if (run.steps[stepIndex]?.name === 'pick') {
-      // The pick step's edit is the image selection ({ keep: Id[] }).
       const keep = (userEdit as { keep?: unknown } | null)?.keep;
       const ids = Array.isArray(keep) ? keep.filter((id): id is Id => typeof id === 'string') : [];
-      await this.pickImages(runId, ids);
+      if (input.persona.mode === 'encounter') {
+        await this.pickEncounterMap(runId, ids, input);
+      } else {
+        await this.pickImages(runId, ids);
+      }
       return;
     }
     await this.updateStep(runId, stepIndex, { userEdit, status: 'approved' });
@@ -356,6 +428,24 @@ export class RunEngine {
     });
   }
 
+  /** Re-packs an approved encounter brief with the next deterministic variant. */
+  async regenerateEncounterLayout(runId: Id, input: StartRunInput): Promise<void> {
+    const run = await getRun(runId);
+    if (run === undefined || input.persona.mode !== 'encounter') return;
+    const stepIndex = run.steps.findIndex((step) => step.name === 'layout');
+    if (stepIndex === -1) throw new Error('Encounter run has no layout step to regenerate');
+    this.encounterLayoutVariants.set(runId, (this.encounterLayoutVariants.get(runId) ?? 0) + 1);
+    this.encounterSchematics.delete(runId);
+    await updateRun(runId, {
+      status: 'running',
+      steps: run.steps.slice(0, stepIndex),
+      errorMessage: '',
+    });
+    void this.executeFrom(runId, stepIndex, input).catch((error: unknown) => {
+      void this.fail(runId, error);
+    });
+  }
+
   /** Cancels the run, aborting any in-flight request. */
   async cancel(runId: Id): Promise<void> {
     this.cancelRequested.add(runId);
@@ -366,6 +456,9 @@ export class RunEngine {
     this.cancelRequested.delete(runId);
     this.draftRetried.delete(runId);
     this.statblockRetried.delete(runId);
+    this.encounterSchematics.delete(runId);
+    this.encounterLayoutVariants.delete(runId);
+    useProgressStore.getState().finish(encounterProgressId(runId));
   }
 
   private async executeFrom(
@@ -383,7 +476,9 @@ export class RunEngine {
         ? [...REVIEW_STEP_NAMES]
         : input.persona.mode === 'image'
           ? [...IMAGE_STEP_NAMES]
-          : input.persona.producesKind === 'npc'
+          : input.persona.mode === 'encounter'
+            ? [...ENCOUNTER_STEP_NAMES]
+            : input.persona.producesKind === 'npc'
             ? [...STEP_NAMES]
             : STEP_NAMES.filter((name) => name !== 'statblock');
 
@@ -410,6 +505,12 @@ export class RunEngine {
         steps[i] = step;
         await updateRun(runId, { steps: [...steps] });
         this.emit({ kind: 'step', runId, stepIndex: i, status: 'running', stepName: name });
+        if (input.persona.mode === 'encounter') {
+          useProgressStore.getState().update(encounterProgressId(runId), {
+            detail: encounterStepDetail(name),
+            progress: i / kinds.length,
+          });
+        }
 
         const outcome = await this.runStep(
           runId,
@@ -437,6 +538,12 @@ export class RunEngine {
 
         if (outcome.runStatus !== undefined && outcome.runStatus !== 'running') {
           this.emit({ kind: 'run', runId, status: outcome.runStatus });
+          if (input.persona.mode === 'encounter') {
+            useProgressStore.getState().update(encounterProgressId(runId), {
+              detail: outcome.runStatus === 'needs_review' ? 'Map needs review' : 'Waiting for your approval',
+              progress: (i + 1) / kinds.length,
+            });
+          }
           return; // paused (awaiting_user / needs_review)
         }
 
@@ -453,6 +560,9 @@ export class RunEngine {
           await updateRun(runId, { status: 'failed', errorMessage: reason, steps: [...steps] });
           this.draftRetried.delete(runId);
           this.statblockRetried.delete(runId);
+          if (input.persona.mode === 'encounter') {
+            useProgressStore.getState().finish(encounterProgressId(runId));
+          }
           this.emit({ kind: 'run', runId, status: 'failed' });
           return;
         }
@@ -461,6 +571,8 @@ export class RunEngine {
       await updateRun(runId, { status: 'completed' });
       this.draftRetried.delete(runId);
       this.statblockRetried.delete(runId);
+      this.encounterSchematics.delete(runId);
+      useProgressStore.getState().finish(encounterProgressId(runId));
       this.emit({ kind: 'run', runId, status: 'completed' });
     } catch (error) {
       if (
@@ -501,10 +613,24 @@ export class RunEngine {
         return this.runPromptDraft(runId, stepIndex, steps, input, signal, extraInstruction);
       case 'generate':
         return this.runGenerate(runId, stepIndex, steps, input, signal);
+      case 'brief':
+        return this.runEncounterBrief(runId, stepIndex, steps, input, signal, extraInstruction);
+      case 'layout':
+        return this.runEncounterLayout(runId, stepIndex, steps, input);
+      case 'schematic':
+        return this.runEncounterSchematic(runId, stepIndex, steps);
+      case 'stylize':
+        return this.runEncounterStylize(runId, stepIndex, steps, input, signal);
+      case 'verify':
+        return this.runEncounterVerify(runId, stepIndex, steps, input, signal);
       case 'pick':
-        return this.runPick(stepIndex, steps);
+        return input.persona.mode === 'encounter'
+          ? this.runEncounterPick(stepIndex, steps, input)
+          : this.runPick(stepIndex, steps);
       case 'finalize':
-        return this.runFinalize(runId, stepIndex, steps, input);
+        return input.persona.mode === 'encounter'
+          ? this.runEncounterFinalize(runId, stepIndex, steps, input)
+          : this.runFinalize(runId, stepIndex, steps, input);
     }
   }
 
@@ -945,6 +1071,410 @@ export class RunEngine {
     return result.success ? result.data : null;
   }
 
+  private effectiveEncounterBrief(steps: readonly RunStep[]): {
+    parsed: EncounterGeneratorBrief;
+    aspect: EncounterMapAspect;
+    statblockChunkIds: Id[];
+  } {
+    const step = steps.find((candidate) => candidate.name === 'brief');
+    const effective = step?.userEdit ?? step?.output;
+    if (effective === null || effective === undefined || typeof effective !== 'object') {
+      throw new Error('Encounter run has no approved brief');
+    }
+    const value = effective as { parsed?: unknown; aspect?: unknown; statblockChunkIds?: unknown };
+    return {
+      parsed: encounterGeneratorBriefSchema.parse(value.parsed),
+      aspect: value.aspect === '16:9' || value.aspect === '1:1' ? value.aspect : '4:3',
+      statblockChunkIds: Array.isArray(value.statblockChunkIds)
+        ? value.statblockChunkIds.filter((id): id is Id => typeof id === 'string')
+        : [],
+    };
+  }
+
+  private effectiveEncounterLayout(steps: readonly RunStep[]): EncounterLayout {
+    const step = steps.find((candidate) => candidate.name === 'layout');
+    const effective = step?.userEdit ?? step?.output;
+    if (effective === null || effective === undefined || typeof effective !== 'object') {
+      throw new Error('Encounter run has no approved layout');
+    }
+    const value = effective as { layout?: unknown };
+    return encounterLayoutSchema.parse(value.layout);
+  }
+
+  private async runEncounterBrief(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+    signal: AbortSignal,
+    extraInstruction: string,
+  ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
+    const settings = await getSettings();
+    const run = await getRun(runId);
+    const aspect = run?.encounterMapAspect ?? input.encounterMapAspect ?? settings.encounterMapAspect;
+    const target = input.targetArtifactId === undefined
+      ? undefined
+      : await getAnyArtifact(input.targetArtifactId);
+    if (input.targetArtifactId !== undefined && target === undefined) {
+      throw new Error('The encounter to regenerate no longer exists');
+    }
+    if (target !== undefined && target.kind !== 'encounter') {
+      throw new Error(`"${target.name}" is not an encounter and cannot be regenerated`);
+    }
+    const context = await loadContextArtifacts(input.contextArtifactIds ?? []);
+    const retrieval = await this.retrieveContext(input);
+    const rosterContract = target?.kind === 'encounter'
+      ? `Regeneration target roster (preserve this exact order, names and counts): ${JSON.stringify(
+          target.data.monsters.map((monster) => ({
+            name: monster.name,
+            count: monster.count,
+            notes: monster.notes,
+          })),
+        )}`
+      : 'Design a concrete monster roster appropriate to the requested difficulty.';
+    const contract = [
+      input.brief,
+      `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
+      `Map aspect: ${aspect}`,
+      rosterContract,
+      context.length === 0 ? null : `Context: ${JSON.stringify(context)}`,
+      retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
+      buildStatblockCitationSection(retrieval.statblockTitles),
+      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+      'Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, monsters [{name,count,notes,sourceChunkIndex? or statBlock?}], rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}], entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.',
+    ].filter((part) => part !== null).join('\n\n');
+    const messages: ChatMessage[] = [
+      { role: 'system', content: input.persona.systemPrompt },
+      { role: 'user', content: contract },
+    ];
+    let raw = await chat(messages, {
+      model: input.persona.model || settings.defaultChatModel,
+      temperature: input.persona.temperature,
+      responseFormat: 'json',
+      signal,
+      onToken: (delta) => {
+        this.emit({ kind: 'token', runId, stepIndex, delta });
+      },
+    });
+    let parsed = parseEncounterBrief(raw);
+    if (target === undefined && parsed !== null && !encounterSourcesValid(parsed, retrieval.statblockChunkIds)) parsed = null;
+    if (parsed === null) {
+      raw = await chat(
+        [
+          ...messages,
+          { role: 'assistant', content: raw },
+          { role: 'user', content: 'The reply failed the required encounter-brief schema. Return corrected JSON only, with valid room and roster indexes.' },
+        ],
+        {
+          model: input.persona.model || settings.defaultChatModel,
+          temperature: input.persona.temperature,
+          responseFormat: 'json',
+          signal,
+          onToken: (delta) => {
+        this.emit({ kind: 'token', runId, stepIndex, delta });
+      },
+        },
+      );
+      parsed = parseEncounterBrief(raw);
+      if (target === undefined && parsed !== null && !encounterSourcesValid(parsed, retrieval.statblockChunkIds)) parsed = null;
+    }
+    if (parsed === null) {
+      return {
+        step: this.finishStep(steps[stepIndex], { raw }, 'rejected'),
+        ...(input.autonomy === 'auto' ? {} : { runStatus: 'needs_review' as const }),
+      };
+    }
+    if (target?.kind === 'encounter') {
+      parsed = {
+        ...parsed,
+        monsters: target.data.monsters.map((monster) => ({
+          name: monster.name,
+          count: monster.count,
+          notes: monster.notes,
+        })),
+      };
+    }
+    return {
+      step: this.finishStep(steps[stepIndex], {
+        parsed,
+        aspect,
+        statblockChunkIds: retrieval.statblockChunkIds,
+      }),
+      ...(input.autonomy === 'auto' ? {} : { runStatus: 'awaiting_user' as const }),
+    };
+  }
+
+  private runEncounterLayout(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+  ): { step: RunStep; runStatus?: PersonaRun['status'] } {
+    const { parsed, aspect } = this.effectiveEncounterBrief(steps);
+    const roomIds = parsed.rooms.map(() => newId());
+    const entryRoomId = roomIds[parsed.entryRoomIndex];
+    if (entryRoomId === undefined) throw new Error('Encounter brief has no valid entry room');
+    const layout = packRooms({
+      theme: parsed.theme,
+      aspect,
+      entryRoomId,
+      rosterCounts: parsed.monsters.map((monster) => monster.count),
+      rooms: parsed.rooms.map((room, index) => {
+        const id = roomIds[index];
+        if (id === undefined) throw new Error(`Encounter room ${String(index)} has no id`);
+        return {
+          id,
+          name: room.name,
+          description: room.description,
+          size: room.size,
+          monsterIndexes: room.monsterIndexes,
+          adjacentRoomIds: room.adjacentRoomIndexes.map((adjacent) => {
+            const adjacentId = roomIds[adjacent];
+            if (adjacentId === undefined) throw new Error(`Room ${room.name} has invalid adjacency`);
+            return adjacentId;
+          }),
+        };
+      }),
+    }, this.encounterLayoutVariants.get(runId) ?? 0);
+    return {
+      step: this.finishStep(steps[stepIndex], { layout }),
+      ...(input.autonomy === 'auto' ? {} : { runStatus: 'awaiting_user' as const }),
+    };
+  }
+
+  private runEncounterSchematic(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+  ): { step: RunStep } {
+    const layout = this.effectiveEncounterLayout(steps);
+    const schematic = encounterRunAdapters.renderSchematic(layout, 96);
+    this.encounterSchematics.set(runId, schematic);
+    return {
+      step: this.finishStep(steps[stepIndex], {
+        width: schematic.width,
+        height: schematic.height,
+      }),
+    };
+  }
+
+  private async runEncounterStylize(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+    signal: AbortSignal,
+  ): Promise<{ step: RunStep }> {
+    const settings = await getSettings();
+    if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
+    const layout = this.effectiveEncounterLayout(steps);
+    const { parsed } = this.effectiveEncounterBrief(steps);
+    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, 96);
+    this.encounterSchematics.set(runId, schematic);
+    const prompt = [
+      `Top-down tabletop RPG battlemap. Theme: ${parsed.theme}.`,
+      parsed.styleNotes,
+      'Keep walls, openings and overall structure exactly as in the reference image.',
+      'No text, labels, grid lines, numbers, tokens, miniatures or watermark.',
+      parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
+    ].filter((part) => part !== null && part !== '').join(' ');
+    const generated = await encounterRunAdapters.generateImages(prompt, 2, {
+      model: settings.imageModel,
+      signal,
+      inputReferences: [{ dataUrl: schematic.dataUrl }],
+    });
+    const imageIds: Id[] = [];
+    const aspectActions: ('none' | 'letterboxed')[] = [];
+    for (const blob of generated.images) {
+      const normalized = await encounterRunAdapters.normalizeImageAspect(blob, layout.gridW, layout.gridH);
+      const intake = await encounterRunAdapters.intakeImage(normalized.blob, { role: 'map' });
+      const stored = await createImage({
+        campaignId: input.campaign.id,
+        blob: intake.blob,
+        mimeType: intake.mimeType,
+        width: intake.width,
+        height: intake.height,
+        prompt,
+        model: settings.imageModel,
+        source: 'generated',
+        role: 'map',
+      });
+      imageIds.push(stored.id);
+      aspectActions.push(normalized.action);
+    }
+    return {
+      step: this.finishStep(steps[stepIndex], {
+        imageIds,
+        aspectActions,
+        costUsd: generated.costUsd,
+        cappedToOne: generated.cappedToOne,
+      }),
+    };
+  }
+
+  private async runEncounterVerify(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+    signal: AbortSignal,
+  ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
+    const settings = await getSettings();
+    const layout = this.effectiveEncounterLayout(steps);
+    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, 96);
+    const stylize = steps.find((step) => step.name === 'stylize')?.output as { imageIds?: Id[] } | undefined;
+    const imageIds = stylize?.imageIds ?? [];
+    if (imageIds.length === 0) throw new Error('Encounter stylize step produced no map candidates');
+    const verifications = [];
+    for (const imageId of imageIds) {
+      const image = await getImage(imageId);
+      if (image === undefined) throw new Error(`Generated map ${imageId} no longer exists`);
+      const stylizedDataUrl = await encounterRunAdapters.blobToDataUrl(
+        new Blob([image.bytes], { type: image.mimeType }),
+      );
+      verifications.push(
+        await encounterRunAdapters.verifyEncounterMap({
+          layout,
+          schematicDataUrl: schematic.dataUrl,
+          stylizedDataUrl,
+          model: settings.defaultChatModel,
+          signal,
+        }),
+      );
+    }
+    const needsReview = verifications.some((verification) => verification.needsReview);
+    if (needsReview && input.autonomy === 'auto') {
+      throw new Error('Generated battlemap failed the structure verification threshold');
+    }
+    return {
+      step: this.finishStep(
+        steps[stepIndex],
+        { verifications },
+        needsReview ? 'rejected' : 'done',
+      ),
+      ...(needsReview ? { runStatus: 'needs_review' as const } : {}),
+    };
+  }
+
+  private async runEncounterPick(
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+  ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
+    const stylize = steps.find((step) => step.name === 'stylize')?.output as { imageIds?: Id[] } | undefined;
+    const candidates = stylize?.imageIds ?? [];
+    if (candidates.length === 0) throw new Error('Encounter run has no map candidates to pick');
+    if (input.autonomy === 'auto') {
+      const selected = candidates[0];
+      if (selected === undefined) throw new Error('Encounter auto run has no first map candidate');
+      await deleteUnreferencedImages(
+        input.campaign.id,
+        candidates.filter((id) => id !== selected),
+      );
+      return {
+        step: {
+          ...this.finishStep(steps[stepIndex], { candidates }, 'approved'),
+          userEdit: { keep: [selected] },
+        },
+      };
+    }
+    return {
+      step: this.finishStep(steps[stepIndex], { candidates }),
+      runStatus: 'awaiting_user',
+    };
+  }
+
+  async pickEncounterMap(runId: Id, keep: readonly Id[], input: StartRunInput): Promise<void> {
+    if (keep.length !== 1) throw new Error('Select exactly one generated battlemap');
+    const run = await getRun(runId);
+    if (run?.status !== 'awaiting_user' && run?.status !== 'needs_review') return;
+    const stepIndex = run.steps.findIndex((step) => step.name === 'pick');
+    const pick = run.steps[stepIndex];
+    const candidates = (pick?.output as { candidates?: Id[] } | undefined)?.candidates ?? [];
+    const selected = keep[0];
+    if (selected === undefined || !candidates.includes(selected)) {
+      throw new Error('Selected battlemap is not a candidate from this run');
+    }
+    await this.updateStep(runId, stepIndex, {
+      userEdit: { keep: [selected] },
+      status: 'approved',
+    });
+    await deleteUnreferencedImages(
+      run.campaignId,
+      candidates.filter((id) => id !== selected),
+    );
+    void this.executeFrom(runId, stepIndex + 1, input).catch((error: unknown) => {
+      void this.fail(runId, error);
+    });
+  }
+
+  private async runEncounterFinalize(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+  ): Promise<{ step: RunStep; artifactId: Id }> {
+    const { parsed, statblockChunkIds } = this.effectiveEncounterBrief(steps);
+    const layout = this.effectiveEncounterLayout(steps);
+    const pick = steps.find((step) => step.name === 'pick');
+    const selected = (pick?.userEdit as { keep?: Id[] } | null | undefined)?.keep?.[0];
+    if (selected === undefined) throw new Error('Encounter finalize has no selected battlemap');
+    const target = input.targetArtifactId === undefined
+      ? undefined
+      : await getAnyArtifact(input.targetArtifactId);
+    if (input.targetArtifactId !== undefined && target === undefined) {
+      throw new Error('The encounter to regenerate no longer exists');
+    }
+    let artifactId: Id;
+    if (target !== undefined) {
+      if (target.kind !== 'encounter') throw new Error('Encounter regeneration target changed kind');
+      if (target.campaignId === null) await reanchorImages([selected], null);
+      const imageIds = target.imageIds.includes(selected) ? target.imageIds : [...target.imageIds, selected];
+      await updateArtifact(target.id, {
+        imageIds,
+        data: { ...target.data, layout, mapImageId: selected },
+      }, { source: 'persona', runId });
+      artifactId = target.id;
+    } else {
+      const artifact = await createArtifact({
+        campaignId: input.campaign.id,
+        kind: 'encounter',
+        name: parsed.name,
+        summary: parsed.summary,
+        body: parsed.body,
+        imageIds: [selected],
+        data: {
+          difficulty: parsed.difficulty,
+          levelHint: parsed.levelHint,
+          monsters: parsed.monsters.map((monster) => {
+            const chunkId = monster.sourceChunkIndex === undefined
+              ? undefined
+              : statblockChunkIds[monster.sourceChunkIndex];
+            return {
+              name: monster.name,
+              count: monster.count,
+              notes: monster.notes,
+              source:
+                chunkId !== undefined
+                  ? { type: 'rulebook' as const, chunkId }
+                  : monster.statBlock !== undefined
+                    ? { type: 'inline' as const, statBlock: monster.statBlock }
+                    : { type: 'none' as const },
+            };
+          }),
+          terrain: parsed.terrain,
+          tactics: parsed.tactics,
+          treasure: parsed.treasure,
+          mapImageId: selected,
+          layout,
+        },
+      }, { source: 'persona', runId });
+      artifactId = artifact.id;
+    }
+    await updateRun(runId, { resultArtifactId: artifactId });
+    return { step: this.finishStep(steps[stepIndex], { artifactId }), artifactId };
+  }
+
   /** Prompt-draft step (M3-A): drafts an image prompt for the target artifact. */
   private async runPromptDraft(
     runId: Id,
@@ -1281,6 +1811,9 @@ export class RunEngine {
 
   private async fail(runId: Id, error: unknown): Promise<void> {
     this.draftRetried.delete(runId);
+    this.encounterSchematics.delete(runId);
+    this.encounterLayoutVariants.delete(runId);
+    useProgressStore.getState().finish(encounterProgressId(runId));
     this.statblockRetried.delete(runId);
     if (error instanceof MissingApiKeyError) {
       toastError('No API key — add one in Settings', error);
@@ -1295,6 +1828,40 @@ export class RunEngine {
       this.emit({ kind: 'run', runId, status: 'failed' });
     }
   }
+}
+
+function encounterProgressId(runId: Id): string {
+  return `encounter-map-${runId}`;
+}
+
+function encounterStepDetail(name: StepName): string {
+  const labels: Partial<Record<StepName, string>> = {
+    brief: 'Drafting the encounter brief…',
+    layout: 'Packing rooms and corridors…',
+    schematic: 'Rendering the structure reference…',
+    stylize: 'Stylizing candidate battlemaps…',
+    verify: 'Checking structural alignment…',
+    pick: 'Waiting for a map selection…',
+    finalize: 'Saving the encounter and map…',
+  };
+  return labels[name] ?? `Running ${name}…`;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => {
+      reject(reader.error ?? new Error('Could not read generated map'));
+    };
+    reader.onload = () => {
+      if (typeof reader.result !== 'string') {
+        reject(new Error('Generated map did not produce a data URL'));
+        return;
+      }
+      resolve(reader.result);
+    };
+    reader.readAsDataURL(blob);
+  });
 }
 
 /** The engine singleton used by the persona panel. */

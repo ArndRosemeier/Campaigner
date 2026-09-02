@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { BaseEntitySchema } from '@/domain/entity';
+import { encounterMapAspectSchema } from '@/domain/encounterMap/schema';
 
 export const autonomySchema = z.enum(['manual', 'review', 'auto']);
 
@@ -61,6 +62,8 @@ export const personaRunSchema = z.object({
    * personas decorate it (M3-A). Null for generate personas.
    */
   targetArtifactId: z.uuid().nullable(),
+  /** Encounter generator option, null for every other persona mode. */
+  encounterMapAspect: encounterMapAspectSchema.nullable().default(null),
   errorMessage: z.string(),
 });
 

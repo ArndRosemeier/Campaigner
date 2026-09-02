@@ -40,12 +40,12 @@ export class EncounterLayoutError extends Error {
 }
 
 /** Deterministic bounded packer. No coordinates ever come from the LLM. */
-export function packRooms(input: EncounterMapBrief): EncounterLayout {
+export function packRooms(input: EncounterMapBrief, variant = 0): EncounterLayout {
   const brief = encounterMapBriefSchema.parse(input);
   const attempts: string[] = [];
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
-      const layout = packAttempt(brief, attempt);
+      const layout = packAttempt(brief, attempt + variant);
       const issues = validateEncounterLayout(layout, brief.rosterCounts);
       if (issues.length === 0) return encounterLayoutSchema.parse(layout);
       attempts.push(`attempt ${String(attempt + 1)}: ${issues.join(', ')}`);
