@@ -79,7 +79,7 @@ export function PersonaPanel({
     [campaignArtifacts, globalArtifacts],
   );
   const [personaId, setPersonaId] = useState<string>('');
-  const [autonomy, setAutonomy] = useState<Autonomy>('manual');
+  const [autonomy, setAutonomy] = useState<Autonomy>('auto');
   const [brief, setBrief] = useState('');
   const [targetArtifactId, setTargetArtifactId] = useState<string>('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
@@ -110,6 +110,7 @@ export function PersonaPanel({
     if (illustrator === undefined) return; // personas not loaded yet
     setPersonaId(illustrator.id);
     setTargetArtifactId(requestArtifactId);
+    setAutonomy('auto');
     setTab('assistant');
     clearRequest();
   }, [requestArtifactId, requestedAt, personas, clearRequest]);
@@ -134,6 +135,7 @@ export function PersonaPanel({
           ? 'Regenerate this encounter map while preserving its authored roster and prose.'
           : 'Generate a battlemap and room layout for this encounter.',
     );
+    setAutonomy('auto');
     setTab('assistant');
     clearEncounterRequest();
   }, [encounterRequestId, encounterRequestRegenerate, encounterRequestVariant, encounterRequestedAt, personas, clearEncounterRequest]);

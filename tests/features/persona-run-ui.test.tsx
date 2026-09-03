@@ -11,6 +11,7 @@ import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
 import { createRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import type { Campaign, Persona } from '@/domain';
+import { coarseStructure } from '@/llm/encounterVision';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
@@ -99,7 +100,14 @@ async function seed(): Promise<{ campaign: Campaign; persona: Persona }> {
 }
 
 /** Selects the persona in the combobox and starts a run with a brief. */
-async function startRun(user: ReturnType<typeof userEvent.setup>, persona: Persona): Promise<void> {
+async function startRun(
+  user: ReturnType<typeof userEvent.setup>,
+  persona: Persona,
+  autonomy?: string,
+): Promise<void> {
+  if (autonomy !== undefined) {
+    await setAutonomy(user, autonomy);
+  }
   await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
   await user.click(await screen.findByRole('option', { name: persona.name }));
   await user.type(screen.getByLabelText('Brief'), 'a goblin alchemist boss for a level 3 party');
@@ -132,6 +140,29 @@ async function onlyRunId(): Promise<string> {
 beforeEach(async () => {
   await clearDatabase();
   useProgressStore.getState().reset();
+  const { encounterRunAdapters } = await import('@/llm/runEngine');
+  vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({
+    dataUrl: 'data:image/png;base64,schematic',
+    width: 2304,
+    height: 1728,
+  });
+  vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) =>
+    Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }),
+  );
+  vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
+  vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
+    const expected = coarseStructure(layout);
+    return Promise.resolve({
+      expected,
+      actual: expected,
+      mismatchedIndexes: [],
+      mismatchRatio: 0,
+      needsReview: false,
+    });
+  });
+  intakeImageMock.mockImplementation((blob: Blob) =>
+    Promise.resolve({ blob, width: 64, height: 64, mimeType: 'image/webp' }),
+  );
 });
 afterEach(() => {
   useProgressStore.getState().reset();
@@ -154,7 +185,7 @@ describe('PersonaPanel run lifecycle', () => {
       </MemoryRouter>,
     );
 
-    await startRun(user, persona);
+    await startRun(user, persona, 'Manual');
 
     // The ActiveRun view shows the pause state with the step log.
     const active = await screen.findByTestId('active-run', {}, { timeout: 10_000 });
@@ -190,7 +221,7 @@ describe('PersonaPanel run lifecycle', () => {
       </MemoryRouter>,
     );
 
-    await startRun(user, persona);
+    await startRun(user, persona, 'Manual');
     const active = await screen.findByTestId('active-run', {}, { timeout: 10_000 });
     await within(active).findByText('awaiting you');
 
@@ -236,7 +267,7 @@ describe('PersonaPanel run lifecycle', () => {
       </MemoryRouter>,
     );
 
-    await startRun(user, persona);
+    await startRun(user, persona, 'Manual');
     const active = await screen.findByTestId('active-run', {}, { timeout: 10_000 });
     await within(active).findByText('awaiting you');
 
@@ -267,7 +298,7 @@ describe('PersonaPanel run lifecycle', () => {
       </MemoryRouter>,
     );
 
-    await startRun(user, persona);
+    await startRun(user, persona, 'Manual');
     const active = await screen.findByTestId('active-run', {}, { timeout: 10_000 });
     await within(active).findByText('awaiting you');
     // The rejected step is flagged in the step log; manual autonomy pauses as
@@ -371,6 +402,13 @@ describe('PersonaPanel run lifecycle', () => {
   it('Encounter Cartographer advances directly to map pick without intermediate layout candidates', async () => {
     const user = userEvent.setup();
     const { campaign } = await seed();
+    const { saveSettings } = await import('@/db/settingsRepo');
+    const { defaultSettings } = await import('@/domain');
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+    });
     const cartographer = await createPersona({
       slug: 'encounter-cartographer-ui',
       name: 'Encounter Cartographer',
@@ -424,14 +462,100 @@ describe('PersonaPanel run lifecycle', () => {
       </MemoryRouter>,
     );
 
-    await startRun(user, cartographer);
+    await startRun(user, cartographer, 'Manual');
     expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
     expect(await screen.findByTestId('encounter-run-actions')).toBeInTheDocument();
     await user.click(await screen.findByTestId('approve-step'));
     expect(
       await screen.findByTestId('encounter-map-pick', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
+    await flushAsyncUpdates();
     await runEngine.cancel(await onlyRunId());
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('Encounter Cartographer runs to completion in default auto mode with no prompts', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { saveSettings } = await import('@/db/settingsRepo');
+    const { defaultSettings } = await import('@/domain');
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+    });
+    const cartographer = await createPersona({
+      slug: 'encounter-cartographer-auto',
+      name: 'Encounter Cartographer Auto',
+      description: '',
+      systemPrompt: 'Return encounter JSON.',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        name: 'Ash Gate',
+        summary: '',
+        body: '',
+        difficulty: 'medium',
+        levelHint: '3',
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        theme: 'ash temple',
+        styleNotes: '',
+        negative: '',
+        monsters: [{ name: 'Cultist', count: 1, notes: '', statBlock: VALID_STATBLOCK }],
+        rooms: [
+          {
+            name: 'Entry',
+            description: '',
+            size: 'small',
+            monsterIndexes: [],
+            adjacentRoomIndexes: [1],
+          },
+          {
+            name: 'Shrine',
+            description: '',
+            size: 'medium',
+            monsterIndexes: [0],
+            adjacentRoomIndexes: [0],
+          },
+        ],
+        entryRoomIndex: 0,
+      }),
+    );
+    generateImagesMock.mockResolvedValue({
+      images: [new Blob(['one'], { type: 'image/webp' })],
+      costUsd: 0.01,
+      cappedToOne: true,
+    });
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    // Default autonomy is Auto: starting the run requires no intermediate approval clicks
+    await startRun(user, cartographer);
+    expect(screen.queryByTestId('approve-step')).not.toBeInTheDocument();
+
+    await waitFor(
+      async () => {
+        const run = await getRun(await onlyRunId());
+        if (run?.status !== 'completed') {
+          throw new Error(
+            `run not completed yet: status=${run?.status} error=${run?.errorMessage} steps=${JSON.stringify(run?.steps.map((s) => [s.name, s.status]))}`,
+          );
+        }
+      },
+      { timeout: 15_000 },
+    );
+
+    expect(
+      await screen.findByRole('button', { name: 'Open encounter' }, { timeout: 5_000 }),
+    ).toBeInTheDocument();
     await flushAsyncUpdates();
   }, 30000);
 
@@ -484,6 +608,7 @@ describe('PersonaPanel run lifecycle', () => {
       </MemoryRouter>,
     );
 
+    await setAutonomy(user, 'Manual');
     await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: illustrator.name }));
     const targetSelect = await screen.findByRole('combobox', { name: 'Artifact to illustrate' });
