@@ -10,7 +10,7 @@ import { act } from '@testing-library/react';
  * Call at the end of a test whose last steps were raw awaits / fireEvent,
  * before the final assertions that leave updates pending.
  */
-export async function flushAsyncUpdates(rounds = 5): Promise<void> {
+export async function flushAsyncUpdates(rounds = 20): Promise<void> {
   await act(async () => {
     for (let round = 0; round < rounds; round += 1) {
       await new Promise((resolve) => {

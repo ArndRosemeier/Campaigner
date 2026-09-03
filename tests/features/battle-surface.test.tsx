@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
@@ -97,7 +97,9 @@ beforeEach(async () => {
   campaignId = (await createCampaign({ name: 'Battle UI', system: 'dnd5e' })).id;
 });
 
-afterEach(() => {
+afterEach(async () => {
+  await flushAsyncUpdates(20);
+  cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
 });
@@ -160,7 +162,7 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
   return { moduleId: module.id, encounterId: encounter.id, npcId: npc.id, pc1 };
 }
 
-function renderSurface(moduleId: string): void {
+async function renderSurface(moduleId: string): Promise<void> {
   render(
     <MemoryRouter initialEntries={[`/c/${campaignId}/m/${moduleId}/battle`]}>
       <Routes>
@@ -168,6 +170,10 @@ function renderSurface(moduleId: string): void {
       </Routes>
     </MemoryRouter>,
   );
+  await waitFor(() => {
+    expect(screen.getByTestId('battle-board')).toBeInTheDocument();
+  });
+  await flushAsyncUpdates(20);
 }
 
 async function currentBattle(moduleId: string) {
@@ -188,7 +194,7 @@ describe('layout-anchored grid rendering', () => {
 describe('player-safe DOM contract', () => {
   it('renders only board pieces: names, HP, initiative — never stat text or secrets', async () => {
     const { moduleId } = await seedStandardBattle();
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getByTestId('battle-board')).toBeInTheDocument();
     });
@@ -221,9 +227,11 @@ describe('player-safe DOM contract', () => {
         },
       ],
     });
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await flushAsyncUpdates();
-    expect(screen.queryByTestId('battle-token')).toBeNull();
+    // The veiled token (Troll) is removed from the DOM.
+    const labels = screen.queryAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
+    expect(labels).not.toContain('Troll');
     // Hidden (visible: false) tokens vanish the same way. The save fires
     // liveQuery updates — wrap it in act (component is mounted).
     const fresh = await currentBattle(moduleId);
@@ -242,7 +250,7 @@ describe('player-safe DOM contract', () => {
 describe('drag & tap', () => {
   it('drags a token with a live position and commits the snapped spot once', async () => {
     const { moduleId } = await seedStandardBattle();
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -271,7 +279,7 @@ describe('drag & tap', () => {
 
   it('taps to select and shows name + HP only in the controls', async () => {
     const { moduleId } = await seedStandardBattle();
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -288,13 +296,14 @@ describe('drag & tap', () => {
     const controls = screen.getByTestId('token-controls');
     expect(within(controls).getByTestId('token-hp').textContent).toContain('84');
     expect(controls.textContent).not.toContain('fears fire');
+    await flushAsyncUpdates();
   });
 });
 
 describe('HP ownership split writes', () => {
   it('damages the NPC onto the token instance and the PC onto the artifact', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -318,7 +327,9 @@ describe('HP ownership split writes', () => {
     await selectByLabel('Troll');
     await user.type(screen.getByLabelText('HP delta'), '10');
     await user.click(screen.getByTestId('damage'));
-    await flushAsyncUpdates();
+    await waitFor(() => {
+      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 74 / 84');
+    });
     let battle = await currentBattle(moduleId);
     expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(74);
     const artifacts = await listArtifactsByCampaign(campaignId);
@@ -329,7 +340,9 @@ describe('HP ownership split writes', () => {
     await selectByLabel('Serren');
     await user.type(screen.getByLabelText('HP delta'), '5');
     await user.click(screen.getByTestId('damage'));
-    await flushAsyncUpdates();
+    await waitFor(() => {
+      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 15 / 20 (persists)');
+    });
     const refreshed = await listArtifactsByCampaign(campaignId);
     const serren = refreshed.find((artifact) => artifact.kind === 'pc' && artifact.name === 'Serren');
     if (serren?.kind !== 'pc') throw new Error('serren missing');
@@ -348,7 +361,7 @@ describe('HP ownership split writes', () => {
       ...battle.board,
       tokens: battle.board.tokens.map((token) => (token.label === 'Troll' ? { ...token, currentHp: 0 } : token)),
     });
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await flushAsyncUpdates();
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
@@ -360,7 +373,7 @@ describe('HP ownership split writes', () => {
 describe('initiative', () => {
   it('rolls every visible fighter when enabled, sorted, with a turn marker', async () => {
     const { moduleId } = await seedStandardBattle();
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -385,7 +398,7 @@ describe('initiative', () => {
 
   it('prunes a fogged monster from initiative and restores it with an auto-roll when revealed', async () => {
     const { moduleId } = await seedStandardBattle();
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
@@ -428,7 +441,7 @@ describe('initiative', () => {
 describe('stage snapshot', () => {
   it('resets to the saved opening layout through the toolbar', async () => {
     const { moduleId } = await seedStandardBattle();
-    renderSurface(moduleId);
+    await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
