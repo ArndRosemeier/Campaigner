@@ -1879,6 +1879,29 @@ export class RunEngine {
     const targetId = input.targetArtifactId ?? null;
     const target = targetId === null ? undefined : await getAnyArtifact(targetId);
     if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
+
+    const targetData = target.data as Record<string, unknown> | null | undefined;
+    const appearance =
+      targetData !== null && typeof targetData === 'object' && typeof targetData.appearance === 'string'
+        ? targetData.appearance.trim()
+        : '';
+
+    if (appearance !== '') {
+      const systemLabel = GAME_SYSTEM_LABELS[input.campaign.system];
+      const promptText =
+        extraInstruction === ''
+          ? `${systemLabel}=>${appearance}`
+          : `${systemLabel}=>${appearance}\n${extraInstruction}`;
+      const parsed: ImagePromptDraft = {
+        prompt: promptText,
+        negative: '',
+        styleNotes: '',
+      };
+      const step = this.finishStep(steps[stepIndex], { parsed });
+      const pausesHere = pauses(input.autonomy, true);
+      return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
+    }
+
     const instruction = [
       `Artifact: ${target.name} (${target.kind})`,
       target.summary === '' ? null : `Summary: ${target.summary}`,

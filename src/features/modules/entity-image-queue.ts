@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 
 import type { AnyArtifact, Id, Persona } from '@/domain';
+import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { getCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -176,7 +178,13 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
     if (illustrator === undefined) {
       throw new Error('the Illustrator persona is missing — re-enable built-in personas');
     }
-    const prompt = await draftPrompt(illustrator, artifact, settings.defaultChatModel, controller.signal);
+    const prompt = await draftPrompt(
+      illustrator,
+      artifact,
+      settings.defaultChatModel,
+      controller.signal,
+      job.campaignId,
+    );
     const finalPrompt = [
       prompt.prompt,
       prompt.styleNotes === '' ? null : `Style: ${prompt.styleNotes}`,
@@ -225,7 +233,28 @@ async function draftPrompt(
   artifact: AnyArtifact,
   defaultChatModel: string,
   signal: AbortSignal,
+  campaignId?: Id,
 ): Promise<ImagePromptDraft> {
+  const data = artifact.data as Record<string, unknown> | null | undefined;
+  const appearance =
+    data !== null && typeof data === 'object' && typeof data.appearance === 'string'
+      ? data.appearance.trim()
+      : '';
+  if (appearance !== '') {
+    let systemLabel = 'D&D 5e';
+    if (campaignId !== undefined) {
+      const campaign = await getCampaign(campaignId);
+      if (campaign !== undefined) {
+        systemLabel = GAME_SYSTEM_LABELS[campaign.system];
+      }
+    }
+    return {
+      prompt: `${systemLabel}=>${appearance}`,
+      negative: '',
+      styleNotes: '',
+    };
+  }
+
   const instruction = [
     `Artifact: ${artifact.name} (${artifact.kind})`,
     artifact.summary === '' ? null : `Summary: ${artifact.summary}`,

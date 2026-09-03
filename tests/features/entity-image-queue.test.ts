@@ -209,4 +209,37 @@ describe('entity image queue', () => {
     expect(artifacts.find((a) => a.name === 'Mira')?.imageIds).toHaveLength(0);
     expect(useProgressStore.getState().jobs).toHaveLength(0);
   });
+
+  it('uses game system prefix and appearance directly without calling LLM chat when entity has appearance', async () => {
+    const campaign = await createCampaign({ name: 'Golarion', system: 'pathfinder2e' });
+    const campaignId = campaign.id;
+    const moduleId = newId();
+    await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Seoni',
+      data: {
+        appearance: 'Varisian sorceress with blue robes and tattoos',
+        personality: 'Enigmatic',
+        statBlock: null,
+      },
+    });
+
+    useEntityImageQueue.getState().enqueue([
+      { campaignId, moduleId, name: 'Seoni' },
+    ]);
+
+    await waitFor(async () => {
+      const artifacts = await listArtifactsByCampaign(campaignId);
+      const seoni = artifacts.find((artifact) => artifact.name === 'Seoni');
+      expect(seoni?.imageIds).toHaveLength(1);
+    });
+
+    expect(generateImagesMock).toHaveBeenCalledWith(
+      'Pathfinder 2e=>Varisian sorceress with blue robes and tattoos',
+      1,
+      expect.anything(),
+    );
+    expect(chatMock).not.toHaveBeenCalled();
+  });
 });

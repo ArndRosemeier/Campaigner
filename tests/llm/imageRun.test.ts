@@ -381,4 +381,134 @@ describe('image persona validation', () => {
     expect(loaded?.prompt).toBe('p');
     expect(loaded?.mimeType).toBe('image/webp');
   });
+
+  it('prefixes appearance with game system (System=>appearance) without calling LLM chat when target has an appearance', async () => {
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+    });
+    const campaign = await createCampaign({ name: 'PF2e Campaign', system: 'pathfinder2e' });
+    const persona = createPersona({
+      slug: 'illustrator-test-pf',
+      name: 'Illustrator',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    const npc = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Valeros',
+      data: {
+        appearance: 'A tall elf with silver hair, dark leather armor, holding a rapier',
+        personality: 'Brave and calm',
+        statBlock: null,
+      },
+    });
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('pf1'), fakeImageBytes('pf2')],
+      costUsd: 0.02,
+      cappedToOne: false,
+    });
+
+    const runInput = {
+      campaign: {
+        id: campaign.id,
+        name: 'PF2e Campaign',
+        system: 'pathfinder2e' as const,
+        description: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      persona,
+      autonomy: 'auto' as const,
+      brief: '',
+      pinnedChunkIds: [],
+      targetArtifactId: npc.id,
+    };
+
+    const runId = await runEngine.startRun(runInput);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps).toHaveLength(3);
+      expect(run?.steps[0]?.status).toBe('done');
+      expect(run?.steps[1]?.status).toBe('done');
+    });
+
+    // LLM chat was NEVER called to rewrite or hallucinate a prompt
+    expect(chatMock).not.toHaveBeenCalled();
+
+    // Image generator received exact system prefix and appearance
+    expect(generateImagesMock).toHaveBeenCalledWith(
+      'Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier',
+      2,
+      expect.anything(),
+    );
+
+    const pickRun = await getRun(runId);
+    expect(pickRun?.steps[0]?.output).toEqual({
+      parsed: {
+        prompt: 'Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier',
+        negative: '',
+        styleNotes: '',
+      },
+    });
+  });
+
+  it('manual mode pauses at prompt-draft with System=>appearance prefilled without calling LLM chat', async () => {
+    const campaign = await createCampaign({ name: 'D&D Campaign', system: 'dnd5e' });
+    const persona = createPersona({
+      slug: 'illustrator-test-dnd',
+      name: 'Illustrator',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    const npc = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Grix',
+      data: {
+        appearance: 'Small, soot-stained, goggles.',
+        personality: 'Manic',
+        statBlock: null,
+      },
+    });
+
+    const runInput = {
+      campaign: {
+        id: campaign.id,
+        name: 'D&D Campaign',
+        system: 'dnd5e' as const,
+        description: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      persona,
+      autonomy: 'manual' as const,
+      brief: '',
+      pinnedChunkIds: [],
+      targetArtifactId: npc.id,
+    };
+
+    const runId = await runEngine.startRun(runInput);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+
+    expect(chatMock).not.toHaveBeenCalled();
+
+    const pausedRun = await getRun(runId);
+    expect(pausedRun?.steps[0]?.output).toEqual({
+      parsed: {
+        prompt: 'D&D 5e=>Small, soot-stained, goggles.',
+        negative: '',
+        styleNotes: '',
+      },
+    });
+  });
 });
