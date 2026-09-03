@@ -186,10 +186,13 @@ describe('ModuleReaderPage', () => {
     expect(screen.getByText('Levels 1–3')).toBeInTheDocument();
     expect(screen.getByText('Standard')).toBeInTheDocument();
     expect(screen.getByText('ready')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Battle table' })).toHaveAttribute(
-      'href',
-      battlePath(campaignId, moduleId),
-    );
+    // Play stays reachable from two places: the ToC sidebar and the reader
+    // header (collapsing the sidebar must not hide the battle entry).
+    const battleButtons = screen.getAllByRole('button', { name: 'Battle table' });
+    expect(battleButtons.length).toBeGreaterThanOrEqual(2);
+    for (const button of battleButtons) {
+      expect(button).toHaveAttribute('href', battlePath(campaignId, moduleId));
+    }
 
     // Premise: [[Old Tower]] resolves against the seeded artifact, [[Missing
     // Person]] has no artifact yet and stays an unresolved stub chip.

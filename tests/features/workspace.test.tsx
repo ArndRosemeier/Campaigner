@@ -2,12 +2,14 @@ import 'fake-indexeddb/auto';
 
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { MemoryRouter, Route, RouterProvider, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { ROUTES, workspacePath } from '@/app/routes';
+import { ROUTES, artifactPath, modulePath, workspacePath } from '@/app/routes';
+import { createAppRouter } from '@/app/router';
 import { createArtifact } from '@/db/artifactRepo';
-import { newId } from '@/domain';
+import { createModule as saveModule } from '@/db/moduleRepo';
+import { createModule, newId } from '@/domain';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { WorkspacePage } from '@/features/campaign/WorkspacePage';
@@ -49,6 +51,38 @@ describe('WorkspacePage', () => {
 
     expect(await screen.findByTestId('artifact-editor')).toBeDefined();
     expect(screen.getByTestId('revision-badge').textContent).toBe('rev 1');
+  });
+
+  it('links module-owned artifacts back to their module reader ("Open in module")', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: 'A flooded vault beneath a watchtower.',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'standard',
+      }),
+    );
+    const kael = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Kael',
+      body: 'The gate warden.',
+    });
+
+    window.history.replaceState(null, '', artifactPath(campaign.id, kael.id));
+    render(<RouterProvider router={createAppRouter()} />);
+
+    expect(await screen.findByTestId('artifact-editor', {}, { timeout: 10_000 })).toBeDefined();
+    const link = screen.getByTestId('open-in-module');
+    expect(link).toHaveAttribute('href', modulePath(campaign.id, module.id));
+    // The tooltip names the module once its live query resolves.
+    await waitFor(() => {
+      expect(link).toHaveAttribute('title', 'Open "The Drowned Vault" in the module reader');
+    });
   });
 
   it('creates an artifact via the tree + button with a non-empty default name', async () => {

@@ -336,10 +336,23 @@ export function ModuleReaderPage(): JSX.Element {
                     campaignId={campaignId}
                   />
                 )}
+              {/* Play is a mode change, not a scroll target: the battle
+                  entry stays in the header so collapsing the contents
+                  sidebar never hides it. */}
+              <Button
+                variant="outline"
+                size="xs"
+                className="ml-auto"
+                data-testid="battle-table-header-link"
+                render={<Link to={battlePath(campaignId, moduleId)} />}
+                nativeButton={false}
+              >
+                <SwordsIcon aria-hidden data-icon="inline-start" />
+                Battle table
+              </Button>
               <Button
                 variant="ghost"
                 size="xs"
-                className="ml-auto"
                 aria-label={tocOpen ? 'Hide table of contents' : 'Show table of contents'}
                 onClick={() => {
                   setTocOpen((open) => !open);

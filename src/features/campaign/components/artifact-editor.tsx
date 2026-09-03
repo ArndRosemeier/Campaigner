@@ -1,10 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { HistoryIcon, SparklesIcon } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 import { artifactRepo } from '@/db';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
+import { modulePath } from '@/app/routes';
+import { getModule } from '@/db/moduleRepo';
 import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
 import {
   ARTIFACT_KIND_SINGULAR,
@@ -253,6 +257,9 @@ export function ArtifactEditor({
               Global
             </Badge>
           )}
+          {artifact.moduleId !== null && (
+            <ModuleOwnerLink campaignId={campaignId} moduleId={artifact.moduleId} />
+          )}
           <ScopeAction artifact={artifact} />
           <HelpButton topic="editor" label="artifact editor" className="ml-auto" />
           <span
@@ -469,8 +476,28 @@ function RevisionDropdown({ artifactId, onOpen }: RevisionDropdownProps) {
  * only the ownership fields change — so no confirm dialog is needed; the
  * toast reports where the artifact now lives.
  */
-function ScopeAction({ artifact }: { artifact: AnyArtifact }) {
-  const modules = useModules(artifact.campaignId ?? undefined);
+/**
+ * Module-owned artifacts edit exactly like campaign artifacts, but their
+ * context lives in the module reader — this closes the one-way door that
+ * peek-modal "Open in workspace" opened: the editor links back.
+ */
+function ModuleOwnerLink({ campaignId, moduleId }: { campaignId: Id; moduleId: Id }) {
+  const module = useLiveQuery(async () => getModule(moduleId), [moduleId]);
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      data-testid="open-in-module"
+      render={<Link to={modulePath(campaignId, moduleId)} />}
+      nativeButton={false}
+      title={module === undefined ? 'Open the owning module' : `Open "${module.title}" in the module reader`}
+    >
+      Open in module
+    </Button>
+  );
+}
+
+function ScopeAction({ artifact }: { artifact: AnyArtifact }) {  const modules = useModules(artifact.campaignId ?? undefined);
   const ownedModuleId = artifact.moduleId;
   const [adoptOpen, setAdoptOpen] = useState(false);
 
