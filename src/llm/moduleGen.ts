@@ -114,9 +114,18 @@ function streamDetailReporter(
     onActivity: (activity: ChatStreamActivity) => {
       const seconds = Math.round(activity.elapsedMs / 1000);
       if (activity.phase === 'thinking') {
-        report(`${baseDetail} — the model is thinking (${String(seconds)}s)`);
+        // Set the expectation explicitly: reasoning models routinely think
+        // for minutes on design-sized prompts — without this users read the
+        // quiet dock as a hang and kill the run mid-think.
+        report(
+          `${baseDetail} — the model is thinking (${String(seconds)}s). ` +
+            'Big design asks routinely take several minutes of thinking before the first words arrive — this is normal, not a hang.',
+        );
       } else if (activity.phase === 'waiting' && seconds >= 5) {
-        report(`${baseDetail} — no answer yet (${String(seconds)}s)`);
+        report(
+          `${baseDetail} — no answer yet (${String(seconds)}s). ` +
+            'The request may be queued at the provider; the first bytes can take minutes.',
+        );
       }
     },
   };
@@ -146,7 +155,13 @@ export async function runSpine(
   // sub-steps, so the bar sweeps while the detail line says what is running.
   const progress = useProgressStore.getState();
   const jobId = `module-spine-${moduleId}`;
-  progress.start(jobId, 'Designing the module outline', 'Asking for premise, themes and part plan…');
+  progress.start(
+    jobId,
+    'Designing the module outline',
+    // One big planning call — set the "this takes minutes" expectation up
+    // front so the quiet stretch before streaming is not read as a hang.
+    'Asking for premise, themes and part plan — one large design call; expect several minutes before streaming starts…',
+  );
   try {
     const module = await getModule(moduleId);
     if (module === undefined) throw new Error('Module to generate no longer exists');
@@ -161,7 +176,10 @@ export async function runSpine(
     // Live dock detail: the spine call can sit minutes on a queued provider or
     // a reasoning model before the first delta — the reporter keeps the dock
     // honest about what is happening (00-OVERVIEW).
-    const reporter = streamDetailReporter(jobId, 'Asking for premise, themes and part plan…');
+    const reporter = streamDetailReporter(
+      jobId,
+      'Asking for premise, themes and part plan…',
+    );
     const streamHandlers = {
       onToken: (delta: string): void => {
         moduleGenEvents.emit({ kind: 'spine-token', moduleId, delta });

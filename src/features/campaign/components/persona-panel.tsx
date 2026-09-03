@@ -469,7 +469,11 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
             <StepIcon status={step.status} />
             <span className={step.status === 'running' ? 'font-medium' : ''}>{step.name}</span>
             {step.status === 'rejected' && <Badge variant="destructive">needs review</Badge>}
-            {index === runningIndex && <span className="text-muted-foreground">streaming…</span>}
+            {index === runningIndex && (
+              <span className="text-muted-foreground">
+                streaming… (reasoning models can think for several minutes before text appears)
+              </span>
+            )}
           </li>
         ))}
       </ol>
