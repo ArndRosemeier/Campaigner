@@ -65,6 +65,34 @@ describe('SettingsPage', () => {
     });
   }, 30000);
 
+  it('updates default reasoning effort when model supports reasoning', async () => {
+    await updateSettings({ defaultChatModel: 'openai/o3-mini' });
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+
+    const select = await screen.findByTestId('chat-reasoning-effort');
+    expect(select).toBeEnabled();
+    expect(screen.getByText('Supported')).toBeInTheDocument();
+
+    await user.click(select);
+    const highOption = await screen.findByRole('option', { name: 'High' });
+    await user.click(highOption);
+
+    await waitFor(async () => {
+      const settings = await getSettings();
+      expect(settings.defaultReasoningEffort).toBe('high');
+    });
+  });
+
+  it('disables reasoning effort when model does not support reasoning', async () => {
+    await updateSettings({ defaultChatModel: 'openai/gpt-4o' });
+    render(<SettingsPage />);
+
+    const select = await screen.findByTestId('chat-reasoning-effort');
+    expect(select).toBeDisabled();
+    expect(screen.getByText('Not supported by this model')).toBeInTheDocument();
+  });
+
   it('deletes all data only when DELETE is typed', async () => {
     const user = userEvent.setup();
     render(<SettingsPage />);

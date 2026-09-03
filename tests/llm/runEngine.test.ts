@@ -446,4 +446,29 @@ describe('runEngine', () => {
     // Draft was NOT re-executed!
     expect(chatMock).toHaveBeenCalledTimes(3);
   }, 20000);
+
+  it('passes persona reasoningEffort to chat calls and falls back to settings', async () => {
+    const { campaignId, persona } = await seed();
+    const customPersona: Persona = {
+      ...persona,
+      model: 'openai/o3-mini',
+      reasoningEffort: 'high',
+    };
+
+    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_DRAFT));
+
+    const runId = await runEngine.startRun(INPUT(campaignId, customPersona));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps[1]?.status).toBe('done');
+    });
+
+    expect(chatMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        model: 'openai/o3-mini',
+        reasoningEffort: 'high',
+      }),
+    );
+  });
 });

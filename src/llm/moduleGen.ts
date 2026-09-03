@@ -201,6 +201,7 @@ export async function runSpine(
     let raw = await chat(messages, {
       model: settings.defaultChatModel,
       temperature: 0.8,
+      reasoningEffort: settings.defaultReasoningEffort,
       responseFormat: 'json',
       signal: controller.signal,
       ...streamHandlers,
@@ -225,6 +226,7 @@ export async function runSpine(
         {
           model: settings.defaultChatModel,
           temperature: 0.8,
+          reasoningEffort: settings.defaultReasoningEffort,
           responseFormat: 'json',
           signal: controller.signal,
           ...streamHandlers,
@@ -735,9 +737,11 @@ async function partCall(
   // Output is plain markdown — no JSON, no zod. Empty or <100-char output is
   // a failure (retry once, then the part fails); network errors fail
   // directly.
+  const settings = await getSettings();
   const raw = await chat(messages, {
     model,
     temperature: 0.8,
+    reasoningEffort: settings.defaultReasoningEffort,
     signal: options.signal,
     onToken: options.onToken,
     onReasoning: options.onReasoning,
@@ -754,6 +758,7 @@ async function partCall(
       {
         model,
         temperature: 0.8,
+        reasoningEffort: settings.defaultReasoningEffort,
         signal: options.signal,
         onActivity: options.onActivity,
       },
@@ -826,7 +831,13 @@ async function normalizationCall(
   names: readonly string[],
   artifactNames: readonly string[],
 ): Promise<NormalizationEntry[]> {
-  const base = { model, temperature: 0.2, responseFormat: 'json' as const };
+  const settings = await getSettings();
+  const base = {
+    model,
+    temperature: 0.2,
+    reasoningEffort: settings.defaultReasoningEffort,
+    responseFormat: 'json' as const,
+  };
   const run = (raw: string): NormalizationEntry[] => {
     const parsed = normalizationReplySchema.parse(JSON.parse(jsonBody(raw)) as unknown).entities;
     const violations = validateNormalizationReply(names, parsed, artifactNames);

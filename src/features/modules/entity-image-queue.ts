@@ -283,6 +283,10 @@ async function draftPrompt(
       {
         model: illustrator.model === '' ? defaultChatModel : illustrator.model,
         temperature: illustrator.temperature,
+        reasoningEffort:
+          illustrator.reasoningEffort !== 'default'
+            ? illustrator.reasoningEffort
+            : undefined,
         responseFormat: 'json',
         signal,
       },

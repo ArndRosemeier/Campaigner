@@ -8,7 +8,9 @@ import type {
   Id,
   Persona,
   PersonaRun,
+  ReasoningEffort,
   RunStep,
+  Settings,
   StatBlock,
 } from '@/domain';
 import {
@@ -414,6 +416,12 @@ export function rejectionIssues(step: Pick<RunStep, 'output'>): string[] {
 /** Draft fields are schema-validated strings; coerce defensively. */
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+function effectiveReasoningEffort(persona: Persona, settings: Settings): ReasoningEffort {
+  return persona.reasoningEffort !== 'default'
+    ? persona.reasoningEffort
+    : settings.defaultReasoningEffort;
 }
 
 export class RunEngine {
@@ -1032,6 +1040,7 @@ export class RunEngine {
     const raw = await chat(messages, {
       model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
       temperature: input.persona.temperature,
+      reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json',
       signal,
       onToken: (delta) => {
@@ -1130,6 +1139,7 @@ export class RunEngine {
       {
         model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
         temperature: input.persona.temperature,
+        reasoningEffort: effectiveReasoningEffort(input.persona, settings),
         responseFormat: 'json',
         signal,
         onToken: (delta) => {
@@ -1267,6 +1277,7 @@ export class RunEngine {
       {
         model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
         temperature: input.persona.temperature,
+        reasoningEffort: effectiveReasoningEffort(input.persona, settings),
         responseFormat: 'json',
         signal,
         onToken: (delta) => {
@@ -1417,6 +1428,7 @@ export class RunEngine {
     const chatOptions = {
       model: input.persona.model || settings.defaultChatModel,
       temperature: input.persona.temperature,
+      reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json' as const,
       signal,
       onToken: (delta: string) => {
@@ -1929,6 +1941,7 @@ export class RunEngine {
     const raw = await chat(messages, {
       model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
       temperature: input.persona.temperature,
+      reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json',
       signal,
       onToken: (delta) => {

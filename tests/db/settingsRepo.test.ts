@@ -16,6 +16,7 @@ describe('settingsRepo', () => {
     expect(settings.id).toBe('settings');
     expect(settings.openRouterApiKey).toBe('');
     expect(settings.defaultChatModel).toBe(DEFAULT_CHAT_MODEL);
+    expect(settings.defaultReasoningEffort).toBe('default');
     expect(settings.embeddingModel).toBe(DEFAULT_EMBEDDING_MODEL);
     expect(settings.embeddingsEnabled).toBe(false);
     expect(await db.settings.count()).toBe(1);

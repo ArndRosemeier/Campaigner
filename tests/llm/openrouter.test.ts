@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
-import { chat, fetchWithRetries, listModels, listVisionChatModels, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
+import { chat, fetchWithRetries, listModels, listVisionChatModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): SSE streaming, retries, typed
@@ -58,6 +58,7 @@ const SETTINGS = {
   id: 'settings' as const,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'anthropic/claude-sonnet-4.5',
+  defaultReasoningEffort: 'default' as const,
   embeddingModel: 'openai/text-embedding-3-small',
   embeddingsEnabled: false,
   imageModel: 'google/gemini-2.5-flash-image',
@@ -386,5 +387,78 @@ describe('fetchWithRetries headers timeout', () => {
     );
     caller.abort();
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' });
+  });
+});
+
+describe('reasoning effort in chat', () => {
+  it('sends reasoning.effort when model supports reasoning and effort is specified', async () => {
+    const fetchMock = vi.fn((_url: unknown, _init?: { body?: string }) =>
+      Promise.resolve(sseResponse([{ choices: [{ delta: { content: 'ok' } }] }])),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'openai/o3-mini', temperature: 1, reasoningEffort: 'low' },
+      [1, 1],
+    );
+
+    const init = fetchMock.mock.calls[0]?.[1] as { body?: string } | undefined;
+    const body = JSON.parse(init?.body ?? '{}') as { reasoning?: { effort?: string } };
+    expect(body.reasoning).toEqual({ effort: 'low' });
+  });
+
+  it('omits reasoning parameter when effort is default', async () => {
+    const fetchMock = vi.fn((_url: unknown, _init?: { body?: string }) =>
+      Promise.resolve(sseResponse([{ choices: [{ delta: { content: 'ok' } }] }])),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'openai/o3-mini', temperature: 1, reasoningEffort: 'default' },
+      [1, 1],
+    );
+
+    const init = fetchMock.mock.calls[0]?.[1] as { body?: string } | undefined;
+    const body = JSON.parse(init?.body ?? '{}') as { reasoning?: unknown };
+    expect(body.reasoning).toBeUndefined();
+  });
+
+  it('omits reasoning parameter when model does not support reasoning', async () => {
+    const fetchMock = vi.fn((_url: unknown, _init?: { body?: string }) =>
+      Promise.resolve(sseResponse([{ choices: [{ delta: { content: 'ok' } }] }])),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await chat(
+      [{ role: 'user', content: 'hi' }],
+      { model: 'openai/gpt-4o', temperature: 1, reasoningEffort: 'high' },
+      [1, 1],
+    );
+
+    const init = fetchMock.mock.calls[0]?.[1] as { body?: string } | undefined;
+    const body = JSON.parse(init?.body ?? '{}') as { reasoning?: unknown };
+    expect(body.reasoning).toBeUndefined();
+  });
+});
+
+describe('modelSupportsReasoning', () => {
+  it('detects reasoning support from supported_parameters when available', () => {
+    const models = [
+      { id: 'custom/reasoner', supported_parameters: ['reasoning', 'max_tokens'] },
+      { id: 'custom/standard', supported_parameters: ['temperature'] },
+    ];
+    expect(modelSupportsReasoning('custom/reasoner', models)).toBe(true);
+    expect(modelSupportsReasoning('custom/standard', models)).toBe(false);
+  });
+
+  it('detects reasoning support from model id naming patterns as fallback', () => {
+    expect(modelSupportsReasoning('openai/o3-mini')).toBe(true);
+    expect(modelSupportsReasoning('deepseek/deepseek-r1')).toBe(true);
+    expect(modelSupportsReasoning('google/gemini-2.5-pro')).toBe(true);
+    expect(modelSupportsReasoning('anthropic/claude-3.7-sonnet:thinking')).toBe(true);
+    expect(modelSupportsReasoning('openai/gpt-4o')).toBe(false);
+    expect(modelSupportsReasoning('meta-llama/llama-3.3-70b-instruct')).toBe(false);
   });
 });

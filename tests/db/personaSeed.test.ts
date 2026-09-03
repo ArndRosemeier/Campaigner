@@ -81,7 +81,21 @@ describe('built-in persona seeding', () => {
     expect(reset.name).toBe('NPC Smith');
     expect(reset.systemPrompt).toBe(smith.systemPrompt);
     expect(reset.model).toBe('');
+    expect(reset.reasoningEffort).toBe('default');
     expect(reset.builtIn).toBe(true);
+  });
+
+  it('updates and resets reasoningEffort', async () => {
+    await seedBuiltInPersonas();
+    const smith = await findPersonaBySlug('npc-smith');
+    if (!smith) throw new Error('npc-smith should be seeded');
+
+    expect(smith.reasoningEffort).toBe('default');
+    const updated = await updatePersona(smith.id, { reasoningEffort: 'high' });
+    expect(updated.reasoningEffort).toBe('high');
+
+    const reset = await resetPersonaToDefault('npc-smith');
+    expect(reset.reasoningEffort).toBe('default');
   });
 
   it('resetPersonaToDefault rejects unknown or missing personas', async () => {

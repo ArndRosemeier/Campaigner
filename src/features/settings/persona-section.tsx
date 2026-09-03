@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { JSX } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { ChevronDownIcon, ChevronRightIcon, RotateCcwIcon } from 'lucide-react';
 
 import type { Persona } from '@/domain';
@@ -12,8 +13,11 @@ import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Textarea } from '@/components/ui/textarea';
 import { updatePersona, resetPersonaToDefault } from '@/db/personaRepo';
+import { readSettings } from '@/db/settingsRepo';
 import { ARTIFACT_KIND_SINGULAR } from '@/domain/artifact';
 import { toastError, toastSuccess } from '@/lib/toast';
+import { ModelInput } from '@/features/settings/model-input';
+import { ReasoningEffortSelect } from '@/features/settings/reasoning-effort-select';
 
 /**
  * Persona management (05-UI.md §Settings): editable name, description, model,
@@ -69,6 +73,10 @@ function PersonaRow({ persona }: { persona: Persona }): JSX.Element {
 }
 
 function PersonaFields({ persona }: { persona: Persona }): JSX.Element {
+  const settings = useLiveQuery(() => readSettings(), []);
+  const defaultModel = settings?.defaultChatModel ?? '';
+  const effectiveModel = persona.model === '' ? defaultModel : persona.model;
+
   return (
     <div className="flex flex-col gap-3 rounded-md border border-t-0 p-3">
       <div className="flex flex-col gap-1.5">
@@ -103,23 +111,33 @@ function PersonaFields({ persona }: { persona: Persona }): JSX.Element {
           }}
         />
       </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`persona-model-${persona.id}`}>Model (blank = default)</Label>
-        <Input
-          id={`persona-model-${persona.id}`}
-          defaultValue={persona.model}
-          placeholder="e.g. anthropic/claude-sonnet-4.5"
-          onBlur={(event) => {
-            if (event.target.value !== persona.model) {
-              void updatePersona(persona.id, { model: event.target.value }).catch(
-                (error: unknown) => {
-                  toastError('Could not save persona', error);
-                },
-              );
-            }
-          }}
-        />
-      </div>
+      <ModelInput
+        id={`persona-model-${persona.id}`}
+        label="Model (blank = default)"
+        value={persona.model}
+        placeholder={defaultModel === '' ? 'e.g. anthropic/claude-sonnet-4.5' : defaultModel}
+        canBrowse={settings?.openRouterApiKey !== ''}
+        onChange={(value) => {
+          if (value !== persona.model) {
+            void updatePersona(persona.id, { model: value }).catch((error: unknown) => {
+              toastError('Could not save persona', error);
+            });
+          }
+        }}
+      />
+      <ReasoningEffortSelect
+        id={`persona-reasoning-${persona.id}`}
+        label="Reasoning effort"
+        value={persona.reasoningEffort}
+        model={effectiveModel}
+        inheritLabel={`Inherit default (${settings?.defaultReasoningEffort === 'default' || !settings ? 'Model default' : settings.defaultReasoningEffort})`}
+        canBrowse={settings?.openRouterApiKey !== ''}
+        onChange={(value) => {
+          void updatePersona(persona.id, { reasoningEffort: value }).catch((error: unknown) => {
+            toastError('Could not save persona', error);
+          });
+        }}
+      />
       <div className="flex flex-col gap-1.5">
         <Label htmlFor={`persona-temp-${persona.id}`}>Temperature: {persona.temperature}</Label>
         <Slider

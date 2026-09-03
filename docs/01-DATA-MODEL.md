@@ -246,6 +246,7 @@ interface Persona extends BaseEntity {
   description: string;
   systemPrompt: string;
   model: string;                // OpenRouter model id, e.g. 'anthropic/claude-sonnet-4.5'
+  reasoningEffort: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'; // default 'default'
   temperature: number;          // default 0.8
   producesKind?: ArtifactKind;  // artifact kind this persona outputs;
                                 // omitted for image personas (mode 'image', M3-A)
@@ -356,6 +357,7 @@ interface Settings {
   id: 'settings';
   openRouterApiKey: string;     // '' when unset
   defaultChatModel: string;     // default 'anthropic/claude-sonnet-4.5'
+  defaultReasoningEffort: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'; // default 'default'
   embeddingModel: string;       // default 'openai/text-embedding-3-small'
   embeddingsEnabled: boolean;   // default false until API key present
   imageModel: string;           // default 'google/gemini-2.5-flash-image' (M3-A)

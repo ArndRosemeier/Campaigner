@@ -9,6 +9,7 @@ export interface PersonaPatch {
   description?: string;
   systemPrompt?: string;
   model?: string;
+  reasoningEffort?: Persona['reasoningEffort'];
   temperature?: number;
   producesKind?: Persona['producesKind'];
 }
@@ -64,6 +65,7 @@ export async function resetPersonaToDefault(slug: string): Promise<Persona> {
       description: builtin.description,
       systemPrompt: builtin.systemPrompt,
       model: builtin.model,
+      reasoningEffort: builtin.reasoningEffort,
       temperature: builtin.temperature,
       producesKind: builtin.producesKind,
       builtIn: true,

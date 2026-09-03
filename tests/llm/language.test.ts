@@ -31,6 +31,7 @@ const SETTINGS_BASE = {
   id: 'settings' as const,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'm',
+  defaultReasoningEffort: 'default' as const,
   embeddingModel: 'e',
   embeddingsEnabled: false,
   imageModel: 'img',

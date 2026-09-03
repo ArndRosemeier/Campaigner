@@ -72,11 +72,27 @@ export function defaultScopeToggles(surface: 'workspace' | 'moduleView'): ScopeT
     : { global: true, campaign: true, module: true };
 }
 
+export const REASONING_EFFORT_OPTIONS = [
+  'default',
+  'none',
+  'minimal',
+  'low',
+  'medium',
+  'high',
+  'max',
+] as const;
+
+export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number];
+
+export const reasoningEffortSchema = z.enum(REASONING_EFFORT_OPTIONS);
+
 export const settingsSchema = z.object({
   id: z.literal(SETTINGS_ID),
   /** '' when unset. */
   openRouterApiKey: z.string(),
   defaultChatModel: z.string().min(1),
+  /** Default reasoning effort for reasoning-capable models ('default' = let the model decide). */
+  defaultReasoningEffort: reasoningEffortSchema.default('default'),
   embeddingModel: z.string().min(1),
   /** Default false until an API key is present. */
   embeddingsEnabled: z.boolean(),
@@ -122,6 +138,7 @@ export function defaultSettings(): Settings {
     id: SETTINGS_ID,
     openRouterApiKey: '',
     defaultChatModel: DEFAULT_CHAT_MODEL,
+    defaultReasoningEffort: 'default',
     embeddingModel: DEFAULT_EMBEDDING_MODEL,
     embeddingsEnabled: false,
     imageModel: DEFAULT_IMAGE_MODEL,

@@ -187,6 +187,7 @@ export interface NewPersona {
   description: string;
   systemPrompt: string;
   model?: string;
+  reasoningEffort?: Persona['reasoningEffort'];
   temperature?: number;
   /**
    * Artifact kind the persona outputs. Required unless mode is 'image'
@@ -209,6 +210,7 @@ export function createPersona(input: NewPersona): Persona {
     description: input.description,
     systemPrompt: input.systemPrompt,
     model: input.model ?? '',
+    reasoningEffort: input.reasoningEffort ?? 'default',
     temperature: input.temperature ?? DEFAULT_PERSONA_TEMPERATURE,
     ...(input.producesKind === undefined ? {} : { producesKind: input.producesKind }),
     mode: input.mode ?? 'generate',

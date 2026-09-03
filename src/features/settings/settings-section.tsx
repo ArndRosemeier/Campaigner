@@ -15,6 +15,7 @@ import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { listImageModels, listModels, listVisionChatModels } from '@/llm/openrouter';
 import { ModelInput } from '@/features/settings/model-input';
+import { ReasoningEffortSelect } from '@/features/settings/reasoning-effort-select';
 
 type TestState =
   | { kind: 'idle' }
@@ -131,6 +132,16 @@ export function SettingsSection(): JSX.Element {
           }}
           placeholder={DEFAULT_CHAT_MODEL}
           canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+        />
+        <ReasoningEffortSelect
+          id="chat-reasoning-effort"
+          label="Default reasoning effort"
+          value={current.defaultReasoningEffort}
+          model={current.defaultChatModel}
+          canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+          onChange={(value) => {
+            void updateSettings({ defaultReasoningEffort: value });
+          }}
         />
         <ModelInput
           id="embedding-model"

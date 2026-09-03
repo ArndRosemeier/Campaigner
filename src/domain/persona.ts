@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { BaseEntitySchema } from '@/domain/entity';
 import { artifactKindSchema } from '@/domain/artifact';
+import { reasoningEffortSchema } from '@/domain/settings';
 
 export const personaSchema = z
   .object({
@@ -13,6 +14,8 @@ export const personaSchema = z
     systemPrompt: z.string(),
     /** OpenRouter model id; '' means "use the default chat model". */
     model: z.string(),
+    /** Reasoning effort override ('default' = inherit default/model setting). */
+    reasoningEffort: reasoningEffortSchema.default('default'),
     temperature: z.number().min(0).max(2),
     /**
      * Artifact kind this persona outputs. Required for generate/review

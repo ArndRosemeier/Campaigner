@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { getSettings } from '@/db/settingsRepo';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
+import type { ReasoningEffort } from '@/domain/settings';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): always-streaming chat completions
@@ -60,6 +61,8 @@ export interface ChatOptions {
   /** Sets response_format: { type: 'json_object' }. */
   responseFormat?: 'json' | undefined;
   signal?: AbortSignal | undefined;
+  /** Reasoning effort for reasoning-capable models ('none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'). */
+  reasoningEffort?: ReasoningEffort | undefined;
   /** Streaming callback, invoked once per content delta. */
   onToken?: ((delta: string) => void) | undefined;
   /**
@@ -134,6 +137,13 @@ export async function chat(
     messages: effectiveMessages,
   };
   if (opts.responseFormat === 'json') body.response_format = { type: 'json_object' };
+  if (
+    opts.reasoningEffort !== undefined &&
+    opts.reasoningEffort !== 'default' &&
+    modelSupportsReasoning(opts.model)
+  ) {
+    body.reasoning = { effort: opts.reasoningEffort };
+  }
 
   const init: RequestInit & { signal?: AbortSignal | undefined } = {
     method: 'POST',
@@ -454,6 +464,36 @@ async function readStream(
 export interface OpenRouterModel {
   id: string;
   name?: string;
+  supported_parameters?: string[];
+}
+
+let cachedModels: OpenRouterModel[] | null = null;
+
+export function getCachedModels(): OpenRouterModel[] | null {
+  return cachedModels;
+}
+
+/** Check if a model supports reasoning effort adjustments. */
+export function modelSupportsReasoning(
+  modelId: string,
+  models?: readonly OpenRouterModel[],
+): boolean {
+  if (!modelId) return false;
+  const candidateList = models ?? cachedModels ?? undefined;
+  if (candidateList && candidateList.length > 0) {
+    const found = candidateList.find((m) => m.id === modelId);
+    if (found?.supported_parameters) {
+      return (
+        found.supported_parameters.includes('reasoning') ||
+        found.supported_parameters.includes('reasoning_effort')
+      );
+    }
+  }
+  return (
+    /(?:^|\/)(?:o[134]|r1|deepseek-r1|qwq|gemini-2\.5|claude-3[.-]7)/i.test(modelId) ||
+    /:thinking/i.test(modelId) ||
+    /reason/i.test(modelId)
+  );
 }
 
 /** GET /api/v1/models — used by "Test key" and the model combobox. */
@@ -465,7 +505,9 @@ export async function listModels(): Promise<OpenRouterModel[]> {
   });
   if (!response.ok) throw new OpenRouterError(response.status, await response.text());
   const json = (await response.json()) as { data?: OpenRouterModel[] };
-  return json.data ?? [];
+  const models = json.data ?? [];
+  cachedModels = models;
+  return models;
 }
 
 /**
