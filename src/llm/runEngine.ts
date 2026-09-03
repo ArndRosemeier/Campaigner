@@ -117,7 +117,9 @@ export type EncounterStepName = (typeof ENCOUNTER_STEP_NAMES)[number];
 export type EngineEvent =
   | { kind: 'run'; runId: Id; status: PersonaRun['status'] }
   | { kind: 'step'; runId: Id; stepIndex: number; status: RunStep['status']; stepName?: string | undefined }
-  | { kind: 'token'; runId: Id; stepIndex: number; delta: string };
+  | { kind: 'token'; runId: Id; stepIndex: number; delta: string }
+  /** Reasoning-delta stream (illustration only; never part of the answer). */
+  | { kind: 'thinking'; runId: Id; stepIndex: number; delta: string };
 
 type Listener = (event: EngineEvent) => void;
 
@@ -960,6 +962,9 @@ export class RunEngine {
       onToken: (delta) => {
         this.emit({ kind: 'token', runId, stepIndex, delta });
       },
+      onReasoning: (delta) => {
+        this.emit({ kind: 'thinking', runId, stepIndex, delta });
+      },
     });
 
     debugLog('run', `draft chat returned ${String(raw.length)} chars`);
@@ -1054,6 +1059,9 @@ export class RunEngine {
         signal,
         onToken: (delta) => {
           this.emit({ kind: 'token', runId, stepIndex, delta });
+        },
+        onReasoning: (delta) => {
+          this.emit({ kind: 'thinking', runId, stepIndex, delta });
         },
       },
     );
@@ -1188,6 +1196,9 @@ export class RunEngine {
         signal,
         onToken: (delta) => {
           this.emit({ kind: 'token', runId, stepIndex, delta });
+        },
+        onReasoning: (delta) => {
+          this.emit({ kind: 'thinking', runId, stepIndex, delta });
         },
       },
     );
@@ -1335,6 +1346,9 @@ export class RunEngine {
       signal,
       onToken: (delta: string) => {
         this.emit({ kind: 'token', runId, stepIndex, delta });
+      },
+      onReasoning: (delta: string) => {
+        this.emit({ kind: 'thinking', runId, stepIndex, delta });
       },
     };
     // Roster sources are only checked for fresh encounters: a regenerate run
@@ -1746,6 +1760,9 @@ export class RunEngine {
       signal,
       onToken: (delta) => {
         this.emit({ kind: 'token', runId, stepIndex, delta });
+      },
+      onReasoning: (delta) => {
+        this.emit({ kind: 'thinking', runId, stepIndex, delta });
       },
     });
 

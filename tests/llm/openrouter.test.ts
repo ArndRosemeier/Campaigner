@@ -107,6 +107,40 @@ describe('chat', () => {
     expect(body.model).toBe('m');
   });
 
+  it('streams reasoning deltas to onReasoning without mixing them into the answer', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, _init?: unknown) =>
+        Promise.resolve(
+          sseResponse([
+            { choices: [{ delta: { reasoning: 'let me think: ' } }] },
+            { choices: [{ delta: { reasoning: 'the party is level 5' } }] },
+            { choices: [{ delta: { content: '{"ok":true}' } }] },
+            { choices: [{ delta: {} }] },
+          ]),
+        ),
+      ),
+    );
+
+    const reasoningDeltas: string[] = [];
+    const contentDeltas: string[] = [];
+    const result = await chat([{ role: 'user', content: 'hi' }], {
+      model: 'm',
+      temperature: 0.7,
+      onToken: (delta) => {
+        contentDeltas.push(delta);
+      },
+      onReasoning: (delta) => {
+        reasoningDeltas.push(delta);
+      },
+    }, [1, 1]);
+
+    expect(reasoningDeltas.join('')).toBe('let me think: the party is level 5');
+    expect(contentDeltas).toEqual(['{"ok":true}']);
+    // The returned answer is the content only — reasoning never leaks into it.
+    expect(result).toBe('{"ok":true}');
+  });
+
   it('reports "thinking" activity while only reasoning deltas arrive', async () => {
     // Reasoning deltas never reach onToken; the liveness probe is the only
     // way a caller can tell a thinking model from a dead connection.

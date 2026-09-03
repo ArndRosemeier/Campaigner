@@ -13,6 +13,7 @@ import {
   classifyEntityName,
   createModuleAndRun,
   generateMissingParts,
+  moduleGenEvents,
   ModuleBusyError,
   normalizeModuleEntityNames,
   normalizePartMarkdown,
@@ -998,6 +999,32 @@ describe('progress dock reporting', () => {
     deferred.resolve(JSON.stringify(VALID_SPINE));
     await pending;
     expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 20000);
+
+  it('runSpine forwards reasoning deltas to the reader as spine-thinking events', async () => {
+    const { campaign, moduleId } = await seedModule();
+    const seen: string[] = [];
+    const unsubscribe = moduleGenEvents.on((event) => {
+      if (event.kind === 'spine-thinking') seen.push(event.delta);
+    });
+    try {
+      const deferred = deferredChat();
+      chatMock.mockImplementationOnce((_messages, options) => {
+        options.onReasoning?.('planning the premise');
+        options.onReasoning?.(', sketching parts');
+        return deferred.promise;
+      });
+      chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+
+      const pending = guard(runSpine(moduleId, campaign));
+      await vi.waitFor(() => {
+        expect(seen.join('')).toBe('planning the premise, sketching parts');
+      });
+      deferred.resolve(JSON.stringify(VALID_SPINE));
+      await pending;
+    } finally {
+      unsubscribe();
+    }
   }, 20000);
 
   it('runSpine counts received chars on the dock while the answer streams', async () => {

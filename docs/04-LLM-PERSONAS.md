@@ -9,6 +9,7 @@ interface ChatOptions {
   responseFormat?: 'json';       // sets response_format: { type: 'json_object' }
   signal?: AbortSignal;
   onToken?: (delta: string) => void;   // streaming callback
+  onReasoning?: (delta: string) => void; // reasoning-delta stream (illustration only)
 }
 async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>;
 ```
@@ -19,6 +20,9 @@ async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>
 - Always request `stream: true`; parse SSE per the WHATWG spec (`data: {json}` /
   `data: [DONE]`, `:`-prefixed keep-alive comments like `: OPENROUTER PROCESSING`
   are ignored), concatenate `choices[0].delta.content`, invoke `onToken` per delta.
+  Reasoning deltas (`delta.reasoning` / `delta.reasoning_content`) drive the
+  liveness probe ("thinking") and are forwarded via `onReasoning` for display
+  only — they are never appended to the returned answer and never persisted.
 - Stream completion: whichever comes first of `[DONE]`, a clean connection
   close, or `choices[0].finish_reason` (the terminal finish_reason repeats on
   OpenRouter's accounting usage chunk — treat it as an accounting frame, not a

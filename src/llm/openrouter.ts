@@ -62,6 +62,12 @@ export interface ChatOptions {
   signal?: AbortSignal | undefined;
   /** Streaming callback, invoked once per content delta. */
   onToken?: ((delta: string) => void) | undefined;
+  /**
+   * Streaming callback for reasoning deltas ("the model is thinking"), when
+   * the model returns them at all. Illustration only — the deltas never
+   * become part of the returned answer and are not persisted anywhere.
+   */
+  onReasoning?: ((delta: string) => void) | undefined;
   /** Liveness probe, emitted by the 1s watchdog while the stream is open.
    * Lets a caller keep a progress surface alive during long quiet stretches
    * (queued providers, reasoning models thinking before the first delta). */
@@ -144,7 +150,7 @@ export async function chat(
     stallTimeoutMs,
     contentStallMs,
     maxDurationMs,
-  }, opts.onActivity);
+  }, opts.onActivity, opts.onReasoning);
 }
 
 /** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */
@@ -284,6 +290,7 @@ async function readStream(
     maxDurationMs: number;
   },
   onActivity: ((activity: ChatStreamActivity) => void) | undefined,
+  onReasoning: ((delta: string) => void) | undefined,
 ): Promise<string> {
   if (response.body === null) throw new OpenRouterError(response.status, 'empty response body');
   const reader = response.body.getReader();
@@ -351,6 +358,10 @@ async function readStream(
       if (typeof reasoning === 'string' && reasoning !== '') {
         reasoned = true;
         lastContentAt = Date.now();
+        // Illustration only: the reasoning text is forwarded to the UI but is
+        // deliberately NOT appended to `full` — it never becomes part of the
+        // returned answer.
+        onReasoning?.(reasoning);
       }
       finishReason = parsed.choices?.[0]?.finish_reason;
       if (parsed.error !== undefined) {

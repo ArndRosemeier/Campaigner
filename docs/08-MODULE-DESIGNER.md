@@ -206,7 +206,9 @@ card, Stop button, and a progress dock that reports what the stream is doing
 (char counts while the answer streams, "the model is thinking (Ns)" — with an
 explicit "can take several minutes, this is normal" hint — while a reasoning
 model works before its first delta, "no answer yet (Ns)" while the provider
-is silent). The spine's opening detail names the stage as one large design
+is silent). When the model streams its reasoning, the card shows it live as a
+dimmed "thinking" tail (illustration only — never persisted, cleared once the
+prose starts). The spine's opening detail names the stage as one large design
 call and sets the minutes-long expectation up front, so the quiet stretch is
 not read as a hang. The dialog never blocks on the LLM. A failed first spine
 shows its recorded error in the reader with an in-place **Retry spine draft**.

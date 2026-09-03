@@ -31,7 +31,10 @@ import { z } from 'zod';
 
 export type ModuleGenEvent =
   | { kind: 'spine-token'; moduleId: Id; delta: string }
+  /** Reasoning-delta stream (illustration only; never persisted). */
+  | { kind: 'spine-thinking'; moduleId: Id; delta: string }
   | { kind: 'part-token'; moduleId: Id; planIndex: number; delta: string }
+  | { kind: 'part-thinking'; moduleId: Id; planIndex: number; delta: string }
   | { kind: 'done'; moduleId: Id };
 
 type Listener = (event: ModuleGenEvent) => void;
@@ -184,6 +187,9 @@ export async function runSpine(
       onToken: (delta: string): void => {
         moduleGenEvents.emit({ kind: 'spine-token', moduleId, delta });
         reporter.onToken(delta);
+      },
+      onReasoning: (delta: string): void => {
+        moduleGenEvents.emit({ kind: 'spine-thinking', moduleId, delta });
       },
       onActivity: reporter.onActivity,
     };
@@ -506,6 +512,9 @@ export async function runParts(
               moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta });
               partReporter.onToken(delta);
             },
+            onReasoning: (delta) => {
+              moduleGenEvents.emit({ kind: 'part-thinking', moduleId, planIndex, delta });
+            },
             onActivity: partReporter.onActivity,
             // Embedding backfill on the part's retrieval path is reported on
             // the same job; the stream reporter overwrites the detail on the
@@ -620,6 +629,10 @@ interface PartCallOptions {
   /** Liveness probe from the chat stream (see streamDetailReporter). */
   onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
   /**
+   * Reasoning-delta stream (illustration only; never part of the part text).
+   */
+  onReasoning?: ((delta: string) => void) | undefined;
+  /**
    * Fires while the part's rule-excerpt search backfills missing embeddings —
    * the first search after enabling embeddings can otherwise sit minutes
    * before the part's chat call starts, with the dock claiming it is writing.
@@ -720,6 +733,7 @@ async function partCall(
     temperature: 0.8,
     signal: options.signal,
     onToken: options.onToken,
+    onReasoning: options.onReasoning,
     onActivity: options.onActivity,
   });
   try {

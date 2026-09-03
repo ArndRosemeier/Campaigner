@@ -421,13 +421,21 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
     [run?.targetArtifactId],
   );
   const [streamed, setStreamed] = useState('');
+  const [thinking, setThinking] = useState('');
   const streamRef = useRef<HTMLPreElement | null>(null);
 
   useEffect(() => {
     setStreamed('');
+    setThinking('');
     return runEngine.on((event) => {
-      if (event.runId !== runId || event.kind !== 'token') return;
-      setStreamed((previous) => previous + event.delta);
+      if (event.runId !== runId) return;
+      if (event.kind === 'token') {
+        setStreamed((previous) => previous + event.delta);
+      } else if (event.kind === 'thinking') {
+        // Illustration only: the model's raw reasoning deltas while it works,
+        // dimmed and cleared with the run. Never part of the run's output.
+        setThinking((previous) => (previous + event.delta).slice(-2000));
+      }
     });
   }, [runId]);
 
@@ -477,6 +485,17 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
           </li>
         ))}
       </ol>
+
+      {runningIndex !== -1 && thinking.trim() !== '' && streamed === '' && (
+        <div data-testid="thinking-stream">
+          <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground/70">
+            the model is thinking
+          </p>
+          <pre className="max-h-40 overflow-y-auto rounded-md bg-muted/60 p-2 font-mono text-[11px] italic whitespace-pre-wrap text-muted-foreground/70">
+            {thinking}
+          </pre>
+        </div>
+      )}
 
       {runningIndex !== -1 && streamed !== '' && (
         <pre

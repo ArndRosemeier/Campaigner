@@ -80,19 +80,32 @@ export function ModuleReaderPage(): JSX.Element {
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [editPartIndex, setEditPartIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
-  const [tails, setTails] = useState<{ spine?: string | undefined; parts: Record<number, string> }>({
-    parts: {},
-  });
+  const [tails, setTails] = useState<{
+    spine?: string | undefined;
+    spineThinking?: string | undefined;
+    parts: Record<number, string>;
+    partsThinking: Record<number, string>;
+  }>({ parts: {}, partsThinking: {} });
 
-  // Streaming tails (in-memory emitter → never persisted).
+  // Streaming tails (in-memory emitter → never persisted). Reasoning deltas
+  // ("the model is thinking") stream dimmed for illustration only and are
+  // cleared once the actual content starts arriving.
   useEffect(() => {
-    setTails({ parts: {} });
+    setTails({ parts: {}, partsThinking: {} });
     return moduleGenEvents.on((event) => {
       if (event.moduleId !== moduleId) return;
       if (event.kind === 'spine-token') {
         setTails((previous) => ({
           ...previous,
           spine: `${previous.spine ?? ''}${event.delta}`.slice(-TOKEN_TAIL_CHARS),
+          spineThinking: '',
+        }));
+      } else if (event.kind === 'spine-thinking') {
+        setTails((previous) => ({
+          ...previous,
+          spineThinking: `${previous.spineThinking ?? ''}${event.delta}`.slice(
+            -TOKEN_TAIL_CHARS,
+          ),
         }));
       } else if (event.kind === 'part-token') {
         setTails((previous) => ({
@@ -103,9 +116,20 @@ export function ModuleReaderPage(): JSX.Element {
               -TOKEN_TAIL_CHARS,
             ),
           },
+          partsThinking: { ...previous.partsThinking, [event.planIndex]: '' },
+        }));
+      } else if (event.kind === 'part-thinking') {
+        setTails((previous) => ({
+          ...previous,
+          partsThinking: {
+            ...previous.partsThinking,
+            [event.planIndex]: `${previous.partsThinking[event.planIndex] ?? ''}${
+              event.delta
+            }`.slice(-TOKEN_TAIL_CHARS),
+          },
         }));
       } else {
-        setTails({ parts: {} });
+        setTails({ parts: {}, partsThinking: {} });
       }
     });
   }, [moduleId]);
@@ -329,7 +353,11 @@ export function ModuleReaderPage(): JSX.Element {
 
           {module.spine === null ? (
             busy ? (
-              <StreamingCard label="Drafting the spine…" tail={tails.spine ?? ''} />
+              <StreamingCard
+                label="Drafting the spine…"
+                tail={tails.spine ?? ''}
+                thinkingTail={tails.spineThinking ?? ''}
+              />
             ) : module.status === 'failed' ? (
               // A failed first spine is actionable, not a dead end: the
               // generator recorded the error on the row (AGENTS rule 2) and
@@ -428,6 +456,7 @@ export function ModuleReaderPage(): JSX.Element {
                       planTitle={plan.title}
                       artifacts={artifacts}
                       tail={tails.parts[index] ?? ''}
+                      thinkingTail={tails.partsThinking[index] ?? ''}
                       editing={editPartIndex === index}
                       editDraft={editDraft}
                       onEditDraftChange={setEditDraft}
@@ -681,6 +710,7 @@ function PartBody({
   planTitle,
   artifacts,
   tail,
+  thinkingTail,
   editing,
   editDraft,
   onEditDraftChange,
@@ -694,6 +724,7 @@ function PartBody({
   planTitle: string;
   artifacts: readonly Artifact[];
   tail: string;
+  thinkingTail: string;
   editing: boolean;
   editDraft: string;
   onEditDraftChange: (value: string) => void;
@@ -722,7 +753,13 @@ function PartBody({
     );
   }
   if (part.status === 'generating') {
-    return <StreamingCard label={`Writing “${planTitle}”…`} tail={tail} />;
+    return (
+      <StreamingCard
+        label={`Writing “${planTitle}”…`}
+        tail={tail}
+        thinkingTail={thinkingTail}
+      />
+    );
   }
   if (part.status === 'failed') {
     return (
@@ -760,13 +797,35 @@ function PartBody({
   );
 }
 
-function StreamingCard({ label, tail }: { label: string; tail: string }): JSX.Element {
+function StreamingCard({
+  label,
+  tail,
+  thinkingTail = '',
+}: {
+  label: string;
+  tail: string;
+  thinkingTail?: string;
+}): JSX.Element {
   return (
     <div className="rounded-lg border bg-muted/30 p-4" data-testid="part-streaming" aria-live="polite">
       <p className="flex items-center gap-2 text-sm text-muted-foreground">
         <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
         {label}
       </p>
+      {/* Reasoning deltas, streamed dimmed for illustration only — the model's
+          raw thoughts, never part of the module text. Present only while the
+          model is thinking; the first content delta clears it. */}
+      {thinkingTail.trim() !== '' && (
+        <div
+          className="mt-2 flex max-h-24 flex-col justify-end overflow-hidden font-mono text-[11px] italic text-muted-foreground/60"
+          data-testid="thinking-tail"
+        >
+          <p className="shrink-0 text-[10px] font-medium uppercase tracking-wide not-italic">
+            thinking
+          </p>
+          <pre className="shrink-0 whitespace-pre-wrap">{thinkingTail}</pre>
+        </div>
+      )}
       {/* Fixed height + bottom-anchored: the box occupies its final size from
           the first token, so streaming never reflows the surrounding document
           (a growing box made the whole module jitter), and clipping at the
