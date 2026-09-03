@@ -291,6 +291,44 @@ sequentially via the existing `chainRunner` in `auto` autonomy, brief-built
 exactly like the single case. Failures follow chain semantics (visible
 failed runs; continue).
 
+The batch engine is headless (`src/features/modules/entity-batch.ts`,
+`runEntityBatch`): the panel and the post-generation automation below share
+one implementation (progress dock job `module-entities-<moduleId>-<kind>`,
+name alignment, module-ownership stamping, loud failure summary).
+
+### Post-generation automation (module row flags)
+
+The New Module dialog's "After the parts are written" grid persists three
+opt-in flags on the module row (zod defaults keep old rows off):
+
+- `autoGenerateKinds: EntityKind[]` — per artifact type (npc, location,
+  faction, note, encounter): batch-detail its UNRESOLVED wiki-link entities
+  after a full parts pass.
+- `autoImageKinds: EntityKind[]` — per artifact type: enqueue a background
+  image (cover) for every RESOLVED entity of that kind without an image.
+  Runs after the batches so newly generated artifacts are covered.
+- `autoGenerateBattlemaps: boolean` — enqueue every module-owned encounter
+  without layout/map into the unattended encounter-map queue (docs/11).
+
+Trigger: `runModulePostGeneration` (features/modules/post-generation.ts)
+runs after `approveSpineAndRun` (spine checkpoint "Generate parts") and after
+every `generateMissingParts` completion (missing-parts button and the
+failed-module "Resume module generation"). A single-part rewrite NEVER
+triggers it. Semantics:
+
+- Idempotent by construction — batches target only unresolved names, the
+  image queue skips artifacts that already have images, the map queue skips
+  encounters that already carry a map. Re-running a full pass never
+  double-generates.
+- Entity batches stay gated on `entityNamesNormalized` (fix-01): a failed
+  normalization pass skips the batch step (its own failure is already loud
+  with a Retry in the entity panel).
+- With image generation disabled in Settings, image/battlemap automation is
+  skipped with ONE loud toast each — never a wall of per-entity failures,
+  never a silent drop.
+- Failures are loud per job (toasts + failed runs in the Runs tab) and never
+  stop the remaining automation; one `toastSuccess` summarizes what ran.
+
 ---
 
 ## M4-D — Integration & retirement

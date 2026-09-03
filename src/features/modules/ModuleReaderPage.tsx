@@ -37,6 +37,7 @@ import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { useModule } from '@/features/modules/hooks';
 import { EntityPanel } from '@/features/modules/entity-panel';
+import { runModulePostGeneration } from '@/features/modules/post-generation';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
@@ -447,6 +448,9 @@ export function ModuleReaderPage(): JSX.Element {
                             const camp = await getCampaign(campaignId);
                             if (camp === undefined) throw new Error('Campaign no longer exists');
                             await generateMissingParts(module.id, camp);
+                            // Post-generation automation (opt-in): runs after
+                            // a resumed generation completes its parts.
+                            void runModulePostGeneration(module.id, camp);
                           } catch (error) {
                             toastError('Could not resume module generation', error);
                           }
@@ -891,6 +895,9 @@ function MissingPartsButton({ moduleId, campaignId }: { moduleId: Id; campaignId
             const campaign = await getCampaign(campaignId);
             if (campaign === undefined) throw new Error('Campaign no longer exists');
             await generateMissingParts(moduleId, campaign);
+            // Post-generation automation (opt-in): runs after the missing
+            // parts have landed and the module is complete again.
+            void runModulePostGeneration(moduleId, campaign);
           } catch (error) {
             toastError('Could not generate the missing parts', error);
           } finally {

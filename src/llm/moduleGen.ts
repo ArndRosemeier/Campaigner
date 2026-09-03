@@ -1,4 +1,4 @@
-import type { Campaign, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
+import type { Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
 import { createModule, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
 import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
@@ -1139,6 +1139,11 @@ export async function createModuleAndRun(
     sizeDial: Module['sizeDial'];
     /** Opt-in cross-module continuity (08 §M4-B): prior modules in context. */
     includePriorModules?: boolean;
+    /** Post-generation automation (08 §M4-C): artifact kinds to batch-detail
+     * after the parts pass, kinds to auto-image, and unattended battlemaps. */
+    autoGenerateKinds?: EntityKind[];
+    autoImageKinds?: EntityKind[];
+    autoGenerateBattlemaps?: boolean;
   },
 ): Promise<Id> {
   const created = createModule(input);

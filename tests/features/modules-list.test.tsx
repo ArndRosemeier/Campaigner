@@ -230,6 +230,43 @@ describe('ModulesListPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('passes the post-generation automation checkboxes to the generator', async () => {
+    const user = userEvent.setup();
+    const { campaignId } = await seedModules();
+    renderAppAt(modulesPath(campaignId));
+    await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByTestId('new-module'));
+    const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+
+    // Default: everything off.
+    expect(within(dialog).getByTestId('auto-generate-npc')).not.toBeChecked();
+    expect(within(dialog).getByTestId('auto-image-npc')).not.toBeChecked();
+    expect(within(dialog).getByTestId('auto-battlemaps')).not.toBeChecked();
+
+    // Tick: auto-generate npcs + locations, auto-image npcs, battlemaps on.
+    await user.click(within(dialog).getByTestId('auto-generate-npc'));
+    await user.click(within(dialog).getByTestId('auto-generate-location'));
+    await user.click(within(dialog).getByTestId('auto-image-npc'));
+    await user.click(within(dialog).getByTestId('auto-battlemaps'));
+
+    await user.type(within(dialog).getByLabelText('Concept'), 'Automated chapter.');
+    createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
+    await user.click(within(dialog).getByTestId('start-module'));
+    await waitFor(() => {
+      expect(createModuleAndRunMock).toHaveBeenCalledTimes(1);
+    });
+    expect(createModuleAndRunMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        autoGenerateKinds: ['npc', 'location'],
+        autoImageKinds: ['npc'],
+        autoGenerateBattlemaps: true,
+      }),
+    );
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('deletes a module after confirmation and removes the row from the DB', async () => {
     const user = userEvent.setup();
     const { campaignId, failedId } = await seedModules();

@@ -17,8 +17,8 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import type { Campaign, ModuleSizeDial } from '@/domain';
-import { MODULE_SIZE_LABELS } from '@/domain';
+import type { Campaign, EntityKind, ModuleSizeDial } from '@/domain';
+import { ENTITY_KINDS, MODULE_SIZE_LABELS } from '@/domain';
 import { modulePath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
 import { createModuleAndRun } from '@/llm/moduleGen';
@@ -33,6 +33,15 @@ import { toastError } from '@/lib/toast';
  */
 
 const SIZES: readonly ModuleSizeDial[] = ['sketch', 'standard', 'detailed'];
+
+/** Human labels for the automation grid rows (artifact/entity kinds). */
+const KIND_LABELS: Readonly<Record<EntityKind, string>> = {
+  npc: 'NPC',
+  location: 'Location',
+  faction: 'Faction',
+  note: 'Note',
+  encounter: 'Encounter',
+};
 
 export interface NewModuleDialogProps {
   campaign: Campaign;
@@ -52,6 +61,9 @@ export function NewModuleDialog({
   const [tone, setTone] = useState('');
   const [sizeDial, setSizeDial] = useState<ModuleSizeDial>('standard');
   const [includePriorModules, setIncludePriorModules] = useState(false);
+  const [autoGenerateKinds, setAutoGenerateKinds] = useState<EntityKind[]>([]);
+  const [autoImageKinds, setAutoImageKinds] = useState<EntityKind[]>([]);
+  const [autoGenerateBattlemaps, setAutoGenerateBattlemaps] = useState(false);
   const [starting, setStarting] = useState(false);
 
   // The opt-in continuity checkbox is only meaningful when some other module
@@ -67,6 +79,17 @@ export function NewModuleDialog({
 
   const canStart = concept.trim() !== '' && !starting;
 
+  /** Toggles one kind in one of the two automation lists (persisted on the row). */
+  function toggleKind(
+    list: EntityKind[],
+    setList: (next: EntityKind[]) => void,
+    kind: EntityKind,
+  ): void {
+    setList(
+      list.includes(kind) ? list.filter((entry) => entry !== kind) : [...list, kind],
+    );
+  }
+
   async function start(): Promise<void> {
     setStarting(true);
     try {
@@ -79,6 +102,9 @@ export function NewModuleDialog({
         tone: tone.trim(),
         sizeDial,
         includePriorModules,
+        autoGenerateKinds,
+        autoImageKinds,
+        autoGenerateBattlemaps,
       });
       onOpenChange(false);
       navigate(modulePath(campaign.id, moduleId));
@@ -192,6 +218,64 @@ export function NewModuleDialog({
                   : 'No previous modules with text in this campaign yet.'}
               </p>
             </div>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label>After the parts are written</Label>
+            <div className="rounded-md border p-2" data-testid="module-automation-grid">
+              <div className="flex items-center gap-2 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
+                <span className="flex-1">Artifact type</span>
+                <span className="w-14 text-center">Generate</span>
+                <span className="w-14 text-center">Image</span>
+              </div>
+              {ENTITY_KINDS.map((kind) => (
+                <div key={kind} className="flex items-center gap-2 py-0.5">
+                  <span className="flex-1 text-sm">{KIND_LABELS[kind]}</span>
+                  <span className="flex w-14 justify-center">
+                    <Checkbox
+                      aria-label={`Auto-generate ${KIND_LABELS[kind]} artifacts`}
+                      data-testid={`auto-generate-${kind}`}
+                      checked={autoGenerateKinds.includes(kind)}
+                      onCheckedChange={() => {
+                        toggleKind(autoGenerateKinds, setAutoGenerateKinds, kind);
+                      }}
+                    />
+                  </span>
+                  <span className="flex w-14 justify-center">
+                    <Checkbox
+                      aria-label={`Auto-generate images for ${KIND_LABELS[kind]} artifacts`}
+                      data-testid={`auto-image-${kind}`}
+                      checked={autoImageKinds.includes(kind)}
+                      onCheckedChange={() => {
+                        toggleKind(autoImageKinds, setAutoImageKinds, kind);
+                      }}
+                    />
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="module-auto-battlemaps"
+                data-testid="auto-battlemaps"
+                checked={autoGenerateBattlemaps}
+                onCheckedChange={(checked) => {
+                  setAutoGenerateBattlemaps(checked);
+                }}
+              />
+              <div className="flex flex-col gap-0.5">
+                <Label htmlFor="module-auto-battlemaps">Generate encounter battlemaps</Label>
+                <p className="text-xs text-muted-foreground">
+                  Unattended map runs for every module encounter without a battlemap (needs image
+                  generation in Settings).
+                </p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Runs once the parts finish: unresolved wiki-links of the checked types are detailed,
+              images attach to their artifacts, and every encounter gets its battlemap. Everything
+              can also be run manually from the entity panel.
+            </p>
           </div>
         </div>
 

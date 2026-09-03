@@ -22,27 +22,17 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { AnyArtifact, Campaign, Id, Module } from '@/domain';
-import { entityKindFor, moduleTagFor } from '@/domain';
+import type { AnyArtifact, Campaign, Module } from '@/domain';
+import { entityKindFor } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
-import { artifactRepo } from '@/db';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
-import { listPersonas } from '@/db/personaRepo';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
-import { chainRunner } from '@/llm/chainRunner';
-import type { ChainStepInput } from '@/llm/chainRunner';
+import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
 import { normalizeModuleEntityNames } from '@/llm/moduleGen';
-import { runEngine } from '@/llm/runEngine';
 import {
-  alignEntityName,
-  RUN_STEP_LABELS,
-} from '@/features/modules/entity-detail';
-import {
-  buildEntityBrief,
   STUB_KINDS,
-  STUB_PERSONA_SLUGS,
   type StubKind,
 } from '@/features/modules/persona-request';
 import {
@@ -51,11 +41,9 @@ import {
   resolveWikiLink,
   rewriteWikiLinkTargets,
   sentenceAround,
-  surroundingParagraphs,
 } from '@/lib/wikilinks';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { RunBattleButton } from '@/features/play/run-battle';
-import { useProgressStore } from '@/lib/progress';
 import { cn } from '@/lib/utils';
 
 /**
@@ -95,15 +83,6 @@ export interface EntityPanelProps {
   /** Opens the entity card (peek modal) for a resolved entity. */
   onOpenCard: (artifact: AnyArtifact) => void;
 }
-
-/** Plural bucket label for the progress bar ("Generating 3 npcs"). */
-const KIND_PLURALS: Record<StubKind, string> = {
-  npc: 'npcs',
-  location: 'locations',
-  faction: 'factions',
-  note: 'notes',
-  encounter: 'encounters',
-};
 
 interface EntityEntry {
   name: string;
@@ -159,7 +138,7 @@ export function EntityPanel({
   onStub,
   onOpenCard,
 }: EntityPanelProps): JSX.Element {
-  const { entries, documents } = useModuleEntities(module, artifacts);
+  const { entries } = useModuleEntities(module, artifacts);
   const [collapsed, setCollapsed] = useState(false);
   const [batching, setBatching] = useState<StubKind | null>(null);
   const [imageMode, setImageMode] = useState(false);
@@ -168,9 +147,6 @@ export function EntityPanel({
     name: string;
     artifact: AnyArtifact;
   } | null>(null);
-  const progressStart = useProgressStore((state) => state.start);
-  const progressUpdate = useProgressStore((state) => state.update);
-  const progressFinish = useProgressStore((state) => state.finish);
   const queuedJobs = useEntityImageQueue((state) => state.queued);
   const activeJob = useEntityImageQueue((state) => state.active);
   const enqueueEncounterMaps = useEncounterMapQueue((state) => state.enqueue);
@@ -181,8 +157,6 @@ export function EntityPanel({
   const [proposalsOpen, setProposalsOpen] = useState(false);
   /** fix-01: the normalization pass is running (Retry / manual run). */
   const [normalizing, setNormalizing] = useState(false);
-
-  const moduleTag = moduleTagFor(module.title);
 
   /** fix-01: the batch gate — no batch generation before the pass succeeded. */
   const batchGateOpen = module.entityNamesNormalized;
@@ -212,9 +186,6 @@ export function EntityPanel({
     list.push(entry);
     unresolvedByKind.set(kind, list);
   }
-
-  /** Full module text for the brief context. */
-  const moduleText = documents.map((document) => document.markdown).join('\n\n');
 
   // Focused / unfocused groups (08 §M4-C), each in the current sort order.
   // Focus matches are case-insensitive — wiki-links resolve that way.
@@ -372,122 +343,20 @@ export function EntityPanel({
     const targets = unresolvedByKind.get(kind) ?? [];
     if (targets.length === 0) return;
     setBatching(kind);
-    const jobId = `module-entities-${module.id}-${kind}`;
-    const total = targets.length;
-    progressStart(jobId, `Generating ${String(total)} ${KIND_PLURALS[kind]}`);
-    // Live detail for the dock: the chain runner names the entity currently
-    // being detailed, the run engine names the step inside it ("drafting") —
-    // multi-minute work must never look like a hang (00-OVERVIEW).
-    let currentEntry = '';
-    let currentRunId: Id | null = null;
-    // Targets finished across chain invocations (the loop re-chains past
-    // failed steps) — keeps the bar monotonic.
-    let completed = 0;
-    const unsubscribeChain = chainRunner.on((state) => {
-      const step = state.steps[state.currentIndex];
-      if (state.status === 'running' && step?.status === 'running' && step.runId !== null) {
-        currentRunId = step.runId;
-        if (step.title !== null) {
-          currentEntry = step.title.replace(/^Detail: /u, '');
-          progressUpdate(jobId, {
-            detail: `Generating ${currentEntry}…`,
-            progress: (completed + state.currentIndex) / total,
-          });
-        }
-      }
-    });
-    const unsubscribeRun = runEngine.on((event) => {
-      if (event.kind !== 'step' || event.runId !== currentRunId) return;
-      if (event.status === 'running' && event.stepName !== undefined) {
-        const label = RUN_STEP_LABELS[event.stepName] ?? event.stepName;
-        progressUpdate(jobId, { detail: `${currentEntry} — ${label}…` });
-      }
-    });
     try {
-      const personas = await listPersonas();
-      const persona =
-        personas.find((candidate) => candidate.slug === STUB_PERSONA_SLUGS[kind]) ??
-        personas.find((candidate) => candidate.producesKind === kind);
-      if (persona === undefined) {
-        toastError(`No persona available to detail ${kind}s — check Settings → Personas`);
-        return;
-      }
-      let remaining: EntityEntry[] = targets;
-      const producedIds: Id[] = [];
-      const succeeded = new Set<string>();
-      // One chain over all targets; chain semantics keep completed steps and
-      // show failed runs in the Runs tab. On a failed step the batch
-      // CONTINUES with the remaining names (fresh chain).
-      while (remaining.length > 0) {
-        const steps: ChainStepInput[] = remaining.map((entry) => ({
-          personaId: persona.id,
-          title: `Detail: ${entry.name}`,
-          brief: buildEntityBrief(
-            entry.name,
-            surroundingParagraphs(moduleText, entry.name),
-            module.spine?.premise ?? '',
-          ),
-          autonomy: 'auto' as const,
-        }));
-        const result = await chainRunner.run(campaign, personas, steps, 'auto', []);
-        // Align produced artifacts with their entity (index-parallel): the
-        // wiki-link resolves by EXACT name, so an artifact the model named
-        // "Kael Ashbound…" would never link back to [[Kael]] — enforce the
-        // entity name and keep the model's name as an alias.
-        for (const [index, step] of result.steps.entries()) {
-          const entry = remaining[index];
-          if (entry === undefined) continue;
-          if (step.status === 'completed' && step.artifactId !== null) {
-            producedIds.push(step.artifactId);
-            succeeded.add(entry.name);
-            try {
-              await alignEntityName(step.artifactId, entry.name);
-            } catch (error) {
-              toastError(`Could not align the artifact name for "${entry.name}"`, error);
-            }
-          }
-          // Non-completed steps are NOT counted as failures here: the chain
-          // stops at the first failure and reports the not-yet-run steps as
-          // 'pending' — counting them double-counted every retry round ("12
-          // of 9 failed"). Real failures are computed after the loop.
-        }
-        completed += result.steps.filter((step) => step.status === 'completed').length;
-        progressUpdate(jobId, { progress: completed / total });
-        const failedIndex = result.steps.findIndex((step) => step.status === 'failed');
-        if (result.status === 'completed') break;
-        if (result.status === 'cancelled') break;
-        if (failedIndex === -1) break;
-        // Skip everything up to and including the failed step, keep going.
-        remaining = remaining.slice(failedIndex + 1);
-      }
-      // Stamp the produced artifacts with their owning module (M6-B) and
-      // the compatibility tag.
-      for (const artifactId of producedIds) {
-        try {
-          const artifact = await artifactRepo.getArtifact(artifactId);
-          if (artifact !== undefined && (artifact.moduleId !== module.id || !artifact.tags.includes(moduleTag))) {
-            await artifactRepo.stampModuleOwnership(artifactId, module.id, moduleTag);
-          }
-        } catch (error) {
-          toastError('Could not scope a produced artifact', error);
-        }
-      }
+      const result = await runEntityBatch({ module, campaign, kind, targets });
       // Failed entities are loud: the bar finishing must not look like
       // success when some runs died (their detail lives in the Runs tab).
       // Ground truth = every target WITHOUT a produced artifact.
-      const failedEntities = targets.filter((target) => !succeeded.has(target.name));
-      if (failedEntities.length > 0) {
+      if (result.failed.length > 0) {
         toastError(
-          `${String(failedEntities.length)} of ${String(total)} ${KIND_PLURALS[kind]} failed to generate — ` +
-            `see the Runs tab (${failedEntities.map((entry) => entry.name).join(', ')})`,
+          `${String(result.failed.length)} of ${String(targets.length)} ${KIND_PLURALS[kind]} failed to generate — ` +
+            `see the Runs tab (${result.failed.join(', ')})`,
         );
       }
     } catch (error) {
       toastError('Batch generation failed', error);
     } finally {
-      unsubscribeChain();
-      unsubscribeRun();
-      progressFinish(jobId);
       setBatching(null);
     }
   }

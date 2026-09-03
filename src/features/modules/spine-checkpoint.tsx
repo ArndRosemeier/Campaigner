@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { Campaign, Id, ModuleEntityKind, ModuleSpine, PartPlan } from '@/domain';
 import { approveSpineAndRun, discardSpine, retrySpine } from '@/llm/moduleGen';
+import { runModulePostGeneration } from '@/features/modules/post-generation';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -97,6 +98,11 @@ export function SpineCheckpoint({
     try {
       await approveSpineAndRun(moduleId, campaign, draft);
       toastSuccess('Parts queued — they appear here as they finish');
+      // Post-generation automation (opt-in, persisted on the module row):
+      // batch-details unresolved entities, queues their images and the
+      // encounter battlemaps once the parts have landed. Idempotent and
+      // loud on its own — fire-and-forget here.
+      void runModulePostGeneration(moduleId, campaign);
     } catch (error) {
       toastError('Could not start part generation', error);
     }
