@@ -101,16 +101,17 @@ describe('workspace tree scope control', () => {
       expect(await getArtifact(publishedId)).toBeUndefined();
     });
 
-    // Library group hidden by default in the workspace (D3)…
+    // Library group hidden by default in the workspace (D3)… (the scope
+    // toggle itself is also labeled "Library" — target the group header.)
     await waitFor(async () => {
       const scopes = (await readSettings()).artifactScopes.workspace;
       expect(scopes.global).toBe(false);
     });
-    expect(screen.queryByText('Library')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Library/ })).not.toBeInTheDocument();
 
     // …and shown once the user turns the toggle on.
     await user.click(screen.getByTestId('scope-toggle-global'));
-    await screen.findByText('Library');
+    await screen.findByRole('button', { name: /Library/ });
     await flushAsyncUpdates();
   }, 20000);
 

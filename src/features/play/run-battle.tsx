@@ -24,7 +24,7 @@ export async function runBattle(
 ): Promise<SeedReport | null> {
   try {
     const report = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
-    toastSuccess('Battle seeded — open the module battle table');
+    toastSuccess('Battle seeded — open the module\'s Battle table');
     if (report.statless.length > 0) {
       toastError(
         `No combat stats for: ${report.statless.join('; ')} — they will not roll initiative`,

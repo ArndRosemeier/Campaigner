@@ -14,7 +14,9 @@ export interface ScopeControlProps {
 }
 
 const TOGGLES: { key: keyof ScopeToggles; label: string }[] = [
-  { key: 'global', label: 'Global' },
+  // "Library" (not "Global"): the toggle filters the same shared rows the
+  // tree renders in its Library group — one name per concept (05-UI.md).
+  { key: 'global', label: 'Library' },
   { key: 'campaign', label: 'Campaign' },
   { key: 'module', label: 'Module' },
 ];

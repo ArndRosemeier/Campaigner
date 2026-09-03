@@ -254,7 +254,7 @@ export function ArtifactEditor({
           <RevisionDropdown artifactId={artifact.id} onOpen={setRevisionView} />
           {artifact.campaignId === null && (
             <Badge data-testid="global-badge" className="bg-amber-500/15 text-amber-700 dark:text-amber-400">
-              Global
+              Library
             </Badge>
           )}
           {artifact.moduleId !== null && (

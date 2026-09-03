@@ -533,7 +533,7 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
         </Badge>
         {target?.campaignId === null && (
           <Badge variant="outline" data-testid="run-global-badge">
-            Global
+            Library
           </Badge>
         )}
         {run.errorMessage !== '' && <span className="text-destructive">{run.errorMessage}</span>}

@@ -653,7 +653,7 @@ describe('PersonaPanel run lifecycle', () => {
     await user.click(targetSelect);
     await user.click(await screen.findByRole('option', { name: 'The Lighthouse — Global' }));
     await user.click(screen.getByTestId('start-run'));
-    expect(await screen.findByTestId('run-global-badge')).toHaveTextContent('Global');
+    expect(await screen.findByTestId('run-global-badge')).toHaveTextContent('Library');
 
     // The draft pauses; continue with the drafted prompt.
     const edit = await screen.findByTestId('image-prompt-edit', {}, { timeout: 10_000 });
