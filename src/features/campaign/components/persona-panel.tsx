@@ -831,22 +831,6 @@ function EncounterRunActions({
 
   return (
     <div className="flex flex-col gap-2" data-testid="encounter-run-actions">
-      {layout !== null && <EncounterLayoutPreview layout={layout} />}
-      {run.status === 'awaiting_user' && layoutStep?.status === 'done' && (
-        <Button
-          variant="outline"
-          size="sm"
-          data-testid="regenerate-layout"
-          onClick={() => {
-            void runEngine.regenerateEncounterLayout(run.id, input).catch((error: unknown) => {
-              toastError('Could not regenerate the layout', error);
-            });
-          }}
-        >
-          <RotateCcwIcon aria-hidden data-icon="inline-start" />
-          Regenerate layout
-        </Button>
-      )}
       <RunActions run={run} campaign={campaign} />
     </div>
   );

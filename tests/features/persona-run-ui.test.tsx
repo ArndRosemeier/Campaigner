@@ -368,7 +368,7 @@ describe('PersonaPanel run lifecycle', () => {
     await flushAsyncUpdates();
   }, 30000);
 
-  it('Encounter Cartographer exposes aspect selection and a layout review checkpoint', async () => {
+  it('Encounter Cartographer advances directly to map pick without intermediate layout candidates', async () => {
     const user = userEvent.setup();
     const { campaign } = await seed();
     const cartographer = await createPersona({
@@ -380,16 +380,44 @@ describe('PersonaPanel run lifecycle', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    chatMock.mockResolvedValueOnce(JSON.stringify({
-      name: 'Ash Gate', summary: '', body: '', difficulty: 'medium', levelHint: '3',
-      terrain: '', tactics: '', treasure: '', theme: 'ash temple', styleNotes: '', negative: '',
-      monsters: [{ name: 'Cultist', count: 1, notes: '', statBlock: VALID_STATBLOCK }],
-      rooms: [
-        { name: 'Entry', description: '', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1] },
-        { name: 'Shrine', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [0] },
-      ],
-      entryRoomIndex: 0,
-    }));
+    chatMock.mockResolvedValueOnce(
+      JSON.stringify({
+        name: 'Ash Gate',
+        summary: '',
+        body: '',
+        difficulty: 'medium',
+        levelHint: '3',
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        theme: 'ash temple',
+        styleNotes: '',
+        negative: '',
+        monsters: [{ name: 'Cultist', count: 1, notes: '', statBlock: VALID_STATBLOCK }],
+        rooms: [
+          {
+            name: 'Entry',
+            description: '',
+            size: 'small',
+            monsterIndexes: [],
+            adjacentRoomIndexes: [1],
+          },
+          {
+            name: 'Shrine',
+            description: '',
+            size: 'medium',
+            monsterIndexes: [0],
+            adjacentRoomIndexes: [0],
+          },
+        ],
+        entryRoomIndex: 0,
+      }),
+    );
+    generateImagesMock.mockResolvedValue({
+      images: [new Blob(['one'], { type: 'image/webp' })],
+      costUsd: 0.01,
+      cappedToOne: true,
+    });
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -400,8 +428,9 @@ describe('PersonaPanel run lifecycle', () => {
     expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
     expect(await screen.findByTestId('encounter-run-actions')).toBeInTheDocument();
     await user.click(await screen.findByTestId('approve-step'));
-    expect(await screen.findByTestId('encounter-layout-preview')).toBeInTheDocument();
-    expect(screen.getByTestId('regenerate-layout')).toBeInTheDocument();
+    expect(
+      await screen.findByTestId('encounter-map-pick', {}, { timeout: 10_000 }),
+    ).toBeInTheDocument();
     await runEngine.cancel(await onlyRunId());
     await flushAsyncUpdates();
   }, 30000);

@@ -118,12 +118,6 @@ async function approveUntilPick(runId: string, runInput: StartRunInput): Promise
   await waitForRun(async () => {
     const run = await getRun(runId);
     expect(run?.status).toBe('awaiting_user');
-    expect(run?.steps.at(-1)?.name).toBe('layout');
-  });
-  await runEngine.approve(runId, runInput);
-  await waitForRun(async () => {
-    const run = await getRun(runId);
-    expect(run?.status).toBe('awaiting_user');
     expect(run?.steps.at(-1)?.name).toBe('pick');
   });
   const run = await getRun(runId);
@@ -131,7 +125,7 @@ async function approveUntilPick(runId: string, runInput: StartRunInput): Promise
 }
 
 describe('Encounter Cartographer run', () => {
-  it('pauses at brief/layout/pick and finalizes one complete encounter', async () => {
+  it('pauses at brief and pick and finalizes one complete encounter', async () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
     const runInput = input(campaign, cartographer);
@@ -264,20 +258,14 @@ describe('Encounter Cartographer run', () => {
     chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
-    await waitForRun(async () => {
-      expect((await getRun(runId))?.steps.at(-1)?.name).toBe('brief');
-    });
-    await runEngine.approve(runId, runInput);
-    await waitForRun(async () => {
-      expect((await getRun(runId))?.steps.at(-1)?.name).toBe('layout');
-    });
+    await approveUntilPick(runId, runInput);
 
     await expect(runEngine.editStep(runId, 1, {}, runInput)).rejects.toThrow(
       'Encounter layout step has no valid approved output',
     );
     const run = await getRun(runId);
     expect(run?.status).toBe('awaiting_user');
-    expect(run?.steps.at(-1)?.status).toBe('done');
+    expect(run?.steps[1]?.status).toBe('done');
   });
 
   it('checks brief/layout prerequisites again when the user approves a map', async () => {
@@ -495,10 +483,6 @@ describe('Encounter Cartographer run', () => {
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
       expect((await getRun(runId))?.steps.at(-1)?.name).toBe('brief');
-    });
-    await runEngine.approve(runId, runInput);
-    await waitForRun(async () => {
-      expect((await getRun(runId))?.steps.at(-1)?.name).toBe('layout');
     });
     await runEngine.approve(runId, runInput);
     await waitForRun(async () => {

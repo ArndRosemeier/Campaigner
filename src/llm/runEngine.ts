@@ -1440,7 +1440,7 @@ export class RunEngine {
     runId: Id,
     stepIndex: number,
     steps: RunStep[],
-    input: StartRunInput,
+    _input: StartRunInput,
   ): { step: RunStep; runStatus?: PersonaRun['status'] } {
     const { parsed, aspect } = this.effectiveEncounterBrief(steps);
     const roomIds = parsed.rooms.map(() => newId());
@@ -1470,7 +1470,6 @@ export class RunEngine {
     }, this.encounterLayoutVariants.get(runId) ?? 0);
     return {
       step: this.finishStep(steps[stepIndex], { layout }),
-      ...(input.autonomy === 'auto' ? {} : { runStatus: 'awaiting_user' as const }),
     };
   }
 
