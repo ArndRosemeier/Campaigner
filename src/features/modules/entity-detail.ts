@@ -1,6 +1,7 @@
 import type { Campaign, Id } from '@/domain';
 import { artifactRepo } from '@/db';
 import { listPersonas } from '@/db/personaRepo';
+import { getRun } from '@/db/runRepo';
 import { chainRunner } from '@/llm/chainRunner';
 import type { ChainStepInput } from '@/llm/chainRunner';
 import { runEngine } from '@/llm/runEngine';
@@ -119,10 +120,13 @@ export async function generateSingleEntity(
     const result = await chainRunner.run(campaign, personas, steps, 'auto', []);
     const artifactId = result.steps[0]?.artifactId ?? null;
     if (result.status !== 'completed' || artifactId === null) {
+      const runId = result.steps[0]?.runId;
+      const run = runId ? await getRun(runId) : undefined;
+      const detail = run?.errorMessage ? `: ${run.errorMessage}` : '';
       return {
         ok: false,
         error: new Error(
-          `The run for "${name}" did not complete — see the Runs tab for the failed run's error.`,
+          `The run for "${name}" did not complete${detail} — see the Runs tab in Workspace for details.`,
         ),
       };
     }
