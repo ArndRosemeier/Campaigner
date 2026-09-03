@@ -628,6 +628,42 @@ describe('PersonaPanel run lifecycle', () => {
     expect(within(pick).getAllByRole('button', { name: /Candidate / })).toHaveLength(1);
     const run = await getRun(await onlyRunId());
     expect((run?.steps[1]?.output as { notice: string | null }).notice).toContain('single candidate');
+
+    // Inspect button opens the large candidate preview dialog
+    const pickStep = run?.steps.find((s) => s.name === 'pick');
+    const candidateId = ((pickStep?.output as { candidates?: string[] }).candidates ?? [])[0] ?? '';
+    const inspectBtn = screen.getByTestId(`inspect-candidate-${candidateId}`);
+    expect(inspectBtn).toBeInTheDocument();
+    await user.click(inspectBtn);
+
+    const dialog = await screen.findByTestId('candidate-preview-dialog');
+    expect(dialog).toBeInTheDocument();
+    expect(within(dialog).getByTestId('zoomable-image')).toBeInTheDocument();
+
+    // Select candidate from within the preview dialog
+    const selectBtn = within(dialog).getByTestId('preview-select-btn');
+    await user.click(selectBtn);
+    expect(selectBtn).toHaveTextContent('Selected');
+
+    // Close preview dialog
+    await user.click(within(dialog).getByTestId('preview-close-btn'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('candidate-preview-dialog')).not.toBeInTheDocument();
+    });
+
+    // The candidate is now selected in the main pick view
+    const keepBtn = screen.getByTestId('keep-selected');
+    expect(keepBtn).toHaveTextContent('Keep 1 selected');
+    await user.click(keepBtn);
+
+    await waitFor(
+      async () => {
+        const finishedRun = await getRun(await onlyRunId());
+        expect(finishedRun?.status).toBe('completed');
+      },
+      { timeout: 10_000 },
+    );
+
     await flushAsyncUpdates();
   }, 30000);
 

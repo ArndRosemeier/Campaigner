@@ -67,10 +67,12 @@ function clamped(transform: ZoomTransform, width: number, height: number): ZoomT
 export function ZoomableImage({
   imageId,
   className,
+  children,
   onCloseRequest,
 }: {
   imageId: Id;
   className?: string | undefined;
+  children?: React.ReactNode | undefined;
   onCloseRequest?: () => void;
 }): JSX.Element | null {
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -303,13 +305,14 @@ export function ZoomableImage({
     >
       <div
         data-testid="zoomable-image-transform"
-        className={cn(!gesturing && 'transition-transform duration-150')}
+        className={cn('relative flex items-center justify-center', !gesturing && 'transition-transform duration-150')}
         style={{ transform: `translate(${String(transform.x)}px, ${String(transform.y)}px) scale(${String(transform.scale)})` }}
       >
         <LightboxImage
           imageId={imageId}
           {...(className !== undefined ? { className } : {})}
         />
+        {children}
       </div>
     </div>
   );

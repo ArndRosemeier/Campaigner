@@ -8,6 +8,7 @@ import {
   CheckIcon,
   CircleDotIcon,
   CopyIcon,
+  Maximize2Icon,
   MinusIcon,
   PencilIcon,
   PlayIcon,
@@ -17,6 +18,8 @@ import {
   XIcon,
 } from 'lucide-react';
 
+import { CandidatePreviewDialog } from '@/features/images/candidate-preview-dialog';
+import { EncounterLayoutPreview } from '@/features/campaign/components/encounter-layout-preview';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -545,6 +548,7 @@ function ImageRunActions({
   persona: Persona;
 }): JSX.Element | null {
   const [selected, setSelected] = useState<Id[]>([]);
+  const [previewCandidateId, setPreviewCandidateId] = useState<Id | null>(null);
   const [prompt, setPrompt] = useState('');
   const [negative, setNegative] = useState('');
   const [styleNotes, setStyleNotes] = useState('');
@@ -664,29 +668,60 @@ function ImageRunActions({
 
       {paused && pickStep?.status === 'done' && (
         <div className="flex flex-col gap-2" data-testid="image-pick">
-          <Label>Candidates — pick up to 2</Label>
+          <div className="flex items-center justify-between">
+            <Label>Candidates — pick up to 2</Label>
+            <span className="text-xs text-muted-foreground">Click to select · Double-click or inspect to enlarge</span>
+          </div>
           <div className="flex flex-wrap gap-2">
             {pickCandidates.map((candidateId) => {
               const isSelected = selected.includes(candidateId);
               return (
-                <button
+                <div
                   key={candidateId}
-                  type="button"
-                  aria-pressed={isSelected}
-                  aria-label={`Candidate ${candidateId}`}
-                  className={`rounded-md border p-0.5 ${isSelected ? 'border-primary ring-2 ring-primary' : ''}`}
-                  onClick={() => {
-                    setSelected((previous) =>
-                      previous.includes(candidateId)
-                        ? previous.filter((id) => id !== candidateId)
-                        : previous.length >= 2
-                          ? previous
-                          : [...previous, candidateId],
-                    );
-                  }}
+                  className={`group/candidate relative rounded-md border p-1 transition-all ${
+                    isSelected ? 'border-primary ring-2 ring-primary' : 'border-border hover:border-muted-foreground/50'
+                  }`}
                 >
-                  <ImageThumb imageId={candidateId} alt={`Generated candidate ${candidateId}`} size={72} />
-                </button>
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={`Candidate ${candidateId}`}
+                    className="block cursor-pointer overflow-hidden rounded"
+                    onClick={() => {
+                      setSelected((previous) =>
+                        previous.includes(candidateId)
+                          ? previous.filter((id) => id !== candidateId)
+                          : previous.length >= 2
+                            ? previous
+                            : [...previous, candidateId],
+                      );
+                    }}
+                    onDoubleClick={() => {
+                      setPreviewCandidateId(candidateId);
+                    }}
+                  >
+                    <ImageThumb imageId={candidateId} alt={`Generated candidate ${candidateId}`} size={144} />
+                    {isSelected && (
+                      <div className="absolute top-2 left-2 rounded-full bg-primary p-0.5 text-primary-foreground shadow">
+                        <CheckIcon className="size-3.5" />
+                      </div>
+                    )}
+                  </button>
+                  <Button
+                    variant="secondary"
+                    size="icon-xs"
+                    className="absolute bottom-2 right-2 size-7 rounded-md bg-background/85 shadow backdrop-blur transition-opacity hover:bg-background"
+                    aria-label={`Inspect candidate image ${candidateId}`}
+                    title="View large image"
+                    data-testid={`inspect-candidate-${candidateId}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setPreviewCandidateId(candidateId);
+                    }}
+                  >
+                    <Maximize2Icon className="size-3.5" aria-hidden />
+                  </Button>
+                </div>
               );
             })}
           </div>
@@ -717,6 +752,22 @@ function ImageRunActions({
               Keep none
             </Button>
           </div>
+          <CandidatePreviewDialog
+            candidates={pickCandidates}
+            currentId={previewCandidateId}
+            onClose={() => { setPreviewCandidateId(null); }}
+            isSelected={(id) => selected.includes(id)}
+            onSelectCandidate={(id) => {
+              setSelected((previous) =>
+                previous.includes(id)
+                  ? previous.filter((item) => item !== id)
+                  : previous.length >= 2
+                    ? previous
+                    : [...previous, id],
+              );
+            }}
+            title="Generated image candidate"
+          />
         </div>
       )}
 
@@ -748,6 +799,7 @@ function EncounterRunActions({
   persona: Persona;
 }): JSX.Element | null {
   const [selected, setSelected] = useState<Id | null>(null);
+  const [previewMapId, setPreviewMapId] = useState<Id | null>(null);
   const layoutStep = run.steps.find((step) => step.name === 'layout');
   const layoutValue = layoutStep?.userEdit ?? layoutStep?.output;
   const layout =
@@ -790,6 +842,10 @@ function EncounterRunActions({
   if (run.status === 'awaiting_user' && pick?.status === 'done') {
     return (
       <div className="flex flex-col gap-2" data-testid="encounter-map-pick">
+        <div className="flex items-center justify-between">
+          <Label>Battlemap candidates</Label>
+          <span className="text-xs text-muted-foreground">Click to select · Double-click or inspect to enlarge</span>
+        </div>
         {layout !== null && <EncounterLayoutPreview layout={layout} />}
         {verification?.verifications?.map((result, index) => (
           <p key={String(index)} className={result.needsReview ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
@@ -798,28 +854,51 @@ function EncounterRunActions({
         ))}
         <div className="flex flex-wrap gap-2">
           {candidates.map((candidateId, candidateIndex) => (
-            <button
+            <div
               key={candidateId}
-              type="button"
-              aria-label={`Encounter map candidate ${candidateId}`}
-              aria-pressed={selected === candidateId}
-              className={`rounded-md border p-1 ${selected === candidateId ? 'border-primary ring-2 ring-primary' : ''}`}
-              onClick={() => {
-                setSelected(candidateId);
-              }}
+              className={`group/candidate relative rounded-md border p-1 transition-all ${
+                selected === candidateId ? 'border-primary ring-2 ring-primary' : 'border-border hover:border-muted-foreground/50'
+              }`}
             >
-              {layout === null ? (
-                <ImageThumb imageId={candidateId} alt="Generated battlemap candidate" size={120} />
-              ) : (
-                <EncounterMapCandidate
-                  imageId={candidateId}
-                  layout={layout}
-                  {...(verification?.verifications?.[candidateIndex] === undefined
-                    ? {}
-                    : { verification: verification.verifications[candidateIndex] })}
-                />
-              )}
-            </button>
+              <button
+                type="button"
+                aria-label={`Encounter map candidate ${candidateId}`}
+                aria-pressed={selected === candidateId}
+                className="block cursor-pointer overflow-hidden rounded"
+                onClick={() => {
+                  setSelected(candidateId);
+                }}
+                onDoubleClick={() => {
+                  setPreviewMapId(candidateId);
+                }}
+              >
+                {layout === null ? (
+                  <ImageThumb imageId={candidateId} alt="Generated battlemap candidate" size={144} />
+                ) : (
+                  <EncounterMapCandidate
+                    imageId={candidateId}
+                    layout={layout}
+                    {...(verification?.verifications?.[candidateIndex] === undefined
+                      ? {}
+                      : { verification: verification.verifications[candidateIndex] })}
+                  />
+                )}
+              </button>
+              <Button
+                variant="secondary"
+                size="icon-xs"
+                className="absolute bottom-2 right-2 size-7 rounded-md bg-background/85 shadow backdrop-blur transition-opacity hover:bg-background"
+                aria-label={`Inspect map candidate ${candidateId}`}
+                title="View large battlemap"
+                data-testid={`inspect-map-candidate-${candidateId}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setPreviewMapId(candidateId);
+                }}
+              >
+                <Maximize2Icon className="size-3.5" aria-hidden />
+              </Button>
+            </div>
           ))}
         </div>
         <Button
@@ -836,6 +915,17 @@ function EncounterRunActions({
           <CheckIcon aria-hidden data-icon="inline-start" />
           Use selected map
         </Button>
+        <CandidatePreviewDialog
+          candidates={candidates}
+          currentId={previewMapId}
+          onClose={() => { setPreviewMapId(null); }}
+          isSelected={(id) => selected === id}
+          onSelectCandidate={(id) => {
+            setSelected(id);
+          }}
+          layout={layout}
+          title="Generated battlemap candidate"
+        />
       </div>
     );
   }
@@ -882,79 +972,6 @@ function EncounterMapCandidate({
             }}
             data-testid="vision-diff-cell"
           />
-        );
-      })}
-    </div>
-  );
-}
-
-function EncounterLayoutPreview({
-  layout,
-  overlay = false,
-}: {
-  layout: EncounterLayout;
-  overlay?: boolean;
-}): JSX.Element {
-  return (
-    <div
-      className={
-        overlay
-          ? 'pointer-events-none absolute inset-0 overflow-hidden'
-          : 'relative w-full overflow-hidden rounded-md border bg-muted'
-      }
-      style={{ aspectRatio: `${String(layout.gridW)} / ${String(layout.gridH)}` }}
-      data-testid="encounter-layout-preview"
-    >
-      {layout.rooms.flatMap((room) =>
-        room.rects.map((rect, index) => (
-          <div
-            key={`${room.id}-${String(index)}`}
-            className="absolute border border-primary/70 bg-primary/10"
-            style={{
-              left: `${String((rect.x / layout.gridW) * 100)}%`,
-              top: `${String((rect.y / layout.gridH) * 100)}%`,
-              width: `${String((rect.w / layout.gridW) * 100)}%`,
-              height: `${String((rect.h / layout.gridH) * 100)}%`,
-            }}
-            title={room.name}
-          >
-            {index === 0 && (
-              <span className="block truncate bg-background/70 px-0.5 text-[9px]">{room.name}</span>
-            )}
-          </div>
-        )),
-      )}
-      {layout.rooms.map((room) => (
-        <div
-          key={`${room.id}-mobs`}
-          className="pointer-events-none absolute border border-dashed border-destructive/80 bg-destructive/10"
-          style={{
-            left: `${String((room.mobsRect.x / layout.gridW) * 100)}%`,
-            top: `${String((room.mobsRect.y / layout.gridH) * 100)}%`,
-            width: `${String((room.mobsRect.w / layout.gridW) * 100)}%`,
-            height: `${String((room.mobsRect.h / layout.gridH) * 100)}%`,
-          }}
-          title={`${room.name} mob area`}
-        />
-      ))}
-      {layout.rooms.map((room) => {
-        if (room.stagingPoint === undefined) return null;
-        return (
-          <div
-            key={`${room.id}-marker`}
-            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center rounded-full border-2 border-black font-bold text-[10px] shadow-sm select-none"
-            style={{
-              left: `${String(room.stagingPoint.x * 100)}%`,
-              top: `${String(room.stagingPoint.y * 100)}%`,
-              width: '20px',
-              height: '20px',
-              backgroundColor: room.letter ? `hsl(${String(room.markerHue ?? 300)}, 100%, 50%)` : '#ec4899',
-              color: '#000',
-            }}
-            title={`${room.name} staging marker ${room.letter ?? ''}`}
-          >
-            {room.letter ?? '•'}
-          </div>
         );
       })}
     </div>
