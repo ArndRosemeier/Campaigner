@@ -209,7 +209,9 @@ describe('campaign bar breadcrumb', () => {
       'href',
       modulesPath(campaign.id),
     );
-    expect(screen.getByTestId('crumb-module')).toHaveTextContent('The Drowned Vault');
+    await waitFor(() => {
+      expect(screen.getByTestId('crumb-module')).toHaveTextContent('The Drowned Vault');
+    });
     expect(within(crumb).queryByText('Battle table')).not.toBeInTheDocument();
   });
 
@@ -230,7 +232,11 @@ describe('campaign bar breadcrumb', () => {
 
     const crumb = await screen.findByTestId('campaign-crumb', {}, { timeout: 10_000 });
     expect(crumb).toHaveTextContent('Battle table');
-    expect(screen.getByTestId('crumb-module')).toHaveTextContent('The Drowned Vault');
+    // The module title arrives one live-query tick after the crumb mounts
+    // (it renders as '…' first).
+    await waitFor(() => {
+      expect(screen.getByTestId('crumb-module')).toHaveTextContent('The Drowned Vault');
+    });
   });
 });
 

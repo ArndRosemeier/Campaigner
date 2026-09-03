@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { artifactPath } from '@/app/routes';
+import { artifactPath, modulesPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
@@ -21,7 +21,8 @@ import {
   type Id,
   type Module,
 } from '@/domain';
-import { matchModules, QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
+import { QuickFindDialog, matchModules } from '@/features/quickfind/quickfind-dialog';
+import { quickFindGoToEntries } from '@/features/quickfind/go-to';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -73,6 +74,8 @@ function renderQuickFindDialog(
   artifacts: readonly AnyArtifact[],
   modules: readonly Module[],
   onPickModule: (moduleId: Id, partIndex: number | undefined) => void,
+  goTo?: readonly { label: string; to: string }[],
+  onGoTo?: (to: string) => void,
 ): void {
   render(
     <QuickFindDialog
@@ -82,6 +85,8 @@ function renderQuickFindDialog(
       modules={modules}
       mode="picker"
       onPickModule={onPickModule}
+      {...(goTo !== undefined ? { goTo } : {})}
+      {...(onGoTo !== undefined ? { onGoTo } : {})}
     />,
   );
 }
@@ -167,6 +172,77 @@ describe('QuickFindDialog modules group', () => {
     expect(screen.queryByTestId('quickfind-module')).not.toBeInTheDocument();
     expect(screen.queryByText('Modules')).not.toBeInTheDocument();
     expect(screen.getByText('Artifacts')).toBeInTheDocument();
+  });
+});
+
+describe('quick-find Go-to group (P5: palette as app map)', () => {
+  beforeEach(clearDatabase);
+  afterEach(cleanup);
+
+  it('quickFindGoToEntries lists the campaign sections, app screens and the battle entry on a module route', () => {
+    const base = quickFindGoToEntries('c1', '/c/c1');
+    expect(base.map((entry) => entry.label)).toEqual([
+      'Workspace',
+      'Modules',
+      'Deliverables',
+      'Graph',
+      'Rules',
+      'Settings',
+    ]);
+    expect(base[0]?.to).toBe('/c/c1');
+
+    const onModule = quickFindGoToEntries('c1', '/c/c1/m/m9');
+    expect(onModule[0]).toEqual({ label: 'Battle table (this module)', to: '/c/c1/m/m9/battle' });
+
+    // Already on the battle table: no second battle entry.
+    const onBattle = quickFindGoToEntries('c1', '/c/c1/m/m9/battle');
+    expect(onBattle.filter((entry) => entry.label.startsWith('Battle table'))).toEqual([]);
+  });
+
+  it('shows the Go-to group on an empty query and navigates via onGoTo', async () => {
+    const user = userEvent.setup();
+    const onGoTo = vi.fn();
+    renderQuickFindDialog([], [], vi.fn(), [
+      { label: 'Modules', to: '/c/c1/modules' },
+      { label: 'Settings', to: '/settings' },
+    ], onGoTo);
+
+    const items = await screen.findAllByTestId('quickfind-go-to');
+    expect(items).toHaveLength(2);
+
+    await user.click(screen.getByRole('option', { name: 'Modules' }));
+    expect(onGoTo).toHaveBeenCalledWith('/c/c1/modules');
+  });
+
+  it('hides the Go-to group once a query is typed', async () => {
+    const user = userEvent.setup();
+    renderQuickFindDialog([], [], vi.fn(), [{ label: 'Modules', to: '/c/c1/modules' }], vi.fn());
+
+    expect(await screen.findByTestId('quickfind-go-to')).toBeInTheDocument();
+    await user.type(screen.getByTestId('quickfind-input'), 'drowned');
+    await waitFor(() => {
+      expect(screen.queryByTestId('quickfind-go-to')).not.toBeInTheDocument();
+    });
+  });
+
+  it('navigates to a screen picked from the Go-to group (Ctrl+K app map)', async () => {
+    const user = userEvent.setup();
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const location = await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
+
+    window.history.replaceState(null, '', artifactPath(campaign.id, location.id));
+    render(<RouterProvider router={createAppRouter()} />);
+    expect(await screen.findByTestId('artifact-editor', {}, { timeout: 10_000 })).toBeInTheDocument();
+
+    await user.keyboard('{Control>}k{/Control}');
+    await screen.findByTestId('quickfind-dialog', {}, { timeout: 5_000 });
+    await user.click(await screen.findByRole('option', { name: 'Modules' }, { timeout: 5_000 }));
+
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(modulesPath(campaign.id));
+    });
+    expect(await screen.findByTestId('modules-page', {}, { timeout: 10_000 })).toBeInTheDocument();
   });
 });
 

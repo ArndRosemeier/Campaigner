@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import MiniSearch from 'minisearch';
-import { BookOpenIcon } from 'lucide-react';
+import { BookOpenIcon, CompassIcon } from 'lucide-react';
 
 import type { AnyArtifact, Artifact, Id, Module, RuleChunk } from '@/domain';
+import type { GoToEntry } from '@/features/quickfind/go-to';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { searchRules, type SearchHit } from '@/search';
 import { Button } from '@/components/ui/button';
@@ -21,9 +22,11 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
  * Quick-find command palette (07-MILESTONE-3 M3-C, Ctrl+K): one input over
  * campaign artifacts (name/tags/summary via MiniSearch), modules and their
  * parts (M4-D) and rule chunks (existing searchRules), in three result
- * groups. Enter on an artifact sets focus (play) or opens the editor
- * (workspace); Enter on a module/part scrolls the module reader; Enter on a
- * chunk expands an inline preview with "Pin to Assistant".
+ * groups — plus an optional "Go to" group of screens while the query is
+ * empty (P5: the palette doubles as an app map). Enter on an artifact sets
+ * focus (play) or opens the editor (workspace); Enter on a module/part
+ * scrolls the module reader; Enter on a chunk expands an inline preview
+ * with "Pin to Assistant".
  */
 
 export type QuickFindMode = 'picker' | 'workspace';
@@ -79,6 +82,13 @@ export interface QuickFindDialogProps {
   onWorkspaceArtifact?: (artifact: AnyArtifact) => void;
   /** Module/part pick: caller scrolls the module reader. */
   onPickModule?: (moduleId: Id, partIndex: number | undefined) => void;
+  /**
+   * "Go to" entries (screens), shown while the query is empty — the palette
+   * doubles as an app map. Omit → no Go-to group (e.g. in-surface pickers).
+   */
+  goTo?: readonly GoToEntry[] | undefined;
+  /** Receives the entry's `to` path; the caller closes + navigates. */
+  onGoTo?: (to: string) => void;
 }
 
 export function QuickFindDialog({
@@ -90,6 +100,8 @@ export function QuickFindDialog({
   onPickArtifact,
   onWorkspaceArtifact,
   onPickModule,
+  goTo,
+  onGoTo,
 }: QuickFindDialogProps): JSX.Element {
   const [query, setQuery] = useState('');
   const [artifactHits, setArtifactHits] = useState<ArtifactHit[]>([]);
@@ -179,6 +191,23 @@ export function QuickFindDialog({
           />
           <CommandList>
             <CommandEmpty>Nothing found.</CommandEmpty>
+            {query.trim() === '' && goTo !== undefined && goTo.length > 0 && onGoTo !== undefined && (
+              <CommandGroup heading="Go to">
+                {goTo.map((entry) => (
+                  <CommandItem
+                    key={entry.label}
+                    value={entry.label}
+                    data-testid="quickfind-go-to"
+                    onSelect={() => {
+                      onGoTo(entry.to);
+                    }}
+                  >
+                    <CompassIcon aria-hidden className="mr-2 size-4 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{entry.label}</span>
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
             {artifactHits.length > 0 && (
               <CommandGroup heading="Artifacts">
                 {artifactHits.map(({ artifact }) => (

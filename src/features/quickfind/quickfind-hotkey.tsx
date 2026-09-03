@@ -8,6 +8,7 @@ import { readSettings } from '@/db/settingsRepo';
 import type { AnyArtifact, Module } from '@/domain';
 import { toastError } from '@/lib/toast';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
+import { quickFindGoToEntries } from '@/features/quickfind/go-to';
 import { useQuickFindStore } from '@/features/quickfind/quickfindStore';
 
 /**
@@ -57,6 +58,7 @@ function QuickFindResults(props: {
   close: () => void;
 }): JSX.Element | null {
   const navigate = useNavigate();
+  const { pathname } = useLocation();
   const [snapshot, setSnapshot] = useState<{
     artifacts: AnyArtifact[];
     modules: Module[];
@@ -87,6 +89,11 @@ function QuickFindResults(props: {
       artifacts={snapshot.artifacts}
       modules={snapshot.modules}
       mode="workspace"
+      goTo={quickFindGoToEntries(props.campaignId, pathname)}
+      onGoTo={(to) => {
+        props.close();
+        navigate(to);
+      }}
       onWorkspaceArtifact={(artifact) => {
         props.close();
         navigate(artifactPath(props.campaignId, artifact.id));
