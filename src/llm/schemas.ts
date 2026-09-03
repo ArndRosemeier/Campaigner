@@ -179,6 +179,7 @@ export const encounterGeneratorBriefSchema = z
     theme: z.string().min(1),
     styleNotes: z.string().default(''),
     negative: z.string().default(''),
+    environment: z.enum(['dungeon', 'outdoor']).default('dungeon'),
     monsters: z.array(
       z.object({
         name: z.string().min(1),
@@ -192,11 +193,11 @@ export const encounterGeneratorBriefSchema = z
       z.object({
         name: z.string().min(1),
         description: z.string().default(''),
-        size: z.enum(['small', 'medium', 'large']),
+        size: z.enum(['small', 'medium', 'large']).default('medium'),
         monsterIndexes: z.array(rosterIndex),
-        adjacentRoomIndexes: z.array(rosterIndex),
+        adjacentRoomIndexes: z.array(rosterIndex).default([]),
       }),
-    ).min(1).max(9),
+    ).min(1).max(10),
     entryRoomIndex: rosterIndex,
   })
   .superRefine((brief, context) => {

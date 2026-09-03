@@ -129,6 +129,101 @@ function roomRects(
   return { bounds, rects: [tall, arm], mobsRect: inset(tall, 1) };
 }
 
+export interface StagingRoomInput {
+  id: string;
+  name: string;
+  description: string;
+  monsterIndexes: number[];
+  spawn: boolean;
+  letter: string;
+  markerHue: number;
+  markerColorName: string;
+  stagingPoint: { x: number; y: number };
+}
+
+export interface StagingLayoutInput {
+  theme: string;
+  aspect: EncounterMapAspect;
+  rooms: StagingRoomInput[];
+  rosterCounts?: readonly number[];
+}
+
+export function adaptiveGridDimensions(
+  aspect: EncounterMapAspect,
+  roomCount: number,
+): { gridW: number; gridH: number } {
+  if (aspect === '16:9') {
+    if (roomCount <= 2) return { gridW: 28, gridH: 16 };
+    if (roomCount <= 5) return { gridW: 42, gridH: 24 };
+    return { gridW: 56, gridH: 32 };
+  }
+  if (aspect === '1:1') {
+    if (roomCount <= 2) return { gridW: 20, gridH: 20 };
+    if (roomCount <= 5) return { gridW: 30, gridH: 30 };
+    return { gridW: 40, gridH: 40 };
+  }
+  // 4:3 default
+  if (roomCount <= 2) return { gridW: 24, gridH: 18 };
+  if (roomCount <= 5) return { gridW: 36, gridH: 27 };
+  return { gridW: 48, gridH: 36 };
+}
+
+/**
+ * Builds an encounter layout from detected marker staging points.
+ * Generates generous room veils centered on each marker and adaptive grid sizing.
+ */
+export function layoutFromStagingMarkers(input: StagingLayoutInput): EncounterLayout {
+  const { aspect, theme, rooms, rosterCounts = [] } = input;
+  const { gridW, gridH } = adaptiveGridDimensions(aspect, rooms.length);
+
+  const baseVeilW = Math.max(6, Math.round(gridW * 0.28));
+  const baseVeilH = Math.max(5, Math.round(gridH * 0.28));
+
+  const layoutRooms: LayoutRoom[] = rooms.map((room) => {
+    const required = room.monsterIndexes.reduce(
+      (total, idx) => total + (rosterCounts[idx] ?? 1),
+      0,
+    );
+    let veilW = baseVeilW;
+    let veilH = baseVeilH;
+    while (veilW * veilH < required) {
+      if (veilW < gridW - 2) veilW += 1;
+      if (veilH < gridH - 2) veilH += 1;
+      if (veilW >= gridW - 2 && veilH >= gridH - 2) break;
+    }
+
+    const cx = Math.round(room.stagingPoint.x * gridW);
+    const cy = Math.round(room.stagingPoint.y * gridH);
+    const x = Math.max(0, Math.min(gridW - veilW, cx - Math.floor(veilW / 2)));
+    const y = Math.max(0, Math.min(gridH - veilH, cy - Math.floor(veilH / 2)));
+    const mobsRect: LayoutRect = { x, y, w: veilW, h: veilH };
+
+    return {
+      id: room.id,
+      name: room.name,
+      description: room.description,
+      monsterIndexes: [...room.monsterIndexes],
+      spawn: room.spawn,
+      letter: room.letter,
+      markerHue: room.markerHue,
+      markerColorName: room.markerColorName,
+      stagingPoint: { ...room.stagingPoint },
+      rects: [mobsRect],
+      mobsRect,
+    };
+  });
+
+  const layout: EncounterLayout = {
+    gridW,
+    gridH,
+    theme,
+    rooms: layoutRooms,
+    corridors: [],
+  };
+
+  return encounterLayoutSchema.parse(layout);
+}
+
 /** Returns every structural problem; an empty list means the layout is safe. */
 export function validateEncounterLayout(
   input: EncounterLayout,
@@ -142,6 +237,7 @@ export function validateEncounterLayout(
     issues.push('layout must contain exactly one spawn room');
   }
 
+  const isStaging = layout.rooms.some((room) => room.stagingPoint !== undefined);
   const ownerByCell = new Map<string, string>();
   for (const room of layout.rooms) {
     const cells = cellsOfRects(room.rects);
@@ -149,18 +245,22 @@ export function validateEncounterLayout(
     for (const rect of [...room.rects, room.mobsRect]) {
       if (!rectInBounds(rect, layout.gridW, layout.gridH)) issues.push(`${room.name}: rectangle outside grid`);
     }
-    for (const key of cells) {
-      const owner = ownerByCell.get(key);
-      if (owner !== undefined && owner !== room.id) issues.push(`${room.name}: overlaps another room`);
-      ownerByCell.set(key, room.id);
+    if (!isStaging) {
+      for (const key of cells) {
+        const owner = ownerByCell.get(key);
+        if (owner !== undefined && owner !== room.id) issues.push(`${room.name}: overlaps another room`);
+        ownerByCell.set(key, room.id);
+      }
     }
     const mobCells = cellsOfRect(room.mobsRect);
     for (const key of mobCells) {
       if (!cells.has(key)) issues.push(`${room.name}: mobsRect leaves room union`);
-      const cell = parseCell(key);
-      if (neighbors(cell).some((neighbor) => !cells.has(cellKey(neighbor)))) {
-        issues.push(`${room.name}: mobsRect is not inside the room border`);
-        break;
+      if (!isStaging) {
+        const cell = parseCell(key);
+        if (neighbors(cell).some((neighbor) => !cells.has(cellKey(neighbor)))) {
+          issues.push(`${room.name}: mobsRect is not inside the room border`);
+          break;
+        }
       }
     }
     const required = room.monsterIndexes.reduce(
@@ -189,35 +289,37 @@ export function validateEncounterLayout(
     }
   }
 
-  const roomIds = new Set(layout.rooms.map((room) => room.id));
-  const connectedPairs = new Set<string>();
-  for (const corridor of layout.corridors) {
-    if (!roomIds.has(corridor.a) || !roomIds.has(corridor.b)) {
-      issues.push('corridor references an unknown room');
-      continue;
-    }
-    if (corridor.rects.some((rect) => rect.w !== 1 && rect.h !== 1)) {
-      issues.push('corridors must be one cell wide');
-    }
-    const cells = cellsOfRects(corridor.rects);
-    if (!cellsConnected(cells)) issues.push('corridor path is disconnected');
-    for (const key of cells) {
-      const cell = parseCell(key);
-      if (!rectInBounds({ ...cell, w: 1, h: 1 }, layout.gridW, layout.gridH)) {
-        issues.push('corridor leaves grid');
+  if (!isStaging) {
+    const roomIds = new Set(layout.rooms.map((room) => room.id));
+    const connectedPairs = new Set<string>();
+    for (const corridor of layout.corridors) {
+      if (!roomIds.has(corridor.a) || !roomIds.has(corridor.b)) {
+        issues.push('corridor references an unknown room');
+        continue;
       }
-      if (ownerByCell.has(key)) issues.push('corridor crosses a room');
+      if (corridor.rects.some((rect) => rect.w !== 1 && rect.h !== 1)) {
+        issues.push('corridors must be one cell wide');
+      }
+      const cells = cellsOfRects(corridor.rects);
+      if (!cellsConnected(cells)) issues.push('corridor path is disconnected');
+      for (const key of cells) {
+        const cell = parseCell(key);
+        if (!rectInBounds({ ...cell, w: 1, h: 1 }, layout.gridW, layout.gridH)) {
+          issues.push('corridor leaves grid');
+        }
+        if (ownerByCell.has(key)) issues.push('corridor crosses a room');
+      }
+      const aCells = cellsOfRects(requireRoom(layout.rooms, corridor.a).rects);
+      const bCells = cellsOfRects(requireRoom(layout.rooms, corridor.b).rects);
+      if (!touches(cells, aCells) || !touches(cells, bCells)) {
+        issues.push('corridor does not connect door-to-door');
+      }
+      connectedPairs.add(pairKey(corridor.a, corridor.b));
     }
-    const aCells = cellsOfRects(requireRoom(layout.rooms, corridor.a).rects);
-    const bCells = cellsOfRects(requireRoom(layout.rooms, corridor.b).rects);
-    if (!touches(cells, aCells) || !touches(cells, bCells)) {
-      issues.push('corridor does not connect door-to-door');
-    }
-    connectedPairs.add(pairKey(corridor.a, corridor.b));
-  }
 
-  if (!allRoomsReachSpawn(layout.rooms, connectedPairs)) {
-    issues.push('room graph is disconnected from spawn');
+    if (!allRoomsReachSpawn(layout.rooms, connectedPairs)) {
+      issues.push('room graph is disconnected from spawn');
+    }
   }
   return unique(issues);
 }

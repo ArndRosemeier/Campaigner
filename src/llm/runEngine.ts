@@ -11,7 +11,18 @@ import type {
   RunStep,
   StatBlock,
 } from '@/domain';
-import { encounterDataSchema, encounterLayoutSchema, newId, packRooms, renderSchematic } from '@/domain';
+import {
+  CANONICAL_ROOM_MARKERS,
+  detectNeonMarkers,
+  encounterDataSchema,
+  encounterLayoutSchema,
+  extractImageData,
+  layoutFromStagingMarkers,
+  newId,
+  packRooms,
+  renderSchematic,
+  type StagingRoomInput,
+} from '@/domain';
 import {
   createArtifact,
   getAnyArtifact,
@@ -45,7 +56,7 @@ import {
 } from '@/llm/schemas';
 import type { EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
 import { normalizeImageAspect } from '@/lib/imageAspect';
-import { verifyEncounterMap } from '@/llm/encounterVision';
+import { locateMissingMarkerWithVision, verifyEncounterMap } from '@/llm/encounterVision';
 
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
@@ -61,6 +72,10 @@ export const encounterRunAdapters = {
   intakeImage,
   verifyEncounterMap,
   blobToDataUrl,
+  detectNeonMarkers,
+  extractImageData,
+  locateMissingMarkerWithVision,
+  layoutFromStagingMarkers,
 };
 
 /**
@@ -1333,7 +1348,7 @@ export class RunEngine {
       buildStatblockCitationSection(retrieval.statblockTitles),
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
       inlineStatHint,
-      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}] (1–9 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
+      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}] (1–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
     ].filter((part) => part !== null).join('\n\n');
     const messages: ChatMessage[] = [
       { role: 'system', content: input.persona.systemPrompt },
@@ -1485,14 +1500,31 @@ export class RunEngine {
     const settings = await getSettings();
     if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
     const layout = this.effectiveEncounterLayout(steps);
-    const { parsed } = this.effectiveEncounterBrief(steps);
+    const { parsed, aspect } = this.effectiveEncounterBrief(steps);
     const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, 96);
     this.encounterSchematics.set(runId, schematic);
+
+    const defaultMarker = CANONICAL_ROOM_MARKERS[0] ?? {
+      letter: 'A',
+      hue: 300,
+      colorName: 'magenta',
+      label: 'Room A',
+    };
+    const markerInstructions = parsed.rooms
+      .map((room, idx) => {
+        const marker = CANONICAL_ROOM_MARKERS[idx] ?? defaultMarker;
+        return `Room ${marker.letter} ("${room.name}"): solid neon ${marker.colorName} disc on open floor with small black plaque labeled "${marker.letter}" beside it.`;
+      })
+      .join(' ');
+
     const prompt = [
-      `Top-down tabletop RPG battlemap. Theme: ${parsed.theme}.`,
+      `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
       parsed.styleNotes,
-      'Keep walls, openings and overall structure exactly as in the reference image.',
-      'No text, labels, grid lines, numbers, tokens, miniatures or watermark.',
+      'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
+      'Room staging markers: Each room has exactly one solid circular neon disc on the open floor (approx 1/10th room diameter) with thick black outline, plus a small black plaque with white capital letter immediately to the right.',
+      markerInstructions,
+      'Keep walls, openings and overall structure aligned with the staging markers.',
+      'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels other than the room plaques, no characters, no monsters, no tokens, no miniatures.',
       parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
     ].filter((part) => part !== null && part !== '').join(' ');
     const generated = await encounterRunAdapters.generateImages(prompt, input.unattended === true ? 1 : 2, {
@@ -1502,6 +1534,8 @@ export class RunEngine {
     });
     const imageIds: Id[] = [];
     const aspectActions: ('none' | 'letterboxed')[] = [];
+    const candidateLayouts: Record<Id, EncounterLayout> = {};
+
     for (const blob of generated.images) {
       const normalized = await encounterRunAdapters.normalizeImageAspect(blob, layout.gridW, layout.gridH);
       const intake = await encounterRunAdapters.intakeImage(normalized.blob, { role: 'map' });
@@ -1518,11 +1552,62 @@ export class RunEngine {
       });
       imageIds.push(stored.id);
       aspectActions.push(normalized.action);
+
+      // Attempt procedural neon detection from research
+      try {
+        const imgData = await encounterRunAdapters.extractImageData(normalized.blob);
+        if (imgData !== null) {
+          const targets = parsed.rooms.map((room, idx) => {
+            const marker = CANONICAL_ROOM_MARKERS[idx] ?? defaultMarker;
+            return {
+              id: layout.rooms[idx]?.id ?? newId(),
+              letter: marker.letter,
+              hue: marker.hue,
+              name: room.name,
+            };
+          });
+          const detection = encounterRunAdapters.detectNeonMarkers(imgData, targets);
+          if (detection.detected.length > 0) {
+            const stagingRooms: StagingRoomInput[] = parsed.rooms.map((room, idx) => {
+              const target = targets[idx] ?? {
+                id: layout.rooms[idx]?.id ?? newId(),
+                letter: 'A',
+                hue: 300,
+                name: room.name,
+              };
+              const found = detection.detected.find((d) => d.id === target.id);
+              const fallbackRoom = layout.rooms[idx];
+              const fallbackX = fallbackRoom ? (fallbackRoom.mobsRect.x + fallbackRoom.mobsRect.w / 2) / layout.gridW : 0.5;
+              const fallbackY = fallbackRoom ? (fallbackRoom.mobsRect.y + fallbackRoom.mobsRect.h / 2) / layout.gridH : 0.5;
+              return {
+                id: target.id,
+                name: room.name,
+                description: room.description,
+                monsterIndexes: room.monsterIndexes,
+                spawn: idx === parsed.entryRoomIndex,
+                letter: target.letter,
+                markerHue: target.hue,
+                markerColorName: CANONICAL_ROOM_MARKERS[idx]?.colorName ?? 'magenta',
+                stagingPoint: found ? { x: found.x, y: found.y } : { x: fallbackX, y: fallbackY },
+              };
+            });
+            candidateLayouts[stored.id] = encounterRunAdapters.layoutFromStagingMarkers({
+              aspect,
+              theme: parsed.theme,
+              rooms: stagingRooms,
+              rosterCounts: parsed.monsters.map((m) => m.count),
+            });
+          }
+        }
+      } catch (err) {
+        debugLog('encounter', 'Neon detection candidate processing error', err);
+      }
     }
     return {
       step: this.finishStep(steps[stepIndex], {
         imageIds,
         aspectActions,
+        candidateLayouts,
         costUsd: generated.costUsd,
         cappedToOne: generated.cappedToOne,
       }),
@@ -1656,10 +1741,13 @@ export class RunEngine {
     input: StartRunInput,
   ): Promise<{ step: RunStep; artifactId: Id }> {
     const { parsed, statblockChunkIds } = this.effectiveEncounterBrief(steps);
-    const layout = this.effectiveEncounterLayout(steps);
     const pick = steps.find((step) => step.name === 'pick');
     const selected = (pick?.userEdit as { keep?: Id[] } | null | undefined)?.keep?.[0];
     if (selected === undefined) throw new Error('Encounter finalize has no selected battlemap');
+    const stylize = steps.find((step) => step.name === 'stylize')?.output as {
+      candidateLayouts?: Record<Id, EncounterLayout>;
+    } | undefined;
+    const layout = stylize?.candidateLayouts?.[selected] ?? this.effectiveEncounterLayout(steps);
     const target = input.targetArtifactId === undefined
       ? undefined
       : await getAnyArtifact(input.targetArtifactId);

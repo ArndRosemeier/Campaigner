@@ -29,7 +29,7 @@ export const encounterMapBriefSchema = z.object({
   aspect: encounterMapAspectSchema,
   entryRoomId: z.uuid(),
   rosterCounts: z.array(z.number().int().positive()),
-  rooms: z.array(encounterMapRoomBriefSchema).min(1).max(9),
+  rooms: z.array(encounterMapRoomBriefSchema).min(1).max(10),
 });
 export type EncounterMapBrief = z.infer<typeof encounterMapBriefSchema>;
 
@@ -41,6 +41,15 @@ export const layoutRoomSchema = z.object({
   description: z.string(),
   monsterIndexes: z.array(z.number().int().nonnegative()),
   spawn: z.boolean(),
+  letter: z.string().optional(),
+  markerHue: z.number().optional(),
+  markerColorName: z.string().optional(),
+  stagingPoint: z
+    .object({
+      x: z.number().min(0).max(1),
+      y: z.number().min(0).max(1),
+    })
+    .optional(),
 });
 export type LayoutRoom = z.infer<typeof layoutRoomSchema>;
 
@@ -53,16 +62,17 @@ export type LayoutCorridor = z.infer<typeof layoutCorridorSchema>;
 
 export const encounterLayoutSchema = z
   .object({
-    gridW: z.number().int().min(12).max(40),
-    gridH: z.number().int().min(12).max(40),
+    gridW: z.number().int().min(12).max(60),
+    gridH: z.number().int().min(12).max(60),
     theme: z.string(),
-    rooms: z.array(layoutRoomSchema).min(1).max(9),
+    rooms: z.array(layoutRoomSchema).min(1).max(10),
     corridors: z.array(layoutCorridorSchema),
   })
   .superRefine((layout, context) => {
     if (layout.rooms.filter((room) => room.spawn).length !== 1) {
       context.addIssue({ code: 'custom', message: 'layout must contain exactly one spawn room' });
     }
+    const isStaging = layout.rooms.some((room) => room.stagingPoint !== undefined);
     const owners = new Map<string, string>();
     for (const room of layout.rooms) {
       const roomCells = new Set(layoutCells(room.rects));
@@ -71,11 +81,13 @@ export const encounterLayoutSchema = z
           context.addIssue({ code: 'custom', message: `${room.name}: rectangle outside grid` });
         }
       }
-      for (const key of roomCells) {
-        if (owners.has(key) && owners.get(key) !== room.id) {
-          context.addIssue({ code: 'custom', message: `${room.name}: overlaps another room` });
+      if (!isStaging) {
+        for (const key of roomCells) {
+          if (owners.has(key) && owners.get(key) !== room.id) {
+            context.addIssue({ code: 'custom', message: `${room.name}: overlaps another room` });
+          }
+          owners.set(key, room.id);
         }
-        owners.set(key, room.id);
       }
       for (const key of layoutCells([room.mobsRect])) {
         if (!roomCells.has(key)) {

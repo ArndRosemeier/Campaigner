@@ -941,6 +941,26 @@ function EncounterLayoutPreview({
           title={`${room.name} mob area`}
         />
       ))}
+      {layout.rooms.map((room) => {
+        if (room.stagingPoint === undefined) return null;
+        return (
+          <div
+            key={`${room.id}-marker`}
+            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center rounded-full border-2 border-black font-bold text-[10px] shadow-sm select-none"
+            style={{
+              left: `${String(room.stagingPoint.x * 100)}%`,
+              top: `${String(room.stagingPoint.y * 100)}%`,
+              width: '20px',
+              height: '20px',
+              backgroundColor: room.letter ? `hsl(${String(room.markerHue ?? 300)}, 100%, 50%)` : '#ec4899',
+              color: '#000',
+            }}
+            title={`${room.name} staging marker ${room.letter ?? ''}`}
+          >
+            {room.letter ?? '•'}
+          </div>
+        );
+      })}
     </div>
   );
 }
