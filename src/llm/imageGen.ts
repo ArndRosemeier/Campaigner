@@ -124,6 +124,19 @@ export async function generateImages(
     try {
       response = await postImages(prompt, n, opts, settings);
     } catch (error) {
+      // If the model rejects input_references (HTTP 400 when input_references
+      // were provided, common for models that only support text-to-image),
+      // retry cleanly as pure text-to-image without reference images.
+      if (
+        error instanceof OpenRouterError &&
+        error.status === 400 &&
+        opts.inputReferences !== undefined &&
+        opts.inputReferences.length > 0
+      ) {
+        const { inputReferences: _omitted, ...cleanOpts } = opts;
+        return generateImages(prompt, n, cleanOpts);
+      }
+
       // The provider caps n at 1: retry once with a single candidate, mark
       // the model, and report the cap (never a silent degrade).
       if (

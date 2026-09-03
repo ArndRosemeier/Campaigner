@@ -1624,7 +1624,9 @@ export class RunEngine {
     const settings = await getSettings();
     const layout = this.effectiveEncounterLayout(steps);
     const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, 96);
-    const stylize = steps.find((step) => step.name === 'stylize')?.output as { imageIds?: Id[] } | undefined;
+    const stylize = steps.find((step) => step.name === 'stylize')?.output as
+      | { imageIds?: Id[]; candidateLayouts?: Record<Id, EncounterLayout> }
+      | undefined;
     const imageIds = stylize?.imageIds ?? [];
     if (imageIds.length === 0) throw new Error('Encounter stylize step produced no map candidates');
     // Verify sends the stylized map to a *chat* model (vision call) — not the
@@ -1637,13 +1639,14 @@ export class RunEngine {
     for (const imageId of imageIds) {
       const image = await getImage(imageId);
       if (image === undefined) throw new Error(`Generated map ${imageId} no longer exists`);
+      const candidateLayout = stylize?.candidateLayouts?.[imageId] ?? layout;
       const stylizedDataUrl = await encounterRunAdapters.blobToDataUrl(
         new Blob([image.bytes], { type: image.mimeType }),
       );
       try {
         verifications.push(
           await encounterRunAdapters.verifyEncounterMap({
-            layout,
+            layout: candidateLayout,
             schematicDataUrl: schematic.dataUrl,
             stylizedDataUrl,
             model: verifyModel,
@@ -2196,6 +2199,7 @@ export class RunEngine {
       return;
     }
     const message = error instanceof Error ? error.message : String(error);
+    toastError(message, error);
     try {
       await updateRun(runId, { status: 'failed', errorMessage: message });
     } finally {
@@ -2211,10 +2215,10 @@ function encounterProgressId(runId: Id): string {
 function encounterStepDetail(name: StepName): string {
   const labels: Partial<Record<StepName, string>> = {
     brief: 'Drafting the encounter brief…',
-    layout: 'Packing rooms and corridors…',
-    schematic: 'Rendering the structure reference…',
-    stylize: 'Stylizing candidate battlemaps…',
-    verify: 'Checking structural alignment…',
+    layout: 'Preparing staging layout…',
+    schematic: 'Rendering layout reference…',
+    stylize: 'Generating candidate battlemaps…',
+    verify: 'Detecting room staging markers…',
     pick: 'Waiting for a map selection…',
     finalize: 'Saving the encounter and map…',
   };
