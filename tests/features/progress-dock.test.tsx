@@ -1,4 +1,6 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ProgressDock } from '@/features/progress/progress-dock';
@@ -64,5 +66,39 @@ describe('ProgressDock', () => {
       store.finish('job-1');
     });
     expect(screen.queryByTestId('progress-dock')).not.toBeInTheDocument();
+  });
+
+  it('renders a job label with an href as a navigation affordance (dock "Open")', async () => {
+    const user = userEvent.setup();
+    useProgressStore.getState().start(
+      'module-parts-42',
+      'Writing 2 module parts',
+      'Writing part 1 of 2: The Sunken Gate',
+      '/c/campaign-1/m/42',
+    );
+
+    render(
+      <MemoryRouter initialEntries={['/rules']}>
+        <Routes>
+          <Route path="/rules" element={<p>Rules page</p>} />
+          <Route path="/c/:campaignId/m/:moduleId" element={<p>Module reader</p>} />
+        </Routes>
+        <ProgressDock />
+      </MemoryRouter>,
+    );
+
+    await user.click(screen.getByTestId('progress-open'));
+
+    // The click navigated the (memory) router to the job's destination.
+    expect(await screen.findByText('Module reader')).toBeInTheDocument();
+  });
+
+  it('keeps a plain label for jobs without an href', () => {
+    useProgressStore.getState().start('job-1', 'Building PDF: The Drowned Vault');
+
+    render(<ProgressDock />);
+
+    expect(screen.getByTestId('progress-label')).toBeInTheDocument();
+    expect(screen.queryByTestId('progress-open')).not.toBeInTheDocument();
   });
 });

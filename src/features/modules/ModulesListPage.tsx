@@ -23,16 +23,21 @@ import { listArtifactsByModule } from '@/db/artifactRepo';
 import { deleteModule } from '@/db/moduleRepo';
 import { useModules } from '@/features/modules/hooks';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
+import { useProgressStore } from '@/lib/progress';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * Module list (08-MODULE-DESIGNER M4-B): the campaign's modules with status
- * and progress, plus the "New Module" entry point.
+ * and progress, plus the "New Module" entry point. A module that is being
+ * forged right now shows the live dock detail ("Writing part 2 of 5: …") on
+ * its row — generation stays visible wherever the user is, not only in the
+ * workspace.
  */
 export function ModulesListPage(): JSX.Element {
   const { campaignId = '' } = useParams<{ campaignId: string }>();
   const navigate = useNavigate();
   const modules = useModules(campaignId === '' ? undefined : campaignId);
+  const jobs = useProgressStore((state) => state.jobs);
   const campaign = useLiveQuery(
     async () => (campaignId === '' ? undefined : await getCampaign(campaignId)),
     [campaignId],
@@ -75,6 +80,13 @@ export function ModulesListPage(): JSX.Element {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   }
 
+  function forgeJobFor(moduleId: string): string | null {
+    const job = jobs.find(
+      (entry) => entry.id === `module-spine-${moduleId}` || entry.id === `module-parts-${moduleId}`,
+    );
+    return job === undefined ? null : (job.detail === '' ? job.label : job.detail);
+  }
+
   return (
     <div className="mx-auto max-w-3xl p-6" data-testid="modules-page">
       <div className="mb-4 flex items-center gap-3">
@@ -113,6 +125,14 @@ export function ModulesListPage(): JSX.Element {
                   <span className="block truncate text-xs text-muted-foreground">
                     {module.concept}
                   </span>
+                  {forgeJobFor(module.id) !== null && (
+                    <span
+                      className="block truncate text-xs text-sky-500 dark:text-sky-400"
+                      data-testid="module-forge-detail"
+                    >
+                      {forgeJobFor(module.id)}
+                    </span>
+                  )}
                 </button>
                 <Badge variant="outline">
                   {module.levelMin}–{module.levelMax}

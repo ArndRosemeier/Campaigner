@@ -173,6 +173,35 @@ afterEach(() => {
 });
 
 describe('PersonaPanel run lifecycle', () => {
+  it('deep-links a run via initialRunId without navigating through the Runs tab', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
+      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+    const { rerender } = render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await startRun(user, persona, 'Manual');
+    const runId = await waitFor(async () => {
+      return onlyRunId();
+    });
+
+    // The progress dock's "Open" navigates to workspacePath?run=<id>; the
+    // panel receives the run id as a prop and focuses it directly.
+    rerender(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey initialRunId={runId} />
+      </MemoryRouter>,
+    );
+
+    const active = await screen.findByTestId('active-run', {}, { timeout: 10_000 });
+    expect(await within(active).findByText('awaiting you')).toBeInTheDocument();
+  }, 30000);
+
   it('manual run pauses with Approve; approving runs the statblock step', async () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();

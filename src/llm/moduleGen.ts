@@ -14,6 +14,7 @@ import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type L
 import { runModulePostGeneration } from '@/features/modules/post-generation';
 import { toastError } from '@/lib/toast';
 import { useProgressStore } from '@/lib/progress';
+import { modulePath } from '@/app/routes';
 import { z } from 'zod';
 
 /**
@@ -168,6 +169,8 @@ export async function runSpine(
     // One big planning call — set the "this takes minutes" expectation up
     // front so the quiet stretch before streaming is not read as a hang.
     'Asking for premise, themes and part plan — one large design call; expect several minutes before streaming starts…',
+    // The dock label opens the module reader, wherever the user currently is.
+    modulePath(campaign.id, moduleId),
   );
   try {
     const module = await getModule(moduleId);
@@ -491,6 +494,8 @@ export async function runParts(
       jobId,
       `Writing ${String(total)} module part${total === 1 ? '' : 's'}`,
       'Starting the first part…',
+      // The dock label opens the module reader, wherever the user currently is.
+      modulePath(campaign.id, moduleId),
     );
     let index = 0;
     for (const planIndex of planIndexes) {

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -11,6 +11,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
+import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
 
@@ -121,7 +122,10 @@ async function seedModules(): Promise<{ campaignId: Id; draftId: Id; failedId: I
   return { campaignId: campaign.id, draftId: draftSaved.id, failedId: failedSaved.id };
 }
 
-beforeEach(clearDatabase);
+beforeEach(() => {
+  useProgressStore.getState().reset();
+  return clearDatabase();
+});
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -129,6 +133,34 @@ afterEach(() => {
 });
 
 describe('ModulesListPage', () => {
+  it('shows the live forge detail on the row of a module that is generating', async () => {
+    const { campaignId, draftId } = await seedModules();
+    renderAppAt(modulesPath(campaignId));
+    const draftTitle = await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+    const draftRow = draftTitle.closest('li');
+    if (draftRow === null) throw new Error('draft module row missing');
+    expect(within(draftRow).queryByTestId('module-forge-detail')).not.toBeInTheDocument();
+
+    // The module-forge progress job (started by runParts) surfaces on the row.
+    act(() => {
+      useProgressStore.getState().start(
+        `module-parts-${draftId}`,
+        'Writing 2 module parts',
+        'Writing part 1 of 2: The Mill',
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        within(draftRow).getByTestId('module-forge-detail'),
+      ).toHaveTextContent('Writing part 1 of 2: The Mill');
+    });
+    act(() => {
+      useProgressStore.getState().reset();
+    });
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('renders both modules with their level/size/status badges', async () => {
     const { campaignId } = await seedModules();
     renderAppAt(modulesPath(campaignId));

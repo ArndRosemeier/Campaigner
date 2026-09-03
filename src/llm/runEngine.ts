@@ -68,6 +68,7 @@ import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
 import { toastError } from '@/lib/toast';
 import { useProgressStore } from '@/lib/progress';
+import { workspacePath } from '@/app/routes';
 
 /** Testable seams for browser/image work in the encounter pipeline. */
 export const encounterRunAdapters = {
@@ -473,6 +474,9 @@ export class RunEngine {
         encounterProgressId(run.id),
         'Generating encounter map',
         'Drafting the encounter brief…',
+        // The dock label opens the run in the workspace persona panel
+        // (deep-linked via ?run=), wherever the user currently is.
+        `${workspacePath(input.campaign.id)}?run=${run.id}`,
       );
     }
     void this.executeFrom(run.id, 0, input).catch((error: unknown) => {

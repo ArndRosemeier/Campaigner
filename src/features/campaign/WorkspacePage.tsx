@@ -1,5 +1,5 @@
 import type { JSX } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { useDefaultLayout } from 'react-resizable-panels';
 
 import { ROUTES, artifactPath } from '@/app/routes';
@@ -97,15 +97,16 @@ export function WorkspacePage(): JSX.Element {
   );
 }
 
-/** Persona panel with the API-key presence from settings. */
+/** Persona panel with the API-key presence from settings and the `?run=` deep link. */
 function PersonaPanelWithKey({
   campaign,
 }: {
   campaign: NonNullable<ReturnType<typeof useCampaign>>;
 }): JSX.Element {
   const settings = useLiveQuery(() => readSettings(), []);
+  const [searchParams] = useSearchParams();
   const hasApiKey = (settings?.openRouterApiKey ?? '') !== '';
-  return <PersonaPanel campaign={campaign} hasApiKey={hasApiKey} />;
+  return <PersonaPanel campaign={campaign} hasApiKey={hasApiKey} initialRunId={searchParams.get('run')} />;
 }
 
 function MissingPane({ message, backLink }: { message: string; backLink?: boolean }): JSX.Element {

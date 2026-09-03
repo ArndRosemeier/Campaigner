@@ -107,13 +107,19 @@ function CompletedRunArtifactAction({
 /**
  * Right pane (05-UI.md §Workspace): Assistant tab (persona + brief + run
  * view) and Runs tab (history with read-only step log).
+ *
+ * `initialRunId` deep-links a run (the progress dock's "Open" affordance
+ * navigates here with `?run=<id>`): the panel selects that run and focuses
+ * the Assistant tab, wherever the run was started from.
  */
 export function PersonaPanel({
   campaign,
   hasApiKey,
+  initialRunId,
 }: {
   campaign: Campaign;
   hasApiKey: boolean;
+  initialRunId?: string | null;
 }): JSX.Element {
   const personas = useLiveQuery(() => listPersonas(), []);
   const campaignArtifacts = useLiveQuery(() => listArtifactsByCampaign(campaign.id), [campaign.id]);
@@ -128,6 +134,15 @@ export function PersonaPanel({
   const [targetArtifactId, setTargetArtifactId] = useState<string>('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [tab, setTab] = useState<string>('assistant');
+
+  // Deep link (dock "Open" → workspace `?run=<id>`): focus the run. ActiveRun
+  // renders inside the Assistant tab, so the tab follows the selection.
+  useEffect(() => {
+    if (initialRunId === undefined || initialRunId === null || initialRunId === '') return;
+    setTab('assistant');
+    setActiveRunId(initialRunId);
+  }, [initialRunId]);
+
   const pinned = usePinnedChunksStore((state) => state.chunks);
   const unpin = usePinnedChunksStore((state) => state.unpin);
   const requestArtifactId = useIllustrationRequest((state) => state.artifactId);

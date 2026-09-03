@@ -17,14 +17,20 @@ export interface ProgressJob {
   detail: string;
   /** 0..1, or null for an indeterminate (unknown-length) task. */
   progress: number | null;
+  /**
+   * Where this job can be inspected ("Open" affordance in the dock) — the
+   * workspace with the run preselected, or the module reader mid-forge.
+   * Undefined for jobs with no meaningful destination (PDF builds…).
+   */
+  href?: string;
 }
 
 interface ProgressState {
   jobs: ProgressJob[];
   /** Starts (or restarts) a job; an existing job with the same id is replaced. */
-  start: (id: string, label: string, detail?: string) => void;
-  /** Updates detail/progress of a started job; silently ignored when absent. */
-  update: (id: string, patch: { detail?: string; progress?: number | null }) => void;
+  start: (id: string, label: string, detail?: string, href?: string) => void;
+  /** Updates detail/progress/href of a started job; silently ignored when absent. */
+  update: (id: string, patch: { detail?: string; progress?: number | null; href?: string }) => void;
   /** Removes a finished job; the dock disappears once no jobs remain. */
   finish: (id: string) => void;
   /** Test seam: clears every job (module-level store persists across tests). */
@@ -38,9 +44,9 @@ function clampProgress(value: number): number {
 export const useProgressStore = create<ProgressState>((set) => ({
   jobs: [],
 
-  start: (id, label, detail = '') => {
+  start: (id, label, detail = '', href) => {
     set((state) => {
-      const job: ProgressJob = { id, label, detail, progress: null };
+      const job: ProgressJob = { id, label, detail, progress: null, ...(href !== undefined ? { href } : {}) };
       return { jobs: [...state.jobs.filter((existing) => existing.id !== id), job] };
     });
   },
@@ -57,6 +63,7 @@ export const useProgressStore = create<ProgressState>((set) => ({
         ...(patch.progress !== undefined
           ? { progress: patch.progress === null ? null : clampProgress(patch.progress) }
           : {}),
+        ...(patch.href !== undefined ? { href: patch.href } : {}),
       };
       const jobs = [...state.jobs];
       jobs[index] = next;

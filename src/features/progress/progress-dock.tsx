@@ -1,4 +1,5 @@
 import type { JSX } from 'react';
+import { useNavigate } from 'react-router-dom';
 
 import { useProgressStore } from '@/lib/progress';
 
@@ -7,7 +8,10 @@ import { useProgressStore } from '@/lib/progress';
  * running task, each with a determinate left-to-right bar (percent when the
  * task knows its progress) or an animated sweep when it does not, a label
  * naming the overall task, and a detail line describing the current step —
- * so a multi-minute generation never looks like a hang.
+ * so a multi-minute generation never looks like a hang. Jobs that carry a
+ * destination (a run's workspace view, the module mid-forge) render their
+ * label as a button that navigates there — generation stays observable from
+ * every screen, not only from the pane that started it.
  */
 export function ProgressDock(): JSX.Element | null {
   const jobs = useProgressStore((state) => state.jobs);
@@ -22,7 +26,11 @@ export function ProgressDock(): JSX.Element | null {
         {jobs.map((job) => (
           <div key={job.id} className="flex flex-col gap-1.5" data-testid="progress-job">
             <div className="flex items-baseline justify-between gap-2 text-sm font-medium">
-              <span data-testid="progress-label">{job.label}</span>
+              {job.href !== undefined ? (
+                <DockLink href={job.href} label={job.label} />
+              ) : (
+                <span data-testid="progress-label">{job.label}</span>
+              )}
               {job.progress !== null && (
                 <span className="text-xs tabular-nums text-muted-foreground" data-testid="progress-percent">
                   {String(Math.round(job.progress * 100))}%
@@ -67,5 +75,27 @@ export function ProgressDock(): JSX.Element | null {
         ))}
       </div>
     </div>
+  );
+}
+
+/**
+ * The "Open" affordance for a job with a destination. Rendered only when the
+ * job carries an href, so bare-store test harnesses without a Router never
+ * mount it (it is the only hook-consuming part of the dock).
+ */
+function DockLink({ href, label }: { href: string; label: string }): JSX.Element {
+  const navigate = useNavigate();
+  return (
+    <button
+      type="button"
+      className="text-left font-medium underline-offset-2 hover:underline"
+      data-testid="progress-open"
+      title="Show this job where it lives"
+      onClick={() => {
+        navigate(href);
+      }}
+    >
+      {label}
+    </button>
   );
 }
