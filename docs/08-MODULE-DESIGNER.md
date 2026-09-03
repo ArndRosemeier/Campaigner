@@ -136,9 +136,29 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
   the model MAY merge adjacent levels into one part when the story is better
   served** (so 1–10 → ~8–10 parts, 1–2 → 1–2 parts). Every level in the range
   must be covered by exactly one part, in order.
-- "Introduce as many locations, NPCs and factions as the story needs — you
-  are not required to detail any of them." **No entity quotas anywhere.**
-- Reuse existing campaign entities by their exact names when they fit.
+- Think like an experienced GM designing for real players: prioritize fun,
+  meaningful choices, varied pacing, memorable moments, clear stakes, and
+  challenges that are exciting without feeling arbitrary or hopeless. Balance
+  combat, social, exploration, discovery, and recovery according to the story
+  and the group's enjoyment. Let the fiction and pacing decide the exact
+  structure rather than filling a quota mechanically.
+- As a soft planning guideline, aim for roughly **1–4 encounters per level**
+  across the module. This is advice, not a requirement: create fewer when
+  tension, travel, investigation, or character moments need room; create more
+  only when the adventure supports that pace. An encounter may be combat,
+  social conflict, exploration, hazard, negotiation, chase, puzzle, or another
+  scene with meaningful risk and player agency. Place encounters deliberately
+  in the parts where they make narrative and gameplay sense, vary their type
+  and intensity, and reserve climactic encounters for an earned escalation.
+  Never pad the module with repetitive or disposable encounters.
+- Introduce as many locations, NPCs, factions, notes, and encounters as the
+  story needs — you are not required to detail any of them in the spine. Give
+  every planned encounter a distinctive, stable name, declare it as
+  `kind: "encounter"` in `entities`, and reference it in prose with a
+  wiki-link (`[[Encounter Name]]`) so it can be resolved into an encounter
+  artifact later.
+- Reuse existing campaign entities by their exact names when they fit; do not
+  invent duplicates to satisfy the soft encounter guideline.
 
 Output zod `ModuleSpineSchema` (premise, themes, partPlan with all four
 fields; partPlan length 1..20) **plus `entities: [{ name, kind }]`** — the
