@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   AlertCircleIcon,
@@ -63,6 +63,46 @@ const STATUS_LABELS: Record<PersonaRun['status'], string> = {
   cancelled: 'cancelled',
   failed: 'failed',
 };
+
+/**
+ * The completed-run "Open artifact/encounter" affordance. A plain link is
+ * DEAD when the result artifact is already the open page (a targeted in-place
+ * run finishes while its artifact is on screen; and re-clicking after one
+ * navigation lands on the same URL) — the click then navigates to the path
+ * the browser is already showing and nothing visibly happens. In that case
+ * the component states the result instead of offering a no-op button.
+ */
+function CompletedRunArtifactAction({
+  campaignId,
+  artifactId,
+  label,
+  noun,
+}: {
+  campaignId: Id;
+  artifactId: Id;
+  label: string;
+  noun: string;
+}): JSX.Element {
+  const location = useLocation();
+  const target = artifactPath(campaignId, artifactId);
+  if (location.pathname === target) {
+    return (
+      <p
+        className="flex items-center gap-1.5 text-xs text-muted-foreground"
+        data-testid="run-result-open"
+      >
+        <CheckIcon aria-hidden className="size-3.5 text-emerald-600" />
+        This {noun} is already open in the editor
+      </p>
+    );
+  }
+  return (
+    <Button render={<Link to={target} />} nativeButton={false}>
+      <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
+      {label}
+    </Button>
+  );
+}
 
 /**
  * Right pane (05-UI.md §Workspace): Assistant tab (persona + brief + run
@@ -581,13 +621,12 @@ function ImageRunActions({
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
     return (
-      <Button
-        render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />}
-        nativeButton={false}
-      >
-        <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
-        Open artifact
-      </Button>
+      <CompletedRunArtifactAction
+        campaignId={run.campaignId}
+        artifactId={run.resultArtifactId}
+        label="Open artifact"
+        noun="artifact"
+      />
     );
   }
 
@@ -831,10 +870,12 @@ function EncounterRunActions({
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
     return (
-      <Button render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />} nativeButton={false}>
-        <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
-        Open encounter
-      </Button>
+      <CompletedRunArtifactAction
+        campaignId={run.campaignId}
+        artifactId={run.resultArtifactId}
+        label="Open encounter"
+        noun="encounter"
+      />
     );
   }
   if (run.status === 'failed' || run.status === 'cancelled') return null;
@@ -1034,13 +1075,12 @@ function RunActions({
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
     return (
-      <Button
-        render={<Link to={artifactPath(run.campaignId, run.resultArtifactId)} />}
-        nativeButton={false}
-      >
-        <SquareArrowOutUpRightIcon aria-hidden data-icon="inline-start" />
-        Open artifact
-      </Button>
+      <CompletedRunArtifactAction
+        campaignId={run.campaignId}
+        artifactId={run.resultArtifactId}
+        label="Open artifact"
+        noun="artifact"
+      />
     );
   }
   if (!paused || input === null || step === undefined) return null;

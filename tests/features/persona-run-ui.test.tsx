@@ -556,6 +556,15 @@ describe('PersonaPanel run lifecycle', () => {
     expect(
       await screen.findByRole('button', { name: 'Open encounter' }, { timeout: 5_000 }),
     ).toBeInTheDocument();
+
+    // Clicking navigates to the encounter's artifact page — the button then
+    // swaps to an "already open" statement instead of staying a dead link
+    // (clicking a link to the URL the browser already shows does nothing).
+    const completedRun = await getRun(await onlyRunId());
+    expect(completedRun?.resultArtifactId).not.toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Open encounter' }));
+    expect(await screen.findByTestId('run-result-open', {}, { timeout: 5_000 })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Open encounter' })).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 30000);
 
