@@ -18,6 +18,7 @@ import {
   moduleSpineSchema,
   type Campaign,
   type Id,
+  type Module,
   type ModuleEntityKind,
 } from '@/domain';
 import { clearDatabase } from '../db/helpers';
@@ -84,7 +85,12 @@ function renderAppAt(path: string): void {
 }
 
 async function seedReaderModule(
-  options: { part0Edited?: boolean; entityKinds?: ModuleEntityKind[] } = {},
+  options: {
+    part0Edited?: boolean;
+    entityKinds?: ModuleEntityKind[];
+    status?: Module['status'];
+    errorMessage?: string;
+  } = {},
 ): Promise<{
   campaign: Campaign;
   campaignId: Id;
@@ -127,7 +133,8 @@ async function seedReaderModule(
   });
   const saved = await saveModule({
     ...draft,
-    status: 'ready',
+    status: options.status ?? 'ready',
+    errorMessage: options.errorMessage ?? '',
     spine,
     parts: [
       modulePartSchema.parse({
@@ -213,6 +220,24 @@ describe('ModuleReaderPage', () => {
     expect(within(failed).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
+
+  it('shows module-failed-banner when module.status is failed and provides Resume button', async () => {
+    const { campaignId, moduleId } = await seedReaderModule({
+      status: 'failed',
+      errorMessage: 'Model service unavailable (503)',
+    });
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findPartSection(0);
+
+    const banner = await screen.findByTestId('module-failed-banner');
+    expect(banner).toBeInTheDocument();
+    expect(banner).toHaveTextContent('Module generation encountered an error');
+    expect(banner).toHaveTextContent('Model service unavailable (503)');
+
+    const resumeBtn = within(banner).getByTestId('resume-module-generation');
+    expect(resumeBtn).toBeInTheDocument();
+    await flushAsyncUpdates();
+  });
 
   it('lists the plan titles in the ToC and scrolls to a part on click', async () => {
     const user = userEvent.setup();

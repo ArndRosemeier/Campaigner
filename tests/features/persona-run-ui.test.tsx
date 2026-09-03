@@ -687,4 +687,115 @@ describe('PersonaPanel run lifecycle', () => {
     await user.click(closeBtn);
     expect(screen.queryByTestId('open-run-report')).not.toBeInTheDocument();
   });
+
+  it('a failed run offers Resume generation in ActiveRun, which continues to completion', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
+      .mockRejectedValueOnce(new Error('Gateway timeout 504'));
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await startRun(user, persona);
+    const failedActions = await screen.findByTestId('failed-run-actions', {}, { timeout: 10_000 });
+    expect(within(failedActions).getByText(/Generation interrupted or encountered an error/)).toBeInTheDocument();
+    expect(within(failedActions).getByTestId('resume-failed-run')).toBeInTheDocument();
+
+    // Now model is back online
+    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+    await user.click(within(failedActions).getByTestId('resume-failed-run'));
+
+    await waitFor(
+      async () => {
+        const run = await getRun(await onlyRunId());
+        if (run?.status !== 'completed') throw new Error('run not completed yet');
+      },
+      { timeout: 10_000 },
+    );
+
+    expect(await screen.findByRole('button', { name: 'Open artifact' }, { timeout: 5_000 })).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('clicking Resume in the Runs tab switches to Assistant and resumes the run', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const run = await createRun({
+      campaignId: campaign.id,
+      personaId: persona.id,
+      autonomy: 'auto',
+      userBrief: 'A test failed run to resume',
+      pinnedChunkIds: [],
+      targetArtifactId: null,
+      encounterMapAspect: null,
+    });
+    await updateRun(run.id, {
+      status: 'failed',
+      errorMessage: 'Temporary service outage',
+      steps: [
+        {
+          index: 0,
+          name: 'retrieve',
+          status: 'done',
+          input: {},
+          output: { chunks: [] },
+          userEdit: null,
+        },
+        {
+          index: 1,
+          name: 'draft',
+          status: 'done',
+          input: {},
+          output: { parsed: VALID_DRAFT },
+          userEdit: null,
+        },
+        {
+          index: 2,
+          name: 'statblock',
+          status: 'running',
+          input: {},
+          output: null,
+          userEdit: null,
+        },
+      ],
+    });
+
+    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Runs' }));
+    const resumeBtn = await screen.findByTestId(`resume-run-${run.id}`);
+    expect(resumeBtn).toBeInTheDocument();
+
+    await user.click(resumeBtn);
+
+    // Clicking resume should activate the run and switch back to the Assistant tab
+    const active = await screen.findByTestId('active-run', {}, { timeout: 5000 });
+    expect(active).toBeInTheDocument();
+
+    await waitFor(
+      async () => {
+        const updatedRun = await getRun(run.id);
+        if (updatedRun?.status !== 'completed') {
+          throw new Error(
+            `run not completed yet: ${updatedRun?.status} err: ${updatedRun?.errorMessage} steps: ${JSON.stringify(updatedRun?.steps.map((s) => [s.name, s.status]))}`,
+          );
+        }
+      },
+      { timeout: 10_000 },
+    );
+
+    expect(await screen.findByRole('button', { name: 'Open artifact' })).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 30000);
 });

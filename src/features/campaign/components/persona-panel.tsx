@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
+  AlertCircleIcon,
   BanIcon,
   CheckIcon,
   CircleDotIcon,
@@ -36,7 +37,7 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, EncounterLayout, Id, Persona, PersonaRun } from '@/domain';
-import { rejectionIssues, runEngine } from '@/llm/runEngine';
+import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
 import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
@@ -403,7 +404,13 @@ export function PersonaPanel({
         </TabsContent>
 
         <TabsContent value="runs" className="min-h-0 flex-1 overflow-y-auto">
-          <RunsList campaignId={campaign.id} />
+          <RunsList
+            campaignId={campaign.id}
+            onSelectRun={(runId) => {
+              setActiveRunId(runId);
+              setTab('assistant');
+            }}
+          />
         </TabsContent>
       </Tabs>
     </div>
@@ -510,7 +517,9 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
         </pre>
       )}
 
-      {persona?.mode === 'image' ? (
+      {run.status === 'failed' ? (
+        <FailedRunActions run={run} campaign={campaign} persona={persona} />
+      ) : persona?.mode === 'image' ? (
         <ImageRunActions run={run} campaign={campaign} persona={persona} />
       ) : persona?.mode === 'encounter' ? (
         <EncounterRunActions run={run} campaign={campaign} persona={persona} />
@@ -1160,7 +1169,107 @@ function safeJson(text: string): unknown {
   }
 }
 
-function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
+function FailedRunActions({
+  run,
+  campaign,
+  persona,
+}: {
+  run: PersonaRun;
+  campaign: Campaign;
+  persona?: Persona | undefined;
+}): JSX.Element {
+  const [resuming, setResuming] = useState(false);
+  const [retryText, setRetryText] = useState('');
+  const [showInstruction, setShowInstruction] = useState(false);
+
+  const input: StartRunInput | undefined =
+    persona === undefined
+      ? undefined
+      : {
+          campaign,
+          persona,
+          autonomy: run.autonomy,
+          brief: run.userBrief,
+          pinnedChunkIds: run.pinnedChunkIds,
+          ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
+          ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+        };
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-xs"
+      data-testid="failed-run-actions"
+    >
+      <div className="flex items-center gap-1.5 font-medium text-destructive">
+        <AlertCircleIcon className="size-4 shrink-0" aria-hidden />
+        <span>Generation interrupted or encountered an error</span>
+      </div>
+      <p className="text-muted-foreground">
+        Completed steps and drafted content are preserved. You can resume generation from the failed step.
+      </p>
+
+      {showInstruction && (
+        <Textarea
+          placeholder="Optional instruction for the retry…"
+          value={retryText}
+          onChange={(event) => {
+            setRetryText(event.target.value);
+          }}
+          className="min-h-16 text-xs bg-background"
+          data-testid="resume-instruction-input"
+        />
+      )}
+
+      <div className="flex flex-wrap items-center gap-2 pt-1">
+        <Button
+          size="sm"
+          disabled={resuming}
+          data-testid="resume-failed-run"
+          onClick={() => {
+            setResuming(true);
+            void runEngine.resumeRun(run.id, retryText, input).catch((error: unknown) => {
+              toastError('Could not resume generation', error);
+              setResuming(false);
+            });
+          }}
+        >
+          <RotateCcwIcon aria-hidden className="size-3.5" data-icon="inline-start" />
+          {resuming ? 'Resuming…' : 'Resume generation'}
+        </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => {
+            setShowInstruction((previous) => !previous);
+          }}
+        >
+          {showInstruction ? 'Hide instruction' : 'Resume with instruction…'}
+        </Button>
+
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => {
+            void runEngine.cancel(run.id).catch((error: unknown) => {
+              toastError('Could not dismiss run', error);
+            });
+          }}
+        >
+          Dismiss
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function RunsList({
+  campaignId,
+  onSelectRun,
+}: {
+  campaignId: string;
+  onSelectRun?: (runId: Id) => void;
+}): JSX.Element {
   const runs = useLiveQuery(() => listRunsByCampaign(campaignId), [campaignId]);
   const personas = useLiveQuery(() => listPersonas(), []);
   const globalIds = useLiveQuery(
@@ -1181,6 +1290,15 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
       toastSuccess('Run deleted');
     } catch (error) {
       toastError('Could not delete run', error);
+    }
+  }
+
+  async function handleResumeRun(id: string): Promise<void> {
+    try {
+      await runEngine.resumeRun(id);
+      onSelectRun?.(id);
+    } catch (error) {
+      toastError('Could not resume run', error);
     }
   }
 
@@ -1245,6 +1363,22 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
               <span className="truncate text-muted-foreground">{run.userBrief}</span>
               <span className="text-muted-foreground">{stamp}</span>
             </button>
+            {run.status === 'failed' && (
+              <Button
+                variant="outline"
+                size="xs"
+                aria-label={`Resume run ${stamp}`}
+                className="shrink-0 h-6 px-2 text-[11px] gap-1 text-primary hover:text-primary"
+                data-testid={`resume-run-${run.id}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  void handleResumeRun(run.id);
+                }}
+              >
+                <RotateCcwIcon className="size-3" aria-hidden />
+                <span>Resume</span>
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon-sm"
@@ -1277,6 +1411,20 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
               </Badge>
             </div>
             <div className="flex items-center gap-1 shrink-0">
+              {openRun.status === 'failed' && (
+                <Button
+                  variant="default"
+                  size="xs"
+                  className="gap-1 h-6 px-2 text-[11px]"
+                  data-testid="resume-open-run"
+                  onClick={() => {
+                    void handleResumeRun(openRun.id);
+                  }}
+                >
+                  <RotateCcwIcon className="size-3" aria-hidden />
+                  <span>Resume run</span>
+                </Button>
+              )}
               <Button
                 variant="outline"
                 size="xs"
@@ -1314,9 +1462,25 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
           </div>
 
           {openRun.errorMessage !== '' && (
-            <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
-              <span className="font-semibold">Error: </span>
-              {openRun.errorMessage}
+            <div className="flex flex-col gap-2 rounded border border-destructive/40 bg-destructive/10 p-2.5 text-xs text-destructive">
+              <div>
+                <span className="font-semibold">Error: </span>
+                {openRun.errorMessage}
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="xs"
+                  className="h-6 gap-1 bg-background text-foreground text-[11px]"
+                  data-testid="resume-banner-button"
+                  onClick={() => {
+                    void handleResumeRun(openRun.id);
+                  }}
+                >
+                  <RotateCcwIcon className="size-3" aria-hidden />
+                  Resume from failed step
+                </Button>
+              </div>
             </div>
           )}
 

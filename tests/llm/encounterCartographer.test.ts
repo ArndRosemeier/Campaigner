@@ -69,6 +69,8 @@ function persona(): Persona {
 async function setup() {
   const campaign = await createCampaign({ name: 'Map Campaign', system: 'dnd5e' });
   const cartographer = persona();
+  const { db } = await import('@/db');
+  await db.personas.put(cartographer);
   await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
   return { campaign, cartographer };
 }
@@ -509,5 +511,47 @@ describe('Encounter Cartographer run', () => {
       expect((await getRun(runId))?.status).toBe('failed');
     });
     expect((await getRun(runId))?.errorMessage).toContain('verification threshold');
+  });
+
+  it('resumes a failed encounter run from stylize step without re-generating brief or layout', async () => {
+    const { campaign, cartographer } = await setup();
+    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    // Simulate image model failure on first attempt
+    vi.mocked(encounterRunAdapters.generateImages).mockRejectedValueOnce(
+      new Error('Image model temporarily unavailable (503)'),
+    );
+
+    const runInput = { ...input(campaign, cartographer), autonomy: 'auto' as const };
+    const runId = await runEngine.startRun(runInput);
+
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+      expect(run?.errorMessage).toContain('Image model temporarily unavailable (503)');
+    });
+
+    const failedRun = await getRun(runId);
+    expect(failedRun?.steps.find((s) => s.name === 'brief')?.status).toBe('done');
+    expect(failedRun?.steps.find((s) => s.name === 'layout')?.status).toBe('done');
+    expect(failedRun?.steps.find((s) => s.name === 'schematic')?.status).toBe('done');
+
+    // Image model recovers
+    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
+      images: [new Blob(['resumed-image'])],
+      costUsd: 0.02,
+      cappedToOne: false,
+    });
+
+    await runEngine.resumeRun(runId);
+
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('completed');
+    });
+
+    const completedRun = await getRun(runId);
+    expect(completedRun?.resultArtifactId).not.toBeNull();
+    // Brief was NOT re-drafted — chat was called only once!
+    expect(chatMock).toHaveBeenCalledTimes(1);
   });
 });

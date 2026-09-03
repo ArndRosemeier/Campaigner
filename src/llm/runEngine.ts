@@ -34,6 +34,9 @@ import {
 import { getChunksByIds } from '@/db/chunkRepo';
 import { createImage, deleteUnreferencedImages, getImage, reanchorImages } from '@/db/imageRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
+import { getCampaign } from '@/db/campaignRepo';
+import { getPersona } from '@/db/personaRepo';
+import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -561,7 +564,64 @@ export class RunEngine {
     );
     if (stepIndex === -1) return;
     await this.resetStep(runId, stepIndex);
+    await updateRun(runId, { status: 'running', errorMessage: '' });
+    this.emit({ kind: 'run', runId, status: 'running' });
     void this.executeFrom(runId, stepIndex, input, extraInstruction).catch((error: unknown) => {
+      void this.fail(runId, error);
+    });
+  }
+
+  /**
+   * Resumes a failed or interrupted run from its first incomplete/failed step.
+   * Prior successfully completed steps and their artifacts/briefs/layouts are preserved.
+   */
+  async resumeRun(
+    runId: Id,
+    extraInstruction = '',
+    explicitInput?: StartRunInput,
+  ): Promise<void> {
+    const run = await getRun(runId);
+    if (run === undefined || run.status === 'completed' || run.status === 'cancelled') return;
+
+    let input = explicitInput;
+    if (input === undefined) {
+      const campaign = await getCampaign(run.campaignId);
+      if (campaign === undefined) throw new Error('Campaign for this run no longer exists');
+      const persona =
+        (await getPersona(run.personaId)) ??
+        BUILT_IN_PERSONAS.find((candidate) => candidate.id === run.personaId);
+      if (persona === undefined) throw new Error('Persona for this run no longer exists');
+      input = {
+        campaign,
+        persona,
+        autonomy: run.autonomy,
+        brief: run.userBrief,
+        pinnedChunkIds: run.pinnedChunkIds,
+        ...(run.targetArtifactId !== null ? { targetArtifactId: run.targetArtifactId } : {}),
+        ...(run.encounterMapAspect !== null ? { encounterMapAspect: run.encounterMapAspect } : {}),
+      };
+    }
+
+    const failedOrPendingIndex = run.steps.findIndex(
+      (step) =>
+        step.status === 'rejected' ||
+        step.status === 'running' ||
+        step.status === 'pending' ||
+        (step.output === null && step.status !== 'skipped'),
+    );
+    const resumeIndex = failedOrPendingIndex === -1 ? run.steps.length : failedOrPendingIndex;
+
+    if (resumeIndex < run.steps.length) {
+      await this.resetStep(runId, resumeIndex);
+    }
+
+    await updateRun(runId, {
+      status: 'running',
+      errorMessage: '',
+    });
+    this.emit({ kind: 'run', runId, status: 'running' });
+
+    void this.executeFrom(runId, resumeIndex, input, extraInstruction).catch((error: unknown) => {
       void this.fail(runId, error);
     });
   }

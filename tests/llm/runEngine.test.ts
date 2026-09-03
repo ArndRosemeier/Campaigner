@@ -3,7 +3,8 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { createPersona, type Persona } from '@/domain';
+import type { Persona } from '@/domain';
+import { createPersona } from '@/db/personaRepo';
 import {
   createArtifact,
   getArtifact,
@@ -73,7 +74,7 @@ const VALID_STATBLOCK = {
 
 async function seed(): Promise<{ campaignId: Id; persona: Persona }> {
   const campaign = await createCampaign({ name: 'Test Campaign', system: 'dnd5e' });
-  const persona = createPersona({
+  const persona = await createPersona({
     slug: 'npc-smith-test',
     name: 'NPC Smith',
     description: 'test',
@@ -328,7 +329,7 @@ describe('runEngine', () => {
 
   it('tolerates loose draft shapes (string list items, single-string tags)', async () => {
     const { campaignId } = await seed();
-    const persona2 = createPersona({
+    const persona2 = await createPersona({
       slug: 'worldbuilder-test',
       name: 'Worldbuilder',
       description: 'test',
@@ -406,5 +407,43 @@ describe('runEngine', () => {
     const run = await getRun(runId);
     expect(run?.status).toBe('cancelled');
     expect(run?.resultArtifactId).toBeNull();
+  }, 20000);
+
+  it('resumeRun resumes a failed run from the failed step, preserving prior completed steps', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
+      .mockRejectedValueOnce(new Error('Model timeout 504'));
+
+    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const };
+    const runId = await runEngine.startRun(input);
+
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+      expect(run?.errorMessage).toContain('Model timeout 504');
+    });
+
+    const failedRun = await getRun(runId);
+    expect(failedRun?.steps[0]?.status).toBe('done'); // retrieve
+    expect(failedRun?.steps[1]?.status).toBe('done'); // draft
+    expect(failedRun?.steps[1]?.output).not.toBeNull();
+
+    // Now model recovers: resume the run
+    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+    await runEngine.resumeRun(runId);
+
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('completed');
+    });
+
+    const completedRun = await getRun(runId);
+    expect(completedRun?.resultArtifactId).not.toBeNull();
+    const artifact = await getArtifact(completedRun?.resultArtifactId ?? '');
+    expect(artifact?.name).toBe('Grix');
+    // Chat was called 3 times total: draft (initial), statblock (failed), statblock (recovered retry).
+    // Draft was NOT re-executed!
+    expect(chatMock).toHaveBeenCalledTimes(3);
   }, 20000);
 });

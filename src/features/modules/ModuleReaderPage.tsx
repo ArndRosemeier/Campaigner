@@ -420,6 +420,45 @@ export function ModuleReaderPage(): JSX.Element {
             </>
           ) : (
             <>
+              {module.status === 'failed' && (
+                <section
+                  className="mb-8 rounded-lg border border-destructive/40 bg-destructive/10 p-4 text-sm"
+                  data-testid="module-failed-banner"
+                  role="alert"
+                >
+                  <div className="flex items-center gap-2 font-medium text-destructive">
+                    <TriangleAlertIcon className="size-4 shrink-0" aria-hidden />
+                    <span>Module generation encountered an error.</span>
+                  </div>
+                  {module.errorMessage !== '' && (
+                    <p className="mt-1 text-xs text-muted-foreground">{module.errorMessage}</p>
+                  )}
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Completed parts are preserved. You can resume generation to write any missing or failed parts.
+                  </p>
+                  <div className="mt-3 flex gap-2">
+                    <Button
+                      variant="default"
+                      size="xs"
+                      data-testid="resume-module-generation"
+                      onClick={() => {
+                        void (async () => {
+                          try {
+                            const camp = await getCampaign(campaignId);
+                            if (camp === undefined) throw new Error('Campaign no longer exists');
+                            await generateMissingParts(module.id, camp);
+                          } catch (error) {
+                            toastError('Could not resume module generation', error);
+                          }
+                        })();
+                      }}
+                    >
+                      <RotateCcwIcon className="size-3.5" aria-hidden data-icon="inline-start" />
+                      Resume module generation
+                    </Button>
+                  </div>
+                </section>
+              )}
               <section id="module-intro" className="mb-10">
                 <IntroBlock
                   premise={module.spine.premise}

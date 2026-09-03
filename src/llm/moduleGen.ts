@@ -474,6 +474,7 @@ export async function runParts(
     const settings = await getSettings();
     const module = await requireModule(moduleId);
     if (module.spine === null) throw new Error('Cannot generate parts without an approved spine');
+    await patchModule(moduleId, { status: 'generating', errorMessage: '' });
 
     const planIndexes =
       options.planIndexes ?? module.spine.partPlan.map((_, index) => index);
