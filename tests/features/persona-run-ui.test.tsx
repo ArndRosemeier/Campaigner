@@ -9,7 +9,7 @@ import { artifactPath } from '@/app/routes';
 import { createArtifact, publishToLibrary } from '@/db/artifactRepo';
 import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
-import { getRun, listRunsByCampaign } from '@/db/runRepo';
+import { createRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import type { Campaign, Persona } from '@/domain';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { runEngine } from '@/llm/runEngine';
@@ -476,4 +476,61 @@ describe('PersonaPanel run lifecycle', () => {
     expect((run?.steps[1]?.output as { notice: string | null }).notice).toContain('single candidate');
     await flushAsyncUpdates();
   }, 30000);
+
+  it('runs tab shows scrollable report with copy button when a run is selected', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      value: { writeText },
+      writable: true,
+      configurable: true,
+    });
+
+    const run = await createRun({
+      campaignId: campaign.id,
+      personaId: persona.id,
+      autonomy: 'auto',
+      userBrief: 'A test failed run',
+      pinnedChunkIds: [],
+      targetArtifactId: null,
+      encounterMapAspect: null,
+    });
+    await updateRun(run.id, {
+      status: 'failed',
+      errorMessage: 'Sample failure reason',
+      steps: [
+        {
+          index: 0,
+          name: 'draft',
+          status: 'rejected',
+          input: {},
+          output: { error: 'Sample failure reason' },
+          userEdit: null,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Runs' }));
+    const runItem = await screen.findByText('A test failed run');
+    await user.click(runItem);
+
+    const report = await screen.findByTestId('open-run-report');
+    expect(report).toBeInTheDocument();
+    expect(within(report).getAllByText(/Sample failure reason/).length).toBeGreaterThanOrEqual(1);
+
+    const copyBtn = within(report).getByRole('button', { name: 'Copy report to clipboard' });
+    await user.click(copyBtn);
+    expect(writeText).toHaveBeenCalled();
+
+    const closeBtn = within(report).getByRole('button', { name: 'Close report' });
+    await user.click(closeBtn);
+    expect(screen.queryByTestId('open-run-report')).not.toBeInTheDocument();
+  });
 });

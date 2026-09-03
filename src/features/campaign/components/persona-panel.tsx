@@ -6,19 +6,20 @@ import {
   BanIcon,
   CheckIcon,
   CircleDotIcon,
+  CopyIcon,
   MinusIcon,
   PencilIcon,
   PlayIcon,
   RotateCcwIcon,
   SquareArrowOutUpRightIcon,
   Trash2Icon,
+  XIcon,
 } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import {
   Select,
   SelectContent,
@@ -1185,6 +1186,7 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
     () => (openRunId === null ? undefined : getRun(openRunId)),
     [openRunId],
   );
+  const [copied, setCopied] = useState(false);
 
   async function handleDeleteRun(id: string): Promise<void> {
     if (openRunId === id) setOpenRunId(null);
@@ -1195,6 +1197,37 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
       toastError('Could not delete run', error);
     }
   }
+
+  async function handleCopy(text: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      toastSuccess('Report copied to clipboard');
+      setTimeout(() => {
+        setCopied(false);
+      }, 2000);
+    } catch (error) {
+      toastError('Could not copy report to clipboard', error);
+    }
+  }
+
+  const openPersona = personas?.find((candidate) => candidate.id === openRun?.personaId);
+  const reportJson =
+    openRun === undefined
+      ? ''
+      : JSON.stringify(
+          {
+            id: openRun.id,
+            persona: openPersona?.name ?? openRun.personaId,
+            status: openRun.status,
+            errorMessage: openRun.errorMessage || undefined,
+            userBrief: openRun.userBrief,
+            updatedAt: openRun.updatedAt,
+            steps: openRun.steps,
+          },
+          null,
+          2,
+        );
 
   return (
     <div className="flex flex-col gap-2 p-3" data-testid="runs-list">
@@ -1241,11 +1274,72 @@ function RunsList({ campaignId }: { campaignId: string }): JSX.Element {
         );
       })}
       {openRun !== undefined && (
-        <ScrollArea className="max-h-64">
-          <pre className="rounded-md bg-muted p-2 font-mono text-[11px] whitespace-pre-wrap">
-            {JSON.stringify(openRun.steps, null, 2)}
-          </pre>
-        </ScrollArea>
+        <div
+          className="flex flex-col gap-2 rounded-md border bg-muted/40 p-3"
+          data-testid="open-run-report"
+        >
+          <div className="flex items-center justify-between gap-2 border-b pb-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-semibold text-xs truncate">
+                {openPersona?.name ?? 'Persona'} run
+              </span>
+              <Badge
+                variant={openRun.status === 'failed' ? 'destructive' : 'outline'}
+                className="text-[10px]"
+              >
+                {STATUS_LABELS[openRun.status]}
+              </Badge>
+            </div>
+            <div className="flex items-center gap-1 shrink-0">
+              <Button
+                variant="outline"
+                size="xs"
+                className="gap-1 h-6 px-2 text-[11px]"
+                aria-label="Copy report to clipboard"
+                title="Copy report to clipboard"
+                onClick={() => {
+                  void handleCopy(reportJson);
+                }}
+              >
+                {copied ? (
+                  <>
+                    <CheckIcon className="size-3 text-green-600" aria-hidden />
+                    <span>Copied</span>
+                  </>
+                ) : (
+                  <>
+                    <CopyIcon className="size-3" aria-hidden />
+                    <span>Copy</span>
+                  </>
+                )}
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Close report"
+                title="Close report"
+                onClick={() => {
+                  setOpenRunId(null);
+                }}
+              >
+                <XIcon className="size-3.5" aria-hidden />
+              </Button>
+            </div>
+          </div>
+
+          {openRun.errorMessage !== '' && (
+            <div className="rounded border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+              <span className="font-semibold">Error: </span>
+              {openRun.errorMessage}
+            </div>
+          )}
+
+          <div className="max-h-[65vh] min-h-[180px] overflow-y-auto overflow-x-auto rounded-md border bg-background p-2.5">
+            <pre className="font-mono text-[11px] whitespace-pre-wrap select-text text-foreground">
+              {reportJson}
+            </pre>
+          </div>
+        </div>
       )}
     </div>
   );
