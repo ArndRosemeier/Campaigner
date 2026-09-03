@@ -159,6 +159,9 @@ export const moduleSchema = z
     autoImageKinds: z.array(z.enum(ENTITY_KINDS)).default([]),
     /** Whether encounter battlemaps should be generated automatically. */
     autoGenerateBattlemaps: z.boolean().default(false),
+    /** Opt-in unattended generation: the pass-0 spine is approved as-is and
+     * pass 1 starts immediately — the spine checkpoint never stops the flow. */
+    autoApproveSpine: z.boolean().default(false),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',
@@ -185,6 +188,8 @@ export interface NewModule {
   autoGenerateKinds?: EntityKind[];
   autoImageKinds?: EntityKind[];
   autoGenerateBattlemaps?: boolean;
+  /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
+  autoApproveSpine?: boolean;
 }
 
 export function createModule(input: NewModule): Module {
@@ -215,6 +220,7 @@ export function createModule(input: NewModule): Module {
     autoGenerateKinds: input.autoGenerateKinds ?? [],
     autoImageKinds: input.autoImageKinds ?? [],
     autoGenerateBattlemaps: input.autoGenerateBattlemaps ?? false,
+    autoApproveSpine: input.autoApproveSpine ?? false,
   });
 }
 

@@ -8,6 +8,10 @@ import { getSettings } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { searchRules } from '@/search';
 import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
+// The engine triggers the module's own post-generation automation (the
+// unattended paths have no UI to do it); the orchestrator never imports this
+// module, so the direction stays acyclic.
+import { runModulePostGeneration } from '@/features/modules/post-generation';
 import { toastError } from '@/lib/toast';
 import { useProgressStore } from '@/lib/progress';
 import { z } from 'zod';
@@ -1054,6 +1058,19 @@ export function normalizePartMarkdown(raw: string): string {
 // --- Orchestration wrappers used by the UI -----------------------------------
 
 /**
+ * Pass 1 plus the post-generation automation for modules that skipped the
+ * spine checkpoint (`autoApproveSpine`) — the unattended tail of the flow.
+ */
+async function runAutomatedParts(moduleId: Id, campaign: Campaign): Promise<void> {
+  await runParts(moduleId, campaign).catch(() => undefined);
+  // Post-generation automation (opt-in, module row) — fired by the engine
+  // because this path has no user interaction to trigger it. The
+  // orchestrator is idempotent, loud on its own, and never imports this
+  // module (no cycle).
+  void runModulePostGeneration(moduleId, campaign);
+}
+
+/**
  * "Generate parts" from the spine checkpoint: stores the (user-edited) spine,
  * then runs pass 1. Failures land on the module/parts rows and surface there;
  * the caller navigates to the reader either way.
@@ -1065,6 +1082,7 @@ export async function approveSpineAndRun(
 ): Promise<void> {
   await patchModule(moduleId, { spine });
   await runParts(moduleId, campaign).catch(() => undefined);
+  void runModulePostGeneration(moduleId, campaign);
 }
 
 /**
@@ -1101,6 +1119,7 @@ export async function generateMissingParts(moduleId: Id, campaign: Campaign): Pr
     });
   if (indexes.length === 0) return;
   await runParts(moduleId, campaign, { planIndexes: indexes }).catch(() => undefined);
+  void runModulePostGeneration(moduleId, campaign);
 }
 
 /** Re-runs pass 0 with an optional extra steering instruction. */
@@ -1109,7 +1128,15 @@ export async function retrySpine(
   campaign: Campaign,
   extraInstruction = '',
 ): Promise<void> {
-  await runSpine(moduleId, campaign, { extraInstruction }).catch(() => undefined);
+  const drafted = await runSpine(moduleId, campaign, { extraInstruction }).catch(
+    () => undefined,
+  );
+  // A failed re-draft is owned by runSpine (failed row + toast).
+  if (drafted === undefined) return;
+  // Modules that skipped the checkpoint continue unattended after a retry
+  // too — the flow never parks on the generated spine.
+  if (!drafted.autoApproveSpine) return;
+  await runAutomatedParts(moduleId, campaign);
 }
 
 /** Checkpoint "Discard": drops the spine, back to a draft module. */
@@ -1126,6 +1153,10 @@ export async function discardSpine(moduleId: Id): Promise<void> {
  * for minutes on a slow provider or a thinking model. Spine failures are owned
  * by `runSpine` itself — status `failed` + `errorMessage` on the row and a
  * toast (AGENTS rule 2) — and surface in the reader with a Retry affordance.
+ *
+ * With `autoApproveSpine` the flow never stops after pass 0: the generated
+ * spine is approved as-is and pass 1 (plus any configured post-generation
+ * automation) runs unattended.
  */
 export async function createModuleAndRun(
   campaign: Campaign,
@@ -1144,10 +1175,19 @@ export async function createModuleAndRun(
     autoGenerateKinds?: EntityKind[];
     autoImageKinds?: EntityKind[];
     autoGenerateBattlemaps?: boolean;
+    /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
+    autoApproveSpine?: boolean;
   },
 ): Promise<Id> {
   const created = createModule(input);
   const saved = await saveModule(created);
-  void runSpine(saved.id, campaign).catch(() => undefined);
+  void (async () => {
+    const drafted = await runSpine(saved.id, campaign).catch(() => undefined);
+    // A failed spine is owned by runSpine (failed row + toast) — nothing to
+    // continue; the reader offers its Retry, which keeps auto-approving.
+    if (drafted === undefined) return;
+    if (!drafted.autoApproveSpine) return; // waits at the spine checkpoint
+    await runAutomatedParts(saved.id, campaign);
+  })();
   return saved.id;
 }

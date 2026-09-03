@@ -242,9 +242,12 @@ describe('ModulesListPage', () => {
     // Default: everything off.
     expect(within(dialog).getByTestId('auto-generate-npc')).not.toBeChecked();
     expect(within(dialog).getByTestId('auto-image-npc')).not.toBeChecked();
+    expect(within(dialog).getByTestId('auto-spine')).not.toBeChecked();
     expect(within(dialog).getByTestId('auto-battlemaps')).not.toBeChecked();
 
-    // Tick: auto-generate npcs + locations, auto-image npcs, battlemaps on.
+    // Tick: unattended spine, auto-generate npcs + locations, auto-image npcs,
+    // battlemaps on.
+    await user.click(within(dialog).getByTestId('auto-spine'));
     await user.click(within(dialog).getByTestId('auto-generate-npc'));
     await user.click(within(dialog).getByTestId('auto-generate-location'));
     await user.click(within(dialog).getByTestId('auto-image-npc'));
@@ -259,6 +262,7 @@ describe('ModulesListPage', () => {
     expect(createModuleAndRunMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
+        autoApproveSpine: true,
         autoGenerateKinds: ['npc', 'location'],
         autoImageKinds: ['npc'],
         autoGenerateBattlemaps: true,

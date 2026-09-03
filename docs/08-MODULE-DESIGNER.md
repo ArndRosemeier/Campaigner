@@ -150,11 +150,17 @@ spine loudly — no client-side heuristic ever decides a type).
 second failure → module `status:'failed'` + errorMessage (loud, per AGENTS
 rule 1).
 
-**Checkpoint (always, regardless of any autonomy setting): the spine is shown
-for approval** — editable premise textarea and part-plan table (edit titles/
-synopses/bands, add/remove/reorder parts). Buttons: "Generate parts" /
-"Retry spine…" (optional extra instruction) / "Discard". This is the
-highest-leverage steering moment; do not make it skippable.
+**Checkpoint (default): the spine is shown for approval** — editable premise
+textarea and part-plan table (edit titles/synopses/bands, add/remove/reorder
+parts). Buttons: "Generate parts" / "Retry spine…" (optional extra
+instruction) / "Discard". This is the highest-leverage steering moment.
+
+**Opt-in skip (`autoApproveSpine`, set at creation via "Generate parts
+without review"):** the generated spine is approved as-is and pass 1 starts
+immediately — the checkpoint never renders, and a retried spine continues
+unattended too (`createModuleAndRun` / `retrySpine` run pass 1 and the
+post-generation automation right after pass 0 lands). Off (default) = the
+checkpoint behavior above, byte-for-byte.
 
 ### Pass 1 — Parts (one call per part, sequential, markdown out)
 
@@ -310,11 +316,12 @@ opt-in flags on the module row (zod defaults keep old rows off):
 - `autoGenerateBattlemaps: boolean` — enqueue every module-owned encounter
   without layout/map into the unattended encounter-map queue (docs/11).
 
-Trigger: `runModulePostGeneration` (features/modules/post-generation.ts)
-runs after `approveSpineAndRun` (spine checkpoint "Generate parts") and after
-every `generateMissingParts` completion (missing-parts button and the
-failed-module "Resume module generation"). A single-part rewrite NEVER
-triggers it. Semantics:
+Trigger: the ENGINE fires `runModulePostGeneration`
+(features/modules/post-generation.ts) — inside `approveSpineAndRun`
+(spine checkpoint "Generate parts"), after every `generateMissingParts`
+completion (missing-parts button, failed-module resume), and in the
+unattended tails (`createModuleAndRun` / `retrySpine` when the module row
+has `autoApproveSpine`). A single-part rewrite NEVER triggers it. Semantics:
 
 - Idempotent by construction — batches target only unresolved names, the
   image queue skips artifacts that already have images, the map queue skips

@@ -61,6 +61,7 @@ export function NewModuleDialog({
   const [tone, setTone] = useState('');
   const [sizeDial, setSizeDial] = useState<ModuleSizeDial>('standard');
   const [includePriorModules, setIncludePriorModules] = useState(false);
+  const [autoApproveSpine, setAutoApproveSpine] = useState(false);
   const [autoGenerateKinds, setAutoGenerateKinds] = useState<EntityKind[]>([]);
   const [autoImageKinds, setAutoImageKinds] = useState<EntityKind[]>([]);
   const [autoGenerateBattlemaps, setAutoGenerateBattlemaps] = useState(false);
@@ -102,6 +103,7 @@ export function NewModuleDialog({
         tone: tone.trim(),
         sizeDial,
         includePriorModules,
+        autoApproveSpine,
         autoGenerateKinds,
         autoImageKinds,
         autoGenerateBattlemaps,
@@ -216,6 +218,25 @@ export function NewModuleDialog({
                 {hasPriorText
                   ? 'Give the generator the other modules of this campaign — premises and part texts, drafts included — as settled history to continue.'
                   : 'No previous modules with text in this campaign yet.'}
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-start gap-2">
+            <Checkbox
+              id="module-auto-spine"
+              data-testid="auto-spine"
+              checked={autoApproveSpine}
+              onCheckedChange={(checked) => {
+                setAutoApproveSpine(checked);
+              }}
+            />
+            <div className="flex flex-col gap-0.5">
+              <Label htmlFor="module-auto-spine">Generate parts without review</Label>
+              <p className="text-xs text-muted-foreground">
+                Skip the spine checkpoint: the generated premise and part plan are approved as-is
+                and the parts are written immediately. The plan cannot be reshaped beforehand —
+                parts stay individually editable and rewritable afterwards.
               </p>
             </div>
           </div>
