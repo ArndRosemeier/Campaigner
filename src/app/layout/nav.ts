@@ -1,6 +1,6 @@
-import { ROUTES, deliverablesPath, modulesPath, workspacePath } from '@/app/routes';
+import { ROUTES, deliverablesPath, graphPath, modulesPath, workspacePath } from '@/app/routes';
 
-/** One primary navigation entry in the top bar (05-UI.md §Top bar). */
+/** One navigation entry rendered as a link. */
 export interface NavItem {
   label: string;
   to: string;
@@ -11,25 +11,38 @@ export interface NavItem {
   end: boolean;
 }
 
+/** One campaign-level tab in the campaign bar (below the top bar). */
+export interface CampaignTab {
+  label: string;
+  to: string;
+  end: boolean;
+  /** True when no campaign is open — the tab renders disabled. */
+  disabled: boolean;
+}
+
 /**
- * The primary navigation, in spec order: Workspace / Rules / Settings.
- *
- * The Workspace link targets the open campaign's workspace when one is open
- * (campaign-scoped URL), and falls back to the campaign picker otherwise —
- * there is no "current campaign" outside the picker to link to.
+ * App-level navigation, shown in the top bar on every route: Rules and
+ * Settings. (The app name links home to the campaign picker; campaign-scoped
+ * sections live in `campaignTabs` below.)
  */
-export function navItems(campaignId: string | undefined): readonly NavItem[] {
+export function appNavItems(): readonly NavItem[] {
   return [
-    campaignId === undefined
-      ? { label: 'Workspace', to: ROUTES.campaignPicker, end: true }
-      : { label: 'Workspace', to: workspacePath(campaignId), end: false },
-    ...(campaignId === undefined
-      ? []
-      : [{ label: 'Modules', to: modulesPath(campaignId), end: false }]),
-    ...(campaignId === undefined
-      ? []
-      : [{ label: 'Deliverables', to: deliverablesPath(campaignId), end: false }]),
     { label: 'Rules', to: ROUTES.rules, end: false },
     { label: 'Settings', to: ROUTES.settings, end: false },
+  ];
+}
+
+/**
+ * The campaign-level tabs, rendered by the campaign bar on EVERY route so the
+ * app's structure stays visible: Workspace / Modules / Deliverables / Graph.
+ * Without an open campaign the tabs render disabled (with a hint) instead of
+ * disappearing — a changing nav reads as different apps.
+ */
+export function campaignTabs(campaignId: string | undefined): readonly CampaignTab[] {
+  return [
+    { label: 'Workspace', to: workspacePath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
+    { label: 'Modules', to: modulesPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
+    { label: 'Deliverables', to: deliverablesPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
+    { label: 'Graph', to: graphPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
   ];
 }

@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { Outlet } from 'react-router-dom';
 
 import { TopBar } from '@/app/layout/TopBar';
+import { CampaignBar } from '@/app/layout/CampaignBar';
 import { useThemeSync } from '@/app/theme/theme';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
@@ -20,7 +21,8 @@ import { useHelpStore } from '@/help/helpStore';
 
 /**
  * App frame shown on every route: the top bar (app name, campaign switcher,
- * nav links, theme toggle) above the routed page content (05-UI.md §Top bar).
+ * Rules/Settings nav, theme toggle) above the campaign bar (campaign-level
+ * tabs + breadcrumb), above the routed page content (05-UI.md §Top bar).
  * Hosts the app-wide TooltipProvider and the single Toaster (errors surface
  * through `lib/toast.ts` only). On start, runs left 'running' by a reload are
  * marked failed (04-LLM-PERSONAS "Interrupted by reload").
@@ -90,6 +92,7 @@ export function AppShell(): JSX.Element {
         <OrientationGate />
         <InstallHint />
         <TopBar />
+        <CampaignBar />
         <main className="min-h-0 flex-1">
           <Outlet />
         </main>

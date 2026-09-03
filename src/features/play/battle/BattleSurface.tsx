@@ -22,6 +22,7 @@ import {
 import type { AnyArtifact, Battle, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
 import { nextTokenScale, tokenSizeFittingGrid, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
+import { modulePath } from '@/app/routes';
 import {
   activeInitiativeTokenId,
   nextTurn,
@@ -479,7 +480,9 @@ export function BattleSurface(): JSX.Element {
         toastError('Could not lift the battle', error);
       });
     }
-    navigate(-1);
+    // Deterministic exit: always the module reader, never history-dependent
+    // (deep links to the battle must not strand the user in an arbitrary tab).
+    navigate(modulePath(campaignId, moduleId));
   }
 
   if (battle === undefined) {
@@ -494,7 +497,7 @@ export function BattleSurface(): JSX.Element {
           variant="outline"
           size="sm"
           onClick={() => {
-            navigate(-1);
+            navigate(modulePath(campaignId, moduleId));
           }}
         >
           Back to module
