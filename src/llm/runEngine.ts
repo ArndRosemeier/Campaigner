@@ -43,9 +43,10 @@ import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
-import type { z } from 'zod';
+import { ZodError, type z } from 'zod';
 import { chat, MissingApiKeyError, OpenRouterError, type ChatMessage } from '@/llm/openrouter';
 import { generateImages } from '@/llm/imageGen';
+import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
@@ -374,13 +375,11 @@ function parseEncounterBrief(
   raw: string,
   opts: { dropInlineStats?: boolean } = {},
 ): { brief: EncounterGeneratorBrief; issues: [] } | { brief: null; issues: string[] } {
-  const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-  if (jsonText === '') return { brief: null, issues: ['the reply contained no JSON object'] };
   let json: unknown;
   try {
-    json = JSON.parse(jsonText);
+    json = parseJsonReply(raw);
   } catch (error) {
-    return { brief: null, issues: [`invalid JSON: ${error instanceof Error ? error.message : String(error)}`] };
+    return { brief: null, issues: [parseErrorSummary(error)] };
   }
   if (opts.dropInlineStats === true && json !== null && typeof json === 'object' && Array.isArray((json as { monsters?: unknown }).monsters)) {
     const record = json as { monsters: unknown[] };
@@ -1058,17 +1057,17 @@ export class RunEngine {
     debugLog('run', `draft chat returned ${String(raw.length)} chars`);
     let parsed: unknown = null;
     let parseFailed = false;
+    let issues: string[] = [];
     try {
-      const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-      parsed = contract.schema.parse(JSON.parse(jsonText) as unknown);
+      parsed = contract.schema.parse(parseJsonReply(raw));
     } catch (error) {
+      issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
       debugLog('run', 'draft parse FAILED — retrying with schema-fix instruction', {
-        issue: error instanceof Error ? error.message : String(error),
+        issue: parseErrorSummary(error),
       });
       parseFailed = true;
-      const issues = error instanceof Error ? error.message : String(error);
       if (!this.draftRetried.has(runId)) {
-        // One automatic JSON-fix retry (04 spec).
+        // One automatic JSON-fix retry (04 spec) that names every problem.
         debugLog('run', 'draft retrying once (automatic JSON fix)');
         this.draftRetried.add(runId);
         return this.runDraft(
@@ -1077,14 +1076,14 @@ export class RunEngine {
           steps,
           input,
           signal,
-          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply was invalid JSON for the schema: ${issues}. Reply with corrected JSON only.`,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply was invalid JSON for the schema:\n- ${issues.join('\n- ')}\nReply with corrected JSON only.`,
         );
       }
     }
 
     if (parseFailed) {
-      // needs_review: raw text stored, run pauses per autonomy.
-      const step = this.finishStep(steps[stepIndex], { raw }, 'rejected');
+      // needs_review: raw text + the named issues stored, run pauses per autonomy.
+      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       if (input.autonomy === 'auto') return { step };
       return { step, runStatus: 'needs_review' };
@@ -1156,16 +1155,16 @@ export class RunEngine {
     );
 
     let statBlock: StatBlock | null = null;
+    let issues: string[] = [];
     try {
-      const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-      const parsed = statBlockSchema.parse(JSON.parse(jsonText) as unknown);
+      const parsed = statBlockSchema.parse(parseJsonReply(raw));
       statBlock = parsed;
     } catch (error) {
-      const issues = error instanceof Error ? error.message : String(error);
+      issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
       if (!this.statblockRetried.has(runId)) {
         // 04-LLM-PERSONAS: same one-time schema-repair retry as draft. This
         // was missing, so one malformed stat block discarded a valid NPC.
-        debugLog('run', 'statblock parse FAILED — retrying once', { issue: issues });
+        debugLog('run', 'statblock parse FAILED — retrying once', { issue: parseErrorSummary(error) });
         this.statblockRetried.add(runId);
         return this.runStatblock(
           runId,
@@ -1173,13 +1172,13 @@ export class RunEngine {
           steps,
           input,
           signal,
-          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous statblock reply was invalid JSON for the COMPLETE schema: ${issues}. Reply with corrected JSON only and include every required field.`,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous statblock reply was invalid JSON for the COMPLETE schema:\n- ${issues.join('\n- ')}\nReply with corrected JSON only and include every required field.`,
         );
       }
     }
 
     if (statBlock === null) {
-      const step = this.finishStep(steps[stepIndex], { raw }, 'rejected');
+      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
@@ -1293,18 +1292,26 @@ export class RunEngine {
       },
     );
 
+    let report: ContinuityReport | null = null;
+    let issues: string[] = [];
     try {
-      const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-      const report = continuityReportSchema.parse(JSON.parse(jsonText) as unknown);
-      const step = this.finishStep(steps[stepIndex], { report });
-      if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
-      return { step };
-    } catch {
-      const step = this.finishStep(steps[stepIndex], { raw }, 'rejected');
+      report = continuityReportSchema.parse(parseJsonReply(raw));
+    } catch (error) {
+      // The rejection reason reaches the review card — a bare "rejected"
+      // left the user guessing what shape the model actually returned.
+      issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
+      debugLog('run', 'continuity report parse FAILED', { issue: parseErrorSummary(error) });
+    }
+
+    if (report === null) {
+      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
     }
+    const step = this.finishStep(steps[stepIndex], { report });
+    if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
+    return { step };
   }
 
   /**
@@ -1958,10 +1965,10 @@ export class RunEngine {
 
     let parsed: unknown;
     try {
-      const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-      parsed = imagePromptDraftSchema.parse(JSON.parse(jsonText) as unknown);
+      parsed = imagePromptDraftSchema.parse(parseJsonReply(raw));
     } catch (error) {
-      const issues = error instanceof Error ? error.message : String(error);
+      // The catch returns on every path, so the issues live here.
+      const issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
       if (!this.draftRetried.has(runId)) {
         // One automatic JSON-fix retry (same policy as artifact drafts).
         this.draftRetried.add(runId);
@@ -1971,10 +1978,11 @@ export class RunEngine {
           steps,
           input,
           signal,
-          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply was invalid JSON for the schema: ${issues}. Reply with corrected JSON only.`,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply was invalid JSON for the schema:\n- ${issues.join('\n- ')}\nReply with corrected JSON only.`,
         );
       }
-      const step = this.finishStep(steps[stepIndex], { raw }, 'rejected');
+      debugLog('run', 'prompt-draft parse FAILED after retry', { issue: parseErrorSummary(error) });
+      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };

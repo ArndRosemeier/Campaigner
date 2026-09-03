@@ -45,18 +45,23 @@ export const partPlanSchema = z.object({
   title: z.string().min(1),
   /** e.g. '1', '2–3' — the level band this part covers. */
   levelBand: z.string().min(1),
-  synopsis: z.string(),
+  synopsis: z.string().default(''),
   /** What ends this part / triggers the level-up. */
-  levelUpTrigger: z.string(),
+  levelUpTrigger: z.string().default(''),
 });
 
 export type PartPlan = z.infer<typeof partPlanSchema>;
 
-/** Pass-0 output: premise + themes + the approved part plan. */
+/**
+ * Pass-0 output: premise + themes + the approved part plan. All of it lands
+ * on the ALWAYS-on spine checkpoint for user review before pass 1 runs, so a
+ * model-omitted optional field defaults to empty (visible, editable) instead
+ * of discarding an otherwise good spine.
+ */
 export const moduleSpineSchema = z.object({
   /** Markdown, a few paragraphs; rendered as the intro section. */
   premise: z.string(),
-  themes: z.array(z.string()),
+  themes: z.array(z.string()).default([]),
   partPlan: z.array(partPlanSchema).min(1).max(20),
 });
 

@@ -9,6 +9,7 @@ import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
 import { chat, type ChatMessage } from '@/llm/openrouter';
+import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { imagePromptDraftSchema, type ImagePromptDraft } from '@/llm/schemas';
 import { intakeImage } from '@/lib/imageIntake';
 import { debugLog } from '@/lib/debug';
@@ -292,10 +293,9 @@ async function draftPrompt(
       },
     );
     try {
-      const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-      return imagePromptDraftSchema.parse(JSON.parse(jsonText) as unknown);
+      return imagePromptDraftSchema.parse(parseJsonReply(raw));
     } catch (error) {
-      lastError = error;
+      lastError = new Error(parseErrorSummary(error));
     }
   }
   throw lastError;

@@ -399,6 +399,16 @@ async function readStream(
         // a message already threw above, so errorText is undefined here.)
         throw new OpenRouterError(response.status, 'stream terminated with finish_reason "error"');
       }
+      if (finishReason === 'length') {
+        // The model hit its output token limit: the reply is cut off
+        // mid-answer. Returning it would look like a completed reply that
+        // merely fails JSON parsing downstream — the real cause (truncation)
+        // would never reach the user. Fail loudly instead (AGENTS rule 1).
+        throw new OpenRouterError(
+          response.status,
+          'the model hit its output token limit — the reply was truncated mid-answer (finish_reason "length"). Retry, shorten the task, or pick a model with a larger output budget.',
+        );
+      }
       return 'done';
     }
     return 'continue';

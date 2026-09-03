@@ -234,6 +234,24 @@ describe('documented error and framing shapes', () => {
       chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0.5 }, [0, 0], 5000),
     ).rejects.toThrow(/finish_reason "error"/);
   });
+
+  it('fails loudly on a token-truncated reply (finish_reason "length")', async () => {
+    // Truncation used to return the cut-off half-reply as if complete — it
+    // then died downstream as a bare JSON parse error and the real cause
+    // (the model hitting its output limit) never reached the user.
+    vi.stubGlobal(
+      'fetch',
+      fetchStub(
+        sseResponse([
+          'data: {"choices":[{"delta":{"content":"{\\"ac\\": 14"}}]}\n\n',
+          'data: {"choices":[{"delta":{},"finish_reason":"length"}]}\n\n',
+        ]),
+      ),
+    );
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0.5 }, [0, 0], 5000),
+    ).rejects.toThrow(/output token limit[\s\S]*finish_reason "length"/);
+  });
 });
 
 describe('framing', () => {

@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { EncounterLayout } from '@/domain';
 import { chat, type ChatMessage } from '@/llm/openrouter';
+import { parseJsonReply } from '@/llm/jsonReply';
 
 export const structureCellSchema = z.enum(['floor', 'wall', 'void']);
 export type StructureCell = z.infer<typeof structureCellSchema>;
@@ -190,7 +191,7 @@ function parseGrid(
   expected: StructureGrid,
 ): { success: true; data: StructureGrid } | { success: false; error: string } {
   try {
-    const data = structureGridSchema.parse(JSON.parse(raw) as unknown);
+    const data = structureGridSchema.parse(parseJsonReply(raw));
     if (data.cols !== expected.cols || data.rows !== expected.rows) {
       return { success: false, error: 'grid dimensions do not match' };
     }
@@ -262,12 +263,14 @@ export async function locateMissingMarkerWithVision(input: {
   });
 
   try {
-    const parsed = visionMarkerLocationSchema.parse(JSON.parse(raw) as unknown);
+    const parsed = visionMarkerLocationSchema.parse(parseJsonReply(raw));
     if (parsed.found && parsed.x !== undefined && parsed.y !== undefined) {
       return { found: true, x: parsed.x, y: parsed.y };
     }
   } catch {
-    // If parse fails, return found: false
+    // Best-effort enrichment only: the marker was already reported missing by
+    // the deterministic detector, and "not found" is a legitimate verdict —
+    // no phantom coordinates are invented from a failed parse (AGENTS rule 1).
   }
   return { found: false, x: 0.5, y: 0.5 };
 }

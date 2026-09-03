@@ -6,6 +6,7 @@ import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
+import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { searchRules } from '@/search';
 import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
 // The engine triggers the module's own post-generation automation (the
@@ -223,7 +224,7 @@ export async function runSpine(
           ...messages,
           {
             role: 'user',
-            content: `Your previous reply was invalid JSON: ${error instanceof Error ? error.message : String(error)}. Reply with corrected JSON only.`,
+            content: `Your previous reply was invalid JSON for the schema: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
           },
         ],
         {
@@ -276,9 +277,9 @@ export async function runSpine(
   }
 }
 
-/** Parses + validates the spine from model output (sliced to the JSON body). */
+/** Parses + validates the spine from model output (shared JSON-reply boundary). */
 export function parseSpine(raw: string): ModuleSpine {
-  return moduleSpineSchema.parse(JSON.parse(jsonBody(raw)) as unknown);
+  return moduleSpineSchema.parse(parseJsonReply(raw));
 }
 
 /** The pass-0 entity record schema ({ entities: [{ name, kind }] }). */
@@ -291,14 +292,7 @@ const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSche
  * spine fails loudly; never a silent default).
  */
 export function parseSpineEntities(raw: string): ModuleEntityKind[] {
-  return entityKindsReplySchema.parse(JSON.parse(jsonBody(raw)) as unknown).entities;
-}
-
-/** Slices the outermost JSON object out of a raw model reply. */
-function jsonBody(raw: string): string {
-  const jsonText = raw.slice(raw.indexOf('{'), raw.lastIndexOf('}') + 1);
-  if (jsonText === '') throw new Error('the reply contained no JSON object');
-  return jsonText;
+  return entityKindsReplySchema.parse(parseJsonReply(raw)).entities;
 }
 
 // --- Prior-module continuity (opt-in) -----------------------------------------
@@ -844,7 +838,7 @@ async function normalizationCall(
     responseFormat: 'json' as const,
   };
   const run = (raw: string): NormalizationEntry[] => {
-    const parsed = normalizationReplySchema.parse(JSON.parse(jsonBody(raw)) as unknown).entities;
+    const parsed = normalizationReplySchema.parse(parseJsonReply(raw)).entities;
     const violations = validateNormalizationReply(names, parsed, artifactNames);
     if (violations.length > 0) {
       throw new Error(`the normalization reply violated its contract: ${violations.join('; ')}`);
@@ -860,7 +854,7 @@ async function normalizationCall(
         ...messages,
         {
           role: 'user',
-          content: `Your previous reply was invalid: ${error instanceof Error ? error.message : String(error)}. Reply with corrected JSON only.`,
+          content: `Your previous reply was invalid: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
         },
       ],
       base,

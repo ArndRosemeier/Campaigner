@@ -21,6 +21,25 @@ const draftBase = {
   body: z.string(),
 };
 
+/** z.boolean() that tolerates the quoted "true"/"false" models sometimes send. */
+function booleanish() {
+  return z.preprocess((value) => {
+    if (value === 'true') return true;
+    if (value === 'false') return false;
+    return value;
+  }, z.boolean());
+}
+
+/** z.enum() that tolerates the model's capitalization ("Dungeon" → 'dungeon').
+ * The `const` type parameter keeps the call-site literals, so the inferred
+ * output stays the narrow member union, not `string`. */
+function enumCaseInsensitive<const T extends readonly [string, ...string[]]>(values: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' ? value.trim().toLowerCase() : value),
+    z.enum(values),
+  );
+}
+
 /**
  * Models frequently return list items in a looser shape than the contract
  * (a bare string instead of {name, description}, "4" instead of 4, an object
@@ -70,7 +89,7 @@ export const npcDraftSchema = z.object({
   personality: z.string(),
   /** The draft decides — false skips the statblock step entirely
    * (contacts/merchants/innkeepers don't need one; wasted effort). */
-  needsStatBlock: z.boolean(),
+  needsStatBlock: booleanish(),
 });
 
 export type NpcDraft = z.infer<typeof npcDraftSchema>;
@@ -85,7 +104,7 @@ export const pcDraftSchema = z.object({
   concept: z.string(),
   notes: z.string(),
   /** Same rule as NPCs: false skips the statblock step entirely. */
-  needsStatBlock: z.boolean(),
+  needsStatBlock: booleanish(),
 });
 
 export type PcDraft = z.infer<typeof pcDraftSchema>;
@@ -179,7 +198,7 @@ export const encounterGeneratorBriefSchema = z
     theme: z.string().min(1),
     styleNotes: z.string().default(''),
     negative: z.string().default(''),
-    environment: z.enum(['dungeon', 'outdoor']).default('dungeon'),
+    environment: enumCaseInsensitive(['dungeon', 'outdoor']).default('dungeon'),
     monsters: z.array(
       z.object({
         name: z.string().min(1),
@@ -193,7 +212,7 @@ export const encounterGeneratorBriefSchema = z
       z.object({
         name: z.string().min(1),
         description: z.string().default(''),
-        size: z.enum(['small', 'medium', 'large']).default('medium'),
+        size: enumCaseInsensitive(['small', 'medium', 'large']).default('medium'),
         monsterIndexes: z.array(rosterIndex),
         adjacentRoomIndexes: z.array(rosterIndex).default([]),
       }),
@@ -233,16 +252,19 @@ export type PlotArcDraft = z.infer<typeof plotArcDraftSchema>;
 
 /** Continuity Editor report (06-MILESTONES M2): issues found in a target. */
 export const continuityReportSchema = z.object({
-  verdict: z.enum(['consistent', 'issues_found']),
+  verdict: enumCaseInsensitive(['consistent', 'issues_found']),
   summary: z.string(),
-  issues: z.array(
-    z.object({
-      severity: z.enum(['minor', 'major']),
-      message: z.string(),
-      /** Name of the artifact this conflicts with, '' when none. */
-      relatedTo: z.string(),
-    }),
-  ),
+  /** A "no issues" verdict may omit the list entirely — same meaning. */
+  issues: z
+    .array(
+      z.object({
+        severity: enumCaseInsensitive(['minor', 'major']),
+        message: z.string(),
+        /** Name of the artifact this conflicts with, '' when none. */
+        relatedTo: z.string().default(''),
+      }),
+    )
+    .default([]),
 });
 
 export type ContinuityReport = z.infer<typeof continuityReportSchema>;
