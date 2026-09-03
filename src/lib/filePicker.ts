@@ -6,6 +6,15 @@ import { downloadBlob } from '@/lib/exportImport';
  * dialog at a user-chosen location; everyone else falls back to a plain
  * download (save) or a hidden file input (open). User cancellation is
  * reported, never swallowed and never escalated to a fallback.
+ *
+ * Saving is TWO-PHASE (`openSaveTarget` → `write`): `showSaveFilePicker`
+ * requires transient user activation, which expires after a few seconds —
+ * and building the data to save (a whole-database backup, a PDF) easily
+ * outlives it. The destination must therefore be acquired inside the click
+ * handler, BEFORE any slow build; the finished blob is written afterwards.
+ * A save flow that awaits work first fails with "Must be handling a user
+ * gesture to show a file picker" — that ordering is the bug this API shape
+ * prevents.
  */
 
 /** Minimal structural types — lib.dom may lack the FS Access declarations. */
@@ -43,28 +52,55 @@ export function supportsFilePickers(): boolean {
   return pickers().save !== undefined && pickers().open !== undefined;
 }
 
-const BACKUP_TYPES: PickerType[] = [
+export const BACKUP_TYPES: PickerType[] = [
   { description: 'Campaigner backup', accept: { 'application/zip': ['.zip'] } },
 ];
 
+/** A save destination acquired up front, written to once the data exists. */
+export interface SaveTarget {
+  /** True when the user backed out of the native dialog — nothing to write. */
+  cancelled: boolean;
+  /** Writes the finished blob to the chosen location (or downloads it). */
+  write: (blob: Blob) => Promise<void>;
+}
+
 /**
- * Saves a blob: native picker when available, otherwise a download. Returns
- * 'cancelled' when the user backed out of the native dialog.
+ * Opens the save destination (native picker, or the download fallback) while
+ * the user's click activation is still fresh. Write to `target.write` after
+ * the slow build; nothing is written when the user cancelled the dialog.
  */
-export async function saveBlobToDisk(blob: Blob, suggestedName: string): Promise<'saved' | 'cancelled'> {
+export async function openSaveTarget(options: {
+  suggestedName: string;
+  types?: PickerType[];
+}): Promise<SaveTarget> {
   const save = pickers().save;
   if (save === undefined) {
-    downloadBlob(blob, suggestedName);
-    return 'saved';
+    // No native picker: "write" is the plain download, once the blob exists.
+    return {
+      cancelled: false,
+      write: (blob) => {
+        downloadBlob(blob, options.suggestedName);
+        return Promise.resolve();
+      },
+    };
   }
   try {
-    const handle = await save({ suggestedName, types: BACKUP_TYPES });
-    const writable = await handle.createWritable();
-    await writable.write(blob);
-    await writable.close();
-    return 'saved';
+    const handle = await save({
+      suggestedName: options.suggestedName,
+      ...(options.types !== undefined ? { types: options.types } : {}),
+    });
+    return {
+      cancelled: false,
+      write: async (blob) => {
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      },
+    };
   } catch (error) {
-    if (error instanceof DOMException && error.name === 'AbortError') return 'cancelled';
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      return { cancelled: true, write: () => Promise.resolve() };
+    }
     throw error;
   }
 }

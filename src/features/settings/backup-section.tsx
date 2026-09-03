@@ -3,7 +3,7 @@ import type { JSX } from 'react';
 import { DownloadIcon, FolderOpenIcon, SaveIcon } from 'lucide-react';
 
 import { buildBackup, backupFileName, importBackup } from '@/lib/backup';
-import { pickBackupFile, saveBlobToDisk, supportsFilePickers } from '@/lib/filePicker';
+import { BACKUP_TYPES, openSaveTarget, pickBackupFile, supportsFilePickers } from '@/lib/filePicker';
 import { storagePersistedStatus } from '@/lib/deviceCapabilities';
 import { useProgressStore } from '@/lib/progress';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -76,16 +76,30 @@ export function BackupSection(): JSX.Element {
 
   async function handleSave(): Promise<void> {
     setSaving(true);
+    // Gesture-first: the native save picker needs transient user activation,
+    // and building a full backup (every table + image binaries) easily
+    // outlives it — so the destination is acquired inside the click handler
+    // and the finished zip is written to it afterwards. A save flow that
+    // built first failed with "Must be handling a user gesture to show a
+    // file picker".
+    let target;
+    try {
+      target = await openSaveTarget({ suggestedName: backupFileName(Date.now()), types: BACKUP_TYPES });
+    } catch (error) {
+      setSaving(false);
+      toastError('Could not save the backup', error);
+      return;
+    }
+    if (target.cancelled) {
+      // The user backed out of the native dialog — nothing to build, no toast.
+      setSaving(false);
+      return;
+    }
     progressStart('app-backup', 'Building backup…');
     try {
-      const { bytes, manifest } = await buildBackup();
-      const outcome = await saveBlobToDisk(
-        new Blob([bytes as BlobPart], { type: 'application/zip' }),
-        backupFileName(manifest.exportedAt),
-      );
-      if (outcome === 'saved') {
-        toastSuccess('Backup saved');
-      }
+      const { bytes } = await buildBackup();
+      await target.write(new Blob([bytes as BlobPart], { type: 'application/zip' }));
+      toastSuccess('Backup saved');
     } catch (error) {
       toastError('Could not save the backup', error);
     } finally {

@@ -7,8 +7,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { db } from '@/db/db';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
-import { unzipSync } from 'fflate';
-import { buildBackup } from '@/lib/backup';
+import { unzipSync, zipSync, strToU8 } from 'fflate';
+import * as backupModule from '@/lib/backup';
+import * as exportImport from '@/lib/exportImport';
 import * as filePicker from '@/lib/filePicker';
 import { createCampaign } from '@/db/campaignRepo';
 import Dexie from 'dexie';
@@ -133,14 +134,14 @@ describe('SettingsPage', () => {
     ) as unknown as Location;
     locationStub.reload = reloadMock;
     vi.stubGlobal('location', locationStub);
-    const saveSpy = vi.spyOn(filePicker, 'saveBlobToDisk').mockResolvedValue('saved');
-    // jsdom has no FS Access API — the fallback path must be used.
+    // jsdom has no FS Access API — the destination is the plain download sink.
+    const downloadSpy = vi.spyOn(exportImport, 'downloadBlob').mockImplementation(() => undefined);
     expect(filePicker.supportsFilePickers()).toBe(false);
 
     // A campaign to back up…
     const campaign = await createCampaign({ name: 'Backed Up', system: 'dnd5e' });
     await updateSettings({ openRouterApiKey: 'sk-must-not-travel' });
-    const { bytes, manifest } = await buildBackup();
+    const { bytes, manifest } = await backupModule.buildBackup();
     expect(manifest.tableCounts.campaigns).toBe(1);
     expect(manifest.tableCounts.settings).toBe(1);
     // The API key never enters the backup file.
@@ -154,10 +155,10 @@ describe('SettingsPage', () => {
     // SAVE: the zip reaches the fallback (download) with the right name.
     await user.click(await screen.findByTestId('backup-save'));
     await waitFor(() => {
-      expect(saveSpy).toHaveBeenCalledTimes(1);
+      expect(downloadSpy).toHaveBeenCalledTimes(1);
     });
     await flushAsyncUpdates();
-    const [blob, filename] = saveSpy.mock.calls[0] ?? [];
+    const [blob, filename] = downloadSpy.mock.calls[0] ?? [];
     expect(filename).toBe(`campaigner-backup-${new Date(manifest.exportedAt).toISOString().slice(0, 10)}.zip`);
     // The written blob is a valid backup containing the campaign.
     const savedManifest = JSON.parse(
@@ -188,5 +189,86 @@ describe('SettingsPage', () => {
     expect(reloadMock).toHaveBeenCalled();
     // Drain the restore flow's trailing setRestoring/setPendingFile updates.
     await flushAsyncUpdates();
+  }, 30000);
+
+  it('opens the native save destination before the backup builds (user-gesture window)', async () => {
+    const user = userEvent.setup();
+    // Regression: "Save everything" used to await buildBackup() first, and the
+    // native picker then failed with "Must be handling a user gesture to show
+    // a file picker" — the click's transient activation had expired during the
+    // build. The destination must be acquired first, the data written after.
+    interface HandleLike {
+      getFile: () => Promise<File>;
+      createWritable: () => Promise<{ write: (data: BlobPart) => Promise<void>; close: () => Promise<void> }>;
+    }
+    const calls: string[] = [];
+    const written: Blob[] = [];
+    const handle: HandleLike = {
+      getFile: () => Promise.resolve(new File([''], 'unused')),
+      createWritable: () =>
+        Promise.resolve({
+          write: (data) => {
+            written.push(data as Blob);
+            return Promise.resolve();
+          },
+          close: () => Promise.resolve(),
+        }),
+    };
+    let resolvePicker!: (handle: HandleLike) => void;
+    const savePicker = vi.fn((): Promise<HandleLike> => {
+      calls.push('picker');
+      return new Promise<HandleLike>((resolve) => {
+        resolvePicker = resolve;
+      });
+    });
+    // stubGlobal sets window.showSaveFilePicker in jsdom; afterEach unstubs.
+    vi.stubGlobal('showSaveFilePicker', savePicker);
+
+    let resolveBuild!: (value: { bytes: Uint8Array; manifest: backupModule.BackupManifest }) => void;
+    const buildPromise = new Promise<{ bytes: Uint8Array; manifest: backupModule.BackupManifest }>(
+      (resolve) => {
+        resolveBuild = resolve;
+      },
+    );
+    const buildSpy = vi
+      .spyOn(backupModule, 'buildBackup')
+      .mockImplementation(() => {
+        calls.push('build');
+        return buildPromise;
+      });
+
+    render(<SettingsPage />);
+    await user.click(await screen.findByTestId('backup-save'));
+
+    // The picker is open while the build has not even started.
+    expect(calls).toEqual(['picker']);
+    resolvePicker(handle);
+    await waitFor(() => {
+      expect(calls).toEqual(['picker', 'build']);
+    });
+    resolveBuild({
+      bytes: zipSync({ 'campaigner-backup.json': strToU8(JSON.stringify({ format: 'campaigner-backup' })) }),
+      manifest: {
+        format: 'campaigner-backup',
+        version: 1,
+        exportedAt: Date.now(),
+        dbVersion: db.verno,
+        tableCounts: {},
+      },
+    });
+
+    await waitFor(() => {
+      expect(written).toHaveLength(1);
+    });
+    const savedBlob = written[0];
+    if (savedBlob === undefined) throw new Error('nothing was written to the save target');
+    const savedManifest = JSON.parse(
+      new TextDecoder().decode(
+        unzipSync(new Uint8Array(await savedBlob.arrayBuffer()))['campaigner-backup.json'] ??
+          new TextEncoder().encode('{}'),
+      ),
+    ) as { format?: string };
+    expect(savedManifest.format).toBe('campaigner-backup');
+    expect(buildSpy).toHaveBeenCalledTimes(1);
   }, 30000);
 });
