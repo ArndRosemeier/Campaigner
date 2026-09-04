@@ -155,14 +155,14 @@ export async function generateImages(
   if (!response.ok) {
     // Re-read the body of a non-JSON/failed retry — fetchWithRetries already
     // threw for the first attempt, so this is the retried request's error.
-    throw new OpenRouterError(response.status, await response.text());
+    throw new OpenRouterError('http', response.status, await response.text());
   }
 
   let json: ImageApiResponse;
   try {
     json = (await response.json()) as ImageApiResponse;
   } catch {
-    throw new OpenRouterError(response.status, 'image API returned no JSON body');
+    throw new OpenRouterError('http', response.status, 'image API returned no JSON body');
   }
 
   const images = (json.data ?? []).flatMap((entry) => {
@@ -172,7 +172,7 @@ export async function generateImages(
     return [new Blob([decodeBase64(b64)], { type: entry.media_type ?? 'image/webp' })];
   });
   if (images.length === 0) {
-    throw new OpenRouterError(response.status, 'image API returned no images');
+    throw new OpenRouterError('no-images', response.status, 'image API returned no images');
   }
 
   const cost = json.usage?.cost;

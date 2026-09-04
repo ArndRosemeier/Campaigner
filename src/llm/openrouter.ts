@@ -3,7 +3,13 @@ import { z } from 'zod';
 import { getSettings } from '@/db/settingsRepo';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
+import { MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
 import type { ReasoningEffort } from '@/domain/settings';
+
+// Error types live in the leaf module /src/llm/openrouterErrors.ts (shared
+// with the model-fallback helpers); re-exported for API compatibility.
+export { MissingApiKeyError, OpenRouterError };
+export type { OpenRouterErrorKind } from '@/llm/openrouterErrors';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): always-streaming chat completions
@@ -11,28 +17,6 @@ import type { ReasoningEffort } from '@/domain/settings';
  */
 
 const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
-
-export class OpenRouterError extends Error {
-  readonly status: number;
-  readonly bodyText: string;
-
-  constructor(status: number, bodyText: string) {
-    // Surface the reason in the message — this string is what failed runs
-    // display, so "OpenRouter request failed (200)" alone is useless.
-    const snippet = bodyText.length > 200 ? bodyText.slice(0, 200) + '…' : bodyText;
-    super(`OpenRouter request failed (${String(status)})${snippet === '' ? '' : `: ${snippet}`}`);
-    this.name = 'OpenRouterError';
-    this.status = status;
-    this.bodyText = bodyText;
-  }
-}
-
-export class MissingApiKeyError extends Error {
-  constructor() {
-    super('No OpenRouter API key configured');
-    this.name = 'MissingApiKeyError';
-  }
-}
 
 export type ChatContentPart =
   | { type: 'text'; text: string }
@@ -176,7 +160,7 @@ export async function fetchWithRetries(
     const retryable = response.status === 429 || response.status >= 500;
     const backoff = backoffs[attempt];
     if (!retryable || backoff === undefined) {
-      throw new OpenRouterError(response.status, await response.text());
+      throw new OpenRouterError('http', response.status, await response.text());
     }
     await sleep(backoff, init.signal);
   }
@@ -302,7 +286,8 @@ async function readStream(
   onActivity: ((activity: ChatStreamActivity) => void) | undefined,
   onReasoning: ((delta: string) => void) | undefined,
 ): Promise<string> {
-  if (response.body === null) throw new OpenRouterError(response.status, 'empty response body');
+  if (response.body === null)
+    throw new OpenRouterError('http', response.status, 'empty response body');
   const reader = response.body.getReader();
   const decoder = new TextDecoder();
   const parser = new SseEventParser();
@@ -346,6 +331,7 @@ async function readStream(
     if (payload === '[DONE]') return 'done';
     let delta: string | undefined;
     let errorText: string | undefined;
+    let errorCode: number | string | undefined;
     let finishReason: string | null | undefined;
     try {
       const parsed = JSON.parse(payload) as {
@@ -357,7 +343,7 @@ async function readStream(
           };
           finish_reason?: string | null;
         }[];
-        error?: { message?: string } | string;
+        error?: { code?: number | string; message?: string } | string;
       };
       delta = parsed.choices?.[0]?.delta?.content;
       // Reasoning deltas are progress (the model is working) even though they
@@ -375,16 +361,18 @@ async function readStream(
       }
       finishReason = parsed.choices?.[0]?.finish_reason;
       if (parsed.error !== undefined) {
-        errorText =
-          typeof parsed.error === 'string'
-            ? parsed.error
-            : (parsed.error.message ?? 'unknown stream error');
+        if (typeof parsed.error === 'string') {
+          errorText = parsed.error;
+        } else {
+          errorText = parsed.error.message ?? 'unknown stream error';
+          errorCode = parsed.error.code;
+        }
       }
     } catch {
       return 'continue'; // ignore malformed payloads (comments never reach here)
     }
     if (errorText !== undefined) {
-      throw new OpenRouterError(response.status, `stream error: ${errorText}`);
+      throw new OpenRouterError('stream-error', response.status, `stream error: ${errorText}`, errorCode);
     }
     if (delta !== undefined && delta !== '') {
       full += delta;
@@ -397,7 +385,11 @@ async function readStream(
         // finish_reason: "error" — even without an error field, that is a
         // failure, not a completed (truncated) answer. (An error field with
         // a message already threw above, so errorText is undefined here.)
-        throw new OpenRouterError(response.status, 'stream terminated with finish_reason "error"');
+        throw new OpenRouterError(
+          'stream-error',
+          response.status,
+          'stream terminated with finish_reason "error"',
+        );
       }
       if (finishReason === 'length') {
         // The model hit its output token limit: the reply is cut off
@@ -405,6 +397,7 @@ async function readStream(
         // merely fails JSON parsing downstream — the real cause (truncation)
         // would never reach the user. Fail loudly instead (AGENTS rule 1).
         throw new OpenRouterError(
+          'length',
           response.status,
           'the model hit its output token limit — the reply was truncated mid-answer (finish_reason "length"). Retry, shorten the task, or pick a model with a larger output budget.',
         );
@@ -451,12 +444,14 @@ async function readStream(
   const now = Date.now();
   if (now - startedAt > maxDurationMs) {
     throw new OpenRouterError(
+      'max-duration',
       response.status,
       `stream exceeded ${String(Math.round(maxDurationMs / 1000))}s total — aborted; retry the run`,
     );
   }
   if (now - lastContentAt > contentStallMs) {
     throw new OpenRouterError(
+      'content-stall',
       response.status,
       `stream delivered no content for ${String(Math.round(contentStallMs / 1000))}s ` +
         '(keep-alives only) — the provider accepted the request but never answered; retry the run',
@@ -464,6 +459,7 @@ async function readStream(
   }
   if (now - lastActivity > stallTimeoutMs) {
     throw new OpenRouterError(
+      'stall',
       response.status,
       `stream stalled after ${String(Math.round(stallTimeoutMs / 1000))}s of silence`,
     );
@@ -513,7 +509,7 @@ export async function listModels(): Promise<OpenRouterModel[]> {
   const response = await fetch(`${OPENROUTER_BASE}/models`, {
     headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
   });
-  if (!response.ok) throw new OpenRouterError(response.status, await response.text());
+  if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
   const json = (await response.json()) as { data?: OpenRouterModel[] };
   const models = json.data ?? [];
   cachedModels = models;
@@ -531,7 +527,7 @@ export async function listImageModels(): Promise<string[]> {
   const response = await fetch(`${OPENROUTER_BASE}/models?output_modalities=image`, {
     headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
   });
-  if (!response.ok) throw new OpenRouterError(response.status, await response.text());
+  if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
   const json = (await response.json()) as {
     data?: ({ id?: string; output_modalities?: string[] } | null | undefined)[];
   };
@@ -572,7 +568,7 @@ export async function listVisionChatModels(): Promise<string[]> {
   const response = await fetch(`${OPENROUTER_BASE}/models?input_modalities=image`, {
     headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
   });
-  if (!response.ok) throw new OpenRouterError(response.status, await response.text());
+  if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
   const json = visionModelResponseSchema.parse(await response.json());
   return json.data
     .filter(
