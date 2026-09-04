@@ -1,6 +1,6 @@
 import type { AnyArtifact, Module, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
-import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
+import { extractWikiLinks, resolveWikiLink, type WikiLinkContext } from '@/lib/wikilinks';
 
 /**
  * "Seed from module" (08-MODULE-DESIGNER M4-D): maps a Module onto a
@@ -8,10 +8,16 @@ import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
  * with a text node of the part markdown, plus artifact nodes for every
  * resolved entity of that part (deduped across the whole module; first
  * occurrence wins).
+ *
+ * `context` carries the module id so resolution tiers the module's own
+ * entities first — the same pool semantics the reader renders with. The
+ * M6-D rule is unchanged below: a RESOLVED library row still never becomes
+ * an outline node implicitly.
  */
 export function seedOutlineFromModule(
   module: Module,
   artifacts: readonly AnyArtifact[],
+  context?: WikiLinkContext,
 ): OutlineNode[] {
   const outline: OutlineNode[] = [];
   if (module.spine !== null && module.spine.premise.trim() !== '') {
@@ -24,7 +30,7 @@ export function seedOutlineFromModule(
     const planTitle = module.spine?.partPlan[part.planIndex]?.title ?? `Part ${part.planIndex + 1}`;
     const children: OutlineNode[] = [{ type: 'text', markdown: part.markdown }];
     for (const link of extractWikiLinks(part.markdown)) {
-      const resolution = resolveWikiLink(link.name, artifacts);
+      const resolution = resolveWikiLink(link.name, artifacts, context);
       const artifact = resolution.artifact;
       // Library rows are never pulled into a deliverable implicitly; users
       // may add them explicitly through the artifact picker (M6-D).

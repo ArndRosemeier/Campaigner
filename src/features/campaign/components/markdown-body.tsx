@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import type { AnyArtifact } from '@/domain';
+import type { AnyArtifact, Id } from '@/domain';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
@@ -10,6 +10,8 @@ export interface MarkdownBodyProps {
   onChange: (value: string) => void;
   /** Campaign artifacts for wiki-link resolution (M4-A). */
   artifacts?: readonly AnyArtifact[] | undefined;
+  /** Owning module id for tier-0 resolution — see WikiMarkdownProps. */
+  moduleId?: Id | undefined;
   /** Resolved wiki-chip click (e.g. open the peek modal). */
   onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
   /** Forwarded to the textarea (module parts save on blur — 08 §M4-A). */

@@ -20,6 +20,10 @@ export interface WikiMarkdownProps {
   value: string;
   /** Campaign artifacts to resolve link names against. */
   artifacts: readonly AnyArtifact[];
+  /** The owning module, when the text belongs to one (08-MODULE-DESIGNER):
+   * the module's own entities win tier-0 over same-named campaign/global
+   * rows. Omit → plain pool resolution. */
+  moduleId?: Id | undefined;
   /** Resolved-chip click (peek modal, focus jump…). Omit → inert chip. */
   onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
   /**
@@ -43,15 +47,16 @@ const KIND_CHIP_CLASSES: Readonly<Record<ArtifactKind, string>> = {
 export function WikiMarkdown({
   value,
   artifacts,
+  moduleId,
   onOpenArtifact,
   onStub,
   className,
 }: WikiMarkdownProps): JSX.Element {
   const components = useMemo(
     () => ({
-      a: wikiAnchorComponent({ artifacts, onOpenArtifact, onStub }),
+      a: wikiAnchorComponent({ artifacts, moduleId, onOpenArtifact, onStub }),
     }),
-    [artifacts, onOpenArtifact, onStub],
+    [artifacts, moduleId, onOpenArtifact, onStub],
   );
 
   return (
@@ -75,6 +80,7 @@ function wikiUrlTransform(url: string): string {
 
 function wikiAnchorComponent(context: {
   artifacts: readonly AnyArtifact[];
+  moduleId?: Id | undefined;
   onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
   onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
 }): (props: { href?: string | undefined; children?: ReactNode }) => JSX.Element {  return function WikiAnchor({ href, children }) {
@@ -101,12 +107,13 @@ function WikiChip({
   display: string;
   context: {
     artifacts: readonly AnyArtifact[];
+    moduleId?: Id | undefined;
     onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
     onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
   };
 }): JSX.Element {
-  const { artifacts, onOpenArtifact, onStub } = context;
-  const resolution = resolveWikiLink(name, artifacts);
+  const { artifacts, moduleId, onOpenArtifact, onStub } = context;
+  const resolution = resolveWikiLink(name, artifacts, moduleId === undefined ? undefined : { moduleId });
 
   if (resolution.status === 'unresolved' || resolution.artifact === undefined) {
     return (

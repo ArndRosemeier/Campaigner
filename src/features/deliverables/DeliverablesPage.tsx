@@ -84,9 +84,11 @@ export function DeliverablesPage(): JSX.Element {
   );
   const ownedArtifacts = useArtifacts(campaignId);
   const globalArtifacts = useGlobalArtifacts();
-  // Globals are available only to the explicit "+ Artifact" picker. Module
-  // seeding below receives owned rows only, so it never pulls library content
-  // into a deliverable implicitly (10-MILESTONE-6 D).
+  // Globals are available to the explicit "+ Artifact" picker and to module
+  // seeding's RESOLUTION (a module quoting a global entity must resolve the
+  // same way the reader renders it). Library rows still never become outline
+  // nodes implicitly — seedOutlineFromModule keeps the M6-D skip rule
+  // (10-MILESTONE-6 D).
   const artifacts = [...(ownedArtifacts ?? []), ...(globalArtifacts ?? [])];
   const images = useLiveQuery(
     () => db.images.where('campaignId').equals(campaignId).toArray(),
@@ -145,7 +147,7 @@ export function DeliverablesPage(): JSX.Element {
    * nodes, deduped first-occurrence-wins). Replaces the outline. */
   function seedFromModule(module: Module): void {
     if (selected === undefined) return;
-    const outline = seedOutlineFromModule(module, ownedArtifacts ?? []);
+    const outline = seedOutlineFromModule(module, artifacts, { moduleId: module.id });
     void updateDeliverable(selected.id, { outline });
     setSeedDialogOpen(false);
     toast.success(`Outline seeded from “${module.title}”`);

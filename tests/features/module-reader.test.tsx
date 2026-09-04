@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { battlePath, modulePath } from '@/app/routes';
-import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { createArtifact, listArtifactsByCampaign, publishToLibrary, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
@@ -87,6 +87,7 @@ function renderAppAt(path: string): void {
 async function seedReaderModule(
   options: {
     part0Edited?: boolean;
+    part0Markdown?: string;
     entityKinds?: ModuleEntityKind[];
     status?: Module['status'];
     errorMessage?: string;
@@ -140,6 +141,7 @@ async function seedReaderModule(
       modulePartSchema.parse({
         planIndex: 0,
         markdown:
+          options.part0Markdown ??
           'The party climbs to the [[Old Tower]] before dawn. A lantern still burns in the top room.',
         status: 'ready',
         errorMessage: '',
@@ -323,6 +325,53 @@ describe('ModuleReaderPage', () => {
     expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');
     await flushAsyncUpdates();
   }, 20_000);
+
+  it('resolves a global library entity in module text (B: reader resolution pool)', async () => {
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: 'The [[Wandering Blacksmith]] hammers at the ford before dawn.',
+    });
+    // A shared-library row: no campaign, no module (10-MILESTONE-6 C) —
+    // published through the real adoption path.
+    const row = await createArtifact({ campaignId, kind: 'npc', name: 'Wandering Blacksmith' });
+    await publishToLibrary(row.id);
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const section = await findPartSection(0);
+    const chip = await waitFor(() => {
+      const found = within(section).getByTestId('wiki-chip');
+      expect(found).toHaveAttribute('data-wiki-name', 'Wandering Blacksmith');
+      return found;
+    });
+    expect(chip).toHaveAttribute('data-wiki-artifact-id');
+  }, 20000);
+
+  it('prefers the module-owned entity over a same-named campaign entity (tier-0)', async () => {
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: '[[Ash Cultist]] waits in the top room.',
+    });
+    // Same name twice: once campaign-scoped, once owned by this module.
+    const campaignOnly = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Ash Cultist',
+    });
+    const moduleOwned = await createArtifact({
+      campaignId,
+      moduleId,
+      kind: 'npc',
+      name: 'Ash Cultist',
+    });
+
+    renderAppAt(modulePath(campaignId, moduleId));
+    const section = await findPartSection(0);
+    await waitFor(() => {
+      const chip = within(section).getByTestId('wiki-chip');
+      expect(chip).toHaveAttribute('data-wiki-name', 'Ash Cultist');
+      expect(chip).toHaveAttribute('data-wiki-artifact-id', moduleOwned.id);
+    });
+    // Sanity: the campaign row exists and was NOT the picked tier.
+    expect(campaignOnly.id).not.toBe(moduleOwned.id);
+  }, 20000);
 
   it('creates a stub from an unresolved chip and the chip resolves once the artifact exists', async () => {
     const user = userEvent.setup();

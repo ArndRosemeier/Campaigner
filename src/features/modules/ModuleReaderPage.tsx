@@ -27,12 +27,12 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import type { AnyArtifact, Artifact, Campaign, Id, Module, ModulePart } from '@/domain';
+import type { AnyArtifact, Campaign, Id, Module, ModulePart } from '@/domain';
 import { MODULE_SIZE_LABELS, entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
-import { useArtifacts, useCampaign, useScopedArtifacts } from '@/features/campaign/hooks';
+import { useArtifacts, useCampaign, useGlobalArtifacts, useScopedArtifacts } from '@/features/campaign/hooks';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { useModule } from '@/features/modules/hooks';
@@ -68,6 +68,12 @@ export function ModuleReaderPage(): JSX.Element {
   const campaign = useCampaign(campaignId === '' ? undefined : campaignId);
   const module = useModule(moduleId === '' ? undefined : moduleId);
   const artifacts = useArtifacts(campaignId === '' ? undefined : campaignId);
+  // Module text resolves against the campaign pool PLUS the shared library —
+  // a module quoting a global entity ("[[Goblin Warrior]]") must render a
+  // resolved chip, not a stub. The combined pool feeds ONLY the reader's
+  // IntroBlock/PartBody markdown; the entity panel, peek modal and the
+  // link-existing picker keep the campaign-only pool (10-MILESTONE-6 D).
+  const globalArtifacts = useGlobalArtifacts();
   const location = useLocation();
 
   const [stub, setStub] = useState<StubPopoverState | null>(null);
@@ -143,7 +149,12 @@ export function ModuleReaderPage(): JSX.Element {
     element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [location.hash, module]);
 
-  if (campaign === undefined || module === undefined || artifacts === undefined) {
+  if (
+    campaign === undefined ||
+    module === undefined ||
+    artifacts === undefined ||
+    globalArtifacts === undefined
+  ) {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   }
   if (campaign === null) {
@@ -178,6 +189,7 @@ export function ModuleReaderPage(): JSX.Element {
 
   const peekArtifact =
     peekId !== null ? artifacts.find((artifact) => artifact.id === peekId) : undefined;
+  const readerArtifacts: readonly AnyArtifact[] = [...artifacts, ...globalArtifacts];
 
   function startEditPart(part: ModulePart): void {
     setEditPartIndex(part.planIndex);
@@ -414,7 +426,8 @@ export function ModuleReaderPage(): JSX.Element {
               <section id="module-intro" className="mb-8">
                 <IntroBlock
                   premise={module.spine.premise}
-                  artifacts={artifacts}
+                  artifacts={readerArtifacts}
+                  moduleId={module.id}
                   onOpenArtifact={(artifact) => {
                     setPeekId(artifact.id);
                   }}
@@ -475,7 +488,8 @@ export function ModuleReaderPage(): JSX.Element {
               <section id="module-intro" className="mb-10">
                 <IntroBlock
                   premise={module.spine.premise}
-                  artifacts={artifacts}
+                  artifacts={readerArtifacts}
+                  moduleId={module.id}
                   onOpenArtifact={(artifact) => {
                     setPeekId(artifact.id);
                   }}
@@ -506,7 +520,8 @@ export function ModuleReaderPage(): JSX.Element {
                     <PartBody
                       part={part}
                       planTitle={plan.title}
-                      artifacts={artifacts}
+                      artifacts={readerArtifacts}
+                      moduleId={module.id}
                       tail={tails.parts[index] ?? ''}
                       thinkingTail={tails.partsThinking[index] ?? ''}
                       editing={editPartIndex === index}
@@ -709,11 +724,13 @@ function ModuleTitleInput({ module }: { module: Module }): JSX.Element {
 function IntroBlock({
   premise,
   artifacts,
+  moduleId,
   onOpenArtifact,
   onStub,
 }: {
   premise: string;
-  artifacts: readonly Artifact[];
+  artifacts: readonly AnyArtifact[];
+  moduleId: Id;
   onOpenArtifact: (artifact: AnyArtifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
 }): JSX.Element {
@@ -722,7 +739,13 @@ function IntroBlock({
       <h2 className="mb-3 font-heading text-lg tracking-wide text-muted-foreground uppercase">
         Premise
       </h2>
-      <WikiMarkdown value={premise} artifacts={artifacts} onOpenArtifact={onOpenArtifact} onStub={onStub} />
+      <WikiMarkdown
+        value={premise}
+        artifacts={artifacts}
+        moduleId={moduleId}
+        onOpenArtifact={onOpenArtifact}
+        onStub={onStub}
+      />
     </div>
   );
 }
@@ -761,6 +784,7 @@ function PartBody({
   part,
   planTitle,
   artifacts,
+  moduleId,
   tail,
   thinkingTail,
   editing,
@@ -774,7 +798,8 @@ function PartBody({
 }: {
   part: ModulePart | undefined;
   planTitle: string;
-  artifacts: readonly Artifact[];
+  artifacts: readonly AnyArtifact[];
+  moduleId: Id;
   tail: string;
   thinkingTail: string;
   editing: boolean;
@@ -794,6 +819,7 @@ function PartBody({
         onTextareaBlur={onEditBlur}
         hideHeading
         artifacts={artifacts}
+        moduleId={moduleId}
       />
     );
   }
@@ -842,6 +868,7 @@ function PartBody({
       <WikiMarkdown
         value={part.markdown}
         artifacts={artifacts}
+        moduleId={moduleId}
         onOpenArtifact={onOpenArtifact}
         onStub={onStub}
       />
