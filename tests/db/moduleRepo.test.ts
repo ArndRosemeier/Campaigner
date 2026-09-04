@@ -19,7 +19,7 @@ import {
   savePartPlan,
   saveSpine,
 } from '@/db/moduleRepo';
-import { createArtifact, getArtifact, listRevisions, saveArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
 import { clearDatabase, expectNotFound } from './helpers';
@@ -240,7 +240,7 @@ describe('moduleRepo', () => {
         kind: 'npc',
         name: 'Kael',
       });
-      await saveArtifact(owned, { source: 'user' });
+      await updateArtifact(owned.id, { body: 'v2' });
       const free = await createArtifact({ campaignId, kind: 'note', name: 'Free note' });
 
       await deleteModule(created.id, 'cascade');

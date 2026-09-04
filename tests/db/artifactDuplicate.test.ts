@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/domain/entity';
-import { createArtifact, duplicateArtifact, listRevisions, saveArtifact } from '@/db/artifactRepo';
+import { createArtifact, duplicateArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { clearDatabase, expectNotFound } from './helpers';
 
@@ -28,7 +28,7 @@ describe('duplicateArtifact', () => {
         statBlock: null,
       },
     });
-    await saveArtifact({ ...original, body: 'A gruff dwarf with a secret.' });
+    await updateArtifact(original.id, { body: 'A gruff dwarf with a secret.' });
 
     const copy = await duplicateArtifact(original.id);
 

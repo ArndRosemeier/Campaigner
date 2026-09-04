@@ -93,31 +93,6 @@ export async function createArtifact(
   });
 }
 
-/**
- * The canonical content save (01-DATA-MODEL §ArtifactRevision): increment
- * `currentRevision`, write the revision row with a deep snapshot, update the
- * artifact row, then trim to the newest 50 revisions.
- *
- * Trusts the passed row's `currentRevision` — callers that read the row
- * themselves (the editor's autosave) should use `updateArtifact`, which does
- * the read and the write inside one transaction and is therefore safe
- * against overlapping saves.
- */
-export async function saveArtifact(
-  artifact: Artifact,
-  meta: RevisionMeta = USER_SAVE,
-): Promise<Artifact> {
-  const valid = artifactSchema.parse({
-    ...artifact,
-    currentRevision: artifact.currentRevision + 1,
-    updatedAt: Date.now(),
-  });
-  return db.transaction('rw', db.artifacts, db.revisions, async () => {
-    await writeRevision(valid, meta);
-    return valid;
-  });
-}
-
 /** Merges a patch and saves it as a new revision (race-safe). Works on both
  * scopes: a global row is parsed against the global shape (M6-C — library
  * entries are editable, D7); the scope fields themselves are NOT patchable
@@ -396,13 +371,6 @@ export async function campaignsReferencingArtifact(id: Id): Promise<Id[]> {
 export async function listRevisions(artifactId: Id): Promise<ArtifactRevision[]> {
   const rows = await db.revisions.where('artifactId').equals(artifactId).toArray();
   return rows.sort((a, b) => b.revision - a.revision);
-}
-
-export async function getRevision(
-  artifactId: Id,
-  revision: number,
-): Promise<ArtifactRevision | undefined> {
-  return db.revisions.where('[artifactId+revision]').equals([artifactId, revision]).first();
 }
 
 /** Deletes an artifact and its revision history. Idempotent. */

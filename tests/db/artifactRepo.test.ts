@@ -10,7 +10,6 @@ import {
   deleteArtifact,
   getAnyArtifact,
   getArtifact,
-  getRevision,
   listArtifactsByCampaign,
   listArtifactsByModule,
   listGlobalArtifacts,
@@ -19,7 +18,6 @@ import {
   publishToLibrary,
   campaignsReferencingArtifact,
   restoreRevision,
-  saveArtifact,
   updateArtifact,
 } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -75,7 +73,7 @@ describe('artifactRepo revisions', () => {
     expect(saved.currentRevision).toBe(2);
     expect(saved.body).toBe('v2');
 
-    const row = await getRevision(artifact.id, 2);
+    const row = (await listRevisions(artifact.id)).find((entry) => entry.revision === 2);
     expect(row?.snapshot.body).toBe('v2');
     expect(row?.snapshot.summary).toBe('A ruin.');
 
@@ -149,7 +147,7 @@ describe('artifactRepo revisions', () => {
     // wraps the error — match through the guard, not by identity.
     await expectNotFound(updateArtifact('missing', { body: 'x' }));
     await expectNotFound(restoreRevision('missing', 1));
-    expect(await getRevision(newId(), 1)).toBeUndefined();
+    expect(await listRevisions(newId())).toEqual([]);
   });
 
   it('deletes the artifact and its revision history', async () => {
@@ -175,18 +173,6 @@ describe('artifactRepo revisions', () => {
     const names = (await listArtifactsByCampaign(campaignId)).map((a) => a.name);
     expect(names).toEqual(['Alpha', 'Beta', 'Gamma']);
     expect(await countArtifactsByCampaign(campaignId)).toBe(3);
-  });
-
-  it('saveArtifact (full-row) also bumps the revision', async () => {
-    const artifact = await createArtifact({
-      campaignId: newId(),
-      kind: 'npc',
-      name: 'Original',
-    });
-    const saved = await saveArtifact({ ...artifact, name: 'Renamed' });
-
-    expect(saved.currentRevision).toBe(2);
-    expect((await getRevision(artifact.id, 2))?.snapshot.name).toBe('Renamed');
   });
 });
 

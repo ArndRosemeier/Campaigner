@@ -1,4 +1,4 @@
-import type { ArtifactKind, EntityKind } from '@/domain';
+import type { EntityKind } from '@/domain';
 import { ENTITY_KINDS } from '@/domain';
 
 /**
@@ -58,9 +58,4 @@ export function buildEntityBrief(
   ]
     .filter((part) => part !== null)
     .join('\n\n');
-}
-
-/** `ArtifactKind` narrowing for the stub kinds (stub ⊂ artifact kinds). */
-export function asStubKind(kind: ArtifactKind): StubKind | undefined {
-  return (STUB_KINDS as readonly string[]).includes(kind) ? (kind as StubKind) : undefined;
 }

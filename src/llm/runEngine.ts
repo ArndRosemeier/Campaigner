@@ -65,7 +65,7 @@ import {
 } from '@/llm/schemas';
 import type { EncounterDraft, EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
 import { normalizeImageAspect } from '@/lib/imageAspect';
-import { locateMissingMarkerWithVision, verifyEncounterMap } from '@/llm/encounterVision';
+import { verifyEncounterMap } from '@/llm/encounterVision';
 
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
@@ -86,7 +86,6 @@ export const encounterRunAdapters = {
   blobToDataUrl,
   detectNeonMarkers,
   extractImageData,
-  locateMissingMarkerWithVision,
   layoutFromStagingMarkers,
 };
 
