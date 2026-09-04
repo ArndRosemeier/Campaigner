@@ -3,10 +3,9 @@ import { create } from 'zustand';
 import type { Id } from '@/domain';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
-import { getRun } from '@/db/runRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { listPersonas } from '@/db/personaRepo';
-import { runEngine } from '@/llm/runEngine';
+import { runEngine, waitForRunStatus } from '@/llm/runEngine';
 import { useProgressStore } from '@/lib/progress';
 import { toastError } from '@/lib/toast';
 
@@ -150,7 +149,7 @@ async function processJob(job: EncounterMapJob): Promise<Error | null> {
       encounterMapAspect: settings.encounterMapAspect,
       unattended: true,
     });
-    const run = await waitForTerminalRun(runId);
+    const run = await waitForRunStatus(runId);
     if (run.status !== 'completed') {
       throw new Error(run.errorMessage || `run ended ${run.status}`);
     }
@@ -158,43 +157,4 @@ async function processJob(job: EncounterMapJob): Promise<Error | null> {
   } catch (error) {
     return error instanceof Error ? error : new Error(String(error));
   }
-}
-
-function waitForTerminalRun(runId: Id): Promise<NonNullable<Awaited<ReturnType<typeof getRun>>>> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const finish = (): void => {
-      if (settled) return;
-      settled = true;
-      unsubscribe();
-      void getRun(runId)
-        .then((run) => {
-          if (run === undefined) reject(new Error('encounter map run row disappeared'));
-          else resolve(run);
-        })
-        .catch(reject);
-    };
-    const unsubscribe = runEngine.on((event) => {
-      if (event.kind === 'run' && event.runId === runId && isTerminal(event.status)) finish();
-    });
-    void getRun(runId)
-      .then((run) => {
-        if (run === undefined) {
-          settled = true;
-          unsubscribe();
-          reject(new Error('encounter map run row disappeared'));
-        } else if (isTerminal(run.status)) {
-          finish();
-        }
-      })
-      .catch((error: unknown) => {
-        settled = true;
-        unsubscribe();
-        reject(error instanceof Error ? error : new Error(String(error)));
-      });
-  });
-}
-
-function isTerminal(status: string): boolean {
-  return status === 'completed' || status === 'failed' || status === 'cancelled';
 }

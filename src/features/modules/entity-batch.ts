@@ -1,10 +1,9 @@
-import type { Campaign, Id, Module, PersonaRun } from '@/domain';
+import type { Campaign, Id, Module } from '@/domain';
 import { moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
-import { getRun } from '@/db/runRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
-import { runEngine, type StartRunInput } from '@/llm/runEngine';
+import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 import { alignEntityName, RUN_STEP_LABELS } from '@/features/modules/entity-detail';
 import {
   buildEntityBrief,
@@ -147,7 +146,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         };
         const runId = await runEngine.startRun(runInput);
         runNames.set(runId, target.name);
-        const outcome = await waitForRunTerminal(runId);
+        const outcome = await waitForRunStatus(runId);
         if (outcome.status === 'completed' && outcome.resultArtifactId !== null) {
           producedIds.push(outcome.resultArtifactId);
           generated.push(target.name);
@@ -193,18 +192,4 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   }
 }
 
-const TERMINAL_RUN_STATUSES: readonly PersonaRun['status'][] = ['completed', 'cancelled', 'failed'];
 
-/** Waits for an unattended run to reach a terminal status ('auto' autonomy
- * never pauses, so awaiting-user states only appear if the user intervenes
- * — treated as "not produced" by the batch). */
-async function waitForRunTerminal(runId: Id): Promise<PersonaRun> {
-  for (;;) {
-    const run = await getRun(runId);
-    if (run === undefined) throw new Error(`Run ${runId} disappeared mid-batch`);
-    if (TERMINAL_RUN_STATUSES.includes(run.status)) return run;
-    await new Promise((resolve) => {
-      window.setTimeout(resolve, 250);
-    });
-  }
-}

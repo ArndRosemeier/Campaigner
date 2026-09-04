@@ -156,6 +156,61 @@ export type EngineEvent =
 type Listener = (event: EngineEvent) => void;
 
 /**
+ * The run statuses that end every wait: a run in one of them can make no
+ * further progress on its own. Single source of truth for the engine, the
+ * chain runner, the entity batch and the encounter-map queue (formerly
+ * three private copies plus one inline check).
+ */
+export const TERMINAL_RUN_STATUSES: readonly PersonaRun['status'][] = ['completed', 'cancelled', 'failed'];
+
+/** True when `status` is terminal (the run can make no further progress). */
+export function isTerminalRunStatus(status: PersonaRun['status']): boolean {
+  return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
+}
+
+export interface WaitForRunOptions {
+  /**
+   * Also return when the run PAUSES for the user (`awaiting_user` /
+   * `needs_review`). Chain steps honor pauses — the user resolves the run
+   * through the Assistant tab and the chain resumes it. Unattended callers
+   * (entity batch, encounter-map queue) wait for terminal only: an
+   * `awaiting_user` run never produces there, so returning early would
+   * misreport it as done.
+   */
+  includePaused?: boolean;
+}
+
+/**
+ * THE "wait for a run to reach a status" primitive (one implementation for
+ * the formerly duplicated poll loops and the event-subscription variant):
+ *
+ * Unified contract — resolves with the run row once it reaches a terminal
+ * status (plus the pause statuses when `includePaused` is set); throws when
+ * the run row disappears mid-wait; polls the row every 250ms, which also
+ * covers the already-terminal race (the first read returns immediately).
+ * The event emitter stays the liveness surface for UIs; waiting code does
+ * not need to subscribe.
+ */
+export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}): Promise<PersonaRun> {
+  for (;;) {
+    const run = await getRun(runId);
+    if (run === undefined) {
+      throw new Error(`Run ${runId} disappeared while waiting for it to finish`);
+    }
+    if (isTerminalRunStatus(run.status)) return run;
+    if (
+      opts.includePaused === true &&
+      (run.status === 'awaiting_user' || run.status === 'needs_review')
+    ) {
+      return run;
+    }
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 250);
+    });
+  }
+}
+
+/**
  * The persisted escalation note for a step output (the 'notice' convention
  * the persona panel renders): a fallback must be visible, never silent
  * (AGENTS rule 1).

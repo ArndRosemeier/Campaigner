@@ -540,4 +540,60 @@ describe('writers\u2019 room chain', () => {
     expect(chatMock).not.toHaveBeenCalled();
     void persona;
   });
+
+  it('cancel stops the initial pass before the next step starts', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const worldbuilder = personaOf('worldbuilder', 'Worldbuilder', 'location');
+    const factionDesigner = personaOf('faction-designer', 'Faction Designer', 'faction');
+
+    // Hold step 1's reply back so the cancel lands while the run is in
+    // flight — the window the initial pass used to ignore entirely.
+    type ChatReply = Awaited<ReturnType<typeof chat>>;
+    let resolveStep1: ((reply: ChatReply) => void) | undefined;
+    chatMock.mockImplementationOnce(
+      () =>
+        new Promise<ChatReply>((resolve) => {
+          resolveStep1 = resolve;
+        }),
+    );
+
+    const steps: ChainStepInput[] = [
+      { personaId: worldbuilder.id, brief: 'Build a docks district.' },
+      { personaId: factionDesigner.id, brief: 'Design the faction ruling it.' },
+    ];
+    const pending = chainRunner.run(campaign, [worldbuilder, factionDesigner], steps, 'auto', []);
+    await waitFor(() => {
+      expect(chatMock).toHaveBeenCalledTimes(1);
+    });
+    chainRunner.cancel();
+
+    const release = resolveStep1;
+    if (release === undefined) throw new Error('the chain never started its first step');
+    release({
+      text: JSON.stringify({
+        name: 'Emberfall Docks',
+        summary: 'Smuggling hub.',
+        suggestedTags: [],
+        body: '# Emberfall Docks',
+        locationType: 'district',
+        inhabitants: 'Dockworkers',
+        pointsOfInterest: [],
+        hooks: [],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    // The finished step-1 run does NOT roll the chain into step 2 — a
+    // requested cancel ends the chain once the in-flight run settles.
+    const state = await pending;
+    expect(state.status).toBe('cancelled');
+    expect(chatMock).toHaveBeenCalledTimes(1);
+
+    const { listRunsByCampaign } = await import('@/db/runRepo');
+    const runs = await listRunsByCampaign(campaign.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe('completed');
+    expect(state.steps.map((step) => step.status)).toEqual(['completed', 'pending']);
+  }, 30000);
 });

@@ -1,6 +1,5 @@
 import type { Autonomy, Campaign, Id, Persona, PersonaRun } from '@/domain';
-import { getRun } from '@/db/runRepo';
-import { runEngine, type StartRunInput } from '@/llm/runEngine';
+import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 
 /**
  * Writers' room (06-MILESTONES M2: persona chaining) — runs a sequence of
@@ -59,8 +58,6 @@ export interface ChainState {
 }
 
 type ChainListener = (state: ChainState) => void;
-
-const TERMINAL_RUN_STATUSES: readonly PersonaRun['status'][] = ['completed', 'cancelled', 'failed'];
 
 function stepStatusForRun(run: PersonaRun): ChainStepStatus {
   switch (run.status) {
@@ -127,7 +124,11 @@ export class ChainRunner {
   /**
    * Runs the chain. Resolves when the chain reaches a terminal state
    * (completed / failed / cancelled) — a paused chain keeps waiting for the
-   * user to finish its run through the Assistant tab.
+   * user to finish its run through the Assistant tab. `cancel()` is honored
+   * mid-pass: after each step's run settles, a requested cancel ends the
+   * chain as 'cancelled' instead of starting the next step (the initial
+   * pass previously skipped this check, so Stop only worked on resumed
+   * passes). Delegates to runRemaining so there is ONE per-step sequence.
    */
   async run(
     campaign: Campaign,
@@ -137,7 +138,6 @@ export class ChainRunner {
     pinnedChunkIds: readonly Id[],
   ): Promise<ChainState> {
     this.cancelRequested = false;
-    this.resumeArgs = { campaign, personas, steps, autonomy, pinnedChunkIds };
     this.state = {
       steps: steps.map((stepInput) => ({
         runId: null,
@@ -149,84 +149,7 @@ export class ChainRunner {
       status: 'running',
     };
     this.emit();
-
-    const producedArtifactIds: Id[] = [];
-
-    for (let index = 0; index < steps.length; index += 1) {
-      const step = steps[index];
-      if (step === undefined) break;
-      const persona = personas.find((candidate) => candidate.id === step.personaId);
-      if (persona === undefined) {
-        this.state.steps[index] = { runId: null, status: 'failed', artifactId: null, title: step.title ?? null };
-        this.state.status = 'failed';
-        this.emit();
-        return this.state;
-      }
-
-      this.state.currentIndex = index;
-      this.state.steps[index] = { runId: null, status: 'running', artifactId: null, title: step.title ?? null };
-      this.emit();
-
-      // Image personas decorate an existing artifact via the editor; they
-      // never appear in pipelines (07-MILESTONE-3 M3-A).
-      if (persona.mode === 'image') {
-        throw new Error(`"${persona.name}" is not chainable — illustrate via the artifact editor`);
-      }
-      if (persona.mode === 'encounter') {
-        throw new Error(`"${persona.name}" is not chainable — use the encounter generator`);
-      }
-
-      const stepAutonomy = autonomyFor(step, autonomy);
-      const input: StartRunInput = {
-        campaign,
-        persona,
-        autonomy: stepAutonomy,
-        brief: step.brief,
-        pinnedChunkIds,
-        contextArtifactIds: producedArtifactIds,
-      };
-      if (persona.mode === 'review') {
-        const targetId = reviewTargetId(step, producedArtifactIds);
-        if (targetId !== undefined) input.targetArtifactId = targetId;
-      }
-      const runId = await runEngine.startRun(input);
-      this.state.steps[index] = { runId, status: 'running', artifactId: null, title: step.title ?? null };
-      this.emit();
-
-      // Wait for the run to finish or pause for the user (the user resolves
-      // paused runs via the Assistant tab; resume() continues the chain).
-      const outcome = await this.waitForRun(runId);
-      this.state.steps[index] = {
-        runId,
-        status: stepStatusForRun(outcome),
-        artifactId: outcome.resultArtifactId,
-        title: step.title ?? null,
-      };
-      this.emit();
-
-      if (outcome.status === 'cancelled') {
-        this.state.status = 'cancelled';
-        this.emit();
-        return this.state;
-      }
-      if (outcome.status === 'failed') {
-        this.state.status = 'failed';
-        this.emit();
-        return this.state;
-      }
-      if (outcome.status !== 'completed' || outcome.resultArtifactId === null) {
-        this.state.status = 'paused';
-        this.emit();
-        return this.state;
-      }
-
-      producedArtifactIds.push(outcome.resultArtifactId);
-    }
-
-    this.state.currentIndex = steps.length;
-    this.state.status = 'completed';
-    this.emit();
-    return this.state;
+    return this.runRemaining(campaign, personas, steps, autonomy, pinnedChunkIds, 0, []);
   }
 
   /**
@@ -251,7 +174,7 @@ export class ChainRunner {
       if (artifactId !== null) producedArtifactIds.push(artifactId);
     }
 
-    const outcome = await this.waitForRunCompletion(pausedStep.runId);
+    const outcome = await waitForRunStatus(pausedStep.runId);
     this.state.steps[pausedIndex] = {
       runId: pausedStep.runId,
       status: stepStatusForRun(outcome),
@@ -366,7 +289,9 @@ export class ChainRunner {
       this.state.steps[index] = { runId, status: 'running', artifactId: null, title: step.title ?? null };
       this.emit();
 
-      const outcome = await this.waitForRun(runId);
+      // Wait for the run to finish or pause for the user (the user resolves
+      // paused runs via the Assistant tab; resume() continues the chain).
+      const outcome = await waitForRunStatus(runId, { includePaused: true });
       this.state.steps[index] = {
         runId,
         status: stepStatusForRun(outcome),
@@ -403,40 +328,6 @@ export class ChainRunner {
     this.state.status = 'completed';
     this.emit();
     return this.state;
-  }
-
-  private async waitForRun(runId: Id): Promise<PersonaRun> {
-    for (;;) {
-      const run = await getRun(runId);
-      if (run === undefined) {
-        throw new Error(`Run ${runId} disappeared mid-chain`);
-      }
-      if (
-        TERMINAL_RUN_STATUSES.includes(run.status) ||
-        run.status === 'awaiting_user' ||
-        run.status === 'needs_review'
-      ) {
-        return run;
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 250);
-      });
-    }
-  }
-
-  private async waitForRunCompletion(runId: Id): Promise<PersonaRun> {
-    for (;;) {
-      const run = await getRun(runId);
-      if (run === undefined) {
-        throw new Error(`Run ${runId} disappeared mid-chain`);
-      }
-      if (TERMINAL_RUN_STATUSES.includes(run.status)) {
-        return run;
-      }
-      await new Promise((resolve) => {
-        window.setTimeout(resolve, 250);
-      });
-    }
   }
 }
 
