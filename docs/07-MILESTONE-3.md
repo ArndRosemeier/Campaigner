@@ -53,7 +53,13 @@ Add `imageModel: string` (default `'google/gemini-2.5-flash-image'`) and
 a new "Images" section, with a model combobox fetched from
 `/models?output_modalities=image` (server-side filter; client-side filtering
 on `architecture.output_modalities` remains the fallback for the shared
-`listModels` response).
+`listModels` response). A `fallbackImageModel: string` ('' = no fallback)
+adds the escalation tier: `generateImages` walks
+`[primary, fallbackImageModel]` when the first-try model is congested or
+refuses (a 200 response with no images counts as congestion), reports the
+model that actually produced the images as `modelUsed`, and image rows
+persist that. Structure-first edits (input_references) skip a fallback the
+cached `/models` data knows is text-to-image only.
 
 ### Generation client (`/src/llm/imageGen.ts`)
 

@@ -34,6 +34,19 @@ async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>
 - Errors: non-200 → throw `OpenRouterError(status, bodyText)`. 429/5xx: retry
   twice with 2s/8s backoff before throwing. Missing API key → throw
   `MissingApiKeyError` (UI catches this and opens Settings).
+- Model escalation (`/src/llm/modelFallback.ts`): when `fallbackChatModel` is
+  set, `chat()` walks `[primary, fallback]` — a failure classified as
+  congestion (429/5xx/408/timeouts) or filter (403/moderation phrasings)
+  escalates to the fallback; aborts and anything else rethrow the original
+  error, and an exhausted chain throws one combined error naming every
+  model. Vision requests (image input) skip a fallback the cached `/models`
+  data knows is text-only. `chat()` returns
+  `ChatResult { text, modelUsed, fallback }`; run steps persist an
+  escalation `notice` so a fallback is visible, never silent.
+- Contract repair escalates too: the ONE automatic retry after a schema/
+  contract failure runs on the fallback model when configured
+  (`repairModel()`; vision repairs via `visionRepairModel()`), because a
+  violated contract is usually a capability weakness of the first-try model.
 
 ## Built-in personas (`/src/llm/personas/builtins.ts`)
 

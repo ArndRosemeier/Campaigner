@@ -357,10 +357,12 @@ interface Settings {
   id: 'settings';
   openRouterApiKey: string;     // '' when unset
   defaultChatModel: string;     // default 'anthropic/claude-sonnet-4.5'
+  fallbackChatModel: string;    // '' = no fallback; escalation tier for congestion/filter + contract repair
   defaultReasoningEffort: 'default' | 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'; // default 'default'
   embeddingModel: string;       // default 'openai/text-embedding-3-small'
   embeddingsEnabled: boolean;   // default false until API key present
   imageModel: string;           // default 'google/gemini-2.5-flash-image' (M3-A)
+  fallbackImageModel: string;   // '' = no fallback; escalation tier for image transport failures
   imagesEnabled: boolean;       // default false — image generation is opt-in (M3-A)
   language: 'en'|'de'|'fr'|'es'|'it'|'pt'|'nl'|'pl'|'ru'|'ja'|'zh';
   artifactScopes: {
