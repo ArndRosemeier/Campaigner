@@ -1,18 +1,108 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CHAT_MODEL, DEFAULT_IMAGE_MODEL, type Settings } from '@/domain';
+import { setCachedModels } from '@/llm/modelCache';
 import {
   buildModelChain,
   repairModel,
   resolveChatModel,
   resolveImageModel,
   visionRepairModel,
+  walkModelChain,
 } from '@/llm/modelFallback';
+import { OpenRouterError } from '@/llm/openrouterErrors';
 
 const settings = {
   defaultChatModel: DEFAULT_CHAT_MODEL,
   imageModel: DEFAULT_IMAGE_MODEL,
 } as Pick<Settings, 'defaultChatModel' | 'imageModel'>;
+
+describe('walkModelChain', () => {
+  /** A fallback-worthy failure (the walker escalates on this class). */
+  const congested = (): OpenRouterError => new OpenRouterError('stall', 500, 'stalled');
+
+  it('returns the first try untouched when it succeeds', async () => {
+    const result = await walkModelChain(['a', 'b'], (model) => Promise.resolve(`ok:${model}`), { kind: 'chat' });
+    expect(result).toEqual({ value: 'ok:a', modelUsed: 'a', fallback: null });
+  });
+
+  it('escalates to the next entry on a fallback-worthy error and reports it', async () => {
+    const fallbacks: unknown[] = [];
+    let resets = 0;
+    const result = await walkModelChain(
+      ['a', 'b'],
+      (model) => (model === 'a' ? Promise.reject(congested()) : Promise.resolve(`ok:${model}`)),
+      {
+        kind: 'chat',
+        onFallback: (info) => fallbacks.push(info),
+        onReset: () => {
+          resets += 1;
+        },
+      },
+    );
+    expect(result.modelUsed).toBe('b');
+    expect(result.fallback).toEqual({ from: 'a', to: 'b', reason: 'congestion' });
+    expect(fallbacks).toEqual([{ from: 'a', to: 'b', reason: 'congestion' }]);
+    expect(resets).toBe(1);
+  });
+
+  it('rethrows unclassifiable errors and user cancels unchanged', async () => {
+    await expect(
+      walkModelChain(['a', 'b'], () => Promise.reject(new Error('bad request')), { kind: 'chat' }),
+    ).rejects.toThrow('bad request');
+    const abort = new DOMException('cancelled', 'AbortError');
+    await expect(
+      walkModelChain(['a', 'b'], () => Promise.reject(abort), { kind: 'chat' }),
+    ).rejects.toBe(abort);
+  });
+
+  it('rethrows the original error on a single-entry chain', async () => {
+    const failure = congested();
+    await expect(
+      walkModelChain(['only'], () => Promise.reject(failure), { kind: 'image' }),
+    ).rejects.toBe(failure);
+  });
+
+  it('combines a chain exhaustion into the chain error', async () => {
+    await expect(
+      walkModelChain(['a', 'b'], () => Promise.reject(congested()), { kind: 'image' }),
+    ).rejects.toThrow(/every image model in the escalation chain failed/);
+  });
+
+  it('skips a cached text-only fallback when the request needs image input', async () => {
+    setCachedModels([
+      { id: 'potent/fallback', architecture: { input_modalities: ['text'], output_modalities: ['text'] } },
+    ]);
+    const failure = congested();
+    await expect(
+      walkModelChain(['vision/primary', 'potent/fallback'], () => Promise.reject(failure), {
+        kind: 'chat',
+        needsImageInput: true,
+      }),
+    ).rejects.toBe(failure);
+  });
+
+  it('attempts unknown and vision-capable fallbacks despite image input (loud)', async () => {
+    const failure = congested();
+    // Unknown to the cache: attempted anyway — the attempt fails loudly.
+    await expect(
+      walkModelChain(['vision/primary', 'unknown/model'], () => Promise.reject(failure), {
+        kind: 'chat',
+        needsImageInput: true,
+      }),
+    ).rejects.toThrow(/every chat model in the escalation chain failed/);
+    // Vision-capable: attempted (and its failure ends the chain).
+    setCachedModels([
+      { id: 'potent/fallback', architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] } },
+    ]);
+    await expect(
+      walkModelChain(['vision/primary', 'potent/fallback'], () => Promise.reject(failure), {
+        kind: 'chat',
+        needsImageInput: true,
+      }),
+    ).rejects.toThrow(/every chat model in the escalation chain failed/);
+  });
+});
 
 describe('resolveChatModel', () => {
   it('uses the settings default when no preferred model is given', () => {

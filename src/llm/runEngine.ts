@@ -45,11 +45,12 @@ import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import { ZodError, type z } from 'zod';
-import { chat, MissingApiKeyError, OpenRouterError, type ChatFallback, type ChatMessage } from '@/llm/openrouter';
+import { chat, MissingApiKeyError, OpenRouterError, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
 import { getCachedModels } from '@/llm/modelCache';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, visionRepairModel } from '@/llm/modelFallback';
+import { assembleImagePrompt, draftImagePrompt } from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
@@ -1267,6 +1268,31 @@ export class RunEngine {
     return { step };
   }
 
+  /**
+   * The per-step chat options (one builder instead of five inlined copies):
+   * every LLM step streams its deltas to the UI through the engine emitter —
+   * content tokens, reasoning illustration, and the reset signal a model
+   * fallback fires before it restarts the stream.
+   */
+  private chatForStep(
+    runId: Id,
+    stepIndex: number,
+    base: Pick<ChatOptions, 'model' | 'temperature' | 'reasoningEffort' | 'responseFormat' | 'signal'>,
+  ): ChatOptions {
+    return {
+      ...base,
+      onToken: (delta) => {
+        this.emit({ kind: 'token', runId, stepIndex, delta });
+      },
+      onReasoning: (delta) => {
+        this.emit({ kind: 'thinking', runId, stepIndex, delta });
+      },
+      onReset: () => {
+        this.emit({ kind: 'reset', runId, stepIndex });
+      },
+    };
+  }
+
   private async runDraft(
     runId: Id,
     stepIndex: number,
@@ -1346,22 +1372,16 @@ export class RunEngine {
       this.draftRetried.has(runId) || this.sourceRepaired.has(runId)
         ? repairModel(firstTryModel, settings)
         : firstTryModel;
-    const { text: raw, fallback } = await chat(messages, {
-      model: repairTarget,
-      temperature: input.persona.temperature,
-      reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-      responseFormat: 'json',
-      signal,
-      onToken: (delta) => {
-        this.emit({ kind: 'token', runId, stepIndex, delta });
-      },
-      onReasoning: (delta) => {
-        this.emit({ kind: 'thinking', runId, stepIndex, delta });
-      },
-      onReset: () => {
-        this.emit({ kind: 'reset', runId, stepIndex });
-      },
-    });
+    const { text: raw, fallback } = await chat(
+      messages,
+      this.chatForStep(runId, stepIndex, {
+        model: repairTarget,
+        temperature: input.persona.temperature,
+        reasoningEffort: effectiveReasoningEffort(input.persona, settings),
+        responseFormat: 'json',
+        signal,
+      }),
+    );
 
     debugLog('run', `draft chat returned ${String(raw.length)} chars`);
     let parsed: unknown = null;
@@ -1491,23 +1511,14 @@ export class RunEngine {
         { role: 'system', content: input.persona.systemPrompt },
         { role: 'user', content: instruction },
       ],
-      {
-        // Repair escalation: see runDraft — same one-attempt policy.
+      // Repair escalation: see runDraft — same one-attempt policy.
+      this.chatForStep(runId, stepIndex, {
         model: repairTarget,
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
         responseFormat: 'json',
         signal,
-        onToken: (delta) => {
-          this.emit({ kind: 'token', runId, stepIndex, delta });
-        },
-        onReasoning: (delta) => {
-          this.emit({ kind: 'thinking', runId, stepIndex, delta });
-        },
-        onReset: () => {
-          this.emit({ kind: 'reset', runId, stepIndex });
-        },
-      },
+      }),
     );
 
     let statBlock: StatBlock | null = null;
@@ -1636,22 +1647,13 @@ export class RunEngine {
         { role: 'system', content: input.persona.systemPrompt },
         { role: 'user', content: instruction },
       ],
-      {
+      this.chatForStep(runId, stepIndex, {
         model: resolveChatModel(settings, input.persona.model),
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
         responseFormat: 'json',
         signal,
-        onToken: (delta) => {
-          this.emit({ kind: 'token', runId, stepIndex, delta });
-        },
-        onReasoning: (delta) => {
-          this.emit({ kind: 'thinking', runId, stepIndex, delta });
-        },
-        onReset: () => {
-          this.emit({ kind: 'reset', runId, stepIndex });
-        },
-      },
+      }),
     );
 
     let report: ContinuityReport | null = null;
@@ -2309,95 +2311,35 @@ export class RunEngine {
     const target = targetId === null ? undefined : await getAnyArtifact(targetId);
     if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
 
-    const targetData = target.data as Record<string, unknown> | null | undefined;
-    const appearance =
-      targetData !== null && typeof targetData === 'object' && typeof targetData.appearance === 'string'
-        ? targetData.appearance.trim()
-        : '';
-
-    if (appearance !== '') {
-      const systemLabel = GAME_SYSTEM_LABELS[input.campaign.system];
-      const promptText =
-        extraInstruction === ''
-          ? `${systemLabel}=>${appearance}`
-          : `${systemLabel}=>${appearance}\n${extraInstruction}`;
-      const parsed: ImagePromptDraft = {
-        prompt: promptText,
-        negative: '',
-        styleNotes: '',
-      };
-      // No chat call happens on this path — no escalation notice applies.
-      const step = this.finishStep(steps[stepIndex], { parsed });
-      const pausesHere = pauses(input.autonomy, true);
-      return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
-    }
-
-    const instruction = [
-      `Artifact: ${target.name} (${target.kind})`,
-      target.summary === '' ? null : `Summary: ${target.summary}`,
-      target.body === '' ? null : `Description (may be truncated):\n${target.body.slice(0, 800)}`,
-      `Campaign tone: ${input.campaign.name}${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
-      input.brief === '' ? null : `Focus: ${input.brief}`,
-      'Reply with ONLY a JSON object with exactly these fields: ["prompt", "negative", "styleNotes"] — `prompt` describes the image to generate for this artifact, `negative` lists what to avoid, `styleNotes` gives style guidance.',
-      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
-    ]
-      .filter((part) => part !== null)
-      .join('\n\n');
-
-    const messages: ChatMessage[] = [
-      { role: 'system', content: input.persona.systemPrompt },
-      { role: 'user', content: instruction },
-    ];
-    if (this.draftRetried.has(runId)) {
-      messages.push({
-        role: 'user',
-        content:
-          'Your previous reply was invalid JSON for the schema. Reply with corrected JSON only.',
-      });
-    }
-
-    // The one contract-repair attempt escalates to the fallback model: a
-    // violated reply contract is usually a capability weakness of the
-    // first-try model, so the diagnosed repair goes to the more potent tier.
-    const firstTryModel = resolveChatModel(settings, input.persona.model);
-    const repairTarget = this.draftRetried.has(runId) ? repairModel(firstTryModel, settings) : firstTryModel;
-    const { text: raw, fallback } = await chat(messages, {
-      model: repairTarget,
-      temperature: input.persona.temperature,
-      reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-      responseFormat: 'json',
-      signal,
-      onToken: (delta) => {
-        this.emit({ kind: 'token', runId, stepIndex, delta });
+    // The prompt contract (appearance shortcut, instruction text, one
+    // contract-repair retry on the repair model) is shared with the entity
+    // image queue — see draftImagePrompt.
+    const result = await draftImagePrompt(
+      { name: target.name, kind: target.kind, summary: target.summary, body: target.body, data: target.data },
+      {
+        model: resolveChatModel(settings, input.persona.model),
+        settings,
+        systemPrompt: input.persona.systemPrompt,
+        systemLabel: GAME_SYSTEM_LABELS[input.campaign.system],
+        contextLines: [
+          `Campaign tone: ${input.campaign.name}${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
+          input.brief === '' ? null : `Focus: ${input.brief}`,
+        ],
+        extraInstruction,
+        signal,
+        chatOptions: (model) =>
+          this.chatForStep(runId, stepIndex, {
+            model,
+            temperature: input.persona.temperature,
+            reasoningEffort: effectiveReasoningEffort(input.persona, settings),
+            responseFormat: 'json',
+            signal,
+          }),
       },
-      onReasoning: (delta) => {
-        this.emit({ kind: 'thinking', runId, stepIndex, delta });
-      },
-      onReset: () => {
-        this.emit({ kind: 'reset', runId, stepIndex });
-      },
-    });
-
-    let parsed: unknown;
-    try {
-      parsed = imagePromptDraftSchema.parse(parseJsonReply(raw));
-    } catch (error) {
-      // The catch returns on every path, so the issues live here.
-      const issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
-      if (!this.draftRetried.has(runId)) {
-        // One automatic JSON-fix retry (same policy as artifact drafts).
-        this.draftRetried.add(runId);
-        return this.runPromptDraft(
-          runId,
-          stepIndex,
-          steps,
-          input,
-          signal,
-          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply was invalid JSON for the schema:\n- ${issues.join('\n- ')}\nReply with corrected JSON only.`,
-        );
-      }
-      debugLog('run', 'prompt-draft parse FAILED after retry', { issue: parseErrorSummary(error) });
-      const step = this.finishStep(steps[stepIndex], { raw, issues }, 'rejected');
+    );
+    if (!result.ok) {
+      debugLog('run', 'prompt-draft parse FAILED after retry', { issue: result.issues.join('; ') });
+      const step = this.finishStep(steps[stepIndex], { raw: result.raw, issues: result.issues }, 'rejected');
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
@@ -2405,7 +2347,11 @@ export class RunEngine {
 
     const step = this.finishStep(
       steps[stepIndex],
-      withNotice({ parsed }, fallback, contractRepairNotice(firstTryModel, repairTarget)),
+      withNotice(
+        { parsed: result.draft },
+        result.fallback,
+        contractRepairNotice(result.firstTryModel, result.repairTarget),
+      ),
     );
     const pausesHere = pauses(input.autonomy, true);
     return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
@@ -2425,13 +2371,7 @@ export class RunEngine {
     }
     const draft = this.effectivePromptDraft(steps);
     if (draft === null) throw new Error('no prompt draft available to generate from');
-    const finalPrompt = [
-      draft.prompt,
-      draft.styleNotes === '' ? null : `Style: ${draft.styleNotes}`,
-      draft.negative === '' ? null : `Avoid: ${draft.negative}`,
-    ]
-      .filter((part) => part !== null)
-      .join('\n');
+    const finalPrompt = assembleImagePrompt(draft);
     const generated = await generateImages(finalPrompt, 2, {
       model: settings.imageModel,
       signal,

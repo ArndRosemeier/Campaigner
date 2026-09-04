@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
-import { chat, fetchWithRetries, imageInputFallbackBlocked, listModels, listVisionChatModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
+import { chat, fetchWithRetries, listModels, listVisionChatModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): SSE streaming, retries, typed
@@ -635,34 +635,5 @@ describe('model fallback chain', () => {
       chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1, signal: controller.signal }, [0, 0]),
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(chatCallsOf(fetchMock)).toHaveLength(1);
-  });
-});
-
-describe('imageInputFallbackBlocked', () => {
-  const visionMessages = [
-    {
-      role: 'user' as const,
-      content: [
-        { type: 'text' as const, text: 'look' },
-        { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,x' } },
-      ],
-    },
-  ];
-
-  it('blocks a cached text-only fallback for vision requests', () => {
-    const models = [
-      { id: 'potent/fallback', architecture: { input_modalities: ['text'], output_modalities: ['text'] } },
-    ];
-    expect(imageInputFallbackBlocked(visionMessages, 'potent/fallback', models)).toBe(true);
-  });
-
-  it('allows a vision-capable fallback, unknown models and text-only requests', () => {
-    const models = [
-      { id: 'potent/fallback', architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] } },
-    ];
-    expect(imageInputFallbackBlocked(visionMessages, 'potent/fallback', models)).toBe(false);
-    expect(imageInputFallbackBlocked(visionMessages, 'unknown/model', models)).toBe(false);
-    expect(imageInputFallbackBlocked([{ role: 'user', content: 'hi' }], 'potent/fallback', models)).toBe(false);
-    expect(imageInputFallbackBlocked(visionMessages, 'potent/fallback', null)).toBe(false);
   });
 });

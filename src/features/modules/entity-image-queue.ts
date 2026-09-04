@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 
-import type { AnyArtifact, Id, Persona } from '@/domain';
+import type { AnyArtifact, Id, Persona, Settings } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -8,10 +8,9 @@ import { createImage } from '@/db/imageRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
-import { chat, type ChatMessage } from '@/llm/openrouter';
-import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
-import { repairModel, resolveChatModel } from '@/llm/modelFallback';
-import { imagePromptDraftSchema, type ImagePromptDraft } from '@/llm/schemas';
+import { resolveChatModel } from '@/llm/modelFallback';
+import { assembleImagePrompt, draftImagePrompt } from '@/llm/imagePromptDraft';
+import type { ImagePromptDraft } from '@/llm/schemas';
 import { intakeImage } from '@/lib/imageIntake';
 import { debugLog } from '@/lib/debug';
 import { useProgressStore } from '@/lib/progress';
@@ -219,15 +218,10 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
       artifact,
       resolveChatModel(settings, illustrator.model),
       controller.signal,
+      settings,
       job.campaignId,
     );
-    const finalPrompt = [
-      prompt.prompt,
-      prompt.styleNotes === '' ? null : `Style: ${prompt.styleNotes}`,
-      prompt.negative === '' ? null : `Avoid: ${prompt.negative}`,
-    ]
-      .filter((part) => part !== null)
-      .join('\n');
+    const finalPrompt = assembleImagePrompt(prompt);
     // n=1: candidate-count caps (imageGen's n-retry, cappedToOne) cannot
     // trigger on this path — the queue only ever asks for one image.
     const generated = await generateImages(finalPrompt, 1, {
@@ -262,80 +256,50 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
   }
 }
 
-/** Prompt-draft for one artifact — mirrors runEngine.runPromptDraft's
- * instruction and one-repair-retry policy (auto-attach queue variant).
+/** Prompt-draft for one artifact — the shared Illustrator prompt contract
+ * (draftImagePrompt: appearance shortcut, instruction text, one repair retry
+ * on the repair model) with the queue's wiring: no run row, no streaming
+ * surface, and the artifact's rule system resolved for the shortcut.
  * `model` is the already-resolved first-try model. */
 async function draftPrompt(
   illustrator: Persona,
   artifact: AnyArtifact,
   model: string,
   signal: AbortSignal,
+  settings: Pick<Settings, 'fallbackChatModel'>,
   campaignId?: Id,
 ): Promise<ImagePromptDraft> {
-  const data = artifact.data as Record<string, unknown> | null | undefined;
-  const appearance =
-    data !== null && typeof data === 'object' && typeof data.appearance === 'string'
-      ? data.appearance.trim()
-      : '';
-  if (appearance !== '') {
-    let systemLabel = 'D&D 5e';
-    if (campaignId !== undefined) {
-      const campaign = await getCampaign(campaignId);
-      if (campaign !== undefined) {
-        systemLabel = GAME_SYSTEM_LABELS[campaign.system];
-      }
+  let systemLabel = 'D&D 5e';
+  if (campaignId !== undefined) {
+    const campaign = await getCampaign(campaignId);
+    if (campaign !== undefined) {
+      systemLabel = GAME_SYSTEM_LABELS[campaign.system];
     }
-    return {
-      prompt: `${systemLabel}=>${appearance}`,
-      negative: '',
-      styleNotes: '',
-    };
   }
-
-  const instruction = [
-    `Artifact: ${artifact.name} (${artifact.kind})`,
-    artifact.summary === '' ? null : `Summary: ${artifact.summary}`,
-    artifact.body === '' ? null : `Description (may be truncated):\n${artifact.body.slice(0, 800)}`,
-    'Reply with ONLY a JSON object with exactly these fields: ["prompt", "negative", "styleNotes"] — `prompt` describes the image to generate for this artifact, `negative` lists what to avoid, `styleNotes` gives style guidance.',
-  ]
-    .filter((part) => part !== null)
-    .join('\n\n');
-  const messages: ChatMessage[] = [
-    { role: 'system', content: illustrator.systemPrompt },
-    { role: 'user', content: instruction },
-  ];
-  let lastError: unknown = new Error('no reply');
-  // The contract-repair attempt escalates to the fallback model when one is
-  // configured — same policy as runEngine.runDraft.
-  const repairTarget = repairModel(model, await getSettings());
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const { text: raw } = await chat(
-      attempt === 0
-        ? messages
-        : [
-            ...messages,
-            {
-              role: 'user' as const,
-              content:
-                'Your previous reply was invalid JSON for the schema. Reply with corrected JSON only.',
-            },
-          ],
-      {
-        model: attempt === 0 ? model : repairTarget,
+  const result = await draftImagePrompt(
+    {
+      name: artifact.name,
+      kind: artifact.kind,
+      summary: artifact.summary,
+      body: artifact.body,
+      data: artifact.data,
+    },
+    {
+      model,
+      settings,
+      systemPrompt: illustrator.systemPrompt,
+      systemLabel,
+      signal,
+      chatOptions: (attemptModel) => ({
+        model: attemptModel,
         temperature: illustrator.temperature,
         reasoningEffort:
-          illustrator.reasoningEffort !== 'default'
-            ? illustrator.reasoningEffort
-            : undefined,
+          illustrator.reasoningEffort !== 'default' ? illustrator.reasoningEffort : undefined,
         responseFormat: 'json',
         signal,
-      },
-    );
-    try {
-      return imagePromptDraftSchema.parse(parseJsonReply(raw));
-    } catch (error) {
-      lastError = new Error(parseErrorSummary(error));
-    }
-  }
-  throw lastError;
+      }),
+    },
+  );
+  if (!result.ok) throw new Error(result.issues.join('; '));
+  return result.draft;
 }

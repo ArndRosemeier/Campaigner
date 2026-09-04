@@ -1,8 +1,6 @@
 import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OPENROUTER_BASE, OpenRouterError, fetchWithRetries, openRouterHeaders } from '@/llm/openrouter';
 import { getSettings } from '@/db/settingsRepo';
-import { getCachedModels } from '@/llm/modelCache';
-import { buildModelChain, modelAcceptsImageInput } from '@/llm/modelFallback';
-import { chainError, fallbackReasonFor } from '@/llm/openrouterErrors';
+import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
 import { bytesFromBase64 } from '@/lib/base64';
 
 /**
@@ -199,33 +197,16 @@ export async function generateImages(
   const settings = await getSettings();
   if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
 
+  // The escalation walk (failures → AbortError/unclassifiable/single-entry
+  // rethrows → vision guard → chainError) is shared with the chat client.
   const chain = buildModelChain(opts.model, settings.fallbackImageModel);
-  const failures: { model: string; error: unknown }[] = [];
-  for (const model of chain) {
-    try {
-      return await generateImagesWithModel(prompt, n, opts, settings, model);
-    } catch (error) {
-      failures.push({ model, error });
-      // A user cancel is never an escalation trigger.
-      if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      // Anything not classified congestion/filter fails loudly, as before.
-      if (fallbackReasonFor(error) === null) throw error;
-      // Single-model chain: the original error propagates unchanged.
-      if (chain.length === 1) throw error;
-      // Vision guard for structure-first edits: an image-input request is
-      // not wasted on a fallback model the cache knows is text-to-image
-      // only — the primary's own failure stays the diagnosis.
-      const next = chain[chain.indexOf(model) + 1];
-      if (
-        next !== undefined &&
-        opts.inputReferences !== undefined &&
-        opts.inputReferences.length > 0 &&
-        modelAcceptsImageInput(next, getCachedModels()) === false
-      ) {
-        throw error;
-      }
-    }
-  }
-  // Every model in the chain failed with congestion/filter errors.
-  throw chainError(failures, 'image');
+  const walk = await walkModelChain(
+    chain,
+    (model) => generateImagesWithModel(prompt, n, opts, settings, model),
+    {
+      kind: 'image',
+      needsImageInput: opts.inputReferences !== undefined && opts.inputReferences.length > 0,
+    },
+  );
+  return walk.value;
 }
