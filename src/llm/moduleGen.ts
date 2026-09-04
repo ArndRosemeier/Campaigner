@@ -7,6 +7,7 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
+import { repairModel } from '@/llm/modelFallback';
 import { searchRules } from '@/search';
 import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
 // The engine triggers the module's own post-generation automation (the
@@ -229,7 +230,9 @@ export async function runSpine(
             },
           ],
           {
-            model: settings.defaultChatModel,
+            // Contract repair escalates to the fallback model: invalid spine
+            // JSON is usually a capability weakness of the first-try model.
+            model: repairModel(settings.defaultChatModel, settings),
             temperature: 0.8,
             reasoningEffort: settings.defaultReasoningEffort,
             responseFormat: 'json',
@@ -751,13 +754,15 @@ async function partCall(
   try {
     return normalizePartMarkdown(raw);
   } catch {
+    // Contract repair escalates to the fallback model: a too-short reply is
+    // usually a capability weakness of the first-try model.
     const { text: retry } = await chat(
       [
         ...messages,
         { role: 'user', content: 'Your previous reply was too short. Write the full part now.' },
       ],
       {
-        model,
+        model: repairModel(model, settings),
         temperature: 0.8,
         reasoningEffort: settings.defaultReasoningEffort,
         signal: options.signal,
@@ -851,6 +856,8 @@ async function normalizationCall(
   try {
     return run(raw);
   } catch (error) {
+    // Contract repair escalates to the fallback model (same rationale as the
+    // part prose repair).
     const { text: retry } = await chat(
       [
         ...messages,
@@ -859,7 +866,7 @@ async function normalizationCall(
           content: `Your previous reply was invalid: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
         },
       ],
-      base,
+      { ...base, model: repairModel(model, settings) },
     );
     return run(retry);
   }

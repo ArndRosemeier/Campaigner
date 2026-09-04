@@ -37,3 +37,46 @@ export function resolveImageModel(settings: Pick<Settings, 'imageModel'>): strin
 export function buildModelChain(primary: string, fallbackModel: string): string[] {
   return fallbackModel === '' || fallbackModel === primary ? [primary] : [primary, fallbackModel];
 }
+
+/**
+ * The model for the ONE contract-repair attempt (invalid JSON, too-short
+ * output, violated reply contract): the escalation tier when configured.
+ * Contract violations are usually a capability weakness of the first-try
+ * model, so the repair — which carries the specific diagnosis — goes to the
+ * more potent fallback model. Without one, the repair stays on the model
+ * that failed (the behavior before this feature existed).
+ */
+export function repairModel(
+  firstTryModel: string,
+  settings: Pick<Settings, 'fallbackChatModel'>,
+): string {
+  const { fallbackChatModel } = settings;
+  return fallbackChatModel === '' || fallbackChatModel === firstTryModel
+    ? firstTryModel
+    : fallbackChatModel;
+}
+
+/** Structural slice of an OpenRouter model entry (kept local to avoid a
+ * module cycle with the client). */
+interface ModelArchitecture {
+  id: string;
+  architecture?: { input_modalities?: readonly string[] } | undefined;
+}
+
+/**
+ * The repair model for a VISION call (e.g. encounter-map verification): the
+ * escalation tier only when the cached /models data knows it accepts image
+ * input. An unknown fallback is attempted anyway — the failure stays loud.
+ */
+export function visionRepairModel(
+  firstTryModel: string,
+  fallbackModel: string,
+  models: readonly ModelArchitecture[] | null,
+): string {
+  const chain = buildModelChain(firstTryModel, fallbackModel);
+  const escalated = chain[chain.length - 1];
+  if (escalated === undefined || escalated === firstTryModel) return firstTryModel;
+  const found = models?.find((model) => model.id === escalated);
+  if (found?.architecture?.input_modalities === undefined) return escalated;
+  return found.architecture.input_modalities.includes('image') ? escalated : firstTryModel;
+}

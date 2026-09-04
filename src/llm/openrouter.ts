@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { getSettings } from '@/db/settingsRepo';
+import { getCachedModels, setCachedModels, type CachedModel } from '@/llm/modelCache';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
 import { buildModelChain } from '@/llm/modelFallback';
@@ -636,18 +637,13 @@ async function readStream(
   return full;
 }
 
-export interface OpenRouterModel {
-  id: string;
-  name?: string;
-  supported_parameters?: string[];
-  architecture?: { input_modalities?: string[]; output_modalities?: string[] } | undefined;
-}
+/** A /models entry — the app only uses the fields CachedModel carries. */
+export type OpenRouterModel = CachedModel;
 
-let cachedModels: OpenRouterModel[] | null = null;
-
-export function getCachedModels(): OpenRouterModel[] | null {
-  return cachedModels;
-}
+// The /models session cache (and its getter) lives in the leaf module
+// /src/llm/modelCache.ts; this re-export keeps the client the single import
+// surface for model metadata.
+export { getCachedModels } from '@/llm/modelCache';
 
 /** Check if a model supports reasoning effort adjustments. */
 export function modelSupportsReasoning(
@@ -655,7 +651,7 @@ export function modelSupportsReasoning(
   models?: readonly OpenRouterModel[],
 ): boolean {
   if (!modelId) return false;
-  const candidateList = models ?? cachedModels ?? undefined;
+  const candidateList = models ?? getCachedModels() ?? undefined;
   if (candidateList && candidateList.length > 0) {
     const found = candidateList.find((m) => m.id === modelId);
     if (found?.supported_parameters) {
@@ -682,7 +678,7 @@ export async function listModels(): Promise<OpenRouterModel[]> {
   if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
   const json = (await response.json()) as { data?: OpenRouterModel[] };
   const models = json.data ?? [];
-  cachedModels = models;
+  setCachedModels(models);
   return models;
 }
 

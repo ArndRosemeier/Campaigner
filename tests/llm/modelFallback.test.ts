@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { DEFAULT_CHAT_MODEL, DEFAULT_IMAGE_MODEL, type Settings } from '@/domain';
-import { buildModelChain, resolveChatModel, resolveImageModel } from '@/llm/modelFallback';
+import {
+  buildModelChain,
+  repairModel,
+  resolveChatModel,
+  resolveImageModel,
+  visionRepairModel,
+} from '@/llm/modelFallback';
 
 const settings = {
   defaultChatModel: DEFAULT_CHAT_MODEL,
@@ -41,5 +47,40 @@ describe('buildModelChain', () => {
 
   it('is primary then fallback when an escalation tier is defined', () => {
     expect(buildModelChain('a', 'b')).toEqual(['a', 'b']);
+  });
+});
+
+describe('repairModel', () => {
+  it('sends the contract repair to the configured escalation tier', () => {
+    expect(repairModel('cheap/primary', { fallbackChatModel: 'potent/fallback' })).toBe(
+      'potent/fallback',
+    );
+  });
+
+  it('keeps the pre-fallback behavior without a fallback or when identical', () => {
+    expect(repairModel('cheap/primary', { fallbackChatModel: '' })).toBe('cheap/primary');
+    expect(repairModel('cheap/primary', { fallbackChatModel: 'cheap/primary' })).toBe(
+      'cheap/primary',
+    );
+  });
+});
+
+describe('visionRepairModel', () => {
+  const models = [
+    { id: 'vision/fallback', architecture: { input_modalities: ['text', 'image'] } },
+    { id: 'text/fallback', architecture: { input_modalities: ['text'] } },
+  ];
+
+  it('escalates the vision repair to a vision-capable fallback', () => {
+    expect(visionRepairModel('cheap/primary', 'vision/fallback', models)).toBe('vision/fallback');
+  });
+
+  it('stays on the first-try model when the fallback cannot take images', () => {
+    expect(visionRepairModel('cheap/primary', 'text/fallback', models)).toBe('cheap/primary');
+  });
+
+  it('attempts an unknown fallback — the failure would stay loud', () => {
+    expect(visionRepairModel('cheap/primary', 'unknown/model', models)).toBe('unknown/model');
+    expect(visionRepairModel('cheap/primary', 'vision/fallback', null)).toBe('vision/fallback');
   });
 });

@@ -45,9 +45,10 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import { ZodError, type z } from 'zod';
 import { chat, MissingApiKeyError, OpenRouterError, type ChatFallback, type ChatMessage } from '@/llm/openrouter';
+import { getCachedModels } from '@/llm/modelCache';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
-import { resolveChatModel } from '@/llm/modelFallback';
+import { resolveChatModel, repairModel, visionRepairModel } from '@/llm/modelFallback';
 import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
@@ -162,12 +163,25 @@ function escalationNotice(fallback: ChatFallback): string {
   return `Primary model “${fallback.from}” ${why} — answered by fallback “${fallback.to}”.`;
 }
 
-/** Step output plus the escalation notice when a fallback produced it. */
+/** Step output plus the escalation notices (transport fallback inside chat()
+ * and/or the contract-repair escalation between calls) when they fired. */
 function withNotice<T extends Record<string, unknown>>(
   output: T,
   fallback: ChatFallback | null,
+  repairNote: string | null = null,
 ): T {
-  return fallback === null ? output : { ...output, notice: escalationNotice(fallback) };
+  const transport = fallback === null ? null : escalationNotice(fallback);
+  const notice = [transport, repairNote]
+    .filter((part): part is string => part !== null)
+    .join(' ');
+  return notice === '' ? output : { ...output, notice };
+}
+
+/** The persisted note for a contract-repair attempt that escalated models. */
+function contractRepairNotice(firstTryModel: string, repairTarget: string): string | null {
+  return repairTarget === firstTryModel
+    ? null
+    : `The reply contract failed on “${firstTryModel}” — the repair attempt ran on “${repairTarget}”.`;
 }
 
 export interface StartRunInput {
@@ -1065,8 +1079,13 @@ export class RunEngine {
       });
     }
 
+    // The one contract-repair attempt escalates to the fallback model: a
+    // violated reply contract is usually a capability weakness of the
+    // first-try model, so the diagnosed repair goes to the more potent tier.
+    const firstTryModel = resolveChatModel(settings, input.persona.model);
+    const repairTarget = this.draftRetried.has(runId) ? repairModel(firstTryModel, settings) : firstTryModel;
     const { text: raw, fallback } = await chat(messages, {
-      model: resolveChatModel(settings, input.persona.model),
+      model: repairTarget,
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json',
@@ -1118,7 +1137,10 @@ export class RunEngine {
     }
 
     this.draftRetried.delete(runId);
-    const step = this.finishStep(steps[stepIndex], withNotice({ parsed }, fallback));
+    const step = this.finishStep(
+      steps[stepIndex],
+      withNotice({ parsed }, fallback, contractRepairNotice(firstTryModel, repairTarget)),
+    );
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
   }
@@ -1162,13 +1184,16 @@ export class RunEngine {
       .filter((part) => part !== null)
       .join('\n\n');
 
+    const firstTryModel = resolveChatModel(settings, input.persona.model);
+    const repairTarget = this.statblockRetried.has(runId) ? repairModel(firstTryModel, settings) : firstTryModel;
     const { text: raw, fallback } = await chat(
       [
         { role: 'system', content: input.persona.systemPrompt },
         { role: 'user', content: instruction },
       ],
       {
-        model: resolveChatModel(settings, input.persona.model),
+        // Repair escalation: see runDraft — same one-attempt policy.
+        model: repairTarget,
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
         responseFormat: 'json',
@@ -1216,7 +1241,10 @@ export class RunEngine {
     }
 
     this.statblockRetried.delete(runId);
-    const step = this.finishStep(steps[stepIndex], withNotice({ statBlock }, fallback));
+    const step = this.finishStep(
+      steps[stepIndex],
+      withNotice({ statBlock }, fallback, contractRepairNotice(firstTryModel, repairTarget)),
+    );
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
   }
@@ -1511,6 +1539,9 @@ export class RunEngine {
     const first = await chat(messages, chatOptions);
     let raw = first.text;
     let fallback = first.fallback;
+    // The contract-repair model: the escalation tier when configured (the
+    // step notice records the escalation only when it actually differed).
+    let briefRepairTarget = chatOptions.model;
     let evaluated = evaluate(raw);
     if (evaluated.brief === null) {
       // One repair turn that names every problem — a bare "the schema failed"
@@ -1518,6 +1549,8 @@ export class RunEngine {
       const statHintForRepair = targetRoster === undefined && evaluated.issues.some((issue) => issue.includes('statBlock'))
         ? `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system)}.`
         : '';
+      // Contract repair escalates to the fallback model (see runDraft).
+      briefRepairTarget = repairModel(chatOptions.model, settings);
       const retry = await chat(
         [
           ...messages,
@@ -1527,7 +1560,7 @@ export class RunEngine {
             content: `Your reply failed the encounter-brief contract:\n- ${evaluated.issues.join('\n- ')}\nReturn the corrected JSON object only, with every field present and valid room/roster indexes.${statHintForRepair}`,
           },
         ],
-        chatOptions,
+        { ...chatOptions, model: briefRepairTarget },
       );
       raw = retry.text;
       fallback = retry.fallback ?? fallback;
@@ -1560,6 +1593,7 @@ export class RunEngine {
             statblockChunkIds: retrieval.statblockChunkIds,
           },
           fallback,
+          contractRepairNotice(chatOptions.model, briefRepairTarget),
         ),
       ),
       ...(input.autonomy === 'auto' ? {} : { runStatus: 'awaiting_user' as const }),
@@ -1762,6 +1796,9 @@ export class RunEngine {
     // image model. The dedicated setting keeps writing and vision models
     // independent; '' falls back to the default chat model.
     const verifyModel = resolveChatModel(settings, settings.encounterVerifyModel);
+    // The grid-repair attempt escalates to the fallback model — but only if
+    // the cached /models data knows it accepts image input.
+    const verifyRepairModel = visionRepairModel(verifyModel, settings.fallbackChatModel, getCachedModels());
     const verifications = [];
     for (const imageId of imageIds) {
       const image = await getImage(imageId);
@@ -1777,6 +1814,7 @@ export class RunEngine {
             schematicDataUrl: schematic.dataUrl,
             stylizedDataUrl,
             model: verifyModel,
+            repairModel: verifyRepairModel,
             signal,
           }),
         );
@@ -1995,8 +2033,13 @@ export class RunEngine {
       });
     }
 
+    // The one contract-repair attempt escalates to the fallback model: a
+    // violated reply contract is usually a capability weakness of the
+    // first-try model, so the diagnosed repair goes to the more potent tier.
+    const firstTryModel = resolveChatModel(settings, input.persona.model);
+    const repairTarget = this.draftRetried.has(runId) ? repairModel(firstTryModel, settings) : firstTryModel;
     const { text: raw, fallback } = await chat(messages, {
-      model: resolveChatModel(settings, input.persona.model),
+      model: repairTarget,
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json',
@@ -2037,7 +2080,10 @@ export class RunEngine {
       return { step, runStatus: 'needs_review' };
     }
 
-    const step = this.finishStep(steps[stepIndex], withNotice({ parsed }, fallback));
+    const step = this.finishStep(
+      steps[stepIndex],
+      withNotice({ parsed }, fallback, contractRepairNotice(firstTryModel, repairTarget)),
+    );
     const pausesHere = pauses(input.autonomy, true);
     return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
   }

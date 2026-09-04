@@ -117,6 +117,9 @@ export async function verifyEncounterMap(input: {
   schematicDataUrl: string;
   stylizedDataUrl: string;
   model: string;
+  /** Optional model for the one grid-repair attempt (contract escalation —
+   * the caller picks a vision-capable fallback via visionRepairModel). */
+  repairModel?: string | undefined;
   signal?: AbortSignal | undefined;
   excludedIndexes?: ReadonlySet<number>;
 }): Promise<EncounterMapVerification> {
@@ -171,7 +174,9 @@ export async function verifyEncounterMap(input: {
           },
         ],
         {
-          model: input.model,
+          // Contract repair escalates to the caller-provided repair model
+          // (vision-capable fallback) when configured.
+          model: input.repairModel ?? input.model,
           temperature: 0,
           responseFormat: 'json',
           signal: input.signal,

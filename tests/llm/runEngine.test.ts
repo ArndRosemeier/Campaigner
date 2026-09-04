@@ -169,6 +169,31 @@ describe('runEngine', () => {
     expect(chatMock).toHaveBeenCalledTimes(2);
   }, 20000);
 
+  it('escalates the contract-repair attempt to the fallback model and records it', async () => {
+    const { campaignId, persona } = await seed();
+    await updateSettings({ fallbackChatModel: 'potent/fallback' });
+    const primary = 'anthropic/claude-sonnet-4.5'; // the seeded settings' default chat model
+    chatMock
+      .mockResolvedValueOnce({ text: 'this is not json at all', modelUsed: primary, fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'potent/fallback', fallback: null });
+
+    const runId = await runEngine.startRun(INPUT(campaignId, persona));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+
+    // The repair attempt (the second call) went to the escalation tier.
+    const models = chatMock.mock.calls.map(([, opts]) => (opts as { model: string }).model);
+    expect(models).toEqual([primary, 'potent/fallback']);
+
+    const run = await getRun(runId);
+    const draft = run?.steps.find((step) => step.name === 'draft');
+    expect((draft?.output as { notice?: string }).notice).toBe(
+      `The reply contract failed on “${primary}” — the repair attempt ran on “potent/fallback”.`,
+    );
+  }, 20000);
+
   it('marks the step needs_review after a second JSON failure (review autonomy)', async () => {
     const { campaignId, persona } = await seed();
     chatMock.mockResolvedValue({ text: 'still not json', modelUsed: 'test-model', fallback: null });

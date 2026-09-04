@@ -10,7 +10,7 @@ import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
-import { resolveChatModel } from '@/llm/modelFallback';
+import { repairModel, resolveChatModel } from '@/llm/modelFallback';
 import { imagePromptDraftSchema, type ImagePromptDraft } from '@/llm/schemas';
 import { intakeImage } from '@/lib/imageIntake';
 import { debugLog } from '@/lib/debug';
@@ -271,6 +271,9 @@ async function draftPrompt(
     { role: 'user', content: instruction },
   ];
   let lastError: unknown = new Error('no reply');
+  // The contract-repair attempt escalates to the fallback model when one is
+  // configured — same policy as runEngine.runDraft.
+  const repairTarget = repairModel(model, await getSettings());
   for (let attempt = 0; attempt < 2; attempt += 1) {
     const { text: raw } = await chat(
       attempt === 0
@@ -284,7 +287,7 @@ async function draftPrompt(
             },
           ],
       {
-        model,
+        model: attempt === 0 ? model : repairTarget,
         temperature: illustrator.temperature,
         reasoningEffort:
           illustrator.reasoningEffort !== 'default'
