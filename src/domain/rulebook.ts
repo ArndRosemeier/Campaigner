@@ -8,6 +8,29 @@ export const rulebookStatusSchema = z.enum(['processing', 'ready', 'error']);
 
 export type RulebookStatus = z.infer<typeof rulebookStatusSchema>;
 
+export const rulebookOriginSchema = z.enum(['pdf', 'pack']);
+
+export type RulebookOrigin = z.infer<typeof rulebookOriginSchema>;
+
+/**
+ * Import report of a bestiary pack book (12-BESTIARY-PACKS §4): the adapter
+ * that produced it, its license string (shown in the UI), and the per-entry
+ * outcome counts. `null` for PDF books.
+ */
+export const packMetaSchema = z.object({
+  /** Adapter id that produced the import, e.g. 'foundry-pf2e'. */
+  sourceId: z.string().min(1),
+  /** License string shown in the UI, taken verbatim from the adapter. */
+  license: z.string(),
+  entriesImported: z.number().int().nonnegative(),
+  /** Non-creature documents skipped by design (folders, non-NPC docs). */
+  entriesSkipped: z.number().int().nonnegative(),
+  /** Entries that failed creature mapping/validation (reported, never silent). */
+  entriesFailed: z.number().int().nonnegative(),
+});
+
+export type PackMeta = z.infer<typeof packMetaSchema>;
+
 export const rulebookSchema = z.object({
   ...BaseEntitySchema.shape,
   /** User-editable; defaults to the PDF filename. */
@@ -17,6 +40,10 @@ export const rulebookSchema = z.object({
   pageCount: z.number().int().nonnegative(),
   status: rulebookStatusSchema,
   errorMessage: z.string(),
+  /** How the book entered the library: PDF ingest or bestiary pack import. */
+  origin: rulebookOriginSchema.default('pdf'),
+  /** Pack import report — null for PDF books (defaults keep old rows valid). */
+  packMeta: packMetaSchema.nullable().default(null),
   // The original PDF bytes are NOT stored (size); only extracted content.
 });
 

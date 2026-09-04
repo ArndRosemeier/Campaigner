@@ -2,11 +2,14 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { ruleChunkSchema, stampNewEntity, type RuleChunk } from '@/domain';
+import { rulebookSchema, ruleChunkSchema, stampNewEntity, type RuleChunk } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import {
+  createPackBook,
   createRulebook,
   deleteRulebook,
+  failPackBook,
+  finalizePackBook,
   getRulebook,
   listRulebooks,
   updateRulebook,
@@ -138,5 +141,58 @@ describe('listRulebooks', () => {
     await new Promise((resolve) => setTimeout(resolve, 2));
     await updateRulebook(first.id, { title: 'A2' });
     expect((await listRulebooks()).map((book) => book.id)).toEqual([first.id, second.id]);
+  });
+});
+
+describe('pack rulebooks (12-BESTIARY-PACKS §4)', () => {
+  beforeEach(clearDatabase);
+
+  it('fills origin/packMeta defaults so pre-pack rows stay valid (no Dexie bump)', () => {
+    // A legacy row as stored before packs existed: no origin/packMeta keys.
+    const legacy = rulebookSchema.parse({
+      ...stampNewEntity(),
+      title: 'Players Handbook',
+      system: 'dnd5e',
+      filename: 'phb.pdf',
+      pageCount: 320,
+      status: 'ready',
+      errorMessage: '',
+    });
+    expect(legacy.origin).toBe('pdf');
+    expect(legacy.packMeta).toBeNull();
+  });
+
+  it('creates, finalizes and fails pack books as ordinary rulebook rows', async () => {
+    const book = await createPackBook({ title: 'Bestiary', system: 'pathfinder2e', filename: 'bestiary.zip' });
+    expect(book.origin).toBe('pack');
+    expect(book.packMeta).toBeNull();
+    expect(book.status).toBe('processing');
+
+    const ready = await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'OGL',
+      entriesImported: 12,
+      entriesSkipped: 3,
+      entriesFailed: 0,
+    });
+    expect(ready.status).toBe('ready');
+    expect(ready.packMeta?.entriesImported).toBe(12);
+    expect(await getRulebook(book.id)).toEqual(ready);
+
+    await failPackBook(book.id, 'no valid creature entries');
+    const failed = await getRulebook(book.id);
+    expect(failed?.status).toBe('error');
+    expect(failed?.errorMessage).toContain('no valid creature entries');
+  });
+
+  it('keeps origin/packMeta through ordinary patches (rename, set system)', async () => {
+    const book = await createPackBook({ title: 'Bestiary', system: 'pathfinder2e', filename: 'b.zip' });
+    const renamed = await updateRulebook(book.id, {
+      title: 'PF2e Bestiary',
+      system: 'dnd5e',
+    });
+    expect(renamed.title).toBe('PF2e Bestiary');
+    expect(renamed.origin).toBe('pack');
+    expect(renamed.packMeta).toBeNull();
   });
 });

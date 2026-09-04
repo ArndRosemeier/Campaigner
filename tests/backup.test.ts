@@ -11,6 +11,7 @@ import { db } from '@/db/db';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { backupFileName, buildBackup, importBackup } from '@/lib/backup';
+import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { unzipSync, zipSync } from 'fflate';
 import { clearDatabase } from './db/helpers';
 
@@ -127,6 +128,32 @@ describe('app backup', () => {
       stripped[path] = content;
     }
     await expect(importBackup(zipSync(stripped))).rejects.toThrow(/missing the binary/);
+  });
+
+  it('round-trips a pack rulebook with origin and packMeta unchanged', async () => {
+    const book = await createPackBook({ title: 'PF2e Bestiary', system: 'pathfinder2e', filename: 'bestiary.zip' });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 7,
+      entriesSkipped: 1,
+      entriesFailed: 0,
+    });
+
+    const { bytes } = await buildBackup();
+    await clearDatabase();
+    await importBackup(bytes);
+
+    const restored = await db.rulebooks.get(book.id);
+    expect(restored?.origin).toBe('pack');
+    expect(restored?.status).toBe('ready');
+    expect(restored?.packMeta).toEqual({
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 7,
+      entriesSkipped: 1,
+      entriesFailed: 0,
+    });
   });
 
   it('names the file after the export date', () => {

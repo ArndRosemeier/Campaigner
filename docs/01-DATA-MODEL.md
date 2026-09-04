@@ -205,6 +205,14 @@ update the artifact row. Keep at most 50 revisions per artifact (delete oldest).
 ### Rulebook & RuleChunk
 
 ```ts
+interface PackMeta {
+  sourceId: string;             // adapter id, e.g. 'foundry-pf2e'
+  license: string;              // stored verbatim from the adapter, shown in the UI
+  entriesImported: number;      // int ≥ 0
+  entriesSkipped: number;       // non-creature docs, by design
+  entriesFailed: number;        // failed statBlock validation
+}
+
 interface Rulebook extends BaseEntity {
   title: string;                // user-editable, default = PDF filename
   system: GameSystem;
@@ -212,6 +220,8 @@ interface Rulebook extends BaseEntity {
   pageCount: number;
   status: 'processing' | 'ready' | 'error';
   errorMessage: string;
+  origin: 'pdf' | 'pack';       // default 'pdf' — legacy rows need no migration
+  packMeta: PackMeta | null;    // default null; import report of a pack book (doc 12 §4)
   // The original PDF bytes are NOT stored (size); only extracted content.
 }
 
