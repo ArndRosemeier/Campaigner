@@ -10,12 +10,12 @@ found exactly this gap; 13 §6 explicitly non-goaled it ("No graph-aware
 retrieval … queued elsewhere") and 14 §6 re-queued it ("spec-first"). This
 document is that spec.
 
-**Status**: spec-first. Unlike 13/14, the binding decisions are NOT yet
-settled — §6 lists the open decision points for the product owner; the
-mechanism in §3 is the recommendation, shaped to keep every option ratifiable
-without re-architecture. Terminology follows `00-OVERVIEW.md §Global
-conventions` precisely: **wiki-link**, **mention**, **relation**
-(`artifacts.links`), **alias**, **phantom**.
+**Status**: ratified. The product owner has ratified the four decision
+points of §6 — they are binding, with zero deviation authority; the
+mechanism in §3 as shaped by those decisions is the binding design.
+Terminology follows `00-OVERVIEW.md §Global conventions` precisely:
+**wiki-link**, **mention**, **relation** (`artifacts.links`), **alias**,
+**phantom**.
 
 ## 1. Motivation
 
@@ -272,10 +272,26 @@ that already exists (no Dexie change).
   phantoms stay the campaign's to-do list.
 - **No cross-module continuity checking** — the 08 non-goal stands.
 
-## 6. Open decision points for the product owner
+## 6. Decision points — ratified by the product owner
+
+**Ratified (product owner) — the following four decisions are BINDING, with
+zero deviation authority:**
+
+1. **Expansion signal: co-mention only** — no curated `artifacts.links`, no
+   transitive expansion (D1 = a).
+2. **Encounter flow: general grounding only** — the encounter brief step
+   renders the campaign-grounding section; the fix-02 citable stat-block
+   search and pack roster stay byte-identical (frozen contract) (D2 = a).
+3. **Budget: moderate** — ≤ 3 detected entities, self + top-1 co-mention
+   each (≤ 6 blocks), 4000-char global budget, deterministic truncation
+   (D3 = b).
+4. **Rollout: global settings toggle, default ON** — mirroring the
+   `embeddingsEnabled` precedent, zero schema change (D4 = b).
+
+The original decision analysis is retained below for the record.
 
 Each is genuinely consequential; the mechanism above is neutral to the choice
-in every row. One ratification round turns §3 into the binding design.
+in every row. The ratification above turned §3 into the binding design.
 
 **D1 — Which expansion signal(s)?**
 - (a) **Co-mention only** (recommended): the derived graph's real signal;
