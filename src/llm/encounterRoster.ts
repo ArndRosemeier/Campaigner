@@ -2,6 +2,7 @@ import type { GameSystem } from '@/domain/gameSystem';
 import type { Id, Rulebook, RuleChunk } from '@/domain';
 import { listChunksByBooks } from '@/db/chunkRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
+import { errorMessage } from '@/lib/errors';
 
 /**
  * Encounter roster index (12-BESTIARY-PACKS §7): a compact, level-ordered
@@ -198,7 +199,7 @@ export async function collectPackRosterWithRetry(
       lastError = error;
     }
   }
-  const cause = lastError instanceof Error ? lastError.message : String(lastError);
+  const cause = errorMessage(lastError);
   throw new Error(
     `Bestiary pack roster for system "${system}" failed after ${String(attempts)} attempts: ${cause}`,
     { cause: lastError ?? undefined },

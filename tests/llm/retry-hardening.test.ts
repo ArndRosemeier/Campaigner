@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { MAX_RETRY_AFTER_MS, fetchWithRetries, retryAfterMs } from '@/llm/openrouter';
+import { fetchWithRetries, retryAfterMs } from '@/llm/openrouter';
 
 /**
  * 429 retry hardening for parallel workers (parallelization feature): the
@@ -10,6 +10,9 @@ import { MAX_RETRY_AFTER_MS, fetchWithRetries, retryAfterMs } from '@/llm/openro
  * returned a retry hint) overrides the backoff and is capped, and plain
  * backoffs carry ±25% jitter so concurrent retriers don't sync up.
  */
+
+/** The in-module Retry-After cap (30s — no longer exported, asserted by value). */
+const MAX_RETRY_AFTER_MS = 30_000;
 
 beforeEach(() => {
   vi.useFakeTimers();

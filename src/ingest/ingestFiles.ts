@@ -5,6 +5,7 @@ import { putChunks } from '@/db/chunkRepo';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { runIngestPipeline } from '@/ingest/pipeline';
 import type { IngestRequest, IngestResponse } from '@/workers/ingest.worker';
+import { errorMessage } from '@/lib/errors';
 
 /**
  * Main-thread orchestration (02-INGESTION.md flow): creates the Rulebook row,
@@ -69,7 +70,7 @@ export async function ingestPdf(
     });
     return { book: ready, chunkCount: chunks.length, emptyPages: result.emptyPages };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     await updateRulebook(book.id, { status: 'error', errorMessage: message });
     throw error;
   }

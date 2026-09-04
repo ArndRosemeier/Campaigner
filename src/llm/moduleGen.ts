@@ -15,6 +15,7 @@ import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type L
 // module, so the direction stays acyclic.
 import { runModulePostGeneration } from '@/features/modules/post-generation';
 import { toastError } from '@/lib/toast';
+import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
 import { modulePath } from '@/app/routes';
 import { z } from 'zod';
@@ -449,7 +450,7 @@ async function failModule(moduleId: Id, error: unknown): Promise<void> {
   } else {
     toastError('Module generation failed', error);
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   await patchModule(moduleId, { status: 'failed', errorMessage: message });
 }
 
@@ -629,7 +630,7 @@ export async function generatePart(
       });
       throw error;
     }
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     await setPart({ planIndex, markdown: '', status: 'failed', errorMessage: message, edited: false });
     throw error;
   }
@@ -933,7 +934,7 @@ export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
       artifactNames,
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     await patchModule(moduleId, { entityNamesNormalized: false, entityNormalizationError: message });
     toastError('Entity name normalization failed — retry from the entity panel', error);
     return;

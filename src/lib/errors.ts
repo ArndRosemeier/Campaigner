@@ -12,6 +12,16 @@ export class NotFoundError extends Error {
   }
 }
 
+/**
+ * The message of any thrown value: `Error` instances keep their message,
+ * anything else (strings, DOMExceptions are Errors too, plain objects) is
+ * stringified. One home for the formerly inlined
+ * `error instanceof Error ? error.message : String(error)` copies.
+ */
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /** Type guard that also matches Dexie-wrapped NotFoundErrors. */
 export function isNotFoundError(error: unknown): error is NotFoundError {
   if (error instanceof NotFoundError) return true;

@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { formatModifier, type StatBlock } from '@/domain/statblock';
+import { errorMessage } from '@/lib/errors';
 
 import type { PackAdapter, PackEntry, PackFileParse } from './types';
 
@@ -130,10 +131,6 @@ type ParsedAction = z.infer<typeof actionItemSchema>;
 
 // --- Helpers ---------------------------------------------------------------
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -158,7 +155,7 @@ function parseDocs(text: string, fileName: string): unknown[] {
     try {
       docs.push(JSON.parse(candidate) as unknown);
     } catch (error) {
-      throw new Error(`${fileName}: line ${String(index + 1)} is not valid JSON: ${messageOf(error)}`, { cause: error });
+      throw new Error(`${fileName}: line ${String(index + 1)} is not valid JSON: ${errorMessage(error)}`, { cause: error });
     }
   }
   return docs;
@@ -397,7 +394,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
       failures.push({
         file: fileName,
         name,
-        message: `document ${String(index)}: ${messageOf(error)}`,
+        message: `document ${String(index)}: ${errorMessage(error)}`,
       });
     }
   }

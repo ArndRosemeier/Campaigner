@@ -2,6 +2,7 @@ import { loadAll } from 'js-yaml';
 import { z } from 'zod';
 
 import { abilityModifier, formatModifier, type StatBlock } from '@/domain/statblock';
+import { errorMessage } from '@/lib/errors';
 
 import type { PackAdapter, PackEntry, PackFileParse } from './types';
 
@@ -233,10 +234,6 @@ type ParsedWeapon = z.infer<typeof weaponItemSchema>;
 
 // --- Helpers ---------------------------------------------------------------
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
@@ -251,7 +248,7 @@ function parseDocs(text: string, fileName: string): unknown[] {
   try {
     return loadAll(trimmed);
   } catch (error) {
-    throw new Error(`${fileName}: invalid YAML: ${messageOf(error)}`, { cause: error });
+    throw new Error(`${fileName}: invalid YAML: ${errorMessage(error)}`, { cause: error });
   }
 }
 
@@ -635,7 +632,7 @@ function parseFileSync(fileName: string, bytes: Uint8Array): PackFileParse {
       failures.push({
         file: fileName,
         name,
-        message: `document ${String(index)}: ${messageOf(error)}`,
+        message: `document ${String(index)}: ${errorMessage(error)}`,
       });
     }
   }

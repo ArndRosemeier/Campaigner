@@ -1,3 +1,4 @@
+import type { ChatMessage } from '@/llm/openrouter';
 import { generationLanguageLabel } from '@/domain/settings';
 
 /**
@@ -8,11 +9,8 @@ import { generationLanguageLabel } from '@/domain/settings';
  * prompt drafting, and rule Q&A are all covered.
  */
 
-/** Structural shape of a chat message (mirrors openrouter's ChatMessage). */
-export interface DirectiveMessage {
-  role: 'system' | 'user' | 'assistant';
-  content: string | ({ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } })[];
-}
+/** The message shape the directive is applied to — the real chat message. */
+export type DirectiveMessage = ChatMessage;
 
 /** The system-level instruction enforcing the generation language. */
 export function languageDirective(language: string): string {

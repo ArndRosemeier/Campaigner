@@ -9,6 +9,7 @@ import { statBlockSchema } from '@/domain/statblock';
 import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, failPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
+import { errorMessage } from '@/lib/errors';
 
 import { getPackAdapter } from './packs/registry';
 import type { PackAdapter, PackEntry, PackEntryFailure, PackInputFile } from './packs/types';
@@ -127,10 +128,6 @@ export function derivePackTitle(inputs: readonly PackInputFile[]): string {
 
 // --- Runner -----------------------------------------------------------------
 
-function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function* batches<T>(items: readonly T[], size: number): Generator<readonly T[]> {
   for (let start = 0; start < items.length; start += size) {
     yield items.slice(start, start + size);
@@ -168,7 +165,7 @@ export async function importPack(
       skipped += parsed.skipped;
       failures.push(...parsed.failures);
     } catch (error) {
-      failures.push({ file: expanded.file.name, name: '', message: messageOf(error) });
+      failures.push({ file: expanded.file.name, name: '', message: errorMessage(error) });
     }
   }
 

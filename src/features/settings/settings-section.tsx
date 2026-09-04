@@ -11,6 +11,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
+import { errorMessage } from '@/lib/errors';
 import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from '@/domain/settings';
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -72,7 +73,7 @@ export function SettingsSection(): JSX.Element {
       setTest({ kind: 'ok', models: models.length });
       toastSuccess(`API key works — ${models.length} models available`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       setTest({ kind: 'fail', message });
       toastError('API key test failed', error);
     }

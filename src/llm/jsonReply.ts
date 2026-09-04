@@ -1,5 +1,7 @@
 import { ZodError } from 'zod';
 
+import { errorMessage } from '@/lib/errors';
+
 /**
  * Shared boundary between raw LLM replies and JSON.parse + zod (AGENTS rule 3:
  * LLM/JSON output is parsed with zod). One implementation instead of the
@@ -146,7 +148,7 @@ export function parseJsonReply(raw: string): unknown {
       `the reply contained no JSON object — reply began: ${snippet(text)}`,
     );
   }
-  const reason = lastError instanceof Error ? lastError.message : String(lastError);
+  const reason = errorMessage(lastError);
   throw new Error(`invalid JSON in the reply (${reason}) — reply began: ${snippet(text)}`);
 }
 
@@ -163,5 +165,5 @@ export function formatZodIssues(error: ZodError): string[] {
 /** A compact reason string for any parse/validation error (retry prompts, run rows). */
 export function parseErrorSummary(error: unknown): string {
   if (error instanceof ZodError) return formatZodIssues(error).join('; ');
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }

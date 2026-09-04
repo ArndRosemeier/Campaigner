@@ -3,6 +3,7 @@ import { z } from 'zod';
 import type { EncounterLayout } from '@/domain';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { parseJsonReply } from '@/llm/jsonReply';
+import { errorMessage } from '@/lib/errors';
 
 export const structureCellSchema = z.enum(['floor', 'wall', 'void']);
 export type StructureCell = z.infer<typeof structureCellSchema>;
@@ -207,7 +208,7 @@ function parseGrid(
     }
     return { success: true, data };
   } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : String(error) };
+    return { success: false, error: errorMessage(error) };
   }
 }
 

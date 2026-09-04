@@ -4,6 +4,7 @@ import type { RuleChunk } from '@/domain';
 import { listAllChunks } from '@/db/chunkRepo';
 import { fetchWithHeadersTimeout } from '@/llm/openrouter';
 import { toastError } from '@/lib/toast';
+import { errorMessage } from '@/lib/errors';
 
 /**
  * Embeddings (03-RETRIEVAL.md): lazy, content-addressed cache. Chunks are
@@ -46,7 +47,7 @@ export function resetEmbeddingFailureNotice(): void {
 function notifyFailure(error: unknown): void {
   if (failureToasted) return;
   failureToasted = true;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   toastError(`Semantic search unavailable: ${message}`);
 }
 

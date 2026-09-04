@@ -72,6 +72,7 @@ import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
 import { mapWithConcurrency } from '@/lib/parallel';
 import { toastError } from '@/lib/toast';
+import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
 import { workspacePath } from '@/app/routes';
 
@@ -1001,7 +1002,7 @@ export class RunEngine {
         await updateRun(runId, { status: 'cancelled' });
         this.emit({ kind: 'run', runId, status: 'cancelled' });
       } else if (input.persona.mode === 'encounter' && activeStepName !== null) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         throw new Error(`Encounter step "${activeStepName}" failed: ${message}`, { cause: error });
       } else {
         throw error;
@@ -2710,7 +2711,7 @@ export class RunEngine {
       this.emit({ kind: 'run', runId, status: 'failed' });
       return;
     }
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     toastError(message, error);
     try {
       await updateRun(runId, { status: 'failed', errorMessage: message });

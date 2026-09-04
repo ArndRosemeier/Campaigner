@@ -6,6 +6,8 @@
  * model-fallback helpers import it — never the other way around.
  */
 
+import { errorMessage } from '@/lib/errors';
+
 export type OpenRouterErrorKind =
   /** Non-OK HTTP response (retries exhausted, bad request, auth, …). */
   | 'http'
@@ -119,7 +121,7 @@ export function chainError(
   const detail = failures
     .map(
       ({ model, error }) =>
-        `“${model}” failed: ${error instanceof Error ? error.message : String(error)}`,
+        `“${model}” failed: ${errorMessage(error)}`,
     )
     .join(' | ');
   if (last.error instanceof OpenRouterError) {

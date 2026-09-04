@@ -20,7 +20,8 @@ export type { OpenRouterErrorKind, FallbackReason } from '@/llm/openrouterErrors
  * with SSE parsing, typed errors and 429/5xx retries (2s/8s backoff).
  */
 
-const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
+/** The OpenRouter API root (chat, images and /models endpoints). */
+export const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
 export type ChatContentPart =
   | { type: 'text'; text: string }
@@ -105,7 +106,7 @@ export const DEFAULT_RETRY_BACKOFFS_MS = [2000, 8000] as const;
  * stuck in "streaming" forever; with it the run fails visibly and can be
  * retried.
  */
-export const DEFAULT_STREAM_STALL_TIMEOUT_MS = 120_000;
+const DEFAULT_STREAM_STALL_TIMEOUT_MS = 120_000;
 
 /**
  * Abort a stream that produces no CONTENT for this long even while bytes
@@ -115,14 +116,14 @@ export const DEFAULT_STREAM_STALL_TIMEOUT_MS = 120_000;
  * "drafting…" forever hang. Reasoning deltas count as progress (the model is
  * working); silent keep-alives do not.
  */
-export const DEFAULT_CONTENT_STALL_TIMEOUT_MS = 180_000;
+const DEFAULT_CONTENT_STALL_TIMEOUT_MS = 180_000;
 
 /**
  * Hard deadline for one streamed chat call regardless of activity — a slow
  * trickle (content every couple of minutes) would otherwise outlive any
  * stall-based watchdog.
  */
-export const DEFAULT_STREAM_MAX_DURATION_MS = 600_000;
+const DEFAULT_STREAM_MAX_DURATION_MS = 600_000;
 
 /** Shared OpenRouter headers (chat, images, models endpoints). */
 export function openRouterHeaders(apiKey: string): Record<string, string> {
@@ -323,7 +324,6 @@ export async function fetchWithRetries(
  * not stall a parallel worker for minutes — past the cap the normal error
  * path takes over (retry budget exhausted → escalation chain). */
 const MAX_RETRY_AFTER_MS = 30_000;
-export { MAX_RETRY_AFTER_MS };
 
 /** Retry-After header → milliseconds (seconds or HTTP-date form). */
 export function retryAfterMs(response: Response): number | null {

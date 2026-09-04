@@ -1,6 +1,7 @@
 import type { GameSystem } from '@/domain/gameSystem';
 import type { RuleChunkDraft } from '@/domain/rulebook';
 import { runIngestPipeline } from '@/ingest/pipeline';
+import { errorMessage } from '@/lib/errors';
 
 /**
  * Ingestion Web Worker (02-INGESTION.md): PDF bytes in, RuleChunkDraft[]
@@ -43,7 +44,7 @@ ctx.onmessage = (event: MessageEvent<IngestRequest>): void => {
       ctx.postMessage({
         kind: 'error',
         bookId,
-        message: error instanceof Error ? error.message : String(error),
+        message: errorMessage(error),
       });
     }
   })();

@@ -1,8 +1,9 @@
-import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OpenRouterError, fetchWithRetries, openRouterHeaders } from '@/llm/openrouter';
+import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OPENROUTER_BASE, OpenRouterError, fetchWithRetries, openRouterHeaders } from '@/llm/openrouter';
 import { getSettings } from '@/db/settingsRepo';
 import { getCachedModels } from '@/llm/modelCache';
 import { buildModelChain, modelAcceptsImageInput } from '@/llm/modelFallback';
 import { chainError, fallbackReasonFor } from '@/llm/openrouterErrors';
+import { bytesFromBase64 } from '@/lib/base64';
 
 /**
  * Image generation client (07-MILESTONE-3 M3-A): OpenRouter's dedicated
@@ -10,8 +11,6 @@ import { chainError, fallbackReasonFor } from '@/llm/openrouterErrors';
  * returning `{ data: [{ b64_json, media_type }], usage: { cost, … } }`. No
  * streaming; same retry/error policy as the chat client.
  */
-
-const OPENROUTER_BASE = 'https://openrouter.ai/api/v1';
 
 export interface GeneratedImages {
   images: Blob[];
@@ -33,14 +32,6 @@ export interface GenerateImagesOptions {
   retryBackoffs?: readonly number[];
   /** Structure-first image edits (encounter schematic → stylized map). */
   inputReferences?: readonly { dataUrl: string }[];
-}
-
-/** Decodes base64 image bytes from the API response. */
-function decodeBase64(b64: string): Uint8Array<ArrayBuffer> {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 
 interface ImageApiResponse {
@@ -178,7 +169,7 @@ async function generateImagesWithModel(
     if (entry === undefined || entry === null) return [];
     const b64 = entry.b64_json;
     if (typeof b64 !== 'string' || b64 === '') return [];
-    return [new Blob([decodeBase64(b64)], { type: entry.media_type ?? 'image/webp' })];
+    return [new Blob([bytesFromBase64(b64)], { type: entry.media_type ?? 'image/webp' })];
   });
   if (images.length === 0) {
     throw new OpenRouterError('no-images', response.status, 'image API returned no images');

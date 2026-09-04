@@ -4,6 +4,7 @@ import { strToU8, unzipSync, zipSync } from 'fflate';
 import type { Artifact, ArtifactRevision, Campaign, Id } from '@/domain';
 import { artifactSchema, artifactRevisionSchema, campaignSchema, storedImageSchema } from '@/domain';
 import { listRevisions } from '@/db/artifactRepo';
+import { bytesFromBase64 } from '@/lib/base64';
 import { db } from '@/db/db';
 
 /**
@@ -60,13 +61,6 @@ function base64FromBytes(bytes: Uint8Array): string {
   let binary = '';
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return btoa(binary);
-}
-
-function bytesFromBase64(b64: string): Uint8Array {
-  const binary = atob(b64);
-  const bytes = new Uint8Array(binary.length);
-  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
-  return bytes;
 }
 
 /** File extension for a stored mime type (zip image files). */

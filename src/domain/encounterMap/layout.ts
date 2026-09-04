@@ -1,3 +1,4 @@
+import { errorMessage } from '@/lib/errors';
 import type { BattleVeil } from '@/domain/battle';
 import {
   encounterLayoutSchema,
@@ -51,7 +52,7 @@ export function packRooms(input: EncounterMapBrief, variant = 0): EncounterLayou
       attempts.push(`attempt ${String(attempt + 1)}: ${issues.join(', ')}`);
     } catch (error) {
       attempts.push(
-        `attempt ${String(attempt + 1)}: ${error instanceof Error ? error.message : String(error)}`,
+        `attempt ${String(attempt + 1)}: ${errorMessage(error)}`,
       );
     }
   }
