@@ -699,6 +699,55 @@ describe('PersonaPanel run lifecycle', () => {
     await flushAsyncUpdates();
   }, 30000);
 
+  it('shows the no-pack notice for encounter runs only when no ready pack exists (fix-02 decision 6)', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { createPackBook, finalizePackBook } = await import('@/db/rulebookRepo');
+    const smith = await createPersona({
+      slug: 'encounter-smith-notice',
+      name: 'Encounter Smith Notice',
+      description: '',
+      systemPrompt: 'Design encounters.',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    // Selecting an encounter persona reveals the run section: no ready pack
+    // for dnd5e → one lightweight, non-blocking notice.
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: smith.name }));
+    expect(await screen.findByTestId('no-pack-notice', {}, { timeout: 5_000 })).toHaveTextContent(
+      'No bestiary pack for D&D 5e installed',
+    );
+
+    // A processing pack book is not ready — the notice stays.
+    const processing = await createPackBook({ title: 'WIP Pack', system: 'dnd5e', filename: 'wip.zip' });
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('no-pack-notice')).toBeInTheDocument();
+
+    // Finalizing it makes the book ready — the notice disappears.
+    await finalizePackBook(processing.id, {
+      sourceId: 'foundry-dnd5e-srd',
+      license: 'CC-BY-4.0',
+      entriesImported: 1,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    await waitFor(
+      () => {
+        expect(screen.queryByTestId('no-pack-notice')).not.toBeInTheDocument();
+      },
+      { timeout: 5_000 },
+    );
+    await flushAsyncUpdates();
+  }, 30000);
+
   it('runs tab shows scrollable report with copy button when a run is selected', async () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();

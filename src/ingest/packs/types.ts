@@ -12,10 +12,6 @@ import type { StatBlock } from '@/domain/statblock';
 export interface PackEntry {
   /** Creature name — also becomes `headingPath[0]` and the roster key. */
   name: string;
-  /** Numeric level (pf2e level / dnd5e CR) for roster ordering. */
-  levelSort: number;
-  /** Descriptive trait strings for the encounter roster line. */
-  traits: string[];
   /** Exact stat block — best-effort is forbidden at this boundary. */
   statBlock: StatBlock;
   /** Rendered plain-text stat block (search text, display, contentHash). */

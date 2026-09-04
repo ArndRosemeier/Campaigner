@@ -371,8 +371,6 @@ function mapNpc(doc: ParsedNpc): PackEntry {
 
   return {
     name: doc.name,
-    levelSort: level,
-    traits: traitsSection.value,
     statBlock,
     text: lines.join('\n'),
   };

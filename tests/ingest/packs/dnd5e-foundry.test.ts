@@ -51,8 +51,9 @@ describe('foundry-dnd5e-srd adapter', () => {
 
     const entry = parsed.entries[0];
     expect(entry?.name).toBe('Ape');
-    expect(entry?.levelSort).toBe(0.5);
-    expect(entry?.traits).toEqual(['beast']);
+    // fix-02 D4 fold: PackEntry carries only name/statBlock/text — roster
+    // ordering derives from the persisted statBlock (level = '1/2' below).
+    expect(entry?.statBlock.extras.Traits).toBe('beast');
 
     const block = entry?.statBlock;
     // 12-BESTIARY-PACKS §10: abilities.str = 16, ac = 12, hp = 19 with
@@ -114,7 +115,7 @@ describe('foundry-dnd5e-srd adapter', () => {
     expect(parsed.entries).toHaveLength(1);
     const entry = parsed.entries[0];
     expect(entry?.name).toBe('Wolf');
-    expect(entry?.levelSort).toBe(0.25);
+    expect(entry?.statBlock.level).toBe('1/4');
 
     const block = entry?.statBlock;
     expect(block?.level).toBe('1/4');
@@ -141,8 +142,8 @@ describe('foundry-dnd5e-srd adapter', () => {
     const parsed = await parseYaml('kobold.yml');
     const entry = parsed.entries[0];
     expect(entry?.name).toBe('Kobold');
-    expect(entry?.levelSort).toBe(0.125);
-    expect(entry?.traits).toEqual(['humanoid', 'kobold']);
+    // Subtype tags stay in extras.Traits ("humanoid, kobold") for the roster.
+    expect(entry?.statBlock.extras.Traits).toBe('humanoid, kobold');
 
     const block = entry?.statBlock;
     expect(block?.level).toBe('1/8');
@@ -174,7 +175,6 @@ describe('foundry-dnd5e-srd adapter', () => {
   it('accepts a string CR and fails unsupported CRs loudly', async () => {
     const stringCr = await parseYaml('wolf-cr.yml', fixtureYaml('wolf.yml').replace('cr: 0.25', "cr: '1/4'"));
     expect(stringCr.entries[0]?.statBlock.level).toBe('1/4');
-    expect(stringCr.entries[0]?.levelSort).toBe(0.25);
 
     const weirdCr = await parseYaml('wolf-cr.yml', fixtureYaml('wolf.yml').replace('cr: 0.25', 'cr: 0.75'));
     expect(weirdCr.entries).toHaveLength(0);

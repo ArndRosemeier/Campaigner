@@ -38,8 +38,10 @@ import { HelpButton } from '@/help/HelpButton';
 import { ROUTES, artifactPath } from '@/app/routes';
 import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
 import { getPersona, listPersonas } from '@/db/personaRepo';
+import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import type { Autonomy, Campaign, EncounterLayout, Id, Persona, PersonaRun } from '@/domain';
+import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
@@ -397,6 +399,9 @@ export function PersonaPanel({
                     <SelectItem value="1:1">1:1</SelectItem>
                   </SelectContent>
                 </Select>
+                {/* fix-02 (decision 6): one lightweight, non-blocking notice
+                when this campaign's system has no ready bestiary pack. */}
+                <NoPackNotice system={campaign.system} />
                 {targetArtifactId !== '' && (
                   <p className="text-xs text-amber-600" data-testid="encounter-regenerate-target">
                     Runs against the selected encounter; name, prose, links and roster are
@@ -472,6 +477,29 @@ export function PersonaPanel({
         </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+/**
+ * fix-02 (decision 6): the no-pack affordance. When the campaign's system has
+ * no ready machine-readable bestiary pack, the encounter run dialog says so
+ * once — lightweight, non-blocking (the run itself is never disabled; mobs
+ * then come from cited excerpts or inline stat blocks). No notice while the
+ * library loads or when a ready pack exists.
+ */
+function NoPackNotice({ system }: { system: Campaign['system'] }): JSX.Element | null {
+  const hasReadyPack = useLiveQuery(async () => {
+    const books = await listRulebooks();
+    return books.some(
+      (book) => book.origin === 'pack' && book.system === system && book.status === 'ready',
+    );
+  }, [system]);
+  if (hasReadyPack !== false) return null;
+  return (
+    <p className="text-xs text-muted-foreground" data-testid="no-pack-notice">
+      No bestiary pack for {GAME_SYSTEM_LABELS[system]} installed — encounter monsters will be
+      generated from inline stat blocks.
+    </p>
   );
 }
 

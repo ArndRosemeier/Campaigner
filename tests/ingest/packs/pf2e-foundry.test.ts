@@ -27,8 +27,9 @@ describe('foundry-pf2e adapter', () => {
 
     const entry = parsed.entries[0];
     expect(entry?.name).toBe('Charau-ka');
-    expect(entry?.levelSort).toBe(1);
-    expect(entry?.traits).toEqual(['chaotic', 'charau-ka', 'evil', 'humanoid']);
+    // fix-02 D4 fold: PackEntry carries only name/statBlock/text — roster
+    // ordering derives from the persisted statBlock (level asserted below)
+    // and traits stay in extras.Traits (asserted below).
 
     const block = entry?.statBlock;
     expect(block?.system).toBe('pathfinder2e');

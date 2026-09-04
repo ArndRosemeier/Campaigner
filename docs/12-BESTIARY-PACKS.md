@@ -111,8 +111,6 @@ export const packMetaSchema = z.object({
 ```ts
 export interface PackEntry {
   name: string;
-  levelSort: number;       // numeric level (pf2e level, 5e CR), for roster ordering
-  traits: string[];        // roster line traits (pf2e traits / 5e type + tags)
   statBlock: StatBlock;    // parsed with statBlockSchema by the import runner
   text: string;            // rendered plain-text stat block
 }
@@ -129,6 +127,12 @@ export interface PackAdapter {
 }
 ```
 
+Delta (fix-02): `PackEntry.levelSort` and `PackEntry.traits` are removed —
+the import runner consumes only `name`/`statBlock`/`text`, and roster ordering
+derives from the **persisted statBlock** (`parseLevelSort` over
+`statBlock.level`, which handles pf2e levels and dnd5e CR fractions);
+`RuleChunk` is unchanged (§4).
+
 Files enter as a user-selected multi-file set: loose `.json` / `.db` / `.yml`
 files, and `.zip` archives (unzipped in-memory via the existing `fflate`
 dependency — a pack zip or a repo zip's pack folder both work). The runner
@@ -140,7 +144,7 @@ is one action.
 | pf2e pack field | StatBlock target |
 |---|---|
 | `name` | identity + `headingPath[0]` |
-| `system.details.level.value` | `level` (string), `levelSort` |
+| `system.details.level.value` | `level` (string) |
 | `system.abilities.*.mod` (modifiers!) | **score = 10 + 2·mod** (binding: the exact inverse of `abilityModifier`, so the shared stat-block UI prints identically); raw mods additionally into `extras['Ability modifiers']` for fidelity |
 | `system.traits.size.value` | `size` (`med` → `Medium`, …) |
 | type trait (humanoid, undead, beast, …) | `creatureType`; no match → `''` |
@@ -164,7 +168,7 @@ test.
 | dnd5e `_source` field | StatBlock target |
 |---|---|
 | `name` | identity + `headingPath[0]` |
-| `system.details.cr` | `level` (`0.5` → `"1/2"` as printed convention), `levelSort` |
+| `system.details.cr` | `level` (`0.5` → `"1/2"` as printed convention) |
 | `system.abilities.*.value` | scores **directly** (no conversion) |
 | `system.attributes.ac.flat` | `ac` |
 | `attributes.hp.max` + `.formula` | `hp` + `hpFormula` |
@@ -218,7 +222,8 @@ a compact **roster index** from the pack books:
   `system === campaign.system`, `status === 'ready'`; chunks via
   `listChunksByBooks` (both exist).
 - Line format: `Name (level, trait1, trait2)`, one creature per line, sorted
-  by `levelSort` then name, **capped at 300 lines** with a trailing
+  by derived level order (`parseLevelSort` over the persisted statBlock's
+  `level`) then name, **capped at 300 lines** with a trailing
   `"(roster truncated; N more)"` note. Not persisted — recomputed at run time
   (deterministic for an unchanged library; noted here as accepted behavior).
 - Draft contract (`/src/llm/schemas.ts`): per-monster optional
