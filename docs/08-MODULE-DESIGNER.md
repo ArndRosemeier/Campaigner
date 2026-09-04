@@ -322,6 +322,17 @@ The batch engine is headless (`src/features/modules/entity-batch.ts`,
 one implementation (progress dock job `module-entities-<moduleId>-<kind>`,
 name alignment, module-ownership stamping, loud failure summary).
 
+Parallelism (optimization): entity generations are independent — each brief
+is grounded in the module text alone — so the batch runs up to
+`maxParallelRequests` (Settings) entity generations at once, each a real
+PersonaRun in the Runs tab (the old sequential chain's "earlier entities as
+extra retrieval context" coupling is dropped). A failed run does not stop
+the batch: every entity without a produced artifact is reported in one
+summary toast. The background image queue likewise generates up to
+`maxParallelRequests` covers at once. Dependent chains (module parts,
+writers' room personas, the encounter pipeline's stages) stay strictly
+sequential.
+
 ### Post-generation automation (module row flags)
 
 The New Module dialog's "After the parts are written" grid persists three

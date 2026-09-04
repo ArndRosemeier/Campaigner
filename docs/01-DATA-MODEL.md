@@ -371,6 +371,7 @@ interface Settings {
   };
   encounterMapAspect: '4:3' | '16:9' | '1:1';
   encounterVerifyModel: string; // '' = use defaultChatModel; verify needs vision (M6)
+  maxParallelRequests: number;  // 1–4, default 2 — bound for independent parallel LLM work
   retiredSessionNotesRemoved: number; // v11 startup notice, consumed to 0
 }
 ```

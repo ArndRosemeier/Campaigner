@@ -32,8 +32,18 @@ async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>
   `finish_reason: "error"` throws `OpenRouterError`; no bytes for 120s (stall
   watchdog, keep-alives count as activity) aborts with a stall error.
 - Errors: non-200 → throw `OpenRouterError(status, bodyText)`. 429/5xx: retry
-  twice with 2s/8s backoff before throwing. Missing API key → throw
+  twice with 2s/8s backoff before throwing. On a 429 a `Retry-After` hint
+  (seconds or HTTP-date, capped at 30s) replaces the plain backoff, and every
+  backoff carries ±25% jitter so parallel workers do not retry in lockstep.
+  Missing API key → throw
   `MissingApiKeyError` (UI catches this and opens Settings).
+- Rate limits are per OpenRouter ACCOUNT: paid models have no platform
+  request cap (upstream provider limits apply, with automatic provider
+  failover), while `:free` models are capped at 20 requests/minute and
+  50–1000 requests/day (by lifetime credit history). Mid-stream 429s arrive
+  as `finish_reason: "error"` and surface like any other stream failure.
+  Parallel generation (Settings → Parallel requests, see 05-UI) multiplies
+  simultaneous traffic — keep the level low for `:free` models.
 - Model escalation (`/src/llm/modelFallback.ts`): when `fallbackChatModel` is
   set, `chat()` walks `[primary, fallback]` — a failure classified as
   congestion (429/5xx/408/timeouts) or filter (403/moderation phrasings)
