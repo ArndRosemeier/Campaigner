@@ -5,6 +5,7 @@ import { ruleChunkSchema, statBlockSchema } from '@/domain';
 import {
   buildPackRoster,
   collectPackRoster,
+  collectPackRosterWithRetry,
   formatRosterSection,
   parseLevelSort,
   rosterNameIndex,
@@ -88,9 +89,9 @@ describe('parseLevelSort', () => {
 describe('buildPackRoster', () => {
   it('formats level-ordered lines with traits', () => {
     const roster = buildPackRoster([
-      { name: 'Ogre', level: '2', traits: 'large, giant', chunkId: 'c3', levelSort: 2, bookId: 'b1' },
-      { name: 'Goblin Warrior', level: '-1', traits: 'humanoid, grunt', chunkId: 'c1', levelSort: -1, bookId: 'b1' },
-      { name: 'Giant Rat', level: '1/2', traits: '', chunkId: 'c2', levelSort: 0.5, bookId: 'b1' },
+      { name: 'Ogre', level: '2', traits: 'large, giant', chunkId: 'c3', levelSort: 2, bookId: 'b1', bookTitle: 'Bestiary' },
+      { name: 'Goblin Warrior', level: '-1', traits: 'humanoid, grunt', chunkId: 'c1', levelSort: -1, bookId: 'b1', bookTitle: 'Bestiary' },
+      { name: 'Giant Rat', level: '1/2', traits: '', chunkId: 'c2', levelSort: 0.5, bookId: 'b1', bookTitle: 'Bestiary' },
     ]);
     expect(roster.lines).toEqual([
       'Goblin Warrior (-1, humanoid, grunt)',
@@ -109,12 +110,45 @@ describe('buildPackRoster', () => {
       chunkId: `c${String(index)}`,
       levelSort: 1,
       bookId: 'b1',
+      bookTitle: 'Bestiary',
     }));
     const roster = buildPackRoster(entries);
     expect(roster.lines).toHaveLength(300);
     expect(roster.total).toBe(305);
     expect(roster.truncated).toBe(5);
     expect(roster.lines[0]).toBe('Creature 001 (1)');
+  });
+
+  it('suffixes duplicate cross-book names with the book title, unique names stay bare (fix-02 decision 5)', () => {
+    const roster = buildPackRoster([
+      { name: 'Dire Wolf', level: '2', traits: 'animal', chunkId: 'c-old', levelSort: 2, bookId: 'b-old', bookTitle: 'Older Bestiary' },
+      { name: 'Dire Wolf', level: '2', traits: 'animal', chunkId: 'c-new', levelSort: 2, bookId: 'b-new', bookTitle: 'Newer Bestiary' },
+      { name: 'Ogre', level: '2', traits: '', chunkId: 'c3', levelSort: 2, bookId: 'b-new', bookTitle: 'Newer Bestiary' },
+      // Same book as the first Dire Wolf: same-book duplicates never suffix.
+      { name: 'Goblin', level: '1', traits: '', chunkId: 'c4', levelSort: 1, bookId: 'b-old', bookTitle: 'Older Bestiary' },
+      { name: 'Goblin', level: '-1', traits: '', chunkId: 'c5', levelSort: -1, bookId: 'b-old', bookTitle: 'Older Bestiary' },
+    ]);
+    expect(roster.lines).toEqual([
+      'Goblin (-1)',
+      'Goblin (1)',
+      'Dire Wolf (2, animal) — Older Bestiary',
+      'Dire Wolf (2, animal) — Newer Bestiary',
+      'Ogre (2)',
+    ]);
+  });
+
+  it('keeps the level/name ordering unaffected by the disambiguation suffix', () => {
+    const roster = buildPackRoster([
+      { name: 'Zeta Beast', level: '1', traits: '', chunkId: 'cz', levelSort: 1, bookId: 'b1', bookTitle: 'One' },
+      { name: 'Alpha Beast', level: '3', traits: '', chunkId: 'ca', levelSort: 3, bookId: 'b2', bookTitle: 'Two' },
+      { name: 'Alpha Beast', level: '2', traits: '', chunkId: 'ca2', levelSort: 2, bookId: 'b1', bookTitle: 'One' },
+    ]);
+    // level 1 < level 2 < level 3; the duplicate lines carry their books.
+    expect(roster.lines).toEqual([
+      'Zeta Beast (1)',
+      'Alpha Beast (2) — One',
+      'Alpha Beast (3) — Two',
+    ]);
   });
 });
 
@@ -196,9 +230,9 @@ describe('rosterNameIndex', () => {
   it('breaks duplicate-name ties by book rank, then level/name order', () => {
     const index = rosterNameIndex(
       [
-        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-late', levelSort: 1, bookId: 'b2' },
-        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-early', levelSort: 1, bookId: 'b1' },
-        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-early2', levelSort: 1, bookId: 'b1' },
+        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-late', levelSort: 1, bookId: 'b2', bookTitle: 'Two' },
+        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-early', levelSort: 1, bookId: 'b1', bookTitle: 'One' },
+        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-early2', levelSort: 1, bookId: 'b1', bookTitle: 'One' },
       ],
       new Map([
         ['b1', 0],
@@ -223,5 +257,59 @@ describe('formatRosterSection', () => {
   it('appends the truncation note with the hidden count (§7)', () => {
     const section = formatRosterSection(['Ogre (2)'], 12);
     expect(section).toContain('(roster truncated; 12 more)');
+  });
+
+  it('tells the model to cite the bare creature name, not the book suffix', () => {
+    const section = formatRosterSection(['Dire Wolf (2, animal) — Older Bestiary'], 0);
+    expect(section).toContain('never the parenthesized level/traits or a " — book" suffix');
+  });
+});
+
+describe('collectPackRosterWithRetry (fix-02 decision 4)', () => {
+  it('retries a transient failure once and succeeds on attempt 2', async () => {
+    const packBook = book({ title: 'Flaky Bestiary' });
+    let calls = 0;
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([packBook]),
+      listChunks: () => {
+        calls += 1;
+        if (calls === 1) return Promise.reject(new Error('DatabaseClosedError: transient'));
+        return Promise.resolve([chunk({ name: 'Ogre', level: '2', traits: 'large' })]);
+      },
+    };
+
+    const roster = await collectPackRosterWithRetry('pathfinder2e', deps);
+    expect(calls).toBe(2);
+    expect(roster.lines).toEqual(['Ogre (2, large)']);
+  });
+
+  it('fails loudly with a named roster error after exactly 2 attempts', async () => {
+    const packBook = book({ title: 'Broken Bestiary' });
+    let calls = 0;
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([packBook]),
+      listChunks: () => {
+        calls += 1;
+        return Promise.reject(new Error('pack chunk abc has no validated stat block — re-import the pack'));
+      },
+    };
+
+    await expect(collectPackRosterWithRetry('pathfinder2e', deps)).rejects.toThrow(
+      /Bestiary pack roster for system "pathfinder2e" failed after 2 attempts: .*no validated stat block/,
+    );
+    expect(calls).toBe(2);
+  });
+
+  it('does not retry a successful build (single call)', async () => {
+    let calls = 0;
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([book()]),
+      listChunks: () => {
+        calls += 1;
+        return Promise.resolve([]);
+      },
+    };
+    await collectPackRosterWithRetry('pathfinder2e', deps);
+    expect(calls).toBe(1);
   });
 });

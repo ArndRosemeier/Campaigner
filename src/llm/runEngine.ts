@@ -39,7 +39,7 @@ import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
-import { collectPackRoster, formatRosterSection } from '@/llm/encounterRoster';
+import { collectPackRosterWithRetry, formatRosterSection } from '@/llm/encounterRoster';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -258,13 +258,16 @@ function draftContractFor(kind: ArtifactKind): DraftContract {
 /**
  * M3-B: instruction section for encounter personas — a numbered list of
  * stat-block-only excerpts the model may cite via `sourceChunkIndex`.
+ * fix-02 (decision 1): a monster with no stat source at all is a rejected
+ * draft, so the "otherwise name it" fallback is gone — uncited monsters
+ * must pick a roster entry or embed a complete inline block.
  */
 function buildStatblockCitationSection(statblockTitles: readonly string[]): string | null {
   if (statblockTitles.length === 0) return null;
   return [
     'Stat-block excerpts (0-based index before each):',
     ...statblockTitles.map((title, index) => `[${index}] ${title}`),
-    'For each monster: if one of these stat blocks matches, add "sourceChunkIndex": <index> to that monster (referring to this numbered list); otherwise leave sourceChunkIndex out and describe the monster in notes.',
+    'For each monster: if one of these stat blocks matches, add "sourceChunkIndex": <index> to that monster (referring to this numbered list); otherwise cite an exact bestiary roster entry via "sourceName" when one matches, or embed a complete inline "statBlock" object. A monster with no stat source is rejected.',
   ].join('\n');
 }
 
@@ -357,9 +360,9 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
 /**
  * Issues for citations that are PRESENT but unresolvable (12-BESTIARY-PACKS
  * §7): an excerpt index outside the list, or a roster name the roster does
- * not contain. Name-only monsters (no citation at all) are legitimate and
- * resolve to `none` — never flagged here. Shared by the Smith draft
- * validation and the Cartographer brief.
+ * not contain. Name-only monsters are flagged one level up by
+ * `encounterSourceIssues` (fix-02 decision 1). Used inside the source-issue
+ * check shared by the Smith draft validation and the Cartographer brief.
  */
 function invalidCitationIssues(
   monsters: readonly {
@@ -396,8 +399,9 @@ function invalidCitationIssues(
  * Encounter monsters must resolve to a stat block: a cited excerpt index that
  * exists, an exact bestiary roster name (§7), or an inline block — checked in
  * that precedence order. Returns one named issue per offender so the repair
- * prompt and the review UI can say exactly what is missing. Used by the
- * Cartographer brief, whose fresh-run contract fully resolves every monster.
+ * prompt and the review UI can say exactly what is missing. Shared by the
+ * Smith draft validation and the Cartographer brief (fix-02 decisions 1–2:
+ * the Smith no longer accepts name-only monsters — one repair, then loud).
  */
 function encounterSourceIssues(
   monsters: readonly {
@@ -451,6 +455,70 @@ function resolveEncounterMonsterSource(
     if (chunkId !== undefined) return chunkId;
   }
   return undefined;
+}
+
+/**
+ * fix-02 (decision 1): materializes a Smith-drafted monster as a REAL NPC
+ * artifact. The draft's zod-validated inline stat block becomes a
+ * campaign-scoped `npc` artifact (created through the repo's
+ * `createArtifact` — full schema parse, fresh `stampNewEntity` identity,
+ * revision-1 snapshot, revision meta source 'persona' with the run id) and
+ * the encounter entry links it via the existing `{type:'npc-ref'}` route, so
+ * the mob resolves with a full block and seeds fighting tokens.
+ *
+ * Reuse (fix-01's one-entity-per-name rule): an NPC of the exact name
+ * (case-insensitive, trimmed) already in the campaign is linked instead of
+ * duplicated — a statless twin receives the materialized block as a
+ * revisioned persona save; an existing stat block is never overwritten.
+ * Duplicate names inside one run collapse onto the first materialized
+ * artifact via `cache`.
+ */
+async function materializeMonsterNpc(
+  name: string,
+  notes: string,
+  statBlock: StatBlock,
+  input: StartRunInput,
+  runId: Id,
+  cache: Map<string, Id>,
+): Promise<Id> {
+  const trimmedName = name.trim();
+  if (trimmedName === '') {
+    throw new Error('finalize: a monster to materialize has an empty name');
+  }
+  const key = trimmedName.toLowerCase();
+  const cached = cache.get(key);
+  if (cached !== undefined) return cached;
+
+  const existing = (await listArtifactsByCampaign(input.campaign.id)).find(
+    (artifact) => artifact.kind === 'npc' && artifact.name.trim().toLowerCase() === key,
+  );
+  if (existing !== undefined) {
+    if (existing.kind !== 'npc') {
+      throw new Error(`"${existing.name}" matched an NPC name lookup but is a ${existing.kind}`);
+    }
+    if (existing.data.statBlock === null) {
+      await updateArtifact(
+        existing.id,
+        { data: { ...existing.data, statBlock } },
+        { source: 'persona', runId },
+      );
+    }
+    cache.set(key, existing.id);
+    return existing.id;
+  }
+
+  const created = await createArtifact(
+    {
+      campaignId: input.campaign.id,
+      kind: 'npc',
+      name: trimmedName,
+      summary: notes,
+      data: { appearance: '', personality: '', statBlock },
+    },
+    { source: 'persona', runId },
+  );
+  cache.set(key, created.id);
+  return created.id;
 }
 
 /**
@@ -1064,9 +1132,13 @@ export class RunEngine {
       let rosterTruncated = 0;
       let rosterChunkByName: Record<string, Id> = {};
       if (input.persona.producesKind === 'encounter') {
+        // fix-02 (decision 3): the citable pool excludes unparsed chunks —
+        // a 'statblock' chunk whose best-effort parse gave up must never
+        // consume a citation slot or be offered to the model.
         const statHits = await searchRules(query, {
           limit: 6,
           chunkTypes: ['statblock'],
+          hasStatBlock: true,
           onEmbeddingProgress,
         });
         for (const hit of statHits) {
@@ -1076,9 +1148,10 @@ export class RunEngine {
           }
         }
         // M-B (§7): the roster index over every ready pack book grounds WHICH
-        // creatures to field. A corrupt pack chunk throws loudly — the
-        // importer forbids it, so it is a data error, not a skip.
-        const roster = await collectPackRoster(input.campaign.system);
+        // creatures to field. fix-02 (decision 4): one automatic retry for a
+        // transient failure, then the named error fails the run loudly — a
+        // corrupt pack chunk or dead book never degrades to inline-only.
+        const roster = await collectPackRosterWithRetry(input.campaign.system);
         rosterLines = roster.lines;
         rosterTruncated = roster.truncated;
         rosterChunkByName = Object.fromEntries(roster.chunkByName);
@@ -1171,6 +1244,14 @@ export class RunEngine {
         : `Rule excerpts:\n${context.excerpts}`,
       buildStatblockCitationSection(context.statblockTitles),
       formatRosterSection(context.rosterLines, context.rosterTruncated),
+      // fix-02 (decision 1): with neither excerpts nor a roster there is
+      // nothing to cite — the draft must inline a complete block per monster,
+      // which finalize then materializes into a real NPC artifact.
+      kind === 'encounter' &&
+      context.statblockChunkIds.length === 0 &&
+      context.rosterLines.length === 0
+        ? `No stat-block excerpts and no bestiary roster are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
+        : null,
       // The only NPC-specific guidance left: whether stats matter is the
       // draft's call, so non-fightable characters skip the statblock step.
       kind === 'npc'
@@ -1264,13 +1345,14 @@ export class RunEngine {
 
     this.draftRetried.delete(runId);
 
-    // M-B (12-BESTIARY-PACKS §7): a monster citation that resolves to nothing
-    // is a contract violation — one repair attempt naming every offender, then
-    // the same loud rejected path as a schema failure. Never a silent
-    // fall-through to name-only at finalize.
+    // M-B (12-BESTIARY-PACKS §7) + fix-02 (decisions 1–2): a monster
+    // citation that resolves to nothing — and a monster with no stat source
+    // at all — is a contract violation. One repair attempt naming every
+    // offender, then the same loud rejected path as a schema failure. Never
+    // a silent fall-through to name-only at finalize.
     if (kind === 'encounter') {
       const draftMonsters = (parsed as { monsters?: EncounterDraft['monsters'] }).monsters ?? [];
-      const sourceIssues = invalidCitationIssues(
+      const sourceIssues = encounterSourceIssues(
         draftMonsters,
         context.statblockChunkIds,
         context.rosterChunkByName,
@@ -1278,13 +1360,17 @@ export class RunEngine {
       if (sourceIssues.length > 0) {
         if (!this.sourceRepaired.has(runId)) {
           this.sourceRepaired.add(runId);
+          const inlineRequired =
+            context.statblockChunkIds.length === 0 && context.rosterLines.length === 0
+              ? `\nNo stat-block excerpts and no bestiary roster are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
+              : `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system)}.`;
           return this.runDraft(
             runId,
             stepIndex,
             steps,
             input,
             signal,
-            `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply cited monster sources that do not exist:\n- ${sourceIssues.join('\n- ')}\nFor each offender ${context.rosterLines.length > 0 ? 'cite an exact name from the bestiary roster via "sourceName", ' : ''}a listed stat-block excerpt via "sourceChunkIndex", or provide a complete inline "statBlock". Reply with corrected JSON only.`,
+            `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply left monsters without a resolvable stat-block source:\n- ${sourceIssues.join('\n- ')}\nFor each offender ${context.rosterLines.length > 0 ? 'cite an exact name from the bestiary roster via "sourceName", ' : ''}a listed stat-block excerpt via "sourceChunkIndex", or provide a complete inline "statBlock".${inlineRequired} Reply with corrected JSON only.`,
           );
         }
         this.sourceRepaired.delete(runId);
@@ -2402,8 +2488,12 @@ export class RunEngine {
     }
     // M3-B: map encounter monsters' cited rulebook chunks / inline stat
     // blocks back into persisted `source` entries. M-B (§7) adds roster-name
-    // citations and the precedence: excerpt index → roster name → inline →
-    // none.
+    // citations and the precedence: excerpt index → roster name → inline.
+    // fix-02 (decisions 1–2): the Smith materializes instead of going quiet —
+    // an uncited monster's validated inline block becomes a real NPC artifact
+    // linked via {type:'npc-ref'}, and a source-less monster refuses to
+    // finalize. Serves BOTH Smith paths: fresh-draft creation and the
+    // in-place content run (both write `data.monsters` below).
     if (kind === 'encounter' && 'monsters' in data) {
       const retrieveStep = steps.find((step) => step.name === 'retrieve');
       const retrieveOutput = (retrieveStep?.output ?? {}) as {
@@ -2416,25 +2506,54 @@ export class RunEngine {
       const rosterChunkByName = sanitizeChunkByName(retrieveOutput.rosterChunkByName);
       const draftMonsters = (
         draft as {
-          monsters?: { sourceChunkIndex?: number; sourceName?: string; statBlock?: StatBlock }[];
+          monsters?: {
+            sourceChunkIndex?: number;
+            sourceName?: string;
+            statBlock?: StatBlock;
+          }[];
         }
       ).monsters;
-      data.monsters = data.monsters.map((monster, index) => {
+      const materializedNpcs = new Map<string, Id>();
+      const monsters: typeof data.monsters = [];
+      for (const [index, monster] of data.monsters.entries()) {
         const cited = draftMonsters?.[index];
         const chunkId =
           cited === undefined
             ? undefined
             : resolveEncounterMonsterSource(cited, statblockChunkIds, rosterChunkByName);
-        return {
-          ...monster,
-          source:
-            chunkId !== undefined
-              ? { type: 'rulebook', chunkId }
-              : cited?.statBlock !== undefined
-                ? { type: 'inline', statBlock: cited.statBlock }
-                : { type: 'none' },
-        };
-      });
+        if (chunkId !== undefined) {
+          monsters.push({
+            name: monster.name,
+            count: monster.count,
+            notes: monster.notes,
+            source: { type: 'rulebook', chunkId },
+          });
+          continue;
+        }
+        const statBlock = cited?.statBlock;
+        if (statBlock !== undefined) {
+          const artifactId = await materializeMonsterNpc(
+            monster.name,
+            monster.notes,
+            statBlockSchema.parse(statBlock),
+            input,
+            runId,
+            materializedNpcs,
+          );
+          monsters.push({
+            name: monster.name,
+            count: monster.count,
+            notes: monster.notes,
+            source: { type: 'npc-ref', artifactId },
+          });
+          continue;
+        }
+        throw new Error(
+          `finalize: monster "${monster.name}" has no stat-block source — no valid citation and no inline stat block. ` +
+            'Refusing to save an encounter with stat-less mobs; re-run the draft or edit it to add a source.',
+        );
+      }
+      data.monsters = monsters;
     }
 
     // Review personas finalize as a continuity report note linked to the
