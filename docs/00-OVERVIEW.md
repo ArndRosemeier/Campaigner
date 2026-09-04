@@ -80,6 +80,11 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard
   Halmund]]`); decided by one LLM call, never heuristics.
+  `fix-02-valid-mobs.md` — valid mobs for generated encounters: Smith
+  source-less monsters materialize into NPC artifacts (never a silent
+  `{type:'none'}`), the citable pool excludes null-statBlock chunks, the pack
+  roster retries then fails loudly and disambiguates duplicate names, and the
+  encounter run dialog carries a no-pack notice.
 
 ## Global conventions (binding for all code)
 
