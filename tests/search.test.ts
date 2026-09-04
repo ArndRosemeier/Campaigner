@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createRulebook } from '@/db/rulebookRepo';
+import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { stampNewEntity } from '@/domain/entity';
@@ -24,9 +24,9 @@ import type { SearchHit } from '@/search/search';
  * consume a result slot.
  */
 
-function validStatBlock(): StatBlock {
+function validStatBlock(system: 'dnd5e' | 'pathfinder2e' = 'dnd5e'): StatBlock {
   return statBlockSchema.parse({
-    system: 'dnd5e',
+    system,
     level: '1',
     size: 'Small',
     creatureType: 'humanoid',
@@ -300,3 +300,74 @@ describe('searchRules (hybrid with embeddings enabled)', () => {
     expect(hits[0]?.source).toBe('keyword');
   });
 });
+
+describe('searchRules system filter (campaign-scoped citable pool)', () => {
+  it('never lists a chunk of another game system when `system` is set — pack books included', async () => {
+    const dnd5eBook = await seedBook();
+    const pf2eBook = await seedPackBook();
+    await putChunks([
+      await makeChunk(dnd5eBook, 'Hill Giant stats.', {
+        chunkType: 'statblock',
+        headingPath: ['Hill Giant'],
+        statBlock: validStatBlock(),
+      }),
+      await makeChunk(pf2eBook, 'Kobold Warrior stats.', {
+        chunkType: 'statblock',
+        headingPath: ['Kobold Warrior'],
+        statBlock: validStatBlock('pathfinder2e'),
+      }),
+    ]);
+    const { searchRules } = await import('@/search');
+
+    // A dnd5e campaign never sees the pf2e pack creature…
+    const dnd5e = await searchRules('stats', { hasStatBlock: true, system: 'dnd5e' });
+    expect(dnd5e.map((hit) => hit.chunk.headingPath[0])).toEqual(['Hill Giant']);
+    // …and a pf2e campaign never sees the dnd5e one (vice versa).
+    const pf2e = await searchRules('stats', { hasStatBlock: true, system: 'pathfinder2e' });
+    expect(pf2e.map((hit) => hit.chunk.headingPath[0])).toEqual(['Kobold Warrior']);
+  });
+
+  it('keeps same-system behavior unchanged and cross-system browsing without `system`', async () => {
+    const dnd5eBook = await seedBook();
+    const pf2eBook = await seedPackBook();
+    const giant = await makeChunk(dnd5eBook, 'Hill Giant stats.', {
+      chunkType: 'statblock',
+      headingPath: ['Hill Giant'],
+      statBlock: validStatBlock(),
+    });
+    const kobold = await makeChunk(pf2eBook, 'Kobold Warrior stats.', {
+      chunkType: 'statblock',
+      headingPath: ['Kobold Warrior'],
+      statBlock: validStatBlock('pathfinder2e'),
+    });
+    await putChunks([giant, kobold]);
+    const { searchRules } = await import('@/search');
+
+    // Same-system search behaves exactly as before the filter existed.
+    const sameSystem = await searchRules('stats', { system: 'dnd5e' });
+    expect(sameSystem.map((hit) => hit.chunk.id)).toEqual([giant.id]);
+    // No system (the global Rules browser) stays cross-system on purpose.
+    const allSystems = await searchRules('stats');
+    expect(new Set(allSystems.map((hit) => hit.chunk.id))).toEqual(new Set([giant.id, kobold.id]));
+    // Explicit bookIds still win over the system filter.
+    const explicit = await searchRules('stats', { bookIds: [kobold.bookId], system: 'dnd5e' });
+    expect(explicit.map((hit) => hit.chunk.id)).toEqual([kobold.id]);
+  });
+});
+
+/** Seeds a ready pathfinder2e pack book (12-BESTIARY-PACKS) for the system filter. */
+async function seedPackBook(): Promise<Id> {
+  const book = await createPackBook({
+    title: 'PF2e Monster Core',
+    system: 'pathfinder2e',
+    filename: 'pf2e.zip',
+  });
+  await finalizePackBook(book.id, {
+    sourceId: 'foundry-pf2e',
+    license: 'Community Use Policy',
+    entriesImported: 1,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+  });
+  return book.id;
+}

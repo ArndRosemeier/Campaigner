@@ -9,12 +9,13 @@ import {
   stampNewEntity,
   statBlockSchema,
   type EncounterArtifactData,
+  type GameSystem,
   type Id,
   type RuleChunk,
   type StatBlock,
 } from '@/domain';
 import { EncounterForm } from '@/features/campaign/components/kind-forms';
-import { createRulebook } from '@/db/rulebookRepo';
+import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { db } from '@/db/db';
 import { createArtifact } from '@/db/artifactRepo';
@@ -29,9 +30,9 @@ import { clearDatabase } from '../db/helpers';
  * "missing ref" warning instead of crashing.
  */
 
-function statBlock(): StatBlock {
+function statBlock(system: GameSystem = 'dnd5e'): StatBlock {
   return statBlockSchema.parse({
-    system: 'dnd5e',
+    system,
     level: '3',
     size: 'Large',
     creatureType: 'giant',
@@ -85,6 +86,7 @@ describe('encounter form monster sources', () => {
       <EncounterForm
         data={data}
         campaignArtifacts={[npc]}
+        campaignSystem="dnd5e"
         onChange={vi_noop}
       />,
     );
@@ -119,6 +121,7 @@ describe('encounter form monster sources', () => {
       <EncounterForm
         data={data}
         campaignArtifacts={[]}
+        campaignSystem="dnd5e"
         onChange={(next) => {
           latest = next;
         }}
@@ -165,7 +168,14 @@ describe('encounter form monster sources', () => {
       mapImageId: null,
       layout: null,
     };
-    render(<EncounterForm data={data} campaignArtifacts={[]} onChange={vi_noop} />);
+    render(
+      <EncounterForm
+        data={data}
+        campaignArtifacts={[]}
+        campaignSystem="dnd5e"
+        onChange={vi_noop}
+      />,
+    );
 
     await user.click(screen.getByLabelText('Stats source for Giant'));
     await user.click(
@@ -177,6 +187,69 @@ describe('encounter form monster sources', () => {
     // Only the parsed chunk is offered; the null-statBlock chunk is absent.
     expect(await within(dialog).findByText('Hill Giant')).toBeInTheDocument();
     expect(within(dialog).queryByText('Stone Giant')).not.toBeInTheDocument();
+  });
+
+  it('the rulebook-link dialog never offers another system’s creatures (campaign-scoped pool)', async () => {
+    const user = userEvent.setup();
+    await createCampaign({ name: 'C', system: 'dnd5e' });
+    const book = await createRulebook({
+      title: 'Bestiary',
+      system: 'dnd5e',
+      filename: 'bestiary.pdf',
+      pageCount: 2,
+    });
+    await db.rulebooks.update(book.id, { status: 'ready' });
+    const pf2ePack = await createPackBook({
+      title: 'PF2e Monster Core',
+      system: 'pathfinder2e',
+      filename: 'pf2e.zip',
+    });
+    await finalizePackBook(pf2ePack.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 1,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    await putChunks([
+      await makeChunk(book.id, 'Hill Giant stats.', ['Hill Giant'], statBlock()),
+      await makeChunk(
+        pf2ePack.id,
+        'Kobold Warrior stats.',
+        ['Kobold Warrior'],
+        statBlock('pathfinder2e'),
+      ),
+    ]);
+    const data: EncounterArtifactData = {
+      difficulty: '',
+      levelHint: '',
+      monsters: [{ name: 'Giant', count: 1, notes: '', source: { type: 'none' } }],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+    };
+    render(
+      <EncounterForm
+        data={data}
+        campaignArtifacts={[]}
+        campaignSystem="dnd5e"
+        onChange={vi_noop}
+      />,
+    );
+
+    await user.click(screen.getByLabelText('Stats source for Giant'));
+    await user.click(
+      await screen.findByRole('option', { name: 'From rulebook…' }, { timeout: 5_000 }),
+    );
+    const dialog = await screen.findByRole('dialog', { name: /Link a rulebook stat block/i });
+    await user.type(within(dialog).getByPlaceholderText('Search stat blocks…'), 'stats');
+
+    // The same-system PDF chunk is offered; the pf2e pack creature is not —
+    // cross-system links are impossible by construction.
+    expect(await within(dialog).findByText('Hill Giant')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Kobold Warrior')).not.toBeInTheDocument();
   });
 });
 

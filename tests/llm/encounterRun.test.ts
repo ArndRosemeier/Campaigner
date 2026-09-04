@@ -216,7 +216,7 @@ describe('encounter runs (M3-B)', () => {
     searchRulesMock.mockReset();
   });
 
-  it('cites rulebook chunks, inlines stat blocks, and defaults the rest to name-only', async () => {
+  it('cites rulebook chunks and materializes inline stat blocks into NPC artifacts (fix-02)', async () => {
     const { campaign, persona, trollChunkId } = await seed();
     const { db } = await import('@/db/db');
     const chunk = await db.chunks.get(trollChunkId);
@@ -246,6 +246,10 @@ describe('encounter runs (M3-B)', () => {
     expect(statblockCall).toBeDefined();
     // fix-02 (decision 3): the citable search excludes unparsed chunks.
     expect(statblockCall?.[1]?.hasStatBlock).toBe(true);
+    // The citable pool is campaign-scoped: another system's books (pack or
+    // PDF) are never searchable by this run.
+    expect(statblockCall?.[1]?.system).toBe('dnd5e');
+    expect(searchRulesMock.mock.calls[0]?.[1]?.system).toBe('dnd5e');
     // The draft prompt teaches the citation scheme.
     const draftCall = chatMock.mock.calls[0];
     const userContent = draftCall?.[0].find((message) => message.role === 'user')?.content ?? '';

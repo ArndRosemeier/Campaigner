@@ -348,6 +348,7 @@ export function ArtifactEditor({
               <EncounterForm
                 data={draft.data}
                 campaignArtifacts={campaignArtifacts}
+                campaignSystem={campaignSystem}
                 onChange={(data) => {
                   setDraft((previous) => ({ ...previous, kind: 'encounter', data }));
                 }}

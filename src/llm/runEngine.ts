@@ -1189,7 +1189,14 @@ export class RunEngine {
     };
     try {
       const query = `${input.brief} (${GAME_SYSTEM_LABELS[input.campaign.system]})`;
-      const hits = await searchRules(query, { limit: 8, onEmbeddingProgress });
+      // The run's retrieval is campaign-scoped: grounding excerpts and the
+      // citable stat-block pool never cross game systems (pack AND PDF books
+      // carry `system`) — a pf2e book is not searchable by a dnd5e run.
+      const hits = await searchRules(query, {
+        limit: 8,
+        system: input.campaign.system,
+        onEmbeddingProgress,
+      });
       const pinned = await getChunksByIds([...input.pinnedChunkIds]);
       const merged: Id[] = [...pinned.map((chunk) => chunk.id)];
       // M3-B: the Encounter Designer gets a second search restricted to
@@ -1206,6 +1213,7 @@ export class RunEngine {
           limit: 6,
           chunkTypes: ['statblock'],
           hasStatBlock: true,
+          system: input.campaign.system,
           onEmbeddingProgress,
         });
         for (const hit of statHits) {

@@ -1,4 +1,5 @@
 import type { ChunkType, Id, RuleChunk } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
 import { countChunksByBooks, listChunksByBooks } from '@/db/chunkRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { searchKeyword } from '@/search/keywordIndex';
@@ -27,6 +28,13 @@ export interface SearchOptions {
    * citable pool never contains unparsed chunks.
    */
   hasStatBlock?: boolean | undefined;
+  /**
+   * Only books of this game system are searched when the query does not
+   * resolve explicit `bookIds` — the campaign-scoped citable pool (pack AND
+   * PDF books) never crosses game systems. Unset keeps the default of all
+   * ready books (the global Rules browser stays cross-system on purpose).
+   */
+  system?: GameSystem | undefined;
   /** Default 12. */
   limit?: number | undefined;
   /**
@@ -53,7 +61,7 @@ export async function searchRules(query: string, opts: SearchOptions = {}): Prom
   const trimmed = query.trim();
   if (trimmed === '') return [];
 
-  const bookIds = opts.bookIds ?? (await readyBookIds());
+  const bookIds = opts.bookIds ?? (await readyBookIds(opts.system));
   if (bookIds.length === 0) return [];
 
   const filter = { bookIds, chunkTypes: opts.chunkTypes, hasStatBlock: opts.hasStatBlock };
@@ -150,7 +158,14 @@ function fuse(
   return fused;
 }
 
-async function readyBookIds(): Promise<Id[]> {
+/**
+ * Default book resolution for queries without explicit `bookIds`: every
+ * 'ready' book, optionally restricted to one game system (the campaign-scoped
+ * citable pool — pack books and PDF books alike carry `system`).
+ */
+async function readyBookIds(system?: GameSystem): Promise<Id[]> {
   const books = await listRulebooks();
-  return books.filter((book) => book.status === 'ready').map((book) => book.id);
+  return books
+    .filter((book) => book.status === 'ready' && (system === undefined || book.system === system))
+    .map((book) => book.id);
 }

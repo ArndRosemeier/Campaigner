@@ -4,6 +4,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpenIcon, FileWarningIcon, LinkIcon, PenLineIcon, UsersIcon } from 'lucide-react';
 
 import type { AnyArtifact, Id, MonsterEntry, MonsterSource, StatBlock } from '@/domain';
+import type { GameSystem } from '@/domain/gameSystem';
 import { blankStatBlock } from '@/domain';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 import { Badge } from '@/components/ui/badge';
@@ -76,10 +77,13 @@ export function MonsterSourceBadge({ source }: { source: MonsterSource }): JSX.E
 export function MonsterSourceControls({
   entry,
   campaignArtifacts,
+  campaignSystem,
   onChange,
 }: {
   entry: MonsterEntry;
   campaignArtifacts: readonly AnyArtifact[];
+  /** The dialog's stat-block pool stays inside the campaign's game system. */
+  campaignSystem: GameSystem;
   onChange: (next: MonsterEntry) => void;
 }): JSX.Element {
   const [rulebookOpen, setRulebookOpen] = useState(false);
@@ -192,6 +196,7 @@ export function MonsterSourceControls({
       <RulebookStatblockDialog
         open={rulebookOpen}
         onOpenChange={setRulebookOpen}
+        campaignSystem={campaignSystem}
         onPick={(chunkId) => {
           setSource({ type: 'rulebook', chunkId });
           setRulebookOpen(false);
@@ -218,10 +223,13 @@ export function MonsterSourceControls({
 function RulebookStatblockDialog({
   open,
   onOpenChange,
+  campaignSystem,
   onPick,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Only books of the campaign's system are offered — no cross-system links. */
+  campaignSystem: GameSystem;
   onPick: (chunkId: Id) => void;
 }): JSX.Element {
   const [query, setQuery] = useState('');
@@ -234,11 +242,14 @@ function RulebookStatblockDialog({
       return;
     }
     // fix-02 (decision 3): the dialog's pool excludes unparsed chunks — a
-    // null-statBlock 'statblock' chunk would resolve to "missing ref".
+    // null-statBlock 'statblock' chunk would resolve to "missing ref". The
+    // pool is also campaign-scoped by game system: a pf2e pack book's
+    // creatures are never offered to a dnd5e campaign (and vice versa).
     const hits = await searchRules(text, {
       limit: 20,
       chunkTypes: ['statblock'],
       hasStatBlock: true,
+      system: campaignSystem,
     });
     setResults(
       hits.map((hit) => ({

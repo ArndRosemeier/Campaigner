@@ -354,10 +354,13 @@ export function FactionForm({ data, onChange }: FactionFormProps) {
 function MonsterListEditor({
   monsters,
   campaignArtifacts,
+  campaignSystem,
   onChange,
 }: {
   monsters: EncounterArtifactData['monsters'];
   campaignArtifacts: readonly AnyArtifact[];
+  /** The rulebook-link dialog's pool stays inside the campaign's system. */
+  campaignSystem: GameSystem;
   onChange: (monsters: EncounterArtifactData['monsters']) => void;
 }) {
   return (
@@ -419,6 +422,7 @@ function MonsterListEditor({
           <MonsterSourceControls
             entry={monster}
             campaignArtifacts={campaignArtifacts}
+            campaignSystem={campaignSystem}
             onChange={(next) => {
               onChange(monsters.map((m, i) => (i === index ? next : m)));
             }}
@@ -442,10 +446,12 @@ function MonsterListEditor({
 export interface EncounterFormProps {
   data: EncounterArtifactData;
   campaignArtifacts: readonly AnyArtifact[];
+  /** The campaign's game system — scopes the rulebook stat-block dialog. */
+  campaignSystem: GameSystem;
   onChange: (data: EncounterArtifactData) => void;
 }
 
-export function EncounterForm({ data, campaignArtifacts, onChange }: EncounterFormProps) {
+export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChange }: EncounterFormProps) {
   function patch(next: Partial<EncounterArtifactData>): void {
     onChange({ ...data, ...next });
   }
@@ -477,6 +483,7 @@ export function EncounterForm({ data, campaignArtifacts, onChange }: EncounterFo
       <MonsterListEditor
         monsters={data.monsters}
         campaignArtifacts={campaignArtifacts}
+        campaignSystem={campaignSystem}
         onChange={(monsters) => {
           patch({ monsters });
         }}
