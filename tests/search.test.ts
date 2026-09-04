@@ -55,6 +55,7 @@ async function seedBook(): Promise<Id> {
 async function enableEmbeddings(): Promise<void> {
   await saveSettings({
     id: 'settings',
+    maxParallelRequests: 2,
     openRouterApiKey: 'test-key',
     defaultChatModel: 'm',
     defaultReasoningEffort: 'default' as const,

@@ -139,6 +139,14 @@ export const settingsSchema = z.object({
    * vision-capable).
    */
   encounterVerifyModel: z.string().default(''),
+  /**
+   * Parallelization (optimization feature): how many OpenRouter requests may
+   * run at once when independent work is generated (entity batches, queued
+   * entity images, encounter map verification). 1 = the old sequential
+   * behavior. Dependent chains (module parts, persona chains) are always
+   * sequential regardless of this value.
+   */
+  maxParallelRequests: z.number().int().min(1).max(4).default(2),
   /** v11 migration notice, consumed once by AppShell after it is shown. */
   retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
 });
@@ -165,6 +173,7 @@ export function defaultSettings(): Settings {
     },
     encounterMapAspect: '4:3',
     encounterVerifyModel: '',
+    maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
   };
 }

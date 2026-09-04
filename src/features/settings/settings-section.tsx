@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
 import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from '@/domain/settings';
@@ -161,6 +162,35 @@ export function SettingsSection(): JSX.Element {
             void updateSettings({ defaultReasoningEffort: value });
           }}
         />
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="parallel-requests">Parallel requests</Label>
+          <Select
+            value={String(current.maxParallelRequests)}
+            items={Object.fromEntries(
+              [1, 2, 3, 4].map((n) => [String(n), n === 1 ? '1 — sequential' : String(n)]),
+            )}
+            onValueChange={(val) => {
+              if (val !== null) void updateSettings({ maxParallelRequests: Number(val) });
+            }}
+          >
+            <SelectTrigger id="parallel-requests" className="w-full" data-testid="parallel-requests">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {[1, 2, 3, 4].map((n) => (
+                <SelectItem key={n} value={String(n)}>
+                  <span>{n === 1 ? '1 — sequential' : String(n)}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-muted-foreground">
+            How many OpenRouter requests may run at once when independent things are generated
+            (entity batches, queued entity images, map candidates). Dependent chains — module
+            parts, persona pipelines — always stay sequential. Higher is faster; paid models take
+            this fine, free models cap at 20 requests/minute.
+          </p>
+        </div>
         <ModelInput
           id="embedding-model"
           label="Embedding model"

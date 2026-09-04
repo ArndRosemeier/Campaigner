@@ -55,6 +55,7 @@ async function seedChunks(count: number): Promise<RuleChunk[]> {
 
 const SETTINGS = {
   id: 'settings' as const,
+  maxParallelRequests: 2,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'm',
   defaultReasoningEffort: 'default' as const,

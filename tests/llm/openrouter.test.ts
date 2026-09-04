@@ -56,6 +56,7 @@ function timedSseResponse(steps: { delayMs: number; event: SseEvent | null }[]):
 
 const SETTINGS = {
   id: 'settings' as const,
+  maxParallelRequests: 2,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'anthropic/claude-sonnet-4.5',
   defaultReasoningEffort: 'default' as const,

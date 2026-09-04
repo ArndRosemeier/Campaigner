@@ -94,6 +94,21 @@ describe('SettingsPage', () => {
     expect(screen.getByText('Not supported by this model')).toBeInTheDocument();
   });
 
+  it('saves the parallel-requests level', async () => {
+    const user = userEvent.setup();
+    render(<SettingsPage />);
+
+    await expect(getSettings()).resolves.toMatchObject({ maxParallelRequests: 2 });
+
+    const select = await screen.findByTestId('parallel-requests');
+    await user.click(select);
+    await user.click(await screen.findByRole('option', { name: '3' }));
+
+    await waitFor(async () => {
+      await expect(getSettings()).resolves.toMatchObject({ maxParallelRequests: 3 });
+    });
+  });
+
   it('deletes all data only when DELETE is typed', async () => {
     const user = userEvent.setup();
     render(<SettingsPage />);

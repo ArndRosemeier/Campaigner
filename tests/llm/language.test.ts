@@ -29,6 +29,7 @@ function sseResponse(): Response {
 
 const SETTINGS_BASE = {
   id: 'settings' as const,
+  maxParallelRequests: 2,
   openRouterApiKey: 'test-key',
   defaultChatModel: 'm',
   defaultReasoningEffort: 'default' as const,
