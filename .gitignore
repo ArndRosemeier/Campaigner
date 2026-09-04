@@ -33,3 +33,9 @@ Sample rules/
 
 # Local backup zips (user data — never commit)
 campaigner-backup-*.zip
+
+# Python bytecode from local deploy scripts
+__pycache__/
+
+# pnpm local store (offline installs)
+.pnpm-store/

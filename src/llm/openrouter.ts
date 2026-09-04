@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { getSettings } from '@/db/settingsRepo';
-import { getCachedModels, setCachedModels, type CachedModel } from '@/llm/modelCache';
+import { getCachedModels, modelsResponseSchema, setCachedModels, type CachedModel } from '@/llm/modelCache';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
 import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
@@ -633,8 +633,8 @@ export async function listModels(): Promise<OpenRouterModel[]> {
     headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
   });
   if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
-  const json = (await response.json()) as { data?: OpenRouterModel[] };
-  const models = json.data ?? [];
+  const json = modelsResponseSchema.parse(await response.json());
+  const models = (json.data ?? []).filter((model): model is OpenRouterModel => model !== null);
   setCachedModels(models);
   return models;
 }
@@ -651,12 +651,13 @@ export async function listImageModels(): Promise<string[]> {
     headers: { Authorization: `Bearer ${settings.openRouterApiKey}` },
   });
   if (!response.ok) throw new OpenRouterError('http', response.status, await response.text());
-  const json = (await response.json()) as {
-    data?: ({ id?: string; output_modalities?: string[] } | null | undefined)[];
-  };
+  const json = modelsResponseSchema.parse(await response.json());
   const imageModelIds: string[] = [];
   for (const model of json.data ?? []) {
-    if (model?.id === undefined) continue;
+    if (model === null) continue;
+    // Preserve the listImageModels behavior: the image-filtered endpoint
+    // carries output_modalities at the entry's top level; an entry without
+    // the field still counts as an image model.
     if (!(model.output_modalities?.includes('image') ?? true)) continue;
     imageModelIds.push(model.id);
   }

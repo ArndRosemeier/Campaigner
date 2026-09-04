@@ -2,6 +2,8 @@ import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OPENROUTER_BASE, OpenRou
 import { getSettings } from '@/db/settingsRepo';
 import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
 import { bytesFromBase64 } from '@/lib/base64';
+import { parseErrorSummary } from '@/llm/jsonReply';
+import { z } from 'zod';
 
 /**
  * Image generation client (07-MILESTONE-3 M3-A): OpenRouter's dedicated
@@ -32,10 +34,22 @@ export interface GenerateImagesOptions {
   inputReferences?: readonly { dataUrl: string }[];
 }
 
-interface ImageApiResponse {
-  data?: ({ b64_json?: string; media_type?: string } | null | undefined)[];
-  usage?: { cost?: number };
-}
+/** POST /images/generations — validated at the boundary (AGENTS rule 3):
+ * unknown response fields pass through; only the consumed fields are
+ * declared. */
+const imageApiResponseSchema = z.object({
+  data: z
+    .array(
+      z
+        .looseObject({
+          b64_json: z.string().optional(),
+          media_type: z.string().optional(),
+        })
+        .nullable(),
+    )
+    .optional(),
+  usage: z.looseObject({ cost: z.number().optional() }).optional(),
+});
 
 /**
  * Generates up to `n` images for `prompt` with the given model. Each returned
@@ -156,27 +170,34 @@ async function generateImagesWithModel(
     throw new OpenRouterError('http', response.status, await response.text());
   }
 
-  let json: ImageApiResponse;
+  let body: unknown;
   try {
-    json = (await response.json()) as ImageApiResponse;
+    body = await response.json();
   } catch {
     throw new OpenRouterError('http', response.status, 'image API returned no JSON body');
   }
+  let json: z.infer<typeof imageApiResponseSchema>;
+  try {
+    json = imageApiResponseSchema.parse(body);
+  } catch (error) {
+    // A 200 body that violates the response contract is loud, not a silent
+    // degrade to "no images" (AGENTS rule 3).
+    throw new OpenRouterError('http', response.status, parseErrorSummary(error));
+  }
 
   const images = (json.data ?? []).flatMap((entry) => {
-    if (entry === undefined || entry === null) return [];
+    if (entry === null) return [];
     const b64 = entry.b64_json;
-    if (typeof b64 !== 'string' || b64 === '') return [];
+    if (b64 === undefined || b64 === '') return [];
     return [new Blob([bytesFromBase64(b64)], { type: entry.media_type ?? 'image/webp' })];
   });
   if (images.length === 0) {
     throw new OpenRouterError('no-images', response.status, 'image API returned no images');
   }
 
-  const cost = json.usage?.cost;
   return {
     images,
-    costUsd: typeof cost === 'number' ? cost : null,
+    costUsd: json.usage?.cost ?? null,
     cappedToOne,
     modelUsed: model,
   };

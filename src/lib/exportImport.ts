@@ -126,12 +126,10 @@ export async function buildCampaignExport(
 }
 
 export function exportFileName(exported: CampaignExport): string {
+  // The same slug rule as zip entries (sanitize); a symbol-only campaign
+  // name falls back to 'artifact' — still a valid file stem.
   const base = exported.campaign?.name ?? 'artifacts';
-  const slug = base
-    .toLowerCase()
-    .replaceAll(/[^a-z0-9]+/g, '-')
-    .replaceAll(/^-+|-+$/g, '');
-  return `${slug || 'export'}-${new Date(exported.exportedAt).toISOString().slice(0, 10)}.json`;
+  return `${sanitize(base)}-${new Date(exported.exportedAt).toISOString().slice(0, 10)}.json`;
 }
 
 /** Multi-file zip bundle: one JSON per artifact + a manifest + image files. */
