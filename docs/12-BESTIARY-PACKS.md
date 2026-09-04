@@ -115,15 +115,25 @@ export interface PackEntry {
   text: string;            // rendered plain-text stat block
 }
 
+/** One file's parse result (implemented contract, /src/ingest/packs/types.ts):
+ *  per-creature problems are collected, never thrown past the file boundary. */
+export interface PackFileParse {
+  entries: PackEntry[];
+  skipped: number;              // non-creature documents, by design
+  failures: PackEntryFailure[]; // { file, name, message } — always surfaced
+}
+
 export interface PackAdapter {
   id: string;              // 'foundry-pf2e' | 'foundry-dnd5e-srd'
   label: string;           // UI label
   system: GameSystem;      // the system stamped on book + stat blocks
   license: string;         // stored on the book, shown in the UI
-  /** Parses one file's bytes into entries. Throws with file context; never
-   *  fetches anything. Non-creature documents are skipped (counted, not
-   *  failed) — the adapter returns them via the second mechanism below. */
-  parseFile(name: string, bytes: Uint8Array): Promise<PackEntry[]>;
+  extensions: readonly string[]; // lowercase file extensions (with dot) the adapter parses
+  /** Parses one file's bytes into entries. Throws only for file-level
+   *  failures (empty, unparseable); per-creature problems are collected in
+   *  `failures`. Never fetches anything. Non-creature documents are skipped
+   *  (counted in `skipped`, not failed). */
+  parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse>;
 }
 ```
 
