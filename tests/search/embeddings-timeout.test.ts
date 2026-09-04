@@ -23,6 +23,8 @@ const SETTINGS = {
   embeddingsEnabled: true,
   imageModel: 'google/gemini-2.5-flash-image',
   imagesEnabled: false,
+  fallbackChatModel: '',
+  fallbackImageModel: '',
   artifactScopes: {
     workspace: { global: false, campaign: true, module: true },
     moduleView: { global: true, campaign: true, module: true },

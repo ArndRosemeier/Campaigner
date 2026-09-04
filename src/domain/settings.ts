@@ -101,6 +101,19 @@ export const settingsSchema = z.object({
   /** Image generation off until the user opts in (M3-A). */
   imagesEnabled: z.boolean(),
   /**
+   * Escalation-tier chat model (model fallback feature). '' = disabled.
+   * Defining it activates it: it is the second, more potent brain used when
+   * the first-try model (persona override or `defaultChatModel`) is
+   * congested, refuses content, or fails the output contract.
+   */
+  fallbackChatModel: z.string().default(''),
+  /**
+   * Escalation-tier image model. '' = disabled. Used when the first-try
+   * image model (`imageModel`) is congested, refuses content, or returns
+   * no images.
+   */
+  fallbackImageModel: z.string().default(''),
+  /**
    * Language every generation prompt is required to produce (default
    * English). Enforced client-side by injecting a directive into each chat
    * completion (see /src/llm/language.ts).
@@ -143,6 +156,8 @@ export function defaultSettings(): Settings {
     embeddingsEnabled: false,
     imageModel: DEFAULT_IMAGE_MODEL,
     imagesEnabled: false,
+    fallbackChatModel: '',
+    fallbackImageModel: '',
     language: 'en',
     artifactScopes: {
       workspace: defaultScopeToggles('workspace'),

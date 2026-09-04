@@ -47,6 +47,7 @@ import { ZodError, type z } from 'zod';
 import { chat, MissingApiKeyError, OpenRouterError, type ChatMessage } from '@/llm/openrouter';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
+import { resolveChatModel } from '@/llm/modelFallback';
 import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
@@ -1041,7 +1042,7 @@ export class RunEngine {
     }
 
     const raw = await chat(messages, {
-      model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
+      model: resolveChatModel(settings, input.persona.model),
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json',
@@ -1140,7 +1141,7 @@ export class RunEngine {
         { role: 'user', content: instruction },
       ],
       {
-        model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
+        model: resolveChatModel(settings, input.persona.model),
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
         responseFormat: 'json',
@@ -1278,7 +1279,7 @@ export class RunEngine {
         { role: 'user', content: instruction },
       ],
       {
-        model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
+        model: resolveChatModel(settings, input.persona.model),
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
         responseFormat: 'json',
@@ -1437,7 +1438,7 @@ export class RunEngine {
       { role: 'user', content: contract },
     ];
     const chatOptions = {
-      model: input.persona.model || settings.defaultChatModel,
+      model: resolveChatModel(settings, input.persona.model),
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json' as const,
@@ -1714,9 +1715,7 @@ export class RunEngine {
     // Verify sends the stylized map to a *chat* model (vision call) — not the
     // image model. The dedicated setting keeps writing and vision models
     // independent; '' falls back to the default chat model.
-    const verifyModel = settings.encounterVerifyModel !== ''
-      ? settings.encounterVerifyModel
-      : settings.defaultChatModel;
+    const verifyModel = resolveChatModel(settings, settings.encounterVerifyModel);
     const verifications = [];
     for (const imageId of imageIds) {
       const image = await getImage(imageId);
@@ -1950,7 +1949,7 @@ export class RunEngine {
     }
 
     const raw = await chat(messages, {
-      model: input.persona.model === '' ? settings.defaultChatModel : input.persona.model,
+      model: resolveChatModel(settings, input.persona.model),
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
       responseFormat: 'json',

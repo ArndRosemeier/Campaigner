@@ -36,6 +36,8 @@ const SETTINGS_BASE = {
   embeddingsEnabled: false,
   imageModel: 'img',
   imagesEnabled: false,
+  fallbackChatModel: '',
+  fallbackImageModel: '',
   artifactScopes: {
     workspace: { global: false, campaign: true, module: true },
     moduleView: { global: true, campaign: true, module: true },

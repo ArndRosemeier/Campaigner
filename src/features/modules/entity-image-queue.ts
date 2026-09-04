@@ -10,6 +10,7 @@ import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
+import { resolveChatModel } from '@/llm/modelFallback';
 import { imagePromptDraftSchema, type ImagePromptDraft } from '@/llm/schemas';
 import { intakeImage } from '@/lib/imageIntake';
 import { debugLog } from '@/lib/debug';
@@ -182,7 +183,7 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
     const prompt = await draftPrompt(
       illustrator,
       artifact,
-      settings.defaultChatModel,
+      resolveChatModel(settings, illustrator.model),
       controller.signal,
       job.campaignId,
     );
@@ -228,11 +229,12 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
 }
 
 /** Prompt-draft for one artifact — mirrors runEngine.runPromptDraft's
- * instruction and one-repair-retry policy (auto-attach queue variant). */
+ * instruction and one-repair-retry policy (auto-attach queue variant).
+ * `model` is the already-resolved first-try model. */
 async function draftPrompt(
   illustrator: Persona,
   artifact: AnyArtifact,
-  defaultChatModel: string,
+  model: string,
   signal: AbortSignal,
   campaignId?: Id,
 ): Promise<ImagePromptDraft> {
@@ -282,7 +284,7 @@ async function draftPrompt(
             },
           ],
       {
-        model: illustrator.model === '' ? defaultChatModel : illustrator.model,
+        model,
         temperature: illustrator.temperature,
         reasoningEffort:
           illustrator.reasoningEffort !== 'default'

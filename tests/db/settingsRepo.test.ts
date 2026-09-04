@@ -19,6 +19,8 @@ describe('settingsRepo', () => {
     expect(settings.defaultReasoningEffort).toBe('default');
     expect(settings.embeddingModel).toBe(DEFAULT_EMBEDDING_MODEL);
     expect(settings.embeddingsEnabled).toBe(false);
+    expect(settings.fallbackChatModel).toBe('');
+    expect(settings.fallbackImageModel).toBe('');
     expect(await db.settings.count()).toBe(1);
   });
 
@@ -77,5 +79,12 @@ describe('settingsRepo', () => {
     // Simulate a row written by an older app version (no language field).
     await db.settings.put(legacy as unknown as Parameters<typeof db.settings.put>[0]);
     expect(await readSettings()).toMatchObject({ language: 'en' });
+  });
+
+  it('fills the fallback-model defaults into legacy rows stored without them', async () => {
+    const { fallbackChatModel: _c, fallbackImageModel: _i, ...legacy } = await getSettings();
+    // Simulate a row written before the model-fallback feature.
+    await db.settings.put(legacy as unknown as Parameters<typeof db.settings.put>[0]);
+    expect(await readSettings()).toMatchObject({ fallbackChatModel: '', fallbackImageModel: '' });
   });
 });
