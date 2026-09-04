@@ -1,10 +1,24 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { foundryPf2eAdapter } from '@/ingest/packs/pf2e-foundry';
 
 import { actionItem, baseNpc, encodeJson, folderDoc, meleeItem } from './fixtures';
 
 describe('foundry-pf2e adapter', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('never touches the network (12-BESTIARY-PACKS §9/§10)', async () => {
+    const fetchSpy = vi.fn(() => {
+      throw new Error('adapters must never fetch');
+    });
+    vi.stubGlobal('fetch', fetchSpy);
+    await foundryPf2eAdapter.parseFile('goblin.json', encodeJson(baseNpc('Goblin Warrior')));
+    await foundryPf2eAdapter.parseFile('pack.db', encodeJson([baseNpc(), folderDoc()]));
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
   it('maps a creature document onto an exact StatBlock (modifiers → scores)', async () => {
     const parsed = await foundryPf2eAdapter.parseFile('charau-ka.json', encodeJson(baseNpc()));
     expect(parsed.entries).toHaveLength(1);

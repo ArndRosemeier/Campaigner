@@ -32,7 +32,7 @@ import {
 import { deleteRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
 
-export type BookMenuAction = 'rename' | 'system' | 'delete' | null;
+export type BookMenuAction = 'rename' | 'system' | 'license' | 'delete' | null;
 
 export interface BookDialogsProps {
   book: Rulebook;
@@ -40,12 +40,13 @@ export interface BookDialogsProps {
   onOpenChange: (open: boolean) => void;
 }
 
-/** Rename / Set system / Delete flows for a book card menu (05-UI §Rules). */
+/** Rename / Set system / License / Delete flows for a book card menu (05-UI §Rules). */
 export function BookDialogs({ book, action, onOpenChange }: BookDialogsProps) {
   return (
     <>
       <RenameDialog book={book} open={action === 'rename'} onOpenChange={onOpenChange} />
       <SystemDialog book={book} open={action === 'system'} onOpenChange={onOpenChange} />
+      <LicenseDialog book={book} open={action === 'license'} onOpenChange={onOpenChange} />
       <DeleteDialog book={book} open={action === 'delete'} onOpenChange={onOpenChange} />
     </>
   );
@@ -190,6 +191,49 @@ function SystemDialog({
             <Button type="submit">Save</Button>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Content license of an imported bestiary pack (12-BESTIARY-PACKS §2/§6):
+ * shown verbatim from `packMeta.license` — the user imported the files
+ * locally, and the UI must state the provenance terms.
+ */
+function LicenseDialog({
+  book,
+  open,
+  onOpenChange,
+}: {
+  book: Rulebook;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>License — {book.title}</DialogTitle>
+          <DialogDescription>
+            Stored with the pack import; the pack files were imported locally from their official
+            source.
+          </DialogDescription>
+        </DialogHeader>
+        <p className="my-3 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap" data-testid="pack-license">
+          {book.packMeta?.license ?? ''}
+        </p>
+        <DialogFooter>
+          <Button
+            type="button"
+            variant="outline"
+            onClick={() => {
+              onOpenChange(false);
+            }}
+          >
+            Close
+          </Button>
+        </DialogFooter>
       </DialogContent>
     </Dialog>
   );

@@ -10,10 +10,13 @@ import { createAppRouter } from '@/app/router';
 import { ROUTES } from '@/app/routes';
 import { clearDatabase } from './db/helpers';
 import { flushAsyncUpdates } from './helpers/flush';
+import { baseNpc, encodeJson, folderDoc } from './ingest/packs/fixtures';
 
 /**
  * Rules screen (T4): PDF import through the UI with the committed fixture,
- * then rename/delete flows — backed by the real Dexie database.
+ * then rename/delete flows — backed by the real Dexie database. The bestiary
+ * pack import (12-BESTIARY-PACKS §6) runs the real adapter + Dexie flow with
+ * fixture creature documents.
  */
 
 function renderAppAt(path: string): void {
@@ -33,6 +36,16 @@ function fixtureFile(): File {
 function importFixture(): void {
   const input = screen.getByTestId('import-input');
   Object.defineProperty(input, 'files', { value: [fixtureFile()] });
+  fireEvent.change(input);
+}
+
+function packFile(name: string, doc: Record<string, unknown>): File {
+  return new File([new Uint8Array(encodeJson(doc))], name, { type: 'application/json' });
+}
+
+function importPackFiles(files: File[]): void {
+  const input = screen.getByTestId('pack-import-input');
+  Object.defineProperty(input, 'files', { value: files });
   fireEvent.change(input);
 }
 
@@ -124,5 +137,67 @@ describe('rules screen', () => {
     expect(await listRulebooks()).toHaveLength(0);
     expect(await db.chunks.count()).toBe(0);
     await flushAsyncUpdates();
+  }, 30000);
+
+  it('imports a bestiary pack through the dialog and lists it with the Pack badge', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.rules);
+
+    await user.click(screen.getByTestId('import-pack'));
+    const dialog = screen.getByTestId('pack-import-dialog');
+
+    // The adapter select lists the registered adapters only.
+    expect(within(dialog).getByLabelText('Pack source')).toHaveTextContent(
+      'Pathfinder 2e (Foundry VTT PF2e system packs)',
+    );
+    importPackFiles([
+      packFile('age-of-ashes-goblin.json', baseNpc('Goblin Warrior')),
+      packFile('_folders.json', folderDoc()),
+    ]);
+    await user.click(within(dialog).getByRole('button', { name: 'Import' }));
+
+    // The import report names all three counts; the folder doc counts as skipped.
+    const report = await within(dialog).findByTestId('pack-import-report', {}, { timeout: 15000 });
+    expect(report).toHaveTextContent('1 imported');
+    expect(report).toHaveTextContent('1 skipped');
+    expect(report).toHaveTextContent('0 failed');
+
+    // Close the dialog (it aria-hides the book list while open).
+    await user.keyboard('{Escape}');
+
+    const title = await screen.findByText('age-of-ashes-goblin', {}, { timeout: 15000 });
+    await waitFor(() => {
+      expect(within(title.closest('li') as HTMLElement).getByText('ready')).toBeInTheDocument();
+    });
+    const card = (await screen.findByText('age-of-ashes-goblin')).closest('li') as HTMLElement;
+    expect(within(card).getByText('Pack')).toBeInTheDocument();
+    expect(within(card).getByText('1 chunk')).toBeInTheDocument();
+
+    // The license lives in the book menu, shown verbatim from the adapter.
+    await user.click(within(card).getByRole('button', { name: 'Menu for age-of-ashes-goblin' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'License' }));
+    expect(await screen.findByTestId('pack-license')).toHaveTextContent(/Pathfinder Second Edition/);
+  }, 30000);
+
+  it('marks the book error and toasts when a pack selection has zero valid entries', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.rules);
+
+    await user.click(screen.getByTestId('import-pack'));
+    const dialog = screen.getByTestId('pack-import-dialog');
+    importPackFiles([packFile('only-folders.json', folderDoc())]);
+    await user.click(within(dialog).getByRole('button', { name: 'Import' }));
+
+    // Loud failure: a toast names the reason, and the book lands as error —
+    // never an empty ready book.
+    expect(
+      await screen.findByText(/Could not import the bestiary pack/, {}, { timeout: 15000 }),
+    ).toBeInTheDocument();
+    const title = await screen.findByText('only-folders', {}, { timeout: 15000 });
+    const card = title.closest('li') as HTMLElement;
+    await waitFor(() => {
+      expect(within(card).getByText('error')).toBeInTheDocument();
+    });
+    expect(within(card).getByText(/no valid creature entries/)).toBeInTheDocument();
   }, 30000);
 });

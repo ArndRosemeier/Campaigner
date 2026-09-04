@@ -12,7 +12,7 @@ export function resolveMonsterEntryWithRepos(entry: MonsterEntry): Promise<Resol
   return resolveMonsterEntry(entry, {
     getArtifact,
     getChunk: (id: Id) => db.chunks.get(id),
-    bookTitle: async (bookId: Id) => (await db.rulebooks.get(bookId))?.title ?? '',
+    getRulebook: (bookId: Id) => db.rulebooks.get(bookId),
   });
 }
 

@@ -6,7 +6,7 @@ import { newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type StatBlock
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createRulebook } from '@/db/rulebookRepo';
+import { createPackBook, createRulebook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { sha256Hex } from '@/lib/hash';
 import { db } from '@/db/db';
@@ -128,6 +128,43 @@ describe('resolveMonsterEntryWithRepos', () => {
     });
     expect(resolved.origin).toBe('Bestiary p.132');
     expect(resolved.statBlock?.level).toBe('3');
+  });
+
+  it('resolves a pack chunk to "<book title>: <creature name>" without a page', async () => {
+    // Pack chunks have no page numbers (12-BESTIARY-PACKS §4): the origin
+    // label names the creature from headingPath[0] instead.
+    const book = await createPackBook({ title: 'PF2e Bestiary', system: 'pathfinder2e', filename: 'bestiary.zip' });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 1,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    const text = 'Goblin Warrior stat block';
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Goblin Warrior'],
+        text,
+        statBlock: statBlock({ creatureType: 'humanoid' }),
+        contentHash: await sha256Hex(text),
+      }),
+    ]);
+    const chunks = await db.chunks.toArray();
+
+    const resolved = await resolveMonsterEntryWithRepos({
+      name: 'Goblin Warrior',
+      count: 4,
+      notes: '',
+      source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
+    });
+    expect(resolved.origin).toBe('PF2e Bestiary: Goblin Warrior');
+    expect(resolved.statBlock?.creatureType).toBe('humanoid');
   });
 
   it('degrades a dangling rulebook chunk to "missing ref"', async () => {

@@ -1,4 +1,4 @@
-import type { Artifact, Id, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
+import type { Artifact, Id, MonsterEntry, Rulebook, RuleChunk, StatBlock } from '@/domain';
 
 /**
  * Monster source resolution (07-MILESTONE-3 M3-B): turns an encounter's
@@ -14,8 +14,8 @@ import type { Artifact, Id, MonsterEntry, RuleChunk, StatBlock } from '@/domain'
 export interface MonsterLookups {
   getArtifact: (id: Id) => Promise<Artifact | undefined>;
   getChunk: (id: Id) => Promise<RuleChunk | undefined>;
-  /** Book title for origin labels; '' when the book is gone. */
-  bookTitle: (bookId: Id) => Promise<string>;
+  /** The book a chunk belongs to — drives the origin label (12-BESTIARY-PACKS §8). */
+  getRulebook: (bookId: Id) => Promise<Rulebook | undefined>;
 }
 
 export interface ResolvedMonster {
@@ -44,10 +44,20 @@ export async function resolveMonsterEntry(
       if (chunk?.statBlock == null) {
         return { statBlock: null, origin: 'missing ref' };
       }
-      const title = await lookups.bookTitle(chunk.bookId);
+      const book = await lookups.getRulebook(chunk.bookId);
+      const title = book?.title === undefined || book.title === '' ? 'Rulebook' : book.title;
+      // Pack chunks have no page numbers (12-BESTIARY-PACKS §4/§8): the
+      // label names the creature instead. PDF books keep the page label.
+      if (book?.origin === 'pack') {
+        const creature = chunk.headingPath[0]?.trim();
+        return {
+          statBlock: chunk.statBlock,
+          origin: `${title}: ${creature === undefined || creature === '' ? entry.name : creature}`,
+        };
+      }
       return {
         statBlock: chunk.statBlock,
-        origin: `${title === '' ? 'Rulebook' : title} p.${chunk.pageStart}`,
+        origin: `${title} p.${chunk.pageStart}`,
       };
     }
     case 'none':

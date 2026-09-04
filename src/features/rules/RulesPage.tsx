@@ -18,15 +18,17 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { Progress } from '@/components/ui/progress';
 import { BookDialogs } from '@/features/rules/book-dialogs';
+import { PackImportDialog } from '@/features/rules/pack-import-dialog';
 import { useRulebookSummaries, type RulebookSummary } from '@/features/rules/hooks';
 import { SearchBrowser } from '@/features/rules/search-browser';
 import { ingestPdf, type IngestProgress } from '@/ingest/ingestFiles';
+import type { PackImportProgress } from '@/ingest/packImport';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { ensureEmbeddings, embeddingsActive } from '@/search';
 import { listChunksByBook } from '@/db/chunkRepo';
 
-/** Per-book ingestion progress (0–100 while processing). */
-export type ProgressMap = Record<string, { page: number; pageCount: number }>;
+/** Per-book ingestion/pack-import progress (0–100 while processing). */
+export type ProgressMap = Record<string, { done: number; total: number }>;
 
 /** Per-book embedding progress (0–100 while embedding whole book). */
 type EmbedProgressMap = Record<string, { done: number; total: number }>;
@@ -42,13 +44,30 @@ export function RulesPage(): JSX.Element {
   const [progress, setProgress] = useState<ProgressMap>({});
   const [embedProgress, setEmbedProgress] = useState<EmbedProgressMap>({});
   const [importing, setImporting] = useState(false);
+  const [packOpen, setPackOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   function trackProgress(p: IngestProgress): void {
     setProgress((previous) => ({
       ...previous,
-      [p.bookId]: { page: p.page, pageCount: p.pageCount },
+      [p.bookId]: { done: p.page, total: p.pageCount },
     }));
+  }
+
+  const packProgressBookRef = useRef<string | null>(null);
+
+  function trackPackProgress(p: PackImportProgress | null): void {
+    setProgress((previous) => {
+      if (p === null) {
+        const bookId = packProgressBookRef.current;
+        packProgressBookRef.current = null;
+        if (bookId === null) return previous;
+        const { [bookId]: _removed, ...rest } = previous;
+        return rest;
+      }
+      packProgressBookRef.current = p.bookId;
+      return { ...previous, [p.bookId]: { done: p.done, total: p.total } };
+    });
   }
 
   async function handleFiles(files: FileList | null): Promise<void> {
@@ -134,16 +153,35 @@ export function RulesPage(): JSX.Element {
             Rulebooks
             <HelpButton topic="rules" label="rulebooks" />
           </h1>
-          <Button
-            size="sm"
-            disabled={importing}
-            onClick={() => fileInputRef.current?.click()}
-            data-testid="import-pdfs"
-          >
-            <PlusIcon aria-hidden data-icon="inline-start" />
-            Import PDFs
-          </Button>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <Button
+              size="sm"
+              disabled={importing}
+              onClick={() => fileInputRef.current?.click()}
+              data-testid="import-pdfs"
+            >
+              <PlusIcon aria-hidden data-icon="inline-start" />
+              Import PDFs
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={importing}
+              onClick={() => {
+                setPackOpen(true);
+              }}
+              data-testid="import-pack"
+            >
+              <PlusIcon aria-hidden data-icon="inline-start" />
+              Import bestiary pack
+            </Button>
+          </div>
           {importInput}
+          <PackImportDialog
+            open={packOpen}
+            onOpenChange={setPackOpen}
+            onProgress={trackPackProgress}
+          />
         </div>
         <EmbeddingLibraryPanel />
         <div className="min-h-0 flex-1 overflow-y-auto p-3" data-testid="book-list">
@@ -238,7 +276,7 @@ function BookCard({
   onEmbedBook,
 }: BookCardProps) {
   const { book, chunkCount } = summary;
-  const [menuAction, setMenuAction] = useState<'rename' | 'system' | 'delete' | null>(null);
+  const [menuAction, setMenuAction] = useState<'rename' | 'system' | 'license' | 'delete' | null>(null);
   const retryInputRef = useRef<HTMLInputElement | null>(null);
   const ingest = progress[book.id];
   const embed = embedProgress[book.id];
@@ -284,6 +322,15 @@ function BookCard({
                 >
                   Set system
                 </DropdownMenuItem>
+                {book.origin === 'pack' && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setMenuAction('license');
+                    }}
+                  >
+                    License
+                  </DropdownMenuItem>
+                )}
                 {book.status === 'ready' && (
                   <DropdownMenuItem
                     disabled={embedding}
@@ -327,14 +374,15 @@ function BookCard({
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
           <div className="flex items-center gap-2">
+            {book.origin === 'pack' && <Badge variant="outline">Pack</Badge>}
             <Badge variant="secondary">{GAME_SYSTEM_LABELS[book.system]}</Badge>
             <StatusChip book={book} />
             <span>
               {chunkCount} chunk{chunkCount === 1 ? '' : 's'}
             </span>
           </div>
-          {book.status === 'processing' && ingest !== undefined && ingest.pageCount > 0 && (
-            <Progress value={(ingest.page / ingest.pageCount) * 100} />
+          {book.status === 'processing' && ingest !== undefined && ingest.total > 0 && (
+            <Progress value={(ingest.done / ingest.total) * 100} />
           )}
           {embed !== undefined && (
             <Progress
@@ -356,8 +404,7 @@ function BookCard({
         onOpenChange={(open) => {
           if (!open) setMenuAction(null);
         }}
-      />
-    </>
+      />    </>
   );
 }
 
