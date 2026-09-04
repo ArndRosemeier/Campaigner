@@ -545,18 +545,37 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
       </div>
 
       <ol className="flex flex-col gap-1">
-        {run.steps.map((step, index) => (
-          <li key={step.index} className="flex items-center gap-2 text-xs">
-            <StepIcon status={step.status} />
-            <span className={step.status === 'running' ? 'font-medium' : ''}>{step.name}</span>
-            {step.status === 'rejected' && <Badge variant="destructive">needs review</Badge>}
-            {index === runningIndex && (
-              <span className="text-muted-foreground">
-                streaming… (reasoning models can think for several minutes before text appears)
-              </span>
-            )}
-          </li>
-        ))}
+        {run.steps.map((step, index) => {
+          // Persisted escalation notices (fallback model answered, contract
+          // repair escalated, candidates capped at one) — visible, never
+          // silent (AGENTS rule 1).
+          const notice = (step.output as { notice?: unknown } | null | undefined)?.notice;
+          const noticeText = typeof notice === 'string' && notice !== '' ? notice : null;
+          return (
+            <li
+              key={step.index}
+              className="flex flex-wrap items-center gap-2 text-xs"
+              data-testid={`run-step-${step.name}`}
+            >
+              <StepIcon status={step.status} />
+              <span className={step.status === 'running' ? 'font-medium' : ''}>{step.name}</span>
+              {step.status === 'rejected' && <Badge variant="destructive">needs review</Badge>}
+              {index === runningIndex && (
+                <span className="text-muted-foreground">
+                  streaming… (reasoning models can think for several minutes before text appears)
+                </span>
+              )}
+              {noticeText !== null && (
+                <span
+                  className="basis-full text-amber-600 dark:text-amber-400"
+                  data-testid={`step-notice-${step.name}`}
+                >
+                  {noticeText}
+                </span>
+              )}
+            </li>
+          );
+        })}
       </ol>
 
       {runningIndex !== -1 && thinking.trim() !== '' && streamed === '' && (

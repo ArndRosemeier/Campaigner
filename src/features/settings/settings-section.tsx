@@ -125,7 +125,7 @@ export function SettingsSection(): JSX.Element {
 
         <ModelInput
           id="chat-model"
-          label="Default chat model"
+          label="First-try chat model"
           value={current.defaultChatModel}
           onChange={(value) => {
             void updateSettings({ defaultChatModel: value });
@@ -133,6 +133,24 @@ export function SettingsSection(): JSX.Element {
           placeholder={DEFAULT_CHAT_MODEL}
           canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
         />
+        <p className="text-xs text-muted-foreground">
+          The workhorse every run starts on — a cheaper model is fine here.
+        </p>
+        <ModelInput
+          id="fallback-chat-model"
+          label="Fallback chat model"
+          value={current.fallbackChatModel}
+          onChange={(value) => {
+            void updateSettings({ fallbackChatModel: value });
+          }}
+          placeholder=""
+          canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+        />
+        <p className="text-xs text-muted-foreground">
+          The escalation tier, used only when the first-try model is congested, refuses the
+          content, or fails its output contract (one repair attempt). Pick one at least as capable
+          as the first-try model. Empty = no fallback — failures stay loud.
+        </p>
         <ReasoningEffortSelect
           id="chat-reasoning-effort"
           label="Default reasoning effort"
@@ -201,7 +219,7 @@ export function SettingsSection(): JSX.Element {
           </p>
           <ModelInput
             id="image-model"
-            label="Image model"
+            label="First-try image model"
             value={current.imageModel}
             onChange={(value) => {
               void updateSettings({ imageModel: value });
@@ -210,6 +228,22 @@ export function SettingsSection(): JSX.Element {
             canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
             fetchOptions={listImageModels}
           />
+          <ModelInput
+            id="fallback-image-model"
+            label="Fallback image model"
+            value={current.fallbackImageModel}
+            onChange={(value) => {
+              void updateSettings({ fallbackImageModel: value });
+            }}
+            placeholder=""
+            canBrowse={current.openRouterApiKey !== '' || test.kind === 'ok'}
+            fetchOptions={listImageModels}
+          />
+          <p className="text-xs text-muted-foreground">
+            The fallback image model runs only when the first-try model is congested or refuses —
+            empty = no fallback. Structure-first edits (encounter maps) skip it unless it accepts
+            image input.
+          </p>
           <ModelInput
             id="encounter-verify-model"
             label="Encounter map verify model"

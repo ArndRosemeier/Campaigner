@@ -1820,6 +1820,11 @@ export class RunEngine {
         );
       } catch (error) {
         if (!(error instanceof OpenRouterError)) throw error;
+        // A 400 is the "this model cannot even accept the request" signal —
+        // point at the settings. Congestion/timeouts/refusals speak for
+        // themselves (their message already says what happened) and now
+        // propagate unchanged instead of masquerading as a vision problem.
+        if (error.status !== 400) throw error;
         throw new Error(
           `Map verification model "${verifyModel}" cannot process images: ${error.message} ` +
             'Pick a vision-capable chat model in Settings → "Encounter map verify model" ' +

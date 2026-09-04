@@ -247,7 +247,7 @@ describe('images ui', () => {
     renderAppAt('/settings');
     const toggle = await screen.findByTestId('images-enabled');
     expect(toggle).not.toBeChecked();
-    expect(screen.getByLabelText('Image model')).toHaveValue('google/gemini-2.5-flash-image');
+    expect(screen.getByLabelText('First-try image model')).toHaveValue('google/gemini-2.5-flash-image');
 
     const user = userEvent.setup();
     await user.click(toggle);

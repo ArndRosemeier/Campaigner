@@ -756,6 +756,57 @@ describe('PersonaPanel run lifecycle', () => {
     expect(screen.queryByTestId('open-run-report')).not.toBeInTheDocument();
   });
 
+  it('renders a persisted escalation notice on the run step list', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const run = await createRun({
+      campaignId: campaign.id,
+      personaId: persona.id,
+      autonomy: 'manual',
+      userBrief: 'A noticed run',
+      pinnedChunkIds: [],
+      targetArtifactId: null,
+      encounterMapAspect: null,
+    });
+    await updateRun(run.id, {
+      status: 'awaiting_user',
+      steps: [
+        {
+          index: 0,
+          name: 'retrieve',
+          status: 'done',
+          input: {},
+          output: { excerpts: '' },
+          userEdit: null,
+        },
+        {
+          index: 1,
+          name: 'draft',
+          status: 'done',
+          input: {},
+          output: {
+            parsed: { name: 'Grix', personality: '', appearance: '', quote: '', hooks: [] },
+            notice: 'The reply contract failed on “cheap/primary” — the repair attempt ran on “potent/fallback”.',
+          },
+          userEdit: null,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Runs' }));
+    await user.click(await screen.findByText('A noticed run'));
+
+    // The run report shows the persisted step outputs, escalation included.
+    const report = await screen.findByTestId('open-run-report');
+    expect(within(report).getAllByText(/repair attempt ran on “potent\/fallback”/).length).toBeGreaterThanOrEqual(1);
+  });
+
   it('a failed run offers Resume generation in ActiveRun, which continues to completion', async () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
