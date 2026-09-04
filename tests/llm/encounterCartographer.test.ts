@@ -96,7 +96,7 @@ beforeEach(async () => {
   useProgressStore.getState().reset();
   chatMock.mockReset();
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 2304, height: 1728 });
-  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false });
+  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model' });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, mimeType: 'image/webp' }));
   vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
@@ -539,7 +539,7 @@ describe('Encounter Cartographer run', () => {
     vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
       images: [new Blob(['resumed-image'])],
       costUsd: 0.02,
-      cappedToOne: false,
+      cappedToOne: false, modelUsed: 'test-image-model',
     });
 
     await runEngine.resumeRun(runId);

@@ -1,4 +1,5 @@
 import type { Settings } from '@/domain';
+import type { CachedModel } from '@/llm/modelCache';
 
 /**
  * Central model resolution and escalation-chain construction (model fallback
@@ -56,11 +57,19 @@ export function repairModel(
     : fallbackChatModel;
 }
 
-/** Structural slice of an OpenRouter model entry (kept local to avoid a
- * module cycle with the client). */
-interface ModelArchitecture {
-  id: string;
-  architecture?: { input_modalities?: readonly string[] } | undefined;
+/**
+ * Cached knowledge of whether a model accepts image INPUT (vision):
+ * `undefined` when the cache has no answer (model unknown or no
+ * architecture data) — callers must then attempt anyway, loudly.
+ */
+export function modelAcceptsImageInput(
+  modelId: string,
+  models: readonly CachedModel[] | null,
+): boolean | undefined {
+  if (models === null) return undefined;
+  const found = models.find((model) => model.id === modelId);
+  if (found?.architecture?.input_modalities === undefined) return undefined;
+  return found.architecture.input_modalities.includes('image');
 }
 
 /**
@@ -71,12 +80,10 @@ interface ModelArchitecture {
 export function visionRepairModel(
   firstTryModel: string,
   fallbackModel: string,
-  models: readonly ModelArchitecture[] | null,
+  models: readonly CachedModel[] | null,
 ): string {
   const chain = buildModelChain(firstTryModel, fallbackModel);
   const escalated = chain[chain.length - 1];
   if (escalated === undefined || escalated === firstTryModel) return firstTryModel;
-  const found = models?.find((model) => model.id === escalated);
-  if (found?.architecture?.input_modalities === undefined) return escalated;
-  return found.architecture.input_modalities.includes('image') ? escalated : firstTryModel;
+  return modelAcceptsImageInput(escalated, models) === false ? firstTryModel : escalated;
 }

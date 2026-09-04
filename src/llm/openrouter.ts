@@ -4,8 +4,8 @@ import { getSettings } from '@/db/settingsRepo';
 import { getCachedModels, setCachedModels, type CachedModel } from '@/llm/modelCache';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
-import { buildModelChain } from '@/llm/modelFallback';
-import { fallbackReasonFor, MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
+import { buildModelChain, modelAcceptsImageInput } from '@/llm/modelFallback';
+import { chainError, fallbackReasonFor, MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
 import type { FallbackReason } from '@/llm/openrouterErrors';
 import type { ReasoningEffort } from '@/domain/settings';
 import type { Settings } from '@/domain';
@@ -186,28 +186,9 @@ async function chatOnce(
 }
 
 /**
- * Every model that was tried and failed, in order — for the combined
- * end-of-chain error. The last entry's kind/status survive so outer
- * instanceof/status checks keep working.
+ * The combined end-of-chain error for chat calls (kind/status preserved in
+ * openrouterErrors.chainError) — see chat() below.
  */
-function chainError(failures: readonly { model: string; error: unknown }[]): Error {
-  const last = failures[failures.length - 1];
-  if (last === undefined) return new Error('the chat escalation chain failed without an error');
-  const detail = failures
-    .map(
-      ({ model, error }) =>
-        `“${model}” failed: ${error instanceof Error ? error.message : String(error)}`,
-    )
-    .join(' | ');
-  if (last.error instanceof OpenRouterError) {
-    return new OpenRouterError(
-      last.error.kind,
-      last.error.status,
-      `every model in the escalation chain failed — ${detail}`,
-    );
-  }
-  return new Error(`every model in the escalation chain failed — ${detail}`, { cause: last.error });
-}
 
 /**
  * True when any message carries image input (vision call — e.g. encounter
@@ -233,10 +214,7 @@ export function imageInputFallbackBlocked(
   models: readonly OpenRouterModel[] | null,
 ): boolean {
   if (!requestHasImageInput(messages)) return false;
-  if (models === null) return false;
-  const found = models.find((model) => model.id === fallbackModel);
-  if (found?.architecture?.input_modalities === undefined) return false;
-  return !found.architecture.input_modalities.includes('image');
+  return modelAcceptsImageInput(fallbackModel, models) === false;
 }
 
 export async function chat(
@@ -314,7 +292,7 @@ export async function chat(
       }
     }
   }
-  throw chainError(failures);
+  throw chainError(failures, 'chat');
 }
 
 /** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */

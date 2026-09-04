@@ -104,3 +104,32 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
 /** Provider phrasings for moderation / content-policy refusals. */
 export const FILTER_PATTERN =
   /content[ _-]?filter|content[ _-]?polic(?:y|ies)|moderation|flagged|inappropriate/i;
+
+/**
+ * The combined end-of-chain error: every model that was tried and failed, in
+ * order. The last entry's kind/status survive so outer instanceof/status
+ * checks keep working.
+ */
+export function chainError(
+  failures: readonly { model: string; error: unknown }[],
+  what: 'chat' | 'image' = 'chat',
+): Error {
+  const last = failures[failures.length - 1];
+  if (last === undefined) return new Error(`the ${what} escalation chain failed without an error`);
+  const detail = failures
+    .map(
+      ({ model, error }) =>
+        `“${model}” failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    .join(' | ');
+  if (last.error instanceof OpenRouterError) {
+    return new OpenRouterError(
+      last.error.kind,
+      last.error.status,
+      `every ${what} model in the escalation chain failed — ${detail}`,
+    );
+  }
+  return new Error(`every ${what} model in the escalation chain failed — ${detail}`, {
+    cause: last.error,
+  });
+}

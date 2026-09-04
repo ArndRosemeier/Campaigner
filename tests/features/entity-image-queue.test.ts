@@ -59,7 +59,7 @@ beforeEach(async () => {
   useEntityImageQueue.setState({ queued: [], active: null });
   useProgressStore.getState().reset();
   chatMock.mockResolvedValue({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
-  generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false });
+  generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
   intakeImageMock.mockResolvedValue({
     blob: blobOf('intake'),
     mimeType: 'image/webp',

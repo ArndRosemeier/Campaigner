@@ -1,5 +1,8 @@
 import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OpenRouterError, fetchWithRetries, openRouterHeaders } from '@/llm/openrouter';
 import { getSettings } from '@/db/settingsRepo';
+import { getCachedModels } from '@/llm/modelCache';
+import { buildModelChain, modelAcceptsImageInput } from '@/llm/modelFallback';
+import { chainError, fallbackReasonFor } from '@/llm/openrouterErrors';
 
 /**
  * Image generation client (07-MILESTONE-3 M3-A): OpenRouter's dedicated
@@ -20,6 +23,8 @@ export interface GeneratedImages {
    * MUST surface this — AGENTS rule 1 forbids silent degradations.
    */
   cappedToOne: boolean;
+  /** The model that actually produced the images (escalation-aware). */
+  modelUsed: string;
 }
 
 export interface GenerateImagesOptions {
@@ -105,24 +110,28 @@ async function postImages(
   );
 }
 
-export async function generateImages(
+/**
+ * The per-model generation body (transport-level adaptations — input-
+ * reference omission, cappedToOne — stay inside one model's attempt).
+ */
+async function generateImagesWithModel(
   prompt: string,
   n: number,
   opts: GenerateImagesOptions,
+  settings: { openRouterApiKey: string },
+  model: string,
 ): Promise<GeneratedImages> {
-  const settings = await getSettings();
-  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
-
+  const attempt = { ...opts, model };
   let response: Response;
   let cappedToOne = false;
-  if (n > 1 && cappedToOneModels.has(opts.model)) {
+  if (n > 1 && cappedToOneModels.has(model)) {
     // Known cap (learned from a previous rejection): ask for one image
     // immediately and report it — the caller still surfaces the degradation.
     cappedToOne = true;
-    response = await postImages(prompt, 1, opts, settings);
+    response = await postImages(prompt, 1, attempt, settings);
   } else {
     try {
-      response = await postImages(prompt, n, opts, settings);
+      response = await postImages(prompt, n, attempt, settings);
     } catch (error) {
       // If the model rejects input_references (HTTP 400 when input_references
       // were provided, common for models that only support text-to-image),
@@ -134,7 +143,7 @@ export async function generateImages(
         opts.inputReferences.length > 0
       ) {
         const { inputReferences: _omitted, ...cleanOpts } = opts;
-        return generateImages(prompt, n, cleanOpts);
+        return generateImagesWithModel(prompt, n, cleanOpts, settings, model);
       }
 
       // The provider caps n at 1: retry once with a single candidate, mark
@@ -148,8 +157,8 @@ export async function generateImages(
         throw error;
       }
       cappedToOne = true;
-      cappedToOneModels.add(opts.model);
-      response = await postImages(prompt, 1, opts, settings);
+      cappedToOneModels.add(model);
+      response = await postImages(prompt, 1, attempt, settings);
     }
   }
   if (!response.ok) {
@@ -176,5 +185,56 @@ export async function generateImages(
   }
 
   const cost = json.usage?.cost;
-  return { images, costUsd: typeof cost === 'number' ? cost : null, cappedToOne };
+  return {
+    images,
+    costUsd: typeof cost === 'number' ? cost : null,
+    cappedToOne,
+    modelUsed: model,
+  };
+}
+
+/**
+ * Generates up to `n` images for `prompt`, escalating across the model
+ * fallback chain when the first-try model is congested or refuses (transport
+ * failures only — image generation has no output contract to repair). The
+ * returned `modelUsed` tells the caller which model produced the images so
+ * image rows record the truth instead of the requested model.
+ */
+export async function generateImages(
+  prompt: string,
+  n: number,
+  opts: GenerateImagesOptions,
+): Promise<GeneratedImages> {
+  const settings = await getSettings();
+  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
+
+  const chain = buildModelChain(opts.model, settings.fallbackImageModel);
+  const failures: { model: string; error: unknown }[] = [];
+  for (const model of chain) {
+    try {
+      return await generateImagesWithModel(prompt, n, opts, settings, model);
+    } catch (error) {
+      failures.push({ model, error });
+      // A user cancel is never an escalation trigger.
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      // Anything not classified congestion/filter fails loudly, as before.
+      if (fallbackReasonFor(error) === null) throw error;
+      // Single-model chain: the original error propagates unchanged.
+      if (chain.length === 1) throw error;
+      // Vision guard for structure-first edits: an image-input request is
+      // not wasted on a fallback model the cache knows is text-to-image
+      // only — the primary's own failure stays the diagnosis.
+      const next = chain[chain.indexOf(model) + 1];
+      if (
+        next !== undefined &&
+        opts.inputReferences !== undefined &&
+        opts.inputReferences.length > 0 &&
+        modelAcceptsImageInput(next, getCachedModels()) === false
+      ) {
+        throw error;
+      }
+    }
+  }
+  // Every model in the chain failed with congestion/filter errors.
+  throw chainError(failures, 'image');
 }

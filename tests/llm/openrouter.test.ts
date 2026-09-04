@@ -549,7 +549,7 @@ describe('model fallback chain', () => {
 
     await expect(
       chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
-    ).rejects.toThrow(/every model in the escalation chain failed.*cheap\/primary.*potent\/fallback/s);
+    ).rejects.toThrow(/every chat model in the escalation chain failed.*cheap\/primary.*potent\/fallback/s);
     expect(chatCallsOf(fetchMock)).toHaveLength(6); // 429-retries run per model
   });
 

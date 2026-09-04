@@ -129,7 +129,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: 0.021,
-    cappedToOne: false,
+    cappedToOne: false, modelUsed: 'test-image-model',
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -184,7 +184,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: null,
-    cappedToOne: false,
+    cappedToOne: false, modelUsed: 'test-image-model',
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -224,7 +224,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('library-keep'), fakeImageBytes('library-discard')],
       costUsd: null,
-      cappedToOne: false,
+      cappedToOne: false, modelUsed: 'test-image-model',
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -262,7 +262,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('only')],
       costUsd: null,
-    cappedToOne: false,
+    cappedToOne: false, modelUsed: 'test-image-model',
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -318,7 +318,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('single')],
       costUsd: 0.011,
-      cappedToOne: true,
+      cappedToOne: true, modelUsed: 'test-image-model',
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -410,7 +410,7 @@ describe('image persona validation', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('pf1'), fakeImageBytes('pf2')],
       costUsd: 0.02,
-      cappedToOne: false,
+      cappedToOne: false, modelUsed: 'test-image-model',
     });
 
     const runInput = {

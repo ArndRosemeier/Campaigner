@@ -1709,7 +1709,7 @@ export class RunEngine {
         width: intake.width,
         height: intake.height,
         prompt,
-        model: settings.imageModel,
+        model: generated.modelUsed,
         source: 'generated',
         role: 'map',
       });
@@ -2126,7 +2126,7 @@ export class RunEngine {
         width: intake.width,
         height: intake.height,
         prompt: finalPrompt,
-        model: settings.imageModel,
+        model: generated.modelUsed,
         source: 'generated',
       });
       imageIds.push(stored.id);
@@ -2135,7 +2135,7 @@ export class RunEngine {
     // is a degradation the user must see (AGENTS rule 1): persist a notice
     // on the step — the run panel renders it next to the pick UI.
     const notice = generated.cappedToOne
-      ? `“${settings.imageModel}” generates one image per request — this run produced a single candidate.`
+      ? `“${generated.modelUsed}” generates one image per request — this run produced a single candidate.`
       : null;
     const step = this.finishStep(steps[stepIndex], { imageIds, costUsd: generated.costUsd, notice });
     return { step };

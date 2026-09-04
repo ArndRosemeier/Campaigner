@@ -210,7 +210,7 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
       width: intake.width,
       height: intake.height,
       prompt: finalPrompt,
-      model: settings.imageModel,
+      model: generated.modelUsed,
       source: 'generated',
     });
     await updateArtifact(artifact.id, {

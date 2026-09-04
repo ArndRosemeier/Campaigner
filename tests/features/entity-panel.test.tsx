@@ -426,7 +426,7 @@ describe('EntityPanel', () => {
     await seedBuiltInPersonas();
     await updateSettings({ imagesEnabled: true });
     chatMock.mockResolvedValue({ text: JSON.stringify({ prompt: 'A portrait', negative: '', styleNotes: 'ink' }), modelUsed: 'test-model', fallback: null });
-    generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01, cappedToOne: false });
+    generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
     intakeImageMock.mockResolvedValue({
       blob: new Blob(['intake']),
       mimeType: 'image/webp',
