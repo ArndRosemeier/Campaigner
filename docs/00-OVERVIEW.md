@@ -76,6 +76,7 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 - `10-MILESTONE-6.md` — M6 feature spec (three ownership scopes — global/campaign/module — scope control, and the play-view retirement: battles anchor to modules, `session` kind removed)
 - `11-ENCOUNTER-GENERATOR.md` — generated encounters: LLM brief → deterministic grid layout → schematic → stylized battlemap (img2img) → vision verify; room-veiled mobs seeded onto the board; unattended module-generation path
 - `12-BESTIARY-PACKS.md` — bestiary pack imports: per-source adapters turn user-imported machine-readable creature data (Foundry pf2e/dnd5e-SRD packs) into exact `statBlock` chunks in the existing pipeline; pack roster grounds encounter monster selection; never bundled or fetched
+- `13-WIKI-GRAPH.md` — the Graph page draws the derived wiki-link graph: module-prose mentions resolved with the reader's pool + module-context conventions, phantom nodes for unresolved names, module/kind filters, mention-count edge weights; derivation in the pure `src/domain/wikiGraph.ts`
 - `fix-*.md` — fix specs: one focused defect each (problem, root causes, binding
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard
