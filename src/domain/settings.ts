@@ -102,9 +102,10 @@ export const settingsSchema = z.object({
    * through the derived wiki-link graph (co-mention only) and grounds the
    * draft with the bounded campaign-grounding section. Default ON — the OFF
    * toggle is the escape hatch for wiki-link-sparse or noisy campaigns; a
-   * genuine preference default, not a failure mask.
+   * genuine preference default, not a failure mask. Defaulted so rows and
+   * backups written before the field parse (the post-M3 field convention).
    */
-  wikiGroundingEnabled: z.boolean(),
+  wikiGroundingEnabled: z.boolean().default(true),
   /** Image generation model (M3-A). */
   imageModel: z.string().min(1),
   /** Image generation off until the user opts in (M3-A). */
