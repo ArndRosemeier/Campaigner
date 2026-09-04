@@ -310,8 +310,39 @@ export async function fetchWithRetries(
     if (!retryable || backoff === undefined) {
       throw new OpenRouterError('http', response.status, await response.text());
     }
-    await sleep(backoff, init.signal);
+    // Parallelization: several workers can hit the same provider limit at
+    // once — Retry-After (OpenRouter sends it when every attempted provider
+    // returned a retry hint) wins, otherwise jittered exponential backoff so
+    // the workers do not retry in lockstep (thundering herd).
+    const hint = response.status === 429 ? retryAfterMs(response) : null;
+    await sleep(hint ?? jitter(backoff), init.signal);
   }
+}
+
+/** Upper bound for an honored Retry-After hint: a hostile/large hint must
+ * not stall a parallel worker for minutes — past the cap the normal error
+ * path takes over (retry budget exhausted → escalation chain). */
+const MAX_RETRY_AFTER_MS = 30_000;
+export { MAX_RETRY_AFTER_MS };
+
+/** Retry-After header → milliseconds (seconds or HTTP-date form). */
+export function retryAfterMs(response: Response): number | null {
+  const header = response.headers.get('Retry-After');
+  if (header === null) return null;
+  const seconds = Number(header);
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+  }
+  const dateMs = Date.parse(header);
+  if (!Number.isNaN(dateMs)) {
+    return Math.min(Math.max(dateMs - Date.now(), 0), MAX_RETRY_AFTER_MS);
+  }
+  return null;
+}
+
+/** ±25% jitter: keeps concurrent retriers from syncing their retries. */
+function jitter(ms: number): number {
+  return ms * 0.75 + Math.random() * ms * 0.5;
 }
 
 /**

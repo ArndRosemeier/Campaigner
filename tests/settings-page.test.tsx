@@ -97,16 +97,20 @@ describe('SettingsPage', () => {
   it('saves the parallel-requests level', async () => {
     const user = userEvent.setup();
     render(<SettingsPage />);
+    // Drain the default-row live query before the plain read (08-TESTING §
+    // console guard: raw DB reads re-fire the live query outside act).
+    await flushAsyncUpdates();
 
     await expect(getSettings()).resolves.toMatchObject({ maxParallelRequests: 2 });
 
-    const select = await screen.findByTestId('parallel-requests');
-    await user.click(select);
+    await user.click(await screen.findByTestId('parallel-requests'));
     await user.click(await screen.findByRole('option', { name: '3' }));
+    await flushAsyncUpdates();
 
     await waitFor(async () => {
       await expect(getSettings()).resolves.toMatchObject({ maxParallelRequests: 3 });
     });
+    await flushAsyncUpdates();
   });
 
   it('deletes all data only when DELETE is typed', async () => {
