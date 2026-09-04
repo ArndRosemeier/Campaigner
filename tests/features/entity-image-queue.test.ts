@@ -56,7 +56,7 @@ beforeEach(async () => {
   generateImagesMock.mockReset();
   intakeImageMock.mockReset();
   toastErrorMock.mockReset();
-  useEntityImageQueue.setState({ queued: [], active: null });
+  useEntityImageQueue.setState({ queued: [], activeJobs: [] });
   useProgressStore.getState().reset();
   chatMock.mockResolvedValue({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
   generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
@@ -104,7 +104,7 @@ describe('entity image queue', () => {
     expect(stored?.prompt).toContain('gate warden');
     // …the queue drains, and the dock job finishes.
     expect(useEntityImageQueue.getState().queued).toHaveLength(0);
-    expect(useEntityImageQueue.getState().active).toBeNull();
+    expect(useEntityImageQueue.getState().activeJobs).toEqual([]);
     expect(
       useProgressStore.getState().jobs.find((job) => job.id === `module-entity-images-${moduleId}`),
     ).toBeUndefined();
@@ -147,23 +147,24 @@ describe('entity image queue', () => {
     expect((call?.[1] as Error).message).toContain('no artifact exists');
     // The queue drains despite the failure.
     expect(useEntityImageQueue.getState().queued).toHaveLength(0);
-    expect(useEntityImageQueue.getState().active).toBeNull();
+    expect(useEntityImageQueue.getState().activeJobs).toEqual([]);
   });
 
-  it('dequeue aborts the active job silently and drops pending ones', async () => {
+  it('dequeue aborts in-flight jobs silently and drops pending ones', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const campaignId: Id = campaign.id;
     const moduleId = newId();
     await createArtifact({ campaignId, kind: 'npc', name: 'Kael' });
     await createArtifact({ campaignId, kind: 'npc', name: 'Mira' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Ruth' });
 
-    // Hold Kael's prompt draft until the test releases it — the job is
-    // ACTIVE (abortable) while Mira is still pending.
+    // Hold every prompt draft until the test releases it — with the default
+    // parallel limit of 2 both slots fill, and the third job stays pending.
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    chatMock.mockImplementationOnce((_messages, opts) => {
+    chatMock.mockImplementation((_messages, opts) => {
       const signal = opts.signal;
       if (signal === undefined) return Promise.reject(new Error('no abort signal passed'));
       return new Promise((resolve, reject) => {
@@ -189,19 +190,23 @@ describe('entity image queue', () => {
     useEntityImageQueue.getState().enqueue([
       { campaignId, moduleId, name: 'Kael' },
       { campaignId, moduleId, name: 'Mira' },
+      { campaignId, moduleId, name: 'Ruth' },
     ]);
     await waitFor(() => {
-      expect(useEntityImageQueue.getState().active?.name).toBe('Kael');
+      expect(useEntityImageQueue.getState().activeJobs).toHaveLength(2);
     });
+    expect(useEntityImageQueue.getState().queued.some((job) => job.name === 'Ruth')).toBe(true);
 
-    // Dequeue the ACTIVE job (abort) and the PENDING one (drop).
+    // Dequeue the two IN-FLIGHT jobs (abort) and the PENDING one (drop).
     useEntityImageQueue.getState().dequeue({ campaignId, moduleId, name: 'Kael' });
     useEntityImageQueue.getState().dequeue({ campaignId, moduleId, name: 'Mira' });
+    useEntityImageQueue.getState().dequeue({ campaignId, moduleId, name: 'Ruth' });
     release();
 
     await waitFor(() => {
-      expect(useEntityImageQueue.getState().active).toBeNull();
+      expect(useEntityImageQueue.getState().activeJobs).toEqual([]);
     });
+    expect(useEntityImageQueue.getState().queued).toEqual([]);
     expect(generateImagesMock).not.toHaveBeenCalled();
     expect(toastErrorMock).not.toHaveBeenCalled();
     const artifacts = await listArtifactsByCampaign(campaignId);

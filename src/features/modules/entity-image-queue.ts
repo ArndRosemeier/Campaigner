@@ -20,10 +20,12 @@ import { resolveWikiLink } from '@/lib/wikilinks';
 
 /**
  * Entity image queue (08-MODULE-DESIGNER M4-C, module-mode-as-play): the
- * entity panel's image checkboxes enqueue entities; a single background pump
+ * entity panel's image checkboxes enqueue entities; a background pump
  * generates one image per entity (prompt draft → image API → intake → attach
- * as cover) while the reader stays fully usable. Progress rides the shared
- * dock; failures are loud toasts and never stop the queue.
+ * as cover) while the reader stays fully usable. Up to
+ * `maxParallelRequests` images generate at once — image generation is
+ * independent per entity. Progress rides the shared dock; failures are loud
+ * toasts and never stop the queue.
  *
  * This deliberately does NOT go through the persona run pipeline: the
  * Illustrator's pick step always pauses for a user decision (07 §M3-A),
@@ -40,7 +42,8 @@ export interface ImageQueueJob {
 
 interface EntityImageQueueState {
   queued: ImageQueueJob[];
-  active: ImageQueueJob | null;
+  /** Jobs whose generation is in flight right now (≤ maxParallelRequests). */
+  activeJobs: ImageQueueJob[];
   enqueue: (jobs: ImageQueueJob[]) => void;
   /** Removes a pending (or aborts the in-flight) job for this entity. */
   dequeue: (job: ImageQueueJob) => void;
@@ -48,21 +51,17 @@ interface EntityImageQueueState {
 
 export const useEntityImageQueue = create<EntityImageQueueState>((set) => ({
   queued: [],
-  active: null,
+  activeJobs: [],
   enqueue: (jobs) => {
     set((state) => ({ queued: [...state.queued, ...jobs] }));
     for (const job of jobs) bumpTotal(job);
     void pump();
   },
   dequeue: (job) => {
-    set((state) => {
-      const active =
-        state.active !== null && key(state.active) === key(job) ? null : state.active;
-      return {
-        queued: state.queued.filter((candidate) => key(candidate) !== key(job)),
-        active,
-      };
-    });
+    set((state) => ({
+      queued: state.queued.filter((candidate) => key(candidate) !== key(job)),
+      activeJobs: state.activeJobs.filter((candidate) => key(candidate) !== key(job)),
+    }));
     controllers.get(key(job))?.abort();
     bumpRemoved(job);
   },
@@ -125,31 +124,66 @@ function bumpRemoved(job: ImageQueueJob): void {
 
 let pumping = false;
 
+/** Atomically moves the queue head into the active set. Returns null when
+ * the queue is empty. (zustand's setState is synchronous, so no two workers
+ * can take the same job.) */
+function takeNext(): ImageQueueJob | null {
+  let taken: ImageQueueJob | null = null;
+  useEntityImageQueue.setState((state) => {
+    const job = state.queued[0];
+    if (job === undefined) return state;
+    taken = job;
+    return {
+      queued: state.queued.slice(1),
+      activeJobs: [...state.activeJobs, job],
+    };
+  });
+  return taken;
+}
+
+/** Removes a finished (or dequeued mid-flight) job from the active set. */
+function releaseJob(job: ImageQueueJob): void {
+  useEntityImageQueue.setState((state) => ({
+    activeJobs: state.activeJobs.filter((candidate) => key(candidate) !== key(job)),
+  }));
+}
+
 async function pump(): Promise<void> {
   if (pumping) return;
   pumping = true;
   try {
-    for (;;) {
-      const state = useEntityImageQueue.getState();
-      const job = state.queued[0];
-      if (job === undefined) break;
-      useEntityImageQueue.setState({ queued: state.queued.slice(1), active: job });
-      useProgressStore
-        .getState()
-        .update(jobIdFor(job), { detail: `Illustrating "${job.name}"…` });
-      const outcome = await processJob(job);
-      debugLog('image-queue', `job for "${job.name}" finished`, { outcome });
-      bumpDone(
-        job,
-        outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
-      );
-      useEntityImageQueue.setState((current) => ({
-        active:
-          current.active !== null && key(current.active) === key(job) ? null : current.active,
-      }));
-    }
+    do {
+      // Image generation is independent per entity: run up to
+      // maxParallelRequests at once (the workers share the queue).
+      const settings = await getSettings();
+      const limit = Math.max(1, settings.maxParallelRequests);
+      const workers: Promise<void>[] = [];
+      for (let worker = 0; worker < limit; worker += 1) {
+        workers.push(pumpWorker());
+      }
+      await Promise.all(workers);
+      // A job may have been enqueued while the last workers were exiting —
+      // drain again instead of stranding it until the next enqueue.
+    } while (useEntityImageQueue.getState().queued.length > 0);
   } finally {
     pumping = false;
+  }
+}
+
+async function pumpWorker(): Promise<void> {
+  for (;;) {
+    const job = takeNext();
+    if (job === null) return;
+    useProgressStore.getState().update(jobIdFor(job), {
+      detail: `Illustrating "${job.name}"…`,
+    });
+    const outcome = await processJob(job);
+    debugLog('image-queue', `job for "${job.name}" finished`, { outcome });
+    bumpDone(
+      job,
+      outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
+    );
+    releaseJob(job);
   }
 }
 

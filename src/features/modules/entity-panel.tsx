@@ -148,7 +148,7 @@ export function EntityPanel({
     artifact: AnyArtifact;
   } | null>(null);
   const queuedJobs = useEntityImageQueue((state) => state.queued);
-  const activeJob = useEntityImageQueue((state) => state.active);
+  const activeJobs = useEntityImageQueue((state) => state.activeJobs);
   const enqueueEncounterMaps = useEncounterMapQueue((state) => state.enqueue);
   const retryFailedEncounterMaps = useEncounterMapQueue((state) => state.retryFailed);
   const allFailedEncounterMaps = useEncounterMapQueue((state) => state.failed);
@@ -290,7 +290,7 @@ export function EntityPanel({
       return 'has';
     }
     if (
-      (activeJob !== null && activeJob.campaignId === campaign.id && activeJob.name === entry.name) ||
+      activeJobs.some((job) => job.campaignId === campaign.id && job.name === entry.name) ||
       queuedJobs.some((job) => job.campaignId === campaign.id && job.name === entry.name)
     ) {
       return 'queued';

@@ -219,7 +219,7 @@ describe('EntityPanel', () => {
   beforeEach(clearDatabase);
   beforeEach(() => {
     useProgressStore.getState().reset();
-    useEntityImageQueue.setState({ queued: [], active: null });
+    useEntityImageQueue.setState({ queued: [], activeJobs: [] });
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();
@@ -568,6 +568,9 @@ describe('EntityPanel', () => {
     await waitFor(async () => {
       const artifacts = await listArtifactsByCampaign(campaign.id);
       expect(artifacts.map((artifact) => artifact.name).sort()).toEqual(['Bram', 'Kael', 'Mira']);
+      const bramWait = artifacts.find((artifact) => artifact.name === 'Bram');
+      expect(bramWait?.moduleId).toBe(module.id);
+      expect(bramWait?.tags).toContain('module:Ember Crypt');
     });
     const artifacts = await listArtifactsByCampaign(campaign.id);
     const kael = artifacts.find((artifact) => artifact.name === 'Kael');
