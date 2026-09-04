@@ -1,13 +1,25 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { statBlockSchema, type EncounterArtifactData, type StatBlock } from '@/domain';
+import {
+  ruleChunkSchema,
+  stampNewEntity,
+  statBlockSchema,
+  type EncounterArtifactData,
+  type Id,
+  type RuleChunk,
+  type StatBlock,
+} from '@/domain';
 import { EncounterForm } from '@/features/campaign/components/kind-forms';
+import { createRulebook } from '@/db/rulebookRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { db } from '@/db/db';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -126,7 +138,66 @@ describe('encounter form monster sources', () => {
       expect(latest?.monsters[0]?.source.type).toBe('inline');
     });
   });
+
+  it('the rulebook-link dialog never lists an unparsed statblock chunk (fix-02 decision 3)', async () => {
+    const user = userEvent.setup();
+    await createCampaign({ name: 'C', system: 'dnd5e' });
+    const book = await createRulebook({
+      title: 'Bestiary',
+      system: 'dnd5e',
+      filename: 'bestiary.pdf',
+      pageCount: 2,
+    });
+    await db.rulebooks.update(book.id, { status: 'ready' });
+    const parsed = await makeChunk(book.id, 'Hill Giant stats.', ['Hill Giant'], statBlock());
+    await putChunks([
+      parsed,
+      // A detected stat block whose best-effort parse gave up: never citable.
+      await makeChunk(book.id, 'Stone Giant (parse gave up).', ['Stone Giant'], null),
+    ]);
+    const data: EncounterArtifactData = {
+      difficulty: '',
+      levelHint: '',
+      monsters: [{ name: 'Giant', count: 1, notes: '', source: { type: 'none' } }],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+    };
+    render(<EncounterForm data={data} campaignArtifacts={[]} onChange={vi_noop} />);
+
+    await user.click(screen.getByLabelText('Stats source for Giant'));
+    await user.click(
+      await screen.findByRole('option', { name: 'From rulebook…' }, { timeout: 5_000 }),
+    );
+    const dialog = await screen.findByRole('dialog', { name: /Link a rulebook stat block/i });
+    await user.type(within(dialog).getByPlaceholderText('Search stat blocks…'), 'giant');
+
+    // Only the parsed chunk is offered; the null-statBlock chunk is absent.
+    expect(await within(dialog).findByText('Hill Giant')).toBeInTheDocument();
+    expect(within(dialog).queryByText('Stone Giant')).not.toBeInTheDocument();
+  });
 });
+
+async function makeChunk(
+  bookId: Id,
+  text: string,
+  headingPath: string[],
+  statBlock: StatBlock | null,
+): Promise<RuleChunk> {
+  return ruleChunkSchema.parse({
+    ...stampNewEntity(),
+    bookId,
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'statblock',
+    headingPath,
+    text,
+    statBlock,
+    contentHash: await sha256Hex(text),
+  });
+}
 
 function vi_noop(): (data: EncounterArtifactData) => void {
   return () => undefined;

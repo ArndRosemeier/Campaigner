@@ -21,6 +21,12 @@ export interface SearchOptions {
   /** Restrict to these books; default: all 'ready' books. */
   bookIds?: Id[] | undefined;
   chunkTypes?: ChunkType[] | undefined;
+  /**
+   * Only chunks with a parsed, non-null `statBlock` (fix-02 decision 3) —
+   * applied to keyword hits and the semantic candidate set alike, so the
+   * citable pool never contains unparsed chunks.
+   */
+  hasStatBlock?: boolean | undefined;
   /** Default 12. */
   limit?: number | undefined;
   /**
@@ -50,7 +56,7 @@ export async function searchRules(query: string, opts: SearchOptions = {}): Prom
   const bookIds = opts.bookIds ?? (await readyBookIds());
   if (bookIds.length === 0) return [];
 
-  const filter = { bookIds, chunkTypes: opts.chunkTypes };
+  const filter = { bookIds, chunkTypes: opts.chunkTypes, hasStatBlock: opts.hasStatBlock };
   const keywordHits = await searchKeyword(trimmed, filter, PREFILTER_KEYWORD_HITS);
 
   if (!(await embeddingsActive())) {
@@ -64,9 +70,10 @@ export async function searchRules(query: string, opts: SearchOptions = {}): Prom
   const semantic = await tryEmbeddings(async () => {
     const totalChunks = await countChunksByBooks(bookIds);
     const candidates =
-      totalChunks < EMBED_ALL_THRESHOLD
+      (totalChunks < EMBED_ALL_THRESHOLD
         ? await listChunksByBooks(bookIds)
-        : keywordHits.map((hit) => hit.chunk);
+        : keywordHits.map((hit) => hit.chunk)
+      ).filter((chunk) => (opts.hasStatBlock === true ? chunk.statBlock !== null : true));
     if (candidates.length === 0) return null;
 
     const [queryVector, vectors] = await Promise.all([

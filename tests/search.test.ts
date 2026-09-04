@@ -12,14 +12,35 @@ import { resetEmbeddingFailureNotice } from '@/search/embeddings';
 import { db } from '@/db/db';
 import { clearDatabase } from './db/helpers';
 
-import type { Id, RuleChunk } from '@/domain';
+import type { Id, RuleChunk, StatBlock } from '@/domain';
+import { statBlockSchema } from '@/domain';
 import type { SearchHit } from '@/search/search';
 
 /**
  * Hybrid retrieval tests (03-RETRIEVAL.md acceptance criteria): keyword-only
  * path with no key, RRF fusion with mocked embeddings, and silent fallback on
- * embedding failure.
+ * embedding failure. fix-02 adds the `hasStatBlock` citable-pool filter
+ * (decision 3): unparsed chunks never enter the citable pool and never
+ * consume a result slot.
  */
+
+function validStatBlock(): StatBlock {
+  return statBlockSchema.parse({
+    system: 'dnd5e',
+    level: '1',
+    size: 'Small',
+    creatureType: 'humanoid',
+    ac: 12,
+    hp: 7,
+    speed: '30 ft.',
+    abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+    saves: '',
+    skills: '',
+    senses: '',
+    languages: '',
+    extras: {},
+  });
+}
 
 async function makeChunk(
   bookId: Id,
@@ -123,6 +144,94 @@ describe('searchRules (keyword-only, no key)', () => {
 
     const hits = await searchRules('grappling');
     expect(hits).toEqual([]);
+  });
+});
+
+describe('searchRules hasStatBlock citable pool (fix-02 decision 3)', () => {
+  it('never returns an unparsed statblock chunk when hasStatBlock is set', async () => {
+    const bookId = await seedBook();
+    await putChunks([
+      // A 'statblock' chunk whose best-effort parse gave up (statBlock null).
+      await makeChunk(bookId, 'Goblin king lore without stats.', {
+        chunkType: 'statblock',
+        headingPath: ['Goblin King'],
+      }),
+      await makeChunk(bookId, 'Goblin warrior stats.', {
+        chunkType: 'statblock',
+        headingPath: ['Goblin'],
+        statBlock: validStatBlock(),
+      }),
+    ]);
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('goblin', { bookIds: [bookId], hasStatBlock: true });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.chunk.headingPath[0]).toBe('Goblin');
+    // Without the filter the unparsed chunk is still searchable (other
+    // surfaces rely on full-text search).
+    const unfiltered = await searchRules('goblin', { bookIds: [bookId] });
+    expect(unfiltered).toHaveLength(2);
+  });
+
+  it('does not let an unparsed chunk consume a limit slot', async () => {
+    const bookId = await seedBook();
+    await putChunks([
+      // The unparsed chunk outranks the valid one on term frequency — under
+      // a post-slice filter it would take the single slot and hide the
+      // citable chunk entirely.
+      await makeChunk(bookId, 'Troll troll troll regenerates.', {
+        chunkType: 'statblock',
+        headingPath: ['Troll Hollow'],
+      }),
+      await makeChunk(bookId, 'Troll stats.', {
+        chunkType: 'statblock',
+        headingPath: ['Troll'],
+        statBlock: validStatBlock(),
+      }),
+    ]);
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('troll', { bookIds: [bookId], hasStatBlock: true, limit: 1 });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.chunk.headingPath[0]).toBe('Troll');
+  });
+
+  it('excludes unparsed chunks from the semantic candidate set (hybrid path)', async () => {
+    const bookId = await seedBook();
+    const parsed = await makeChunk(bookId, 'Ogre stats with real numbers.', {
+      chunkType: 'statblock',
+      headingPath: ['Ogre'],
+      statBlock: validStatBlock(),
+    });
+    await putChunks([
+      parsed,
+      await makeChunk(bookId, 'Ogre hill lore, parse gave up.', {
+        chunkType: 'statblock',
+        headingPath: ['Ogre Hill'],
+      }),
+    ]);
+    await enableEmbeddings();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: { body?: string }) => {
+        const body = JSON.parse(init?.body ?? '{}') as { input?: string[] };
+        const inputs = body.input ?? [];
+        return new Response(
+          JSON.stringify({
+            data: inputs.map((text, index) => ({
+              index,
+              embedding: text.includes('Ogre') ? [1, 0, 0, 0] : [0, 0, 0, 0],
+            })),
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('ogre', { bookIds: [bookId], hasStatBlock: true });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.chunk.id).toBe(parsed.id);
   });
 });
 

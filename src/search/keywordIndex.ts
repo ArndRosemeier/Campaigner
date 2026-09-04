@@ -13,6 +13,8 @@ interface IndexedChunk {
   id: Id;
   text: string;
   headingJoined: string;
+  /** Stored so a hasStatBlock filter can drop null blocks before `limit`. */
+  hasStatBlock: boolean;
 }
 
 export interface KeywordHit {
@@ -23,7 +25,7 @@ export interface KeywordHit {
 
 const miniSearchOptions: Options<IndexedChunk> = {
   fields: ['text', 'headingJoined'],
-  storeFields: ['id'],
+  storeFields: ['id', 'hasStatBlock'],
   searchOptions: { prefix: true, fuzzy: 0.2, boost: { headingJoined: 2 } },
 };
 
@@ -48,6 +50,7 @@ async function buildIndex(): Promise<MiniSearch<IndexedChunk>> {
       id: chunk.id,
       text: chunk.text,
       headingJoined: chunk.headingPath.join(' '),
+      hasStatBlock: chunk.statBlock !== null,
     })),
   );
   return index;
@@ -56,6 +59,12 @@ async function buildIndex(): Promise<MiniSearch<IndexedChunk>> {
 export interface KeywordSearchFilter {
   bookIds?: Id[] | undefined;
   chunkTypes?: RuleChunk['chunkType'][] | undefined;
+  /**
+   * Only chunks with a parsed, non-null `statBlock` (fix-02 decision 3: the
+   * citable pool excludes unparsed chunks). Applied to the indexed flag
+   * BEFORE the limit slice so null blocks cannot consume result budget.
+   */
+  hasStatBlock?: boolean | undefined;
 }
 
 /**
@@ -72,7 +81,15 @@ export async function searchKeyword(
   if (trimmed === '') return [];
 
   const index = await getKeywordIndex();
-  const matches = index.search(trimmed).slice(0, limit);
+  const ranked = index.search(trimmed);
+  // fix-02: filter on the indexed stat-block flag before slicing, so a
+  // best-effort "statblock" chunk that failed parsing never consumes a
+  // result slot (12 §1: exact, never best-effort).
+  const matches = (
+    filter.hasStatBlock === true
+      ? ranked.filter((match) => match.hasStatBlock === true)
+      : ranked
+  ).slice(0, limit);
   if (matches.length === 0) return [];
 
   const ids: Id[] = matches.map((match) => String(match.id));

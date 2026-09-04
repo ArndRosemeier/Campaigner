@@ -233,7 +233,13 @@ function RulebookStatblockDialog({
       setResults([]);
       return;
     }
-    const hits = await searchRules(text, { limit: 20, chunkTypes: ['statblock'] });
+    // fix-02 (decision 3): the dialog's pool excludes unparsed chunks — a
+    // null-statBlock 'statblock' chunk would resolve to "missing ref".
+    const hits = await searchRules(text, {
+      limit: 20,
+      chunkTypes: ['statblock'],
+      hasStatBlock: true,
+    });
     setResults(
       hits.map((hit) => ({
         chunkId: hit.chunk.id,
