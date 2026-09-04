@@ -72,16 +72,16 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
   editor: {
     title: 'Artifact editor (middle pane)',
     summary:
-      'Edit one artifact: name, tags, summary, body, kind-specific fields, relations and revision history.',
+      'Edit one artifact: name, tags, aliases, summary, body, kind-specific fields, relations and revision history.',
     tips: [
       'Changes autosave; the revision badge shows the current version.',
       'History (clock icon): every save snapshots a revision — open the dialog to inspect or restore any older snapshot.',
-      'Tags group artifacts and feed the tree filter.',
+      'Tags group artifacts and feed the tree filter. Aliases ("also known as") are alternate names module wiki-links also resolve against — a title, a nickname, or the old name kept by a rename.',
       'Relations connect artifacts (e.g. NPC "lives in" location). Relations created here appear in the relations graph and can be exported.',
       'Kind-specific sections: NPCs can carry a full stat block; encounters have monsters and tactics; plot arcs have beats and hooks.',
       'When a persona run finishes, its draft lands in the editor — accept, edit further, or discard it.',
     ],
-    keywords: 'autosave revisions restore tags relations links statblock draft',
+    keywords: 'autosave revisions restore tags aliases relations links statblock draft',
   },
   assistant: {
     title: 'Assistant (personas)',

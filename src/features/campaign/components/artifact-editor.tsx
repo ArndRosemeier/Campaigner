@@ -6,6 +6,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 
 import { artifactRepo } from '@/db';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
+import { AliasEditor } from '@/features/campaign/components/alias-editor';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
 import { modulePath } from '@/app/routes';
 import { getModule } from '@/db/moduleRepo';
@@ -68,6 +69,7 @@ const AUTOSAVE_DELAY_MS = 800;
 interface CommonDraft {
   name: string;
   tags: string[];
+  aliases: string[];
   summary: string;
   body: string;
   links: ArtifactLink[];
@@ -92,6 +94,7 @@ function draftFrom(artifact: AnyArtifact): ArtifactDraft {
   const common: CommonDraft = {
     name: artifact.name,
     tags: [...artifact.tags],
+    aliases: [...artifact.aliases],
     summary: artifact.summary,
     body: artifact.body,
     links: structuredClone(artifact.links),
@@ -117,13 +120,14 @@ function draftFrom(artifact: AnyArtifact): ArtifactDraft {
 function draftPatch(draft: ArtifactDraft): {
   name: string;
   tags: string[];
+  aliases: string[];
   summary: string;
   body: string;
   links: ArtifactLink[];
   data: ArtifactDraft['data'];
 } {
-  const { name, tags, summary, body, links, data } = draft;
-  return { name, tags, summary, body, links, data };
+  const { name, tags, aliases, summary, body, links, data } = draft;
+  return { name, tags, aliases, summary, body, links, data };
 }
 
 export interface ArtifactEditorProps {
@@ -137,10 +141,10 @@ export interface ArtifactEditorProps {
 
 /**
  * Center pane (05-UI §Artifact editor): header with inline name, kind badge,
- * tags, summary and revision dropdown; Markdown body with preview; kind form;
- * links. Autosaves with an 800 ms debounce and only creates a revision when
- * content actually changed (deep-compare against the last saved draft) —
- * keystroke bursts never churn the 50-revision cap.
+ * tags, aliases, summary and revision dropdown; Markdown body with preview;
+ * kind form; links. Autosaves with an 800 ms debounce and only creates a
+ * revision when content actually changed (deep-compare against the last
+ * saved draft) — keystroke bursts never churn the 50-revision cap.
  *
  * Mounted with `key={artifact.id}` so drafts reset per artifact.
  */
@@ -276,6 +280,13 @@ export function ArtifactEditor({
           tags={draft.tags}
           onChange={(tags) => {
             patchDraft({ tags });
+          }}
+        />
+        <AliasEditor
+          name={draft.name}
+          aliases={draft.aliases}
+          onChange={(aliases) => {
+            patchDraft({ aliases });
           }}
         />
         <Input
