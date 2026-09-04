@@ -244,7 +244,7 @@ describe('Encounter Cartographer run', () => {
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
       const run = await getRun(runId);
-      expect(run?.status).toBe('needs_review');
+      expect(run?.status).toBe('awaiting_user');
       expect(run?.steps.at(-1)?.name).toBe('brief');
       expect(run?.steps.at(-1)?.status).toBe('rejected');
     });
@@ -253,7 +253,7 @@ describe('Encounter Cartographer run', () => {
       'Encounter brief step has no valid approved output',
     );
     const run = await getRun(runId);
-    expect(run?.status).toBe('needs_review');
+    expect(run?.status).toBe('awaiting_user');
     expect(run?.steps).toHaveLength(1);
   });
 
@@ -274,7 +274,7 @@ describe('Encounter Cartographer run', () => {
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
-      expect((await getRun(runId))?.status).toBe('needs_review');
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
     });
 
     expect(chatMock).toHaveBeenCalledTimes(2);
@@ -301,7 +301,7 @@ describe('Encounter Cartographer run', () => {
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
-      expect((await getRun(runId))?.status).toBe('needs_review');
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
     });
     const step = (await getRun(runId))?.steps[0];
     expect(rejectionIssues(step ?? { output: null })).toEqual([
@@ -485,7 +485,7 @@ describe('Encounter Cartographer run', () => {
     const runInput = input(campaign, cartographer, target.id);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
-      expect((await getRun(runId))?.status).toBe('needs_review');
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
     });
     const step = (await getRun(runId))?.steps[0];
     expect(rejectionIssues(step ?? { output: null })).toEqual([
@@ -502,7 +502,7 @@ describe('Encounter Cartographer run', () => {
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
-      expect((await getRun(runId))?.status).toBe('needs_review');
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
     });
     const step = (await getRun(runId))?.steps[0];
     expect(rejectionIssues(step ?? { output: null })).toEqual([

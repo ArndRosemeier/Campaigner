@@ -44,7 +44,7 @@ import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
-import { ZodError, type z } from 'zod';
+import { ZodError, z } from 'zod';
 import { chat, MissingApiKeyError, OpenRouterError, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
 import { getCachedModels } from '@/llm/modelCache';
 import { generateImages } from '@/llm/imageGen';
@@ -106,6 +106,31 @@ export interface StepDraftOutput {
 export interface StepRetrieveOutput {
   chunkIds: Id[];
   titles: string[];
+}
+
+/** The persisted retrieve-step output the draft/statblock steps re-consume
+ * (see contextFromRetrieveStep) — zod-validated when read back. */
+const storedRetrieveOutputSchema = z.object({
+  chunkIds: z.array(z.string()),
+  statblockChunkIds: z.array(z.string()).default([]),
+  rosterChunkByName: z.record(z.string(), z.string()).default({}),
+  rosterLines: z.array(z.string()).default([]),
+  rosterTruncated: z.number().default(0),
+});
+
+/** The grounding context one retrieve pass computes (and the retrieve step
+ * persists the stable parts of). */
+interface RetrieveContext {
+  chunkIds: Id[];
+  titles: string[];
+  excerpts: string;
+  /** M3-B: statblock-only hits, in citation order (encounter personas). */
+  statblockChunkIds: Id[];
+  statblockTitles: string[];
+  /** M-B (12-BESTIARY-PACKS §7): pack-roster lines + name→chunkId map. */
+  rosterLines: string[];
+  rosterTruncated: number;
+  rosterChunkByName: Record<string, Id>;
 }
 
 export interface StepStatblockOutput {
@@ -1148,21 +1173,7 @@ export class RunEngine {
       : null;
   }
 
-  private async retrieveContext(
-    runId: Id,
-    input: StartRunInput,
-  ): Promise<{
-    chunkIds: Id[];
-    titles: string[];
-    excerpts: string;
-    /** M3-B: statblock-only hits, in citation order (encounter personas). */
-    statblockChunkIds: Id[];
-    statblockTitles: string[];
-    /** M-B (12-BESTIARY-PACKS §7): pack-roster lines + name→chunkId map. */
-    rosterLines: string[];
-    rosterTruncated: number;
-    rosterChunkByName: Record<string, Id>;
-  }> {
+  private async retrieveContext(runId: Id, input: StartRunInput): Promise<RetrieveContext> {
     // First semantic search after enabling embeddings backfills the whole
     // library — minutes of embedding requests before the first LLM call. The
     // dock job appears with the first batch, so a warm cache shows nothing.
@@ -1264,8 +1275,68 @@ export class RunEngine {
       titles: context.titles,
       statblockChunkIds: context.statblockChunkIds,
       rosterChunkByName: context.rosterChunkByName,
+      // The draft consumes these verbatim (see contextFromRetrieveStep) —
+      // persisting them keeps the roster grounding byte-identical without a
+      // second roster collection.
+      rosterLines: context.rosterLines,
+      rosterTruncated: context.rosterTruncated,
     });
     return { step };
+  }
+
+  /**
+   * Rebuilds the grounding context from the retrieve step's PERSISTED
+   * output. Draft/statblock used to call retrieveContext again — 2 extra
+   * searches + 2 extra query embeddings per run — although the retrieve
+   * step had already selected the chunks. Rebuilding the excerpts from the
+   * stored chunk ids reproduces the retrieve step's grounding exactly (same
+   * ids, same order, same rendering — the valid-mobs pack-roster and
+   * citation sections included), so the draft and statblock prompts are
+   * byte-identical to the re-searched path. Missing retrieve output is a
+   * loud error, never a re-search fallback.
+   */
+  private async contextFromRetrieveStep(steps: readonly RunStep[]): Promise<RetrieveContext> {
+    // The persisted step output is data at rest — validate it at the boundary
+    // instead of asserting shapes (AGENTS rule 3).
+    const parsed = storedRetrieveOutputSchema.safeParse(
+      steps.find((step) => step.name === 'retrieve')?.output ?? null,
+    );
+    if (!parsed.success) {
+      throw new Error('the run has no retrieve output to ground from — the retrieve step must run first');
+    }
+    const output = parsed.data;
+    const chunkIds = output.chunkIds;
+    const statblockChunkIds = output.statblockChunkIds;
+    const chunks = await getChunksByIds(chunkIds);
+    const books = await listRulebooks();
+    const titleById = new Map(books.map((book) => [book.id, book.title]));
+    const titles = chunks.map(
+      (chunk) => `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart}`,
+    );
+    const excerpts = chunks
+      .map((chunk, i) => {
+        const where = titles[i] ?? '';
+        const heading = chunk.headingPath.join(' > ');
+        return `[${where}] ${heading}\n${chunk.text}`;
+      })
+      .join('\n\n');
+    const statblockChunks = statblockChunkIds
+      .map((id) => chunks.find((chunk) => chunk.id === id))
+      .filter((chunk): chunk is (typeof chunks)[number] => chunk !== undefined);
+    const statblockTitles = statblockChunks.map(
+      (chunk) =>
+        `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart} — ${chunk.headingPath.join(' > ')}`,
+    );
+    return {
+      chunkIds,
+      titles,
+      excerpts,
+      statblockChunkIds,
+      statblockTitles,
+      rosterLines: output.rosterLines,
+      rosterTruncated: output.rosterTruncated,
+      rosterChunkByName: output.rosterChunkByName,
+    };
   }
 
   /**
@@ -1302,7 +1373,9 @@ export class RunEngine {
     extraInstruction: string,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     const settings = await getSettings();
-    const context = await this.retrieveContext(runId, input);
+    // Grounding comes from the retrieve step's stored selection — no
+    // duplicate search/embedding pass (see contextFromRetrieveStep).
+    const context = await this.contextFromRetrieveStep(steps);
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not draft artifacts');
     const contract = draftContractFor(kind);
@@ -1491,7 +1564,9 @@ export class RunEngine {
     const settings = await getSettings();
     const draft = this.effectiveDraft(steps);
     const levelHint = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';
-    const context = await this.retrieveContext(runId, input);
+    // Grounding comes from the retrieve step's stored selection — no
+    // duplicate search/embedding pass (see contextFromRetrieveStep).
+    const context = await this.contextFromRetrieveStep(steps);
     const instruction = [
       `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelHint === '' ? '' : ` at level ${levelHint}`}, grounded in the rule excerpts.`,
       input.brief,
@@ -1881,10 +1956,13 @@ export class RunEngine {
       evaluated = evaluate(raw);
     }
     if (evaluated.brief === null) {
-      return {
-        step: this.finishStep(steps[stepIndex], { raw, issues: evaluated.issues }, 'rejected'),
-        ...(input.autonomy === 'auto' ? {} : { runStatus: 'needs_review' as const }),
-      };
+      const step = this.finishStep(steps[stepIndex], { raw, issues: evaluated.issues }, 'rejected');
+      // Same rejection mapping as every other step: manual waits for the
+      // user (awaiting_user), review parks the run for triage, auto lets
+      // executeFrom fail the run.
+      if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
+      if (input.autonomy === 'auto') return { step };
+      return { step, runStatus: 'needs_review' };
     }
     let parsed: EncounterGeneratorBrief = evaluated.brief;
     if (targetRoster !== undefined) {

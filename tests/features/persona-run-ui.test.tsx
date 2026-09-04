@@ -911,7 +911,7 @@ describe('PersonaPanel run lifecycle', () => {
           name: 'retrieve',
           status: 'done',
           input: {},
-          output: { chunks: [] },
+          output: { chunkIds: [], titles: [] },
           userEdit: null,
         },
         {
