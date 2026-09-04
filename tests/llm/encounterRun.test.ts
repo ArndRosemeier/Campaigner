@@ -6,7 +6,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, createRulebook, finalizePackBook } from '@/db/rulebookRepo';
 import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
-import { getRun } from '@/db/runRepo';
+import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
@@ -622,5 +622,118 @@ describe('encounter runs (M3-B)', () => {
     expect(keptOgre.data.statBlock?.hp).toBe(99);
     expect(keptOgre.data.statBlock?.creatureType).toBe('giant');
     expect(keptOgre.summary).toBe('The bridge toll keeper');
+  });
+
+  it('collapses two same-name monsters onto ONE materialized NPC artifact and resolves both (fix-02)', async () => {
+    const { campaign, persona } = await seed();
+    // No chunk hits and no pack roster: both monsters must materialize inline.
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [
+          { name: 'Orc Brute', count: 2, notes: 'front line', statBlock: monsterBlock({ creatureType: 'humanoid (orc)', hp: 11 }) },
+          { name: 'Orc Brute', count: 3, notes: 'flankers', statBlock: monsterBlock({ creatureType: 'humanoid (orc)', hp: 13 }) },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'An orc ambush for level 1',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    const storedRun = await getRun(runId);
+    const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    const [first, second] = artifact.data.monsters;
+    expect(first?.source.type).toBe('npc-ref');
+    expect(second?.source.type).toBe('npc-ref');
+    if (first?.source.type !== 'npc-ref' || second?.source.type !== 'npc-ref') return;
+    // fix-02 (decision 1, reuse rule): one name per run materializes ONE NPC —
+    // the second entry reuses the first artifact via the materialize cache.
+    expect(second.source.artifactId).toBe(first.source.artifactId);
+    const npcs = (await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc');
+    expect(npcs).toHaveLength(1);
+    expect(npcs[0]?.name).toBe('Orc Brute');
+    // Resolution works for BOTH entries through the shared artifact.
+    for (const monster of [first, second]) {
+      const resolved = await resolveMonsterEntryWithRepos(monster);
+      expect(resolved.origin).toBe('NPC: Orc Brute');
+      expect(resolved.statBlock).not.toBeNull();
+    }
+  });
+
+  it('fails the run loudly when the persisted retrieve output is corrupt instead of materializing from empty maps', async () => {
+    const { campaign, persona } = await seed();
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [{ name: 'Cultist', count: 4, notes: 'netters', statBlock: monsterBlock() }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    // Manual autonomy parks the run at the draft checkpoint, so the retrieve
+    // output is at rest before finalize consumes it.
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A cult ambush',
+      autonomy: 'manual',
+      pinnedChunkIds: [],
+    });
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+
+    // Corrupt the retrieve step's persisted output at rest (a broken hand
+    // edit): the citation field finalize consumes is no longer an array.
+    const run = await getRun(runId);
+    if (run === undefined) throw new Error('run missing');
+    const retrieveStep = run.steps.find((step) => step.name === 'retrieve');
+    if (retrieveStep === undefined) throw new Error('retrieve step missing');
+    await updateRun(runId, {
+      steps: run.steps.map((step) =>
+        step === retrieveStep
+          ? {
+              ...retrieveStep,
+              output: {
+                ...(retrieveStep.output as Record<string, unknown>),
+                statblockChunkIds: 'not-an-array',
+              },
+            }
+          : step,
+      ),
+    });
+
+    await runEngine.approve(runId, {
+      campaign,
+      persona,
+      brief: 'A cult ambush',
+      autonomy: 'manual',
+      pinnedChunkIds: [],
+    });
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+    const storedRun = await getRun(runId);
+    // The zod boundary throws loudly — the run fails with a named error
+    // instead of finalizing against silently-empty citation maps.
+    expect(storedRun?.errorMessage).toContain('retrieve output');
+    expect(storedRun?.resultArtifactId).toBeNull();
+    // No NPC was materialized from the garbage.
+    expect((await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc')).toEqual([]);
   });
 });

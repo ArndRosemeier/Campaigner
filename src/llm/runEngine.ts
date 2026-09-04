@@ -1285,6 +1285,23 @@ export class RunEngine {
   }
 
   /**
+   * Validates the retrieve step's PERSISTED output (AGENTS rule 3): data at
+   * rest is zod-parsed, never cast. Shared by the draft re-grounding and by
+   * finalize — the retrieve step always persists a valid output, so garbage
+   * here (e.g. a broken hand edit) is an internal invariant violation that
+   * must throw loudly, never silently degrade to empty maps.
+   */
+  private storedRetrieveOutput(steps: readonly RunStep[]): z.infer<typeof storedRetrieveOutputSchema> {
+    const parsed = storedRetrieveOutputSchema.safeParse(
+      steps.find((step) => step.name === 'retrieve')?.output ?? null,
+    );
+    if (!parsed.success) {
+      throw new Error('the run has no retrieve output to ground from — the retrieve step must run first');
+    }
+    return parsed.data;
+  }
+
+  /**
    * Rebuilds the grounding context from the retrieve step's PERSISTED
    * output. Draft/statblock used to call retrieveContext again — 2 extra
    * searches + 2 extra query embeddings per run — although the retrieve
@@ -1296,15 +1313,7 @@ export class RunEngine {
    * loud error, never a re-search fallback.
    */
   private async contextFromRetrieveStep(steps: readonly RunStep[]): Promise<RetrieveContext> {
-    // The persisted step output is data at rest — validate it at the boundary
-    // instead of asserting shapes (AGENTS rule 3).
-    const parsed = storedRetrieveOutputSchema.safeParse(
-      steps.find((step) => step.name === 'retrieve')?.output ?? null,
-    );
-    if (!parsed.success) {
-      throw new Error('the run has no retrieve output to ground from — the retrieve step must run first');
-    }
-    const output = parsed.data;
+    const output = this.storedRetrieveOutput(steps);
     const chunkIds = output.chunkIds;
     const statblockChunkIds = output.statblockChunkIds;
     const chunks = await getChunksByIds(chunkIds);
@@ -2568,15 +2577,12 @@ export class RunEngine {
     // finalize. Serves BOTH Smith paths: fresh-draft creation and the
     // in-place content run (both write `data.monsters` below).
     if (kind === 'encounter' && 'monsters' in data) {
-      const retrieveStep = steps.find((step) => step.name === 'retrieve');
-      const retrieveOutput = (retrieveStep?.output ?? {}) as {
-        statblockChunkIds?: unknown;
-        rosterChunkByName?: unknown;
-      };
-      const statblockChunkIds = Array.isArray(retrieveOutput.statblockChunkIds)
-        ? (retrieveOutput.statblockChunkIds as Id[])
-        : [];
-      const rosterChunkByName = sanitizeChunkByName(retrieveOutput.rosterChunkByName);
+      // The retrieve output is data at rest — validate it at the boundary
+      // exactly like the draft path (storedRetrieveOutput). Garbage must
+      // fail the run loudly, never silently become empty citation maps.
+      const retrieveOutput = this.storedRetrieveOutput(steps);
+      const statblockChunkIds = retrieveOutput.statblockChunkIds;
+      const rosterChunkByName = retrieveOutput.rosterChunkByName;
       const draftMonsters = (
         draft as {
           monsters?: {
