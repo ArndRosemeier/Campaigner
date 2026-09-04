@@ -4,11 +4,12 @@ import { act, cleanup, render, screen, waitFor, within } from '@testing-library/
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getArtifact, updateArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage, getImage } from '@/db/imageRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
+import { listRunsByCampaign } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
@@ -19,10 +20,8 @@ import {
   newId,
   type AnyArtifact,
   type Artifact,
-  type Autonomy,
   type Id,
   type Module,
-  type Persona,
 } from '@/domain';
 import { EntityPanel, useModuleEntities } from '@/features/modules/entity-panel';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
@@ -53,46 +52,68 @@ const intakeImageMock = vi.mocked(intakeImage);
 
 const { toastError } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
-import {
-  type ChainState,
-  type ChainStepInput,
-} from '@/llm/chainRunner';
 import { clearDatabase } from '../db/helpers';
 
 /**
  * Entity panel (08-M4-C): useModuleEntities ordering (resolved first, then
  * total mentions desc), stub rows and per-kind batch buttons, and the batch
- * chain run (chainRunner mocked at the seam) tagging its produced artifacts
- * with the module tag.
+ * run (chat mocked at the seam — the batch drives real runEngine runs)
+ * tagging its produced artifacts with the module tag.
  */
 
-const chainMocks = vi.hoisted(() => ({
-  run: vi.fn<
-    (
-      campaign: Parameters<typeof EntityPanel>[0]['campaign'],
-      personas: readonly Persona[],
-      steps: readonly ChainStepInput[],
-      autonomy: Autonomy,
-      pinnedChunkIds: readonly Id[],
-    ) => Promise<ChainState>
-  >(),
-  getState: vi.fn<() => ChainState>(),
-  /** Subscribed listeners, so tests can drive chain state like the real runner. */
-  listeners: [] as ((state: ChainState) => void)[],
-}));
+/** A valid npc draft reply — one per run; alignment renames to the entity. */
+const BATCH_DRAFT = {
+  name: 'Watcher of the Crypt',
+  summary: 'A quiet warden of the seal.',
+  suggestedTags: ['warden'],
+  body: '# Watcher\nKeeps the seal and counts visitors.',
+  appearance: 'Weathered leathers and a brass key-ring.',
+  personality: 'Quiet and observant.',
+  needsStatBlock: true,
+};
 
-vi.mock('@/llm/chainRunner', () => ({
-  chainRunner: {
-    run: chainMocks.run,
-    getState: chainMocks.getState,
-    on: vi.fn((listener: (state: ChainState) => void) => {
-      chainMocks.listeners.push(listener);
-      return () => {
-        chainMocks.listeners = chainMocks.listeners.filter((registered) => registered !== listener);
-      };
-    }),
-  },
-}));
+const BATCH_STATBLOCK = {
+  system: 'dnd5e',
+  level: '3',
+  size: 'Medium',
+  creatureType: 'Humanoid',
+  ac: 15,
+  acNote: 'leather armor',
+  hp: 27,
+  hpFormula: '5d8+5',
+  speed: '30 ft.',
+  abilities: { str: 12, dex: 14, con: 12, int: 11, wis: 15, cha: 10 },
+  saves: 'Wis +4',
+  skills: 'Insight +4, Perception +4',
+  senses: 'passive Perception 14',
+  languages: 'Common',
+  traits: [{ name: 'Gatewatch', text: 'Advantage on checks to notice intruders.' }],
+  actions: [{ name: 'Spear', text: 'Melee Weapon Attack: +4 to hit.' }],
+  reactions: [],
+  legendary: [],
+  extras: {},
+};
+
+/** Batch chat responder: statblock calls are told apart by their prompt. The
+ * override receives the PLAIN user content (the stringified form escapes the
+ * quotes around entity names). */
+function respondToBatch(
+  override?: (
+    content: string,
+  ) => Promise<{ text: string; modelUsed: string; fallback: null }> | undefined,
+): (messages: unknown[]) => Promise<{ text: string; modelUsed: string; fallback: null }> {
+  return async (messages) => {
+    const chatMessages = messages as { role: string; content: string }[];
+    const content = chatMessages.map((message) => message.content).join('\n');
+    const raw = JSON.stringify(messages);
+    if (raw.includes('Fill the StatBlock for')) {
+      return { text: JSON.stringify(BATCH_STATBLOCK), modelUsed: 'test-model', fallback: null };
+    }
+    const overridden = override?.(content);
+    if (overridden !== undefined) return overridden;
+    return { text: JSON.stringify(BATCH_DRAFT), modelUsed: 'test-model', fallback: null };
+  };
+}
 
 const PREMISE = [
   'The crypt of [[Mira]] looms over the shore.',
@@ -166,27 +187,6 @@ function EntriesHarness({
   );
 }
 
-function completedChainState(kaelProduced: Artifact, bramProduced: Artifact): ChainState {
-  return {
-    steps: [
-      {
-        runId: 'run-kael',
-        status: 'completed',
-        artifactId: kaelProduced.id,
-        title: 'Detail: Kael',
-      },
-      {
-        runId: 'run-bram',
-        status: 'completed',
-        artifactId: bramProduced.id,
-        title: 'Detail: Bram',
-      },
-    ],
-    currentIndex: 2,
-    status: 'completed',
-  };
-}
-
 describe('useModuleEntities', () => {
   beforeEach(clearDatabase);
   afterEach(cleanup);
@@ -218,9 +218,6 @@ describe('useModuleEntities', () => {
 describe('EntityPanel', () => {
   beforeEach(clearDatabase);
   beforeEach(() => {
-    chainMocks.run.mockReset();
-    chainMocks.getState.mockReset();
-    chainMocks.listeners.length = 0;
     useProgressStore.getState().reset();
     useEntityImageQueue.setState({ queued: [], active: null });
     chatMock.mockReset();
@@ -515,25 +512,24 @@ describe('EntityPanel', () => {
     });
   });
 
-  it('runs one batch chain for an unresolved kind with the stub persona and tags the produced artifact', async () => {
+  it('runs a batch for an unresolved kind with the stub persona and tags the produced artifacts', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     await seedBuiltInPersonas();
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
-    const produced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Kael the Watcher',
-    });
-    const bramProduced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Bram of the Tide',
-    });
 
-    const chainState = completedChainState(produced, bramProduced);
-    chainMocks.run.mockResolvedValue(chainState);
-    chainMocks.getState.mockReturnValue(chainState);
+    const draftTexts: string[] = [];
+    chatMock.mockImplementation(async (messages) => {
+      const result = respondToBatch()(messages);
+      const text = JSON.stringify(messages);
+      if (!text.includes('Fill the StatBlock for')) {
+        // Collect the plain user content (the stringified form escapes the
+        // quotes inside `Detail the entity "Kael"`).
+        const chatMessages = messages as { role: string; content: string }[];
+        draftTexts.push(chatMessages.map((message) => message.content).join('\n'));
+      }
+      return result;
+    });
 
     const module = moduleFixture(campaign.id);
     render(
@@ -548,57 +544,47 @@ describe('EntityPanel', () => {
 
     await user.click(screen.getByTestId('batch-npc'));
 
+    // One run per unresolved entity: each draft prompt is the prebuilt brief
+    // (module text around the wiki-link), built from the stub persona slug.
+    await waitFor(() => {
+      expect(draftTexts).toHaveLength(2);
+    });
+    expect(draftTexts.some((text) => text.includes('Detail the entity "Kael"'))).toBe(true);
+    expect(draftTexts.some((text) => text.includes('Detail the entity "Bram"'))).toBe(true);
+    expect(draftTexts.some((text) => text.includes('[[Kael]] watches the gate.'))).toBe(true);
+
+    // The runs are real PersonaRuns driven by the stub persona in auto mode.
     const personas = await listPersonas();
-    const npcSmith = personas.find(
-      (candidate) => candidate.slug === STUB_PERSONA_SLUGS.npc,
-    );
-    expect(npcSmith).toBeDefined();
-    expect(chainMocks.run).toHaveBeenCalledTimes(1);
+    const npcSmith = personas.find((candidate) => candidate.slug === STUB_PERSONA_SLUGS.npc);
+    const runs = await listRunsByCampaign(campaign.id);
+    expect(runs).toHaveLength(2);
+    expect(runs.every((run) => run.personaId === npcSmith?.id)).toBe(true);
+    expect(runs.every((run) => run.autonomy === 'auto')).toBe(true);
 
-    // One chain over all unresolved npcs of the kind, built from the stub
-    // persona slug, with the chain-wide 'auto' autonomy and no pinned chunks.
-    const runCall = chainMocks.run.mock.calls.at(0);
-    expect(runCall?.[0]?.id).toBe(campaign.id);
-    expect(runCall?.[1]).toContainEqual(npcSmith);
-    expect(runCall?.[2]).toHaveLength(2);
-    expect(runCall?.[2]?.[0]).toMatchObject({
-      personaId: npcSmith?.id,
-      title: 'Detail: Kael',
-      autonomy: 'auto',
-    });
-    expect(runCall?.[2]?.[0]?.brief).toContain('Detail the entity "Kael"');
-    // Brief context keeps the module's wiki tokens intact.
-    expect(runCall?.[2]?.[0]?.brief).toContain('[[Kael]] watches the gate.');
-    expect(runCall?.[2]?.[1]).toMatchObject({
-      personaId: npcSmith?.id,
-      title: 'Detail: Bram',
-      autonomy: 'auto',
-    });
-    expect(runCall?.[3]).toBe('auto');
-    expect(runCall?.[4]).toEqual([]);
-
-    // After the chain completes, the produced artifacts gain the module tag
-    // AND the owning module (10-MILESTONE-6 M6-B — ownership is written,
-    // never inferred from the tag).
+    // Produced artifacts gain the module tag AND the owning module
+    // (10-MILESTONE-6 M6-B — ownership is written, never inferred), are
+    // aligned to the EXACT entity name ([[Kael]] resolves), and keep the
+    // model's invented name as an alias.
     await waitFor(async () => {
-      const tagged = await getArtifact(produced.id);
-      expect(tagged?.tags).toContain('module:Ember Crypt');
-      expect(tagged?.moduleId).toBe(module.id);
+      const artifacts = await listArtifactsByCampaign(campaign.id);
+      expect(artifacts.map((artifact) => artifact.name).sort()).toEqual(['Bram', 'Kael', 'Mira']);
     });
-    const bramScoped = await getArtifact(bramProduced.id);
-    expect(bramScoped?.moduleId).toBe(module.id);
-    // Drain the batch to its end so no trailing state update (the
-    // finally-block setBatching) leaks into the next test.
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    const kael = artifacts.find((artifact) => artifact.name === 'Kael');
+    expect(kael?.aliases).toContain('Watcher of the Crypt');
+    expect(kael?.tags).toContain('module:Ember Crypt');
+    expect(kael?.moduleId).toBe(module.id);
+    const bram = artifacts.find((artifact) => artifact.name === 'Bram');
+    expect(bram?.moduleId).toBe(module.id);
+    if (kael?.kind === 'npc') {
+      expect(kael.data.statBlock?.ac).toBe(15);
+    }
+    // Drain the batch to its end so no trailing state update leaks into the
+    // next test.
     await waitFor(() => {
       expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 2 npc');
     });
-    // The artifact is aligned to the EXACT entity name so [[Kael]] resolves;
-    // the model's invented name survives as an alias.
-    const aligned = await getArtifact(produced.id);
-    expect(aligned?.name).toBe('Kael');
-    expect(aligned?.aliases).toContain('Kael the Watcher');
-    const bramAligned = await getArtifact(bramProduced.id);
-    expect(bramAligned?.name).toBe('Bram');
+    expect(toastErrorMock).not.toHaveBeenCalled();
   });
 
   it('reports entities whose runs failed instead of finishing silently', async () => {
@@ -606,34 +592,16 @@ describe('EntityPanel', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     await seedBuiltInPersonas();
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
-    const bramProduced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Bram of the Tide',
-    });
 
-    // First chain: Kael's run fails. Second chain (the loop retries with the
-    // remaining names): Bram completes.
-    chainMocks.run
-      .mockResolvedValueOnce({
-        steps: [
-          { runId: 'run-kael', status: 'failed', artifactId: null, title: 'Detail: Kael' },
-        ],
-        currentIndex: 1,
-        status: 'failed',
-      })
-      .mockResolvedValueOnce({
-        steps: [
-          {
-            runId: 'run-bram',
-            status: 'completed',
-            artifactId: bramProduced.id,
-            title: 'Detail: Bram',
-          },
-        ],
-        currentIndex: 1,
-        status: 'completed',
-      });
+    // Kael's draft call fails; Bram's run completes.
+    chatMock.mockImplementation(async (messages) =>
+      respondToBatch((text) => {
+        if (text.includes('Detail the entity "Kael"')) {
+          return Promise.reject(new Error('gateway down'));
+        }
+        return undefined;
+      })(messages),
+    );
 
     render(
       <EntityPanel
@@ -646,17 +614,17 @@ describe('EntityPanel', () => {
     );
     await user.click(screen.getByTestId('batch-npc'));
 
-    // Kael is named loudly; Bram was still generated on the retry chain.
+    // Kael is named loudly; Bram was still generated in parallel.
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         '1 of 2 npcs failed to generate — see the Runs tab (Kael)',
       );
     });
-    expect(chainMocks.run).toHaveBeenCalledTimes(2);
     await waitFor(async () => {
-      const saved = await getArtifact(bramProduced.id);
-      expect(saved?.name).toBe('Bram');
-      expect(saved?.tags).toContain('module:Ember Crypt');
+      const bram = (await listArtifactsByCampaign(campaign.id)).find(
+        (artifact) => artifact.name === 'Bram',
+      );
+      expect(bram?.tags).toContain('module:Ember Crypt');
     });
     // Drain to the batch end — no trailing updates for the next test.
     await waitFor(() => {
@@ -664,21 +632,44 @@ describe('EntityPanel', () => {
     });
   });
 
-  it('does not count not-yet-run steps as failures when a chain stops early', async () => {
+  it('counts every entity without a produced artifact exactly once', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     await seedBuiltInPersonas();
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
-    const kaelProduced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Kael the Watcher',
+
+    // Both runs fail: the failed list is the produced-artifact diff, not a
+    // run-status tally — one entry per entity, never doubled.
+    chatMock.mockImplementation(() => {
+      throw new Error('gateway down');
     });
-    const coraProduced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Cora of the Crypt',
+
+    render(
+      <EntityPanel
+        module={moduleFixture(campaign.id)}
+        artifacts={[mira]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+    await user.click(screen.getByTestId('batch-npc'));
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        '2 of 2 npcs failed to generate — see the Runs tab (Kael, Bram)',
+      );
     });
+    await waitFor(() => {
+      expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 2 npc');
+    });
+  });
+
+  it('reports exactly the entities without a produced artifact when some runs fail', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await seedBuiltInPersonas();
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
     const base = moduleFixture(campaign.id);
     const module = moduleSchema.parse({
       ...base,
@@ -689,36 +680,17 @@ describe('EntityPanel', () => {
       entityKinds: [...base.entityKinds, { name: 'Cora', kind: 'npc', absorbed: [] }],
     });
 
-    // The REAL chain runner pre-fills every step as 'pending' and stops at
-    // the first failure. Counting non-completed steps said "12 of 9 failed"
-    // when 2 runs died — every retry round recounted the pending tail.
-    chainMocks.run
-      .mockResolvedValueOnce({
-        steps: [
-          {
-            runId: 'run-kael',
-            status: 'completed',
-            artifactId: kaelProduced.id,
-            title: 'Detail: Kael',
-          },
-          { runId: 'run-bram', status: 'failed', artifactId: null, title: 'Detail: Bram' },
-          { runId: null, status: 'pending', artifactId: null, title: 'Detail: Cora' },
-        ],
-        currentIndex: 2,
-        status: 'failed',
-      })
-      .mockResolvedValueOnce({
-        steps: [
-          {
-            runId: 'run-cora',
-            status: 'completed',
-            artifactId: coraProduced.id,
-            title: 'Detail: Cora',
-          },
-        ],
-        currentIndex: 1,
-        status: 'completed',
-      });
+    // Bram's draft call fails; Kael and Cora complete in parallel. The
+    // failed list is the produced-artifact diff, not a run-status tally —
+    // under the old chain it recounted the pending tail ("12 of 9 failed").
+    chatMock.mockImplementation(async (messages) =>
+      respondToBatch((text) => {
+        if (text.includes('Detail the entity "Bram"')) {
+          return Promise.reject(new Error('gateway down'));
+        }
+        return undefined;
+      })(messages),
+    );
 
     render(
       <EntityPanel
@@ -731,46 +703,45 @@ describe('EntityPanel', () => {
     );
     await user.click(screen.getByTestId('batch-npc'));
 
-    // Exactly the entities without a produced artifact — no pending recount.
+    // Exactly the entities without a produced artifact.
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
         '1 of 3 npcs failed to generate — see the Runs tab (Bram)',
       );
     });
-    expect(chainMocks.run).toHaveBeenCalledTimes(2);
     await waitFor(async () => {
-      const cora = await getArtifact(coraProduced.id);
-      expect(cora?.name).toBe('Cora');
-      expect(cora?.tags).toContain('module:Ember Crypt');
+      const artifacts = await listArtifactsByCampaign(campaign.id);
+      expect(artifacts.map((artifact) => artifact.name).sort()).toEqual(['Cora', 'Kael', 'Mira']);
     });
+    const cora = (await listArtifactsByCampaign(campaign.id)).find(
+      (artifact) => artifact.name === 'Cora',
+    );
+    expect(cora?.tags).toContain('module:Ember Crypt');
     await waitFor(() => {
       expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 3 npc');
     });
   });
 
-  it('reports batch progress to the app-wide dock while the chain runs', async () => {
+  it('reports batch progress to the app-wide dock while the runs execute', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     await seedBuiltInPersonas();
     const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
-    const produced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Kael the Watcher',
-    });
-    const bramProduced = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Bram of the Tide',
-    });
 
-    // Deferred chain: the batch hangs until the test releases it, so the
-    // mid-run dock state is observable.
-    let releaseChain!: (state: ChainState) => void;
-    const chainDone = new Promise<ChainState>((resolve) => {
-      releaseChain = resolve;
+    // Deferred DRAFT calls: both pool slots stay busy, so the mid-run dock
+    // state is observable.
+    let releaseDrafts!: () => void;
+    const draftGate = new Promise<void>((resolve) => {
+      releaseDrafts = resolve;
     });
-    chainMocks.run.mockImplementation(() => chainDone);
+    chatMock.mockImplementation(async (messages) => {
+      const text = JSON.stringify(messages);
+      if (text.includes('Fill the StatBlock for')) {
+        return { text: JSON.stringify(BATCH_STATBLOCK), modelUsed: 'test-model', fallback: null };
+      }
+      await draftGate;
+      return { text: JSON.stringify(BATCH_DRAFT), modelUsed: 'test-model', fallback: null };
+    });
 
     render(
       <>
@@ -793,27 +764,19 @@ describe('EntityPanel', () => {
       expect(screen.getByTestId('progress-label')).toHaveTextContent('Generating 2 npcs');
     });
 
-    // Chain running on the first step: the detail names the entity being
-    // detailed and the bar sits at that entity's coarse fraction.
-    act(() => {
-      for (const listener of chainMocks.listeners) {
-        listener({
-          steps: [
-            { runId: 'run-kael', status: 'running', artifactId: null, title: 'Detail: Kael' },
-            { runId: null, status: 'pending', artifactId: null, title: 'Detail: Bram' },
-          ],
-          currentIndex: 0,
-          status: 'running',
-        });
-      }
+    // Both entities are in flight (parallel pool, limit 2): the detail names
+    // them, and the bar has not advanced yet.
+    await waitFor(() => {
+      const detail = screen.getByTestId('progress-detail').textContent;
+      expect(detail).toContain('Kael');
+      expect(detail).toContain('Bram');
     });
-    expect(screen.getByTestId('progress-detail')).toHaveTextContent('Generating Kael…');
     expect(screen.getByTestId('progress-bar')).toHaveAttribute('aria-valuenow', '0');
 
-    // Release the chain: completed steps advance the bar; when the batch
-    // ends the dock disappears and the store is drained.
+    // Release the drafts: runs complete, the dock disappears and the store
+    // is drained.
     act(() => {
-      releaseChain(completedChainState(produced, bramProduced));
+      releaseDrafts();
     });
     await waitFor(() => {
       expect(screen.queryByTestId('progress-dock')).not.toBeInTheDocument();
@@ -825,7 +788,6 @@ describe('EntityPanel', () => {
 describe('EntityPanel — normalization state (fix-01)', () => {
   beforeEach(clearDatabase);
   beforeEach(() => {
-    chainMocks.run.mockReset();
     useProgressStore.getState().reset();
     chatMock.mockReset();
     toastErrorMock.mockClear();

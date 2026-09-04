@@ -14,6 +14,8 @@ import { EntityPanel } from '@/features/modules/entity-panel';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { chainRunner } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
+import { runEntityBatch } from '@/features/modules/entity-batch';
+import { updateSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
 vi.mock('@/llm/openrouter', () => ({
@@ -174,4 +176,56 @@ describe('entity batch — real chain persistence and live resolution', () => {
     }
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 20_000);
+
+  it('generates independent entities concurrently up to maxParallelRequests', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = moduleFixture(campaign.id);
+    await updateSettings({ maxParallelRequests: 2 });
+    const NAMES = ['Kael', 'Bree', 'Ruth'] as const;
+
+    // Gate each entity's FIRST (draft) call: with limit 2 the first two
+    // entities' drafts must both be in flight before any is released — and
+    // the third entity must not have started at all. (Under the old
+    // sequential chain the first two calls both belonged to "Kael".)
+    const draftStarts: string[] = [];
+    const callsByEntity = new Map<string, number>();
+    let releaseDrafts!: () => void;
+    const draftGate = new Promise<void>((resolve) => {
+      releaseDrafts = resolve;
+    });
+    chatMock.mockImplementation(async (messages) => {
+      const text = JSON.stringify(messages);
+      const name = NAMES.find((candidate) => text.includes(candidate)) ?? 'unknown';
+      const nth = (callsByEntity.get(name) ?? 0) + 1;
+      callsByEntity.set(name, nth);
+      if (nth > 1) {
+        // Statblock call for an already-released entity.
+        return { text: JSON.stringify(statblock), modelUsed: 'test-model', fallback: null };
+      }
+      draftStarts.push(name);
+      if (draftStarts.length === 2) {
+        // Both pool slots are busy: the third entity must still be waiting.
+        expect(draftStarts).not.toContain('Ruth');
+        releaseDrafts();
+      }
+      await draftGate;
+      return { text: JSON.stringify(draft), modelUsed: 'test-model', fallback: null };
+    });
+
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: 'Kael' }, { name: 'Bree' }, { name: 'Ruth' }],
+    });
+
+    // The first two concurrent starts belong to DIFFERENT entities — the
+    // sequential chain would have produced ['Kael', 'Kael', ...].
+    expect(draftStarts.slice(0, 2)).toHaveLength(2);
+    expect(new Set(draftStarts.slice(0, 2)).size).toBe(2);
+    expect(result.generated.sort()).toEqual(['Bree', 'Kael', 'Ruth']);
+    expect(result.failed).toEqual([]);
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    expect(artifacts.map((artifact) => artifact.name).sort()).toEqual(['Bree', 'Kael', 'Ruth']);
+  }, 30_000);
 });

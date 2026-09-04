@@ -1,10 +1,10 @@
-import type { Campaign, Id, Module } from '@/domain';
+import type { Campaign, Id, Module, PersonaRun } from '@/domain';
 import { moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
+import { getRun } from '@/db/runRepo';
 import { listPersonas } from '@/db/personaRepo';
-import { chainRunner } from '@/llm/chainRunner';
-import type { ChainStepInput } from '@/llm/chainRunner';
-import { runEngine } from '@/llm/runEngine';
+import { getSettings } from '@/db/settingsRepo';
+import { runEngine, type StartRunInput } from '@/llm/runEngine';
 import { alignEntityName, RUN_STEP_LABELS } from '@/features/modules/entity-detail';
 import {
   buildEntityBrief,
@@ -12,21 +12,28 @@ import {
   type StubKind,
 } from '@/features/modules/persona-request';
 import { surroundingParagraphs } from '@/lib/wikilinks';
+import { mapWithConcurrency } from '@/lib/parallel';
 import { toastError } from '@/lib/toast';
 import { useProgressStore } from '@/lib/progress';
 
 /**
  * Headless entity batch (08-MODULE-DESIGNER M4-C): details a list of entity
- * names with one persona chain in `auto` autonomy — the engine behind the
+ * names with one persona in `auto` autonomy — the engine behind the
  * entity panel's "Generate all unresolved of kind…" AND the module
  * post-generation automation (which runs the same path unattended after the
  * parts land).
  *
+ * Parallelization (optimization feature): entities are independent — each
+ * brief is grounded in the module text alone, not in the other entities —
+ * so up to `maxParallelRequests` entity runs execute at once. Each entity
+ * is still a real PersonaRun visible in the Runs tab; only the incidental
+ * "earlier entities as extra retrieval context" coupling of the old
+ * sequential chain is dropped.
+ *
  * Failure semantics (08 §M4-C / AGENTS rule 2): a failed RUN does not stop
- * the batch — the chain skips past it and the remaining names are retried in
- * a fresh chain; every entity without a produced artifact is reported loudly
- * (toast + the failed runs in the Runs tab). Progress rides the shared dock
- * (`module-entities-<moduleId>-<kind>`).
+ * the batch — the other runs finish, and every entity without a produced
+ * artifact is reported loudly (toast + the failed runs in the Runs tab).
+ * Progress rides the shared dock (`module-entities-<moduleId>-<kind>`).
  */
 
 /** Plural bucket label for the progress bar ("Generating 3 npcs"). */
@@ -83,35 +90,32 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   const progressUpdate = useProgressStore.getState().update;
   const progressFinish = useProgressStore.getState().finish;
   progressStart(jobId, `Generating ${String(total)} ${KIND_PLURALS[kind]}`);
-  // Live detail for the dock: the chain runner names the entity currently
-  // being detailed, the run engine names the step inside it ("drafting") —
-  // multi-minute work must never look like a hang (00-OVERVIEW).
-  let currentEntry = '';
-  let currentRunId: Id | null = null;
-  // Targets finished across chain invocations (the loop re-chains past
-  // failed steps) — keeps the bar monotonic.
-  let completed = 0;
-  const unsubscribeChain = chainRunner.on((state) => {
-    const step = state.steps[state.currentIndex];
-    if (state.status === 'running' && step?.status === 'running' && step.runId !== null) {
-      currentRunId = step.runId;
-      if (step.title !== null) {
-        currentEntry = step.title.replace(/^Detail: /u, '');
-        progressUpdate(jobId, {
-          detail: `Generating ${currentEntry}…`,
-          progress: (completed + state.currentIndex) / total,
-        });
-      }
-    }
-  });
-  const unsubscribeRun = runEngine.on((event) => {
-    if (event.kind !== 'step' || event.runId !== currentRunId) return;
-    if (event.status === 'running' && event.stepName !== undefined) {
-      const label = RUN_STEP_LABELS[event.stepName] ?? event.stepName;
-      progressUpdate(jobId, { detail: `${currentEntry} — ${label}…` });
-    }
-  });
   const generated: string[] = [];
+  // In-flight entities for the dock detail: name → current run step label.
+  const inFlight = new Map<string, string | null>();
+  let completed = 0;
+  const updateDetail = (): void => {
+    const parts = [...inFlight.entries()].slice(0, 3).map(([name, label]) =>
+      `"${name}"${label === null ? '' : ` — ${label}`}`,
+    );
+    progressUpdate(jobId, {
+      detail: parts.length === 0 ? 'Wrapping up…' : `Generating ${parts.join(' · ')}`,
+      progress: completed / total,
+    });
+  };
+  // Live step labels for the dock detail ("Kael — drafting…"), per run.
+  const runNames = new Map<Id, string>();
+  const unsubscribeRun = runEngine.on((event) => {
+    if (event.kind !== 'step') return;
+    const name = runNames.get(event.runId);
+    if (name === undefined || !inFlight.has(name)) return;
+    inFlight.set(
+      name,
+      event.stepName === undefined ? null : RUN_STEP_LABELS[event.stepName] ?? event.stepName,
+    );
+    updateDetail();
+  });
+  const producedIds: Id[] = [];
   try {
     const personas = await listPersonas();
     const persona =
@@ -120,53 +124,53 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     if (persona === undefined) {
       throw new Error(`No persona available to detail ${kind}s — check Settings → Personas`);
     }
-    let remaining: EntityBatchTarget[] = [...targets];
-    const producedIds: Id[] = [];
-    // One chain over all targets; chain semantics keep completed steps and
-    // show failed runs in the Runs tab. On a failed step the batch
-    // CONTINUES with the remaining names (fresh chain).
-    while (remaining.length > 0) {
-      const steps: ChainStepInput[] = remaining.map((entry) => ({
-        personaId: persona.id,
-        title: `Detail: ${entry.name}`,
-        brief: buildEntityBrief(
-          entry.name,
-          surroundingParagraphs(moduleText, entry.name),
+    const settings = await getSettings();
+    const limit = Math.max(1, settings.maxParallelRequests);
+
+    await mapWithConcurrency(targets, limit, async (target) => {
+      inFlight.set(target.name, null);
+      updateDetail();
+      try {
+        // The brief stands alone per entity: module text around the wiki-link
+        // plus the spine premise — no dependency on sibling entities.
+        const brief = buildEntityBrief(
+          target.name,
+          surroundingParagraphs(moduleText, target.name),
           module.spine?.premise ?? '',
-        ),
-        autonomy: 'auto' as const,
-      }));
-      const result = await chainRunner.run(campaign, personas, steps, 'auto', []);
-      // Align produced artifacts with their entity (index-parallel): the
-      // wiki-link resolves by EXACT name, so an artifact the model named
-      // "Kael Ashbound…" would never link back to [[Kael]] — enforce the
-      // entity name and keep the model's name as an alias.
-      for (const [index, step] of result.steps.entries()) {
-        const entry = remaining[index];
-        if (entry === undefined) continue;
-        if (step.status === 'completed' && step.artifactId !== null) {
-          producedIds.push(step.artifactId);
-          generated.push(entry.name);
+        );
+        const runInput: StartRunInput = {
+          campaign,
+          persona,
+          autonomy: 'auto' as const,
+          brief,
+          pinnedChunkIds: [],
+        };
+        const runId = await runEngine.startRun(runInput);
+        runNames.set(runId, target.name);
+        const outcome = await waitForRunTerminal(runId);
+        if (outcome.status === 'completed' && outcome.resultArtifactId !== null) {
+          producedIds.push(outcome.resultArtifactId);
+          generated.push(target.name);
           try {
-            await alignEntityName(step.artifactId, entry.name);
+            // The wiki-link resolves by EXACT name, so an artifact the model
+            // named "Kael Ashbound…" would never link back to [[Kael]] —
+            // enforce the entity name and keep the model's name as an alias.
+            await alignEntityName(outcome.resultArtifactId, target.name);
           } catch (error) {
-            toastError(`Could not align the artifact name for "${entry.name}"`, error);
+            toastError(`Could not align the artifact name for "${target.name}"`, error);
           }
         }
-        // Non-completed steps are NOT counted as failures here: the chain
-        // stops at the first failure and reports the not-yet-run steps as
-        // 'pending' — counting them double-counted every retry round ("12
-        // of 9 failed"). Real failures are computed after the loop.
+      } catch {
+        // Setup failure for this entity (e.g. key missing): recorded as a
+        // failure — the run row or the batch toast carries it loudly. The
+        // batch continues with the other entities.
+      } finally {
+        inFlight.delete(target.name);
+        completed += 1;
+        updateDetail();
       }
-      completed += result.steps.filter((step) => step.status === 'completed').length;
-      progressUpdate(jobId, { progress: completed / total });
-      const failedIndex = result.steps.findIndex((step) => step.status === 'failed');
-      if (result.status === 'completed') break;
-      if (result.status === 'cancelled') break;
-      if (failedIndex === -1) break;
-      // Skip everything up to and including the failed step, keep going.
-      remaining = remaining.slice(failedIndex + 1);
-    }
+    });
+
     // Stamp the produced artifacts with their owning module (M6-B) and
     // the compatibility tag.
     for (const artifactId of producedIds) {
@@ -184,8 +188,23 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       failed: targets.filter((target) => !generated.includes(target.name)).map((target) => target.name),
     };
   } finally {
-    unsubscribeChain();
     unsubscribeRun();
     progressFinish(jobId);
+  }
+}
+
+const TERMINAL_RUN_STATUSES: readonly PersonaRun['status'][] = ['completed', 'cancelled', 'failed'];
+
+/** Waits for an unattended run to reach a terminal status ('auto' autonomy
+ * never pauses, so awaiting-user states only appear if the user intervenes
+ * — treated as "not produced" by the batch). */
+async function waitForRunTerminal(runId: Id): Promise<PersonaRun> {
+  for (;;) {
+    const run = await getRun(runId);
+    if (run === undefined) throw new Error(`Run ${runId} disappeared mid-batch`);
+    if (TERMINAL_RUN_STATUSES.includes(run.status)) return run;
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 250);
+    });
   }
 }
