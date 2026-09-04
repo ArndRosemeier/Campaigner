@@ -69,6 +69,7 @@ import { locateMissingMarkerWithVision, verifyEncounterMap } from '@/llm/encount
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
+import { mapWithConcurrency } from '@/lib/parallel';
 import { toastError } from '@/lib/toast';
 import { useProgressStore } from '@/lib/progress';
 import { workspacePath } from '@/app/routes';
@@ -1799,40 +1800,46 @@ export class RunEngine {
     // The grid-repair attempt escalates to the fallback model — but only if
     // the cached /models data knows it accepts image input.
     const verifyRepairModel = visionRepairModel(verifyModel, settings.fallbackChatModel, getCachedModels());
-    const verifications = [];
-    for (const imageId of imageIds) {
-      const image = await getImage(imageId);
-      if (image === undefined) throw new Error(`Generated map ${imageId} no longer exists`);
-      const candidateLayout = stylize?.candidateLayouts?.[imageId] ?? layout;
-      const stylizedDataUrl = await encounterRunAdapters.blobToDataUrl(
-        new Blob([image.bytes], { type: image.mimeType }),
-      );
-      try {
-        verifications.push(
-          await encounterRunAdapters.verifyEncounterMap({
+    // Candidates are independent: verify up to maxParallelRequests maps at
+    // once. Order is preserved, so verifications[i] still corresponds to
+    // imageIds[i] (the review UI maps them positionally). A missing image or
+    // an unusable verify model still fails the step loudly — the pool
+    // rethrows the first rejection once its in-flight siblings finish.
+    const verifications = await mapWithConcurrency(
+      imageIds,
+      Math.max(1, settings.maxParallelRequests),
+      async (imageId) => {
+        const image = await getImage(imageId);
+        if (image === undefined) throw new Error(`Generated map ${imageId} no longer exists`);
+        const candidateLayout = stylize?.candidateLayouts?.[imageId] ?? layout;
+        const stylizedDataUrl = await encounterRunAdapters.blobToDataUrl(
+          new Blob([image.bytes], { type: image.mimeType }),
+        );
+        try {
+          return await encounterRunAdapters.verifyEncounterMap({
             layout: candidateLayout,
             schematicDataUrl: schematic.dataUrl,
             stylizedDataUrl,
             model: verifyModel,
             repairModel: verifyRepairModel,
             signal,
-          }),
-        );
-      } catch (error) {
-        if (!(error instanceof OpenRouterError)) throw error;
-        // A 400 is the "this model cannot even accept the request" signal —
-        // point at the settings. Congestion/timeouts/refusals speak for
-        // themselves (their message already says what happened) and now
-        // propagate unchanged instead of masquerading as a vision problem.
-        if (error.status !== 400) throw error;
-        throw new Error(
-          `Map verification model "${verifyModel}" cannot process images: ${error.message} ` +
-            'Pick a vision-capable chat model in Settings → "Encounter map verify model" ' +
-            '(its browse list only offers models that accept image input).',
-          { cause: error },
-        );
-      }
-    }
+          });
+        } catch (error) {
+          if (!(error instanceof OpenRouterError)) throw error;
+          // A 400 is the "this model cannot even accept the request" signal —
+          // point at the settings. Congestion/timeouts/refusals speak for
+          // themselves (their message already says what happened) and now
+          // propagate unchanged instead of masquerading as a vision problem.
+          if (error.status !== 400) throw error;
+          throw new Error(
+            `Map verification model "${verifyModel}" cannot process images: ${error.message} ` +
+              'Pick a vision-capable chat model in Settings → "Encounter map verify model" ' +
+              '(its browse list only offers models that accept image input).',
+            { cause: error },
+          );
+        }
+      },
+    );
     const needsReview = verifications.some((verification) => verification.needsReview);
     if (needsReview && input.autonomy === 'auto') {
       throw new Error('Generated battlemap failed the structure verification threshold');

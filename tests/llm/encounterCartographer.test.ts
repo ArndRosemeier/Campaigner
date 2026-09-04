@@ -499,6 +499,53 @@ describe('Encounter Cartographer run', () => {
     });
   });
 
+  it('verifies map candidates in parallel up to maxParallelRequests', async () => {
+    const { campaign, cartographer } = await setup();
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+      maxParallelRequests: 2,
+    });
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+    // Three stylized candidates → three verifications.
+    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValue({
+      images: [new Blob(['one']), new Blob(['two']), new Blob(['three'])],
+      costUsd: 0.03,
+      cappedToOne: false,
+      modelUsed: 'test-image-model',
+    });
+    // Hold the verifications behind one gate: with limit 2 the first two
+    // candidates fill both pool slots and the third cannot start until one
+    // finishes (a violation would make calls.length hit 3 before release).
+    const calls: number[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
+      calls.push(calls.length + 1);
+      if (calls.length === 2) {
+        expect(calls).toHaveLength(2);
+        release();
+      }
+      return gate.then(() => {
+        const expected = coarseStructure(layout);
+        return { expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false };
+      });
+    });
+
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    const candidates = await approveUntilPick(runId, runInput);
+    expect(candidates).toHaveLength(3);
+    // Order preserved: verifications[i] corresponds to candidate[i].
+    expect(calls).toEqual([1, 2, 3]);
+    const run = await getRun(runId);
+    const verifyStep = run?.steps.find((step) => step.name === 'verify');
+    expect((verifyStep?.output as { verifications: unknown[] }).verifications).toHaveLength(3);
+  });
+
   it('fails auto generation when verification exceeds the threshold', async () => {
     const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
