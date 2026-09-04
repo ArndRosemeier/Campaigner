@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   encounterDraftSchema,
+  encounterGeneratorBriefSchema,
   factionDraftSchema,
   locationDraftSchema,
   plotArcDraftSchema,
@@ -72,5 +73,39 @@ describe('draft schema coercions', () => {
       treasure: 'y',
     });
     expect(encounter.monsters[0]?.count).toBe(4);
+  });
+
+  it('accepts sourceName roster citations in both encounter contracts (12-BESTIARY-PACKS §7)', () => {
+    const draft = encounterDraftSchema.parse({
+      ...BASE,
+      difficulty: 'medium',
+      levelHint: '3',
+      monsters: [{ name: 'Goblin Boss', count: 2, notes: '', sourceName: 'Goblin Boss' }],
+      terrain: 't',
+      tactics: 'x',
+      treasure: 'y',
+    });
+    expect(draft.monsters[0]?.sourceName).toBe('Goblin Boss');
+    expect(draft.monsters[0]?.sourceChunkIndex).toBeUndefined();
+
+    const brief = encounterGeneratorBriefSchema.parse({
+      name: 'Goblin Gate',
+      summary: 'S',
+      body: 'B',
+      difficulty: 'medium',
+      levelHint: '3',
+      terrain: 't',
+      tactics: 'x',
+      treasure: 'y',
+      theme: 'gate',
+      monsters: [{ name: 'Goblin Boss', count: 2, notes: '', sourceName: 'goblin boss' }],
+      rooms: [
+        { name: 'Entry', monsterIndexes: [] },
+        { name: 'Yard', monsterIndexes: [0] },
+      ],
+      entryRoomIndex: 0,
+    });
+    expect(brief.monsters[0]?.sourceName).toBe('goblin boss');
+    expect(brief.monsters[0]?.sourceChunkIndex).toBeUndefined();
   });
 });

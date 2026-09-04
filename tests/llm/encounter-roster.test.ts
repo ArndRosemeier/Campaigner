@@ -5,7 +5,9 @@ import { ruleChunkSchema, statBlockSchema } from '@/domain';
 import {
   buildPackRoster,
   collectPackRoster,
+  formatRosterSection,
   parseLevelSort,
+  rosterNameIndex,
   type PackRosterDeps,
 } from '@/llm/encounterRoster';
 
@@ -77,9 +79,9 @@ describe('parseLevelSort', () => {
 describe('buildPackRoster', () => {
   it('formats level-ordered lines with traits', () => {
     const roster = buildPackRoster([
-      { name: 'Ogre', level: '2', traits: 'large, giant', chunkId: 'c3', levelSort: 2 },
-      { name: 'Goblin Warrior', level: '-1', traits: 'humanoid, grunt', chunkId: 'c1', levelSort: -1 },
-      { name: 'Giant Rat', level: '1/2', traits: '', chunkId: 'c2', levelSort: 0.5 },
+      { name: 'Ogre', level: '2', traits: 'large, giant', chunkId: 'c3', levelSort: 2, bookId: 'b1' },
+      { name: 'Goblin Warrior', level: '-1', traits: 'humanoid, grunt', chunkId: 'c1', levelSort: -1, bookId: 'b1' },
+      { name: 'Giant Rat', level: '1/2', traits: '', chunkId: 'c2', levelSort: 0.5, bookId: 'b1' },
     ]);
     expect(roster.lines).toEqual([
       'Goblin Warrior (-1, humanoid, grunt)',
@@ -97,6 +99,7 @@ describe('buildPackRoster', () => {
       traits: '',
       chunkId: `c${String(index)}`,
       levelSort: 1,
+      bookId: 'b1',
     }));
     const roster = buildPackRoster(entries);
     expect(roster.lines).toHaveLength(300);
@@ -107,8 +110,7 @@ describe('buildPackRoster', () => {
 });
 
 describe('collectPackRoster', () => {
-  it('collects pack chunks for the campaign system only', async () => {
-    const packBook = book();
+  it('collects pack chunks for the campaign system only', async () => {    const packBook = book();
     const pdfBook = book({
       id: 'book-2',
       title: 'PDF Rulebook',
@@ -147,5 +149,70 @@ describe('collectPackRoster', () => {
     await expect(collectPackRoster('pathfinder2e', deps)).rejects.toThrow(
       'has no validated stat block',
     );
+  });
+
+  it('skips books that are not ready packs (§7: origin, system, status)', async () => {
+    const processing = book({ id: 'book-4', status: 'processing' });
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([book(), processing]),
+      listChunks: (bookIds) => {
+        expect(bookIds).toEqual(['book-1']);
+        return Promise.resolve([]);
+      },
+    };
+    const roster = await collectPackRoster('pathfinder2e', deps);
+    expect(roster.lines).toEqual([]);
+    expect(roster.chunkByName.size).toBe(0);
+  });
+
+  it('resolves duplicate names to the most recently updated pack book first', async () => {
+    // listRulebooks returns most-recently-updated first, so 'b-new' ranks 0.
+    const newer = book({ id: 'b-new', title: 'Newer Bestiary' });
+    const older = book({ id: 'b-old', title: 'Older Bestiary', updatedAt: 1 });
+    const chunks = [
+      { ...chunk({ name: 'Dire Wolf', level: '2', traits: 'animal' }), id: 'chunk-old', bookId: 'b-old' },
+      { ...chunk({ name: 'Dire Wolf', level: '2', traits: 'animal' }), id: 'chunk-new', bookId: 'b-new' },
+    ];
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([newer, older]),
+      listChunks: () => Promise.resolve(chunks),
+    };
+    const roster = await collectPackRoster('pathfinder2e', deps);
+    // Keys are lowercased; runEngine lowercases citations before lookup (§7).
+    expect(roster.chunkByName.get('dire wolf')).toBe('chunk-new');
+  });
+});
+
+describe('rosterNameIndex', () => {
+  it('breaks duplicate-name ties by book rank, then level/name order', () => {
+    const index = rosterNameIndex(
+      [
+        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-late', levelSort: 1, bookId: 'b2' },
+        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-early', levelSort: 1, bookId: 'b1' },
+        { name: 'Bandit', level: '1', traits: '', chunkId: 'c-early2', levelSort: 1, bookId: 'b1' },
+      ],
+      new Map([
+        ['b1', 0],
+        ['b2', 1],
+      ]),
+    );
+    expect(index.get('bandit')).toBe('c-early');
+  });
+});
+
+describe('formatRosterSection', () => {
+  it('is null without roster lines and adds a citation instruction', () => {
+    expect(formatRosterSection([], 0)).toBeNull();
+    const section = formatRosterSection(['Goblin (-1, humanoid)', 'Ogre (2, large)'], 0);
+    expect(section).toContain('Bestiary roster');
+    expect(section).toContain('Goblin (-1, humanoid)');
+    expect(section).toContain('sourceName');
+    expect(section).toContain('sourceChunkIndex');
+    expect(section).not.toContain('roster truncated');
+  });
+
+  it('appends the truncation note with the hidden count (§7)', () => {
+    const section = formatRosterSection(['Ogre (2)'], 12);
+    expect(section).toContain('(roster truncated; 12 more)');
   });
 });

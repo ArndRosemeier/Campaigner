@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
-import { createRulebook } from '@/db/rulebookRepo';
+import { createPackBook, createRulebook, finalizePackBook } from '@/db/rulebookRepo';
 import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { getRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
@@ -154,6 +154,55 @@ async function putChunksFirstId(): Promise<Id | undefined> {
   return chunks[0]?.id;
 }
 
+/** Seeds a ready pack book (12-BESTIARY-PACKS) with one validated creature chunk. */
+async function seedPackBook(title: string): Promise<Id> {
+  const book = await createPackBook({ title, system: 'dnd5e', filename: `${title}.zip` });
+  await finalizePackBook(book.id, {
+    sourceId: 'foundry-pf2e',
+    license: 'Community Use Policy',
+    entriesImported: 1,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+  });
+  const text = 'Goblin Boss, humanoid, agile commander.';
+  await putChunks([
+    ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: book.id,
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'statblock',
+      headingPath: ['Goblin Boss'],
+      text,
+      statBlock: statBlockSchema.parse({
+        system: 'dnd5e',
+        level: '1',
+        size: 'Small',
+        creatureType: 'humanoid (goblinoid)',
+        ac: 17,
+        acNote: '',
+        hp: 21,
+        hpFormula: '3d6 + 11',
+        speed: '30 ft.',
+        abilities: { str: 14, dex: 14, con: 10, int: 10, wis: 8, cha: 8 },
+        saves: '',
+        skills: '',
+        senses: 'darkvision 60 ft.',
+        languages: 'Common, Goblin',
+        traits: [],
+        actions: [],
+        reactions: [],
+        legendary: [],
+        extras: { Traits: 'humanoid, goblinoid' },
+      }),
+      contentHash: await sha256Hex(text),
+    }),
+  ]);
+  const { db } = await import('@/db/db');
+  const chunk = (await db.chunks.where('bookId').equals(book.id).first());
+  return chunk?.id ?? '';
+}
+
 describe('encounter runs (M3-B)', () => {
   beforeEach(async () => {
     await clearDatabase();
@@ -264,5 +313,87 @@ describe('encounter runs (M3-B)', () => {
     // The (not yet generated) battlemap is untouched by a content run.
     expect(updated.data.mapImageId).toBe(mapImageId);
     expect(updated.data.layout).toBeNull();
+  });
+
+  it('grounds the draft in the pack roster and resolves a sourceName citation (12-BESTIARY-PACKS §7)', async () => {
+    const { campaign, persona } = await seed();
+    const goblinChunkId = await seedPackBook('Dnd5e Bestiary Pack');
+    const { db } = await import('@/db/db');
+    const packChunk = await db.chunks.get(goblinChunkId);
+    expect(packChunk).toBeDefined();
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [{ name: 'Goblin Boss', count: 2, notes: 'shields up', sourceName: 'Goblin Boss' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A goblin ambush for level 1',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+
+    // The draft prompt carries the roster section with the pack creature.
+    await vi.waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const userContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    expect(userContent).toContain('Bestiary roster');
+    expect(userContent).toContain('Goblin Boss (1, humanoid, goblinoid)');
+    expect(userContent).toContain('sourceName');
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const storedRun = await getRun(runId);
+    const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(artifact.data.monsters[0]?.source).toEqual({
+      type: 'rulebook',
+      chunkId: goblinChunkId,
+    });
+  });
+
+  it('fails loudly after one repair attempt when a sourceName misses the roster', async () => {
+    const { campaign, persona } = await seed();
+    await seedPackBook('Dnd5e Bestiary Pack');
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [{ name: 'Shadow Beast', count: 1, notes: '', sourceName: 'Not A Creature' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A shadow ambush',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+    const storedRun = await getRun(runId);
+    // Exactly one repair attempt, then the run fails with the named issue —
+    // never a silent fallback to name-only.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const repairContent =
+      chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(repairContent).toContain('cited monster sources that do not exist');
+    expect(repairContent).toContain('Not A Creature');
+    expect(storedRun?.errorMessage).toContain('sourceName "Not A Creature" is not in the bestiary roster');
+    expect(storedRun?.resultArtifactId).toBeNull();
   });
 });

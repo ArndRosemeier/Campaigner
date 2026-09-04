@@ -6,12 +6,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { getImage } from '@/db/imageRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { coarseStructure } from '@/llm/encounterVision';
 import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
-import { createPersona, defaultSettings, newId, type Persona } from '@/domain';
+import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Persona } from '@/domain';
+import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
 
@@ -73,6 +76,55 @@ async function setup() {
   await db.personas.put(cartographer);
   await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
   return { campaign, cartographer };
+}
+
+/** Seeds a ready pack book with one validated creature chunk (12-BESTIARY-PACKS). */
+async function seedPackBook(): Promise<string> {
+  const book = await createPackBook({ title: 'Dnd5e Bestiary Pack', system: 'dnd5e', filename: 'pack.zip' });
+  await finalizePackBook(book.id, {
+    sourceId: 'foundry-pf2e',
+    license: 'Community Use Policy',
+    entriesImported: 1,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+  });
+  const text = 'Goblin Boss, humanoid, agile commander.';
+  await putChunks([
+    ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: book.id,
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'statblock',
+      headingPath: ['Goblin Boss'],
+      text,
+      statBlock: statBlockSchema.parse({
+        system: 'dnd5e',
+        level: '1',
+        size: 'Small',
+        creatureType: 'humanoid (goblinoid)',
+        ac: 17,
+        acNote: '',
+        hp: 21,
+        hpFormula: '3d6 + 11',
+        speed: '30 ft.',
+        abilities: { str: 14, dex: 14, con: 10, int: 10, wis: 8, cha: 8 },
+        saves: '',
+        skills: '',
+        senses: 'darkvision 60 ft.',
+        languages: 'Common, Goblin',
+        traits: [],
+        actions: [],
+        reactions: [],
+        legendary: [],
+        extras: { Traits: 'humanoid, goblinoid' },
+      }),
+      contentHash: await sha256Hex(text),
+    }),
+  ]);
+  const { db } = await import('@/db');
+  const chunk = await db.chunks.where('bookId').equals(book.id).first();
+  return chunk?.id ?? '';
 }
 
 function input(
@@ -152,6 +204,38 @@ describe('Encounter Cartographer run', () => {
     expect(useProgressStore.getState().jobs).toEqual([]);
   });
 
+  it('grounds the brief in the pack roster and resolves sourceName through map finalize (§7)', async () => {
+    const { campaign, cartographer } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const rosterBrief = {
+      ...BRIEF,
+      monsters: [{ name: 'Goblin Boss', count: 2, notes: '', sourceName: 'Goblin Boss' }],
+    };
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(rosterBrief), modelUsed: 'test-model', fallback: null });
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+
+    // The brief prompt carries the roster section listing the pack creature.
+    await waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const briefContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    expect(briefContent).toContain('Bestiary roster');
+    expect(briefContent).toContain('Goblin Boss (1, humanoid, goblinoid)');
+
+    const candidates = await approveUntilPick(runId, runInput);
+    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    // The map finalize remapped the roster citation to the pack chunk.
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
+  });
+
   it('does not approve a rejected brief into an opaque downstream failure', async () => {
     const { campaign, cartographer } = await setup();
     // Both the initial reply and automatic repair fail the brief schema.
@@ -221,7 +305,7 @@ describe('Encounter Cartographer run', () => {
     });
     const step = (await getRun(runId))?.steps[0];
     expect(rejectionIssues(step ?? { output: null })).toEqual([
-      'monsters[0] "Ash Cultist": add sourceChunkIndex citing a listed stat-block excerpt, or an inline statBlock',
+      'monsters[0] "Ash Cultist": add sourceChunkIndex citing a listed stat-block excerpt, sourceName citing a bestiary roster entry, or an inline statBlock',
     ]);
   });
 

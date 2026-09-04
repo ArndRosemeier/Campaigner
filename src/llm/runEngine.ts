@@ -39,6 +39,7 @@ import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
+import { collectPackRoster, formatRosterSection } from '@/llm/encounterRoster';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -62,7 +63,7 @@ import {
   plotArcDraftSchema,
   continuityReportSchema,
 } from '@/llm/schemas';
-import type { EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
+import type { EncounterDraft, EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
 import { normalizeImageAspect } from '@/lib/imageAspect';
 import { locateMissingMarkerWithVision, verifyEncounterMap } from '@/llm/encounterVision';
 
@@ -354,28 +355,102 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
 }
 
 /**
- * Cartographer monsters must resolve to a stat block: a cited excerpt index
- * that exists, or an inline block. Returns one named issue per offender so
- * the repair prompt and the review UI can say exactly what is missing.
+ * Issues for citations that are PRESENT but unresolvable (12-BESTIARY-PACKS
+ * §7): an excerpt index outside the list, or a roster name the roster does
+ * not contain. Name-only monsters (no citation at all) are legitimate and
+ * resolve to `none` — never flagged here. Shared by the Smith draft
+ * validation and the Cartographer brief.
  */
-function encounterSourceIssues(
-  brief: EncounterGeneratorBrief,
+function invalidCitationIssues(
+  monsters: readonly {
+    name: string;
+    sourceChunkIndex?: number | undefined;
+    sourceName?: string | undefined;
+  }[],
   statblockChunkIds: readonly Id[],
+  rosterChunkByName: Readonly<Record<string, Id>>,
 ): string[] {
   const issues: string[] = [];
-  for (const [index, monster] of brief.monsters.entries()) {
+  for (const [index, monster] of monsters.entries()) {
+    if (monster.sourceChunkIndex !== undefined) {
+      if (statblockChunkIds[monster.sourceChunkIndex] === undefined) {
+        issues.push(
+          `monsters[${String(index)}] "${monster.name}": sourceChunkIndex ${String(monster.sourceChunkIndex)} is not in the excerpt list (0–${String(statblockChunkIds.length - 1)})`,
+        );
+      }
+      continue;
+    }
+    if (monster.sourceName !== undefined) {
+      const key = monster.sourceName.trim().toLowerCase();
+      if (rosterChunkByName[key] === undefined) {
+        issues.push(
+          `monsters[${String(index)}] "${monster.name}": sourceName "${monster.sourceName}" is not in the bestiary roster — cite the exact roster name`,
+        );
+      }
+    }
+  }
+  return issues;
+}
+
+/**
+ * Encounter monsters must resolve to a stat block: a cited excerpt index that
+ * exists, an exact bestiary roster name (§7), or an inline block — checked in
+ * that precedence order. Returns one named issue per offender so the repair
+ * prompt and the review UI can say exactly what is missing. Used by the
+ * Cartographer brief, whose fresh-run contract fully resolves every monster.
+ */
+function encounterSourceIssues(
+  monsters: readonly {
+    name: string;
+    sourceChunkIndex?: number | undefined;
+    sourceName?: string | undefined;
+    statBlock?: StatBlock | undefined;
+  }[],
+  statblockChunkIds: readonly Id[],
+  rosterChunkByName: Readonly<Record<string, Id>>,
+): string[] {
+  const issues = invalidCitationIssues(monsters, statblockChunkIds, rosterChunkByName);
+  for (const [index, monster] of monsters.entries()) {
     if (monster.statBlock !== undefined) continue;
-    if (monster.sourceChunkIndex === undefined) {
+    if (
+      monster.sourceChunkIndex !== undefined &&
+      statblockChunkIds[monster.sourceChunkIndex] !== undefined
+    ) {
+      continue;
+    }
+    const named =
+      monster.sourceName !== undefined &&
+      rosterChunkByName[monster.sourceName.trim().toLowerCase()] !== undefined;
+    if (!named) {
       issues.push(
-        `monsters[${String(index)}] "${monster.name}": add sourceChunkIndex citing a listed stat-block excerpt, or an inline statBlock`,
-      );
-    } else if (statblockChunkIds[monster.sourceChunkIndex] === undefined) {
-      issues.push(
-        `monsters[${String(index)}] "${monster.name}": sourceChunkIndex ${String(monster.sourceChunkIndex)} is not in the excerpt list (0–${String(statblockChunkIds.length - 1)})`,
+        `monsters[${String(index)}] "${monster.name}": add sourceChunkIndex citing a listed stat-block excerpt, sourceName citing a bestiary roster entry, or an inline statBlock`,
       );
     }
   }
   return issues;
+}
+
+/**
+ * Resolve a monster's rulebook chunk in finalize precedence order (§7):
+ * cited excerpt index → cited roster name → undefined (the caller then falls
+ * to the inline stat block, or none). Draft validation upstream rejects
+ * unresolvable citations, so this only sees valid model output or
+ * user-edited drafts; each citation still falls through to the next source.
+ */
+function resolveEncounterMonsterSource(
+  monster: { sourceChunkIndex?: number | undefined; sourceName?: string | undefined },
+  statblockChunkIds: readonly Id[],
+  rosterChunkByName: Readonly<Record<string, Id>>,
+): Id | undefined {
+  if (monster.sourceChunkIndex !== undefined) {
+    const chunkId = statblockChunkIds[monster.sourceChunkIndex];
+    if (chunkId !== undefined) return chunkId;
+  }
+  if (typeof monster.sourceName === 'string') {
+    const chunkId = rosterChunkByName[monster.sourceName.trim().toLowerCase()];
+    if (chunkId !== undefined) return chunkId;
+  }
+  return undefined;
 }
 
 /**
@@ -406,10 +481,11 @@ function encounterCoverageIssues(brief: EncounterGeneratorBrief, rosterLength: n
  *
  * `dropInlineStats` (regenerate mode): the roster is replaced verbatim from
  * the target encounter right after validation, stat sources included, so
- * embedded `statBlock`/`sourceChunkIndex` fields carry no information and are
- * stripped before the schema runs — the model echoing a stub block there must
- * not fail the map over data the contract discards. Fresh runs keep strict
- * validation: their inline stat blocks become the artifact's source data.
+ * embedded `statBlock`/`sourceChunkIndex`/`sourceName` fields carry no
+ * information and are stripped before the schema runs — the model echoing a
+ * stub block there must not fail the map over data the contract discards.
+ * Fresh runs keep strict validation: their inline stat blocks become the
+ * artifact's source data.
  */
 function parseEncounterBrief(
   raw: string,
@@ -458,6 +534,20 @@ function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
 }
 
+/**
+ * Sanitizes a persisted roster name→chunkId map (12-BESTIARY-PACKS §7) from a
+ * retrieve/brief step output — step outputs are plain JSON, so keys/values are
+ * re-checked instead of trusted.
+ */
+function sanitizeChunkByName(value: unknown): Record<string, Id> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return {};
+  const result: Record<string, Id> = {};
+  for (const [key, chunkId] of Object.entries(value)) {
+    if (typeof chunkId === 'string' && key.trim() !== '') result[key] = chunkId;
+  }
+  return result;
+}
+
 function effectiveReasoningEffort(persona: Persona, settings: Settings): ReasoningEffort {
   return persona.reasoningEffort !== 'default'
     ? persona.reasoningEffort
@@ -471,6 +561,9 @@ export class RunEngine {
   /** JSON-parse retry state per run (one automatic fix retry per LLM step). */
   private draftRetried = new Set<Id>();
   private statblockRetried = new Set<Id>();
+  /** Monster-citation repair state per run (12-BESTIARY-PACKS §7): one repair
+   * attempt for unknown sourceName/out-of-range sourceChunkIndex citations. */
+  private sourceRepaired = new Set<Id>();
   private encounterSchematics = new Map<Id, { dataUrl: string; width: number; height: number }>();
   private encounterLayoutVariants = new Map<Id, number>();
 
@@ -504,6 +597,7 @@ export class RunEngine {
     });
     this.draftRetried.delete(run.id);
     this.statblockRetried.delete(run.id);
+    this.sourceRepaired.delete(run.id);
     this.cancelRequested.delete(run.id);
     if (input.persona.mode === 'encounter') {
       this.encounterLayoutVariants.set(run.id, 0);
@@ -705,6 +799,7 @@ export class RunEngine {
     this.cancelRequested.delete(runId);
     this.draftRetried.delete(runId);
     this.statblockRetried.delete(runId);
+    this.sourceRepaired.delete(runId);
     this.encounterSchematics.delete(runId);
     this.encounterLayoutVariants.delete(runId);
     useProgressStore.getState().finish(encounterProgressId(runId));
@@ -814,6 +909,7 @@ export class RunEngine {
           await updateRun(runId, { status: 'failed', errorMessage: reason, steps: [...steps] });
           this.draftRetried.delete(runId);
           this.statblockRetried.delete(runId);
+          this.sourceRepaired.delete(runId);
           if (input.persona.mode === 'encounter') {
             useProgressStore.getState().finish(encounterProgressId(runId));
           }
@@ -825,6 +921,7 @@ export class RunEngine {
       await updateRun(runId, { status: 'completed' });
       this.draftRetried.delete(runId);
       this.statblockRetried.delete(runId);
+      this.sourceRepaired.delete(runId);
       this.encounterSchematics.delete(runId);
       useProgressStore.getState().finish(encounterProgressId(runId));
       this.emit({ kind: 'run', runId, status: 'completed' });
@@ -937,6 +1034,10 @@ export class RunEngine {
     /** M3-B: statblock-only hits, in citation order (encounter personas). */
     statblockChunkIds: Id[];
     statblockTitles: string[];
+    /** M-B (12-BESTIARY-PACKS §7): pack-roster lines + name→chunkId map. */
+    rosterLines: string[];
+    rosterTruncated: number;
+    rosterChunkByName: Record<string, Id>;
   }> {
     // First semantic search after enabling embeddings backfills the whole
     // library — minutes of embedding requests before the first LLM call. The
@@ -959,6 +1060,9 @@ export class RunEngine {
       // M3-B: the Encounter Designer gets a second search restricted to
       // statblock chunks so it can cite real bestiary entries.
       const statblockChunkIds: Id[] = [];
+      let rosterLines: string[] = [];
+      let rosterTruncated = 0;
+      let rosterChunkByName: Record<string, Id> = {};
       if (input.persona.producesKind === 'encounter') {
         const statHits = await searchRules(query, {
           limit: 6,
@@ -971,6 +1075,13 @@ export class RunEngine {
             statblockChunkIds.push(hit.chunk.id);
           }
         }
+        // M-B (§7): the roster index over every ready pack book grounds WHICH
+        // creatures to field. A corrupt pack chunk throws loudly — the
+        // importer forbids it, so it is a data error, not a skip.
+        const roster = await collectPackRoster(input.campaign.system);
+        rosterLines = roster.lines;
+        rosterTruncated = roster.truncated;
+        rosterChunkByName = Object.fromEntries(roster.chunkByName);
       }
       for (const hit of hits) {
         if (merged.length >= 12) break;
@@ -996,7 +1107,16 @@ export class RunEngine {
         (chunk) =>
           `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart} — ${chunk.headingPath.join(' > ')}`,
       );
-      return { chunkIds: merged, titles, excerpts, statblockChunkIds, statblockTitles };
+      return {
+        chunkIds: merged,
+        titles,
+        excerpts,
+        statblockChunkIds,
+        statblockTitles,
+        rosterLines,
+        rosterTruncated,
+        rosterChunkByName,
+      };
     } finally {
       useProgressStore.getState().finish(contextJobId);
     }
@@ -1014,6 +1134,7 @@ export class RunEngine {
       chunkIds: context.chunkIds,
       titles: context.titles,
       statblockChunkIds: context.statblockChunkIds,
+      rosterChunkByName: context.rosterChunkByName,
     });
     return { step };
   }
@@ -1049,6 +1170,7 @@ export class RunEngine {
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
       buildStatblockCitationSection(context.statblockTitles),
+      formatRosterSection(context.rosterLines, context.rosterTruncated),
       // The only NPC-specific guidance left: whether stats matter is the
       // draft's call, so non-fightable characters skip the statblock step.
       kind === 'npc'
@@ -1084,7 +1206,10 @@ export class RunEngine {
     // violated reply contract is usually a capability weakness of the
     // first-try model, so the diagnosed repair goes to the more potent tier.
     const firstTryModel = resolveChatModel(settings, input.persona.model);
-    const repairTarget = this.draftRetried.has(runId) ? repairModel(firstTryModel, settings) : firstTryModel;
+    const repairTarget =
+      this.draftRetried.has(runId) || this.sourceRepaired.has(runId)
+        ? repairModel(firstTryModel, settings)
+        : firstTryModel;
     const { text: raw, fallback } = await chat(messages, {
       model: repairTarget,
       temperature: input.persona.temperature,
@@ -1138,6 +1263,39 @@ export class RunEngine {
     }
 
     this.draftRetried.delete(runId);
+
+    // M-B (12-BESTIARY-PACKS §7): a monster citation that resolves to nothing
+    // is a contract violation — one repair attempt naming every offender, then
+    // the same loud rejected path as a schema failure. Never a silent
+    // fall-through to name-only at finalize.
+    if (kind === 'encounter') {
+      const draftMonsters = (parsed as { monsters?: EncounterDraft['monsters'] }).monsters ?? [];
+      const sourceIssues = invalidCitationIssues(
+        draftMonsters,
+        context.statblockChunkIds,
+        context.rosterChunkByName,
+      );
+      if (sourceIssues.length > 0) {
+        if (!this.sourceRepaired.has(runId)) {
+          this.sourceRepaired.add(runId);
+          return this.runDraft(
+            runId,
+            stepIndex,
+            steps,
+            input,
+            signal,
+            `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous reply cited monster sources that do not exist:\n- ${sourceIssues.join('\n- ')}\nFor each offender ${context.rosterLines.length > 0 ? 'cite an exact name from the bestiary roster via "sourceName", ' : ''}a listed stat-block excerpt via "sourceChunkIndex", or provide a complete inline "statBlock". Reply with corrected JSON only.`,
+          );
+        }
+        this.sourceRepaired.delete(runId);
+        const rejected = this.finishStep(steps[stepIndex], { raw, issues: sourceIssues }, 'rejected');
+        if (input.autonomy === 'manual') return { step: rejected, runStatus: 'awaiting_user' };
+        if (input.autonomy === 'auto') return { step: rejected };
+        return { step: rejected, runStatus: 'needs_review' };
+      }
+    }
+    this.sourceRepaired.delete(runId);
+
     const step = this.finishStep(
       steps[stepIndex],
       withNotice({ parsed }, fallback, contractRepairNotice(firstTryModel, repairTarget)),
@@ -1395,13 +1553,19 @@ export class RunEngine {
     parsed: EncounterGeneratorBrief;
     aspect: EncounterMapAspect;
     statblockChunkIds: Id[];
+    rosterChunkByName: Record<string, Id>;
   } {
     const step = steps.find((candidate) => candidate.name === 'brief');
     const effective = step?.userEdit ?? step?.output;
     if (effective === null || effective === undefined || typeof effective !== 'object') {
       throw new Error('Encounter run has no approved brief');
     }
-    const value = effective as { parsed?: unknown; aspect?: unknown; statblockChunkIds?: unknown };
+    const value = effective as {
+      parsed?: unknown;
+      aspect?: unknown;
+      statblockChunkIds?: unknown;
+      rosterChunkByName?: unknown;
+    };
     const parsed = encounterGeneratorBriefSchema.safeParse(value.parsed);
     if (!parsed.success) {
       const issues = parsed.error.issues
@@ -1417,6 +1581,7 @@ export class RunEngine {
       statblockChunkIds: Array.isArray(value.statblockChunkIds)
         ? value.statblockChunkIds.filter((id): id is Id => typeof id === 'string')
         : [],
+      rosterChunkByName: sanitizeChunkByName(value.rosterChunkByName),
     };
   }
 
@@ -1469,7 +1634,7 @@ export class RunEngine {
       );
     }
     const rosterContract = targetRoster !== undefined
-      ? `Regeneration target roster — reply with these EXACT entries, same order, same names and counts (name/count/notes only; never add sourceChunkIndex or statBlock, the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
+      ? `Regeneration target roster — reply with these EXACT entries, same order, same names and counts (name/count/notes only; never add sourceChunkIndex, sourceName or statBlock, the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
           targetRoster.map((monster) => ({
             name: monster.name,
             count: monster.count,
@@ -1479,7 +1644,7 @@ export class RunEngine {
       : 'Design a concrete monster roster appropriate to the requested difficulty.';
     const monsterFieldSpec = targetRoster !== undefined
       ? 'monsters [{name,count,notes}] (the target roster copied verbatim)'
-      : 'monsters [{name,count,notes,sourceChunkIndex? or statBlock?}]';
+      : 'monsters [{name,count,notes,sourceChunkIndex? or sourceName? or statBlock?}]';
     const inlineStatHint = targetRoster === undefined && retrieval.statblockChunkIds.length === 0
       ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
       : null;
@@ -1491,6 +1656,7 @@ export class RunEngine {
       context.length === 0 ? null : `Context: ${JSON.stringify(context)}`,
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
       buildStatblockCitationSection(retrieval.statblockTitles),
+      formatRosterSection(retrieval.rosterLines, retrieval.rosterTruncated),
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
       inlineStatHint,
       `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}] (1–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
@@ -1532,7 +1698,11 @@ export class RunEngine {
         const coverage = encounterCoverageIssues(result.brief, targetRoster.length);
         return coverage.length === 0 ? result : { brief: null, issues: coverage };
       }
-      const sourceIssues = encounterSourceIssues(result.brief, retrieval.statblockChunkIds);
+      const sourceIssues = encounterSourceIssues(
+        result.brief.monsters,
+        retrieval.statblockChunkIds,
+        retrieval.rosterChunkByName,
+      );
       if (sourceIssues.length > 0) return { brief: null, issues: sourceIssues };
       const coverage = encounterCoverageIssues(result.brief, result.brief.monsters.length);
       return coverage.length === 0 ? result : { brief: null, issues: coverage };
@@ -1592,6 +1762,7 @@ export class RunEngine {
             parsed,
             aspect,
             statblockChunkIds: retrieval.statblockChunkIds,
+            rosterChunkByName: retrieval.rosterChunkByName,
           },
           fallback,
           contractRepairNotice(chatOptions.model, briefRepairTarget),
@@ -1920,7 +2091,7 @@ export class RunEngine {
     steps: RunStep[],
     input: StartRunInput,
   ): Promise<{ step: RunStep; artifactId: Id }> {
-    const { parsed, statblockChunkIds } = this.effectiveEncounterBrief(steps);
+    const { parsed, statblockChunkIds, rosterChunkByName } = this.effectiveEncounterBrief(steps);
     const pick = steps.find((step) => step.name === 'pick');
     const selected = (pick?.userEdit as { keep?: Id[] } | null | undefined)?.keep?.[0];
     if (selected === undefined) throw new Error('Encounter finalize has no selected battlemap');
@@ -1956,19 +2127,18 @@ export class RunEngine {
           difficulty: parsed.difficulty,
           levelHint: parsed.levelHint,
           monsters: parsed.monsters.map((monster) => {
-            const chunkId = monster.sourceChunkIndex === undefined
-              ? undefined
-              : statblockChunkIds[monster.sourceChunkIndex];
+            // M-B (§7) resolution precedence: cited excerpt index → cited
+            // roster name → inline stat block → none.
+            const chunkId = resolveEncounterMonsterSource(monster, statblockChunkIds, rosterChunkByName);
             return {
               name: monster.name,
               count: monster.count,
               notes: monster.notes,
-              source:
-                chunkId !== undefined
-                  ? { type: 'rulebook' as const, chunkId }
-                  : monster.statBlock !== undefined
-                    ? { type: 'inline' as const, statBlock: monster.statBlock }
-                    : { type: 'none' as const },
+              source: chunkId === undefined
+                ? monster.statBlock !== undefined
+                  ? { type: 'inline' as const, statBlock: monster.statBlock }
+                  : { type: 'none' as const }
+                : { type: 'rulebook' as const, chunkId },
             };
           }),
           terrain: parsed.terrain,
@@ -2231,30 +2401,38 @@ export class RunEngine {
       if (statBlock !== undefined) data.statBlock = statBlock;
     }
     // M3-B: map encounter monsters' cited rulebook chunks / inline stat
-    // blocks back into persisted `source` entries.
+    // blocks back into persisted `source` entries. M-B (§7) adds roster-name
+    // citations and the precedence: excerpt index → roster name → inline →
+    // none.
     if (kind === 'encounter' && 'monsters' in data) {
       const retrieveStep = steps.find((step) => step.name === 'retrieve');
-      const retrieveOutput = (retrieveStep?.output ?? {}) as { statblockChunkIds?: unknown };
+      const retrieveOutput = (retrieveStep?.output ?? {}) as {
+        statblockChunkIds?: unknown;
+        rosterChunkByName?: unknown;
+      };
       const statblockChunkIds = Array.isArray(retrieveOutput.statblockChunkIds)
         ? (retrieveOutput.statblockChunkIds as Id[])
         : [];
-      const draftMonsters = (draft as { monsters?: { sourceChunkIndex?: number; statBlock?: StatBlock }[] })
-        .monsters;
+      const rosterChunkByName = sanitizeChunkByName(retrieveOutput.rosterChunkByName);
+      const draftMonsters = (
+        draft as {
+          monsters?: { sourceChunkIndex?: number; sourceName?: string; statBlock?: StatBlock }[];
+        }
+      ).monsters;
       data.monsters = data.monsters.map((monster, index) => {
         const cited = draftMonsters?.[index];
-        if (cited?.statBlock !== undefined) {
-          return { ...monster, source: { type: 'inline', statBlock: cited.statBlock } };
-        }
         const chunkId =
-          typeof cited?.sourceChunkIndex === 'number'
-            ? statblockChunkIds[cited.sourceChunkIndex]
-            : undefined;
+          cited === undefined
+            ? undefined
+            : resolveEncounterMonsterSource(cited, statblockChunkIds, rosterChunkByName);
         return {
           ...monster,
           source:
             chunkId !== undefined
               ? { type: 'rulebook', chunkId }
-              : { type: 'none' },
+              : cited?.statBlock !== undefined
+                ? { type: 'inline', statBlock: cited.statBlock }
+                : { type: 'none' },
         };
       });
     }
@@ -2402,6 +2580,7 @@ export class RunEngine {
 
   private async fail(runId: Id, error: unknown): Promise<void> {
     this.draftRetried.delete(runId);
+    this.sourceRepaired.delete(runId);
     this.encounterSchematics.delete(runId);
     this.encounterLayoutVariants.delete(runId);
     useProgressStore.getState().finish(encounterProgressId(runId));

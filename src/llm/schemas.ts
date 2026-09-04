@@ -164,6 +164,9 @@ export const encounterDraftSchema = z.object({
       /** M3-B: index into the numbered stat-block excerpts of the retrieve
        * step — mapped back to { type: 'rulebook', chunkId } on finalize. */
       sourceChunkIndex: z.number().int().nonnegative().optional(),
+      /** M-B (12-BESTIARY-PACKS §7): exact roster name of an imported pack
+       * creature — resolved against the same roster the prompt listed. */
+      sourceName: z.string().optional(),
       /** M3-B: a full inline stat block when no rulebook excerpt matched. */
       statBlock: statBlockSchema.optional(),
     }),
@@ -205,6 +208,7 @@ export const encounterGeneratorBriefSchema = z
         count: z.coerce.number().int().positive(),
         notes: z.string().default(''),
         sourceChunkIndex: rosterIndex.optional(),
+        sourceName: z.string().optional(),
         statBlock: statBlockSchema.optional(),
       }),
     ).min(1),
