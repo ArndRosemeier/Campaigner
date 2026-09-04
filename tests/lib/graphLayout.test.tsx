@@ -1,22 +1,20 @@
-import 'fake-indexeddb/auto';
+import { describe, expect, it } from 'vitest';
 
-import { render, screen, waitFor } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { createMemoryRouter, RouterProvider } from 'react-router-dom';
-import { beforeEach, describe, expect, it } from 'vitest';
-
-import { ROUTES, graphPath } from '@/app/routes';
-import { artifactSchema, type Artifact } from '@/domain';
-import { createArtifact } from '@/db/artifactRepo';
-import { createCampaign } from '@/db/campaignRepo';
-import { clearDatabase } from '../db/helpers';
-
-import { createAppRouter } from '@/app/router';
-import { layoutGraph } from '@/lib/graphLayout';
+import {
+  artifactSchema,
+  createArtifact,
+  createModule,
+  moduleSchema,
+  type Artifact,
+  type Module,
+} from '@/domain';
+import { layoutGraph, layoutWikiGraph } from '@/lib/graphLayout';
+import type { WikiGraph } from '@/domain/wikiGraph';
 
 /**
- * Link graph (06-MILESTONES M2): deterministic kind-row layout, dangling
- * links dropped, page renders nodes/edges and navigates on click.
+ * Graph layouts: the relations layout (06-MILESTONES M2) and the derived
+ * wiki-link layout (13-WIKI-GRAPH) — deterministic kind/module/phantom rows.
+ * The GraphPage UI tests live in tests/features/graph-page.test.tsx.
  */
 
 describe('layoutGraph', () => {
@@ -32,30 +30,7 @@ describe('layoutGraph', () => {
     name: string,
     links: { targetId: string; relation: string }[] = [],
   ): Artifact {
-    return artifactSchema.parse({
-      id,
-      createdAt: 1,
-      updatedAt: 1,
-      campaignId,
-      kind,
-      name,
-      aliases: [],
-      tags: [],
-      summary: '',
-      body: '',
-      links,
-      imageIds: [],
-      coverImageId: null,
-      currentRevision: 1,
-      data:
-        kind === 'npc'
-          ? {
-              appearance: '',
-              personality: '',
-              statBlock: null,
-            }
-          : { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] },
-    });
+    return artifactSchema.parse({ ...createArtifact({ campaignId, kind, name, links }), id });
   }
 
   it('clusters kinds into rows and spaces nodes deterministically', () => {
@@ -84,41 +59,84 @@ describe('layoutGraph', () => {
   });
 });
 
-describe('GraphPage', () => {
-  beforeEach(clearDatabase);
+describe('layoutWikiGraph', () => {
+  const campaignId = '11111111-1111-4111-8111-111111111111';
+  const MODULE_ID = '00000000-0000-4000-8000-0000000000a1';
 
-  it('renders nodes for linked artifacts and opens one on click', async () => {
-    const user = userEvent.setup();
-    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-    const location = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'location',
-      name: 'The Docks',
+  function moduleRow(): Module {
+    return moduleSchema.parse({
+      ...createModule({
+        campaignId,
+        title: 'Ashen Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+      id: MODULE_ID,
     });
-    const npc = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Grimm',
-      links: [{ targetId: location.id, relation: 'lives-in' }],
-    });
+  }
 
-    const router = createMemoryRouter(createAppRouter().routes as never, {
-      initialEntries: [graphPath(campaign.id)],
-    });
-    render(<RouterProvider router={router} />);
+  function wikiGraphFixture(): WikiGraph {
+    const grimm = createArtifact({ campaignId, kind: 'npc', name: 'Grimm' });
+    const docks = createArtifact({ campaignId, kind: 'location', name: 'The Docks' });
+    return {
+      nodes: [
+        {
+          key: 'name:seggel',
+          names: ['Seggel'],
+          artifact: undefined,
+          status: 'unresolved',
+          mentions: 1,
+          mentionsByDocument: [],
+        },
+        {
+          key: grimm.id,
+          names: ['Grimm'],
+          artifact: grimm,
+          status: 'resolved',
+          mentions: 3,
+          mentionsByDocument: [],
+        },
+        {
+          key: docks.id,
+          names: ['The Docks'],
+          artifact: docks,
+          status: 'resolved',
+          mentions: 1,
+          mentionsByDocument: [],
+        },
+      ],
+      edges: [
+        { moduleId: MODULE_ID, to: grimm.id, weight: 3 },
+        { moduleId: MODULE_ID, to: docks.id, weight: 1 },
+        { moduleId: MODULE_ID, to: 'name:seggel', weight: 1 },
+      ],
+      modules: [moduleRow()],
+      truncated: 0,
+    };
+  }
 
-    await waitFor(() => {
-      expect(screen.getByTestId('link-graph')).toBeTruthy();
-    });
-    expect(screen.getByText('Grimm')).toBeDefined();
-    expect(screen.getByText('The Docks')).toBeDefined();
-    expect(screen.getByText('lives-in')).toBeDefined();
-
-    await user.click(screen.getByText('Grimm'));
-    await waitFor(() => {
-      expect(router.state.location.pathname).toBe(
-        ROUTES.artifact.replace(':campaignId', campaign.id).replace(':artifactId', npc.id),
-      );
-    });
-  }, 20000);
+  it('rows module hubs first, one row per kind, phantoms last', () => {
+    const graph = wikiGraphFixture();
+    const layout = layoutWikiGraph(graph);
+    const hub = layout.nodes.find((node) => node.group === 'module');
+    const grimm = layout.nodes.find((node) => node.label === 'Grimm');
+    const docks = layout.nodes.find((node) => node.label === 'The Docks');
+    const phantom = layout.nodes.find((node) => node.group === 'phantom');
+    expect(hub).toBeDefined();
+    expect(grimm).toBeDefined();
+    expect(docks).toBeDefined();
+    expect(phantom).toBeDefined();
+    // Hubs on top; kind rows in ARTIFACT_KINDS order (npc before location);
+    // phantoms last.
+    expect(hub?.y).toBeLessThan(grimm?.y ?? 0);
+    expect(grimm?.y).toBeLessThan(docks?.y ?? 0);
+    expect(docks?.y).toBeLessThan(phantom?.y ?? 0);
+    expect(layout.edges).toEqual(
+      graph.edges.map((edge) => ({ from: edge.moduleId, to: edge.to, weight: edge.weight })),
+    );
+    // Same input → same output (deterministic).
+    expect(layoutWikiGraph(graph)).toEqual(layout);
+  });
 });

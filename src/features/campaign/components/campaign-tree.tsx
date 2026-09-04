@@ -306,7 +306,7 @@ export function CampaignTree({
             nativeButton={false}
           >
             <WaypointsIcon aria-hidden data-icon="inline-start" />
-            Relations graph
+            Wiki-link graph
           </Button>
           <HelpButton topic="tree" label="artifact library" />
         </div>

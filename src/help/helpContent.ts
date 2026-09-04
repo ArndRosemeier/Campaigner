@@ -64,7 +64,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'Delete: hover a row and click the trash icon (confirmation dialog). This removes the artifact, its whole revision history, and any relations other artifacts pointed at it.',
       'Right-click a row for the full menu: Rename, Duplicate, Export as JSON, Export PDF (GM notes or player handout).',
       'Filter: the search box narrows by name or tag.',
-      'Relations graph: the button under the filter opens a visual map of all relations between artifacts.',
+      'Wiki-link graph: the button under the filter opens a visual map of the [[wiki-links]] in your modules\u2019 prose — which modules mention which entities.',
     ],
     keywords:
       'artifacts npc location faction note encounter plot arc library scope delete rename',
@@ -172,16 +172,18 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
     keywords: 'semantic vector model cache clear api',
   },
   graph: {
-    title: 'Relations graph',
+    title: 'Wiki-link graph',
     summary:
-      'A visual map of the campaign: artifacts as nodes clustered by kind, hand-curated relations as labeled edges. [[Wiki-links]] in module documents are a separate graph and are not drawn here.',
+      'The real graph of the campaign: module hubs connected to every entity their prose mentions via [[wiki-links]], resolved the way the reader resolves them. Unresolved names render as dashed phantom nodes.',
     tips: [
-      'Click a node to open that artifact in the editor.',
-      'Edge labels show the relation (e.g. "lives-in"); dangling relations to deleted artifacts are filtered out automatically.',
-      'Use it to spot isolated artifacts that could use more connections.',
-      'Back to workspace with the arrow button, top left.',
+      'Rounded squares are modules; colored circles are resolved entities; dashed circles are unresolved names — the campaign\u2019s to-do list (nothing is created from the graph).',
+      'Edge thickness and the ×N label show how often a module\u2019s prose mentions an entity; click an edge\u2019s entity to open it.',
+      'Click a resolved node to open the artifact; click a phantom to jump to its first mention in the module reader (where you can create, generate or alias it); click a module hub to open the reader.',
+      'Filter by module (all vs one) and by entity kind — "Unresolved (phantoms)" shows only the to-do list.',
+      'Large campaigns are capped at the most-mentioned entities; the truncation note under the caption says how many are hidden.',
+      'Hand-curated relations are not drawn here — they stay on each artifact\u2019s Relations section.',
     ],
-    keywords: 'graph relations links map visualize',
+    keywords: 'graph wiki links mentions map visualize phantom unresolved',
   },
   settings: {
     title: 'Settings',

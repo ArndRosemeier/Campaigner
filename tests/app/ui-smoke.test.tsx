@@ -176,9 +176,9 @@ describe('route smoke sweep', () => {
       await screen.findByText('Summary of Gorim', {}, { timeout: 5_000 }),
     ).toBeInTheDocument();
 
-    // The "Relations graph" affordance renders the router Link (nativeButton=false
+    // The "Wiki-link graph" affordance renders the router Link (nativeButton=false
     // fix) — Base UI gives non-native button renders role="button".
-    expect(screen.getByRole('button', { name: 'Relations graph' })).toHaveAttribute(
+    expect(screen.getByRole('button', { name: 'Wiki-link graph' })).toHaveAttribute(
       'href',
       graphPath(world.campaignId),
     );
@@ -248,7 +248,7 @@ describe('route smoke sweep', () => {
   it('graph page mounts with the router Link back affordance', async () => {
     renderAppAt(graphPath(world.campaignId));
 
-    expect(await screen.findByText('Relations graph')).toBeInTheDocument();
+    expect(await screen.findByText('Wiki-link graph')).toBeInTheDocument();
     // Base UI gives non-native button renders role="button"; the href pins
     // the element to the router Link (nativeButton=false fix).
     expect(screen.getByRole('button', { name: 'Back to workspace' })).toHaveAttribute(
