@@ -3,7 +3,7 @@ import type { JSX } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeftIcon } from 'lucide-react';
 
-import { ROUTES, artifactPath, modulePath, modulesPath, workspacePath } from '@/app/routes';
+import { ROUTES, artifactPath, modulePath, workspacePath } from '@/app/routes';
 import { ARTIFACT_KINDS, ARTIFACT_KIND_LABELS, type ArtifactKind } from '@/domain';
 import {
   buildWikiGraph,
@@ -21,6 +21,8 @@ import {
 } from '@/components/ui/select';
 import { useArtifacts, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModules } from '@/features/modules/hooks';
+import { LinkHealthReport } from '@/features/campaign/components/link-health-report';
+import { nodeFirstMentionRoute } from '@/features/campaign/mentionView';
 import { layoutWikiGraph } from '@/lib/graphLayout';
 
 /** Node fill colors per kind (Tailwind palette, dark-mode friendly). */
@@ -85,6 +87,17 @@ export function GraphPage(): JSX.Element {
       kind: kindFilter === 'all' ? undefined : kindFilter,
     });
   }, [modules, pool, moduleFilter, kindFilter]);
+  // Link-health report derivation (14-BACKLINKS-ORPHANS): the page's filters
+  // again, but UNCAPPED — the report's own row caps are visible, so the
+  // drawing cap must never silently hide a phantom or a mentioned entity.
+  const reportGraph = useMemo(() => {
+    if (modules === undefined || pool === undefined) return undefined;
+    return buildWikiGraph(modules, pool, {
+      moduleId: moduleFilter === 'all' ? undefined : moduleFilter,
+      kind: kindFilter === 'all' ? undefined : kindFilter,
+      cap: Number.POSITIVE_INFINITY,
+    });
+  }, [modules, pool, moduleFilter, kindFilter]);
 
   const layout = useMemo(() => (graph === undefined ? undefined : layoutWikiGraph(graph)), [graph]);
   const nodeByKey = useMemo(
@@ -103,15 +116,10 @@ export function GraphPage(): JSX.Element {
   const entityTotal = (graph?.nodes.length ?? 0) + (graph?.truncated ?? 0);
 
   /** Phantom click-through: the reader location of the first mention — the
-   * dashed chip (and its stub/adopt flow) already lives there. */
-  const phantomRoute = (node: WikiGraphNode): string => {
-    const first = node.mentionsByDocument[0];
-    if (first === undefined) return modulesPath(campaignId);
-    const match = /^part-(\d+)$/.exec(first.where);
-    return match !== null
-      ? modulePath(campaignId, first.moduleId, Number(match[1]))
-      : modulePath(campaignId, first.moduleId);
-  };
+   * dashed chip (and its stub/adopt flow) already lives there. A mention-less
+   * node cannot come out of the derivation; `nodeFirstMentionRoute` fails
+   * loudly if one ever does. */
+  const phantomRoute = (node: WikiGraphNode): string => nodeFirstMentionRoute(campaignId, node);
 
   return (
     <div className="flex h-full flex-col">
@@ -331,6 +339,23 @@ export function GraphPage(): JSX.Element {
               </svg>
             </div>
           )}
+
+          {/* Link-health report (14-BACKLINKS-ORPHANS): shown whenever the
+              campaign has any prose mention at all — even when the current
+              filters empty the drawing, the never-mentioned list stays
+              useful. Without wiki-links the empty state above covers it. */}
+          {pool !== undefined &&
+            reportGraph !== undefined &&
+            allGraph !== undefined &&
+            allGraph.nodes.length > 0 && (
+              <LinkHealthReport
+                campaignId={campaignId}
+                modules={modules}
+                pool={pool}
+                kindFilter={kindFilter}
+                graph={reportGraph}
+              />
+            )}
 
           <div className="flex flex-wrap items-center gap-3 border-t p-2 text-xs text-muted-foreground">
             <span className="flex items-center gap-1.5">

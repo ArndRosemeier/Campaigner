@@ -60,7 +60,11 @@ this spec's file name only.
   artifact.id)` — `mentionsByDocument` is the raw per-document list.
   Module titles come from the same module list the derivation saw, so a
   mention's `moduleId` always resolves there (an impossible miss throws
-  loudly instead of rendering a placeholder).
+  loudly instead of rendering a placeholder). The panel takes the pool
+  from the editor's `campaignArtifacts` prop (the reader's pool the
+  editor already holds — stable while typing, no artifacts-table live
+  query re-firing through every autosave) and subscribes only to the
+  module list.
 - **Report**: unresolved sub-list = `graph.nodes` with `status
   === 'unresolved'` — phantoms are already grouped by name (keyed
   `name:<lowercase>`) with per-document counts; never-mentioned sub-list
@@ -111,7 +115,7 @@ from the graph, quick-find and the tree); documented in `05-UI.md`.
   mention, so the panel truncates nothing.
 - Empty state: "No mentions yet — write `[[Name]]` (or one of its
   aliases) in a module's premise or parts."
-- Loading: a muted "Loading…" line until the live queries resolve.
+- Loading: a muted "Loading…" line until the module list resolves.
 - Scope: a Library (global) row shows its mentions across the open
   campaign's modules — the panel lives in the campaign workspace.
 - Rendered rows are `<Link>`s; navigation targets are the reader and

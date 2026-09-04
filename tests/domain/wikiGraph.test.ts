@@ -277,3 +277,19 @@ describe('buildWikiGraph — cap and truncation', () => {
     expect(graph.truncated).toBe(2);
   });
 });
+
+describe('buildWikiGraph — uncapped derivation (14-BACKLINKS-ORPHANS consumers)', () => {
+  it('cap: Number.POSITIVE_INFINITY keeps every node and truncates nothing', () => {
+    // The backlinks panel and the link-health report pass Infinity so the
+    // drawing cap can never silently hide a mention they must surface; the
+    // visible caps are their own.
+    const parts = Array.from({ length: WIKI_GRAPH_NODE_CAP + 7 }, (_, index) => ({
+      planIndex: index,
+      markdown: `[[Name ${String(index)}]]`,
+    }));
+    const module = moduleWith({ title: 'Ashen Vault', parts });
+    const graph = buildWikiGraph([module], [], { cap: Number.POSITIVE_INFINITY });
+    expect(graph.nodes).toHaveLength(WIKI_GRAPH_NODE_CAP + 7);
+    expect(graph.truncated).toBe(0);
+  });
+});

@@ -12,6 +12,7 @@ import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { clearDatabase } from '../db/helpers';
+import { LINK_HEALTH_ROW_CAP } from '@/features/campaign/components/link-health-report';
 
 import { createAppRouter } from '@/app/router';
 
@@ -247,5 +248,206 @@ describe('GraphPage — the derived wiki-link graph', () => {
       expect(screen.getByTestId('graph-empty')).toBeTruthy();
     });
     expect(screen.getByTestId('graph-empty').textContent).toContain('[[wiki-links]]');
+  }, 20000);
+});
+
+describe('GraphPage — link-health report (14-BACKLINKS-ORPHANS)', () => {
+  beforeEach(clearDatabase);
+
+  async function expandReport(user: ReturnType<typeof userEvent.setup>): Promise<void> {
+    await user.click(screen.getByTestId('link-health-toggle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-unresolved')).toBeTruthy();
+    });
+  }
+
+  it('is not rendered for a campaign without any prose mention', async () => {
+    const campaignId = await createCampaignFixture();
+    renderGraph(campaignId);
+    await waitFor(() => {
+      expect(screen.getByTestId('graph-empty')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('link-health')).toBeNull();
+  }, 20000);
+
+  it('lists unresolved phantom names with per-document counts and deep-links the first mention', async () => {
+    const user = userEvent.setup();
+    const campaignId = await createCampaignFixture();
+    const moduleA = await createModuleFixture({
+      campaignId,
+      title: 'Ashen Vault',
+      premise: '[[Seggel]] and [[Seggel]].',
+      parts: [{ planIndex: 0, markdown: '[[Seggel]] waits.' }],
+    });
+    await createModuleFixture({
+      campaignId,
+      title: 'Bell Harbor',
+      premise: '[[Moro]] looms.',
+    });
+    await createArtifact({ campaignId, kind: 'location', name: 'The Docks' });
+
+    const router = renderGraph(campaignId);
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-toggle')).toBeTruthy();
+    });
+    await expandReport(user);
+
+    expect(screen.getByTestId('link-health-counts').textContent).toBe('2 unresolved · 1 never mentioned');
+
+    const seggel = screen
+      .getAllByTestId('link-health-unresolved-row')
+      .find((row) => row.getAttribute('data-name') === 'Seggel');
+    if (seggel === undefined) throw new Error('the Seggel unresolved row did not render');
+    expect(seggel.textContent).toContain('×3');
+    expect(seggel.textContent).toContain('Ashen Vault — Premise ×2, Part 1 ×1');
+    const moro = screen
+      .getAllByTestId('link-health-unresolved-row')
+      .find((row) => row.getAttribute('data-name') === 'Moro');
+    expect(moro?.textContent).toContain('Bell Harbor — Premise ×1');
+
+    // Never-mentioned artifacts link to the entity detail route.
+    expect(screen.getByTestId('link-health-never-row').textContent).toContain('The Docks');
+
+    // The first reader location hosts the stub/adopt flow.
+    await user.click(seggel);
+    await waitFor(() => {
+      expect(router.state.location.pathname).toBe(modulePath(campaignId, moduleA.id));
+    });
+  }, 20000);
+
+  it('honors the module filter in both sub-lists', async () => {
+    const user = userEvent.setup();
+    const campaignId = await createCampaignFixture();
+    await createModuleFixture({
+      campaignId,
+      title: 'Ashen Vault',
+      premise: '[[Grimm]] and [[Seggel]] and [[Seggel]].',
+    });
+    await createModuleFixture({
+      campaignId,
+      title: 'Bell Harbor',
+      premise: '[[Moro]] looms.',
+    });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Grimm' });
+
+    renderGraph(campaignId);
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-toggle')).toBeTruthy();
+    });
+    await expandReport(user);
+    // In the all-modules scope Grimm IS mentioned (Ashen Vault) — the
+    // never-mentioned list is empty until the filter narrows the prose.
+    expect(screen.getByTestId('link-health-counts').textContent).toBe('2 unresolved · 0 never mentioned');
+
+    await user.click(screen.getByTestId('graph-module-filter'));
+    await user.click(await screen.findByRole('option', { name: 'Bell Harbor' }));
+
+    // Bell Harbor's prose: only Moro is unresolved; Grimm's only mention is
+    // out of scope, so the campaign row counts as never mentioned HERE.
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-counts').textContent).toBe('1 unresolved · 1 never mentioned');
+    });
+    const unresolvedNames = screen
+      .getAllByTestId('link-health-unresolved-row')
+      .map((row) => row.getAttribute('data-name'));
+    expect(unresolvedNames).toEqual(['Moro']);
+    expect(screen.getByTestId('link-health-never-row').textContent).toContain('Grimm');
+  }, 20000);
+
+  it('honors the kind filter: a resolved kind hides phantoms, Unresolved hides entities', async () => {
+    const user = userEvent.setup();
+    const campaignId = await createCampaignFixture();
+    await createModuleFixture({
+      campaignId,
+      title: 'Ashen Vault',
+      premise: '[[Grimm]] and [[The Docks]] and [[Seggel]].',
+    });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Grimm' });
+    await createArtifact({ campaignId, kind: 'location', name: 'The Docks' });
+
+    renderGraph(campaignId);
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-toggle')).toBeTruthy();
+    });
+    await expandReport(user);
+
+    // Kind = Locations: phantoms have no kind (muted note); the one location
+    // is mentioned, so the never-mentioned list is empty for the kind.
+    await user.click(screen.getByTestId('graph-kind-filter'));
+    await user.click(await screen.findByRole('option', { name: 'Locations' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-unresolved-note')).toBeTruthy();
+    });
+    expect(screen.getByTestId('link-health-counts').textContent).toBe('0 never mentioned');
+    expect(screen.getByTestId('link-health-never-empty').textContent).toContain(
+      'Every entity in scope is mentioned',
+    );
+
+    // Kind = Unresolved: exactly the phantoms; the artifact list is hidden.
+    await user.click(screen.getByTestId('graph-kind-filter'));
+    await user.click(await screen.findByRole('option', { name: 'Unresolved (phantoms)' }));
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-counts').textContent).toBe('1 unresolved');
+    });
+    expect(screen.getByTestId('link-health-unresolved-row').getAttribute('data-name')).toBe('Seggel');
+    expect(screen.getByTestId('link-health-never-note')).toBeTruthy();
+  }, 20000);
+
+  it('caps both sub-lists with visible truncation notes', async () => {
+    const campaignId = await createCampaignFixture();
+    const parts = Array.from({ length: LINK_HEALTH_ROW_CAP + 6 }, (_, index) => ({
+      planIndex: index,
+      markdown: `[[Name ${String(index)}]]`,
+    }));
+    await createModuleFixture({ campaignId, title: 'Ashen Vault', premise: '', parts });
+    for (let index = 0; index < LINK_HEALTH_ROW_CAP + 6; index += 1) {
+      await createArtifact({ campaignId, kind: 'npc', name: `Filler ${String(index)}` });
+    }
+
+    renderGraph(campaignId);
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-toggle')).toBeTruthy();
+    });
+    const user = userEvent.setup();
+    await expandReport(user);
+
+    const total = String(LINK_HEALTH_ROW_CAP + 6);
+    expect(screen.getByTestId('link-health-counts').textContent).toBe(
+      `${total} unresolved · ${total} never mentioned`,
+    );
+    expect(screen.getAllByTestId('link-health-unresolved-row')).toHaveLength(LINK_HEALTH_ROW_CAP);
+    expect(screen.getAllByTestId('link-health-never-row')).toHaveLength(LINK_HEALTH_ROW_CAP);
+    expect(screen.getByTestId('link-health-unresolved-truncated').textContent).toBe(
+      `Showing ${String(LINK_HEALTH_ROW_CAP)} of ${total} unresolved names (truncated; 6 more)`,
+    );
+    expect(screen.getByTestId('link-health-never-truncated').textContent).toBe(
+      `Showing ${String(LINK_HEALTH_ROW_CAP)} of ${total} never-mentioned entities (truncated; 6 more)`,
+    );
+  }, 30000);
+
+  it('shows both empty states when every name resolves and every entity is mentioned', async () => {
+    const user = userEvent.setup();
+    const campaignId = await createCampaignFixture();
+    await createModuleFixture({
+      campaignId,
+      title: 'Ashen Vault',
+      premise: '[[Grimm]] waits.',
+    });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Grimm' });
+
+    renderGraph(campaignId);
+    await waitFor(() => {
+      expect(screen.getByTestId('link-health-toggle')).toBeTruthy();
+    });
+    await expandReport(user);
+
+    expect(screen.getByTestId('link-health-unresolved-empty').textContent).toContain(
+      'every wiki-link in scope resolves',
+    );
+    expect(screen.getByTestId('link-health-never-empty').textContent).toContain(
+      'Every entity in scope is mentioned',
+    );
+    expect(screen.queryByTestId('link-health-unresolved-row')).toBeNull();
+    expect(screen.queryByTestId('link-health-never-row')).toBeNull();
   }, 20000);
 });

@@ -48,6 +48,7 @@ import {
   PlotArcForm,
 } from '@/features/campaign/components/kind-forms';
 import { LinksSection } from '@/features/campaign/components/links-section';
+import { MentionsPanel } from '@/features/campaign/components/mentions-panel';
 import { ImagesSection } from '@/features/campaign/components/images-section';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { PeekModal } from '@/features/modules/peek-modal';
@@ -382,6 +383,16 @@ export function ArtifactEditor({
             }}
             campaignArtifacts={campaignArtifacts}
             selfId={artifact.id}
+          />
+
+          {/* Mentions panel (14-BACKLINKS-ORPHANS): the derived wiki-link
+              mentions, read-only and deliberately below the editable
+              Relations section — the two graphs stay separate lists. It
+              reuses the editor's pool (campaign + globals). */}
+          <MentionsPanel
+            artifact={artifact}
+            campaignId={campaignId}
+            campaignArtifacts={campaignArtifacts}
           />
         </div>
       </ScrollArea>
