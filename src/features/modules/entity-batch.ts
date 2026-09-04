@@ -4,6 +4,7 @@ import { artifactRepo } from '@/db';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
+import { errorMessage } from '@/lib/errors';
 import { alignEntityName, RUN_STEP_LABELS } from '@/features/modules/entity-detail';
 import {
   buildEntityBrief,
@@ -56,11 +57,21 @@ export interface RunEntityBatchInput {
   targets: readonly EntityBatchTarget[];
 }
 
+/** One entity whose run produced no artifact, with the reason. */
+export interface EntityBatchFailure {
+  /** The entity (wiki-link target) the failed run belonged to. */
+  name: string;
+  /** The run's errorMessage, the thrown setup error's message, or the
+   * terminal status when the engine recorded neither. */
+  message: string;
+}
+
 export interface EntityBatchResult {
   /** Names whose chain step completed (artifact produced + aligned). */
   generated: string[];
-  /** Names that produced no artifact — loud in the toast and Runs tab. */
-  failed: string[];
+  /** Entities that produced no artifact, with the reason — loud in the
+   * toast and the Runs tab (AGENTS rule 2). */
+  failed: EntityBatchFailure[];
 }
 
 /** The full module text (premise + parts, plan order) for brief context. */
@@ -90,6 +101,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   const progressFinish = useProgressStore.getState().finish;
   progressStart(jobId, `Generating ${String(total)} ${KIND_PLURALS[kind]}`);
   const generated: string[] = [];
+  const failed: EntityBatchFailure[] = [];
   // In-flight entities for the dock detail: name → current run step label.
   const inFlight = new Map<string, string | null>();
   let completed = 0;
@@ -158,11 +170,25 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           } catch (error) {
             toastError(`Could not align the artifact name for "${target.name}"`, error);
           }
+        } else {
+          // Loud per-entity reason (AGENTS rule 2): the run's own
+          // errorMessage when the engine recorded one, the terminal status
+          // otherwise; a completed run without an artifact is its own
+          // anomaly and says so.
+          failed.push({
+            name: target.name,
+            message:
+              outcome.status !== 'completed'
+                ? outcome.errorMessage !== ''
+                  ? outcome.errorMessage
+                  : `run ended ${outcome.status}`
+                : 'the run completed without producing an artifact',
+          });
         }
-      } catch {
+      } catch (error) {
         // Setup failure for this entity (e.g. key missing): recorded as a
-        // failure — the run row or the batch toast carries it loudly. The
-        // batch continues with the other entities.
+        // failure with its reason — the batch continues with the others.
+        failed.push({ name: target.name, message: errorMessage(error) });
       } finally {
         inFlight.delete(target.name);
         completed += 1;
@@ -182,9 +208,14 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         toastError('Could not scope a produced artifact', error);
       }
     }
+    // Stable order: the input target order, not completion order.
+    const failureByName = new Map(failed.map((failure) => [failure.name, failure]));
     return {
       generated,
-      failed: targets.filter((target) => !generated.includes(target.name)).map((target) => target.name),
+      failed: targets.flatMap((target) => {
+        const failure = failureByName.get(target.name);
+        return failure === undefined ? [] : [failure];
+      }),
     };
   } finally {
     unsubscribeRun();

@@ -105,8 +105,12 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
         });
         generatedCount += result.generated.length;
         if (result.failed.length > 0) {
+          const summary = result.failed
+            .map((failure) => `"${failure.name}" — ${failure.message}`)
+            .join('; ');
           toastError(
-            `${String(result.failed.length)} of ${String(names.length)} ${kind}s failed to generate — see the Runs tab`,
+            `${String(result.failed.length)} of ${String(names.length)} ${kind}s failed to generate — ` +
+              `see the Runs tab (${summary})`,
           );
         }
       }

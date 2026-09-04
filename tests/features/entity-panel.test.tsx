@@ -620,7 +620,7 @@ describe('EntityPanel', () => {
     // Kael is named loudly; Bram was still generated in parallel.
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
-        '1 of 2 npcs failed to generate — see the Runs tab (Kael)',
+        '1 of 2 npcs failed to generate — see the Runs tab ("Kael" — gateway down)',
       );
     });
     await waitFor(async () => {
@@ -660,7 +660,7 @@ describe('EntityPanel', () => {
 
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
-        '2 of 2 npcs failed to generate — see the Runs tab (Kael, Bram)',
+        '2 of 2 npcs failed to generate — see the Runs tab ("Kael" — gateway down; "Bram" — gateway down)',
       );
     });
     await waitFor(() => {
@@ -709,7 +709,7 @@ describe('EntityPanel', () => {
     // Exactly the entities without a produced artifact.
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
-        '1 of 3 npcs failed to generate — see the Runs tab (Bram)',
+        '1 of 3 npcs failed to generate — see the Runs tab ("Bram" — gateway down)',
       );
     });
     await waitFor(async () => {

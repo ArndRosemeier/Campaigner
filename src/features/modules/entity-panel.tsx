@@ -349,9 +349,12 @@ export function EntityPanel({
       // success when some runs died (their detail lives in the Runs tab).
       // Ground truth = every target WITHOUT a produced artifact.
       if (result.failed.length > 0) {
+        const summary = result.failed
+          .map((failure) => `"${failure.name}" — ${failure.message}`)
+          .join('; ');
         toastError(
           `${String(result.failed.length)} of ${String(targets.length)} ${KIND_PLURALS[kind]} failed to generate — ` +
-            `see the Runs tab (${result.failed.join(', ')})`,
+            `see the Runs tab (${summary})`,
         );
       }
     } catch (error) {
