@@ -230,7 +230,7 @@ export function ModuleReaderPage(): JSX.Element {
       }
       toastSuccess(`“${name}” now resolves to ${artifact.name}`);
     } catch (error) {
-      toastError('Could not link the existing artifact', error);
+      toastError('Could not use the existing entity', error);
     }
   }
 

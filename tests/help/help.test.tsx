@@ -57,10 +57,10 @@ describe('HelpDialog', () => {
     expect(within(content).getByText(/hover a row and click the trash icon/i)).toBeDefined();
 
     // switching topics inside the dialog
-    await user.click(within(dialog).getByRole('button', { name: 'Link graph' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Relations graph' }));
     expect(
       within(screen.getByTestId('help-content')).getByText(
-        'A visual map of the campaign: artifacts as nodes clustered by kind, links as labeled edges.',
+        'A visual map of the campaign: artifacts as nodes clustered by kind, hand-curated relations as labeled edges. [[Wiki-links]] in module documents are a separate graph and are not drawn here.',
       ),
     ).toBeDefined();
   }, 20000);
@@ -73,7 +73,7 @@ describe('HelpDialog', () => {
 
     await user.type(within(dialog).getByTestId('help-search'), 'embedding');
     expect(within(dialog).getByRole('button', { name: 'Embeddings' })).toBeDefined();
-    expect(within(dialog).queryByRole('button', { name: 'Link graph' })).toBeNull();
+    expect(within(dialog).queryByRole('button', { name: 'Relations graph' })).toBeNull();
 
     await user.clear(within(dialog).getByTestId('help-search'));
     await user.type(within(dialog).getByTestId('help-search'), 'zzzz-nothing');

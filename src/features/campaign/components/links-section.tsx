@@ -23,9 +23,10 @@ export interface LinksSectionProps {
 const DEFAULT_RELATION = 'related-to';
 
 /**
- * Links editor (05-UI): list of `relation → target name` rows; the target is
- * a combobox over the campaign's artifacts. Links referencing deleted
- * artifacts render as such instead of breaking.
+ * Relations editor (05-UI): list of `relation → target name` rows; the target
+ * is a combobox over the campaign's artifacts. Relations referencing deleted
+ * artifacts render as such instead of breaking. (The persisted field is still
+ * `links` — only the user-facing term changed to "relations".)
  */
 export function LinksSection({ links, onChange, campaignArtifacts, selfId }: LinksSectionProps) {
   const [newRelation, setNewRelation] = useState('');
@@ -47,12 +48,12 @@ export function LinksSection({ links, onChange, campaignArtifacts, selfId }: Lin
 
   return (
     <section className="flex flex-col gap-2">
-      <h2 className="text-sm font-medium">Links</h2>
+      <h2 className="text-sm font-medium">Relations</h2>
       {links.map((link, index) => (
         <div key={`${link.targetId}-${index}`} className="flex items-center gap-1">
           <Input
             value={link.relation}
-            aria-label={`Relation of link ${index + 1}`}
+            aria-label={`Relation ${index + 1}`}
             placeholder="Relation"
             className="h-7 w-40 shrink-0 text-sm"
             onChange={(event) => {
@@ -68,7 +69,7 @@ export function LinksSection({ links, onChange, campaignArtifacts, selfId }: Lin
           <Button
             variant="ghost"
             size="icon-xs"
-            aria-label={`Remove link ${index + 1}`}
+            aria-label={`Remove relation ${index + 1}`}
             onClick={() => {
               onChange(links.filter((_, i) => i !== index));
             }}
@@ -82,7 +83,7 @@ export function LinksSection({ links, onChange, campaignArtifacts, selfId }: Lin
         <Input
           value={newRelation}
           placeholder={`Relation (default: ${DEFAULT_RELATION})`}
-          aria-label="New link relation"
+          aria-label="New relation"
           className="h-7 w-40 shrink-0 text-sm"
           onChange={(event) => {
             setNewRelation(event.target.value);
@@ -102,7 +103,7 @@ export function LinksSection({ links, onChange, campaignArtifacts, selfId }: Lin
             setNewTargetId(value ?? '');
           }}
         >
-          <SelectTrigger size="sm" className="w-44" aria-label="New link target">
+          <SelectTrigger size="sm" className="w-44" aria-label="New relation target">
             <SelectValue placeholder="Choose artifact…" />
           </SelectTrigger>
           <SelectContent>
@@ -116,7 +117,7 @@ export function LinksSection({ links, onChange, campaignArtifacts, selfId }: Lin
         <Button
           size="icon-xs"
           variant="outline"
-          aria-label="Add link"
+          aria-label="Add relation"
           disabled={newTargetId === ''}
           onClick={addLink}
         >
@@ -124,7 +125,7 @@ export function LinksSection({ links, onChange, campaignArtifacts, selfId }: Lin
         </Button>
       </div>
       {candidates.length === 0 && (
-        <p className="text-xs text-muted-foreground">Create another artifact to link to it.</p>
+        <p className="text-xs text-muted-foreground">Create another artifact to relate it to.</p>
       )}
     </section>
   );

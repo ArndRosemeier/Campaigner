@@ -419,7 +419,7 @@ function EncounterAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Elemen
     <div className="flex items-center justify-between gap-3 rounded-md border p-3" data-testid="encounter-ai-section">
       <p className="text-xs text-muted-foreground">
         {hasContent
-          ? 'Regenerate roster, terrain, tactics, treasure and prose with the Encounter Smith. Name, links and battlemap are preserved.'
+          ? 'Regenerate roster, terrain, tactics, treasure and prose with the Encounter Smith. Name, relations and battlemap are preserved.'
           : 'This encounter has no content yet — generate roster, terrain, tactics, treasure and prose with the Encounter Smith.'}
       </p>
       <Button

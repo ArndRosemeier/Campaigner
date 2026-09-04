@@ -189,7 +189,7 @@ describe('images ui', () => {
       expect(personaSelect.textContent).toContain('Encounter Smith');
     });
     expect(screen.getByLabelText('Brief')).toHaveValue(
-      'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, links and battlemap are preserved.',
+      'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.',
     );
     expect(screen.getByTestId('start-run')).toBeEnabled();
     await flushAsyncUpdates();

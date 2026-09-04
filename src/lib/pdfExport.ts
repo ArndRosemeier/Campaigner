@@ -281,7 +281,7 @@ export function buildGmNotesDefinition(
   });
   content.push(...(dataSections(artifact) as Content[]));
   if (artifact.links.length > 0) {
-    content.push({ text: 'Links', style: 'heading' });
+    content.push({ text: 'Relations', style: 'heading' });
     content.push(...(listItems(artifact.links.map((link) => link.relation)) as Content[]));
   }
   return { ...doc, content };

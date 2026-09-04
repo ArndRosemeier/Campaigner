@@ -61,10 +61,10 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
     tips: [
       'Create: the + button next to each kind header.',
       'Open: click a row to load it into the editor.',
-      'Delete: hover a row and click the trash icon (confirmation dialog). This removes the artifact, its whole revision history, and any links other artifacts pointed at it.',
+      'Delete: hover a row and click the trash icon (confirmation dialog). This removes the artifact, its whole revision history, and any relations other artifacts pointed at it.',
       'Right-click a row for the full menu: Rename, Duplicate, Export as JSON, Export PDF (GM notes or player handout).',
       'Filter: the search box narrows by name or tag.',
-      'Link graph: the button under the filter opens a visual map of all links between artifacts.',
+      'Relations graph: the button under the filter opens a visual map of all relations between artifacts.',
     ],
     keywords:
       'artifacts npc location faction note encounter plot arc library scope delete rename',
@@ -72,16 +72,16 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
   editor: {
     title: 'Artifact editor (middle pane)',
     summary:
-      'Edit one artifact: name, tags, summary, body, kind-specific fields, links and revision history.',
+      'Edit one artifact: name, tags, summary, body, kind-specific fields, relations and revision history.',
     tips: [
       'Changes autosave; the revision badge shows the current version.',
       'History (clock icon): every save snapshots a revision — open the dialog to inspect or restore any older snapshot.',
       'Tags group artifacts and feed the tree filter.',
-      'Links connect artifacts (e.g. NPC "lives in" location). Links created here appear in the link graph and can be exported.',
+      'Relations connect artifacts (e.g. NPC "lives in" location). Relations created here appear in the relations graph and can be exported.',
       'Kind-specific sections: NPCs can carry a full stat block; encounters have monsters and tactics; plot arcs have beats and hooks.',
       'When a persona run finishes, its draft lands in the editor — accept, edit further, or discard it.',
     ],
-    keywords: 'autosave revisions restore tags links statblock draft',
+    keywords: 'autosave revisions restore tags relations links statblock draft',
   },
   assistant: {
     title: 'Assistant (personas)',
@@ -117,7 +117,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
     tips: [
       'New Module (top bar or the Modules page) drafts a spine first: premise + part plan, each part with a level band. Approve it, then parts generate one by one, each seeing the previous parts for continuity.',
       'The reader shows the module as one document: a table of contents on the left, the prose in the middle, and an entity panel on the right listing every mentioned character, place, faction or item.',
-      '[[Names]] in the text become colored chips: a solid chip means the artifact exists and opens a peek; a dashed chip is unresolved and can create, generate, or link an artifact.',
+      '[[Names]] in the text become colored chips: a solid chip means the artifact exists and opens a peek; a dashed chip is unresolved and can create, generate, or use an existing entity.',
       'Every part can be edited in place (✎) and rewritten (↺) with an optional instruction; rewriting a hand-edited part asks first. Failed parts show a Retry button without touching the rest.',
       'The entity panel can batch-generate unresolved entities, including encounter stubs. “Generate encounter maps” runs the Cartographer unattended for mapless module encounters and keeps failures retryable.',
       'Deliverables → "Seed from module" turns a finished module into a printable outline: premise as intro, one chapter per part with its resolved entities attached.',
@@ -172,16 +172,16 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
     keywords: 'semantic vector model cache clear api',
   },
   graph: {
-    title: 'Link graph',
+    title: 'Relations graph',
     summary:
-      'A visual map of the campaign: artifacts as nodes clustered by kind, links as labeled edges.',
+      'A visual map of the campaign: artifacts as nodes clustered by kind, hand-curated relations as labeled edges. [[Wiki-links]] in module documents are a separate graph and are not drawn here.',
     tips: [
       'Click a node to open that artifact in the editor.',
-      'Edge labels show the relation (e.g. "lives-in"); dangling links to deleted artifacts are filtered out automatically.',
+      'Edge labels show the relation (e.g. "lives-in"); dangling relations to deleted artifacts are filtered out automatically.',
       'Use it to spot isolated artifacts that could use more connections.',
       'Back to workspace with the arrow button, top left.',
     ],
-    keywords: 'graph links map relations visualize',
+    keywords: 'graph relations links map visualize',
   },
   settings: {
     title: 'Settings',

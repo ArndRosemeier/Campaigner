@@ -120,5 +120,16 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   failure. Every caught error must be surfaced to the user through
   `lib/toast.ts`, the global error boundary, or a failed run with an
   `errorMessage` — not swallowed into partial results.
+- **Terminology (binding for all user-facing copy)**:
+  - **Wiki-link** — the `[[Name]]` token inside module/artifact markdown.
+    Renders as a chip; may carry a display alias as `[[Name|display]]`.
+  - **Mention** — a wiki-link occurrence of an entity in a document; the
+    entity panel and seed-from-module count mentions.
+  - **Relation** — a hand-curated `relation → target artifact` link edited
+    on the artifact card (persisted field `artifacts.links`) and drawn in
+    the relations graph. The UI calls them "relations", never "links".
+  - **Alias** — an alternate name on an artifact (`aliases`); a wiki-link
+    resolves by exact name OR alias. "Use existing entity" adds the stub
+    name as an alias so the chip resolves.
 - No environment variables at build time; all configuration (API key, models)
   is user-entered at runtime and stored in Dexie `settings`.

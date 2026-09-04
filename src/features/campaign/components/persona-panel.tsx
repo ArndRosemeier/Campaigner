@@ -190,8 +190,8 @@ export function PersonaPanel({
     setBrief(
       encounterRequestVariant === 'content'
         ? encounterRequestRegenerate
-          ? 'Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, links and battlemap are preserved.'
-          : 'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, links and battlemap are preserved.'
+          ? 'Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.'
+          : 'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.'
         : encounterRequestRegenerate
           ? 'Regenerate this encounter map while preserving its authored roster and prose.'
           : 'Generate a battlemap and room layout for this encounter.',
@@ -404,7 +404,7 @@ export function PersonaPanel({
                 <NoPackNotice system={campaign.system} />
                 {targetArtifactId !== '' && (
                   <p className="text-xs text-amber-600" data-testid="encounter-regenerate-target">
-                    Runs against the selected encounter; name, prose, links and roster are
+                    Runs against the selected encounter; name, prose, relations and roster are
                     preserved, layout and map are replaced.
                   </p>
                 )}

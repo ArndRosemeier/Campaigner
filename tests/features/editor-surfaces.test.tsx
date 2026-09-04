@@ -126,25 +126,25 @@ describe('editor surfaces', () => {
     render(<ArtifactEditor artifact={npc} campaignId={npc.campaignId} campaignArtifacts={[npc, forge]} campaignSystem="dnd5e" />);
 
     // The target select is a Base UI combobox: open, pick 'Forge'.
-    await user.click(screen.getByRole('combobox', { name: 'New link target' }));
+    await user.click(screen.getByRole('combobox', { name: 'New relation target' }));
     await user.click(await screen.findByRole('option', { name: 'Forge' }));
 
-    const add = screen.getByRole('button', { name: 'Add link' });
+    const add = screen.getByRole('button', { name: 'Add relation' });
     expect(add).toBeEnabled();
     await user.click(add);
 
     // Default relation applied; the row names the target artifact.
-    const relation = screen.getByLabelText('Relation of link 1');
+    const relation = screen.getByLabelText('Relation 1');
     expect(relation).toHaveValue('related-to');
     expect(relation.closest('div')?.textContent).toContain('Forge');
 
     // Editing the relation updates the row.
     await user.type(relation, ' inside');
-    expect(screen.getByLabelText('Relation of link 1')).toHaveValue('related-to inside');
+    expect(screen.getByLabelText('Relation 1')).toHaveValue('related-to inside');
 
     // Removing clears the row.
-    await user.click(screen.getByRole('button', { name: 'Remove link 1' }));
-    expect(screen.queryByLabelText('Relation of link 1')).toBeNull();
+    await user.click(screen.getByRole('button', { name: 'Remove relation 1' }));
+    expect(screen.queryByLabelText('Relation 1')).toBeNull();
 
     await flushAsyncUpdates();
   });

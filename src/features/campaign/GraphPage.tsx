@@ -24,7 +24,8 @@ const KIND_COLORS: Readonly<Record<ArtifactKind, string>> = {
 
 /**
  * Graph view (06-MILESTONES M2): artifacts as nodes clustered by kind rows,
- * outgoing links as labeled edges; clicking a node opens the artifact.
+ * outgoing hand-curated relations as labeled edges; clicking a node opens the
+ * artifact. [[wiki-links]] in documents are a separate graph (not drawn here).
  */
 export function GraphPage(): JSX.Element {
   const { campaignId } = useParams<{ campaignId: string }>();
@@ -52,11 +53,11 @@ export function GraphPage(): JSX.Element {
           <ArrowLeftIcon aria-hidden />
         </Button>
         <h1 className="flex items-center gap-1 text-sm font-semibold">
-          Link graph
-          <HelpButton topic="graph" label="link graph" />
+          Relations graph
+          <HelpButton topic="graph" label="relations graph" />
         </h1>
         <span className="text-xs text-muted-foreground">
-          {layout.nodes.length} artifacts · {layout.edges.length} links
+          {layout.nodes.length} artifacts · {layout.edges.length} relations
         </span>
       </div>
 
@@ -65,7 +66,7 @@ export function GraphPage(): JSX.Element {
       ) : layout.nodes.length === 0 ? (
         <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center">
           <p className="text-sm text-muted-foreground">
-            Nothing to graph yet — create artifacts and link them in the editor.
+            Nothing to graph yet — create artifacts and relate them in the editor.
           </p>
           <Link
             to={workspacePath(campaignId)}
@@ -76,13 +77,19 @@ export function GraphPage(): JSX.Element {
         </div>
       ) : (
         <div className="flex-1 overflow-auto p-4" data-testid="link-graph">
+          {/* Honest copy (terminology pass): this graph draws the hand-curated
+              relations edited on the artifact card — [[wiki-links]] in
+              documents are a separate, text-level graph, not drawn here. */}
+          <p className="mx-auto mb-3 max-w-2xl text-center text-xs text-muted-foreground">
+            Hand-curated relations between artifacts. [[Wiki-links]] in documents are a separate graph.
+          </p>
           <svg
             width={layout.width}
             height={layout.height}
             viewBox={`0 0 ${layout.width} ${layout.height}`}
             className="mx-auto"
             role="img"
-            aria-label="Link graph of campaign artifacts"
+            aria-label="Relations graph of campaign artifacts"
           >
             {layout.edges.map((edge) => {
               const from = nodeById.get(edge.from);

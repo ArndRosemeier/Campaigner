@@ -774,7 +774,7 @@ function EntityRow({
           size="icon-sm"
           className="shrink-0 text-muted-foreground/40 hover:text-foreground"
           aria-label={`Adopt ${entry.name} into the campaign`}
-          title="Adopt into campaign — moves the artifact out of this module's ownership (its links here stay)"
+          title="Adopt into campaign — moves the artifact out of this module's ownership (its relations here stay)"
           data-testid="entity-adopt"
           data-name={entry.name}
           onClick={() => {

@@ -128,7 +128,7 @@ export function StubPopover({
 
   /**
    * fix-01: default action when the verdict resolves to an existing artifact —
-   * alias-add the name onto that artifact (same as "Link existing…"), never a
+   * alias-add the name onto that artifact (same as "Use existing entity…"), never a
    * second stub. Only a variant needs the alias; a name equal to the
    * artifact's own spelling already resolves.
    */
@@ -151,7 +151,7 @@ export function StubPopover({
       toastSuccess(`“${alias}” now resolves to ${artifact.name}`);
       onClose();
     } catch (error) {
-      toastError(`Could not link "${name.trim()}" to "${canonicalArtifactName}"`, error);
+      toastError(`Could not use "${canonicalArtifactName}" for "${name.trim()}"`, error);
     } finally {
       setBusy(false);
     }
@@ -247,7 +247,7 @@ export function StubPopover({
             >
               The model resolved this to the existing entity “{canonicalArtifactName}”
               {verdict.canonical.trim().toLowerCase() !== state.name.trim().toLowerCase()
-                ? ' — linking keeps the story consistent'
+                ? ' — using the existing entity keeps the story consistent'
                 : ''}
               .
             </p>
@@ -260,7 +260,7 @@ export function StubPopover({
               onClick={() => void linkToCanonical()}
             >
               <LinkIcon aria-hidden data-icon="inline-start" />
-              Link to “{canonicalArtifactName}”
+              Use “{canonicalArtifactName}”
             </Button>
           )}
           <div className="flex items-center gap-2">
@@ -339,7 +339,7 @@ export function StubPopover({
             }}
           >
             <UsersIcon aria-hidden data-icon="inline-start" />
-            Link existing…
+            Use existing entity…
           </Button>
         </div>
 
