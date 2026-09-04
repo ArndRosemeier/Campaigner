@@ -71,6 +71,15 @@ describe('parseLevelSort', () => {
     expect(parseLevelSort('0')).toBe(0);
   });
 
+  it('orders dnd5e CR fractions by value (12-BESTIARY-PACKS §5/§11)', () => {
+    expect(parseLevelSort('1/8')).toBe(0.125);
+    expect(parseLevelSort('3/4')).toBe(0.75);
+    const chain = ['1/4', '1/2', '1', '2'].map(parseLevelSort);
+    expect(chain).toEqual([0.25, 0.5, 1, 2]);
+    expect([...chain].sort((a, b) => a - b)).toEqual(chain);
+    expect(parseLevelSort('1/4')).toBeLessThan(parseLevelSort('1/2'));
+  });
+
   it('rejects levels that cannot be ordered', () => {
     expect(() => parseLevelSort('boss')).toThrow('cannot order creatures by level');
   });

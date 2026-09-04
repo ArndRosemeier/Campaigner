@@ -167,6 +167,41 @@ describe('resolveMonsterEntryWithRepos', () => {
     expect(resolved.statBlock?.creatureType).toBe('humanoid');
   });
 
+  it('resolves a dnd5e pack chunk to "<book title>: <creature name>" (M-C)', async () => {
+    const book = await createPackBook({ title: 'D&D 5e SRD Bestiary', system: 'dnd5e', filename: 'srd-bestiary.zip' });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-dnd5e-srd',
+      license: 'CC-BY-4.0 attribution',
+      entriesImported: 1,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    const text = 'Ape stat block';
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Ape'],
+        text,
+        statBlock: statBlock({ level: '1/2', creatureType: 'beast' }),
+        contentHash: await sha256Hex(text),
+      }),
+    ]);
+    const chunks = await db.chunks.toArray();
+
+    const resolved = await resolveMonsterEntryWithRepos({
+      name: 'Ape',
+      count: 1,
+      notes: '',
+      source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
+    });
+    expect(resolved.origin).toBe('D&D 5e SRD Bestiary: Ape');
+    expect(resolved.statBlock?.level).toBe('1/2');
+  });
+
   it('degrades a dangling rulebook chunk to "missing ref"', async () => {
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Owlbear',

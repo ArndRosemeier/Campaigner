@@ -1,0 +1,169 @@
+# Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
+# copied from `packs/_source/monsters/humanoid/goblin.yml` on foundryvtt/dnd5e
+# branch 6.0.x — every consumed field verbatim; unconsumed presentation
+# subtrees (prototypeToken, item _stats, activity targeting) removed.
+#
+# This document stores no flat Armor Class (`flat: null, calc: default` — the
+# AC of 15 is armor-derived: leather armor + shield + Dexterity), so the
+# adapter must reject it loudly instead of computing AC (12-BESTIARY-PACKS §1:
+# exact, never best-effort; §9: no Foundry system automation).
+_id: TjWQOgI3A4UAl7lC
+name: Goblin
+type: npc
+system:
+  abilities:
+    str:
+      value: 8
+      proficient: 0
+    dex:
+      value: 14
+      proficient: 0
+    con:
+      value: 10
+      proficient: 0
+    int:
+      value: 10
+      proficient: 0
+    wis:
+      value: 8
+      proficient: 0
+    cha:
+      value: 8
+      proficient: 0
+  attributes:
+    ac:
+      flat: null
+      calc: default
+      formula: ''
+    hp:
+      value: 7
+      max: 7
+      formula: 2d6
+    movement:
+      burrow: 0
+      climb: 0
+      fly: 0
+      swim: 0
+      walk: 30
+      units: ft
+      hover: false
+    senses:
+      darkvision: 60
+      blindsight: 0
+      tremorsense: 0
+      truesight: 0
+      units: ft
+      special: ''
+  details:
+    alignment: Neutral Evil
+    type:
+      value: humanoid
+      subtype: Goblinoid
+      swarm: ''
+      custom: ''
+    environment: Underdark
+    cr: 0.25
+  traits:
+    size: sm
+    languages:
+      value:
+        - common
+        - goblin
+      custom: ''
+  skills:
+    ste:
+      value: 2
+      ability: dex
+items:
+  - _id: Ti3XQOmTKdgcnpAa
+    name: Leather Armor
+    type: equipment
+    system:
+      armor:
+        value: 11
+  - _id: sSs3hSzkKBMNBgTs
+    name: Shield
+    type: equipment
+    system:
+      armor:
+        value: 2
+  - _id: SxVatHq02vURYDt3
+    name: Nimble Escape
+    type: feat
+    system:
+      description:
+        value: >-
+          <p>The [[lookup @name lowercase]]{monster} can take the
+          &amp;reference[Disengage] or &amp;reference[Hide] action as a bonus
+          action on each of its turns.</p>
+      activities:
+        3Vnkh4NwfhWSFwKy:
+          type: check
+          activation:
+            type: bonus
+  - _id: 3bqRvDlo1YZKZ1aN
+    name: Scimitar
+    type: weapon
+    system:
+      proficient: null
+      properties:
+        - fin
+        - lgt
+      type:
+        value: martialM
+        baseItem: scimitar
+      range:
+        value: null
+        long: null
+        units: ft
+        reach: null
+      damage:
+        base:
+          number: 1
+          denomination: 6
+          bonus: ''
+          types:
+            - slashing
+      activities:
+        TUghCxk1oij8CnfS:
+          type: attack
+          activation:
+            type: action
+          attack:
+            ability: ''
+            bonus: ''
+            type:
+              value: ''
+  - _id: MLXbWk7LuuYQdmZ2
+    name: Shortbow
+    type: weapon
+    system:
+      proficient: null
+      properties:
+        - amm
+        - two
+      type:
+        value: simpleR
+        baseItem: shortbow
+      range:
+        value: 80
+        long: 320
+        units: ft
+        reach: null
+      damage:
+        base:
+          number: 1
+          denomination: 6
+          bonus: ''
+          types:
+            - piercing
+      activities:
+        cUXp5D0S9nCKg7Vv:
+          type: attack
+          activation:
+            type: action
+          attack:
+            ability: ''
+            bonus: ''
+            type:
+              value: ranged

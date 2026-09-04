@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { strToU8, zipSync } from 'fflate';
 import { describe, expect, it } from 'vitest';
 
@@ -12,6 +15,12 @@ import {
 import { sha256Hex } from '@/lib/hash';
 
 import { baseNpc, encodeJson, folderDoc } from './fixtures';
+
+const DND5E_FIXTURES = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'dnd5e');
+
+function dnd5eFixture(name: string): Uint8Array {
+  return new TextEncoder().encode(readFileSync(join(DND5E_FIXTURES, name), 'utf8'));
+}
 
 type MemoryDeps = PackImportDeps & {
   created: { title: string; system: string; filename: string }[];
@@ -192,5 +201,74 @@ describe('importPack', () => {
   it('rejects unknown adapters and empty file lists up front', async () => {
     await expect(importPack('foundry-4e', [], {})).rejects.toThrow('unknown pack adapter');
     await expect(importPack('foundry-pf2e', [], {})).rejects.toThrow('received no files');
+  });
+});
+
+describe('importPack (foundry-dnd5e-srd, M-C)', () => {
+  it('imports loose .yml files with the dnd5e license and reports failures loudly', async () => {
+    const deps = memoryDeps();
+    const result = await importPack(
+      'foundry-dnd5e-srd',
+      [
+        { name: 'monsters/beast/ape.yml', bytes: dnd5eFixture('ape.yml') },
+        { name: 'monsters/humanoid/goblin.yml', bytes: dnd5eFixture('goblin.yml') },
+      ],
+      { title: 'SRD Bestiary', deps },
+    );
+    expect(deps.created).toEqual([
+      { title: 'SRD Bestiary', system: 'dnd5e', filename: 'monsters/beast/ape.yml' },
+    ]);
+    expect(result.imported).toBe(1);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.file).toBe('monsters/humanoid/goblin.yml');
+    expect(result.failed[0]?.name).toBe('Goblin');
+    expect(result.failed[0]?.message).toContain('no flat Armor Class');
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceId).toBe('foundry-dnd5e-srd');
+    expect(result.book.packMeta?.license).toContain('CC-BY-4.0');
+    expect(result.book.packMeta?.entriesImported).toBe(1);
+    expect(result.book.packMeta?.entriesFailed).toBe(1);
+
+    // The §10 acceptance block survives the full runner boundary.
+    const chunk = deps.persisted.flat()[0];
+    expect(chunk?.headingPath).toEqual(['Ape']);
+    expect(chunk?.statBlock?.abilities.str).toBe(16);
+    expect(chunk?.statBlock?.ac).toBe(12);
+    expect(chunk?.statBlock?.hp).toBe(19);
+    expect(chunk?.statBlock?.hpFormula).toBe('3d8 + 6');
+  });
+
+  it('expands a zip with nested monster folders and skips non-pack members', async () => {
+    const deps = memoryDeps();
+    const zip = zipSync({
+      'monsters/beast/ape.yml': dnd5eFixture('ape.yml'),
+      'monsters/beast/wolf.yml': dnd5eFixture('wolf.yml'),
+      'docs/readme.md': strToU8('not pack content'),
+    });
+    const result = await importPack(
+      'foundry-dnd5e-srd',
+      [{ name: 'srd-bestiary.zip', bytes: zip }],
+      { title: 'SRD Bestiary', deps },
+    );
+    expect(result.imported).toBe(2);
+    expect(result.skipped).toBe(1);
+    expect(result.failed).toHaveLength(0);
+    expect(deps.persisted.flat().map((chunk) => chunk.headingPath[0])).toEqual(['Ape', 'Wolf']);
+  });
+
+  it('fails an explicitly selected non-YAML input loudly', async () => {
+    const deps = memoryDeps();
+    const result = await importPack(
+      'foundry-dnd5e-srd',
+      [
+        { name: 'goblin.json', bytes: encodeJson(baseNpc('Goblin Warrior')) },
+        { name: 'ape.yml', bytes: dnd5eFixture('ape.yml') },
+      ],
+      { title: 'Mixed Selection', deps },
+    );
+    expect(result.imported).toBe(1);
+    expect(result.failed).toEqual([
+      { file: 'goblin.json', name: '', message: 'adapter "foundry-dnd5e-srd" cannot parse .json' },
+    ]);
   });
 });

@@ -1,11 +1,12 @@
+import { foundryDnd5eSrdAdapter } from './dnd5e-foundry';
 import { foundryPf2eAdapter } from './pf2e-foundry';
 import type { PackAdapter } from './types';
 
 /**
  * Registered pack adapters (12-BESTIARY-PACKS §5). Adding a source is one
- * adapter file plus one entry here — `foundry-dnd5e-srd` lands with M-C.
+ * adapter file plus one entry here.
  */
-export const PACK_ADAPTERS: readonly PackAdapter[] = [foundryPf2eAdapter];
+export const PACK_ADAPTERS: readonly PackAdapter[] = [foundryPf2eAdapter, foundryDnd5eSrdAdapter];
 
 export function getPackAdapter(id: string): PackAdapter {
   const adapter = PACK_ADAPTERS.find((candidate) => candidate.id === id);
