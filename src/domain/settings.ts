@@ -96,6 +96,15 @@ export const settingsSchema = z.object({
   embeddingModel: z.string().min(1),
   /** Default false until an API key is present. */
   embeddingsEnabled: z.boolean(),
+  /**
+   * Graph-aware retrieval (15-GRAPH-RETRIEVAL, decision D4): when true, the
+   * retrieve step detects pool entities in the run brief, expands them
+   * through the derived wiki-link graph (co-mention only) and grounds the
+   * draft with the bounded campaign-grounding section. Default ON — the OFF
+   * toggle is the escape hatch for wiki-link-sparse or noisy campaigns; a
+   * genuine preference default, not a failure mask.
+   */
+  wikiGroundingEnabled: z.boolean(),
   /** Image generation model (M3-A). */
   imageModel: z.string().min(1),
   /** Image generation off until the user opts in (M3-A). */
@@ -162,6 +171,7 @@ export function defaultSettings(): Settings {
     defaultReasoningEffort: 'default',
     embeddingModel: DEFAULT_EMBEDDING_MODEL,
     embeddingsEnabled: false,
+    wikiGroundingEnabled: true,
     imageModel: DEFAULT_IMAGE_MODEL,
     imagesEnabled: false,
     fallbackChatModel: '',

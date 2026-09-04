@@ -224,6 +224,27 @@ export function SettingsSection(): JSX.Element {
           </div>
         </div>
 
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div>
+            <Label htmlFor="wiki-grounding-enabled">Campaign grounding from wiki-links</Label>
+            <p className="text-xs text-muted-foreground">
+              LLM runs detect entities named in the brief (wiki-links, names, aliases) and ground
+              the draft with short excerpts of the module prose and entity summaries around them
+              plus their top co-mentioned entity. No extra searches or API calls.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Switch
+              id="wiki-grounding-enabled"
+              data-testid="wiki-grounding-enabled"
+              checked={current.wikiGroundingEnabled}
+              onCheckedChange={(checked) => {
+                void updateSettings({ wikiGroundingEnabled: checked });
+              }}
+            />
+          </div>
+        </div>
+
         <div className="flex flex-col gap-3 rounded-md border p-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">

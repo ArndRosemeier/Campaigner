@@ -35,6 +35,7 @@ const SETTINGS_BASE = {
   defaultReasoningEffort: 'default' as const,
   embeddingModel: 'e',
   embeddingsEnabled: false,
+  wikiGroundingEnabled: true,
   imageModel: 'img',
   imagesEnabled: false,
   fallbackChatModel: '',

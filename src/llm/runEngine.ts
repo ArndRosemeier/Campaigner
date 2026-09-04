@@ -38,6 +38,14 @@ import { createImage, deleteUnreferencedImages, getImage, reanchorImages } from 
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
+import { listModulesByCampaign } from '@/db/moduleRepo';
+import {
+  computeCampaignGrounding,
+  expansionExcerptSchema,
+  renderCampaignGroundingSection,
+  validateExpansionSources,
+  type ExpansionExcerpt,
+} from '@/llm/campaignGrounding';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { collectPackRosterWithRetry, formatRosterSection } from '@/llm/encounterRoster';
 import { listRulebooks } from '@/db/rulebookRepo';
@@ -116,6 +124,10 @@ const storedRetrieveOutputSchema = z.object({
   rosterChunkByName: z.record(z.string(), z.string()).default({}),
   rosterLines: z.array(z.string()).default([]),
   rosterTruncated: z.number().default(0),
+  // 15-GRAPH-RETRIEVAL: the derived campaign-grounding blocks, persisted so
+  // the draft renders them byte-identically without re-derivation (additive
+  // field; older runs read back as []).
+  expansionExcerpts: z.array(expansionExcerptSchema).default([]),
 });
 
 /** The grounding context one retrieve pass computes (and the retrieve step
@@ -131,6 +143,10 @@ interface RetrieveContext {
   rosterLines: string[];
   rosterTruncated: number;
   rosterChunkByName: Record<string, Id>;
+  /** 15-GRAPH-RETRIEVAL: the derived campaign-grounding blocks (already
+   * budget-truncated by the derivation). The draft renders them verbatim;
+   * the statblock step never does. */
+  expansionExcerpts: ExpansionExcerpt[];
 }
 
 export interface StepStatblockOutput {
@@ -1255,6 +1271,11 @@ export class RunEngine {
         (chunk) =>
           `${titleById.get(chunk.bookId) ?? 'Unknown'} p.${chunk.pageStart} — ${chunk.headingPath.join(' > ')}`,
       );
+      // 15-GRAPH-RETRIEVAL: graph-aware campaign grounding, computed HERE
+      // inside the retrieve step from campaign sources only — zero new
+      // searchRules calls, zero query embeddings, zero LLM calls. An OFF
+      // toggle, an empty module set or zero detections yield no section.
+      const expansionExcerpts = await this.campaignGroundingFor(input);
       return {
         chunkIds: merged,
         titles,
@@ -1264,10 +1285,34 @@ export class RunEngine {
         rosterLines,
         rosterTruncated,
         rosterChunkByName,
+        expansionExcerpts,
       };
     } finally {
       useProgressStore.getState().finish(contextJobId);
     }
+  }
+
+  /**
+   * The derived campaign-grounding blocks (15-GRAPH-RETRIEVAL), gated by the
+   * global settings toggle (D4, default ON, mirroring `embeddingsEnabled`).
+   * Pure derivation over the campaign's modules and the reader's resolution
+   * pool (campaign artifacts + global library, the buildWikiGraph contract);
+   * repo failures propagate and fail the run loudly — never a silent empty
+   * section.
+   */
+  private async campaignGroundingFor(input: StartRunInput): Promise<ExpansionExcerpt[]> {
+    const settings = await getSettings();
+    if (!settings.wikiGroundingEnabled) return [];
+    const [modules, campaignArtifacts, globalArtifacts] = await Promise.all([
+      listModulesByCampaign(input.campaign.id),
+      listArtifactsByCampaign(input.campaign.id),
+      listGlobalArtifacts(),
+    ]);
+    return computeCampaignGrounding({
+      brief: input.brief,
+      modules,
+      pool: [...campaignArtifacts, ...globalArtifacts],
+    });
   }
 
   private async runRetrieve(
@@ -1288,6 +1333,10 @@ export class RunEngine {
       // second roster collection.
       rosterLines: context.rosterLines,
       rosterTruncated: context.rosterTruncated,
+      // 15-GRAPH-RETRIEVAL: the campaign-grounding blocks persist with the
+      // selection so the draft renders the stored ones byte-identically —
+      // nothing re-derives the graph at draft time.
+      expansionExcerpts: context.expansionExcerpts,
     });
     return { step };
   }
@@ -1319,9 +1368,25 @@ export class RunEngine {
    * citation sections included), so the draft and statblock prompts are
    * byte-identical to the re-searched path. Missing retrieve output is a
    * loud error, never a re-search fallback.
+   *
+   * 15-GRAPH-RETRIEVAL: the stored campaign-grounding blocks are returned
+   * verbatim — nothing re-derives the graph here, so pause/resume and
+   * mid-run edits cannot drift the prompt. Only their SOURCE REFERENCES
+   * are validated on read (impossible-miss rule, §3.7): a stored excerpt
+   * whose module/part vanished mid-run fails loudly instead of silently
+   * rendering grounding from a source that no longer exists.
    */
-  private async contextFromRetrieveStep(steps: readonly RunStep[]): Promise<RetrieveContext> {
+  private async contextFromRetrieveStep(
+    steps: readonly RunStep[],
+    campaignId: Id,
+  ): Promise<RetrieveContext> {
     const output = this.storedRetrieveOutput(steps);
+    if (output.expansionExcerpts.some((excerpt) => excerpt.moduleId !== undefined)) {
+      validateExpansionSources(
+        output.expansionExcerpts,
+        await listModulesByCampaign(campaignId),
+      );
+    }
     const chunkIds = output.chunkIds;
     const statblockChunkIds = output.statblockChunkIds;
     const chunks = await getChunksByIds(chunkIds);
@@ -1353,6 +1418,7 @@ export class RunEngine {
       rosterLines: output.rosterLines,
       rosterTruncated: output.rosterTruncated,
       rosterChunkByName: output.rosterChunkByName,
+      expansionExcerpts: output.expansionExcerpts,
     };
   }
 
@@ -1392,7 +1458,7 @@ export class RunEngine {
     const settings = await getSettings();
     // Grounding comes from the retrieve step's stored selection — no
     // duplicate search/embedding pass (see contextFromRetrieveStep).
-    const context = await this.contextFromRetrieveStep(steps);
+    const context = await this.contextFromRetrieveStep(steps, input.campaign.id);
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not draft artifacts');
     const contract = draftContractFor(kind);
@@ -1406,9 +1472,18 @@ export class RunEngine {
                 `- ${artifact.name}${artifact.summary === '' ? '' : ` — ${artifact.summary}`}\n${artifact.body}`,
             )
             .join('\n')}`;
+    // 15-GRAPH-RETRIEVAL: the campaign-grounding section renders after the
+    // Task line, from the retrieve step's STORED blocks (byte-identical
+    // across pause/resume; no re-derivation). An OFF toggle or empty blocks
+    // render no section at all — never an empty block.
+    const groundingSection =
+      settings.wikiGroundingEnabled && context.expansionExcerpts.length > 0
+        ? renderCampaignGroundingSection(context.expansionExcerpts)
+        : null;
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
+      groundingSection,
       contextSection,
       context.excerpts === ''
         ? 'No rule excerpts available.'
@@ -1582,8 +1657,11 @@ export class RunEngine {
     const draft = this.effectiveDraft(steps);
     const levelHint = /level\s*(\d{1,2})/i.exec(input.brief)?.[1] ?? '';
     // Grounding comes from the retrieve step's stored selection — no
-    // duplicate search/embedding pass (see contextFromRetrieveStep).
-    const context = await this.contextFromRetrieveStep(steps);
+    // duplicate search/embedding pass (see contextFromRetrieveStep). The
+    // stored campaign-grounding blocks are validated on read but NEVER
+    // rendered here: statblock filling grounds in rules, not campaign lore
+    // (15-GRAPH-RETRIEVAL §3.3).
+    const context = await this.contextFromRetrieveStep(steps, input.campaign.id);
     const instruction = [
       `Fill the StatBlock for "${asString(draft?.name) || 'the NPC'}"${levelHint === '' ? '' : ` at level ${levelHint}`}, grounded in the rule excerpts.`,
       input.brief,
@@ -1883,8 +1961,18 @@ export class RunEngine {
     const inlineStatHint = targetRoster === undefined && retrieval.statblockChunkIds.length === 0
       ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
       : null;
+    // 15-GRAPH-RETRIEVAL (D2 = general grounding only): the encounter brief
+    // renders the derived campaign-grounding section after the brief line;
+    // the citable stat-block search and the pack roster above stay
+    // byte-identical (the frozen fix-02 contract). OFF toggle or empty
+    // blocks render no section at all.
+    const groundingSection =
+      settings.wikiGroundingEnabled && retrieval.expansionExcerpts.length > 0
+        ? renderCampaignGroundingSection(retrieval.expansionExcerpts)
+        : null;
     const contract = [
       input.brief,
+      groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
       `Map aspect: ${aspect}`,
       rosterContract,
