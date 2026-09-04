@@ -58,7 +58,7 @@ beforeEach(async () => {
   toastErrorMock.mockReset();
   useEntityImageQueue.setState({ queued: [], active: null });
   useProgressStore.getState().reset();
-  chatMock.mockResolvedValue(JSON.stringify(PROMPT_DRAFT));
+  chatMock.mockResolvedValue({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
   generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false });
   intakeImageMock.mockResolvedValue({
     blob: blobOf('intake'),
@@ -166,7 +166,7 @@ describe('entity image queue', () => {
     chatMock.mockImplementationOnce((_messages, opts) => {
       const signal = opts.signal;
       if (signal === undefined) return Promise.reject(new Error('no abort signal passed'));
-      return new Promise<string>((resolve, reject) => {
+      return new Promise((resolve, reject) => {
         const abort = (): void => {
           reject(new DOMException('Aborted', 'AbortError'));
         };
@@ -181,7 +181,7 @@ describe('entity image queue', () => {
             abort();
             return;
           }
-          resolve(JSON.stringify(PROMPT_DRAFT));
+          resolve({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
         });
       });
     });

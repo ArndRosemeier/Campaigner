@@ -28,6 +28,7 @@ import {
 } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
+import type { ChatResult } from '@/llm/openrouter';
 
 /**
  * Module Designer generator (08-MODULE-DESIGNER M4-B) with a mocked chat:
@@ -102,13 +103,21 @@ const SELF_NORMALIZATION = {
 };
 
 /** Module prose well above the 100-char floor, with a findable marker. */
-function partMarkdown(marker: string): string {
-  return `${marker}: The tide withdraws and the streets shine wet under a pale sun. `.repeat(4);
+function partMarkdown(marker: string): ChatResult {
+  return {
+    text: `${marker}: The tide withdraws and the streets shine wet under a pale sun. `.repeat(4),
+    modelUsed: 'test-model',
+    fallback: null,
+  };
 }
 
 /** Part prose that wiki-links the given names (for entity-kind flows). */
-function partWithNames(marker: string, names: string[]): string {
-  return `${partMarkdown(marker)} Mentioned here: ${names.map((name) => `[[${name}]]`).join(' and ')}.`;
+function partWithNames(marker: string, names: string[]): ChatResult {
+  return {
+    text: `${partMarkdown(marker).text} Mentioned here: ${names.map((name) => `[[${name}]]`).join(' and ')}.`,
+    modelUsed: 'test-model',
+    fallback: null,
+  };
 }
 
 async function seedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
@@ -133,15 +142,16 @@ async function seedSpine(moduleId: Id): Promise<void> {
 async function seedReadyPart(
   moduleId: Id,
   planIndex: number,
-  markdown: string,
+  markdown: string | ChatResult,
   options: { edited?: boolean } = {},
 ): Promise<void> {
   const current = await getModule(moduleId);
   if (current === undefined) throw new Error('seed module is missing');
+  const prose = typeof markdown === 'string' ? markdown : markdown.text;
   const parts = current.parts.filter((part) => part.planIndex !== planIndex);
   parts.push({
     planIndex,
-    markdown,
+    markdown: prose,
     status: 'ready',
     errorMessage: '',
     edited: options.edited === true,
@@ -175,20 +185,20 @@ function userMessagesOf(callIndex: number): string {
 }
 
 /** Resolves only via the returned resolve — for observing in-flight states. */
-function deferredChat(): { promise: Promise<string>; resolve: (value: string) => void } {
+function deferredChat(): { promise: Promise<ChatResult>; resolve: (value: string) => void } {
   let resolve!: (value: string) => void;
   const promise = new Promise<string>((res) => {
     resolve = res;
   });
-  return { promise, resolve };
+  return { promise: promise.then((text) => ({ text, modelUsed: 'test-model', fallback: null })), resolve };
 }
 
 /**
  * A chat call that never settles on its own and rejects with AbortError when
  * the moduleGen abort signal fires (mirrors the real client's abort path).
  */
-function chatUntilAborted(signal: AbortSignal | undefined): Promise<string> {
-  return new Promise<string>((_resolve, reject) => {
+function chatUntilAborted(signal: AbortSignal | undefined): Promise<ChatResult> {
+  return new Promise<ChatResult>((_resolve, reject) => {
     const abortError = (): DOMException =>
       new DOMException('The operation was aborted.', 'AbortError');
     if (signal === undefined || signal.aborted) {
@@ -257,7 +267,7 @@ describe('runSpine', () => {
     const deferred = deferredChat();
     chatMock.mockImplementationOnce(() => deferred.promise);
     // fix-01: the spine's entity list is normalized before storage.
-    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     const pending = guard(runSpine(moduleId, campaign));
     await waitFor(async () => {
@@ -292,7 +302,7 @@ describe('runSpine', () => {
 
   it('retries invalid JSON once, then fails the module loudly (row + toast)', async () => {
     const { campaign, moduleId } = await seedModule();
-    chatMock.mockResolvedValue('not json at all');
+    chatMock.mockResolvedValue({ text: 'not json at all', modelUsed: 'test-model', fallback: null });
 
     await expect(runSpine(moduleId, campaign)).rejects.toThrow('no JSON object');
 
@@ -338,10 +348,10 @@ describe('entity kinds — spine record (08 §M4-C)', () => {
     const { campaign, moduleId } = await seedModule();
     const { entities: _entities, ...spineOnly } = VALID_SPINE;
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(spineOnly))
-      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE))
+      .mockResolvedValueOnce({ text: JSON.stringify(spineOnly), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
       // fix-01: the normalization call that follows the parsed spine.
-      .mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     const finished = await runSpine(moduleId, campaign);
 
@@ -420,7 +430,7 @@ describe('runParts', () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
     chatMock
-      .mockResolvedValueOnce('The bell rings at midnight.') // 27 chars: too short
+      .mockResolvedValueOnce({ text: 'The bell rings at midnight.', modelUsed: 'test-model', fallback: null }) // 27 chars: too short
       .mockResolvedValueOnce(partMarkdown('PART-ONE-RETRY'));
 
     const finished = await runParts(moduleId, campaign, { planIndexes: [0] });
@@ -436,7 +446,7 @@ describe('runParts', () => {
   it('fails the part when the retry is also too short, without sinking the module', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
-    chatMock.mockResolvedValue('The bell rings at midnight.');
+    chatMock.mockResolvedValue({ text: 'The bell rings at midnight.', modelUsed: 'test-model', fallback: null });
 
     const finished = await runParts(moduleId, campaign, { planIndexes: [0] });
 
@@ -564,7 +574,7 @@ describe('ModuleBusyError', () => {
     const deferred = deferredChat();
     chatMock.mockImplementationOnce(() => deferred.promise);
     // fix-01: once the spine lands, the entity normalization call follows.
-    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
     const first = guard(runSpine(moduleId, campaign));
     await waitFor(async () => {
       expect((await getModule(moduleId))?.status).toBe('generating');
@@ -597,15 +607,13 @@ describe('entity name normalization (fix-01)', () => {
       name: 'Halmund',
       summary: 'The guard of the drowned bell.',
     });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         entities: [
           { name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' },
           { name: 'Halmunds', canonical: 'Halmund', kind: 'npc' },
           { name: 'Halmund', canonical: 'Halmund', kind: 'npc' },
         ],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     await normalizeModuleEntityNames(moduleId);
 
@@ -636,15 +644,13 @@ describe('entity name normalization (fix-01)', () => {
     });
     await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Halmunds']));
     await seedReadyPart(moduleId, 1, partWithNames('PART-TWO', ['Halmunds']), { edited: true });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         entities: [
           { name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' },
           { name: 'Halmunds', canonical: 'Halmund', kind: 'npc' },
           { name: 'Halmund', canonical: 'Halmund', kind: 'npc' },
         ],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     await normalizeModuleEntityNames(moduleId);
 
@@ -665,9 +671,7 @@ describe('entity name normalization (fix-01)', () => {
     const { moduleId } = await seedModule();
     await seedSpine(moduleId);
     await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['The Undercroft']));
-    chatMock.mockResolvedValue(
-      JSON.stringify({ entities: [{ name: 'Ghost', canonical: 'Ghost', kind: 'npc' }] }),
-    );
+    chatMock.mockResolvedValue({ text: JSON.stringify({ entities: [{ name: 'Ghost', canonical: 'Ghost', kind: 'npc' }] }), modelUsed: 'test-model', fallback: null });
 
     await normalizeModuleEntityNames(moduleId);
 
@@ -683,9 +687,7 @@ describe('entity name normalization (fix-01)', () => {
   }, 20000);
 
   it('classifies a single hand-typed name with kind and canonical verdict', async () => {
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({ entities: [{ name: 'Some Guard', canonical: 'Halmund', kind: 'npc' }] }),
-    );
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({ entities: [{ name: 'Some Guard', canonical: 'Halmund', kind: 'npc' }] }), modelUsed: 'test-model', fallback: null });
 
     const verdict = await classifyEntityName('Some Guard', 'Some Guard watches the quay.', 'A haunted keep.', [
       'Halmund',
@@ -701,9 +703,7 @@ describe('entity name normalization (fix-01)', () => {
   it('classifyEntityName rejects a contract-violating reply after the retry', async () => {
     // The reply never answers for the requested name — an invalid reply after
     // the one retry must throw, never silently resolve.
-    chatMock.mockResolvedValue(
-      JSON.stringify({ entities: [{ name: 'Someone Else', canonical: 'Someone Else', kind: 'npc' }] }),
-    );
+    chatMock.mockResolvedValue({ text: JSON.stringify({ entities: [{ name: 'Someone Else', canonical: 'Someone Else', kind: 'npc' }] }), modelUsed: 'test-model', fallback: null });
 
     await expect(classifyEntityName('Kael', '', '', [])).rejects.toThrow('violated its contract');
     expect(chatMock).toHaveBeenCalledTimes(2);
@@ -760,7 +760,7 @@ describe('prior-module continuity (opt-in, 08 §M4-B)', () => {
       parts: [
         modulePartSchema.parse({
           planIndex: 0,
-          markdown: partMarkdown('PRIOR-PART-MARKER'),
+          markdown: partMarkdown('PRIOR-PART-MARKER').text,
           status: 'ready',
           errorMessage: '',
           edited: false,
@@ -775,8 +775,8 @@ describe('prior-module continuity (opt-in, 08 §M4-B)', () => {
     await patchModule(moduleId, { includePriorModules: true });
     await seedPriorModule(campaign.id);
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE))
-      .mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     await runSpine(moduleId, campaign);
 
@@ -794,8 +794,8 @@ describe('prior-module continuity (opt-in, 08 §M4-B)', () => {
     await patchModule(moduleId, { includePriorModules: false });
     await seedPriorModule(campaign.id);
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_SPINE))
-      .mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_SPINE), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     await runSpine(moduleId, campaign);
 
@@ -927,7 +927,7 @@ describe('progress dock reporting', () => {
     const deferred = deferredChat();
     chatMock.mockImplementationOnce(() => deferred.promise);
     // fix-01: the entity normalization call follows the parsed spine.
-    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     const pending = guard(runSpine(moduleId, campaign));
     await waitFor(() => {
@@ -964,7 +964,7 @@ describe('progress dock reporting', () => {
       progress: 0,
     });
 
-    first.resolve(partMarkdown('PART-ONE'));
+    first.resolve(partMarkdown('PART-ONE').text);
     await waitFor(() => {
       expect(useProgressStore.getState().jobs[0]).toMatchObject({
         detail: 'Writing part 2 of 3: The Drowned Cathedral',
@@ -972,7 +972,7 @@ describe('progress dock reporting', () => {
       });
     });
 
-    second.resolve(partMarkdown('PART-TWO'));
+    second.resolve(partMarkdown('PART-TWO').text);
     await pending;
     expect(useProgressStore.getState().jobs).toEqual([]);
   }, 20000);
@@ -986,7 +986,7 @@ describe('progress dock reporting', () => {
       options.onActivity?.({ elapsedMs: 5000, receivedChars: 0, phase: 'thinking' });
       return deferred.promise;
     });
-    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     const pending = guard(runSpine(moduleId, campaign));
     await waitFor(() => {
@@ -1014,7 +1014,7 @@ describe('progress dock reporting', () => {
         options.onReasoning?.(', sketching parts');
         return deferred.promise;
       });
-      chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
       const pending = guard(runSpine(moduleId, campaign));
       await vi.waitFor(() => {
@@ -1034,7 +1034,7 @@ describe('progress dock reporting', () => {
       options.onToken?.('{"premise"');
       return deferred.promise;
     });
-    chatMock.mockResolvedValueOnce(JSON.stringify(SELF_NORMALIZATION));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(SELF_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     const pending = guard(runSpine(moduleId, campaign));
     await waitFor(() => {

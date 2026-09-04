@@ -47,7 +47,7 @@ beforeEach(async () => {
   await clearDatabase();
   useEncounterMapQueue.getState().reset();
   useProgressStore.getState().reset();
-  chatMock.mockReset().mockResolvedValue(JSON.stringify(BRIEF));
+  chatMock.mockReset().mockResolvedValue({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
   toastErrorMock.mockReset();
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 240, height: 180 });
   vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false });

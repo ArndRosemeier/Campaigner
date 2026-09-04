@@ -319,8 +319,13 @@ function RunTokenPreview({ runId }: { runId: Id }): JSX.Element {
   useEffect(() => {
     setText('');
     return runEngine.on((event) => {
-      if (event.kind === 'token' && event.runId === runId) {
+      if (event.runId !== runId) return;
+      if (event.kind === 'token') {
         setText((previous) => (previous + event.delta).slice(-TOKEN_PREVIEW_CHARS));
+      } else if (event.kind === 'reset') {
+        // Model fallback restarted the stream: drop the failed attempt's
+        // partial tokens so the preview never stitches two attempts together.
+        setText('');
       }
     });
   }, [runId]);

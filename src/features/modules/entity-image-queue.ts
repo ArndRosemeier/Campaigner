@@ -272,7 +272,7 @@ async function draftPrompt(
   ];
   let lastError: unknown = new Error('no reply');
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const raw = await chat(
+    const { text: raw } = await chat(
       attempt === 0
         ? messages
         : [

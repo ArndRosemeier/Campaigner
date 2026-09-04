@@ -148,8 +148,8 @@ describe('runModulePostGeneration', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await seedModule(campaign.id);
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(npcDraft))
-      .mockResolvedValueOnce(JSON.stringify(npcStatblock));
+      .mockResolvedValueOnce({ text: JSON.stringify(npcDraft), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(npcStatblock), modelUsed: 'test-model', fallback: null });
 
     await runModulePostGeneration(module.id, campaign);
 

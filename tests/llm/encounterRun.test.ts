@@ -169,7 +169,7 @@ describe('encounter runs (M3-B)', () => {
     searchRulesMock.mockResolvedValue(
       chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
     );
-    chatMock.mockResolvedValue(JSON.stringify(DRAFT));
+    chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
 
     // startRun resolves with the run id once the row exists.
     const runId = await runEngine.startRun({
@@ -234,7 +234,7 @@ describe('encounter runs (M3-B)', () => {
         mapImageId, layout: null,
       },
     });
-    chatMock.mockResolvedValue(JSON.stringify(DRAFT));
+    chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun({
       campaign,

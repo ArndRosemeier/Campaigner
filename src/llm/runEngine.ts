@@ -44,7 +44,7 @@ import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import { ZodError, type z } from 'zod';
-import { chat, MissingApiKeyError, OpenRouterError, type ChatMessage } from '@/llm/openrouter';
+import { chat, MissingApiKeyError, OpenRouterError, type ChatFallback, type ChatMessage } from '@/llm/openrouter';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel } from '@/llm/modelFallback';
@@ -142,9 +142,33 @@ export type EngineEvent =
   | { kind: 'step'; runId: Id; stepIndex: number; status: RunStep['status']; stepName?: string | undefined }
   | { kind: 'token'; runId: Id; stepIndex: number; delta: string }
   /** Reasoning-delta stream (illustration only; never part of the answer). */
-  | { kind: 'thinking'; runId: Id; stepIndex: number; delta: string };
+  | { kind: 'thinking'; runId: Id; stepIndex: number; delta: string }
+  /**
+   * Model fallback restarted this step's stream after a failure: the previous
+   * attempt may have streamed partial tokens, so subscribers must clear
+   * their buffers before the new attempt's deltas arrive.
+   */
+  | { kind: 'reset'; runId: Id; stepIndex: number };
 
 type Listener = (event: EngineEvent) => void;
+
+/**
+ * The persisted escalation note for a step output (the 'notice' convention
+ * the persona panel renders): a fallback must be visible, never silent
+ * (AGENTS rule 1).
+ */
+function escalationNotice(fallback: ChatFallback): string {
+  const why = fallback.reason === 'filter' ? 'refused the content' : 'was congested';
+  return `Primary model “${fallback.from}” ${why} — answered by fallback “${fallback.to}”.`;
+}
+
+/** Step output plus the escalation notice when a fallback produced it. */
+function withNotice<T extends Record<string, unknown>>(
+  output: T,
+  fallback: ChatFallback | null,
+): T {
+  return fallback === null ? output : { ...output, notice: escalationNotice(fallback) };
+}
 
 export interface StartRunInput {
   campaign: Campaign;
@@ -1041,7 +1065,7 @@ export class RunEngine {
       });
     }
 
-    const raw = await chat(messages, {
+    const { text: raw, fallback } = await chat(messages, {
       model: resolveChatModel(settings, input.persona.model),
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
@@ -1052,6 +1076,9 @@ export class RunEngine {
       },
       onReasoning: (delta) => {
         this.emit({ kind: 'thinking', runId, stepIndex, delta });
+      },
+      onReset: () => {
+        this.emit({ kind: 'reset', runId, stepIndex });
       },
     });
 
@@ -1091,7 +1118,7 @@ export class RunEngine {
     }
 
     this.draftRetried.delete(runId);
-    const step = this.finishStep(steps[stepIndex], { parsed });
+    const step = this.finishStep(steps[stepIndex], withNotice({ parsed }, fallback));
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
   }
@@ -1135,7 +1162,7 @@ export class RunEngine {
       .filter((part) => part !== null)
       .join('\n\n');
 
-    const raw = await chat(
+    const { text: raw, fallback } = await chat(
       [
         { role: 'system', content: input.persona.systemPrompt },
         { role: 'user', content: instruction },
@@ -1151,6 +1178,9 @@ export class RunEngine {
         },
         onReasoning: (delta) => {
           this.emit({ kind: 'thinking', runId, stepIndex, delta });
+        },
+        onReset: () => {
+          this.emit({ kind: 'reset', runId, stepIndex });
         },
       },
     );
@@ -1186,7 +1216,7 @@ export class RunEngine {
     }
 
     this.statblockRetried.delete(runId);
-    const step = this.finishStep(steps[stepIndex], { statBlock });
+    const step = this.finishStep(steps[stepIndex], withNotice({ statBlock }, fallback));
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
   }
@@ -1273,7 +1303,7 @@ export class RunEngine {
       .filter((part) => part !== null)
       .join('\n\n');
 
-    const raw = await chat(
+    const { text: raw, fallback } = await chat(
       [
         { role: 'system', content: input.persona.systemPrompt },
         { role: 'user', content: instruction },
@@ -1289,6 +1319,9 @@ export class RunEngine {
         },
         onReasoning: (delta) => {
           this.emit({ kind: 'thinking', runId, stepIndex, delta });
+        },
+        onReset: () => {
+          this.emit({ kind: 'reset', runId, stepIndex });
         },
       },
     );
@@ -1310,7 +1343,7 @@ export class RunEngine {
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
     }
-    const step = this.finishStep(steps[stepIndex], { report });
+    const step = this.finishStep(steps[stepIndex], withNotice({ report }, fallback));
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
   }
@@ -1449,6 +1482,9 @@ export class RunEngine {
       onReasoning: (delta: string) => {
         this.emit({ kind: 'thinking', runId, stepIndex, delta });
       },
+      onReset: () => {
+        this.emit({ kind: 'reset', runId, stepIndex });
+      },
     };
     // Roster sources are only checked for fresh encounters: a regenerate run
     // replaces the roster with the target's verbatim entries below.
@@ -1472,7 +1508,9 @@ export class RunEngine {
       const coverage = encounterCoverageIssues(result.brief, result.brief.monsters.length);
       return coverage.length === 0 ? result : { brief: null, issues: coverage };
     };
-    let raw = await chat(messages, chatOptions);
+    const first = await chat(messages, chatOptions);
+    let raw = first.text;
+    let fallback = first.fallback;
     let evaluated = evaluate(raw);
     if (evaluated.brief === null) {
       // One repair turn that names every problem — a bare "the schema failed"
@@ -1480,7 +1518,7 @@ export class RunEngine {
       const statHintForRepair = targetRoster === undefined && evaluated.issues.some((issue) => issue.includes('statBlock'))
         ? `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system)}.`
         : '';
-      raw = await chat(
+      const retry = await chat(
         [
           ...messages,
           { role: 'assistant', content: raw },
@@ -1491,6 +1529,8 @@ export class RunEngine {
         ],
         chatOptions,
       );
+      raw = retry.text;
+      fallback = retry.fallback ?? fallback;
       evaluated = evaluate(raw);
     }
     if (evaluated.brief === null) {
@@ -1511,11 +1551,17 @@ export class RunEngine {
       };
     }
     return {
-      step: this.finishStep(steps[stepIndex], {
-        parsed,
-        aspect,
-        statblockChunkIds: retrieval.statblockChunkIds,
-      }),
+      step: this.finishStep(
+        steps[stepIndex],
+        withNotice(
+          {
+            parsed,
+            aspect,
+            statblockChunkIds: retrieval.statblockChunkIds,
+          },
+          fallback,
+        ),
+      ),
       ...(input.autonomy === 'auto' ? {} : { runStatus: 'awaiting_user' as const }),
     };
   }
@@ -1919,6 +1965,7 @@ export class RunEngine {
         negative: '',
         styleNotes: '',
       };
+      // No chat call happens on this path — no escalation notice applies.
       const step = this.finishStep(steps[stepIndex], { parsed });
       const pausesHere = pauses(input.autonomy, true);
       return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
@@ -1948,7 +1995,7 @@ export class RunEngine {
       });
     }
 
-    const raw = await chat(messages, {
+    const { text: raw, fallback } = await chat(messages, {
       model: resolveChatModel(settings, input.persona.model),
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
@@ -1959,6 +2006,9 @@ export class RunEngine {
       },
       onReasoning: (delta) => {
         this.emit({ kind: 'thinking', runId, stepIndex, delta });
+      },
+      onReset: () => {
+        this.emit({ kind: 'reset', runId, stepIndex });
       },
     });
 
@@ -1987,7 +2037,7 @@ export class RunEngine {
       return { step, runStatus: 'needs_review' };
     }
 
-    const step = this.finishStep(steps[stepIndex], { parsed });
+    const step = this.finishStep(steps[stepIndex], withNotice({ parsed }, fallback));
     const pausesHere = pauses(input.autonomy, true);
     return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
   }

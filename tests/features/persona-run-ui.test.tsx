@@ -177,8 +177,8 @@ describe('PersonaPanel run lifecycle', () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     const { rerender } = render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -206,8 +206,8 @@ describe('PersonaPanel run lifecycle', () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -242,8 +242,8 @@ describe('PersonaPanel run lifecycle', () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -289,7 +289,7 @@ describe('PersonaPanel run lifecycle', () => {
   it('cancel from the paused view marks the run cancelled', async () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
-    chatMock.mockResolvedValue(JSON.stringify(VALID_DRAFT));
+    chatMock.mockResolvedValue({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -318,9 +318,9 @@ describe('PersonaPanel run lifecycle', () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce('this is not json at all')
-      .mockResolvedValueOnce('still not json at all') // the automatic JSON-fix retry
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: 'this is not json at all', modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: 'still not json at all', modelUsed: 'test-model', fallback: null }) // the automatic JSON-fix retry
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -356,10 +356,10 @@ describe('PersonaPanel run lifecycle', () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce('not json one')
-      .mockResolvedValueOnce('not json two') // the automatic JSON-fix retry
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT)) // consumed by Retry
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK)); // the statblock step
+      .mockResolvedValueOnce({ text: 'not json one', modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: 'not json two', modelUsed: 'test-model', fallback: null }) // the automatic JSON-fix retry
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null }) // consumed by Retry
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null }); // the statblock step
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -398,8 +398,8 @@ describe('PersonaPanel run lifecycle', () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -447,8 +447,7 @@ describe('PersonaPanel run lifecycle', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Ash Gate',
         summary: '',
         body: '',
@@ -478,8 +477,7 @@ describe('PersonaPanel run lifecycle', () => {
           },
         ],
         entryRoomIndex: 0,
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [new Blob(['one'], { type: 'image/webp' })],
       costUsd: 0.01,
@@ -522,8 +520,7 @@ describe('PersonaPanel run lifecycle', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Ash Gate',
         summary: '',
         body: '',
@@ -553,8 +550,7 @@ describe('PersonaPanel run lifecycle', () => {
           },
         ],
         entryRoomIndex: 0,
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [new Blob(['one'], { type: 'image/webp' })],
       costUsd: 0.01,
@@ -622,13 +618,11 @@ describe('PersonaPanel run lifecycle', () => {
       name: 'The Lighthouse',
     });
     await publishToLibrary(lighthouse.id);
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         prompt: 'A storm-lashed lighthouse',
         negative: 'text',
         styleNotes: 'oil painting',
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
     // The model capped n at 1 (imageGen reports it; the engine persists the
     // notice) — the panel must SHOW it, not quietly present one candidate.
     generateImagesMock.mockResolvedValue({
@@ -766,7 +760,7 @@ describe('PersonaPanel run lifecycle', () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
       .mockRejectedValueOnce(new Error('Gateway timeout 504'));
 
     render(
@@ -781,7 +775,7 @@ describe('PersonaPanel run lifecycle', () => {
     expect(within(failedActions).getByTestId('resume-failed-run')).toBeInTheDocument();
 
     // Now model is back online
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     await user.click(within(failedActions).getByTestId('resume-failed-run'));
 
     await waitFor(
@@ -839,7 +833,7 @@ describe('PersonaPanel run lifecycle', () => {
       ],
     });
 
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
     render(
       <MemoryRouter>

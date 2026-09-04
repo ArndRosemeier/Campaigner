@@ -78,8 +78,8 @@ describe('encounter map vision verification', () => {
     const mapLayout = layout();
     const expected = coarseStructure(mapLayout);
     chatMock
-      .mockResolvedValueOnce('not-json')
-      .mockResolvedValueOnce(JSON.stringify(expected));
+      .mockResolvedValueOnce({ text: 'not-json', modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(expected), modelUsed: 'test-model', fallback: null });
 
     const result = await verifyEncounterMap({
       layout: mapLayout,
@@ -101,7 +101,7 @@ describe('encounter map vision verification', () => {
   });
 
   it('fails loudly when the repair response is still invalid', async () => {
-    chatMock.mockResolvedValue('still invalid');
+    chatMock.mockResolvedValue({ text: 'still invalid', modelUsed: 'test-model', fallback: null });
     await expect(
       verifyEncounterMap({
         layout: layout(),

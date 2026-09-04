@@ -52,7 +52,7 @@ describe('chat stream hardening', () => {
       [0, 0],
       5000,
     );
-    expect(result).toBe('Hello');
+    expect(result.text).toBe('Hello');
     expect(tokens).toEqual(['Hel', 'lo']);
   });
 });
@@ -119,7 +119,7 @@ describe('more stream cases', () => {
       5_000,
       3_000,
     );
-    expect(result).toBe('Hello');
+    expect(result.text).toBe('Hello');
   });
 
   it('counts reasoning deltas as progress while the model thinks', async () => {
@@ -145,7 +145,7 @@ describe('more stream cases', () => {
       5_000,
       10_000,
     );
-    expect(result).toBe('{}');
+    expect(result.text).toBe('{}');
   });
 
   it('surfaces in-stream error events instead of hanging on them', async () => {
@@ -179,7 +179,7 @@ describe('documented OpenRouter behaviors', () => {
       [0, 0],
       5000,
     );
-    expect(result).toBe('{}');
+    expect(result.text).toBe('{}');
   });
 
   it('finishes on finish_reason even when DONE never arrives', async () => {
@@ -200,7 +200,7 @@ describe('documented OpenRouter behaviors', () => {
       [0, 0],
       300,
     );
-    expect(result).toBe('{"ac": 14, "hp": 22}');
+    expect(result.text).toBe('{"ac": 14, "hp": 22}');
   });
 });
 
@@ -273,7 +273,7 @@ describe('framing', () => {
       [0, 0],
       5000,
     );
-    expect(result).toBe('Hello');
+    expect(result.text).toBe('Hello');
   });
 
   it('ignores empty deltas and the accounting usage chunk', async () => {
@@ -299,7 +299,7 @@ describe('framing', () => {
       [0, 0],
       5000,
     );
-    expect(result).toBe('Hi!');
+    expect(result.text).toBe('Hi!');
     expect(tokens).toEqual(['Hi', '!']);
   });
 });

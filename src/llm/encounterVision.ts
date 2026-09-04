@@ -152,7 +152,7 @@ export async function verifyEncounterMap(input: {
       ],
     },
   ];
-  let raw = await chat(messages, {
+  let { text: raw } = await chat(messages, {
     model: input.model,
     temperature: 0,
     responseFormat: 'json',
@@ -160,22 +160,24 @@ export async function verifyEncounterMap(input: {
   });
   let parsed = parseGrid(raw, expected);
   if (!parsed.success) {
-    raw = await chat(
-      [
-        ...messages,
-        { role: 'assistant', content: raw },
+    raw = (
+      await chat(
+        [
+          ...messages,
+          { role: 'assistant', content: raw },
+          {
+            role: 'user',
+            content: `Your response was invalid: ${parsed.error}. Return corrected JSON only with the exact dimensions and cell count.`,
+          },
+        ],
         {
-          role: 'user',
-          content: `Your response was invalid: ${parsed.error}. Return corrected JSON only with the exact dimensions and cell count.`,
+          model: input.model,
+          temperature: 0,
+          responseFormat: 'json',
+          signal: input.signal,
         },
-      ],
-      {
-        model: input.model,
-        temperature: 0,
-        responseFormat: 'json',
-        signal: input.signal,
-      },
-    );
+      )
+    ).text;
     parsed = parseGrid(raw, expected);
   }
   if (!parsed.success) throw new Error(`Vision verification failed after repair: ${parsed.error}`);
@@ -255,7 +257,7 @@ export async function locateMissingMarkerWithVision(input: {
     },
   ];
 
-  const raw = await chat(messages, {
+  const { text: raw } = await chat(messages, {
     model: input.model,
     temperature: 0,
     responseFormat: 'json',

@@ -3,13 +3,16 @@ import { z } from 'zod';
 import { getSettings } from '@/db/settingsRepo';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
-import { MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
+import { buildModelChain } from '@/llm/modelFallback';
+import { fallbackReasonFor, MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
+import type { FallbackReason } from '@/llm/openrouterErrors';
 import type { ReasoningEffort } from '@/domain/settings';
+import type { Settings } from '@/domain';
 
 // Error types live in the leaf module /src/llm/openrouterErrors.ts (shared
 // with the model-fallback helpers); re-exported for API compatibility.
 export { MissingApiKeyError, OpenRouterError };
-export type { OpenRouterErrorKind } from '@/llm/openrouterErrors';
+export type { OpenRouterErrorKind, FallbackReason } from '@/llm/openrouterErrors';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): always-streaming chat completions
@@ -59,6 +62,37 @@ export interface ChatOptions {
    * Lets a caller keep a progress surface alive during long quiet stretches
    * (queued providers, reasoning models thinking before the first delta). */
   onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
+  /**
+   * Model-fallback feature: called when the previous chain entry failed with
+   * a fallback-worthy error (congestion / filter) and the next model is about
+   * to be tried. Never fires when no fallback model is configured.
+   */
+  onFallback?: ((info: ChatFallback) => void) | undefined;
+  /**
+   * Called before a fallback attempt after the previous attempt may already
+   * have streamed partial tokens: subscribers must clear their buffers so the
+   * restarted stream does not append to content from the failed attempt.
+   */
+  onReset?: (() => void) | undefined;
+}
+
+/**
+ * How an answer came to be via the escalation chain: from/to models and the
+ * classified reason. Callers surface this (run notices, progress dock);
+ * it must never be swallowed (AGENTS rule 1).
+ */
+export interface ChatFallback {
+  from: string;
+  to: string;
+  reason: FallbackReason;
+}
+
+/** What one chat() call produced — including WHICH model produced it. */
+export interface ChatResult {
+  text: string;
+  modelUsed: string;
+  /** Null when the first-try model answered without escalation. */
+  fallback: ChatFallback | null;
 }
 
 /** Spec backoff schedule for 429/5xx retries (04 spec: 2s, 8s). */
@@ -99,23 +133,26 @@ export function openRouterHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-export async function chat(
+/**
+ * One chat completion against one model: transport only. The escalation
+ * chain around it lives in chat().
+ */
+async function chatOnce(
+  model: string,
   messages: ChatMessage[],
   opts: ChatOptions,
-  retryBackoffs: readonly number[] = DEFAULT_RETRY_BACKOFFS_MS,
-  stallTimeoutMs: number = DEFAULT_STREAM_STALL_TIMEOUT_MS,
-  contentStallMs: number = DEFAULT_CONTENT_STALL_TIMEOUT_MS,
-  maxDurationMs: number = DEFAULT_STREAM_MAX_DURATION_MS,
+  settings: Settings,
+  retryBackoffs: readonly number[],
+  stallTimeoutMs: number,
+  contentStallMs: number,
+  maxDurationMs: number,
 ): Promise<string> {
-  const settings = await getSettings();
-  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
-
   // Generation-language enforcement: the settings-selected language is
   // injected into every chat completion (07 §Settings).
   const effectiveMessages = applyLanguageDirective(messages, settings.language);
 
   const body: Record<string, unknown> = {
-    model: opts.model,
+    model,
     temperature: opts.temperature,
     stream: true,
     messages: effectiveMessages,
@@ -124,7 +161,7 @@ export async function chat(
   if (
     opts.reasoningEffort !== undefined &&
     opts.reasoningEffort !== 'default' &&
-    modelSupportsReasoning(opts.model)
+    modelSupportsReasoning(model)
   ) {
     body.reasoning = { effort: opts.reasoningEffort };
   }
@@ -145,6 +182,138 @@ export async function chat(
     contentStallMs,
     maxDurationMs,
   }, opts.onActivity, opts.onReasoning);
+}
+
+/**
+ * Every model that was tried and failed, in order — for the combined
+ * end-of-chain error. The last entry's kind/status survive so outer
+ * instanceof/status checks keep working.
+ */
+function chainError(failures: readonly { model: string; error: unknown }[]): Error {
+  const last = failures[failures.length - 1];
+  if (last === undefined) return new Error('the chat escalation chain failed without an error');
+  const detail = failures
+    .map(
+      ({ model, error }) =>
+        `“${model}” failed: ${error instanceof Error ? error.message : String(error)}`,
+    )
+    .join(' | ');
+  if (last.error instanceof OpenRouterError) {
+    return new OpenRouterError(
+      last.error.kind,
+      last.error.status,
+      `every model in the escalation chain failed — ${detail}`,
+    );
+  }
+  return new Error(`every model in the escalation chain failed — ${detail}`, { cause: last.error });
+}
+
+/**
+ * True when any message carries image input (vision call — e.g. encounter
+ * verify): escalating such a call to a text-only fallback model would only
+ * buy a second, equally loud failure.
+ */
+function requestHasImageInput(messages: ChatMessage[]): boolean {
+  return messages.some(
+    (message) =>
+      Array.isArray(message.content) &&
+      message.content.some((part) => part.type === 'image_url'),
+  );
+}
+
+/**
+ * Vision guard: the request needs image input and the cached /models data
+ * knows the fallback model cannot accept it. Unknown fallback (not cached or
+ * architecture missing) is NOT blocked — the attempt fails loudly as before.
+ */
+export function imageInputFallbackBlocked(
+  messages: ChatMessage[],
+  fallbackModel: string,
+  models: readonly OpenRouterModel[] | null,
+): boolean {
+  if (!requestHasImageInput(messages)) return false;
+  if (models === null) return false;
+  const found = models.find((model) => model.id === fallbackModel);
+  if (found?.architecture?.input_modalities === undefined) return false;
+  return !found.architecture.input_modalities.includes('image');
+}
+
+export async function chat(
+  messages: ChatMessage[],
+  opts: ChatOptions,
+  retryBackoffs: readonly number[] = DEFAULT_RETRY_BACKOFFS_MS,
+  stallTimeoutMs: number = DEFAULT_STREAM_STALL_TIMEOUT_MS,
+  contentStallMs: number = DEFAULT_CONTENT_STALL_TIMEOUT_MS,
+  maxDurationMs: number = DEFAULT_STREAM_MAX_DURATION_MS,
+): Promise<ChatResult> {
+  const settings = await getSettings();
+  if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
+
+  // Model-fallback feature: primary first, then the configured escalation
+  // tier ('' or duplicate = disabled). Transport failures classified as
+  // congestion/filter escalate; everything else fails loudly exactly as
+  // before (AGENTS rule 1 — fallback is surfaced, never silent).
+  const chain = buildModelChain(opts.model, settings.fallbackChatModel);
+  const firstModel = chain[0];
+  if (firstModel === undefined) throw new Error('the model escalation chain is empty');
+  const failures: { model: string; error: unknown }[] = [];
+  for (let attempt = 0; attempt < chain.length; attempt += 1) {
+    const model = chain[attempt];
+    if (model === undefined) break;
+    if (attempt > 0) {
+      const reason = fallbackReasonFor(failures[failures.length - 1]?.error);
+      if (reason !== null) {
+        opts.onFallback?.({ from: firstModel, to: model, reason });
+      }
+      // The failed attempt may have streamed partial tokens — subscribers
+      // must drop them before the restarted stream appends.
+      opts.onReset?.();
+    }
+    try {
+      const text = await chatOnce(
+        model,
+        messages,
+        opts,
+        settings,
+        retryBackoffs,
+        stallTimeoutMs,
+        contentStallMs,
+        maxDurationMs,
+      );
+      return {
+        text,
+        modelUsed: model,
+        fallback:
+          attempt === 0
+            ? null
+            : {
+                from: firstModel,
+                to: model,
+                reason: fallbackReasonFor(failures[0]?.error) ?? 'congestion',
+              },
+      };
+    } catch (error) {
+      failures.push({ model, error });
+      // Single-model chain: behavior is exactly what it was before the
+      // fallback feature — no wrapping, no change.
+      if (chain.length === 1) throw error;
+      // A user cancel is never an escalation trigger.
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
+      // Anything not classified congestion/filter fails loudly, as before.
+      if (fallbackReasonFor(error) === null) throw error;
+      // Vision guard: never waste an attempt on a fallback that cannot even
+      // accept the request — rethrow the primary's error unchanged so the
+      // caller's diagnosis (and message) stays exact.
+      if (
+        attempt === 0 &&
+        imageInputFallbackBlocked(messages, chain[1] ?? '', getCachedModels())
+      ) {
+        debugLog('llm', 'fallback skipped: request needs image input the fallback model cannot take');
+        throw error;
+      }
+    }
+  }
+  throw chainError(failures);
 }
 
 /** 429/5xx responses are retried twice with backoff (defaults 2s/8s). */
@@ -471,6 +640,7 @@ export interface OpenRouterModel {
   id: string;
   name?: string;
   supported_parameters?: string[];
+  architecture?: { input_modalities?: string[]; output_modalities?: string[] } | undefined;
 }
 
 let cachedModels: OpenRouterModel[] | null = null;

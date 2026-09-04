@@ -202,7 +202,7 @@ export async function runSpine(
       onActivity: reporter.onActivity,
     };
 
-    let raw = await chat(messages, {
+    let { text: raw } = await chat(messages, {
       model: settings.defaultChatModel,
       temperature: 0.8,
       reasoningEffort: settings.defaultReasoningEffort,
@@ -219,23 +219,25 @@ export async function runSpine(
     } catch (error) {
       // One automatic invalid-JSON retry (same policy as persona drafts); a
       // second failure fails the module loudly.
-      raw = await chat(
-        [
-          ...messages,
+      raw = (
+        await chat(
+          [
+            ...messages,
+            {
+              role: 'user',
+              content: `Your previous reply was invalid JSON for the schema: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
+            },
+          ],
           {
-            role: 'user',
-            content: `Your previous reply was invalid JSON for the schema: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
+            model: settings.defaultChatModel,
+            temperature: 0.8,
+            reasoningEffort: settings.defaultReasoningEffort,
+            responseFormat: 'json',
+            signal: controller.signal,
+            ...streamHandlers,
           },
-        ],
-        {
-          model: settings.defaultChatModel,
-          temperature: 0.8,
-          reasoningEffort: settings.defaultReasoningEffort,
-          responseFormat: 'json',
-          signal: controller.signal,
-          ...streamHandlers,
-        },
-      );
+        )
+      ).text;
       spine = parseSpine(raw);
       entityKinds = parseSpineEntities(raw);
     }
@@ -737,7 +739,7 @@ async function partCall(
   // a failure (retry once, then the part fails); network errors fail
   // directly.
   const settings = await getSettings();
-  const raw = await chat(messages, {
+  const { text: raw } = await chat(messages, {
     model,
     temperature: 0.8,
     reasoningEffort: settings.defaultReasoningEffort,
@@ -749,7 +751,7 @@ async function partCall(
   try {
     return normalizePartMarkdown(raw);
   } catch {
-    const retry = await chat(
+    const { text: retry } = await chat(
       [
         ...messages,
         { role: 'user', content: 'Your previous reply was too short. Write the full part now.' },
@@ -845,11 +847,11 @@ async function normalizationCall(
     }
     return parsed;
   };
-  const raw = await chat(messages, base);
+  const { text: raw } = await chat(messages, base);
   try {
     return run(raw);
   } catch (error) {
-    const retry = await chat(
+    const { text: retry } = await chat(
       [
         ...messages,
         {

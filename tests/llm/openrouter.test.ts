@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
-import { chat, fetchWithRetries, listModels, listVisionChatModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
+import { chat, fetchWithRetries, imageInputFallbackBlocked, listModels, listVisionChatModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): SSE streaming, retries, typed
@@ -13,7 +13,7 @@ import { chat, fetchWithRetries, listModels, listVisionChatModels, modelSupports
  */
 
 interface SseEvent {
-  choices?: { delta?: { content?: string; reasoning?: string } }[];
+  choices?: { delta?: { content?: string; reasoning?: string }; finish_reason?: string }[];
 }
 
 function sseResponse(events: SseEvent[]): Response {
@@ -102,7 +102,7 @@ describe('chat', () => {
       [1, 1],
     );
 
-    expect(result).toBe('Hello world');
+    expect(result.text).toBe('Hello world');
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const init = fetchMock.mock.calls[0]?.[1] as { body?: string } | undefined;
     const body = JSON.parse(init?.body ?? '{}') as { stream?: boolean; model?: string };
@@ -141,7 +141,7 @@ describe('chat', () => {
     expect(reasoningDeltas.join('')).toBe('let me think: the party is level 5');
     expect(contentDeltas).toEqual(['{"ok":true}']);
     // The returned answer is the content only — reasoning never leaks into it.
-    expect(result).toBe('{"ok":true}');
+    expect(result.text).toBe('{"ok":true}');
   });
 
   it('reports "thinking" activity while only reasoning deltas arrive', async () => {
@@ -169,7 +169,7 @@ describe('chat', () => {
       },
     }, [1, 1]);
 
-    expect(result).toBe('{"premise"');
+    expect(result.text).toBe('{"premise"');
     // The 1s watchdog ticked while only reasoning had arrived.
     const thinking = activities.find((activity) => activity.phase === 'thinking');
     expect(thinking).toBeDefined();
@@ -201,7 +201,7 @@ describe('chat', () => {
       },
     }, [1, 1]);
 
-    expect(result).toBe('abcdef');
+    expect(result.text).toBe('abcdef');
     expect(activities.some((activity) => activity.phase === 'waiting')).toBe(true);
     const content = activities.find((activity) => activity.phase === 'content');
     expect(content?.receivedChars).toBe(6);
@@ -274,7 +274,7 @@ describe('chat', () => {
       [1, 1],
     );
 
-    expect(result).toBe('ok');
+    expect(result.text).toBe('ok');
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
@@ -462,5 +462,206 @@ describe('modelSupportsReasoning', () => {
     expect(modelSupportsReasoning('anthropic/claude-3.7-sonnet:thinking')).toBe(true);
     expect(modelSupportsReasoning('openai/gpt-4o')).toBe(false);
     expect(modelSupportsReasoning('meta-llama/llama-3.3-70b-instruct')).toBe(false);
+  });
+});
+
+describe('model fallback chain', () => {
+  const FALLBACK_SETTINGS = { ...SETTINGS, fallbackChatModel: 'potent/fallback' };
+  const chatCallsOf = (fetchMock: { mock: { calls: unknown[][] } }): unknown[][] =>
+    fetchMock.mock.calls.filter(([url]) => String(url).includes('/chat/completions'));
+
+  it('keeps single-model behavior when no fallback is configured', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('rate limited', { status: 429 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
+    ).rejects.toMatchObject({ name: 'OpenRouterError', status: 429 });
+    // The original error propagates unwrapped (no "escalation chain" wrapper).
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
+    ).rejects.toThrow(/rate limited/);
+    expect(chatCallsOf(fetchMock)).toHaveLength(6); // 3 attempts per call × 2 calls
+  });
+
+  it('escalates to the fallback model on a persistent 429 and reports it', async () => {
+    await saveSettings(FALLBACK_SETTINGS);
+    const fallbacks: { from: string; to: string; reason: string }[] = [];
+    const resets: number[] = [];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(new Response('rate limited', { status: 429 }))
+      .mockResolvedValueOnce(sseResponse([{ choices: [{ delta: { content: 'Hello' } }] }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await chat([{ role: 'user', content: 'hi' }], {
+      model: 'cheap/primary',
+      temperature: 1,
+      onFallback: (info) => {
+        fallbacks.push(info);
+      },
+      onReset: () => {
+        resets.push(1);
+      },
+    }, [0, 0]);
+
+    expect(result).toEqual({
+      text: 'Hello',
+      modelUsed: 'potent/fallback',
+      fallback: { from: 'cheap/primary', to: 'potent/fallback', reason: 'congestion' },
+    });
+    expect(fallbacks).toEqual([{ from: 'cheap/primary', to: 'potent/fallback', reason: 'congestion' }]);
+    expect(resets).toHaveLength(1);
+    const bodies = chatCallsOf(fetchMock).map(
+      (call) => JSON.parse((call[1] as { body: string }).body) as { model: string },
+    );
+    expect(bodies.map((body) => body.model)).toEqual([
+      'cheap/primary',
+      'cheap/primary',
+      'cheap/primary',
+      'potent/fallback',
+    ]);
+  });
+
+  it('reports a filter refusal as the fallback reason', async () => {
+    await saveSettings(FALLBACK_SETTINGS);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response('input was flagged by moderation', { status: 403 }))
+      .mockResolvedValueOnce(sseResponse([{ choices: [{ delta: { content: 'ok' } }] }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]);
+    expect(result.fallback).toEqual({
+      from: 'cheap/primary',
+      to: 'potent/fallback',
+      reason: 'filter',
+    });
+  });
+
+  it('throws a combined error naming every attempt when the chain is exhausted', async () => {
+    await saveSettings(FALLBACK_SETTINGS);
+    const fetchMock = vi
+      .fn(() => Promise.resolve(new Response('rate limited', { status: 429 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
+    ).rejects.toThrow(/every model in the escalation chain failed.*cheap\/primary.*potent\/fallback/s);
+    expect(chatCallsOf(fetchMock)).toHaveLength(6); // 429-retries run per model
+  });
+
+  it('never falls back on errors that are not congestion or filter', async () => {
+    await saveSettings(FALLBACK_SETTINGS);
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('bad request', { status: 400 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
+    ).rejects.toMatchObject({ status: 400 });
+    expect(chatCallsOf(fetchMock)).toHaveLength(1);
+  });
+
+  it('never falls back on truncation (finish_reason "length")', async () => {
+    await saveSettings(FALLBACK_SETTINGS);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        sseResponse([{ choices: [{ delta: { content: 'partial' }, finish_reason: 'length' }] }]),
+      );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
+    ).rejects.toMatchObject({ status: 200 });
+    expect(chatCallsOf(fetchMock)).toHaveLength(1);
+  });
+
+  it('skips the fallback for image-input requests when the fallback model is not vision-capable', async () => {
+    await saveSettings(FALLBACK_SETTINGS);
+    const fetchMock = vi.fn((url: unknown) => {
+      if (String(url).includes('/models')) {
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: [
+                {
+                  id: 'potent/fallback',
+                  architecture: { input_modalities: ['text'], output_modalities: ['text'] },
+                },
+              ],
+            }),
+            { status: 200 },
+          ),
+        );
+      }
+      return Promise.resolve(new Response('moderation blocked', { status: 403 }));
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    await listModels(); // populate the client's model cache
+
+    const visionMessages = [
+      {
+        role: 'user' as const,
+        content: [
+          { type: 'text' as const, text: 'compare' },
+          { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,map' } },
+        ],
+      },
+    ];
+    await expect(
+      chat(visionMessages, { model: 'cheap/primary', temperature: 1 }, [0, 0]),
+    ).rejects.toMatchObject({ status: 403 });
+    // Only the primary attempt was made — no wasted call to a text-only model.
+    expect(chatCallsOf(fetchMock)).toHaveLength(1);
+  });
+
+  it('does not fall back after a user abort', async () => {
+    await saveSettings(FALLBACK_SETTINGS);
+    const controller = new AbortController();
+    controller.abort();
+    const fetchMock = vi.fn(
+      () =>
+        new Promise<Response>((_resolve, reject) => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1, signal: controller.signal }, [0, 0]),
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(chatCallsOf(fetchMock)).toHaveLength(1);
+  });
+});
+
+describe('imageInputFallbackBlocked', () => {
+  const visionMessages = [
+    {
+      role: 'user' as const,
+      content: [
+        { type: 'text' as const, text: 'look' },
+        { type: 'image_url' as const, image_url: { url: 'data:image/png;base64,x' } },
+      ],
+    },
+  ];
+
+  it('blocks a cached text-only fallback for vision requests', () => {
+    const models = [
+      { id: 'potent/fallback', architecture: { input_modalities: ['text'], output_modalities: ['text'] } },
+    ];
+    expect(imageInputFallbackBlocked(visionMessages, 'potent/fallback', models)).toBe(true);
+  });
+
+  it('allows a vision-capable fallback, unknown models and text-only requests', () => {
+    const models = [
+      { id: 'potent/fallback', architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] } },
+    ];
+    expect(imageInputFallbackBlocked(visionMessages, 'potent/fallback', models)).toBe(false);
+    expect(imageInputFallbackBlocked(visionMessages, 'unknown/model', models)).toBe(false);
+    expect(imageInputFallbackBlocked([{ role: 'user', content: 'hi' }], 'potent/fallback', models)).toBe(false);
+    expect(imageInputFallbackBlocked(visionMessages, 'potent/fallback', null)).toBe(false);
   });
 });

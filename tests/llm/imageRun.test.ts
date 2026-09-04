@@ -125,7 +125,7 @@ describe('illustrator run (image persona)', () => {
 
   it('manual flow: pauses at prompt-draft, generates 2 candidates on continue, pauses at pick', async () => {
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: 0.021,
@@ -180,7 +180,7 @@ describe('illustrator run (image persona)', () => {
 
   it('pickImages appends keeps to the artifact, sets cover, and deletes discards', async () => {
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: null,
@@ -220,7 +220,7 @@ describe('illustrator run (image persona)', () => {
   it('targets a global artifact while the run stays campaign-anchored', async () => {
     const { campaignId, persona, targetId } = await seed();
     await publishToLibrary(targetId);
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('library-keep'), fakeImageBytes('library-discard')],
       costUsd: null,
@@ -258,7 +258,7 @@ describe('illustrator run (image persona)', () => {
 
   it('pickImages with an empty keep discards all candidates and keeps the artifact untouched', async () => {
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('only')],
       costUsd: null,
@@ -295,7 +295,7 @@ describe('illustrator run (image persona)', () => {
       openRouterApiKey: 'test-key',
       imagesEnabled: false,
     });
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -314,7 +314,7 @@ describe('illustrator run (image persona)', () => {
     // x-ai/grok-imagine-image-2.0-class models cap n at 1: imageGen retries
     // and reports cappedToOne — the run must NOT continue silently.
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_PROMPT_DRAFT));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('single')],
       costUsd: 0.011,

@@ -140,8 +140,8 @@ describe('entity batch — real chain persistence and live resolution', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = moduleFixture(campaign.id);
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(draft))
-      .mockResolvedValueOnce(JSON.stringify(statblock));
+      .mockResolvedValueOnce({ text: JSON.stringify(draft), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(statblock), modelUsed: 'test-model', fallback: null });
 
     render(<Harness campaign={campaign} module={module} />);
 

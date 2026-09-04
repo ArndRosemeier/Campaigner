@@ -503,6 +503,11 @@ function ActiveRun({ runId, campaign }: { runId: string; campaign: Campaign }): 
         // Illustration only: the model's raw reasoning deltas while it works,
         // dimmed and cleared with the run. Never part of the run's output.
         setThinking((previous) => (previous + event.delta).slice(-2000));
+      } else if (event.kind === 'reset') {
+        // Model fallback restarted the stream: drop the failed attempt's
+        // partial tokens so the preview never stitches two attempts together.
+        setStreamed('');
+        setThinking('');
       }
     });
   }, [runId]);

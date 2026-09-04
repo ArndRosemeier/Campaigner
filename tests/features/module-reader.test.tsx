@@ -472,14 +472,12 @@ describe('ModuleReaderPage', () => {
     const { campaignId, moduleId } = await seedReaderModule({
       entityKinds: [{ name: 'Missing Person', kind: 'note', absorbed: [] }],
     });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Missing Person',
         summary: 'Seen near the tower.',
         suggestedTags: [],
         body: '# Missing Person\nThey never came down.',
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
     renderAppAt(modulePath(campaignId, moduleId));
 
     const chip = await screen.findByTestId('wiki-chip-unresolved', {}, { timeout: 10_000 });

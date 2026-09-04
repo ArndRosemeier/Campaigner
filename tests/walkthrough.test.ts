@@ -108,8 +108,8 @@ describe('T8 walkthrough', () => {
       builtIn: true,
     });
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(STATBLOCK));
+      .mockResolvedValueOnce({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(STATBLOCK), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun({
       campaign,

@@ -425,9 +425,7 @@ describe('EntityPanel', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     await seedBuiltInPersonas();
     await updateSettings({ imagesEnabled: true });
-    chatMock.mockResolvedValue(
-      JSON.stringify({ prompt: 'A portrait', negative: '', styleNotes: 'ink' }),
-    );
+    chatMock.mockResolvedValue({ text: JSON.stringify({ prompt: 'A portrait', negative: '', styleNotes: 'ink' }), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01, cappedToOne: false });
     intakeImageMock.mockResolvedValue({
       blob: new Blob(['intake']),
@@ -893,8 +891,7 @@ describe('EntityPanel — normalization state (fix-01)', () => {
     expect(screen.getByTestId('batch-gate-reason')).toHaveTextContent('normalization failed');
 
     // Retry runs the pass for real: every extracted name self-maps.
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         entities: [
           { name: 'Mira', canonical: 'Mira', kind: 'npc' },
           { name: 'Undercroft', canonical: 'Undercroft', kind: 'location' },
@@ -902,8 +899,7 @@ describe('EntityPanel — normalization state (fix-01)', () => {
           { name: 'Bram', canonical: 'Bram', kind: 'npc' },
           { name: 'The Tide Bell', canonical: 'The Tide Bell', kind: 'note' },
         ],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
     await user.click(screen.getByTestId('entity-normalize-retry'));
 
     // The panel prop is a static snapshot here (no live query in this test),

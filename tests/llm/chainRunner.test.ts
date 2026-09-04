@@ -65,8 +65,7 @@ describe('remaining personas wired', () => {
   it('worldbuilder produces a location artifact from its draft', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const persona = personaOf('worldbuilder', 'Worldbuilder', 'location');
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Emberfall Docks',
         summary: 'Smuggling hub.',
         suggestedTags: ['docks'],
@@ -75,8 +74,7 @@ describe('remaining personas wired', () => {
         inhabitants: 'Dockworkers, smugglers',
         pointsOfInterest: [{ name: 'The Sinking Gull', description: 'A tavern.' }],
         hooks: ['A crate of emberwine went missing.'],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     const input = { ...campaignInput(campaign.id), persona };
     const runId = await runEngine.startRun(input);
@@ -96,8 +94,7 @@ describe('remaining personas wired', () => {
   it('faction-designer produces a faction artifact from its draft', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const persona = personaOf('faction-designer', 'Faction Designer', 'faction');
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'The Ember Guild',
         summary: 'Controls the emberwine trade.',
         suggestedTags: ['guild'],
@@ -106,8 +103,7 @@ describe('remaining personas wired', () => {
         methods: 'Smuggling, bribery.',
         resources: 'Fleet of barges.',
         ranks: [{ title: 'Guildmaster', description: 'Runs everything.' }],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     const input = { ...campaignInput(campaign.id), persona };
     const runId = await runEngine.startRun(input);
@@ -125,14 +121,12 @@ describe('remaining personas wired', () => {
   it('plot-architect produces a note artifact from its draft', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const persona = personaOf('plot-architect', 'Plot Architect', 'note');
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'The Emberwine Conspiracy',
         summary: 'A smuggling plot.',
         suggestedTags: ['plot'],
         body: '# The Emberwine Conspiracy\nThree acts.',
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     const input = { ...campaignInput(campaign.id), persona };
     const runId = await runEngine.startRun(input);
@@ -185,9 +179,9 @@ describe('remaining personas wired', () => {
       legendary: [],
     };
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(draft))
-      .mockResolvedValueOnce(JSON.stringify(incompleteStatblock))
-      .mockResolvedValueOnce(JSON.stringify(validStatblock));
+      .mockResolvedValueOnce({ text: JSON.stringify(draft), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(incompleteStatblock), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(validStatblock), modelUsed: 'test-model', fallback: null });
 
     const state = await chainRunner.run(
       campaign,
@@ -253,7 +247,7 @@ describe('remaining personas wired', () => {
       personality: 'Chatty, cagey about prices.',
       needsStatBlock: false,
     };
-    chatMock.mockResolvedValueOnce(JSON.stringify(draft));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(draft), modelUsed: 'test-model', fallback: null });
 
     const state = await chainRunner.run(
       campaign,
@@ -320,8 +314,7 @@ describe('continuity editor persona', () => {
       mode: 'review',
       builtIn: true,
     });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         verdict: 'issues_found',
         summary: 'Grimm is described as alive here but dead elsewhere.',
         issues: [
@@ -331,8 +324,7 @@ describe('continuity editor persona', () => {
             relatedTo: 'Grimm',
           },
         ],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun({
       campaign: {
@@ -374,8 +366,7 @@ describe('writers\u2019 room chain', () => {
     const factionDesigner = personaOf('faction-designer', 'Faction Designer', 'faction');
 
     chatMock
-      .mockResolvedValueOnce(
-        JSON.stringify({
+      .mockResolvedValueOnce({ text: JSON.stringify({
           name: 'Emberfall Docks',
           summary: 'Smuggling hub.',
           suggestedTags: [],
@@ -384,10 +375,8 @@ describe('writers\u2019 room chain', () => {
           inhabitants: '',
           pointsOfInterest: [],
           hooks: [],
-        }),
-      )
-      .mockResolvedValueOnce(
-        JSON.stringify({
+        }), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify({
           name: 'The Ember Guild',
           summary: 'Rules the docks.',
           suggestedTags: [],
@@ -396,8 +385,7 @@ describe('writers\u2019 room chain', () => {
           methods: '',
           resources: '',
           ranks: [],
-        }),
-      );
+        }), modelUsed: 'test-model', fallback: null });
 
     const steps: ChainStepInput[] = [
       { personaId: worldbuilder.id, brief: 'Build a docks district.' },
@@ -427,8 +415,7 @@ describe('writers\u2019 room chain', () => {
   it('pauses the chain when a manual run awaits the user', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const persona = personaOf('worldbuilder', 'Worldbuilder', 'location');
-    chatMock.mockResolvedValue(
-      JSON.stringify({
+    chatMock.mockResolvedValue({ text: JSON.stringify({
         name: 'Emberfall Docks',
         summary: '',
         suggestedTags: [],
@@ -437,8 +424,7 @@ describe('writers\u2019 room chain', () => {
         inhabitants: '',
         pointsOfInterest: [],
         hooks: [],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     const result = await chainRunner.run(
       campaign,
@@ -478,8 +464,7 @@ describe('writers\u2019 room chain', () => {
     // Step 1 completes; step 2's reply is garbage twice (draft + the engine's
     // automatic JSON-fix retry) → the run fails → the chain stops.
     chatMock
-      .mockResolvedValueOnce(
-        JSON.stringify({
+      .mockResolvedValueOnce({ text: JSON.stringify({
           name: 'Emberfall Docks',
           summary: 'Smuggling hub.',
           suggestedTags: [],
@@ -488,10 +473,9 @@ describe('writers\u2019 room chain', () => {
           inhabitants: 'Dockworkers',
           pointsOfInterest: [],
           hooks: [],
-        }),
-      )
-      .mockResolvedValueOnce('this is not json')
-      .mockResolvedValueOnce('still not json');
+        }), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: 'this is not json', modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: 'still not json', modelUsed: 'test-model', fallback: null });
 
     const steps: ChainStepInput[] = [
       { personaId: worldbuilder.id, brief: 'Build a docks district.' },
@@ -515,8 +499,7 @@ describe('writers\u2019 room chain', () => {
     expect(failedRun?.errorMessage ?? '').not.toBe('');
 
     // Retry: only the failed step re-runs, with a valid reply this time.
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'The Ember Guild',
         summary: 'Rules the docks.',
         suggestedTags: [],
@@ -525,8 +508,7 @@ describe('writers\u2019 room chain', () => {
         methods: '',
         resources: '',
         ranks: [],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
     const retried = await chainRunner.retry();
     expect(retried.status).toBe('completed');
     expect(retried.steps.map((step) => step.status)).toEqual(['completed', 'completed']);

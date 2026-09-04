@@ -9,6 +9,7 @@ import { updateSettings } from '@/db/settingsRepo';
 import { createModule } from '@/domain';
 import { createModuleAndRun, retrySpine } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
+import type { ChatResult } from '@/llm/openrouter';
 import { useProgressStore } from '@/lib/progress';
 
 /**
@@ -74,8 +75,12 @@ const AUTO_SPINE = {
 
 /** Part prose well above the 100-char floor, deliberately without wiki-links
  * (so the post-parts normalization pass makes no model call). */
-function partMarkdown(marker: string): string {
-  return `${marker}: The tower door opens onto a spiral stair that counts its own steps aloud. `.repeat(4);
+function partMarkdown(marker: string): ChatResult {
+  return {
+    text: `${marker}: The tower door opens onto a spiral stair that counts its own steps aloud. `.repeat(4),
+    modelUsed: 'test-model',
+    fallback: null,
+  };
 }
 
 beforeEach(async () => {
@@ -92,7 +97,7 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
   it('approves the generated spine as-is and runs the parts unattended', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(AUTO_SPINE)) // pass 0
+      .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null }) // pass 0
       .mockResolvedValue(partMarkdown('part')); // every pass-1 call
 
     const moduleId = await createModuleAndRun(campaign, {
@@ -127,7 +132,7 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
 
   it('stops at the spine checkpoint when the flag is off (default)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    chatMock.mockResolvedValue(JSON.stringify(AUTO_SPINE));
+    chatMock.mockResolvedValue({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null });
 
     const moduleId = await createModuleAndRun(campaign, {
       campaignId: campaign.id,
@@ -166,7 +171,7 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
     await patchModule(saved.id, { status: 'failed', errorMessage: 'The provider timed out' });
 
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(AUTO_SPINE)) // retried pass 0
+      .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null }) // retried pass 0
       .mockResolvedValue(partMarkdown('retry')); // pass 1
 
     await retrySpine(saved.id, campaign);

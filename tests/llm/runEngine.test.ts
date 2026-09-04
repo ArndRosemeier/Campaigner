@@ -110,8 +110,8 @@ describe('runEngine', () => {
   it('manual happy path: pauses after each step and completes on approval', async () => {
     const { campaignId, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun(INPUT(campaignId, persona));
     await waitFor(async () => {
@@ -154,9 +154,9 @@ describe('runEngine', () => {
   it('retries invalid JSON once automatically, then succeeds', async () => {
     const { campaignId, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce('this is not json at all')
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: 'this is not json at all', modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun(INPUT(campaignId, persona));
     await waitFor(async () => {
@@ -171,7 +171,7 @@ describe('runEngine', () => {
 
   it('marks the step needs_review after a second JSON failure (review autonomy)', async () => {
     const { campaignId, persona } = await seed();
-    chatMock.mockResolvedValue('still not json');
+    chatMock.mockResolvedValue({ text: 'still not json', modelUsed: 'test-model', fallback: null });
 
     const input = { ...INPUT(campaignId, persona), autonomy: 'review' as const };
     const runId = await runEngine.startRun(input);
@@ -187,7 +187,7 @@ describe('runEngine', () => {
     // The designed rescue path: the user EDITS the rejected draft step to
     // valid JSON (approve-without-edit now fails loudly in finalize — it
     // used to create an artifact named after the persona with empty data).
-    chatMock.mockResolvedValue(JSON.stringify(VALID_STATBLOCK));
+    chatMock.mockResolvedValue({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     await runEngine.editStep(runId, 1, { parsed: VALID_DRAFT }, input);
     await waitFor(async () => {
       const run2 = await getRun(runId);
@@ -199,7 +199,7 @@ describe('runEngine', () => {
 
   it('auto mode with a never-parsing draft fails the run instead of saving an empty artifact', async () => {
     const { campaignId, persona } = await seed();
-    chatMock.mockResolvedValue('still not json');
+    chatMock.mockResolvedValue({ text: 'still not json', modelUsed: 'test-model', fallback: null });
 
     const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const };
     const runId = await runEngine.startRun(input);
@@ -222,8 +222,8 @@ describe('runEngine', () => {
     // be skipped and the NPC finalized WITHOUT its stat block.
     const { campaignId, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValue('this is not a statblock');
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({ text: 'this is not a statblock', modelUsed: 'test-model', fallback: null });
 
     const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const };
     const runId = await runEngine.startRun(input);
@@ -261,9 +261,7 @@ describe('runEngine', () => {
         moduleView: { global: true, campaign: true, module: true },
       },
     });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({ verdict: 'consistent', summary: 'All consistent.', issues: [] }),
-    );
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({ verdict: 'consistent', summary: 'All consistent.', issues: [] }), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun({
       campaign,
@@ -306,7 +304,7 @@ describe('runEngine', () => {
       pinnedChunkIds: [],
       targetArtifactId: arc.id,
     };
-    chatMock.mockResolvedValue('still not json');
+    chatMock.mockResolvedValue({ text: 'still not json', modelUsed: 'test-model', fallback: null });
     const runId = await runEngine.startRun(input);
     await waitFor(async () => {
       const run = await getRun(runId);
@@ -337,8 +335,7 @@ describe('runEngine', () => {
       producesKind: 'location',
       builtIn: true,
     });
-    chatMock.mockResolvedValueOnce(
-      JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Drowned Docks',
         summary: 'Flooded piers.',
         suggestedTags: 'harbour',
@@ -347,8 +344,7 @@ describe('runEngine', () => {
         inhabitants: 'Fishers',
         pointsOfInterest: ['Sunken bell tower', { name: 'Fish market', description: 'Stalls.' }],
         hooks: [{ title: 'Missing diver' }],
-      }),
-    );
+      }), modelUsed: 'test-model', fallback: null });
 
     const input = {
       ...INPUT(campaignId, persona2),
@@ -379,8 +375,8 @@ describe('runEngine', () => {
   it('auto mode runs to completion without pausing', async () => {
     const { campaignId, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
-      .mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
     const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const };
     const runId = await runEngine.startRun(input);
@@ -395,7 +391,7 @@ describe('runEngine', () => {
 
   it('cancel stops the run and no artifact is created', async () => {
     const { campaignId, persona } = await seed();
-    chatMock.mockResolvedValue(JSON.stringify(VALID_DRAFT));
+    chatMock.mockResolvedValue({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun(INPUT(campaignId, persona));
     await waitFor(async () => {
@@ -412,7 +408,7 @@ describe('runEngine', () => {
   it('resumeRun resumes a failed run from the failed step, preserving prior completed steps', async () => {
     const { campaignId, persona } = await seed();
     chatMock
-      .mockResolvedValueOnce(JSON.stringify(VALID_DRAFT))
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
       .mockRejectedValueOnce(new Error('Model timeout 504'));
 
     const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const };
@@ -430,7 +426,7 @@ describe('runEngine', () => {
     expect(failedRun?.steps[1]?.output).not.toBeNull();
 
     // Now model recovers: resume the run
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_STATBLOCK));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
     await runEngine.resumeRun(runId);
 
     await waitFor(async () => {
@@ -455,7 +451,7 @@ describe('runEngine', () => {
       reasoningEffort: 'high',
     };
 
-    chatMock.mockResolvedValueOnce(JSON.stringify(VALID_DRAFT));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun(INPUT(campaignId, customPersona));
     await waitFor(async () => {

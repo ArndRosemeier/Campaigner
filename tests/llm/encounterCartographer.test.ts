@@ -129,7 +129,7 @@ async function approveUntilPick(runId: string, runInput: StartRunInput): Promise
 describe('Encounter Cartographer run', () => {
   it('pauses at brief and pick and finalizes one complete encounter', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     const candidates = await approveUntilPick(runId, runInput);
@@ -155,7 +155,7 @@ describe('Encounter Cartographer run', () => {
   it('does not approve a rejected brief into an opaque downstream failure', async () => {
     const { campaign, cartographer } = await setup();
     // Both the initial reply and automatic repair fail the brief schema.
-    chatMock.mockResolvedValue('{}');
+    chatMock.mockResolvedValue({ text: '{}', modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
@@ -186,7 +186,7 @@ describe('Encounter Cartographer run', () => {
         { ...BRIEF.rooms[1], monsterIndexes: [3] },
       ],
     };
-    chatMock.mockResolvedValue(JSON.stringify(broken));
+    chatMock.mockResolvedValue({ text: JSON.stringify(broken), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
@@ -213,7 +213,7 @@ describe('Encounter Cartographer run', () => {
       ...BRIEF,
       monsters: [{ name: 'Ash Cultist', count: 2, notes: '' }],
     };
-    chatMock.mockResolvedValue(JSON.stringify(missingSource));
+    chatMock.mockResolvedValue({ text: JSON.stringify(missingSource), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
@@ -238,7 +238,7 @@ describe('Encounter Cartographer run', () => {
       entryRoomIndex: '0',
     };
     delete loose.negative;
-    chatMock.mockResolvedValueOnce(JSON.stringify(loose));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(loose), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
@@ -257,7 +257,7 @@ describe('Encounter Cartographer run', () => {
 
   it('validates a layout edit before downstream steps can observe it', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await approveUntilPick(runId, runInput);
@@ -272,7 +272,7 @@ describe('Encounter Cartographer run', () => {
 
   it('checks brief/layout prerequisites again when the user approves a map', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     const candidates = await approveUntilPick(runId, runInput);
@@ -294,7 +294,7 @@ describe('Encounter Cartographer run', () => {
 
   it('auto autonomy selects candidate one and completes without a pick pause', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runId = await runEngine.startRun({ ...input(campaign, cartographer), autonomy: 'auto' });
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
@@ -322,7 +322,7 @@ describe('Encounter Cartographer run', () => {
       },
     });
     if (target.kind !== 'encounter') throw new Error('encounter target missing');
-    chatMock.mockResolvedValueOnce(JSON.stringify({ ...BRIEF, monsters: [{ name: 'Wrong Rename', count: 9, notes: '' }] }));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({ ...BRIEF, monsters: [{ name: 'Wrong Rename', count: 9, notes: '' }] }), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer, target.id);
     const runId = await runEngine.startRun(runInput);
     const candidates = await approveUntilPick(runId, runInput);
@@ -358,10 +358,10 @@ describe('Encounter Cartographer run', () => {
     });
     // The model echoes the roster but decorates it with a stub inline stat
     // block — irrelevant in regenerate mode, where sources are preserved.
-    chatMock.mockResolvedValueOnce(JSON.stringify({
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
       ...BRIEF,
       monsters: [{ name: 'Wrong Rename', count: 9, notes: '', statBlock: {} }],
-    }));
+    }), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer, target.id);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
@@ -391,13 +391,13 @@ describe('Encounter Cartographer run', () => {
         mapImageId: null, layout: null,
       },
     });
-    chatMock.mockResolvedValue(JSON.stringify({
+    chatMock.mockResolvedValue({ text: JSON.stringify({
       ...BRIEF,
       monsters: [
         { name: 'Cultist A', count: 1, notes: '' },
         { name: 'Cultist B', count: 1, notes: '' },
       ],
-    }));
+    }), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer, target.id);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
@@ -411,10 +411,10 @@ describe('Encounter Cartographer run', () => {
 
   it('reports unplaced roster entries as a repairable issue instead of a layout failure', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValue(JSON.stringify({
+    chatMock.mockResolvedValue({ text: JSON.stringify({
       ...BRIEF,
       rooms: BRIEF.rooms.map((room) => ({ ...room, monsterIndexes: [] })),
-    }));
+    }), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await waitForRun(async () => {
@@ -434,7 +434,7 @@ describe('Encounter Cartographer run', () => {
       imagesEnabled: true,
       encounterVerifyModel: 'vision/verifier',
     });
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
     await approveUntilPick(runId, runInput);
@@ -444,7 +444,7 @@ describe('Encounter Cartographer run', () => {
 
     // Empty setting → the default chat model remains the fallback.
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const fallbackRunId = await runEngine.startRun(runInput);
     await approveUntilPick(fallbackRunId, runInput);
     expect(vi.mocked(encounterRunAdapters.verifyEncounterMap).mock.calls.at(-1)?.[0]?.model).toBe(
@@ -476,7 +476,7 @@ describe('Encounter Cartographer run', () => {
 
   it('stops a manual run for review when the map drifts', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
       const expected = coarseStructure(layout);
       return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true });
@@ -501,7 +501,7 @@ describe('Encounter Cartographer run', () => {
 
   it('fails auto generation when verification exceeds the threshold', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
       const expected = coarseStructure(layout);
       return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true });
@@ -515,7 +515,7 @@ describe('Encounter Cartographer run', () => {
 
   it('resumes a failed encounter run from stylize step without re-generating brief or layout', async () => {
     const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce(JSON.stringify(BRIEF));
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     // Simulate image model failure on first attempt
     vi.mocked(encounterRunAdapters.generateImages).mockRejectedValueOnce(
       new Error('Image model temporarily unavailable (503)'),
