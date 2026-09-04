@@ -77,6 +77,7 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 - `11-ENCOUNTER-GENERATOR.md` — generated encounters: LLM brief → deterministic grid layout → schematic → stylized battlemap (img2img) → vision verify; room-veiled mobs seeded onto the board; unattended module-generation path
 - `12-BESTIARY-PACKS.md` — bestiary pack imports: per-source adapters turn user-imported machine-readable creature data (Foundry pf2e/dnd5e-SRD packs) into exact `statBlock` chunks in the existing pipeline; pack roster grounds encounter monster selection; never bundled or fetched
 - `13-WIKI-GRAPH.md` — the Graph page draws the derived wiki-link graph: module-prose mentions resolved with the reader's pool + module-context conventions, phantom nodes for unresolved names, module/kind filters, mention-count edge weights; derivation in the pure `src/domain/wikiGraph.ts`
+- `14-BACKLINKS-ORPHANS.md` — the Mentions panel on the entity editor (every wiki-link mention of the entity across all modules, deep-linked to the reader) and the Graph page's collapsible link-health report (unresolved phantom names + never-mentioned artifacts, filter-aware, visibly capped) — both consuming `buildWikiGraph` uncapped; no persistence, no derivation changes
 - `fix-*.md` — fix specs: one focused defect each (problem, root causes, binding
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard
@@ -132,5 +133,9 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
   - **Alias** — an alternate name on an artifact (`aliases`); a wiki-link
     resolves by exact name OR alias. "Use existing entity" adds the stub
     name as an alias so the chip resolves.
+  - **Phantom** — an unresolved wiki-link name (no artifact matches,
+    exactly or by alias): rendered as a dashed chip in the reader and a
+    dashed node on the Graph page — the campaign's to-do list, never an
+    artifact.
 - No environment variables at build time; all configuration (API key, models)
   is user-entered at runtime and stored in Dexie `settings`.

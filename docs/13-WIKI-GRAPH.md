@@ -209,6 +209,12 @@ Rules pinned by tests:
 Help topic `graph` (`src/help/helpContent.ts`) is rewritten for the new
 content.
 
+> **Delta (14-BACKLINKS-ORPHANS):** the Graph page gained a collapsible
+> **link-health report** below the graph area — unresolved phantom names
+> and never-mentioned artifacts, honoring these filters, each sub-list
+> visibly capped at 20 rows. It consumes `buildWikiGraph` uncapped; see
+> 14 for the binding decisions.
+
 ## 5. Acceptance criteria
 
 - A campaign whose module prose mentions resolved entities, aliases, global
