@@ -32,6 +32,17 @@ export interface MarkerTarget {
   name?: string;
 }
 
+/**
+ * The entrance marker's canonical hue (entrance/exit spawn zones, doc 11):
+ * rooms consume the palette strictly in order (room index → palette entry),
+ * so the entry ONE PAST the room count can never collide with a room marker.
+ * With all ten hues taken (10-room layouts) there is no free hue and
+ * entrance detection is skipped — the layout coordinate stays authoritative.
+ */
+export function entranceMarkerConfig(roomCount: number): RoomMarkerConfig | null {
+  return CANONICAL_ROOM_MARKERS[roomCount] ?? null;
+}
+
 export interface DetectedMarker {
   id: string;
   letter: string;

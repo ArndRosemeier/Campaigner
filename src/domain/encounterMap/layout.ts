@@ -3,11 +3,16 @@ import type { BattleVeil } from '@/domain/battle';
 import {
   encounterLayoutSchema,
   encounterMapBriefSchema,
+  cellKeyOf,
+  entranceOutwardCell,
+  entranceSideDelta,
   type EncounterLayout,
   type EncounterMapAspect,
   type EncounterMapBrief,
   type EncounterRoomSize,
   type LayoutCorridor,
+  type LayoutEntrance,
+  type LayoutEntranceSide,
   type LayoutRect,
   type LayoutRoom,
   type MonsterPlacement,
@@ -99,7 +104,124 @@ function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout
     return { a, b, rects: compressPath(path) };
   });
 
+  // Entrance zone: the spawn room's outer-wall cell farthest from its own
+  // doors, opening toward the outside. Deterministic; omitted when the room
+  // has no candidate wall (the field is optional enrichment, never invented).
+  const spawn = rooms.find((room) => room.spawn);
+  if (spawn !== undefined) {
+    const entrance = placeEntrance(spawn, occupied, corridorCells, gridW, gridH);
+    if (entrance !== undefined) spawn.entrance = entrance;
+  }
+
   return { gridW, gridH, theme: brief.theme, rooms, corridors };
+}
+
+const ENTRANCE_SIDES: readonly LayoutEntranceSide[] = ['north', 'west', 'east', 'south'];
+
+/**
+ * Deterministic entrance placement (entrance/exit spawn zones, doc 11): the
+ * spawn room's outer-wall cell FARTHEST from the room's own corridor doors —
+ * the party enters at one end and fights toward the doors — opening toward
+ * the outside world. Ties break toward the nearest grid edge, then
+ * lexicographically ((y, x), then a fixed side order), so the same geometry
+ * always yields the same entrance. A room with no candidate wall (every
+ * boundary face is a corridor door or another room) gets no entrance: the
+ * field is optional enrichment and is never invented.
+ */
+export function placeEntrance(
+  room: LayoutRoom,
+  occupied: ReadonlySet<string>,
+  corridorCells: ReadonlySet<string>,
+  gridW: number,
+  gridH: number,
+): LayoutEntrance | undefined {
+  const roomCells = new Set<string>();
+  for (const rect of room.rects) {
+    for (const key of cellsOfRect(rect)) roomCells.add(key);
+  }
+  const doorCells: Cell[] = [];
+  for (const key of roomCells) {
+    const cell = parseCell(key);
+    if (neighbors(cell).some((neighbor) => corridorCells.has(cellKey(neighbor)))) {
+      doorCells.push(cell);
+    }
+  }
+  interface EntranceCandidate {
+    cell: Cell;
+    side: LayoutEntranceSide;
+    doorDistance: number;
+    edgeSteps: number;
+  }
+  const candidates: EntranceCandidate[] = [];
+  for (const key of roomCells) {
+    const cell = parseCell(key);
+    for (const side of ENTRANCE_SIDES) {
+      const [dx, dy] = entranceSideDelta(side);
+      const outward = { x: cell.x + dx, y: cell.y + dy };
+      const outwardKey = cellKey(outward);
+      // Not an outer wall of this room, a corridor door, or another room's
+      // cell — the entrance opens into the void, the map edge, or a wall.
+      if (roomCells.has(outwardKey) || corridorCells.has(outwardKey) || occupied.has(outwardKey)) {
+        continue;
+      }
+      const doorDistance =
+        doorCells.length === 0
+          ? 0
+          : Math.min(...doorCells.map((door) => Math.abs(door.x - cell.x) + Math.abs(door.y - cell.y)));
+      // Steps from the outward cell to just past the grid edge; naturally 0
+      // when the outward cell is off-grid (a map-edge entrance).
+      const edgeSteps =
+        dx > 0 ? gridW - outward.x : dx < 0 ? outward.x + 1 : dy > 0 ? gridH - outward.y : outward.y + 1;
+      candidates.push({
+        cell,
+        side,
+        doorDistance: Math.max(0, doorDistance),
+        edgeSteps: Math.max(0, edgeSteps),
+      });
+    }
+  }
+  if (candidates.length === 0) return undefined;
+  candidates.sort(
+    (left, right) =>
+      right.doorDistance - left.doorDistance ||
+      left.edgeSteps - right.edgeSteps ||
+      left.cell.y - right.cell.y ||
+      left.cell.x - right.cell.x ||
+      ENTRANCE_SIDES.indexOf(left.side) - ENTRANCE_SIDES.indexOf(right.side),
+  );
+  const best = candidates[0];
+  if (best === undefined) return undefined;
+  return { x: best.cell.x, y: best.cell.y, side: best.side };
+}
+
+/**
+ * The party staging block for the spawn room: the mobsRect-sized rectangle
+ * slid along the entrance axis until it hugs the entrance wall while staying
+ * inside the room union. Without an entrance (legacy layouts) this is
+ * exactly the mobsRect — the pre-entrance staging-ground behavior.
+ */
+export function stagingBlockRect(room: LayoutRoom): LayoutRect {
+  const entrance = room.entrance;
+  if (entrance === undefined) return room.mobsRect;
+  const [dx, dy] = entranceSideDelta(entrance.side);
+  const roomCells = new Set<string>();
+  for (const rect of room.rects) {
+    for (const key of cellsOfRect(rect)) roomCells.add(key);
+  }
+  let current = room.mobsRect;
+  for (;;) {
+    const shifted: LayoutRect = { ...current, x: current.x + dx, y: current.y + dy };
+    let inside = true;
+    for (const key of cellsOfRect(shifted)) {
+      if (!roomCells.has(key)) {
+        inside = false;
+        break;
+      }
+    }
+    if (!inside) break;
+    current = shifted;
+  }
+  return current;
 }
 
 function roomRects(
@@ -214,6 +336,14 @@ export function layoutFromStagingMarkers(input: StagingLayoutInput): EncounterLa
     };
   });
 
+  // Entrance zone (no corridors here): the spawn area's boundary cell whose
+  // outward side faces the nearest grid edge — the party walks in off the map.
+  const spawnRoom = layoutRooms.find((room) => room.spawn);
+  if (spawnRoom !== undefined) {
+    const entrance = placeEntrance(spawnRoom, new Set(), new Set(), gridW, gridH);
+    if (entrance !== undefined) spawnRoom.entrance = entrance;
+  }
+
   const layout: EncounterLayout = {
     gridW,
     gridH,
@@ -240,9 +370,25 @@ export function validateEncounterLayout(
 
   const isStaging = layout.rooms.some((room) => room.stagingPoint !== undefined);
   const ownerByCell = new Map<string, string>();
+  const corridorCellKeys = new Set<string>();
+  for (const corridor of layout.corridors) {
+    for (const key of cellsOfRects(corridor.rects)) corridorCellKeys.add(key);
+  }
+  if (layout.rooms.filter((room) => room.entrance !== undefined).length > 1) {
+    issues.push('layout must contain at most one entrance');
+  }
   for (const room of layout.rooms) {
     const cells = cellsOfRects(room.rects);
     if (cells.size === 0 || !cellsConnected(cells)) issues.push(`${room.name}: room union is disconnected`);
+    const entrance = room.entrance;
+    if (entrance !== undefined) {
+      if (!room.spawn) issues.push(`${room.name}: only the spawn room may carry an entrance`);
+      const cellSet = new Set(cells);
+      if (!cellSet.has(cellKeyOf(entrance))) issues.push(`${room.name}: entrance cell is outside the room`);
+      const outwardKey = cellKeyOf(entranceOutwardCell(entrance));
+      if (cellSet.has(outwardKey)) issues.push(`${room.name}: entrance side does not face the outer wall`);
+      if (corridorCellKeys.has(outwardKey)) issues.push(`${room.name}: entrance opens into a corridor`);
+    }
     for (const rect of [...room.rects, room.mobsRect]) {
       if (!rectInBounds(rect, layout.gridW, layout.gridH)) issues.push(`${room.name}: rectangle outside grid`);
     }

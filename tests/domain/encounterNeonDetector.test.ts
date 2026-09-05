@@ -3,11 +3,26 @@ import {
   CANONICAL_ROOM_MARKERS,
   circularHueDistance,
   detectNeonMarkers,
+  entranceMarkerConfig,
   rgbToHsv,
   type RgbImageLike,
 } from '@/domain/encounterMap/neonDetector';
 
 describe('neonDetector', () => {
+  describe('entranceMarkerConfig', () => {
+    it('returns the palette entry one past the room count — never a room hue', () => {
+      expect(entranceMarkerConfig(1)).toEqual(CANONICAL_ROOM_MARKERS[1]);
+      expect(entranceMarkerConfig(1)?.hue).toBe(180);
+      expect(entranceMarkerConfig(9)).toEqual(CANONICAL_ROOM_MARKERS[9]);
+      expect(entranceMarkerConfig(9)?.hue).toBe(205);
+    });
+
+    it('returns null when all ten hues are taken (10-room layouts)', () => {
+      expect(entranceMarkerConfig(10)).toBeNull();
+      expect(entranceMarkerConfig(11)).toBeNull();
+    });
+  });
+
   describe('rgbToHsv', () => {
     it('computes accurate HSV for pure colors', () => {
       expect(rgbToHsv(255, 0, 0)).toEqual({ h: 0, s: 1, v: 1 });

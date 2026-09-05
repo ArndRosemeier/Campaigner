@@ -5,12 +5,16 @@ import {
   EncounterLayoutError,
   layoutFromStagingMarkers,
   packRooms,
+  placeEntrance,
   placeMonsters,
   renderSchematic,
+  stagingBlockRect,
   validateEncounterLayout,
   veilsFromRooms,
+  encounterLayoutSchema,
   type EncounterLayout,
   type EncounterMapBrief,
+  type LayoutRoom,
 } from '@/domain';
 
 const ROOM_A = '00000000-0000-4000-8000-0000000000a1';
@@ -121,6 +125,12 @@ describe('encounter map layout engine', () => {
       fillStyle: '',
       strokeStyle: '',
       lineWidth: 1,
+      beginPath: vi.fn(),
+      moveTo: vi.fn(),
+      lineTo: vi.fn(),
+      closePath: vi.fn(),
+      fill: vi.fn(),
+      stroke: vi.fn(),
       fillRect: vi.fn(),
       strokeRect: vi.fn(),
     };
@@ -140,6 +150,272 @@ describe('encounter map layout engine', () => {
     });
     expect(context.fillRect).toHaveBeenCalled();
     expect(context.strokeRect).toHaveBeenCalled();
+  });
+
+  describe('entrance zone', () => {
+    const OPPOSITE_SIDE = {
+      north: 'south',
+      south: 'north',
+      east: 'west',
+      west: 'east',
+    } as const;
+    function schematicContext() {
+      return {
+        fillStyle: '',
+        strokeStyle: '',
+        lineWidth: 1,
+        beginPath: vi.fn(),
+        moveTo: vi.fn(),
+        lineTo: vi.fn(),
+        closePath: vi.fn(),
+        fill: vi.fn(),
+        stroke: vi.fn(),
+        fillRect: vi.fn(),
+        strokeRect: vi.fn(),
+      };
+    }
+
+    function roomWith(rects: LayoutRoom['rects'], mobsRect: LayoutRoom['mobsRect']): LayoutRoom {
+      return {
+        id: ROOM_A,
+        name: 'Hall',
+        rects,
+        mobsRect,
+        description: '',
+        monsterIndexes: [],
+        spawn: true,
+      };
+    }
+
+    it('packs exactly one entrance onto the spawn room, deterministically and valid', () => {
+      const first = packRooms(brief());
+      const second = packRooms(brief());
+      const spawn = first.rooms.find((room) => room.spawn);
+      if (spawn === undefined) throw new Error('spawn room missing');
+      expect(first.rooms.filter((room) => room.entrance !== undefined)).toHaveLength(1);
+      expect(spawn.entrance).toBeDefined();
+      expect(second).toEqual(first);
+      expect(validateEncounterLayout(first, brief().rosterCounts)).toEqual([]);
+    });
+
+    it('places the entrance on the outer wall farthest from the room doors', () => {
+      // 7×6 room at (2,2) in a 24×18 grid; one corridor door west of (2,4).
+      const room = roomWith([{ x: 2, y: 2, w: 7, h: 6 }], { x: 3, y: 3, w: 5, h: 4 });
+      const corridorCells = new Set(['1,4']);
+      const occupied = new Set<string>();
+      for (let y = 2; y < 8; y += 1) {
+        for (let x = 2; x < 9; x += 1) occupied.add(`${String(x)},${String(y)}`);
+      }
+      // Farthest wall cell from the door (2,4) is the corner (8,7) (distance 9),
+      // offering east and south; the south outward cell (8,8) sits nearer the
+      // grid edge (10 steps vs 15), so south wins the tiebreak.
+      expect(placeEntrance(room, occupied, corridorCells, 24, 18)).toEqual({
+        x: 8,
+        y: 7,
+        side: 'south',
+      });
+    });
+
+    it('omits the entrance when every boundary face is a corridor door', () => {
+      const closet = roomWith([{ x: 5, y: 5, w: 1, h: 1 }], { x: 5, y: 5, w: 1, h: 1 });
+      const around = new Set(['4,5', '6,5', '5,4', '5,6']);
+      expect(placeEntrance(closet, new Set(), around, 24, 18)).toBeUndefined();
+    });
+
+    it('emits the staging entrance on the map-edge side of the spawn area', () => {
+      const stagingLayout = layoutFromStagingMarkers({
+        theme: 'Cistern of Echoes',
+        aspect: '4:3',
+        rosterCounts: [3, 1, 2],
+        rooms: [
+          {
+            id: ROOM_A,
+            name: 'Flooded Stair',
+            description: '',
+            monsterIndexes: [0],
+            spawn: true,
+            letter: 'A',
+            markerHue: 300,
+            markerColorName: 'magenta',
+            stagingPoint: { x: 0.47, y: 0.84 },
+          },
+          {
+            id: ROOM_B,
+            name: 'Settling Basin',
+            description: '',
+            monsterIndexes: [1],
+            spawn: false,
+            letter: 'B',
+            markerHue: 180,
+            markerColorName: 'cyan',
+            stagingPoint: { x: 0.15, y: 0.5 },
+          },
+          {
+            id: ROOM_C,
+            name: 'Filter Gallery',
+            description: '',
+            monsterIndexes: [2],
+            spawn: false,
+            letter: 'C',
+            markerHue: 60,
+            markerColorName: 'yellow',
+            stagingPoint: { x: 0.75, y: 0.54 },
+          },
+        ],
+      });
+      const spawn = stagingLayout.rooms.find((room) => room.spawn);
+      if (spawn === undefined) throw new Error('spawn room missing');
+      // Veil rect is {12,19,10,8} on the 36×27 grid — its south edge lies on
+      // the grid boundary, so the entrance faces south at the lexicographically
+      // first bottom-row cell.
+      expect(spawn.rects[0]).toEqual({ x: 12, y: 19, w: 10, h: 8 });
+      expect(spawn.entrance).toEqual({ x: 12, y: 26, side: 'south' });
+    });
+
+    it('reports entrance violations as named issues and rejects them at the schema boundary', () => {
+      const layout = packRooms(brief());
+      const spawn = layout.rooms.find((room) => room.spawn);
+      const other = layout.rooms.find((room) => !room.spawn);
+      if (spawn === undefined || other === undefined) throw new Error('rooms missing');
+      const entrance = spawn.entrance;
+      if (entrance === undefined) throw new Error('entrance missing');
+
+      const moved = {
+        ...layout,
+        rooms: layout.rooms.map((room) =>
+          room.id === spawn.id ? { ...room, entrance: { ...entrance, x: entrance.x + 100 } } : room,
+        ),
+      };
+      expect(validateEncounterLayout(moved).join(' | ')).toContain('entrance cell is outside the room');
+
+      const flipped = {
+        ...layout,
+        rooms: layout.rooms.map((room) =>
+          room.id === spawn.id
+            ? {
+                ...room,
+                entrance: { ...entrance, side: OPPOSITE_SIDE[entrance.side] },
+              }
+            : room,
+        ),
+      };
+      expect(validateEncounterLayout(flipped).join(' | ')).toContain(
+        'entrance side does not face the outer wall',
+      );
+
+      // The spawn room's own door cell aimed at its corridor.
+      const spawnCells = new Set(spawn.rects.flatMap((rect) => {
+        const keys: string[] = [];
+        for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+          for (let x = rect.x; x < rect.x + rect.w; x += 1) keys.push(`${String(x)},${String(y)}`);
+        }
+        return keys;
+      }));
+      let doorCell: { x: number; y: number } | null = null;
+      let doorSide: 'north' | 'south' | 'west' | 'east' = 'north';
+      outer: for (const corridor of layout.corridors) {
+        for (const rect of corridor.rects) {
+          for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+            for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+              const probes: readonly (readonly ['north' | 'south' | 'west' | 'east', number, number])[] = [
+                ['north', 0, -1],
+                ['south', 0, 1],
+                ['west', -1, 0],
+                ['east', 1, 0],
+              ];
+              for (const [side, dx, dy] of probes) {
+                if (spawnCells.has(`${String(x + dx)},${String(y + dy)}`)) {
+                  doorCell = { x: x + dx, y: y + dy };
+                  doorSide = side === 'north' ? 'south' : side === 'south' ? 'north' : side === 'west' ? 'east' : 'west';
+                  break outer;
+                }
+              }
+            }
+          }
+        }
+      }
+      if (doorCell === null) throw new Error('no door cell found');
+      const ontoCorridor = {
+        ...layout,
+        rooms: layout.rooms.map((room) =>
+          room.id === spawn.id ? { ...room, entrance: { x: doorCell.x, y: doorCell.y, side: doorSide } } : room,
+        ),
+      };
+      expect(validateEncounterLayout(ontoCorridor).join(' | ')).toContain('entrance opens into a corridor');
+      expect(encounterLayoutSchema.safeParse(ontoCorridor).success).toBe(false);
+
+      const duplicated = {
+        ...layout,
+        rooms: layout.rooms.map((room) => (room.id === other.id ? { ...room, entrance } : room)),
+      };
+      const duplicatedIssues = validateEncounterLayout(duplicated).join(' | ');
+      expect(duplicatedIssues).toContain('at most one entrance');
+      expect(duplicatedIssues).toContain('only the spawn room may carry an entrance');
+    });
+
+    it('slides the staging block to the entrance wall, inside the room union', () => {
+      const legacy = roomWith([{ x: 0, y: 0, w: 7, h: 6 }], { x: 1, y: 1, w: 5, h: 4 });
+      expect(stagingBlockRect(legacy)).toEqual({ x: 1, y: 1, w: 5, h: 4 });
+
+      const west = { ...legacy, entrance: { x: 0, y: 3, side: 'west' } as const };
+      expect(stagingBlockRect(west)).toEqual({ x: 0, y: 1, w: 5, h: 4 });
+
+      // L-shaped room: the slide stops where the union does.
+      const ell = roomWith([{ x: 0, y: 0, w: 3, h: 6 }, { x: 3, y: 3, w: 3, h: 3 }], { x: 1, y: 1, w: 1, h: 4 });
+      const eastEll = { ...ell, entrance: { x: 2, y: 1, side: 'east' } as const };
+      expect(stagingBlockRect(eastEll)).toEqual({ x: 2, y: 1, w: 1, h: 4 });
+
+      // Staging-style room (rect = mobsRect): no room to slide into.
+      const staging = roomWith([{ x: 2, y: 2, w: 6, h: 5 }], { x: 2, y: 2, w: 6, h: 5 });
+      const south = { ...staging, entrance: { x: 2, y: 6, side: 'south' } as const };
+      expect(stagingBlockRect(south)).toEqual({ x: 2, y: 2, w: 6, h: 5 });
+    });
+
+    it('draws the entrance gap, landing pad and inward neon triangle on the schematic', () => {
+      const context = schematicContext();
+      const canvas = document.createElement('canvas');
+      vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+      vi.spyOn(canvas, 'toDataURL').mockReturnValue('data:image/png;base64,entrance');
+      const layout: EncounterLayout = {
+        gridW: 12,
+        gridH: 12,
+        theme: 'test',
+        rooms: [
+          {
+            id: ROOM_A,
+            name: 'Entry',
+            rects: [{ x: 1, y: 1, w: 6, h: 6 }],
+            mobsRect: { x: 2, y: 2, w: 4, h: 4 },
+            description: '',
+            monsterIndexes: [],
+            spawn: true,
+            entrance: { x: 1, y: 1, side: 'north' },
+          },
+        ],
+        corridors: [],
+      };
+
+      renderSchematic(layout, 10, (width, height) => {
+        canvas.width = width;
+        canvas.height = height;
+        return canvas;
+      });
+
+      // Gap across the north wall of cell (1,1): thickness 2, opening 5.5.
+      expect(context.fillRect).toHaveBeenCalledWith(12.25, 9, 5.5, 2);
+      // One-cell landing pad outside the gap.
+      expect(context.fillRect).toHaveBeenCalledWith(10, 0, 10, 10);
+      // Triangle just inside, pointing south (inward): tip at (15,18), base
+      // (12,12.8)–(18,12.8). Hue = palette entry past one room = B cyan 180.
+      expect(context.moveTo).toHaveBeenCalledWith(15, 18);
+      expect(context.lineTo).toHaveBeenCalledWith(12, 12.8);
+      expect(context.lineTo).toHaveBeenCalledWith(18, 12.8);
+      expect(context.closePath).toHaveBeenCalled();
+      expect(context.fill).toHaveBeenCalled();
+      expect(context.stroke).toHaveBeenCalled();
+      expect(context.fillStyle).toBe('hsl(180, 100%, 50%)');
+      expect(context.strokeStyle).toBe('#000');
+    });
   });
 
   describe('staging layout and adaptive grid', () => {
