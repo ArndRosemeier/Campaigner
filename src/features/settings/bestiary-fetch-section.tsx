@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import {
   fetchAndImportPack,
   listPackRecipes,
+  PACK_FETCH_NEWEST_REF,
   PACK_FETCH_SOURCES,
   type PackFetchProgress,
   type PackFetchResult,
@@ -115,7 +116,9 @@ export function BestiaryFetchSection(): JSX.Element {
         </CardTitle>
         <CardDescription>
           Download machine-readable bestiaries from the pinned upstream repos into this browser —
-          fetched packs work exactly like locally imported ones. The manual file import stays
+          fetched packs work exactly like locally imported ones. Each fetch tries the repo's newest
+          state (HEAD) first and falls back to the verified snapshot when the newest format imports
+          poorly or fails to list — loudly reported either way. The manual file import stays
           available in Rules.
         </CardDescription>
       </CardHeader>
@@ -129,8 +132,12 @@ export function BestiaryFetchSection(): JSX.Element {
             <div key={source.adapterId} className="flex flex-col gap-2 rounded-md border p-3">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-medium">{adapter.label}</span>
+                {/* Two-ref badge (16 §1.1 amendment, decision 6): the fallback
+                    story is visible before any fetch — newest first, then the
+                    pinned verified ref the chain can degrade to. */}
                 <Badge variant="outline" data-testid={`ref-${source.adapterId}`}>
-                  {source.owner}/{source.repo} @ {source.ref}
+                  {source.owner}/{source.repo}: newest ({PACK_FETCH_NEWEST_REF}) → verified{' '}
+                  {source.ref}
                 </Badge>
               </div>
               <p className="text-xs text-muted-foreground">{adapter.license}</p>

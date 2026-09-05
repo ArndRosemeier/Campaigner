@@ -38,8 +38,11 @@ pack chunks are ordinary `statblock` chunks with a **non-null, exact**
   imports pack files manually (unchanged `/rules` fallback) or triggers the
   **user-triggered pack fetch** (16-BESTIARY-FETCH), which downloads chosen
   packs from the pinned upstream repos into the user's own browser and feeds
-  the bytes into this pipeline. The import path itself stays network-free:
-  adapters parse bytes they are handed and never fetch (unit-test asserted).
+  the bytes into this pipeline (since 16 §1.1, 2026-09-06: the fetch tries the
+  repo's newest state, `HEAD`, first and falls back to the pinned verified
+  ref — **HEAD of the same pinned repos is still a pinned source**). The
+  import path itself stays network-free: adapters parse bytes they are handed
+  and never fetch (unit-test asserted).
 - **Loud failure policy.** Per-entry validation failures are collected and
   shown in an import report (AGENTS rule 1). Zero valid entries → the book is
   marked `error` and the import throws; an empty "ready" book is forbidden.
@@ -52,7 +55,10 @@ pinned sources there is allowed and changes the acquisition channel, not the
 licensing model — the fetch downloads to the user's own browser storage from
 the upstream repo the user chose; Campaigner never bundles, re-serves, or
 redistributes, and the book stores provenance — source ref, URL, fetch time —
-plus the license, displayed in the UI*).
+plus the license, displayed in the UI*. Amended 2026-09-06 by 16 §1.1: *the
+ref chain — newest `HEAD` first, then the pinned verified ref — stays inside
+the same pinned repos; HEAD of a pinned source repo is still a pinned source,
+and provenance additionally records `attemptedRefs`*.).
 The user obtains the files from the source repository (manually or via the
 pinned-source fetch) and imports them; the
 book row stores the license string and the UI displays it. This local-import

@@ -70,8 +70,14 @@ describe('BestiaryFetchSection', () => {
     expect(screen.getByText('(492 creatures)')).toBeInTheDocument();
     expect(screen.getByText('D&D 5e SRD Monsters')).toBeInTheDocument();
     expect(screen.getByText('(337 creatures)')).toBeInTheDocument();
-    expect(screen.getByTestId('ref-foundry-pf2e')).toHaveTextContent('foundryvtt/pf2e @ v14-dev');
-    expect(screen.getByTestId('ref-foundry-dnd5e-srd')).toHaveTextContent('foundryvtt/dnd5e @ 6.0.x');
+    // Two-ref badge (16 §1.1 amendment, decision 6): the fallback story is
+    // visible before any fetch — newest (HEAD) first, then the verified ref.
+    expect(screen.getByTestId('ref-foundry-pf2e')).toHaveTextContent(
+      'foundryvtt/pf2e: newest (HEAD) → verified v14-dev',
+    );
+    expect(screen.getByTestId('ref-foundry-dnd5e-srd')).toHaveTextContent(
+      'foundryvtt/dnd5e: newest (HEAD) → verified 6.0.x',
+    );
     expect(screen.getAllByText(/Community Use Policy/).length).toBeGreaterThan(0);
     expect(screen.getAllByText(/CC-BY-4\.0/).length).toBeGreaterThan(0);
     expect(fetchMock).not.toHaveBeenCalled();

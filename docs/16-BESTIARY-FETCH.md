@@ -13,12 +13,66 @@ fetch" in the import path); it is an explicit amendment, not drift.
    the repo" toggle that lists all packs on demand.
 2. **Source refs: pinned recipe refs** — pf2e `v14-dev`, dnd5e `6.0.x` (the
    spec-12-verified formats); the ref is stored in provenance.
+   **Amended 2026-09-06 (§1.1, binding): the pinned refs are now the VERIFIED
+   FALLBACK targets of a newest-first chain — HEAD is fetched first.**
 3. **Location: the Settings menu** — a settings card, near the existing
    embeddings/grounding cards. The manual file-import dialog in `/rules` STAYS
    as the fallback.
 4. **Flow: fetch → importPack in one user-triggered action**, with progress
    and the existing import-report semantics (loud, collected failures; zero
    valid entries → error book).
+
+## 1.1 Amendment (2026-09-06, owner-ratified): newest-first fetch with loud verified-ref fallback
+
+Motivation: the pinned `v14-dev` dev branch moved mid-session and broke parsing
+until the adapters caught up (fixed in `312efae`/`6f3ae8f`). This design turns
+that failure class from "import dies" into "import degrades to the last
+known-good snapshot, loudly, while the newest format is unusable". Ratified
+design (binding, verbatim):
+
+1. **Ref chain per source: `HEAD` first (newest = default branch), then the
+   pinned verified ref** (`v14-dev` pf2e / `6.0.x` dnd5e — now the *fallback
+   targets*, not the sole targets). Refs resolve on the existing endpoints
+   (raw + trees API accept `HEAD`) — no git protocol, no new plumbing.
+2. **Threshold fallback, not any-error**: run the newest ref; if its
+   **valid/total ratio < 50%** (documented constant, e.g.
+   `PACK_FETCH_FALLBACK_VALID_RATIO = 0.5`), treat it as suspected format
+   drift, run the fallback ref too, and **import whichever attempt yielded
+   more valid entries**. Deterministic tie → the newest ref wins (prefer
+   freshness at equal quality). Below-threshold-but-empty edge: 0 valid on
+   newest AND fallback → all-fail semantics as today (no book, loud). If
+   newest ≥ threshold → import newest, no fallback attempt, no extra cost.
+3. **Loud on fallback**: the report and toast must name BOTH attempts — e.g.
+   "newest (HEAD): 12/492 valid — format drift suspected; imported the
+   verified snapshot (v14-dev) instead: 492/492". No silent degradation
+   anywhere.
+4. **Listing failures follow the same resilience**: a named error on the
+   newest ref's trees listing (rate-limit/network) → attempt the fallback
+   ref's listing; both fail → loud (existing semantics). The per-ref session
+   cache already keys by ref — verified.
+5. **Provenance stamps the ref ACTUALLY imported** (`sourceRef`).
+   Additionally record the attempt trail additively: optional
+   `packMeta.attemptedRefs: string[]` (e.g. `['HEAD','v14-dev']` when fallback
+   fired, `['HEAD']` otherwise) — additive optional zod, backup round-trip
+   preserved.
+6. **Settings card**: per adapter, show both refs (e.g.
+   `newest (HEAD) → verified v14-dev`) — the fallback story visible before
+   any fetch.
+
+Implementation shape (as built, §3–§8 updated below): the attempt is an
+internal loop over `['HEAD', pinnedRef]` reusing everything (selection,
+downloads, `importPack`) per attempt; each attempt is a side-effect-free
+CANDIDATE — its downloaded files run through the unchanged `importPack` with
+in-memory deps (the documented injectable-deps seam), so the threshold rule
+compares attempts before any book exists and exactly one book (the winner's)
+is ever created. The winner is re-imported with the real Dexie deps (the
+files are already in memory; only parsing runs twice, bounded CPU against a
+network-bound fetch). A listing error on the newest ref moves the chain to
+the verified ref's listing; when the newest attempt already completed below
+the threshold and the verified listing fails, the newest import still ships
+(with the loud note). 0 valid on newest AND fallback → all-fail semantics as
+today: loud, and NO book. Selection-empty stays a loud hard error (threshold
+fallback, not any-error). Manual `/rules` import path untouched.
 
 ## 2. Amendment to 12-BESTIARY-PACKS (recorded there; binding)
 
@@ -131,41 +185,52 @@ value. (Spec-12's "337 SRD monsters" re-verified exactly.)
 ## 5. UX (Settings → "Bestiary packs" card)
 
 Per registered adapter with fetch recipes (pf2e + dnd5e; Cosmere has none),
-each row: pack title + creature count + pinned ref badge (`v14-dev` /
-`6.0.x`), license line, and a "Fetch & import" button. Advanced toggle "List
-all packs in the repo" (on-demand trees-API listing; pf2e ~60+ packs incl.
-every AP bestiary; dnd5e lists its 15 type folders as pack rows). Inline
-progress ("Fetching X/Y files…"), then the standard import report (imported /
-skipped / failed counts + expandable failed list) and the book lands in
-`/rules` with Pack badge, license and provenance. Errors via `toastError`;
-no-network / rate-limit / unknown-pack failures are loud and named. Fetching
-"again" creates a new book (same policy as re-importing a PDF).
+each row: pack title + creature count + the two-ref badge
+(`{owner}/{repo}: newest (HEAD) → verified v14-dev` / `… 6.0.x` — the §1.1
+fallback story visible before any fetch), license line, and a "Fetch &
+import" button. Advanced toggle "List all packs in the repo" (on-demand
+trees-API listing; pf2e ~60+ packs incl. every AP bestiary; dnd5e lists its 15
+type folders as pack rows). Inline progress ("Fetching X/Y files…"), then the
+standard import report (imported / skipped / failed counts + expandable failed
+list — with the §1.1 `fetchNote` line naming BOTH refs when the chain fired)
+and the book lands in `/rules` with Pack badge, license and provenance. Errors
+via `toastError`; no-network / rate-limit / unknown-pack failures are loud and
+named. Fetching "again" creates a new book (same policy as re-importing a
+PDF).
 
 ## 6. Data flow (no pipeline fork)
 
 ```
 Settings card click (user-triggered)
-  → listPackRecipes(adapterId)               (curated constant; full:true → trees API, cached)
   → fetchAndImportPack(adapterId, recipeId, {onFetchProgress, onProgress})
-       listing (one cached trees-API call) → select creature files (skip non-creature docs)
-       → mapWithConcurrency(4) fetch raw.githubusercontent.com
-       → PackInputFile[]  (+ collected download failures)
-  → importPack(adapterId, files, { title, onProgress, deps })
-       (UNCHANGED — zod, batches, report, zero-entries → error book)
-  → finalize: packMeta + provenance (sourceRef, sourceUrl, fetchedAt)
+       attempt loop over the ref chain (§1.1): ['HEAD', pinnedRef] —
+         listing (one cached trees-API call PER REF) → select creature files
+           (skip non-creature docs; empty selection = loud hard error)
+         → mapWithConcurrency(4) fetch raw.githubusercontent.com @<ref>
+         → probe importPack (UNCHANGED runner, in-memory deps — no book)
+       threshold rule between attempts (§1.1): newest valid/total ≥ 0.5 →
+         newest wins (no fallback attempt); below → verified attempt runs,
+         whichever yielded more valid entries is imported (tie → newest);
+         0 valid on both → all-fail: loud, NO book
+       → importPack (winner, real deps) (UNCHANGED — zod, batches, report)
+  → finalize: packMeta + provenance (sourceRef = ref ACTUALLY imported,
+    sourceUrl, fetchedAt, attemptedRefs)
 ```
 
 `fetchAndImportPack` calls `importPack` exactly as the `/rules` dialog calls
 it. `packFetch` never touches Dexie or chunk persistence — the import runner
-owns that. Zero valid entries → existing error-book semantics.
+owns that (the probe passes in-memory deps through `importPack`'s documented
+injectable seam). Zero valid entries on every attempt → the §1.1 all-fail
+error, no book.
 
 ## 7. packMeta provenance extension (additive, no migration)
 
 ```ts
 // packMetaSchema additions (all optional → old backups parse unchanged):
-sourceRef: z.string().optional(),   // pinned ref, e.g. 'v14-dev' | '6.0.x'
+sourceRef: z.string().optional(),   // ref ACTUALLY imported: 'HEAD' or the verified ref (§1.1)
 sourceUrl: z.string().optional(),   // pack base URL (raw.githubusercontent.com/...)
 fetchedAt: z.number().int().positive().optional(), // epoch ms; absent for manual imports
+attemptedRefs: z.string().array().optional(), // attempt trail, e.g. ['HEAD'] | ['HEAD','v14-dev'] (§1.1)
 ```
 
 Backup round-trip: `rulebookSchema` parses old packs (no provenance) and new
@@ -185,12 +250,21 @@ migration, no schema bump.
   (`all N downloads failed for "<title>" — no pack book was created. <first
   three entries>`) before any book is created; the UI toasts it and the card
   shows the failed state. Never a silent empty book.
-- Zero valid entries after downloads → existing `importPack` error-book path.
+- Zero valid entries after downloads → §1.1 all-fail semantics (amended):
+  with the ref chain, 0 valid on the newest attempt triggers the verified
+  attempt (ratio < 0.5); 0 valid on BOTH → a loud named error listing every
+  attempt's causes and **no book**. (The importPack error-book path remains
+  the semantics of the manual `/rules` import, which has no chain.)
 - Trees-API listing failure (rate limit, network): loud named error mentioning
   the 60 req/h per-IP GitHub limit when applicable. Every fetch — curated
-  recipes included — makes exactly one trees-API listing call (cached per
-  session) plus its raw file GETs, so curated fetches cost that one cached
-  listing call + the raw GETs and ARE subject to the 60 req/h cap.
+  recipes included — makes exactly one trees-API listing call per ref attempt
+  (cached per session) plus its raw file GETs, so curated fetches cost that
+  one cached listing call per attempt + the raw GETs and ARE subject to the
+  60 req/h cap. A listing error on the newest ref moves the chain to the
+  verified ref's listing (§1.1 decision 4); both failing → the combined loud
+  listing error naming both refs; the verified listing failing after a
+  below-threshold newest attempt → the newest import ships, with the cause
+  named in the `fetchNote`.
 
 ## 9. Acceptance criteria
 
@@ -205,6 +279,16 @@ migration, no schema bump.
   only fetch caller in `src/ingest`).
 - Settings card renders curated lists, lists on demand via the advanced
   toggle, shows inline progress + report; packMeta backup round-trip holds.
+- §1.1 chain: newest healthy → single pass (`attemptedRefs: ['HEAD']`, no
+  fallback listing, no extra cost); newest drift (ratio < 0.5) + better
+  fallback → the verified snapshot imported with both attempts named in the
+  report/toast (`attemptedRefs: ['HEAD','v14-dev']`, `sourceRef` = verified
+  ref); newest below threshold but still better → newest imported with the
+  fallback note; tie → newest; newest listing failure → verified listing
+  tried, both failing → combined loud error; 0 valid on both → loud, no book;
+  `PACK_FETCH_FALLBACK_VALID_RATIO` pinned at 0.5 by test; exactly one
+  listing call per attempt (cached, no hidden extras); the Settings card
+  shows the two-ref badge.
 - Gates: `pnpm lint && pnpm typecheck && pnpm test` green; lint stays at the
   4 pre-existing warnings.
 
