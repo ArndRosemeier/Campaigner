@@ -52,6 +52,7 @@ import { MentionsPanel } from '@/features/campaign/components/mentions-panel';
 import { ImagesSection } from '@/features/campaign/components/images-section';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { PeekModal } from '@/features/modules/peek-modal';
+import { MobPortraitsSection } from '@/features/campaign/components/mob-portraits-section';
 import { RunBattleButton } from '@/features/play/run-battle';
 import { ModuleBattlePicker } from '@/features/campaign/components/run-battle-picker';
 import { RevisionDialog } from '@/features/campaign/components/revision-dialog';
@@ -374,6 +375,9 @@ export function ArtifactEditor({
                   setDraft((previous) => ({ ...previous, kind: 'encounter', data }));
                 }}
               />
+            )}
+            {artifact.kind === 'encounter' && (
+              <MobPortraitsSection artifact={artifact} campaignId={campaignId} />
             )}
             {draft.kind === 'plotarc' && (
               <PlotArcForm
