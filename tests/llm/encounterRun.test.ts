@@ -740,4 +740,167 @@ describe('encounter runs (M3-B)', () => {
     // No NPC was materialized from the garbage.
     expect((await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc')).toEqual([]);
   });
+
+  it('a pinned statblock chunk is citable even when it does not rank (pinned-citability gap)', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    // The pinned chunk does NOT rank: both searches come back empty, so only
+    // the pin could ever make it citable.
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A bridge ambush for level 5',
+      autonomy: 'auto',
+      pinnedChunkIds: [trollChunkId],
+    });
+
+    // The draft prompt lists the PINNED chunk as citation excerpt [0].
+    await vi.waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const userContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    expect(userContent).toContain('Stat-block excerpts');
+    expect(userContent).toContain('[0] Bestiary p.132 — Troll');
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    // The pinned chunk persisted as the citable pool (index 0)…
+    const storedRun = await getRun(runId);
+    const retrieveStep = storedRun?.steps.find((step) => step.name === 'retrieve');
+    expect((retrieveStep?.output as { statblockChunkIds?: Id[] }).statblockChunkIds).toEqual([
+      trollChunkId,
+    ]);
+    const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    // …and sourceChunkIndex 0 resolved through finalize to the pinned chunk.
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+  });
+
+  it('a pinned null-statBlock chunk stays excerpt-context-only (fix-02 pool exclusion)', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const troll = await db.chunks.get(trollChunkId);
+    if (troll === undefined) throw new Error('troll chunk missing');
+    const sectionText = 'Grapple rules for shoving and pinning.';
+    const sectionChunk = ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: troll.bookId,
+      pageStart: 40,
+      pageEnd: 40,
+      chunkType: 'section',
+      headingPath: ['Appendix', 'Grappling'],
+      text: sectionText,
+      statBlock: null,
+      contentHash: await sha256Hex(sectionText),
+    });
+    await putChunks([sectionChunk]);
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [{ name: 'Wrestler', count: 1, notes: '', sourceChunkIndex: 0 }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A tavern wrestling match',
+      autonomy: 'auto',
+      pinnedChunkIds: [sectionChunk.id],
+    });
+
+    // The pinned chunk still grounds the draft as an excerpt…
+    await vi.waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const draftUserContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    expect(draftUserContent).toContain('Grapple rules for shoving and pinning.');
+    const parkedRun = await getRun(runId);
+    const retrieveStep = parkedRun?.steps.find((step) => step.name === 'retrieve');
+    // …but it never joins the citable pool (no citation section; with no
+    // roster either, the prompt demands inline blocks instead).
+    expect((retrieveStep?.output as { statblockChunkIds?: Id[] }).statblockChunkIds).toEqual([]);
+    expect((retrieveStep?.output as { chunkIds?: Id[] }).chunkIds).toContain(sectionChunk.id);
+
+    // A stale sourceChunkIndex citation stays loud: one repair, then fail.
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+    const storedRun = await getRun(runId);
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(storedRun?.errorMessage).toContain('is not in the excerpt list');
+    expect(storedRun?.resultArtifactId).toBeNull();
+  });
+
+  it('pinned chunks lead the citation list; a pinned chunk that also ranks is not duplicated', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const goblinChunkId = await seedPackBook('Dnd5e Bestiary Pack');
+    const { db } = await import('@/db/db');
+    const troll = await db.chunks.get(trollChunkId);
+    const goblin = await db.chunks.get(goblinChunkId);
+    if (troll === undefined || goblin === undefined) throw new Error('seeded chunks missing');
+    // The goblin chunk is pinned AND ranks second; the troll ranks first.
+    const goblinHit = { chunk: goblin, score: 1, source: 'keyword' as const };
+    const trollHit = { chunk: troll, score: 2, source: 'keyword' as const };
+    searchRulesMock.mockImplementation((_query, opts) =>
+      opts?.chunkTypes?.[0] === 'statblock'
+        ? Promise.resolve([trollHit, goblinHit])
+        : Promise.resolve([]),
+    );
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [
+          { name: 'Goblin Boss', count: 2, notes: 'commander', sourceChunkIndex: 0 },
+          { name: 'Troll', count: 1, notes: '', sourceChunkIndex: 1 },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A goblin warband with a troll',
+      autonomy: 'auto',
+      pinnedChunkIds: [goblinChunkId],
+    });
+
+    // Citation order is deterministic: pinned first (pin order), then ranked
+    // hits — the pinned goblin leads even though the troll outranks it, and
+    // the goblin appears once despite also ranking.
+    await vi.waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const userContent = (chatMock.mock.calls[0]?.[0] ?? [])
+      .map((message) => (typeof message.content === 'string' ? message.content : ''))
+      .join('\n');
+    const goblinIndex = userContent.indexOf('[0] Dnd5e Bestiary Pack p.1 — Goblin Boss');
+    const trollIndex = userContent.indexOf('[1] Bestiary p.132 — Troll');
+    expect(goblinIndex).toBeGreaterThanOrEqual(0);
+    expect(trollIndex).toBeGreaterThan(goblinIndex);
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const storedRun = await getRun(runId);
+    const retrieveStep = storedRun?.steps.find((step) => step.name === 'retrieve');
+    expect((retrieveStep?.output as { statblockChunkIds?: Id[] }).statblockChunkIds).toEqual([
+      goblinChunkId,
+      trollChunkId,
+    ]);
+    const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
+    expect(artifact.data.monsters[1]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+  });
 });

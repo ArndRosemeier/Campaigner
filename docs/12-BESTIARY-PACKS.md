@@ -251,6 +251,18 @@ a compact **roster index** from the pack books:
   never a silent fallback to name-only). Duplicate names across books resolve
   deterministically (most recently updated pack book first) and are visible
   in the origin badge (§8), which names the book.
+- **Pinned chunks join the citable list.** A chunk the user pinned in the run
+  dialog is an explicit instruction to use it, so when it parsed
+  (`statBlock !== null` — the same invariant as every ranked citable chunk) it
+  joins `statblockChunkIds` in pin order, AHEAD of the ranked hits, and a
+  pinned chunk that also ranks is not duplicated: the citation-list order is
+  always pinned-first, then rank order (mirroring the excerpt merge's
+  pinned-first convention). A pinned chunk whose parse gave up
+  (`statBlock: null`) stays excerpt-context-only — decision 3's pool exclusion
+  is binding for pins too. The citable SEARCH is unchanged; only the
+  post-search list construction extends, and the pinned ids persist inside the
+  stored retrieve/brief `statblockChunkIds`, so finalize maps citation indexes
+  correctly across pause/resume (additive zod compatibility, no migration).
 
 ## 8. Origin labels
 

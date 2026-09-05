@@ -24,7 +24,14 @@ vi.mock('@/llm/openrouter', () => ({
   OpenRouterError: class OpenRouterError extends Error {},
 }));
 
+vi.mock('@/search', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...(actual as object), searchRules: vi.fn() };
+});
+
 const chatMock = vi.mocked(chat);
+const { searchRules } = await import('@/search');
+const searchRulesMock = vi.mocked(searchRules);
 
 function waitForRun(assertion: () => void | Promise<void>) {
   return waitFor(assertion, { timeout: 15000 });
@@ -147,6 +154,8 @@ beforeEach(async () => {
   await clearDatabase();
   useProgressStore.getState().reset();
   chatMock.mockReset();
+  searchRulesMock.mockReset();
+  searchRulesMock.mockResolvedValue([]);
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 2304, height: 1728 });
   vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model' });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }));
@@ -233,6 +242,41 @@ describe('Encounter Cartographer run', () => {
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // The map finalize remapped the roster citation to the pack chunk.
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
+  });
+
+  it('finalizes a brief citing a pinned statblock chunk to {type:"rulebook", chunkId}', async () => {
+    const { campaign, cartographer } = await setup();
+    const goblinChunkId = await seedPackBook();
+    // The pinned chunk does NOT rank (searches are mocked empty) — only the
+    // pin makes it citable.
+    const pinnedBrief = {
+      ...BRIEF,
+      monsters: [{ name: 'Goblin Boss', count: 2, notes: '', sourceChunkIndex: 0 }],
+    };
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(pinnedBrief), modelUsed: 'test-model', fallback: null });
+    const runInput = { ...input(campaign, cartographer), pinnedChunkIds: [goblinChunkId] };
+    const runId = await runEngine.startRun(runInput);
+
+    // The brief prompt lists the PINNED chunk as citation excerpt [0].
+    await waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const briefContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    expect(briefContent).toContain('Stat-block excerpts');
+    expect(briefContent).toContain('[0] Dnd5e Bestiary Pack p.1 — Goblin Boss');
+
+    const candidates = await approveUntilPick(runId, runInput);
+    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    // The pinned citation (persisted with the brief through the pick pause)
+    // resolved in map finalize to the pinned chunk.
     expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
   });
 

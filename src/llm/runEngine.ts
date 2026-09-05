@@ -1222,6 +1222,19 @@ export class RunEngine {
       let rosterTruncated = 0;
       let rosterChunkByName: Record<string, Id> = {};
       if (input.persona.producesKind === 'encounter') {
+        // Pinned-citability: an explicitly pinned chunk is an instruction to
+        // use it, so a pinned chunk joins the citation list in PIN ORDER,
+        // ahead of the ranked hits (mirroring the excerpt merge's
+        // pinned-first convention; the ranked loop below dedupes against
+        // `merged`, which already holds every pinned id). The fix-02 pool
+        // invariant still binds: only a parsed chunk (statBlock !== null —
+        // the same check the hasStatBlock search filter applies) becomes
+        // citable; a pinned null-statBlock chunk stays excerpt-context-only.
+        for (const chunk of pinned) {
+          if (chunk.statBlock !== null && !statblockChunkIds.includes(chunk.id)) {
+            statblockChunkIds.push(chunk.id);
+          }
+        }
         // fix-02 (decision 3): the citable pool excludes unparsed chunks —
         // a 'statblock' chunk whose best-effort parse gave up must never
         // consume a citation slot or be offered to the model.
