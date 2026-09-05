@@ -5,11 +5,16 @@ import { listRulebooks } from '@/db/rulebookRepo';
 import { errorMessage } from '@/lib/errors';
 
 /**
- * Encounter roster index (12-BESTIARY-PACKS §7): a compact, level-ordered
- * "name (level, traits)" listing of every imported pack creature for the
- * campaign's system, injected into the Encounter Smith's prompt so it picks
- * real bestiary entries (cited by exact `sourceName`) instead of inventing
- * names. Pure selection/formatting here; the run-engine wiring is M-B.
+ * Encounter roster index (12-BESTIARY-PACKS §7): a compact "name (level,
+ * traits)" listing of every imported pack creature for the campaign's
+ * system, injected into the Encounter Smith's prompt so it picks real
+ * bestiary entries (cited by exact `sourceName`) instead of inventing names.
+ * The 300-line PROMPT WINDOW is ordered by level distance to the run's
+ * target level when one exists (ratified §7 amendment), so a huge bestiary
+ * import surfaces creatures that could actually threaten the party instead
+ * of the first 300 low-CR entries; without a target the order stays
+ * level/name ascending. Pure selection/formatting here; the run-engine
+ * wiring is M-B.
  */
 
 export const ROSTER_LIMIT = 300;
@@ -90,6 +95,31 @@ export function parseLevelSort(level: string): number {
   throw new Error(`cannot order creatures by level "${level}"`);
 }
 
+/**
+ * The prompt window's target level parsed from an encounter's free-text
+ * `levelHint` (§7 ratified chain, step (a)): the FIRST digit run in the
+ * string, deterministically — "5" → 5, "4–6" → 4, "CR 5" → 5. A hint with no
+ * digits ("", "mid") → undefined. This is a graceful preference chain, not a
+ * silent fallback of erroneous data: the hint is a user preference string,
+ * and "no parseable target" is a legitimate state that falls to the next
+ * preference in the chain.
+ */
+export function parseRosterTargetLevel(levelHint: string): number | undefined {
+  const match = /(\d+)/.exec(levelHint);
+  const digits = match?.[1];
+  return digits === undefined ? undefined : Number(digits);
+}
+
+/**
+ * Distance from the window's target level. The CR-less "—" creatures
+ * (`levelSort` +Infinity) sit at +Infinity so they always sort after every
+ * leveled creature, exactly as today — the guard keeps `∞ − ∞` from becoming
+ * a NaN comparator result when two of them tie.
+ */
+function levelDistance(levelSort: number, targetLevel: number): number {
+  return Number.isFinite(levelSort) ? Math.abs(levelSort - targetLevel) : Number.POSITIVE_INFINITY;
+}
+
 function rosterLine(entry: PackRosterEntry, duplicatedNames: ReadonlySet<string>): string {
   const base = `${entry.name} (${entry.level}${entry.traits === '' ? '' : `, ${entry.traits}`})`;
   // fix-02 (decision 5): the " — <bookTitle>" suffix appears ONLY when the
@@ -117,14 +147,29 @@ function duplicatedAcrossBooks(entries: readonly PackRosterEntry[]): Set<string>
   );
 }
 
-export function buildPackRoster(entries: readonly PackRosterEntry[]): PackRoster {
+/**
+ * Builds the prompt roster (§7). Without a `targetLevel` the window keeps the
+ * historical level/name-ascending order byte-identically. With one, the
+ * window orders by `|levelSort − target|` ascending — the creatures that
+ * could actually threaten the target-level party — with ties broken by
+ * `levelSort` ascending, then name (locale-compare): fully deterministic.
+ * The cap, the line format and the truncation count are unaffected; the
+ * name index is built over ALL entries by the caller, so creatures outside
+ * the visible window stay resolvable.
+ */
+export function buildPackRoster(entries: readonly PackRosterEntry[], targetLevel?: number): PackRoster {
   const sorted = [...entries].sort(
-    (a, b) => a.levelSort - b.levelSort || a.name.localeCompare(b.name),
+    targetLevel === undefined
+      ? (a, b) => a.levelSort - b.levelSort || a.name.localeCompare(b.name)
+      : (a, b) =>
+          levelDistance(a.levelSort, targetLevel) - levelDistance(b.levelSort, targetLevel) ||
+          a.levelSort - b.levelSort ||
+          a.name.localeCompare(b.name),
   );
   const duplicatedNames = duplicatedAcrossBooks(entries);
   return {
     // Ordering is unaffected by the suffix: lines render from the
-    // level/name-sorted order (fix-02 acceptance criteria).
+    // sorted order (fix-02 acceptance criteria).
     lines: sorted.slice(0, ROSTER_LIMIT).map((entry) => rosterLine(entry, duplicatedNames)),
     total: sorted.length,
     truncated: Math.max(0, sorted.length - ROSTER_LIMIT),
@@ -146,11 +191,14 @@ const defaultDeps: PackRosterDeps = {
  * (§7: origin 'pack', matching system, status 'ready' — books arrive most
  * recently updated first). Chunks without a validated stat block must not
  * exist in pack books (the importer enforces it), so encountering one is a
- * loud data error, not a skip.
+ * loud data error, not a skip. `targetLevel` orders the PROMPT WINDOW by
+ * level distance (§7 ratified amendment); undefined keeps the ascending
+ * order. The name index always covers every entry.
  */
 export async function collectPackRoster(
   system: GameSystem,
   deps: PackRosterDeps = defaultDeps,
+  targetLevel?: number,
 ): Promise<PackRoster & { entries: PackRosterEntry[]; chunkByName: Map<string, Id> }> {
   const books = (await deps.listBooks()).filter(
     (book) => book.system === system && book.origin === 'pack' && book.status === 'ready',
@@ -177,7 +225,7 @@ export async function collectPackRoster(
       bookTitle: titleById.get(chunk.bookId) ?? '',
     });
   }
-  return { entries, chunkByName: rosterNameIndex(entries, bookRank), ...buildPackRoster(entries) };
+  return { entries, chunkByName: rosterNameIndex(entries, bookRank), ...buildPackRoster(entries, targetLevel) };
 }
 
 /** ROSTER_ATTEMPTS (fix-02 decision 4): one automatic retry, then loud. */
@@ -196,11 +244,12 @@ export async function collectPackRosterWithRetry(
   system: GameSystem,
   deps: PackRosterDeps = defaultDeps,
   attempts: number = ROSTER_ATTEMPTS,
+  targetLevel?: number,
 ): Promise<PackRoster & { entries: PackRosterEntry[]; chunkByName: Map<string, Id> }> {
   let lastError: unknown = null;
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
-      return await collectPackRoster(system, deps);
+      return await collectPackRoster(system, deps, targetLevel);
     } catch (error) {
       lastError = error;
     }

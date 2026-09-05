@@ -8,8 +8,10 @@ import {
   collectPackRosterWithRetry,
   formatRosterSection,
   parseLevelSort,
+  parseRosterTargetLevel,
   rosterNameIndex,
   type PackRosterDeps,
+  type PackRosterEntry,
 } from '@/llm/encounterRoster';
 
 function chunk(overrides: {
@@ -83,6 +85,110 @@ describe('parseLevelSort', () => {
 
   it('rejects levels that cannot be ordered', () => {
     expect(() => parseLevelSort('boss')).toThrow('cannot order creatures by level');
+  });
+});
+
+describe('parseRosterTargetLevel (12-BESTIARY-PACKS §7 ratified chain, step a)', () => {
+  it('parses the first digit run of the free-text hint deterministically', () => {
+    expect(parseRosterTargetLevel('5')).toBe(5);
+    expect(parseRosterTargetLevel('4–6')).toBe(4);
+    expect(parseRosterTargetLevel('CR 5')).toBe(5);
+    expect(parseRosterTargetLevel(' 12 ')).toBe(12);
+    expect(parseRosterTargetLevel('level 3 party')).toBe(3);
+  });
+
+  it('returns undefined for a hint without digits — a legitimate preference state, not an error', () => {
+    expect(parseRosterTargetLevel('')).toBeUndefined();
+    expect(parseRosterTargetLevel('mid')).toBeUndefined();
+    expect(parseRosterTargetLevel('—')).toBeUndefined();
+  });
+});
+
+/** A roster fixture of `count` creatures whose level (and levelSort) is 1..count. */
+function creatureLadder(count: number): PackRosterEntry[] {
+  return Array.from({ length: count }, (_, index) => {
+    const level = index + 1;
+    return {
+      name: `Creature ${String(level).padStart(3, '0')}`,
+      level: String(level),
+      traits: '',
+      chunkId: `c${String(level).padStart(3, '0')}`,
+      levelSort: level,
+      bookId: 'b1',
+      bookTitle: 'Bestiary',
+    };
+  });
+}
+
+describe('buildPackRoster with a target level (§7 ratified window ordering)', () => {
+  it('keeps the ascending window byte-identical when no target exists (pin)', () => {
+    const entries = creatureLadder(305);
+    const noArg = buildPackRoster(entries);
+    const explicitUndefined = buildPackRoster(entries, undefined);
+    expect(explicitUndefined).toEqual(noArg);
+    // The historical order: levels 1..300 ascending, 5 truncated.
+    expect(noArg.lines[0]).toBe('Creature 001 (1)');
+    expect(noArg.lines[299]).toBe('Creature 300 (300)');
+    expect(noArg.total).toBe(305);
+    expect(noArg.truncated).toBe(5);
+  });
+
+  it('fills the 300-line window with the creatures closest to the target level', () => {
+    // 305 creatures, levels 1..305, target 300: the ascending window would
+    // hold levels 1..300, the distance window holds levels 6..305 — the two
+    // windows differ by {1..5} out, {301..305} in.
+    const roster = buildPackRoster(creatureLadder(305), 300);
+    expect(roster.total).toBe(305);
+    expect(roster.truncated).toBe(5);
+    expect(roster.lines).toHaveLength(300);
+    // Distance ties (299/301 both 1 away) break by levelSort ascending.
+    expect(roster.lines[0]).toBe('Creature 300 (300)');
+    expect(roster.lines[1]).toBe('Creature 299 (299)');
+    expect(roster.lines[2]).toBe('Creature 301 (301)');
+    expect(roster.lines[3]).toBe('Creature 298 (298)');
+    expect(roster.lines[4]).toBe('Creature 302 (302)');
+    // The five farthest (levels 1..5) drop out; near-target high levels are in.
+    expect(roster.lines).toContain('Creature 305 (305)');
+    expect(roster.lines).not.toContain('Creature 001 (1)');
+    expect(roster.lines).not.toContain('Creature 005 (5)');
+  });
+
+  it('breaks distance ties by levelSort ascending, then name', () => {
+    const roster = buildPackRoster(
+      [
+        { name: 'Gamma', level: '3', traits: '', chunkId: 'c3', levelSort: 3, bookId: 'b1', bookTitle: 'Bestiary' },
+        { name: 'Zeta', level: '4', traits: '', chunkId: 'c4a', levelSort: 4, bookId: 'b1', bookTitle: 'Bestiary' },
+        { name: 'Alpha', level: '4', traits: '', chunkId: 'c4b', levelSort: 4, bookId: 'b1', bookTitle: 'Bestiary' },
+        { name: 'Beta', level: '6', traits: '', chunkId: 'c6', levelSort: 6, bookId: 'b1', bookTitle: 'Bestiary' },
+      ],
+      5,
+    );
+    // Distances: level 4 → 1, level 6 → 1, level 3 → 2. The distance-1 tie
+    // orders 4 before 6 (levelSort), and the two level-4 rows by name.
+    expect(roster.lines).toEqual([
+      'Alpha (4)',
+      'Zeta (4)',
+      'Beta (6)',
+      'Gamma (3)',
+    ]);
+  });
+
+  it('sorts the CR-less "—" creatures after every leveled creature, even at huge distance', () => {
+    const roster = buildPackRoster(
+      [
+        { name: 'Avatar of Death', level: '—', traits: '', chunkId: 'c-a', levelSort: Number.POSITIVE_INFINITY, bookId: 'b1', bookTitle: 'Bestiary' },
+        { name: 'Goblin', level: '1', traits: '', chunkId: 'c-g', levelSort: 1, bookId: 'b1', bookTitle: 'Bestiary' },
+        { name: 'Animated Object', level: '—', traits: '', chunkId: 'c-b', levelSort: Number.POSITIVE_INFINITY, bookId: 'b1', bookTitle: 'Bestiary' },
+      ],
+      20,
+    );
+    // Two "—" creatures tie at +Infinity distance without NaN-poisoning the
+    // comparator; their mutual order falls through to the name.
+    expect(roster.lines).toEqual([
+      'Goblin (1)',
+      'Animated Object (—)',
+      'Avatar of Death (—)',
+    ]);
   });
 });
 
@@ -206,6 +312,42 @@ describe('collectPackRoster', () => {
     const roster = await collectPackRoster('pathfinder2e', deps);
     expect(roster.lines).toEqual([]);
     expect(roster.chunkByName.size).toBe(0);
+  });
+
+  it('threads the target level into the window while the name index still covers ALL entries', async () => {
+    const packBook = book();
+    const entries = creatureLadder(302);
+    const chunks = entries.map((entry) => ({ ...chunk({ name: entry.name, level: entry.level }), id: entry.chunkId }));
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([packBook]),
+      listChunks: () => Promise.resolve(chunks),
+    };
+
+    const roster = await collectPackRoster('pathfinder2e', deps, 302);
+    // The window is distance-ordered: levels 1..2 drop out, the target leads.
+    expect(roster.lines[0]).toBe('Creature 302 (302)');
+    expect(roster.lines).not.toContain('Creature 001 (1)');
+    expect(roster.truncated).toBe(2);
+    // Resolution is NOT windowed: a creature outside the visible 300 still
+    // resolves through the index built over every entry.
+    expect(roster.chunkByName.get('creature 001')).toBe('c001');
+    expect(roster.chunkByName.get('creature 002')).toBe('c002');
+    expect(roster.chunkByName.size).toBe(302);
+  });
+
+  it('keeps the ascending window when no target level is passed', async () => {
+    const packBook = book();
+    const entries = creatureLadder(302);
+    const chunks = entries.map((entry) => ({ ...chunk({ name: entry.name, level: entry.level }), id: entry.chunkId }));
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([packBook]),
+      listChunks: () => Promise.resolve(chunks),
+    };
+
+    const roster = await collectPackRoster('pathfinder2e', deps);
+    expect(roster.lines[0]).toBe('Creature 001 (1)');
+    expect(roster.lines).not.toContain('Creature 302 (302)');
+    expect(roster.truncated).toBe(2);
   });
 
   it('resolves duplicate names to the most recently updated pack book first', async () => {
