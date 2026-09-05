@@ -195,6 +195,22 @@ export function PackImportReport({
       </p>
       {failed.length > 0 && (
         <>
+          {/* 16-BESTIARY-FETCH §6: the report leads with a representative
+              failure (the first entry's issue) so the reason is visible
+              without expanding the list. */}
+          {failed.slice(0, 1).map((entry) => (
+            <p
+              key={`lead-${entry.file}-${entry.name}`}
+              className="mt-1 text-destructive"
+              data-testid="pack-import-first-failure"
+            >
+              <span className="font-medium">
+                {entry.name === '' ? entry.file : `${entry.file} (${entry.name})`}
+              </span>
+              {': '}
+              {entry.message}
+            </p>
+          ))}
           <Button
             type="button"
             variant="ghost"

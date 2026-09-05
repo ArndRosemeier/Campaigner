@@ -219,7 +219,12 @@ export async function importPack(
   if (entries.length === 0) {
     const fetchedCount =
       inputs.length + (options.extraFailures?.length ?? 0);
+    // 16-BESTIARY-FETCH §6: when the selection validates nothing, the error
+    // leads with a representative failure (the first entry's issue) so the
+    // toast and the error-state book show the reason, not just a count.
+    const representative = leadFailure(failures);
     const message =
+      (representative === null ? '' : `${representative} — `) +
       `no valid creature entries in the pack selection ` +
       `(${String(skipped)} skipped, ${String(failures.length)} failed` +
       (options.extraFailures === undefined ? '' : ` of ${String(fetchedCount)} fetched files`) +
@@ -236,6 +241,18 @@ export async function importPack(
     skipped,
     failed: failures,
   };
+}
+
+/**
+ * The representative failure for a zero-entry import (16-BESTIARY-FETCH §6):
+ * the first entry failure, as a readable "file (name): issue" line. Null when
+ * nothing failed (e.g. every file was skipped) — no invented reason.
+ */
+function leadFailure(failures: PackEntryFailure[]): string | null {
+  const first = failures[0];
+  if (first === undefined) return null;
+  const subject = first.name === '' ? first.file : `${first.file} (${first.name})`;
+  return `${subject}: ${first.message}`;
 }
 
 /**

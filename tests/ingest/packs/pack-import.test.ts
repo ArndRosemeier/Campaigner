@@ -151,15 +151,40 @@ describe('importPack', () => {
 
   it('marks the book error and throws when zero entries validate', async () => {
     const deps = memoryDeps();
+    const broken = baseNpc('Broken Creature');
+    const system = broken.system as Record<string, unknown>;
+    delete (system.details as Record<string, unknown>).level;
+    await expect(
+      importPack(
+        'foundry-pf2e',
+        [
+          { name: 'junk.json', bytes: encodeJson(folderDoc()) },
+          { name: 'broken.json', bytes: encodeJson(broken) },
+        ],
+        { title: 'Empty Pack', deps },
+      ),
+    ).rejects.toThrow('no valid creature entries');
+    // 16-BESTIARY-FETCH §6: the error leads with the first failure's issue —
+    // the user sees the reason, not just a count. The skipped folder doc is
+    // not a failure, so the broken creature's zod issue leads.
+    expect(deps.failed[0]?.message.startsWith('broken.json (Broken Creature): document 0: [')).toBe(
+      true,
+    );
+    expect(deps.failed[0]?.message).toContain(
+      '— no valid creature entries in the pack selection (1 skipped, 1 failed)',
+    );
+    expect(deps.finalized).toHaveLength(0);
+  });
+
+  it('reports a skipped-only zero-entry import without an invented reason', async () => {
+    const deps = memoryDeps();
     await expect(
       importPack('foundry-pf2e', [{ name: 'junk.json', bytes: encodeJson(folderDoc()) }], {
         title: 'Empty Pack',
         deps,
       }),
-    ).rejects.toThrow('no valid creature entries');
-    expect(deps.failed).toHaveLength(1);
-    expect(deps.failed[0]?.message).toContain('1 skipped, 0 failed');
-    expect(deps.finalized).toHaveLength(0);
+    ).rejects.toThrow('no valid creature entries in the pack selection (1 skipped, 0 failed)');
+    expect(deps.failed[0]?.message.startsWith('no valid creature entries')).toBe(true);
   });
 
   it('fails loudly on an explicitly selected unsupported file', async () => {

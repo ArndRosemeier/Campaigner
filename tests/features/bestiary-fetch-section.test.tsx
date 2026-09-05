@@ -162,6 +162,59 @@ describe('BestiaryFetchSection', () => {
     expect(await db.rulebooks.count()).toBe(0);
   });
 
+  it('leads the zero-entry fetch failure with the first validation issue (16-BESTIARY-FETCH §6)', async () => {
+    // This is the live Monster Core scenario: files download fine but every
+    // document fails validation — the toast and error-state book must name
+    // the representative failure, not just "0 imported".
+    const user = userEvent.setup();
+    const broken = baseNpc('Acolyte of Nethys');
+    const system = broken.system as Record<string, unknown>;
+    delete (system.details as Record<string, unknown>).level;
+    vi.stubGlobal(
+      'fetch',
+      mockFetch({
+        [PF2E_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
+        [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response(
+          JSON.stringify(broken),
+          { status: 200 },
+        ),
+        [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Response(
+          JSON.stringify(broken),
+          { status: 200 },
+        ),
+        [RAW('packs/pf2e/npc-gallery/_folders.json')]: new Response(
+          JSON.stringify({ name: 'NPC Gallery', type: 'folder' }),
+          { status: 200 },
+        ),
+      }),
+    );
+    render(<BestiaryFetchSection />);
+    render(<Toaster />);
+
+    await user.click(await screen.findByTestId('fetch-packs/pf2e/npc-gallery'));
+
+    // The card's named error line leads with the representative failure
+    // (the first document's zod issue), then the zero-entry summary; the
+    // toast shows the same message ("Bestiary pack fetch failed").
+    expect(await screen.findByTestId('error-foundry-pf2e')).toHaveTextContent(
+      /npc-gallery\/acolyte-of-nethys\.json \(Acolyte of Nethys\): document 0:/s,
+    );
+    expect(screen.getByTestId('error-foundry-pf2e')).toHaveTextContent(
+      /no valid creature entries in the pack selection \(0 skipped, 2 failed of 2 fetched files\)/,
+    );
+    expect(
+      (await screen.findAllByText(/Bestiary pack fetch failed/)).length,
+    ).toBeGreaterThanOrEqual(1);
+    // The error-state book message leads with the same representative failure.
+    const books = await db.rulebooks.toArray();
+    expect(books.map((entry) => entry.status)).toEqual(['error']);
+    expect(
+      books
+        .map((entry) => entry.errorMessage)
+        .some((message) => message.startsWith('npc-gallery/acolyte-of-nethys.json')),
+    ).toBe(true);
+  });
+
   it('names the GitHub rate limit when the repo listing is rejected', async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
