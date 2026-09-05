@@ -71,8 +71,12 @@ import { cn } from '@/lib/utils';
  * - The surface renders ONLY the board — map, grid, tokens, veils, staging
  *   ground, initiative sidebar, HP meters, downed overlay. No artifact
  *   bodies, no stat text, no GM-only material anywhere in the DOM.
- * - Tokens under a veil/fog and `visible: false` tokens are REMOVED from the
- *   DOM (not dimmed) and pruned from initiative — that IS the mechanic.
+ * - Veils tint the map at ~10% in BOTH views; they never blind the GM. In
+ *   player view, mob tokens under a veil/fog are REMOVED from the DOM (not
+ *   dimmed) and pruned from initiative — that IS the hiding mechanic; PCs
+ *   and other tokens are never coverage-hidden and render above the veil.
+ *   `visible: false` tokens are removed in both views. The GM view sees
+ *   everything under its own veils.
  * - Token tap shows name + image + HP only (full inspection happens back on
  *   the GM view, never here).
  *
@@ -257,10 +261,14 @@ export function BattleSurface(): JSX.Element {
   const displayedTokens = useMemo(() => {
     if (battle === undefined) return [];
     const drag = liveDrag;
+    // Coverage REMOVES tokens from the DOM in player view only — and
+    // coveredTokenIds holds mob tokens only (use-battle scopes it: PCs and
+    // other tokens are never coverage-hidden). The GM sees everything under
+    // their own veils.
     return battle.board.tokens
-      .filter((token) => token.visible && !coveredTokenIds.has(token.id))
+      .filter((token) => token.visible && (!playerSafe || !coveredTokenIds.has(token.id)))
       .map((token) => (drag !== null && token.id === drag.tokenId ? { ...token, x: drag.x, y: drag.y } : token));
-  }, [battle, liveDrag, coveredTokenIds]);
+  }, [battle, liveDrag, coveredTokenIds, playerSafe]);
 
   // Same live-render contract as displayedTokens: a dragged veil follows the
   // pointer in local state (persisted exactly once on release).
@@ -818,26 +826,9 @@ export function BattleSurface(): JSX.Element {
                   }}
                 />
               )}
-              {/* Tokens — covered/hidden are REMOVED, never dimmed */}
-              {displayedTokens.map((token) => (
-                <TokenView
-                  key={token.id}
-                  token={token}
-                  content={contentPx}
-                  artifact={token.artifactId === null ? undefined : artifactById.get(token.artifactId)}
-                  stats={stats}
-                  selected={token.id === selectedTokenId}
-                  isActiveTurn={token.id === turnTokenId}
-                  dragging={liveDrag?.tokenId === token.id}
-                  playerSafe={playerSafe}
-                  onPointerDown={(event) => {
-                    startTokenDrag(event, token);
-                  }}
-                  onPointerMove={moveTokenDrag}
-                  onPointerUp={finishTokenDrag}
-                />
-              ))}
-              {/* Veils */}
+              {/* Veils — UNDER the tokens: covered mob tokens are removed in
+                  player view, and every token that survives (PCs, other
+                  tokens, GM-view mobs) must render ABOVE the veil. */}
               {displayedVeils.map((veil) => (
                 <VeilView
                   key={veil.id}
@@ -856,6 +847,25 @@ export function BattleSurface(): JSX.Element {
                   onResize={(edge, event) => {
                     resizeVeil(veil, edge, event);
                   }}
+                />
+              ))}
+              {/* Tokens — covered/hidden are REMOVED in player view, never dimmed */}
+              {displayedTokens.map((token) => (
+                <TokenView
+                  key={token.id}
+                  token={token}
+                  content={contentPx}
+                  artifact={token.artifactId === null ? undefined : artifactById.get(token.artifactId)}
+                  stats={stats}
+                  selected={token.id === selectedTokenId}
+                  isActiveTurn={token.id === turnTokenId}
+                  dragging={liveDrag?.tokenId === token.id}
+                  playerSafe={playerSafe}
+                  onPointerDown={(event) => {
+                    startTokenDrag(event, token);
+                  }}
+                  onPointerMove={moveTokenDrag}
+                  onPointerUp={finishTokenDrag}
                 />
               ))}
             </div>
@@ -1127,7 +1137,15 @@ interface VeilViewProps {
   onResize: (edge: VeilEdge, event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
-/** A veil/fog rectangle; opaque for players, translucent while selected. */
+/**
+ * A veil/fog rectangle at a ~10% tint, ALWAYS (M5-D amendment 2026-09-06):
+ * the veil marks unexplored ground and hides mob tokens in player view — it
+ * must not blind the GM to their own map. The fog keeps its light tint and
+ * the veil its dark one so the kind stays readable at the same strength.
+ * Selection and dragging read via outline + lift (ring / z-20, mirroring the
+ * token drag lift) — never opacity swings. The solid amber resize handles
+ * carry the resize affordance, so the translucent fill hides nothing.
+ */
 function VeilView({
   veil,
   content,
@@ -1154,11 +1172,9 @@ function VeilView({
     <div
       className={cn(
         'absolute -translate-x-1/2 -translate-y-1/2 touch-none',
-        veil.kind === 'fog' ? 'bg-zinc-200' : 'bg-zinc-800',
-        selected ? 'opacity-70 ring-2 ring-amber-400' : 'opacity-100',
-        // Dragging visual mirrors TokenView: lifted above siblings, slightly
-        // translucent (wins over the selected opacity via cn's last-wins).
-        dragging && 'z-20 opacity-90',
+        veil.kind === 'fog' ? 'bg-zinc-200/10' : 'bg-black/10',
+        (selected || dragging) && 'ring-2 ring-amber-400',
+        dragging && 'z-20',
         !resizable && 'cursor-default',
       )}
       style={{

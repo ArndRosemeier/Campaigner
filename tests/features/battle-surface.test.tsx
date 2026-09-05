@@ -281,7 +281,7 @@ describe('player-safe DOM contract', () => {
     expect(surface.textContent).not.toContain('Hit Dice');
   });
 
-  it('removes veiled and hidden tokens from the DOM entirely', async () => {
+  it('keeps GM view seeing a veiled mob; hidden (visible:false) tokens are removed from the DOM entirely', async () => {
     const { moduleId } = await seedStandardBattle();
     // A fog parked exactly over the troll token (fallback spawn point 1).
     const battle = await currentBattle(moduleId);
@@ -302,11 +302,14 @@ describe('player-safe DOM contract', () => {
     });
     await renderSurface(moduleId);
     await flushAsyncUpdates();
-    // The veiled token (Troll) is removed from the DOM.
+    // M5-D amendment: the GM sees their own map — the fogged troll STAYS in
+    // the DOM in GM view (player-view removal is pinned by the coverage test
+    // in 'veil coverage hides mobs only').
     const labels = screen.queryAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
-    expect(labels).not.toContain('Troll');
-    // Hidden (visible: false) tokens vanish the same way. The save fires
-    // liveQuery updates — wrap it in act (component is mounted).
+    expect(labels).toContain('Troll');
+    // Hidden (visible: false) tokens vanish the same way, in both views —
+    // that is the GM deliberately hiding a token, not coverage. The save
+    // fires liveQuery updates — wrap it in act (component is mounted).
     const fresh = await currentBattle(moduleId);
     await act(async () => {
       await saveBattleBoard(fresh.id, {
@@ -317,6 +320,90 @@ describe('player-safe DOM contract', () => {
       await flushAsyncUpdates();
     });
     expect(screen.queryByTestId('battle-token')).toBeNull();
+  });
+});
+
+describe('veil coverage hides mobs only', () => {
+  it('removes a mob token under a veil in player view while the PC under the same veil stays visible ABOVE it; GM view sees both', async () => {
+    const { moduleId } = await seedStandardBattle();
+    // Park Serren on the troll's spot so ONE fog covers both: the headline
+    // pin is the PC surviving coverage that hides the mob beside it.
+    const battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    const serren = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (troll === undefined || serren === undefined) throw new Error('tokens missing');
+    await act(async () => {
+      await saveBattleBoard(battle.id, {
+        ...battle.board,
+        tokens: battle.board.tokens.map((token) =>
+          token.label === 'Serren' ? { ...token, x: troll.x, y: troll.y } : token,
+        ),
+        veils: [
+          { id: newId(), kind: 'veil', x: troll.x, y: troll.y, widthCells: 2, heightCells: 2 },
+        ],
+      });
+      await flushAsyncUpdates();
+    });
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    // GM view: everything under the GM's own veil stays on the board.
+    let labels = screen.getAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
+    expect(labels).toContain('Troll');
+    expect(labels).toContain('Serren');
+    // Player view: the mob is removed; the PC under the same veil is not.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    labels = screen.getAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
+    expect(labels).not.toContain('Troll');
+    expect(labels).toContain('Serren');
+    // The surviving PC renders ABOVE the veil (same stacking context: later
+    // document order paints on top).
+    const veilEl = screen.getByTestId('battle-veil');
+    const serrenEl = screen
+      .getAllByTestId('battle-token')
+      .find((el) => el.getAttribute('data-token-label') === 'Serren');
+    if (serrenEl === undefined) throw new Error('serren element missing');
+    expect(veilEl.compareDocumentPosition(serrenEl) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe('veil presentation', () => {
+  it('tints veils at ~10% in both views; selection reads via outline, never opacity', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: newId(), kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    // Base tint pinned as a class: black at 10% alpha, and NO opacity-* class
+    // anywhere on the veil (selection/dragging must not swing it).
+    const expectTint = (el: HTMLElement): void => {
+      expect(el.className).toContain('bg-black/10');
+      expect(el.className).not.toMatch(/opacity-\d/);
+    };
+    expectTint(screen.getByTestId('battle-veil'));
+    // Tap (below threshold) selects: the outline appears, the tint does not.
+    const veilEl = screen.getByTestId('battle-veil');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    fireEvent.pointerDown(veilEl, { pointerId: 5, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerUp(veilEl, { pointerId: 5 });
+    await flushAsyncUpdates();
+    expectTint(screen.getByTestId('battle-veil'));
+    expect(screen.getByTestId('battle-veil').className).toContain('ring-2');
+    // Player view gets the same ~10% base — the veil never blinds anyone.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expectTint(screen.getByTestId('battle-veil'));
   });
 });
 
@@ -400,9 +487,11 @@ describe('veil live drag', () => {
     await flushAsyncUpdates();
     expect(Number.parseFloat(veilEl.style.left) / 100).toBeCloseTo(0.55, 9);
     expect(Number.parseFloat(veilEl.style.top) / 100).toBeCloseTo(0.62, 9);
-    // Dragging visual mirrors tokens: lifted (z-20), slightly translucent.
+    // Dragging visual mirrors tokens: lifted (z-20) with outline emphasis —
+    // the tint never swings (selection reads via outline, not opacity).
     expect(veilEl.className).toContain('z-20');
-    expect(veilEl.className).toContain('opacity-90');
+    expect(veilEl.className).toContain('ring-2');
+    expect(veilEl.className).not.toMatch(/opacity-\d/);
     // Zero persistence while the drag is live — the battle row is untouched.
     expect(saveBattleBoard).not.toHaveBeenCalled();
     const during = await currentBattle(moduleId);
@@ -812,10 +901,13 @@ describe('initiative', () => {
     });
     battle = await currentBattle(moduleId);
     expect(battle.board.initiativeOrder).toHaveLength(2);
-    // The TROLL leaves the DOM; the PC tokens remain.
+    // The order prunes, but GM view still SEES the fogged troll on the board
+    // (M5-D amendment: coverage removal from the DOM is player-view-only);
+    // the PC tokens remain too.
     await waitFor(() => {
       const labels = screen.queryAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
-      expect(labels).not.toContain('Troll');
+      expect(labels).toContain('Troll');
+      expect(labels).toContain('Serren');
     });
 
     // Lift the fog → back on the board with a fresh auto-roll.

@@ -65,6 +65,14 @@ export function useBattleState(
       ? cellWidthPx
       : contentHeightPx / board.mapLayout.rows;
     for (const token of board.tokens) {
+      // M5-D amendment (2026-09-06): veils hide MOB tokens only — never PCs
+      // or other tokens. The fighter kind is the seed-chain derivation, no
+      // new schema field: seedFighters rows (rulebook/inline monsters) and
+      // npc artifacts (npc-ref monsters) both resolve kind 'npc' through the
+      // stats lookup; PCs resolve 'pc'; statless tokens and stamps are
+      // absent from the lookup (the loud-badge contract) and are never
+      // coverage-hidden.
+      if (token.artifactId === null || stats(token.artifactId)?.kind !== 'npc') continue;
       if (portraitCoveredByVeils(
         token,
         board.veils,
@@ -78,7 +86,7 @@ export function useBattleState(
       }
     }
     return covered;
-  }, [battle, contentWidthPx, contentHeightPx]);
+  }, [battle, stats, contentWidthPx, contentHeightPx]);
 
   return { battle, stats, coveredTokenIds, artifacts, pcFighters };
 }
