@@ -76,15 +76,18 @@ git/trees**. No third-party proxy is used anywhere; if raw fails (network down
 
 - **Curated recipes** (default): constant lists in `src/ingest/packFetch.ts`
   — zero network for the default view.
-- **Advanced "list everything"** (on-demand): pf2e uses **api.github.com
-  git/trees** (`recursive=1` — pf2e's tree is beyond the 100k cap? No: the
-  dnd5e tree was 7 240 entries with `truncated: false`; pf2e's ~35k-entry tree
-  is comfortably below the 100k-entry recursion cap, but the **60 req/h per-IP
-  limit can exhaust the listing even when the call itself succeeds** — the UI
-  names the rate limit in the error when it happens; this is the documented
-  degraded path). dnd5e's tree is small and verified `truncated: false`.
-  Raw.githubusercontent.com cannot list directories (404-ish JSON, no index),
-  so trees-API-or-nothing for the full list; the curated list never needs it.
+- **Advanced "list everything"** (on-demand): **api.github.com git/trees**
+  (`?recursive=1`, one call, cached per session). Verified entry counts at the
+  pinned refs (blobless-clone `git ls-tree -r`): dnd5e `6.0.x` = 6 678,
+  pf2e `v14-dev` = 41 445 — both comfortably below the trees API's
+  100 000-entry recursion cap, so `truncated: false` is the expected case and
+  a `truncated: true` response fails loudly instead of silently missing
+  packs. The real operational limit is the **60 req/h per-IP API quota**
+  (observed exhausted live on shared egress mid-mission, `remaining: 0`) —
+  the UI names the rate limit in the error when it happens; this is the
+  documented degraded path. Raw.githubusercontent.com cannot list directories
+  (no index), so trees-API-or-nothing for the full list; the curated list
+  never needs it.
 
 ## 4. Curated recipe list (Phase A deliverable)
 
