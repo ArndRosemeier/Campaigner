@@ -13,6 +13,11 @@ import type { BattleVeil } from '@/domain/battle';
  * Live battle state for the module-anchored table surface (M6-E): the battle
  * row, campaign/module/global fighter stats, and the derived covered-token
  * set. This is the one place Dexie rows become the engine's plain numbers.
+ *
+ * `contentWidthPx`/`contentHeightPx` MUST be the aspect-fitted CONTENT div's
+ * size — the frame tokens and veils are %-positioned in — not the outer
+ * container's. Under letterbox the two differ, and coverage must match the
+ * rendered geometry (veil rect vs token rect in the same frame).
  */
 export interface BattleState {
   battle: Battle | undefined;
@@ -25,8 +30,8 @@ export interface BattleState {
 export function useBattleState(
   campaignId: Id,
   moduleId: Id,
-  boardWidthPx: number,
-  boardHeightPx: number,
+  contentWidthPx: number,
+  contentHeightPx: number,
 ): BattleState {
   const battle = useLiveQuery(
     async () => (moduleId === '' ? undefined : getBattleByModule(moduleId)),
@@ -52,28 +57,28 @@ export function useBattleState(
     const covered = new Set<BattleTokenId>();
     if (battle === undefined) return covered;
     const board = battle.board;
-    if (board.veils.length === 0 || boardWidthPx <= 0 || boardHeightPx <= 0) return covered;
+    if (board.veils.length === 0 || contentWidthPx <= 0 || contentHeightPx <= 0) return covered;
     const cellWidthPx = board.mapLayout === null
       ? veilCellPx(board.gridSize, board.tokenSize)
-      : boardWidthPx / board.mapLayout.cols;
+      : contentWidthPx / board.mapLayout.cols;
     const cellHeightPx = board.mapLayout === null
       ? cellWidthPx
-      : boardHeightPx / board.mapLayout.rows;
+      : contentHeightPx / board.mapLayout.rows;
     for (const token of board.tokens) {
       if (portraitCoveredByVeils(
         token,
         board.veils,
         board.tokenSize,
         cellWidthPx,
-        boardWidthPx,
-        boardHeightPx,
+        contentWidthPx,
+        contentHeightPx,
         cellHeightPx,
       )) {
         covered.add(token.id);
       }
     }
     return covered;
-  }, [battle, boardWidthPx, boardHeightPx]);
+  }, [battle, contentWidthPx, contentHeightPx]);
 
   return { battle, stats, coveredTokenIds, artifacts, pcFighters };
 }

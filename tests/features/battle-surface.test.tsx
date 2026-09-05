@@ -26,6 +26,56 @@ import { flushAsyncUpdates } from '../helpers/flush';
 
 const BOARD_W = 800;
 const BOARD_H = 600;
+// The aspect-fitted content div: 800 wide at the fallback 16:9 aspect → 450
+// high, letterboxed 75px top/bottom inside the 600-high container. The board
+// frame the surface converts pointers against and snaps in.
+const CONTENT_H = 450;
+const CONTENT_TOP = 75;
+
+/**
+ * The container rect (the outer board div) and the content div's rect, as the
+ * browser would report them at zoom 1 / pan 0. Tests mutate `contentRect` to
+ * simulate a transformed content element (zoom/pan) — the surface must then
+ * convert pointers against THIS rect, not the container's.
+ */
+const containerRect = {
+  x: 0,
+  y: 0,
+  top: 0,
+  left: 0,
+  bottom: BOARD_H,
+  right: BOARD_W,
+  width: BOARD_W,
+  height: BOARD_H,
+  toJSON: () => ({}),
+};
+let contentRect = {
+  x: 0,
+  y: CONTENT_TOP,
+  top: CONTENT_TOP,
+  left: 0,
+  bottom: CONTENT_TOP + CONTENT_H,
+  right: BOARD_W,
+  width: BOARD_W,
+  height: CONTENT_H,
+  toJSON: () => ({}),
+};
+
+/** Post-transform content rect for a zoom/pan, per the surface's CSS
+ * (`translate(pan) scale(zoom)`, origin center of the 800×600 container). */
+function transformedContentRect(zoom: number, pan: { x: number; y: number }): typeof contentRect {
+  return {
+    x: 400 + (0 - 400) * zoom + pan.x,
+    y: 300 + (CONTENT_TOP - 300) * zoom + pan.y,
+    top: 300 + (CONTENT_TOP - 300) * zoom + pan.y,
+    left: 400 + (0 - 400) * zoom + pan.x,
+    bottom: 300 + (CONTENT_TOP - 300) * zoom + pan.y + CONTENT_H * zoom,
+    right: 400 + (0 - 400) * zoom + pan.x + BOARD_W * zoom,
+    width: BOARD_W * zoom,
+    height: CONTENT_H * zoom,
+    toJSON: () => ({}),
+  };
+}
 
 function statBlock(over: Partial<StatBlock> = {}): StatBlock {
   return statBlockSchema.parse({
@@ -61,15 +111,20 @@ class ResizeObserverStub {
   constructor(callback: ResizeObserverCallback) {
     this.callback = callback;
   }
-  observe(): void {
+  observe(element: Element): void {
+    // Per-element layout rects: the board container and the aspect-fitted
+    // content div report DIFFERENT frames (the letterbox lives between them;
+    // ResizeObserver ignores transforms, so contentRect stays the layout box
+    // even when a test transforms `contentRect` for pointer conversion).
+    const rect =
+      element.getAttribute('data-board-content') === 'true'
+        ? { width: contentRect.width, height: contentRect.height }
+        : { width: BOARD_W, height: BOARD_H };
     // Report the fixed test viewport on a microtask, inside act — the board
     // mounts only after the battle row's liveQuery resolves.
     queueMicrotask(() => {
       act(() => {
-        this.callback(
-          [{ contentRect: { width: BOARD_W, height: BOARD_H } } as ResizeObserverEntry],
-          this,
-        );
+        this.callback([{ contentRect: rect } as ResizeObserverEntry], this);
       });
     });
   }
@@ -81,18 +136,27 @@ class ResizeObserverStub {
 
 beforeEach(async () => {
   await clearDatabase();
-  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
-  // jsdom reports zero rects; the surface needs a real board frame.
-  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+  contentRect = {
     x: 0,
-    y: 0,
-    top: 0,
+    y: CONTENT_TOP,
+    top: CONTENT_TOP,
     left: 0,
-    bottom: BOARD_H,
+    bottom: CONTENT_TOP + CONTENT_H,
     right: BOARD_W,
     width: BOARD_W,
-    height: BOARD_H,
+    height: CONTENT_H,
     toJSON: () => ({}),
+  };
+  vi.stubGlobal('ResizeObserver', ResizeObserverStub);
+  // jsdom reports zero rects; the surface needs real frames. The content div
+  // gets its own (letterboxed) rect — the surface must convert pointers
+  // against the content frame, not the container's.
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
+    this: Element,
+  ) {
+    return this.getAttribute('data-board-content') === 'true'
+      ? { ...contentRect }
+      : { ...containerRect };
   });
   campaignId = (await createCampaign({ name: 'Battle UI', system: 'dnd5e' })).id;
 });
@@ -297,6 +361,148 @@ describe('drag & tap', () => {
     expect(within(controls).getByTestId('token-hp').textContent).toContain('84');
     expect(controls.textContent).not.toContain('fears fire');
     await flushAsyncUpdates();
+  });
+});
+
+describe('content-frame pointer conversion', () => {
+  it('commits a token where the pointer was under zoom AND pan', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    // Disable the 72px grid so the committed spot is EXACTLY the pointer's
+    // content-frame fraction (snapPoint is the identity without a grid).
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, { ...seeded.board, gridSize: null });
+      await flushAsyncUpdates();
+    });
+    const user = userEvent.setup();
+    // Zoom to exactly 1.5625 (two ×1.25 steps — exact in binary floating
+    // point), then pan +100/−50 by dragging the background.
+    await user.click(screen.getByLabelText('Zoom in'));
+    await user.click(screen.getByLabelText('Zoom in'));
+    const zoom = 1.5625;
+    const pan = { x: 100, y: -50 };
+    const board = screen.getByTestId('battle-board');
+    fireEvent.pointerDown(board, { pointerId: 7, clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(board, { pointerId: 7, clientX: 400 + pan.x, clientY: 300 + pan.y });
+    fireEvent.pointerUp(board, { pointerId: 7 });
+    // The rect the browser would report for the transformed content element.
+    contentRect = transformedContentRect(zoom, pan);
+    const battle = await currentBattle(moduleId);
+    const serren = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (serren === undefined) throw new Error('serren token missing');
+    const serrenEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Serren');
+    if (serrenEl === undefined) throw new Error('serren element missing');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    fireEvent.pointerDown(serrenEl, { pointerId: 3, clientX: cx(0.55), clientY: cy(0.35) });
+    fireEvent.pointerMove(serrenEl, { pointerId: 3, clientX: cx(0.7), clientY: cy(0.45) });
+    fireEvent.pointerUp(serrenEl, { pointerId: 3 });
+    await flushAsyncUpdates();
+    const after = await currentBattle(moduleId);
+    const moved = after.board.tokens.find((token) => token.label === 'Serren');
+    // Committed exactly where the pointer was — the container-frame bug would
+    // drift by (s−c)(1−1/zoom) + pan/zoom + letterbox here.
+    expect(moved?.x).toBeCloseTo(0.7, 9);
+    expect(moved?.y).toBeCloseTo(0.45, 9);
+  });
+
+  it('snaps y against the content frame under letterbox (72px grid)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll token missing');
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    // Move to content fraction (0.5, 0.5): the grid overlay renders INSIDE
+    // the 450-high content div, so y-snap must quantize against 450, not the
+    // 600-high container.
+    fireEvent.pointerDown(trollEl, { pointerId: 3, clientX: 80, clientY: 120 });
+    fireEvent.pointerMove(trollEl, { pointerId: 3, clientX: 400, clientY: 300 });
+    fireEvent.pointerUp(trollEl, { pointerId: 3 });
+    await flushAsyncUpdates();
+    const after = await currentBattle(moduleId);
+    const moved = after.board.tokens.find((token) => token.label === 'Troll');
+    if (moved === undefined) throw new Error('troll vanished');
+    // Span-1 snap lands the centre mid-cell in CONTENT px: ≡36 (mod 72).
+    expect(Math.abs(((moved.x * BOARD_W) % 72) - 36)).toBeLessThan(1e-6);
+    expect(Math.abs(((moved.y * CONTENT_H) % 72) - 36)).toBeLessThan(1e-6);
+    // 225 content px → block 3 → 252/450 = 0.56 (the container frame would
+    // snap 300 container px to 0.54 — the letterbox drift this pins out).
+    expect(moved.y).toBeCloseTo(0.56, 9);
+  });
+
+  it('keeps the 8px tap threshold screen-space across zoom', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+
+    function tokenEl(label: string): HTMLElement {
+      const element = screen
+        .getAllByTestId('battle-token')
+        .find((entry) => entry.getAttribute('data-token-label') === label);
+      if (element === undefined) throw new Error(`${label} element missing`);
+      return element;
+    }
+
+    // Zoom to the 4× clamp (7 ×1.25 steps overshoot; clampZoom pins 4).
+    for (let click = 0; click < 7; click += 1) {
+      await user.click(screen.getByLabelText('Zoom in'));
+    }
+    contentRect = transformedContentRect(4, { x: 0, y: 0 });
+    // A 20-client-px move at 4× reads 5 board-px under a zoom-scaled
+    // threshold (→ tap); screen-space pins it as a DRAG that commits.
+    const serrenEl = tokenEl('Serren');
+    fireEvent.pointerDown(serrenEl, { pointerId: 3, clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(serrenEl, { pointerId: 3, clientX: 420, clientY: 300 });
+    fireEvent.pointerUp(serrenEl, { pointerId: 3 });
+    await flushAsyncUpdates();
+    const dragged = (await currentBattle(moduleId)).board.tokens.find(
+      (token) => token.label === 'Serren',
+    );
+    // Committed the snapped content-frame spot of the moved-to fraction
+    // (0.5, 0.5 → 0.495/0.56) — a tap would have left the row untouched.
+    expect(dragged?.x).toBeCloseTo(0.495, 9);
+    expect(dragged?.y).toBeCloseTo(0.56, 9);
+
+    // Zoom back out to the 0.35 clamp. A 6-client-px move stays a TAP
+    // (screen-space); a zoom-scaled threshold would read ~17 board-px and
+    // commit a drag.
+    const miraBefore = (await currentBattle(moduleId)).board.tokens.find(
+      (token) => token.label === 'Mira',
+    );
+    if (miraBefore === undefined) throw new Error('mira token missing');
+    for (let click = 0; click < 11; click += 1) {
+      await user.click(screen.getByLabelText('Zoom out'));
+    }
+    contentRect = transformedContentRect(0.35, { x: 0, y: 0 });
+    const miraEl = tokenEl('Mira');
+    fireEvent.pointerDown(miraEl, { pointerId: 4, clientX: 200, clientY: 300 });
+    fireEvent.pointerMove(miraEl, { pointerId: 4, clientX: 206, clientY: 300 });
+    fireEvent.pointerUp(miraEl, { pointerId: 4 });
+    await flushAsyncUpdates();
+    const miraAfter = (await currentBattle(moduleId)).board.tokens.find(
+      (token) => token.label === 'Mira',
+    );
+    expect(miraAfter?.x).toBe(miraBefore.x);
+    expect(miraAfter?.y).toBe(miraBefore.y);
+    // Tap selected Mira instead of committing a drag.
+    expect(screen.getByTestId('token-controls')).toBeInTheDocument();
+    expect(screen.getByTestId('token-controls').textContent).toContain('Mira');
   });
 });
 

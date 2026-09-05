@@ -38,6 +38,7 @@ import {
   snapAxisToLayoutGrid,
   tokenSpanCells,
 } from '@/domain/battle/gridSnap';
+import { pointInRect } from '@/domain/battle/pointerFrame';
 import {
   beginBoardGesture,
   endBoardGesture,
@@ -74,9 +75,16 @@ import { cn } from '@/lib/utils';
  *   the GM view, never here).
  *
  * Interactions: drag with a local live position + a single repo commit on
- * release (8px tap threshold); wheel/button/pinch pan-zoom; veil add/resize;
+ * release (8px SCREEN-space tap threshold — client px, so the tap window does
+ * not scale with zoom); wheel/button/pinch pan-zoom; veil add/resize;
  * stage set/reset; gated initiative reconcile; HP floats writing to the
  * token (NPC) or the pc artifact (PC).
+ *
+ * Frames (the bug family this file guards against): the pan/zoom transform
+ * lives on the background wrapper and the aspect-fitted CONTENT div inside it
+ * letterboxes, so EVERYTHING piece-related converts/measures against the
+ * content div — pointers via its post-transform rect (bakes pan/zoom/
+ * letterbox in), px math via its layout size — never the outer container.
  */
 
 const ZOOM_MIN = 0.35;
@@ -92,9 +100,11 @@ interface LiveDrag {
   tokenId: BattleTokenId;
   x: number;
   y: number;
+  /** Screen-space (client px) distance from the pointer-down origin — the
+   * tap/drag threshold must not scale with zoom. */
   movedPx: number;
-  originX: number;
-  originY: number;
+  startClientX: number;
+  startClientY: number;
 }
 
 export function BattleSurface(): JSX.Element {
@@ -112,6 +122,11 @@ export function BattleSurface(): JSX.Element {
   const [hpDelta, setHpDelta] = useState('');
   const [, setEpochTick] = useState(initiativeDragEpoch());
   const boardRef = useRef<HTMLDivElement | null>(null);
+  // The aspect-fitted content div tokens/veils are %-positioned in — both the
+  // pointer frame (post-transform rect) and the px frame (layout size) for
+  // snapping/thresholds/coverage. The outer container letterboxes it.
+  const contentRef = useRef<HTMLDivElement | null>(null);
+  const [contentSize, setContentSize] = useState({ w: 0, h: 0 });
   const openedLiveRef = useRef(false);
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const pinchRef = useRef<Map<number, { x: number; y: number }>>(new Map());
@@ -120,8 +135,8 @@ export function BattleSurface(): JSX.Element {
   const { battle, stats, coveredTokenIds, artifacts } = useBattleState(
     campaignId,
     moduleId,
-    boardSize.w,
-    boardSize.h,
+    contentSize.w,
+    contentSize.h,
   );
 
   const mapImageId = battle?.board.mapImageId ?? null;
@@ -163,6 +178,28 @@ export function BattleSurface(): JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [boardMounted]);
 
+  // Track the content div's layout px size (snapping/coverage/veil sizing
+  // need the frame the %-positioned pieces actually resolve against — under
+  // letterbox it differs from the container). ResizeObserver reports the
+  // untransformed layout box, which is exactly that frame.
+  useEffect(() => {
+    if (!boardMounted) return undefined;
+    const element = contentRef.current;
+    if (element === null) return undefined;
+    const observer = new ResizeObserver((entries) => {
+      const rect = entries[0]?.contentRect;
+      if (rect !== undefined && (rect.width !== contentSize.w || rect.height !== contentSize.h)) {
+        setContentSize({ w: rect.width, h: rect.height });
+      }
+    });
+    observer.observe(element);
+    return () => {
+      observer.disconnect();
+    };
+    // contentSize is intentionally not a dependency (would loop on every resize).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [boardMounted]);
+
   // Entering the surface puts the battle on the table (once per mount):
   // live: true AND every token revealed — the source's `liveBoard` rule
   // (artifact-backed tokens and stamps become visible on the table; prep
@@ -194,13 +231,13 @@ export function BattleSurface(): JSX.Element {
 
   const mapLayout = battle?.board.mapLayout ?? null;
   const cellWidthPx =
-    mapLayout !== null && boardSize.w > 0
-      ? boardSize.w / mapLayout.cols
+    mapLayout !== null && contentSize.w > 0
+      ? contentSize.w / mapLayout.cols
       : battle === undefined
         ? 72
         : veilCellPx(battle.board.gridSize, battle.board.tokenSize);
   const cellHeightPx =
-    mapLayout !== null && boardSize.h > 0 ? boardSize.h / mapLayout.rows : cellWidthPx;
+    mapLayout !== null && contentSize.h > 0 ? contentSize.h / mapLayout.rows : cellWidthPx;
   const aspect =
     mapLayout !== null
       ? mapLayout.cols / mapLayout.rows
@@ -209,11 +246,11 @@ export function BattleSurface(): JSX.Element {
         : mapImage.width / mapImage.height;
 
   useEffect(() => {
-    if (battle === undefined || mapLayout === null || boardSize.w <= 0 || boardSize.h <= 0) return;
+    if (battle === undefined || mapLayout === null || contentSize.w <= 0 || contentSize.h <= 0) return;
     const desired = tokenSizeFittingGrid(Math.max(1, Math.floor(Math.min(cellWidthPx, cellHeightPx))));
     if (desired === battle.board.tokenSize) return;
     void commit((board) => ({ ...board, tokenSize: desired }));
-  }, [battle, mapLayout, boardSize.w, boardSize.h, cellWidthPx, cellHeightPx, commit]);
+  }, [battle, mapLayout, contentSize.w, contentSize.h, cellWidthPx, cellHeightPx, commit]);
 
   const displayedTokens = useMemo(() => {
     if (battle === undefined) return [];
@@ -227,32 +264,32 @@ export function BattleSurface(): JSX.Element {
   const selectedToken = displayedTokens.find((token) => token.id === selectedTokenId) ?? null;
 
   function boardPointFromEvent(event: { clientX: number; clientY: number }): { x: number; y: number } {
-    const rect = boardRef.current?.getBoundingClientRect();
-    if (rect === undefined || rect.width === 0 || rect.height === 0) return { x: 0.5, y: 0.5 };
-    return {
-      x: (event.clientX - rect.left) / rect.width,
-      y: (event.clientY - rect.top) / rect.height,
-    };
+    // Convert against the CONTENT element's post-transform rect: it bakes the
+    // pan/zoom transform (which lives on the background wrapper) and the
+    // aspect-fit letterbox in, matching the %-positioned tokens and veils.
+    // The outer container's rect would drift by (s−c)(1−1/zoom) + pan/zoom
+    // plus the letterbox offset. The rect already includes pan/zoom — never
+    // re-apply them here (double-application).
+    const rect = contentRef.current?.getBoundingClientRect();
+    if (rect === undefined) {
+      throw new Error('Board content frame missing — cannot convert pointer coordinates');
+    }
+    return pointInRect(event.clientX, event.clientY, rect);
   }
 
-  function snapPoint(x: number, y: number): { x: number; y: number } {
+  function snapPoint(x: number, y: number, spanCells: { x: number; y: number }): { x: number; y: number } {
     const grid = battle?.board.gridSize;
-    if (battle === undefined || boardSize.w === 0) return { x, y };
+    if (battle === undefined || contentSize.w === 0) return { x, y };
     if (battle.board.mapLayout === null && (grid === undefined || grid === null)) return { x, y };
-    const token =
-      liveDrag === null
-        ? undefined
-        : battle.board.tokens.find((entry) => entry.id === liveDrag.tokenId);
-    const span = tokenSpanCells(token?.scale ?? 1);
     if (battle.board.mapLayout !== null) {
       return {
-        x: snapAxisToLayoutGrid(x, battle.board.mapLayout.cols, span),
-        y: snapAxisToLayoutGrid(y, battle.board.mapLayout.rows, span),
+        x: snapAxisToLayoutGrid(x, battle.board.mapLayout.cols, spanCells.x),
+        y: snapAxisToLayoutGrid(y, battle.board.mapLayout.rows, spanCells.y),
       };
     }
     return {
-      x: snapAxisToGrid(x, boardSize.w, cellWidthPx, span),
-      y: snapAxisToGrid(y, boardSize.h, cellHeightPx, span),
+      x: snapAxisToGrid(x, contentSize.w, cellWidthPx, spanCells.x),
+      y: snapAxisToGrid(y, contentSize.h, cellHeightPx, spanCells.y),
     };
   }
 
@@ -316,16 +353,28 @@ export function BattleSurface(): JSX.Element {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     beginBoardGesture();
-    const at = boardPointFromEvent(event);
-    setLiveDrag({ tokenId: token.id, x: token.x, y: token.y, movedPx: 0, originX: at.x, originY: at.y });
+    setLiveDrag({
+      tokenId: token.id,
+      x: token.x,
+      y: token.y,
+      movedPx: 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    });
   }
 
   function moveTokenDrag(event: React.PointerEvent<HTMLDivElement>): void {
     const drag = liveDrag;
     if (drag === null) return;
     const at = boardPointFromEvent(event);
-    const movedPx = Math.hypot((at.x - drag.originX) * boardSize.w, (at.y - drag.originY) * boardSize.h);
-    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx: Math.max(drag.movedPx, movedPx) });
+    // Screen-space threshold: client px from the down origin, so the 8px tap
+    // window is zoom-invariant (a board-frame distance would shrink/grow it
+    // with zoom — micro-drags when zoomed in, dead taps when zoomed out).
+    const movedPx = Math.max(
+      drag.movedPx,
+      Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
+    );
+    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
   }
 
   function finishTokenDrag(): void {
@@ -339,7 +388,10 @@ export function BattleSurface(): JSX.Element {
       setSelectedVeilId(null);
       return;
     }
-    const snapped = snapPoint(drag.x, drag.y);
+    const span = tokenSpanCells(
+      battle?.board.tokens.find((entry) => entry.id === drag.tokenId)?.scale ?? 1,
+    );
+    const snapped = snapPoint(drag.x, drag.y, { x: span, y: span });
     void commit((board) => ({
       ...board,
       tokens: board.tokens.map((token) => (token.id === drag.tokenId ? { ...token, x: snapped.x, y: snapped.y } : token)),
@@ -353,8 +405,14 @@ export function BattleSurface(): JSX.Element {
       event.currentTarget.setPointerCapture(event.pointerId);
     }
     beginBoardGesture();
-    const at = boardPointFromEvent(event);
-    setLiveDrag({ tokenId: `veil:${veil.id}`, x: veil.x, y: veil.y, movedPx: 0, originX: at.x, originY: at.y });
+    setLiveDrag({
+      tokenId: `veil:${veil.id}`,
+      x: veil.x,
+      y: veil.y,
+      movedPx: 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    });
     setSelectedVeilId(veil.id);
     setSelectedTokenId(null);
   }
@@ -363,8 +421,12 @@ export function BattleSurface(): JSX.Element {
     const drag = liveDrag;
     if (drag?.tokenId.startsWith('veil:') !== true) return;
     const at = boardPointFromEvent(event);
-    const movedPx = Math.hypot((at.x - drag.originX) * boardSize.w, (at.y - drag.originY) * boardSize.h);
-    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx: Math.max(drag.movedPx, movedPx) });
+    // Screen-space threshold, same as tokens (see moveTokenDrag).
+    const movedPx = Math.max(
+      drag.movedPx,
+      Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
+    );
+    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
   }
 
   function finishVeilDrag(): void {
@@ -388,8 +450,8 @@ export function BattleSurface(): JSX.Element {
         veil,
         edge,
         at,
-        boardSize.w,
-        boardSize.h,
+        contentSize.w,
+        contentSize.h,
         cellWidthPx,
         cellHeightPx,
       );
@@ -511,7 +573,10 @@ export function BattleSurface(): JSX.Element {
 
   const board = battle.board;
   const turnTokenId = activeInitiativeTokenId(board);
-  const boardPx = { w: boardSize.w, h: boardSize.h };
+  // The px frame tokens/veils resolve against: the content div, not the
+  // container (under letterbox the two differ — the %-denominator must match
+  // what the browser resolves the % against).
+  const contentPx = { w: contentSize.w, h: contentSize.h };
   const hasRealSize = boardSize.w > 0 && boardSize.h > 0;
 
   return (
@@ -673,6 +738,8 @@ export function BattleSurface(): JSX.Element {
             }}
           >
             <div
+              ref={contentRef}
+              data-board-content="true"
               className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
               style={{ width: '100%', aspectRatio: String(aspect), maxWidth: '100%' }}
             >
@@ -709,7 +776,7 @@ export function BattleSurface(): JSX.Element {
                 <TokenView
                   key={token.id}
                   token={token}
-                  board={boardPx}
+                  content={contentPx}
                   artifact={token.artifactId === null ? undefined : artifactById.get(token.artifactId)}
                   stats={stats}
                   selected={token.id === selectedTokenId}
@@ -728,7 +795,7 @@ export function BattleSurface(): JSX.Element {
                 <VeilView
                   key={veil.id}
                   veil={veil}
-                  board={boardPx}
+                  content={contentPx}
                   cellWidthPx={cellWidthPx}
                   cellHeightPx={cellHeightPx}
                   selected={veil.id === selectedVeilId}
@@ -881,7 +948,8 @@ function MapLayer({ imageId }: { imageId: Id }): JSX.Element | null {
 
 interface TokenViewProps {
   token: BattleToken;
-  board: { w: number; h: number };
+  /** Content-div px frame — the %-denominator for size/position. */
+  content: { w: number; h: number };
   artifact: AnyArtifact | undefined;
   stats: FighterStatsLookup;
   selected: boolean;
@@ -897,7 +965,7 @@ interface TokenViewProps {
  * overlay, turn marker. NAME + IMAGE + HP ONLY — never stats. */
 function TokenView({
   token,
-  board,
+  content,
   artifact,
   stats,
   selected,
@@ -911,11 +979,11 @@ function TokenView({
   const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
   const url = useImageUrl(coverImageId);
   const resolved = combatHpForToken(token, stats);
-  if (board.w === 0 || board.h === 0) return null;
-  // Token size: tokenSize in board px scaled by token.scale — the board div
-  // is the reference frame, so width is a percentage of board width.
-  const widthPct = ((64 * token.scale) / board.w) * 100;
-  const heightPct = ((64 * token.scale) / board.h) * 100;
+  if (content.w === 0 || content.h === 0) return null;
+  // Token size: tokenSize in content px scaled by token.scale — the content
+  // div is the reference frame, so width is a percentage of content width.
+  const widthPct = ((64 * token.scale) / content.w) * 100;
+  const heightPct = ((64 * token.scale) / content.h) * 100;
   const hpRatio = resolved === null ? null : resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
   const downed = hpRatio === 0;
   const initials = token.label
@@ -986,7 +1054,8 @@ function TokenView({
 
 interface VeilViewProps {
   veil: BattleVeil;
-  board: { w: number; h: number };
+  /** Content-div px frame — the %-denominator for size/position. */
+  content: { w: number; h: number };
   cellWidthPx: number;
   cellHeightPx: number;
   selected: boolean;
@@ -1000,7 +1069,7 @@ interface VeilViewProps {
 /** A veil/fog rectangle; opaque for players, translucent while selected. */
 function VeilView({
   veil,
-  board,
+  content,
   cellWidthPx,
   cellHeightPx,
   selected,
@@ -1010,9 +1079,9 @@ function VeilView({
   onPointerUp,
   onResize,
 }: VeilViewProps): JSX.Element | null {
-  if (board.w === 0 || board.h === 0) return null;
-  const widthPct = ((veil.widthCells * cellWidthPx) / board.w) * 100;
-  const heightPct = ((veil.heightCells * cellHeightPx) / board.h) * 100;
+  if (content.w === 0 || content.h === 0) return null;
+  const widthPct = ((veil.widthCells * cellWidthPx) / content.w) * 100;
+  const heightPct = ((veil.heightCells * cellHeightPx) / content.h) * 100;
   const handles: { edge: VeilEdge; className: string }[] = [
     { edge: 'n', className: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2' },
     { edge: 's', className: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2' },
