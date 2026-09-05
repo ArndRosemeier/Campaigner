@@ -224,7 +224,10 @@ recorded here as a binding constraint on any such extension.
 
 No silent fallbacks (AGENTS rule 1): repo reads failing inside the retrieve
 step fail the run loudly; a stored excerpt referencing a since-deleted
-module/part throws on read (impossible-miss rule); an empty graph, no
+module/part throws on read (impossible-miss rule) — and that read-time source
+validation runs UNCONDITIONALLY: stored reference fields are data-at-rest
+integrity, validated even when the toggle is OFF, so a vanished module fails
+the run loudly regardless of `wikiGroundingEnabled`; an empty graph, no
 detections, or a budget truncation are legitimate deterministic outcomes, not
 errors. The section is derived — no persistence beyond the run-step output
 that already exists (no Dexie change).

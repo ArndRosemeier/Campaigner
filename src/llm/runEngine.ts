@@ -1474,10 +1474,12 @@ export class RunEngine {
             .join('\n')}`;
     // 15-GRAPH-RETRIEVAL: the campaign-grounding section renders after the
     // Task line, from the retrieve step's STORED blocks (byte-identical
-    // across pause/resume; no re-derivation). An OFF toggle or empty blocks
-    // render no section at all — never an empty block.
+    // across pause/resume; no re-derivation). The toggle is read ONCE, at
+    // compute time (campaignGroundingFor) — a mid-run ON→OFF flip cannot
+    // un-render persisted blocks: the prompt is a function of the persisted
+    // data. Empty blocks render no section at all — never an empty block.
     const groundingSection =
-      settings.wikiGroundingEnabled && context.expansionExcerpts.length > 0
+      context.expansionExcerpts.length > 0
         ? renderCampaignGroundingSection(context.expansionExcerpts)
         : null;
     const instruction = [
@@ -1964,10 +1966,11 @@ export class RunEngine {
     // 15-GRAPH-RETRIEVAL (D2 = general grounding only): the encounter brief
     // renders the derived campaign-grounding section after the brief line;
     // the citable stat-block search and the pack roster above stay
-    // byte-identical (the frozen fix-02 contract). OFF toggle or empty
-    // blocks render no section at all.
+    // byte-identical (the frozen fix-02 contract). The toggle is read ONCE,
+    // at compute time (campaignGroundingFor) — persisted blocks render even
+    // if flipped OFF mid-run. Empty blocks render no section at all.
     const groundingSection =
-      settings.wikiGroundingEnabled && retrieval.expansionExcerpts.length > 0
+      retrieval.expansionExcerpts.length > 0
         ? renderCampaignGroundingSection(retrieval.expansionExcerpts)
         : null;
     const contract = [

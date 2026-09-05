@@ -311,6 +311,42 @@ describe('campaign grounding (15-GRAPH-RETRIEVAL)', () => {
     expect(userMessage(0)).not.toContain('guards the door');
   }, 20000);
 
+  it('still renders the persisted section when the toggle is flipped OFF between retrieve and draft', async () => {
+    const { campaign } = await seedGroundingCampaign();
+    const persona = await notePersona();
+    chatMock.mockResolvedValue({ text: JSON.stringify(NOTE_DRAFT), modelUsed: 'test-model', fallback: null });
+    const input = { ...INPUT(campaign, persona, 'A scene with [[Grix]].'), autonomy: 'manual' as const };
+
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+      expect(chatMock.mock.calls.length).toBe(1);
+    });
+
+    // The blocks were computed and persisted while the toggle was ON.
+    const run = await getRun(runId);
+    const retrieveStep = run?.steps.find((step) => step.name === 'retrieve');
+    const persisted = (retrieveStep?.output as { expansionExcerpts?: unknown[] }).expansionExcerpts;
+    expect(persisted?.length ?? 0).toBeGreaterThan(0);
+
+    // The user flips the global toggle OFF, then touches the retrieve step:
+    // the re-run draft grounds from the STORED blocks. The render gates read
+    // NO toggle — the toggle is consumed ONCE, at compute time
+    // (campaignGroundingFor) — so the persisted section still renders: the
+    // prompt is a function of the persisted data.
+    await updateSettings({ wikiGroundingEnabled: false });
+    await runEngine.editStep(runId, 0, {}, input);
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+      expect(chatMock.mock.calls.length).toBe(2);
+    });
+
+    const prompt = userMessage(1);
+    expect(prompt).toContain(HEADER);
+    expect(prompt).toContain('- Grix (Ashen Vault — Premise):');
+    expect(prompt).toContain('- Ashen Cult (Ashen Vault — Premise):');
+  }, 20000);
+
   it('a no-wiki-links campaign renders the draft prompt byte-identical to today', async () => {
     const campaign = await createCampaign({ name: 'Test Campaign', system: 'dnd5e' });
     const persona = await notePersona();
