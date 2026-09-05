@@ -312,6 +312,9 @@ room like everyone else. `layout === null` encounters seed exactly as today.
   generator in **auto** for every module-owned encounter lacking a layout —
   triggered from the module view ("Generate encounter maps") and available to
   the forge's post-pass. This is the D2 unattended contract; no pick pause.
+  The persona panel's "Generate a battlemap" creation extra rides this same
+  queue (05-UI §Assistant tab); campaign-level encounters enqueue with a null
+  `moduleId` and keep the D2 unattended semantics unchanged.
 - Encounters produced here are module-owned (`moduleId`, M6-B semantics) and
   battle-ready via the module view's Run battle.
 

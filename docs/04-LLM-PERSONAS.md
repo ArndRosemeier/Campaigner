@@ -82,6 +82,14 @@ are not chainable (chainRunner/moduleForge reject them).
 | continuity-editor | Continuity Editor | note        | review   | Reports contradictions in an artifact   |
 | illustrator      | Illustrator       | —            | image    | Drafts an image prompt and generates candidate images for an artifact (M3-A) |
 
+`postCreateExtras` (optional, declared) — the extras the creation dialog
+offers for a NEWLY created artifact; unset → derived from `mode`/`producesKind`
+(extrasForPersona): every creator offers `image`; npc adds `statBlock`
+(verification-only, see finalize); `encounter` adds `mobPortraits`, and the
+content-only Smith (mode `generate`) also offers `battlemap` — the
+Cartographer (mode `encounter`) already produces the map in-run. Review and
+image personas offer nothing. Built-ins declare their sets explicitly.
+
 ### Encounter Cartographer pipeline
 
 Mode `encounter` runs fixed steps `brief → layout → schematic → stylize →
@@ -136,7 +144,15 @@ Steps for every persona (M1):
    JSON schema for this NPC at a user-hinted level (from brief) grounded in the
    excerpts. Same retry policy. Skippable by user.
 4. **finalize** — create the Artifact (kind from persona), revision 1,
-   `source:'persona'`, `runId` set; link run `resultArtifactId`.
+   `source:'persona'`, `runId` set; link run `resultArtifactId`. The run's
+   `placementModuleId` (creation dialog, one-off) is applied on fresh creates
+   only — a targeted in-place fill with placement set fails loudly. When the
+   stat-block extra is ticked and the created npc has `statBlock: null`,
+   finalize persists the notice "No stat block was generated — add one in the
+   artifact editor." (never a fabricated block). Post-create extras (image /
+   mobPortraits / battlemap) run after completion in the shared unattended
+   queues (src/features/campaign/post-run-extras.ts) — a completed run is
+   never reopened or failed by them.
 
 ### Draft JSON contracts (zod in `/src/llm/schemas.ts`)
 
