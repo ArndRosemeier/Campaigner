@@ -11,9 +11,10 @@ import {
   listPackRecipes,
   PACK_FETCH_SOURCES,
   type PackFetchProgress,
+  type PackFetchResult,
   type PackRecipe,
 } from '@/ingest/packFetch';
-import type { PackImportProgress, PackImportResult } from '@/ingest/packImport';
+import type { PackImportProgress } from '@/ingest/packImport';
 import { getPackAdapter } from '@/ingest/packs/registry';
 import { errorMessage } from '@/lib/errors';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -34,7 +35,7 @@ import { PackImportReport } from '@/features/rules/pack-import-dialog';
 type FetchState =
   | { kind: 'idle' }
   | { kind: 'fetching'; detail: string }
-  | { kind: 'done'; result: PackImportResult }
+  | { kind: 'done'; result: PackFetchResult }
   | { kind: 'failed'; message: string };
 
 type FullList =
@@ -75,9 +76,12 @@ export function BestiaryFetchSection(): JSX.Element {
         },
       });
       setState(adapterId, { kind: 'done', result });
+      // Loud on fallback (16 §1.1 amendment): when the ref chain fired, the
+      // toast names BOTH attempts via `fetchNote` — no silent degradation.
       toastSuccess(
         `Fetched & imported “${result.book.title}” (${String(result.imported)} creatures, ` +
-          `${String(result.skipped)} skipped, ${String(result.failed.length)} failed) — it is in Rules`,
+          `${String(result.skipped)} skipped, ${String(result.failed.length)} failed) — it is in Rules` +
+          (result.fetchNote === undefined ? '' : ` — ${result.fetchNote}`),
       );
     } catch (error) {
       const message = errorMessage(error);

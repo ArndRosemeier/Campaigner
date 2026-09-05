@@ -19,7 +19,12 @@ import { baseNpc } from '../ingest/packs/fixtures';
  */
 
 const PF2E_LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/v14-dev?recursive=1';
+const HEAD_LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/HEAD?recursive=1';
+/** Raw file URL at the NEWEST ref (the chain's first attempt). */
 const RAW = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/pf2e/HEAD/${path}`;
+/** Raw file URL at the pinned VERIFIED ref (the chain's fallback target). */
+const RAW_PINNED = (path: string): string =>
   `https://raw.githubusercontent.com/foundryvtt/pf2e/v14-dev/${path}`;
 
 const TREE = {
@@ -78,6 +83,7 @@ describe('BestiaryFetchSection', () => {
       'fetch',
       mockFetch({
         [PF2E_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
+        [HEAD_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
         [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response(
           JSON.stringify(baseNpc('Acolyte of Nethys')),
           { status: 200 },
@@ -97,16 +103,18 @@ describe('BestiaryFetchSection', () => {
     // The import report (same component as the /rules dialog) appears…
     expect(await screen.findByTestId('pack-import-report')).toBeInTheDocument();
     expect(screen.getByText('2 imported')).toBeInTheDocument();
-    // …and the book is in Dexie, ready, with fetch provenance.
+    // …and the book is in Dexie, ready, with fetch provenance from the NEWEST
+    // ref (healthy → single pass, no fallback attempt).
     await waitFor(async () => {
       const books = await db.rulebooks.toArray();
       expect(books).toHaveLength(1);
       const book = books[0];
       expect(book?.title).toBe('NPC Gallery');
       expect(book?.status).toBe('ready');
-      expect(book?.packMeta?.sourceRef).toBe('v14-dev');
+      expect(book?.packMeta?.sourceRef).toBe('HEAD');
+      expect(book?.packMeta?.attemptedRefs).toEqual(['HEAD']);
       expect(book?.packMeta?.sourceUrl).toBe(
-        'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
+        'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/npc-gallery',
       );
       expect(typeof book?.packMeta?.fetchedAt).toBe('number');
       expect(book?.packMeta?.license).toContain('Community Use Policy');
@@ -132,12 +140,13 @@ describe('BestiaryFetchSection', () => {
     expect(screen.getByTestId('fetch-packs/pf2e/npc-gallery')).toBeInTheDocument();
   });
 
-  it('fails loudly — and creates no book — when every download fails', async () => {
+  it('fails loudly — and creates no book — when every download fails on both refs', async () => {
     const user = userEvent.setup();
     vi.stubGlobal(
       'fetch',
       mockFetch({
         [PF2E_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
+        [HEAD_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
         [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response('nope', {
           status: 404,
           statusText: 'Not Found',
@@ -146,6 +155,14 @@ describe('BestiaryFetchSection', () => {
           status: 404,
           statusText: 'Not Found',
         }),
+        [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response('nope', {
+          status: 404,
+          statusText: 'Not Found',
+        }),
+        [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Response('nope', {
+          status: 404,
+          statusText: 'Not Found',
+        }),
       }),
     );
     render(<BestiaryFetchSection />);
@@ -153,19 +170,28 @@ describe('BestiaryFetchSection', () => {
 
     await user.click(await screen.findByTestId('fetch-packs/pf2e/npc-gallery'));
 
+    // The newest attempt is below threshold → the verified ref's downloads run
+    // too; both all-fail → the combined loud error names BOTH refs (16 §1.1).
     expect(await screen.findByTestId('error-foundry-pf2e')).toHaveTextContent(
-      /all 2 downloads failed for "NPC Gallery".*HTTP 404/s,
+      /no valid entries from any ref in the chain, no pack book was created/s,
+    );
+    expect(screen.getByTestId('error-foundry-pf2e')).toHaveTextContent(
+      'newest (HEAD): 0/2 valid — all 2 downloads failed',
+    );
+    expect(screen.getByTestId('error-foundry-pf2e')).toHaveTextContent(
+      'verified (v14-dev): 0/2 valid — all 2 downloads failed',
     );
     // Loud on both surfaces: the card's named error line AND a toast.
     expect(await screen.findByText(/Bestiary pack fetch failed/)).toBeInTheDocument();
-    expect((await screen.findAllByText(/all 2 downloads failed/)).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/no valid entries from any ref/)).length).toBeGreaterThanOrEqual(1);
     expect(await db.rulebooks.count()).toBe(0);
   });
 
-  it('leads the zero-entry fetch failure with the first validation issue (16-BESTIARY-FETCH §6)', async () => {
-    // This is the live Monster Core scenario: files download fine but every
-    // document fails validation — the toast and error-state book must name
-    // the representative failure, not just "0 imported".
+  it('throws loudly with no book when BOTH refs validate zero entries (all-fail edge, 16 §1.1)', async () => {
+    // The live Monster Core drift scenario taken to its end: the newest ref's
+    // documents all fail validation (0/2 < 0.5), so the verified snapshot runs
+    // too — and its documents are equally unusable → all-fail semantics: a
+    // loud named error, no book.
     const user = userEvent.setup();
     const broken = baseNpc('Acolyte of Nethys');
     const system = broken.system as Record<string, unknown>;
@@ -174,6 +200,7 @@ describe('BestiaryFetchSection', () => {
       'fetch',
       mockFetch({
         [PF2E_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
+        [HEAD_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
         [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response(
           JSON.stringify(broken),
           { status: 200 },
@@ -182,8 +209,12 @@ describe('BestiaryFetchSection', () => {
           JSON.stringify(broken),
           { status: 200 },
         ),
-        [RAW('packs/pf2e/npc-gallery/_folders.json')]: new Response(
-          JSON.stringify({ name: 'NPC Gallery', type: 'folder' }),
+        [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response(
+          JSON.stringify(broken),
+          { status: 200 },
+        ),
+        [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Response(
+          JSON.stringify(broken),
           { status: 200 },
         ),
       }),
@@ -193,26 +224,70 @@ describe('BestiaryFetchSection', () => {
 
     await user.click(await screen.findByTestId('fetch-packs/pf2e/npc-gallery'));
 
-    // The card's named error line leads with the representative failure
-    // (the first document's zod issue), then the zero-entry summary; the
-    // toast shows the same message ("Bestiary pack fetch failed").
+    // The card's named error leads with the newest attempt's representative
+    // failure (the first document's zod issue), then names BOTH attempts.
     expect(await screen.findByTestId('error-foundry-pf2e')).toHaveTextContent(
       /npc-gallery\/acolyte-of-nethys\.json \(Acolyte of Nethys\): document 0:/s,
     );
     expect(screen.getByTestId('error-foundry-pf2e')).toHaveTextContent(
-      /no valid creature entries in the pack selection \(0 skipped, 2 failed of 2 fetched files\)/,
+      /pack fetch failed for "NPC Gallery" — no valid entries from any ref in the chain, no pack book was created\. newest \(HEAD\): 0\/2 valid.*verified \(v14-dev\): 0\/2 valid/s,
     );
+    // All-fail semantics: NO book at all (not even an error book).
+    expect(await db.rulebooks.count()).toBe(0);
+  });
+
+  it('reports a verified-ref fallback loudly in the report and toast (format drift)', async () => {
+    // The ratified scenario: the newest ref's format is unusable (0/2), the
+    // verified snapshot imports 2/2 — the book comes from v14-dev and the
+    // report AND toast name BOTH attempts.
+    const user = userEvent.setup();
+    const broken = baseNpc('Acolyte of Nethys');
+    const system = broken.system as Record<string, unknown>;
+    delete (system.details as Record<string, unknown>).level;
+    vi.stubGlobal(
+      'fetch',
+      mockFetch({
+        [PF2E_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
+        [HEAD_LIST_URL]: new Response(JSON.stringify(TREE), { status: 200 }),
+        [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response(
+          JSON.stringify(broken),
+          { status: 200 },
+        ),
+        [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Response(
+          JSON.stringify(broken),
+          { status: 200 },
+        ),
+        [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: new Response(
+          JSON.stringify(baseNpc('Acolyte of Nethys')),
+          { status: 200 },
+        ),
+        [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Response(
+          JSON.stringify(baseNpc('Priest of Pharasma')),
+          { status: 200 },
+        ),
+      }),
+    );
+    render(<BestiaryFetchSection />);
+    render(<Toaster />);
+
+    await user.click(await screen.findByTestId('fetch-packs/pf2e/npc-gallery'));
+
+    expect(await screen.findByTestId('pack-import-report')).toBeInTheDocument();
+    expect(screen.getByTestId('pack-import-fetch-note')).toHaveTextContent(
+      'newest (HEAD): 0/2 valid — format drift suspected; imported the verified snapshot (v14-dev) instead: 2/2',
+    );
+    // Loud on BOTH surfaces: the report note above AND the success toast.
     expect(
-      (await screen.findAllByText(/Bestiary pack fetch failed/)).length,
-    ).toBeGreaterThanOrEqual(1);
-    // The error-state book message leads with the same representative failure.
-    const books = await db.rulebooks.toArray();
-    expect(books.map((entry) => entry.status)).toEqual(['error']);
-    expect(
-      books
-        .map((entry) => entry.errorMessage)
-        .some((message) => message.startsWith('npc-gallery/acolyte-of-nethys.json')),
-    ).toBe(true);
+      (await screen.findAllByText(/format drift suspected; imported the verified snapshot/)).length,
+    ).toBeGreaterThanOrEqual(2);
+    // The book is from the verified snapshot, with the attempt trail stamped.
+    await waitFor(async () => {
+      const books = await db.rulebooks.toArray();
+      expect(books).toHaveLength(1);
+      expect(books[0]?.packMeta?.sourceRef).toBe('v14-dev');
+      expect(books[0]?.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+      expect(books[0]?.status).toBe('ready');
+    });
   });
 
   it('names the GitHub rate limit when the repo listing is rejected', async () => {

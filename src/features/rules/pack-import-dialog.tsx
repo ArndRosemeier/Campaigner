@@ -179,13 +179,20 @@ export function PackImportReport({
   showFailed,
   onToggleFailed,
 }: {
-  result: PackImportResult;
+  /** `fetchNote` (16 §1.1 amendment) is set only by fetched packs whose
+   *  ref chain fired — the manual import path never has it. */
+  result: PackImportResult & { fetchNote?: string };
   showFailed: boolean;
   onToggleFailed: () => void;
 }): JSX.Element {
   const { imported, skipped, failed } = result;
   return (
     <div className="rounded-md border p-2 text-xs" data-testid="pack-import-report">
+      {result.fetchNote !== undefined && (
+        <p className="mb-1 font-medium text-amber-500" data-testid="pack-import-fetch-note">
+          {result.fetchNote}
+        </p>
+      )}
       <p className="flex items-center gap-2">
         <Badge className="bg-emerald-600/15 text-emerald-500">{String(imported)} imported</Badge>
         <Badge variant="secondary">{String(skipped)} skipped</Badge>

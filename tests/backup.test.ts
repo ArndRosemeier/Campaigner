@@ -138,10 +138,12 @@ describe('app backup', () => {
       entriesImported: 7,
       entriesSkipped: 1,
       entriesFailed: 0,
-      // 16-BESTIARY-FETCH §7: fetched books carry provenance.
+      // 16-BESTIARY-FETCH §7: fetched books carry provenance; the §1.1
+      // amendment adds the additive attempt trail.
       sourceRef: 'v14-dev',
       sourceUrl: 'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
       fetchedAt: 1757100000000,
+      attemptedRefs: ['HEAD', 'v14-dev'],
     });
 
     const { bytes } = await buildBackup();
@@ -160,6 +162,7 @@ describe('app backup', () => {
       sourceRef: 'v14-dev',
       sourceUrl: 'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
       fetchedAt: 1757100000000,
+      attemptedRefs: ['HEAD', 'v14-dev'],
     });
   });
 

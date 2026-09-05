@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 import { mapWithConcurrency } from '@/lib/parallel';
 import { errorMessage } from '@/lib/errors';
+import type { GameSystem } from '@/domain/gameSystem';
+import type { Rulebook } from '@/domain/rulebook';
 
 import { importPack, type PackImportDeps, type PackImportProgress, type PackImportResult } from './packImport';
 import { getPackAdapter } from './packs/registry';
@@ -22,6 +24,14 @@ import type { PackEntryFailure, PackInputFile } from './packs/types';
  * assets (no ACAO) and jsDelivr (50 MB package cap / branch refs unsupported)
  * are browser-blocked — see the spec's CORS matrix; there is no proxy
  * fallback: failures are loud.
+ *
+ * Ref chain (16 §1.1 amendment, 2026-09-06): each fetch runs NEWEST-first —
+ * `HEAD` (the repo's default branch) — and falls back to the pinned VERIFIED
+ * ref when the newest attempt looks like format drift (valid/total below
+ * `PACK_FETCH_FALLBACK_VALID_RATIO`) or its listing fails. Both refs resolve
+ * on the existing endpoints (raw + trees API accept `HEAD`); the winning
+ * attempt is imported, and the report names BOTH attempts loudly when the
+ * chain fired — no silent degradation.
  */
 
 // --- Sources & recipes -------------------------------------------------------
@@ -41,7 +51,11 @@ export interface PackFetchSource {
   adapterId: string;
   owner: string;
   repo: string;
-  /** Pinned ref (16-BESTIARY-FETCH, ratified decision 2). */
+  /**
+   * Pinned VERIFIED ref (16 §1.1 amendment) — the fallback target of the
+   * newest-first chain (`HEAD` first). The verified format the adapters were
+   * validated against, e.g. `v14-dev` pf2e / `6.0.x` dnd5e.
+   */
   ref: string;
   /** Repo-root path whose direct children are the packs. */
   packRoot: string;
@@ -94,6 +108,32 @@ export function getPackFetchSource(adapterId: string): PackFetchSource {
   // Registration invariant: a source without its adapter would fail mid-fetch.
   getPackAdapter(source.adapterId);
   return source;
+}
+
+// --- Newest-first ref chain (16 §1.1 amendment, 2026-09-06) -------------------
+
+/**
+ * The newest ref of the chain: the repo's default branch. Both endpoints of
+ * the engine (raw.githubusercontent.com and the git/trees API) accept `HEAD`
+ * directly — no git protocol, no new plumbing.
+ */
+export const PACK_FETCH_NEWEST_REF = 'HEAD';
+
+/**
+ * Format-drift threshold (16 §1.1 amendment, documented constant): the newest
+ * attempt falls back to the pinned verified ref when its valid/total ratio
+ * drops below this — a suspected upstream format change, not any-error.
+ */
+export const PACK_FETCH_FALLBACK_VALID_RATIO = 0.5;
+
+/**
+ * The per-source ref chain: `HEAD` first (newest = default branch), then the
+ * pinned verified ref. A source already pinned to `HEAD` has a one-ref chain.
+ */
+export function packRefChain(source: PackFetchSource): readonly string[] {
+  return source.ref === PACK_FETCH_NEWEST_REF
+    ? [source.ref]
+    : [PACK_FETCH_NEWEST_REF, source.ref];
 }
 
 /** Creature files under one pack (relative to the pack dir, adapter-parseable, no `_` metadata docs). */
@@ -360,7 +400,95 @@ async function downloadOne(
   }
 }
 
+// --- Per-attempt probe (side-effect-free import evaluation) -------------------
+
+/**
+ * Side-effect-free `PackImportDeps` for the per-attempt probe (16 §1.1
+ * amendment): the threshold rule must compare attempts BEFORE any book exists,
+ * so each attempt's downloaded files run through the UNCHANGED `importPack`
+ * (same parse, same validation, same report shape) with in-memory deps — no
+ * Dexie write, no book row. The winning attempt is imported for real
+ * afterwards. `failBook` records its message: `importPack` calls it exactly on
+ * the zero-valid-entries path, which separates that loud-but-expected outcome
+ * from a genuine import error (rethrown).
+ */
+function probePackImportDeps(recordFailBook: (message: string) => void): PackImportDeps {
+  const state: { book: Rulebook | null } = { book: null };
+  const makeBook = (input: { title: string; system: GameSystem; filename: string }): Rulebook => ({
+    id: crypto.randomUUID(),
+    createdAt: 0,
+    updatedAt: 0,
+    title: input.title,
+    system: input.system,
+    filename: input.filename,
+    pageCount: 0,
+    status: 'processing',
+    errorMessage: '',
+    origin: 'pack',
+    packMeta: null,
+  });
+  return {
+    createBook: (input) => {
+      state.book = makeBook(input);
+      return Promise.resolve(state.book);
+    },
+    persistChunks: () => Promise.resolve(),
+    finalizeBook: (id, packMeta) => {
+      const book = state.book;
+      if (book === null) throw new Error('probe import: finalizeBook ran before createBook');
+      return Promise.resolve({ ...book, id, status: 'ready', packMeta });
+    },
+    failBook: (_id, message) => {
+      recordFailBook(message);
+      return Promise.resolve();
+    },
+  };
+}
+
+interface PackAttemptProbe {
+  /** Valid entries the attempt's import produced. */
+  valid: number;
+  /** `importPack`'s zero-entry report message when nothing validated (null otherwise). */
+  zeroEntriesMessage: string | null;
+}
+
+/**
+ * Runs one attempt's downloaded files through `importPack` with the probe deps
+ * and reports the valid-entry count. A zero-entry import is an expected probe
+ * outcome (0 valid), not a failure — its report message is kept for the loud
+ * chain error; anything else rethrows.
+ */
+async function probePackAttemptImport(
+  adapterId: string,
+  inputs: readonly PackInputFile[],
+  title: string,
+  extraFailures: readonly PackEntryFailure[],
+): Promise<PackAttemptProbe> {
+  const state: { failBookMessage: string | null } = { failBookMessage: null };
+  try {
+    const result = await importPack(adapterId, inputs, {
+      title,
+      deps: probePackImportDeps((message) => {
+        state.failBookMessage = message;
+      }),
+      extraFailures,
+    });
+    return { valid: result.imported, zeroEntriesMessage: null };
+  } catch (error) {
+    if (state.failBookMessage === null) throw error;
+    return { valid: 0, zeroEntriesMessage: state.failBookMessage };
+  }
+}
+
 // --- The one user-triggered action (fetch → importPack) ------------------------
+
+/**
+ * Fetch result: the unchanged `PackImportResult` plus the loud chain note.
+ * `fetchNote` is set exactly when the fallback chain fired (16 §1.1
+ * amendment, decision 3: the report and toast name BOTH attempts — no silent
+ * degradation anywhere).
+ */
+export type PackFetchResult = PackImportResult & { fetchNote?: string };
 
 export interface PackFetchOptions {
   /** Download-phase progress (listing + per-file). */
@@ -424,18 +552,100 @@ export function throttleProgress<T>(
 }
 
 /**
- * Fetches one pack from its pinned source repo and imports it through the
- * unchanged `importPack` (ratified decision 4). Loud failure policy
- * (16-BESTIARY-FETCH §8): a failed download is a collected failure entry in
- * the import report (never catch-and-continue); a fetch with zero downloaded
- * files throws before any book is created; an import with zero valid entries
- * marks the book `error` via the existing importPack semantics.
+ * One attempt of the newest-first chain: everything a ref produced, compared
+ * by the threshold rule before any book exists.
+ */
+interface PackAttempt {
+  /** The ref this attempt fetched from ('HEAD' or the pinned verified ref). */
+  ref: string;
+  /** Selected creature files — the denominator of the attempt's valid/total ratio. */
+  total: number;
+  /** Valid entries the attempt's probe import produced. */
+  valid: number;
+  /** Files that downloaded OK (re-imported for real when this attempt wins). */
+  inputs: PackInputFile[];
+  /** Collected download failures (folded into whichever import ships). */
+  downloadFailures: PackEntryFailure[];
+  /** `importPack`'s zero-entry report message when nothing validated (null otherwise). */
+  zeroEntriesMessage: string | null;
+}
+
+/** The first download causes of an all-failing attempt, for the loud chain error. */
+function attemptDownloadCauses(attempt: PackAttempt): string {
+  const first = attempt.downloadFailures
+    .slice(0, 3)
+    .map((failure) => `${failure.file}: ${failure.message}`)
+    .join('; ');
+  return (
+    `all ${String(attempt.downloadFailures.length)} downloads failed — ${first}` +
+    (attempt.downloadFailures.length > 3
+      ? ` (and ${String(attempt.downloadFailures.length - 3)} more)`
+      : '')
+  );
+}
+
+/** Why one attempt produced zero valid entries (for the loud chain error). */
+function attemptZeroCause(attempt: PackAttempt): string {
+  return attempt.inputs.length === 0 ? attemptDownloadCauses(attempt) : (attempt.zeroEntriesMessage ?? 'no valid entries');
+}
+
+/**
+ * The loud all-fail error (16 §1.1 amendment: "0 valid on newest AND fallback →
+ * all-fail semantics as today (no book, loud)"): names EVERY attempt and its
+ * causes, and no book was created.
+ */
+function noValidEntriesError(
+  title: string,
+  chain: readonly string[],
+  newest: PackAttempt | undefined,
+  verified: PackAttempt | undefined,
+  newestListingError: string | undefined,
+  fallbackListingError: string | undefined,
+): Error {
+  const parts: string[] = [];
+  if (newest === undefined) {
+    parts.push(`newest (${chain[0]}): listing failed — ${newestListingError ?? 'unknown cause'}`);
+  } else {
+    parts.push(`newest (${newest.ref}): 0/${String(newest.total)} valid — ${attemptZeroCause(newest)}`);
+  }
+  if (verified !== undefined) {
+    parts.push(`verified (${verified.ref}): 0/${String(verified.total)} valid — ${attemptZeroCause(verified)}`);
+  } else if (fallbackListingError !== undefined) {
+    parts.push(`verified (${chain[1] ?? 'n/a'}): listing failed — ${fallbackListingError}`);
+  }
+  return new Error(
+    `pack fetch failed for "${title}" — no valid entries from any ref in the chain, ` +
+      `no pack book was created. ${parts.join('; ')}`,
+  );
+}
+
+/**
+ * Fetches one pack through the newest-first ref chain and imports the winning
+ * attempt through the unchanged `importPack` (ratified decision 4; 16 §1.1
+ * amendment, 2026-09-06).
+ *
+ * The chain: `HEAD` (newest = default branch) first, then the pinned verified
+ * ref. Each attempt is a CANDIDATE — listing → selection → downloads → a
+ * side-effect-free probe import through `importPack` — so the threshold rule
+ * can compare attempts before any book exists. Only the NEWEST attempt is
+ * subject to the threshold: at/above `PACK_FETCH_FALLBACK_VALID_RATIO` the
+ * newest import ships and the verified ref costs nothing; below it the
+ * verified attempt runs too and whichever attempt yielded MORE valid entries
+ * is imported (deterministic tie → newest, preferring freshness at equal
+ * quality). A listing error on the newest ref moves the chain to the verified
+ * ref's listing (decision 4); both failing throws the combined loud error.
+ * When NO attempt yields a valid entry the result is the all-fail semantics:
+ * a loud named error and NO book.
+ *
+ * Loud on fallback (no silent degradation): when the chain fired, the returned
+ * result carries `fetchNote` naming BOTH attempts, and provenance stamps the
+ * ref ACTUALLY imported (`sourceRef`) plus the attempt trail (`attemptedRefs`).
  */
 export async function fetchAndImportPack(
   adapterId: string,
   recipeId: string,
   options: PackFetchOptions = {},
-): Promise<PackImportResult> {
+): Promise<PackFetchResult> {
   const source = getPackFetchSource(adapterId);
   const adapter = getPackAdapter(source.adapterId);
   const fetchFn = fetchFnOf(options.fetchDeps);
@@ -451,74 +661,181 @@ export async function fetchAndImportPack(
     PACK_FETCH_PROGRESS_INTERVAL_MS,
   );
 
-  fetchProgress.send({
-    phase: 'listing',
-    done: 0,
-    total: 0,
-    detail: `listing ${source.owner}/${source.repo}@${source.ref}`,
-  });
-  const listing = await loadTreeListing(source, fetchFn);
-
-  const files = selectCreatureFiles(adapter.extensions, source.packRoot, recipeId, listing.blobPaths);
-  if (files.length === 0) {
-    throw new Error(
-      `no creature files found under "${recipeId}" in ${source.owner}/${source.repo}@${source.ref} — check the pack path`,
-    );
-  }
-
   const curated = source.curated.find((recipe) => recipe.id === recipeId);
   const title = curated?.label ?? recipeId.slice(source.packRoot.length + 1);
+  const chain = packRefChain(source);
 
-  let done = 0;
-  let outcomes: DownloadOutcome[];
-  try {
-    outcomes = await mapWithConcurrency(files, PACK_FETCH_CONCURRENCY, async (path) => {
-      const outcome = await downloadOne(source, path, fetchFn);
-      done += 1;
-      fetchProgress.send({
-        phase: 'downloading',
-        done,
-        total: files.length,
-        detail: outcome.ok ? outcome.file.name : path,
-      });
-      return outcome;
+  const attemptedRefs: string[] = [];
+  const attempts: PackAttempt[] = [];
+  let newestListingError: string | undefined;
+  let fallbackListingError: string | undefined;
+
+  for (const [index, ref] of chain.entries()) {
+    attemptedRefs.push(ref);
+    const refSource: PackFetchSource = { ...source, ref };
+    fetchProgress.send({
+      phase: 'listing',
+      done: 0,
+      total: 0,
+      detail: `listing ${refSource.owner}/${refSource.repo}@${ref}`,
     });
-  } finally {
-    // The final downloading update always flushes — even if the loop fails.
-    fetchProgress.flush();
+
+    let listing: PackTreeListing;
+    try {
+      listing = await loadTreeListing(refSource, fetchFn);
+    } catch (error) {
+      if (index === 0) {
+        // Listing resilience (16 §1.1 amendment, decision 4): a named error on
+        // the newest ref's trees listing (rate limit / network) moves the
+        // chain to the verified ref's listing. The per-ref session cache keys
+        // by ref; both listings failing throws the combined loud error below.
+        newestListingError = errorMessage(error);
+        continue;
+      }
+      // The verified ref's listing failed too. When the newest attempt already
+      // completed below the threshold, its import still ships (with the loud
+      // note below); otherwise BOTH listings failed — break into the combined
+      // loud error. Never a silent degradation.
+      fallbackListingError = errorMessage(error);
+      break;
+    }
+
+    const files = selectCreatureFiles(adapter.extensions, source.packRoot, recipeId, listing.blobPaths);
+    if (files.length === 0) {
+      // Not a fallback trigger (16 §1.1: threshold fallback, not any-error) —
+      // a recipe whose pack directory does not exist at a ref is a loud,
+      // named configuration error.
+      throw new Error(
+        `no creature files found under "${recipeId}" in ${source.owner}/${source.repo}@${ref} — check the pack path`,
+      );
+    }
+
+    let done = 0;
+    let outcomes: DownloadOutcome[];
+    try {
+      outcomes = await mapWithConcurrency(files, PACK_FETCH_CONCURRENCY, async (path) => {
+        const outcome = await downloadOne(refSource, path, fetchFn);
+        done += 1;
+        fetchProgress.send({
+          phase: 'downloading',
+          done,
+          total: files.length,
+          detail: outcome.ok ? outcome.file.name : path,
+        });
+        return outcome;
+      });
+    } finally {
+      // The final downloading update always flushes — even if the loop fails.
+      fetchProgress.flush();
+    }
+
+    const inputs: PackInputFile[] = [];
+    const downloadFailures: PackEntryFailure[] = [];
+    for (const outcome of outcomes) {
+      if (outcome.ok) inputs.push(outcome.file);
+      else downloadFailures.push(outcome.failure);
+    }
+
+    // Failures WITHIN an attempt (individual downloads) stay collected — the
+    // threshold rule compares each attempt's valid/total, not its failures.
+    const probe =
+      inputs.length === 0
+        ? { valid: 0, zeroEntriesMessage: null }
+        : await probePackAttemptImport(source.adapterId, inputs, title, downloadFailures);
+    const attempt: PackAttempt = {
+      ref,
+      total: files.length,
+      valid: probe.valid,
+      inputs,
+      downloadFailures,
+      zeroEntriesMessage: probe.zeroEntriesMessage,
+    };
+    attempts.push(attempt);
+
+    // Threshold rule (16 §1.1 amendment): only the NEWEST attempt is subject
+    // to it — at/above the ratio the newest import ships with no fallback
+    // attempt and no extra cost; below it the verified attempt runs too.
+    if (index === 0 && attempt.valid / attempt.total >= PACK_FETCH_FALLBACK_VALID_RATIO) break;
   }
 
-  const inputs: PackInputFile[] = [];
-  const downloadFailures: PackEntryFailure[] = [];
-  for (const outcome of outcomes) {
-    if (outcome.ok) inputs.push(outcome.file);
-    else downloadFailures.push(outcome.failure);
-  }
-
-  if (inputs.length === 0) {
-    const first = downloadFailures
-      .slice(0, 3)
-      .map((failure) => `${failure.file}: ${failure.message}`)
-      .join('; ');
+  if (attempts.length === 0) {
+    // Both listings failed (or the single-element chain's listing did) — the
+    // combined loud listing error (16 §1.1 amendment, decision 4).
+    const parts = [`newest (${chain[0]}): ${newestListingError ?? 'unknown cause'}`];
+    if (fallbackListingError !== undefined) {
+      parts.push(`verified (${chain[1] ?? 'n/a'}): ${fallbackListingError}`);
+    }
     throw new Error(
-      `all ${String(downloadFailures.length)} downloads failed for "${title}" — ` +
-        `no pack book was created. ${first}` +
-        (downloadFailures.length > 3 ? ` (and ${String(downloadFailures.length - 3)} more)` : ''),
+      `pack listing failed for "${title}" — no pack book was created. ${parts.join('; ')}`,
     );
   }
 
+  const newest = attempts.find((attempt) => attempt.ref === chain[0]);
+  const verified = attempts.find((attempt) => attempt.ref !== chain[0]);
+
+  // All-fail edge (16 §1.1 amendment): 0 valid on newest AND fallback →
+  // all-fail semantics as today — loud, and NO book was created.
+  if (attempts.every((attempt) => attempt.valid === 0)) {
+    throw noValidEntriesError(title, chain, newest, verified, newestListingError, fallbackListingError);
+  }
+
+  let winner: PackAttempt;
+  let fetchNote: string | undefined;
+  if (newest === undefined) {
+    // The newest ref never produced an attempt (its listing failed) — the
+    // verified attempt is the only complete one; decision 4's loud note.
+    const attempt = attempts[0];
+    if (attempt === undefined) {
+      throw new Error(`pack fetch failed for "${title}" — no attempt matched the ref chain`);
+    }
+    winner = attempt;
+    fetchNote =
+      `newest (${chain[0]}) listing failed (${newestListingError ?? 'unknown cause'}) — ` +
+      `listed and imported the verified snapshot (${winner.ref}) instead: ` +
+      `${String(winner.valid)}/${String(winner.total)} valid`;
+  } else if (verified === undefined) {
+    // Newest at/above the threshold — imported, no fallback attempt, no note.
+    // (The one loud exception: the chain fired but the verified ref could not
+    // even be listed — the newest import ships with that named.)
+    winner = newest;
+    if (fallbackListingError !== undefined) {
+      fetchNote =
+        `newest (${newest.ref}): ${String(newest.valid)}/${String(newest.total)} valid — below the ` +
+        `${String(PACK_FETCH_FALLBACK_VALID_RATIO)} valid-entry threshold (format drift suspected); ` +
+        `the verified snapshot (${chain[1] ?? 'n/a'}) could not be listed (${fallbackListingError}) — ` +
+        `kept the newest ref's import: ${String(newest.valid)}/${String(newest.total)}`;
+    }
+  } else {
+    // Whichever attempt yielded MORE valid entries wins; the deterministic tie
+    // keeps the newest ref (prefer freshness at equal quality).
+    winner = verified.valid > newest.valid ? verified : newest;
+    fetchNote =
+      winner === verified
+        ? `newest (${newest.ref}): ${String(newest.valid)}/${String(newest.total)} valid — ` +
+          `format drift suspected; imported the verified snapshot (${verified.ref}) instead: ` +
+          `${String(verified.valid)}/${String(verified.total)}`
+        : `newest (${newest.ref}): ${String(newest.valid)}/${String(newest.total)} valid — below the ` +
+          `${String(PACK_FETCH_FALLBACK_VALID_RATIO)} valid-entry threshold (format drift suspected); ` +
+          `the verified snapshot (${verified.ref}) yielded ${String(verified.valid)}/${String(verified.total)} — ` +
+          `kept the newest ref's import: ${String(newest.valid)}/${String(newest.total)}`;
+  }
+
   try {
-    return await importPack(source.adapterId, inputs, {
+    const result = await importPack(source.adapterId, winner.inputs, {
       title,
       onProgress: importProgress.send,
       deps: options.deps,
-      extraFailures: downloadFailures,
+      extraFailures: winner.downloadFailures,
       provenance: {
-        sourceRef: source.ref,
-        sourceUrl: `https://github.com/${source.owner}/${source.repo}/tree/${source.ref}/${recipeId}`,
+        // Provenance stamps the ref ACTUALLY imported + the attempt trail
+        // (16 §1.1 amendment, decision 5).
+        sourceRef: winner.ref,
+        sourceUrl: `https://github.com/${source.owner}/${source.repo}/tree/${winner.ref}/${recipeId}`,
         fetchedAt: Date.now(),
+        attemptedRefs: [...attemptedRefs],
       },
     });
+    return fetchNote === undefined ? result : { ...result, fetchNote };
   } finally {
     importProgress.flush();
   }

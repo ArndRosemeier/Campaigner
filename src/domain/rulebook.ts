@@ -29,18 +29,27 @@ export const packMetaSchema = z.object({
   entriesFailed: z.number().int().nonnegative(),
   // Provenance of a FETCHED pack (16-BESTIARY-FETCH §7) — absent for manual
   // file imports; all optional, so old backups parse unchanged (no migration).
-  /** Pinned source ref the pack was fetched from, e.g. 'v14-dev' | '6.0.x'. */
+  /** The ref the pack was ACTUALLY imported from: 'HEAD' (newest) or the
+   *  pinned verified ref when the chain fell back (16 §1.1 amendment). */
   sourceRef: z.string().min(1).optional(),
   /** Human-browsable upstream URL of the fetched pack. */
   sourceUrl: z.string().min(1).optional(),
   /** When the pack was downloaded (epoch ms). */
   fetchedAt: z.number().int().positive().optional(),
+  /** The ref chain that produced this book, in attempt order (16 §1.1
+   *  amendment): ['HEAD'] when the newest ref imported, ['HEAD', 'v14-dev']
+   *  when the fetch fell back to the verified snapshot. Additive + optional —
+   *  old backups parse unchanged. */
+  attemptedRefs: z.array(z.string().min(1)).optional(),
 });
 
 export type PackMeta = z.infer<typeof packMetaSchema>;
 
 /** The fetch-provenance subset, stamped by `packFetch` on fetched books. */
-export type PackProvenance = Pick<PackMeta, 'sourceRef' | 'sourceUrl' | 'fetchedAt'>;
+export type PackProvenance = Pick<
+  PackMeta,
+  'sourceRef' | 'sourceUrl' | 'fetchedAt' | 'attemptedRefs'
+>;
 
 export const rulebookSchema = z.object({
   ...BaseEntitySchema.shape,

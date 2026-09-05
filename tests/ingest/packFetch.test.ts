@@ -7,12 +7,15 @@ import type { PackMeta } from '@/domain/rulebook';
 import type { RuleChunk } from '@/domain';
 import {
   PACK_FETCH_CONCURRENCY,
+  PACK_FETCH_FALLBACK_VALID_RATIO,
   PACK_FETCH_MAX_BYTES,
+  PACK_FETCH_NEWEST_REF,
   PACK_FETCH_SOURCES,
   PACK_FETCH_TIMEOUT_MS,
   clearPackTreeCache,
   fetchAndImportPack,
   listPackRecipes,
+  packRefChain,
   selectCreatureFiles,
   throttleProgress,
 } from '@/ingest/packFetch';
@@ -74,8 +77,13 @@ function mockFetch(routes: Record<string, Response | Error>): typeof fetch & { c
   return mock;
 }
 
-const LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/v14-dev?recursive=1';
+const PINNED_LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/v14-dev?recursive=1';
+const HEAD_LIST_URL = 'https://api.github.com/repos/foundryvtt/pf2e/git/trees/HEAD?recursive=1';
+/** Raw file URL at the NEWEST ref (the chain's first attempt). */
 const RAW = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/pf2e/HEAD/${path}`;
+/** Raw file URL at the pinned VERIFIED ref (the chain's fallback target). */
+const RAW_PINNED = (path: string): string =>
   `https://raw.githubusercontent.com/foundryvtt/pf2e/v14-dev/${path}`;
 
 type MemoryDeps = PackImportDeps & {
@@ -156,6 +164,17 @@ describe('pack fetch sources (ratified pins)', () => {
     expect(fetchCallers).toEqual(['packFetch.ts']);
   });
 
+  it('pins the newest-first chain constants (16 §1.1 amendment)', () => {
+    // Documented constants: the newest ref and the format-drift threshold.
+    expect(PACK_FETCH_NEWEST_REF).toBe('HEAD');
+    expect(PACK_FETCH_FALLBACK_VALID_RATIO).toBe(0.5);
+    // Every source's chain: newest (HEAD) first, then its pinned verified ref.
+    expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
+      ['HEAD', 'v14-dev'],
+      ['HEAD', '6.0.x'],
+    ]);
+  });
+
   it('pins pf2e to v14-dev and dnd5e to 6.0.x with the verified curated recipes', () => {
     const pf2e = PACK_FETCH_SOURCES.find((source) => source.adapterId === 'foundry-pf2e');
     const dnd5e = PACK_FETCH_SOURCES.find((source) => source.adapterId === 'foundry-dnd5e-srd');
@@ -206,7 +225,7 @@ describe('pack fetch sources (ratified pins)', () => {
 
 describe('listPackRecipes (advanced full listing)', () => {
   it('lists every pack group with creature counts, metadata-only dirs excluded', async () => {
-    const fetchFn = mockFetch({ [LIST_URL]: listingResponse(PF2E_TREE) });
+    const fetchFn = mockFetch({ [PINNED_LIST_URL]: listingResponse(PF2E_TREE) });
     const recipes = await listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } });
     expect(recipes).toEqual([
       { id: 'packs/pf2e/blog-bestiary', label: 'blog-bestiary', creatures: 1 },
@@ -220,7 +239,7 @@ describe('listPackRecipes (advanced full listing)', () => {
 
   it('fails loudly on a rate-limited listing, naming the per-IP limit', async () => {
     const fetchFn = mockFetch({
-      [LIST_URL]: new Response('rate limited', { status: 403 }),
+      [PINNED_LIST_URL]: new Response('rate limited', { status: 403 }),
     });
     await expect(
       listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
@@ -231,7 +250,7 @@ describe('listPackRecipes (advanced full listing)', () => {
     // F10: the 429 branch of the same rate-limit handling, alongside the 403
     // test above — GitHub sends either on an exhausted 60 req/h quota.
     const fetchFn = mockFetch({
-      [LIST_URL]: new Response('too many requests', { status: 429 }),
+      [PINNED_LIST_URL]: new Response('too many requests', { status: 429 }),
     });
     const action = listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } });
     await expect(action).rejects.toThrow('pack listing failed: GitHub API HTTP 429');
@@ -247,7 +266,7 @@ describe('listPackRecipes (advanced full listing)', () => {
     // segment, a backslash, or an absolute path fails the WHOLE listing with a
     // named error quoting the path, never a silent per-path filter.
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse({
+      [PINNED_LIST_URL]: listingResponse({
         sha: 'tree-sha',
         truncated: false,
         tree: [{ path: hostilePath, type: 'blob' }],
@@ -264,7 +283,7 @@ describe('listPackRecipes (advanced full listing)', () => {
     // F9: the body parse happens inside the named-error scope — a malformed
     // listing fails as a named listing failure, not a raw SyntaxError.
     const fetchFn = mockFetch({
-      [LIST_URL]: new Response('{"truncated": false, "tree": [', { status: 200 }),
+      [PINNED_LIST_URL]: new Response('{"truncated": false, "tree": [', { status: 200 }),
     });
     await expect(
       listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
@@ -273,7 +292,7 @@ describe('listPackRecipes (advanced full listing)', () => {
 
   it('fails loudly on a truncated tree instead of silently missing packs', async () => {
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse({ truncated: true, tree: [] }),
+      [PINNED_LIST_URL]: listingResponse({ truncated: true, tree: [] }),
     });
     await expect(
       listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
@@ -281,7 +300,7 @@ describe('listPackRecipes (advanced full listing)', () => {
   });
 
   it('fails loudly on a network error during listing', async () => {
-    const fetchFn = mockFetch({ [LIST_URL]: new Error('Failed to fetch') });
+    const fetchFn = mockFetch({ [PINNED_LIST_URL]: new Error('Failed to fetch') });
     await expect(
       listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } }),
     ).rejects.toThrow('pack listing failed');
@@ -289,9 +308,9 @@ describe('listPackRecipes (advanced full listing)', () => {
 });
 
 describe('fetchAndImportPack', () => {
-  it('fetches creature files and imports a ready book with provenance stamped', async () => {
+  it('fetches the newest ref and imports a ready book with provenance stamped', async () => {
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(PF2E_TREE),
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
       [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
       [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc('Priest of Pharasma')),
     });
@@ -316,13 +335,20 @@ describe('fetchAndImportPack', () => {
     expect(fetchFn.calls.some((url) => url.includes('_folders.json'))).toBe(false);
     expect(fetchFn.calls.some((url) => url.includes('notes.txt'))).toBe(false);
 
-    // Provenance (ratified decision 2): pinned ref + upstream URL + time.
+    // Newest healthy → a SINGLE pass (16 §1.1): one listing call, no fallback
+    // attempt, the pinned verified ref never touched.
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(1);
+    expect(fetchFn.calls.some((url) => url.includes('/v14-dev/'))).toBe(false);
+    expect(result.fetchNote).toBeUndefined();
+
+    // Provenance (16 §1.1 decision 5): the ref ACTUALLY imported + the trail.
     const meta = result.book.packMeta;
-    expect(meta?.sourceRef).toBe('v14-dev');
+    expect(meta?.sourceRef).toBe('HEAD');
     expect(meta?.sourceUrl).toBe(
-      'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/npc-gallery',
     );
     expect(typeof meta?.fetchedAt).toBe('number');
+    expect(meta?.attemptedRefs).toEqual(['HEAD']);
 
     // Progress: downloading phase counts up to the file total; import phase
     // keeps its existing shape.
@@ -332,8 +358,10 @@ describe('fetchAndImportPack', () => {
   });
 
   it('collects a partial download failure loudly in the report and packMeta', async () => {
+    // 1/2 valid = exactly the threshold → NOT below it (16 §1.1: the fallback
+    // fires only when valid/total < 0.5), so this stays a single newest pass.
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(PF2E_TREE),
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
       [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
       [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc('Priest of Pharasma'), 404),
     });
@@ -357,7 +385,7 @@ describe('fetchAndImportPack', () => {
 
   it('collects a network failure as a named failure entry', async () => {
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(PF2E_TREE),
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
       [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
       [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Error('Failed to fetch'),
     });
@@ -378,7 +406,7 @@ describe('fetchAndImportPack', () => {
     const rawSignals: (AbortSignal | null | undefined)[] = [];
     const fetchFn = vi.fn((url: string | URL, init?: RequestInit) => {
       const key = typeof url === 'string' ? url : url instanceof Request ? url.url : url.href;
-      if (key === LIST_URL) return Promise.resolve(listingResponse(PF2E_TREE));
+      if (key === HEAD_LIST_URL) return Promise.resolve(listingResponse(PF2E_TREE));
       rawSignals.push(init?.signal);
       return Promise.resolve(creatureResponse(baseNpc('Wired Creature')));
     }) as unknown as typeof fetch;
@@ -399,7 +427,7 @@ describe('fetchAndImportPack', () => {
     // F8: AbortSignal.timeout rejects with a TimeoutError-named error; the
     // injected stub mimics exactly that rejection shape.
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(PF2E_TREE),
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
       [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
       [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: Object.assign(
         new Error('The operation was aborted due to timeout'),
@@ -429,7 +457,7 @@ describe('fetchAndImportPack', () => {
     // a collected per-file failure, and the pack still imports the rest.
     const oversized = new Uint8Array(PACK_FETCH_MAX_BYTES + 1);
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(PF2E_TREE),
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
       [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
       [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: new Response(oversized, { status: 200 }),
     });
@@ -449,43 +477,63 @@ describe('fetchAndImportPack', () => {
     expect(deps.finalized).toHaveLength(1);
   });
 
-  it('marks the book error when the fetched files yield zero valid entries', async () => {
+  it('imports nothing and throws loudly naming BOTH refs when every attempt yields zero valid entries', async () => {
+    // All-fail edge (16 §1.1): 0 valid on newest AND fallback → all-fail
+    // semantics as today — loud, and NO book was created (the newest attempt
+    // is below threshold, so the verified ref runs too; its documents are
+    // equally unusable).
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(PF2E_TREE),
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [PINNED_LIST_URL]: listingResponse(PF2E_TREE),
       [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(folderDoc()),
       [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(folderDoc()),
+      [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(folderDoc()),
+      [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(folderDoc()),
     });
     const deps = memoryDeps();
 
     await expect(
       fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn } }),
-    ).rejects.toThrow('no valid creature entries');
-    expect(deps.failed).toHaveLength(1);
-    expect(deps.failed[0]?.message).toContain('of 2 fetched files');
+    ).rejects.toThrow(
+      /pack fetch failed for "NPC Gallery" — no valid entries from any ref in the chain, no pack book was created\. .*newest \(HEAD\): 0\/2 valid.*verified \(v14-dev\): 0\/2 valid.*no valid creature entries/s,
+    );
+    // No book: not created, not failed, not finalized.
+    expect(deps.created).toHaveLength(0);
+    expect(deps.failed).toHaveLength(0);
     expect(deps.finalized).toHaveLength(0);
+    // Exactly one listing call per attempt (no hidden extra calls).
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(2);
   });
 
-  it('throws before creating a book when every download fails', async () => {
+  it('throws the combined loud error when every download fails on BOTH refs', async () => {
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(PF2E_TREE),
+      [HEAD_LIST_URL]: listingResponse(PF2E_TREE),
+      [PINNED_LIST_URL]: listingResponse(PF2E_TREE),
       [RAW('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc(), 500),
       [RAW('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc(), 500),
+      [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc(), 500),
+      [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc(), 500),
     });
     const deps = memoryDeps();
 
     await expect(
       fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn } }),
-    ).rejects.toThrow(/all 2 downloads failed for "NPC Gallery".*HTTP 500/s);
+    ).rejects.toThrow(
+      /newest \(HEAD\): 0\/2 valid — all 2 downloads failed.*HTTP 500.*verified \(v14-dev\): 0\/2 valid — all 2 downloads failed/s,
+    );
     expect(deps.created).toHaveLength(0);
   });
 
   it('rejects an unknown pack path before any download', async () => {
-    const fetchFn = mockFetch({ [LIST_URL]: listingResponse(PF2E_TREE) });
+    const fetchFn = mockFetch({ [HEAD_LIST_URL]: listingResponse(PF2E_TREE) });
     const deps = memoryDeps();
     await expect(
       fetchAndImportPack('foundry-pf2e', 'packs/pf2e/not-a-pack', { deps, fetchDeps: { fetchFn } }),
     ).rejects.toThrow('no creature files found under "packs/pf2e/not-a-pack"');
     expect(deps.created).toHaveLength(0);
+    // Threshold fallback, NOT any-error (16 §1.1): an empty selection is a
+    // loud configuration error — the verified ref's listing is never tried.
+    expect(fetchFn.calls.some((url) => url.includes('/v14-dev/'))).toBe(false);
   });
 
   it('selects and fetches creature files through nested book-N layouts (AP bestiaries)', async () => {
@@ -503,7 +551,7 @@ describe('fetchAndImportPack', () => {
       ],
     };
     const fetchFn = mockFetch({
-      [LIST_URL]: listingResponse(nestedTree),
+      [HEAD_LIST_URL]: listingResponse(nestedTree),
       [RAW('packs/pf2e/gatewalkers-bestiary/book-1-hellknight-hill/deathcap-ambusher.json')]: creatureResponse(baseNpc('Deathcap Ambusher')),
       [RAW('packs/pf2e/gatewalkers-bestiary/book-2-spire-of-xibalan/cinder-crab.json')]: creatureResponse(baseNpc('Cinder Crab')),
     });
@@ -541,7 +589,7 @@ describe('fetchAndImportPack', () => {
     const gates: (() => void)[] = [];
     const fetchFn = vi.fn((url: string | URL) => {
       const key = String(url);
-      if (key === LIST_URL) return Promise.resolve(listingResponse(tree));
+      if (key === HEAD_LIST_URL) return Promise.resolve(listingResponse(tree));
       active += 1;
       maxActive = Math.max(maxActive, active);
       return new Promise<Response>((resolve) => {
@@ -574,6 +622,172 @@ describe('fetchAndImportPack', () => {
     expect(result.imported).toBe(fileCount);
     expect(maxActive).toBe(PACK_FETCH_CONCURRENCY); // parallel, but never above the bound
   }, 15000);
+});
+
+describe('newest-first ref chain with verified-ref fallback (16 §1.1 amendment)', () => {
+  /** Three-creature tree so ratios land strictly below the 0.5 threshold. */
+  const TREE_3 = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/npc-gallery/a.json', type: 'blob' },
+      { path: 'packs/pf2e/npc-gallery/b.json', type: 'blob' },
+      { path: 'packs/pf2e/npc-gallery/c.json', type: 'blob' },
+    ],
+  };
+  const PATHS = ['a.json', 'b.json', 'c.json'].map((name) => `packs/pf2e/npc-gallery/${name}`);
+  const routes = (head: (path: string) => Response | Error, pinned: (path: string) => Response | Error) => ({
+    [HEAD_LIST_URL]: listingResponse(TREE_3),
+    [PINNED_LIST_URL]: listingResponse(TREE_3),
+    ...Object.fromEntries(PATHS.map((path) => [RAW(path), head(path)])),
+    ...Object.fromEntries(PATHS.map((path) => [RAW_PINNED(path), pinned(path)])),
+  });
+
+  it('falls back to the verified snapshot when the newest ref imports below the threshold, loudly', async () => {
+    // Format drift (the v14-dev-moved-under-us failure class): HEAD's documents
+    // parse to NOTHING (0/3 < 0.5) → the verified ref runs too and wins.
+    const fetchFn = mockFetch(
+      routes(
+        () => creatureResponse(folderDoc()),
+        (path) => creatureResponse(baseNpc(`Verified ${path.at(-1)}`)),
+      ),
+    );
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(3);
+    expect(result.book.status).toBe('ready');
+    // Provenance stamps the ref ACTUALLY imported + the attempt trail.
+    expect(result.book.packMeta?.sourceRef).toBe('v14-dev');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
+    );
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    // Loud on fallback: the note names BOTH attempts.
+    expect(result.fetchNote).toBe(
+      'newest (HEAD): 0/3 valid — format drift suspected; imported the verified snapshot (v14-dev) instead: 3/3',
+    );
+    // Exactly one listing call per attempt (the per-ref cache adds no extras).
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(2);
+  });
+
+  it('keeps the newest import when it is below the threshold but still beats the verified ref', async () => {
+    const fetchFn = mockFetch(
+      routes(
+        (path) => (path.endsWith('a.json') ? creatureResponse(baseNpc('Head Acolyte')) : creatureResponse(folderDoc())),
+        () => creatureResponse(folderDoc()),
+      ),
+    );
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    // 1/3 < 0.5 → the verified attempt ran; 1 > 0 → newest wins the comparison.
+    expect(result.imported).toBe(1);
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    expect(result.fetchNote).toBe(
+      'newest (HEAD): 1/3 valid — below the 0.5 valid-entry threshold (format drift suspected); ' +
+        'the verified snapshot (v14-dev) yielded 0/3 — kept the newest ref\'s import: 1/3',
+    );
+  });
+
+  it('breaks a deterministic tie toward the newest ref', async () => {
+    // Equal valid counts (1/3 vs 1/3) → freshness wins: newest is imported.
+    const fetchFn = mockFetch(
+      routes(
+        (path) => (path.endsWith('a.json') ? creatureResponse(baseNpc('Head Acolyte')) : creatureResponse(folderDoc())),
+        (path) => (path.endsWith('a.json') ? creatureResponse(baseNpc('Verified Acolyte')) : creatureResponse(folderDoc())),
+      ),
+    );
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(deps.persisted[0]?.[0]?.headingPath[0]).toBe('Head Acolyte');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    expect(result.fetchNote).toContain('kept the newest ref\'s import: 1/3');
+  });
+
+  it('lists and imports the verified ref when the newest listing fails, and says so', async () => {
+    // Decision 4: a named error on the newest ref's trees listing (rate limit
+    // here) moves the chain to the verified ref's listing.
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: new Response('rate limited', { status: 403 }),
+      [PINNED_LIST_URL]: listingResponse(PF2E_TREE),
+      [RAW_PINNED('packs/pf2e/npc-gallery/acolyte-of-nethys.json')]: creatureResponse(baseNpc('Acolyte of Nethys')),
+      [RAW_PINNED('packs/pf2e/npc-gallery/priest-of-pharasma.json')]: creatureResponse(baseNpc('Priest of Pharasma')),
+    });
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(2);
+    expect(result.book.packMeta?.sourceRef).toBe('v14-dev');
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD', 'v14-dev']);
+    // Loud on fallback: the note names the newest listing's cause AND both refs.
+    expect(result.fetchNote).toContain('newest (HEAD) listing failed (pack listing failed: GitHub API HTTP 403');
+    expect(result.fetchNote).toContain('60 requests/hour per IP');
+    expect(result.fetchNote).toContain(
+      '— listed and imported the verified snapshot (v14-dev) instead: 2/2 valid',
+    );
+  });
+
+  it('throws the combined loud listing error when BOTH refs fail to list', async () => {
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: new Error('Failed to fetch'),
+      [PINNED_LIST_URL]: new Response('too many requests', { status: 429 }),
+    });
+    const deps = memoryDeps();
+
+    await expect(
+      fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn } }),
+    ).rejects.toThrow(
+      /pack listing failed for "NPC Gallery" — no pack book was created\. newest \(HEAD\): pack listing failed: could not reach api\.github\.com — Failed to fetch; verified \(v14-dev\): pack listing failed: GitHub API HTTP 429/s,
+    );
+    expect(deps.created).toHaveLength(0);
+  });
+
+  it('serves repeat fetches from the per-ref listing cache — one call per attempt, no hidden extras', async () => {
+    const deps = memoryDeps();
+
+    // First fetch: one listing call per attempt of the chain.
+    const first = mockFetch(
+      routes(
+        () => creatureResponse(folderDoc()),
+        (path) => creatureResponse(baseNpc(`Verified ${path.at(-1)}`)),
+      ),
+    );
+    await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn: first } });
+    expect(first.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(2);
+
+    // A second full fetch re-uses BOTH cached listings — zero api.github.com
+    // calls — and still re-runs the raw GETs of each attempt.
+    const second = mockFetch(
+      routes(
+        () => creatureResponse(folderDoc()),
+        (path) => creatureResponse(baseNpc(`Verified ${path.at(-1)}`)),
+      ),
+    );
+    await fetchAndImportPack('foundry-pf2e', 'packs/pf2e/npc-gallery', { deps, fetchDeps: { fetchFn: second } });
+    expect(second.calls.filter((url) => url.startsWith('https://api.github.com'))).toHaveLength(0);
+    expect(second.calls.filter((url) => url.startsWith('https://raw.githubusercontent.com'))).toHaveLength(6);
+  });
 });
 
 describe('throttleProgress (~10 Hz progress, F7)', () => {
@@ -624,7 +838,7 @@ describe('throttleProgress (~10 Hz progress, F7)', () => {
     };
     const fetchFn = vi.fn((url: string | URL) => {
       const key = String(url);
-      if (key === LIST_URL) return Promise.resolve(listingResponse(tree));
+      if (key === HEAD_LIST_URL) return Promise.resolve(listingResponse(tree));
       return Promise.resolve(creatureResponse(baseNpc(`Creature ${key.at(-1)}`)));
     }) as unknown as typeof fetch;
 
