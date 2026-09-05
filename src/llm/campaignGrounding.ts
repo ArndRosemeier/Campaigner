@@ -135,6 +135,14 @@ export function computeCampaignGrounding(input: CampaignGroundingInput): Expansi
  * module-tier shadowing must not redirect detection. Capped at
  * `GROUNDING_MAX_DETECTED_ENTITIES` — token-resolved entities rank first,
  * then word matches.
+ *
+ * Matches CONSUME their span (15 §3.1): every occurrence a matched spelling
+ * covers — a literal token or a longer name/alias match — is claimed, and a
+ * later (shorter) spelling can no longer match inside a claimed span. One
+ * occurrence therefore detects exactly ONE artifact, the longest match:
+ * "the Ember Council convenes" grounds the Council, never a second 'Ember'
+ * artifact hiding inside it. Rank order stays longest-first; the cap counts
+ * artifacts, not spans.
  */
 export function detectCampaignEntities(
   brief: string,
@@ -142,6 +150,11 @@ export function detectCampaignEntities(
 ): AnyArtifact[] {
   const detected: AnyArtifact[] = [];
   const seen = new Set<string>();
+  // The brief with every CLAIMED span blanked (same length, so match indices
+  // stay the brief's): phase 1 claims each literal token's whole span; the
+  // word phase below claims the span of every occurrence a matched spelling
+  // covers.
+  let remaining = blankSpans(brief, WIKI_LINK_PATTERN);
 
   // 1. Literal wiki-link tokens, in brief order.
   for (const link of extractWikiLinks(brief)) {
@@ -154,12 +167,13 @@ export function detectCampaignEntities(
   }
 
   // 2. Word-boundary name/alias matches, longest spelling first, over the
-  // brief's free prose — the wiki-link tokens are removed first: phase 1
-  // already claimed those occurrences (a token grounds its ONE resolution,
-  // never a second same-named artifact behind it). One spelling per lowercase
-  // form per artifact (the longest wins) so "The Alchemist" beats its own
-  // partial overlap "Alchemist".
-  const plainBrief = brief.replaceAll(WIKI_LINK_PATTERN, ' ');
+  // brief's unconsumed prose: spans claimed by the literal tokens above (a
+  // token grounds its ONE resolution, never a second same-named artifact
+  // behind it) and spans claimed by longer matches below are blanked, so a
+  // shorter spelling can never detect inside them — the longest match
+  // consumes the span. One spelling per lowercase form per artifact (the
+  // longest wins) so "The Alchemist" beats its own partial overlap
+  // "Alchemist".
   const spellings: { artifact: AnyArtifact; name: string }[] = [];
   for (const artifact of pool) {
     const forms = new Map<string, string>();
@@ -180,7 +194,13 @@ export function detectCampaignEntities(
   );
   for (const { artifact, name } of spellings) {
     if (seen.has(artifact.id)) continue;
-    if (!briefWordBoundaryMatches(plainBrief, name)) continue;
+    const pattern = wordBoundaryPattern(name);
+    // Free occurrences first: one match claims the spelling, and every
+    // occurrence found is blanked in the same pass — claiming IS the match,
+    // so shorter spellings can never overlap a consumed span.
+    const occurrences = [...remaining.matchAll(pattern)];
+    if (occurrences.length === 0) continue;
+    remaining = blankSpans(remaining, pattern);
     seen.add(artifact.id);
     detected.push(artifact);
     if (detected.length >= GROUNDING_MAX_DETECTED_ENTITIES) return detected;
@@ -188,12 +208,18 @@ export function detectCampaignEntities(
   return detected;
 }
 
-/** Case-insensitive word-boundary check of `name` in `brief`. Boundaries are
- * Unicode-aware letters/numbers (names are prose, not ASCII): "Grix" matches
- * in "Grix's" but not inside "Grixstone". */
-function briefWordBoundaryMatches(brief: string, name: string): boolean {
+/** A case-insensitive, word-boundary-anchored global matcher for `name`.
+ * Boundaries are Unicode-aware letters/numbers (names are prose, not ASCII):
+ * "Grix" matches in "Grix's" but not inside "Grixstone". */
+function wordBoundaryPattern(name: string): RegExp {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(brief);
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'giu');
+}
+
+/** Blanks every match of `pattern` with same-length spaces: claimed text can
+ * no longer match, but string indices stay the original's. */
+function blankSpans(text: string, pattern: RegExp): string {
+  return text.replace(pattern, (whole) => ' '.repeat(whole.length));
 }
 
 /** Per-module adjacency of the derived graph: moduleId → (node key → weight).

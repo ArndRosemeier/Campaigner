@@ -112,11 +112,28 @@ describe('detection (15 §3.1)', () => {
     ]);
   });
 
-  it('ranks longest spellings first so the longer artifact name wins the rank', () => {
+  it('consumes the longest match\'s span: a shorter spelling inside it detects nothing', () => {
     const short = artifact({ name: 'Ember', summary: 'a spark.' });
     const long = artifact({ name: 'Ember Council', summary: 'the council.' });
 
+    // One occurrence, two candidate artifacts: the longest match wins the
+    // rank AND claims its span — 'Ember' inside "Ember Council" is consumed,
+    // so exactly ONE artifact detects (span exclusivity, 15 §3.1).
     const detected = detectCampaignEntities('The Ember Council convenes tonight.', [short, long]);
+
+    expect(detected.map((entry) => entry.name)).toEqual(['Ember Council']);
+  });
+
+  it('still detects a shorter spelling at an occurrence outside the consumed span', () => {
+    const short = artifact({ name: 'Ember', summary: 'a spark.' });
+    const long = artifact({ name: 'Ember Council', summary: 'the council.' });
+
+    // Span exclusivity is per occurrence, not per brief: the standalone
+    // "Ember" after the consumed "Ember Council" span is a real mention.
+    const detected = detectCampaignEntities(
+      'The Ember Council convenes tonight; Ember departs.',
+      [short, long],
+    );
 
     expect(detected.map((entry) => entry.name)).toEqual(['Ember Council', 'Ember']);
   });

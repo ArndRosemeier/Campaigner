@@ -145,6 +145,10 @@ byte-identically — no new searches, embeddings, or LLM calls.
 2. Then match pool artifact `name`s and `alias`es case-insensitively at word
    boundaries in the brief; longest name first so "The Alchemist" beats a
    partial overlap; each artifact detected at most once; phantoms skipped.
+   A match consumes its span: a word-phase match inside the span of an
+   already-matched spelling — a literal wiki-link token or a longer
+   name/alias match — detects nothing, so one occurrence grounds exactly one
+   (longest) artifact.
 3. Rank: token-resolved first (brief order), then word matches (longest
    first); cap at **≤ 3 detected entities**.
 4. Chain-context artifacts (`contextArtifactIds`, runEngine.ts:291-301) are
