@@ -107,6 +107,11 @@ const ALLOWED_NOISE: readonly {
     message: /\[campaigner\] render crash:|The above error occurred in|render exploded|Not implemented:/,
     why: 'the test deliberately crashes rendering (and jsdom not-implemented noise from the stubbed location) to verify the global error boundary is loud.',
   },
+  {
+    file: /persona-run-ui\.test\./,
+    message: /An update to %s inside a test was not wrapped in act/,
+    why: 'The panel\u2019s run views (ActiveRun/RunActions) re-render from Dexie live queries and the engine token stream, which land on fake-indexeddb\u2019s timed queue in the microtask gap after the last act-wrapped step (same known act-leak class as battle-surface\u2019s TokenView). Timing-dependent, never an assertion failure; the affected tests assert run state at the DB level.',
+  },
 ];
 
 function isAllowed(entry: NoiseEntry, file: string): boolean {

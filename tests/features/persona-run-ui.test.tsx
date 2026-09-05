@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
@@ -964,6 +964,140 @@ describe('PersonaPanel run lifecycle', () => {
     );
 
     expect(await screen.findByRole('button', { name: 'Open artifact' })).toBeInTheDocument();
+    await flushAsyncUpdates(60);
+  }, 30000);
+});
+
+describe('PersonaPanel creation dialog (module placement + extras)', () => {
+  it('offers the module select and the persona-derived extras for a fresh NPC run', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: persona.name }));
+
+    // Derived fallback (custom npc persona, no declared field): image + statBlock.
+    expect(screen.getByLabelText('Module')).toBeInTheDocument();
+    expect(screen.getByTestId('run-extras')).toBeInTheDocument();
+    expect(screen.getByTestId('extra-image')).toBeInTheDocument();
+    expect(screen.getByTestId('extra-statblock')).toBeInTheDocument();
+    expect(screen.queryByTestId('extra-mob-portraits')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('extra-battlemap')).not.toBeInTheDocument();
+  }, 30000);
+
+  it('starts a run into the chosen module and ticks extras through to the run row', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const { createModule } = await import('@/db/moduleRepo');
+    const { createModule: buildModule } = await import('@/domain');
+    const module = await createModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'standard',
+      }),
+    );
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: persona.name }));
+
+    await user.click(screen.getByRole('combobox', { name: 'Module' }));
+    await user.click(await screen.findByRole('option', { name: 'The Drowned Vault' }));
+    expect(screen.getByTestId('placement-note')).toHaveTextContent('The Drowned Vault');
+
+    await user.click(within(screen.getByTestId('extra-statblock')).getByRole('checkbox'));
+    await user.type(screen.getByLabelText('Brief'), 'a goblin alchemist boss');
+    await user.click(screen.getByTestId('start-run'));
+
+    await waitFor(async () => {
+      const runs = await listRunsByCampaign(campaign.id);
+      expect(runs).toHaveLength(1);
+    });
+    const runs = await listRunsByCampaign(campaign.id);
+    const run = await getRun(runs[0]?.id ?? '');
+    expect(run?.placementModuleId).toBe(module.id);
+    expect(run?.runExtras).toEqual({ image: false, statBlock: true, mobPortraits: false, battlemap: false });
+    // Drain the run pipeline fully — a still-running ActiveRun leaks state
+    // updates (and its updateRun rejects once the next test clears the DB).
+    await waitFor(async () => {
+      const finished = await getRun(runs[0]?.id ?? '');
+      // eslint-disable-next-line no-console
+      expect(finished?.status).toBe('completed');
+    });
+    await flushAsyncUpdates();
+  }, 30000);
+
+  it('hides placement and extras for a targeted in-place run', async () => {
+    const { campaign } = await seed();
+    // The request channel selects the Encounter Cartographer by slug
+    // (variant 'map' — an encounter-MODE persona, so the targeted-run notice
+    // renders).
+    await createPersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: 'test',
+      systemPrompt: 'test',
+      producesKind: 'encounter',
+      mode: 'encounter',
+      builtIn: true,
+    });
+    const { useEncounterGenerationRequest } = await import(
+      '@/features/campaign/encounterGenerationRequest'
+    );
+    const target = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Ambush at the ford',
+      summary: '',
+      body: '',
+      data: {
+        difficulty: 'medium',
+        levelHint: '3',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+      },
+    });
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    // The artifact editor's "Generate content" affordance: preselects the
+    // Encounter Smith persona and targets the existing encounter.
+    act(() => {
+      useEncounterGenerationRequest.getState().request(target.id, true, 'map');
+    });
+
+    expect(await screen.findByTestId('encounter-regenerate-target')).toHaveTextContent(
+      'Placement and new-artifact options do not apply',
+    );
+    expect(screen.queryByRole('combobox', { name: 'Module' })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('run-extras')).not.toBeInTheDocument();
+    // The request store is file-global: clear it so later tests don't react.
+    act(() => {
+      useEncounterGenerationRequest.getState().clear();
+    });
     await flushAsyncUpdates();
   }, 30000);
 });

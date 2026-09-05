@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toastError, toastSuccess } from '@/lib/toast';
+import { ARTIFACT_KIND_SINGULAR } from '@/domain/artifact';
 import { Textarea } from '@/components/ui/textarea';
 import { HelpButton } from '@/help/HelpButton';
 import { ROUTES, artifactPath } from '@/app/routes';
@@ -47,6 +48,10 @@ import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
 import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
+import { extrasForPersona } from '@/llm/personas/extras';
+import type { PostCreateExtra } from '@/domain';
+import { useModules } from '@/features/modules/hooks';
+import { Checkbox } from '@/components/ui/checkbox';
 import { ImageThumb } from '@/features/images/image-thumb';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { WritersRoom } from '@/features/campaign/components/writers-room';
@@ -56,6 +61,31 @@ const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
   { value: 'review', label: 'Review' },
   { value: 'auto', label: 'Auto' },
 ];
+
+/** One "After creation" extra: the offered set derives from the CHOSEN
+ * persona (extrasForPersona) — the checkbox writes a remembered preference
+ * (Settings.runExtras) except the battlemap offer, which is one-off. */
+function ExtraCheckbox({
+  label,
+  testId,
+  checked,
+  onChecked,
+}: {
+  label: string;
+  testId: string;
+  checked: boolean;
+  onChecked: (value: boolean) => void;
+}): JSX.Element {
+  return (
+    <Label className="flex cursor-pointer items-center gap-2 text-sm" data-testid={testId}>
+      <Checkbox
+        checked={checked}
+        onCheckedChange={onChecked}
+      />
+      {label}
+    </Label>
+  );
+}
 
 const STATUS_LABELS: Record<PersonaRun['status'], string> = {
   running: 'running',
@@ -136,6 +166,12 @@ export function PersonaPanel({
   const [targetArtifactId, setTargetArtifactId] = useState<string>('');
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
   const [tab, setTab] = useState<string>('assistant');
+  // One-off module placement for the created artifact ('' = campaign level);
+  // deliberately NOT remembered — a stale remembered module would silently
+  // scope new artifacts (ratified owner default 3).
+  const [placementModuleId, setPlacementModuleId] = useState<string>('');
+  // The battlemap extra is a one-off offer (ratified): never remembered.
+  const [battlemapExtra, setBattlemapExtra] = useState(false);
 
   // Deep link (dock "Open" → workspace `?run=<id>`): focus the run. ActiveRun
   // renders inside the Assistant tab, so the tab follows the selection.
@@ -162,6 +198,20 @@ export function PersonaPanel({
   const isImage = selectedPersona?.mode === 'image';
   const isEncounter = selectedPersona?.mode === 'encounter';
   const needsTarget = isReview || isImage;
+  // The creation-dialog controls (module placement + post-create extras)
+  // apply to NEW artifacts only: a targeted run fills an existing one and
+  // its placement is immutable outside the editor's explicit scope moves.
+  const createsArtifact =
+    selectedPersona !== undefined && !isReview && !isImage && targetArtifactId === '';
+  const kindNoun =
+    selectedPersona?.producesKind === undefined
+      ? 'artifact'
+      : ARTIFACT_KIND_SINGULAR[selectedPersona.producesKind].toLowerCase();
+  const offeredExtras = useMemo(
+    () => (selectedPersona === undefined ? [] : extrasForPersona(selectedPersona)),
+    [selectedPersona],
+  );
+  const offers = (extra: PostCreateExtra): boolean => offeredExtras.includes(extra);
 
   // "Illustrate…" from the artifact editor: select the Illustrator persona,
   // target the requesting artifact, and focus the Assistant tab (M3-A).
@@ -201,6 +251,38 @@ export function PersonaPanel({
     clearEncounterRequest();
   }, [encounterRequestId, encounterRequestRegenerate, encounterRequestVariant, encounterRequestedAt, personas, clearEncounterRequest]);
 
+  // Remembered extras defaults (aspect pattern): the dialog pre-ticks from
+  // Settings.runExtras and persists toggles; the battlemap extra stays a
+  // one-off offer and never rides Settings.
+  const rememberedExtras = settings?.runExtras ?? { image: false, statBlock: false, mobPortraits: false };
+  const modules = useModules(campaign.id);
+
+  function tickedExtras(): {
+    image: boolean;
+    statBlock: boolean;
+    mobPortraits: boolean;
+    battlemap: boolean;
+  } {
+    return {
+      image: offers('image') && rememberedExtras.image,
+      statBlock: offers('statBlock') && rememberedExtras.statBlock,
+      mobPortraits: offers('mobPortraits') && rememberedExtras.mobPortraits,
+      battlemap: offers('battlemap') && battlemapExtra,
+    };
+  }
+
+  async function setRememberedExtra(key: 'image' | 'statBlock' | 'mobPortraits', value: boolean): Promise<void> {
+    await updateSettings({
+      runExtras: {
+        image: key === 'image' ? value : rememberedExtras.image,
+        statBlock: key === 'statBlock' ? value : rememberedExtras.statBlock,
+        mobPortraits: key === 'mobPortraits' ? value : rememberedExtras.mobPortraits,
+      },
+    }).catch((error: unknown) => {
+      toastError('Could not save the extras default', error);
+    });
+  }
+
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
     if (selectedPersona.mode === 'encounter') {
@@ -212,6 +294,12 @@ export function PersonaPanel({
         pinnedChunkIds: pinned.map((chunk) => chunk.id),
         encounterMapAspect: settings?.encounterMapAspect ?? '4:3',
         ...(targetArtifactId === '' ? {} : { targetArtifactId }),
+        // Fresh encounter creates carry the dialog's placement + extras;
+        // targeted fills get neither (placement is fresh-create only).
+        ...(targetArtifactId === '' && placementModuleId !== ''
+          ? { placementModuleId }
+          : {}),
+        ...(targetArtifactId === '' ? { extras: tickedExtras() } : {}),
       });
       setActiveRunId(runId);
       return;
@@ -235,6 +323,8 @@ export function PersonaPanel({
       autonomy,
       brief,
       pinnedChunkIds: pinned.map((chunk) => chunk.id),
+      ...(placementModuleId !== '' ? { placementModuleId } : {}),
+      extras: tickedExtras(),
     });
     setActiveRunId(runId);
   }
@@ -376,6 +466,85 @@ export function PersonaPanel({
               </div>
             )}
 
+            {createsArtifact && (
+              <>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="module-select">Module</Label>
+                  <Select
+                    value={placementModuleId}
+                    onValueChange={(value) => {
+                      setPlacementModuleId(value ?? '');
+                    }}
+                  >
+                    <SelectTrigger id="module-select" aria-label="Module" className="w-full">
+                      <SelectValue placeholder="Campaign (no module)" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="" data-testid="placement-campaign">
+                        Campaign (no module)
+                      </SelectItem>
+                      {(modules ?? []).map((module) => (
+                        <SelectItem key={module.id} value={module.id}>
+                          {module.title}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {placementModuleId !== '' && (
+                    <p className="text-xs text-muted-foreground" data-testid="placement-note">
+                      The created {kindNoun} will live in module{' '}
+                      {(modules ?? []).find((module) => module.id === placementModuleId)?.title ??
+                        '…'}
+                      .
+                    </p>
+                  )}
+                </div>
+                {offeredExtras.length > 0 && (
+                  <div className="flex flex-col gap-1.5" data-testid="run-extras">
+                    <Label>After creation</Label>
+                    {offers('image') && (
+                      <ExtraCheckbox
+                        label="Generate a cover image"
+                        testId="extra-image"
+                        checked={rememberedExtras.image}
+                        onChecked={(value) => {
+                          void setRememberedExtra('image', value);
+                        }}
+                      />
+                    )}
+                    {offers('statBlock') && (
+                      <ExtraCheckbox
+                        label="Include a stat block"
+                        testId="extra-statblock"
+                        checked={rememberedExtras.statBlock}
+                        onChecked={(value) => {
+                          void setRememberedExtra('statBlock', value);
+                        }}
+                      />
+                    )}
+                    {offers('mobPortraits') && (
+                      <ExtraCheckbox
+                        label="Generate mob portraits"
+                        testId="extra-mob-portraits"
+                        checked={rememberedExtras.mobPortraits}
+                        onChecked={(value) => {
+                          void setRememberedExtra('mobPortraits', value);
+                        }}
+                      />
+                    )}
+                    {offers('battlemap') && (
+                      <ExtraCheckbox
+                        label="Generate a battlemap"
+                        testId="extra-battlemap"
+                        checked={battlemapExtra}
+                        onChecked={setBattlemapExtra}
+                      />
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+
             {isEncounter && (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="encounter-aspect">Map aspect</Label>
@@ -405,7 +574,8 @@ export function PersonaPanel({
                 {targetArtifactId !== '' && (
                   <p className="text-xs text-amber-600" data-testid="encounter-regenerate-target">
                     Runs against the selected encounter; name, prose, relations and roster are
-                    preserved, layout and map are replaced.
+                    preserved, layout and map are replaced. Placement and new-artifact options do
+                    not apply.
                   </p>
                 )}
               </div>
@@ -933,6 +1103,8 @@ function EncounterRunActions({
     pinnedChunkIds: run.pinnedChunkIds,
     ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
     ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+    ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
+    ...(run.runExtras === null ? {} : { extras: run.runExtras }),
   };
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
@@ -1129,6 +1301,8 @@ function RunActions({
           pinnedChunkIds: run.pinnedChunkIds,
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+          ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
+          ...(run.runExtras === null ? {} : { extras: run.runExtras }),
         };
   }, [
     personaRow,
@@ -1138,6 +1312,8 @@ function RunActions({
     run.pinnedChunkIds,
     run.targetArtifactId,
     run.encounterMapAspect,
+    run.placementModuleId,
+    run.runExtras,
   ]);
 
   if (run.status === 'completed' && run.resultArtifactId !== null) {
@@ -1317,6 +1493,8 @@ function FailedRunActions({
           pinnedChunkIds: run.pinnedChunkIds,
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+          ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
+          ...(run.runExtras === null ? {} : { extras: run.runExtras }),
         };
 
   return (
