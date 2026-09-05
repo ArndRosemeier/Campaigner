@@ -1037,7 +1037,6 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     // updates (and its updateRun rejects once the next test clears the DB).
     await waitFor(async () => {
       const finished = await getRun(runs[0]?.id ?? '');
-      // eslint-disable-next-line no-console
       expect(finished?.status).toBe('completed');
     });
     await flushAsyncUpdates();
