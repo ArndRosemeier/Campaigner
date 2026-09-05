@@ -1,7 +1,8 @@
 import 'fake-indexeddb/auto';
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, getArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
@@ -53,6 +54,18 @@ const intakeImageMock = vi.mocked(intakeImage);
 const { toastError } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
 import { clearDatabase } from '../db/helpers';
+
+/**
+ * Every render gets a router context: the entity panel's Run battle button
+ * navigates to the module's battle table on a successful seed (useNavigate),
+ * so EntityPanel cannot render outside a Router anymore.
+ */
+function render(
+  ui: Parameters<typeof rtlRender>[0],
+  options?: Parameters<typeof rtlRender>[1],
+): ReturnType<typeof rtlRender> {
+  return rtlRender(ui, { ...options, wrapper: options?.wrapper ?? MemoryRouter });
+}
 
 /**
  * Entity panel (08-M4-C): useModuleEntities ordering (resolved first, then

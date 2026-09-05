@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact } from '@/db/artifactRepo';
@@ -11,6 +11,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { saveModule } from '@/db/moduleRepo';
 import { createModule, type Artifact, type Id, type Module } from '@/domain';
+import { battlePath } from '@/app/routes';
 import { ArtifactEditor } from '@/features/campaign/components/artifact-editor';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
@@ -20,8 +21,15 @@ import { flushAsyncUpdates } from '../helpers/flush';
  * picker fallback): module-scoped encounters run through the module view's
  * own RunBattleButton anchored to their own module; campaign-scoped ones
  * pick a module; both paths keep the two-step replace confirm; zero modules
- * is a named empty state; non-encounter kinds stay untouched.
+ * is a named empty state; non-encounter kinds stay untouched. A successful
+ * seed navigates straight to the seeded module's battle table.
  */
+
+/** Renders the current router location so tests can assert the navigation. */
+function LocationProbe() {
+  const location = useLocation();
+  return <span data-testid="route-location">{location.pathname}</span>;
+}
 
 async function seedWorld(moduleTitles: string[]): Promise<{
   campaignId: Id;
@@ -71,6 +79,7 @@ function renderEditor(
         campaignArtifacts={campaignArtifacts}
         campaignSystem="dnd5e"
       />
+      <LocationProbe />
     </MemoryRouter>,
   );
 }
@@ -99,6 +108,13 @@ describe('artifact editor run battle', () => {
       expect(battle?.encounterArtifactId).toBe(owned.id);
     });
     expect(await db.battles.count()).toBe(1);
+    // The seed lands the user on the module's battle table — no toast-estimated
+    // detour telling them to open it themselves.
+    await waitFor(() => {
+      expect(screen.getByTestId('route-location')).toHaveTextContent(
+        battlePath(campaignId, crypt.id),
+      );
+    });
     await flushAsyncUpdates();
   });
 
@@ -154,6 +170,12 @@ describe('artifact editor run battle', () => {
     // The dialog closes once the seed landed.
     await waitFor(() => {
       expect(screen.queryByTestId('run-battle-module-picker')).toBeNull();
+    });
+    // And the picked module's battle table is where the user ends up.
+    await waitFor(() => {
+      expect(screen.getByTestId('route-location')).toHaveTextContent(
+        battlePath(campaignId, tide.id),
+      );
     });
     await flushAsyncUpdates();
   });
