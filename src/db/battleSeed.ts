@@ -7,6 +7,7 @@ import { NotFoundError } from '@/lib/errors';
 import { getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { ensureBattle, getBattle, patchBattle, saveBattleBoard } from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
+import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 
 /**
@@ -16,6 +17,11 @@ import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
  * until the table opens). One live battle per module — seeding an already
  * running battle REPLACES it (the UI confirms; the stage snapshot is
  * discarded).
+ *
+ * Mob artifacts (owner-ratified): every statful rulebook entry shares ONE
+ * npc artifact keyed by its cited chunk across all instances, frozen with a
+ * single seedFighters row; entries written before `mobArtifactId` existed
+ * retro-fill their artifact here via the shared get-or-create (idempotent).
  *
  * Loud-by-contract (AGENTS rule 1): roster entries without stats seed as
  * tokens WITHOUT HP that are excluded from initiative; the report lists them
@@ -85,6 +91,9 @@ export async function seedBattleFromEncounter(
   // portrait tokens at fresh max HP (the token instance owns it); statless
   // entries produce HP-less tokens excluded from initiative.
   const seedFighters: SeedFighter[] = [];
+  // Mob artifacts (owner-ratified): deduplicates get-or-creates within this
+  // seed when several roster entries cite the same creature chunk.
+  const seedMobArtifacts = new Map<Id, Id>();
   const statless: string[] = [];
   const rosterTokens: BattleToken[] = [];
   for (const [monsterIndex, entry] of encounter.data.monsters.entries()) {
@@ -125,9 +134,31 @@ export async function seedBattleFromEncounter(
         // npc-ref tokens resolve stats through the real artifact — no seed
         // copy to drift (the artifact must NEVER store current HP).
         artifactId = entry.source.artifactId;
+      } else if (entry.source.type === 'rulebook') {
+        // Mob artifact (owner-ratified): ALL instances of a rulebook creature
+        // share ONE image-able npc artifact keyed by the cited chunk — created
+        // here lazily for encounters written before the marker existed (the
+        // get-or-create is idempotent, so old rows retro-fill on first seed),
+        // otherwise the finalize-stamped mobArtifactId is used verbatim (a
+        // dangling one behaves like a deleted npc-ref: scrubbed tokens, no
+        // stats). ONE seedFighters row under that artifact id carries the
+        // chunk-resolved stats; the fighterStats fallthrough (mob artifact
+        // itself has no statBlock → seed row) resolves every instance.
+        artifactId =
+          entry.source.mobArtifactId ??
+          (await getOrCreateMobArtifact(
+            campaignId,
+            entry.source.chunkId,
+            entry.name,
+            { source: 'user' },
+            seedMobArtifacts,
+          ));
+        if (!seedFighters.some((seed) => seed.id === artifactId)) {
+          seedFighters.push({ id: artifactId, name: entry.name, maxHp, initiativeBonus: bonus });
+        }
       } else {
-        // Rulebook/inline monsters have no artifact: freeze the resolved
-        // stats onto the battle row under a synthetic per-instance id.
+        // Inline monsters have no artifact: freeze the resolved stats onto
+        // the battle row under a synthetic per-instance id.
         artifactId = newId();
         seedFighters.push({ id: artifactId, name: label, maxHp, initiativeBonus: bonus });
       }
