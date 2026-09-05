@@ -247,17 +247,47 @@ and `visible: false` tokens are **removed from the DOM** (not dimmed) and
 pruned from initiative. **Token tap shows name + image + HP only** — the
 source's inspect modal on the table surface opens the full card with secrets
 revealed one tap from the player-facing screen; that flaw is explicitly fixed
-here (full inspection happens back on the GM view).
+here (full inspection happens back on the GM view). Amended 2026-09-06 by
+fba12b7: *the tap contract ships as a selection card in the right rail —
+portrait art + label + HP meter in BOTH modes (player-safe included; the
+card renders only what the board already shows: cover art via the shared
+useImageUrl path, label, HP), plus a GM-only allowance in GM mode: an
+"Open card" button mounts the existing full NpcCard (statblock included) in
+a dialog for NPC tokens that resolve to a statblock. The button never
+renders in player-safe mode — stat text still never enters the DOM there —
+and tapping the empty board deselects.*
 
 **Interaction:**
 
 - Drag (≥8px threshold): live local position with grid snapping, single repo
   commit on release; tap = select; scenery lock rejects stamp/veil moves.
-- Pan/zoom (0.35–80, pinch + wheel + buttons), DOM-transform based; on coarse
-  pointers portrait tokens render in a screen-space overlay so art stays
-  crisp.
+  Amended 2026-09-06 by 0275d27: *the live-local-position contract covers
+  veils exactly like tokens — a dragged veil follows the pointer in local
+  state (zero Dexie writes mid-drag) and persists exactly once on release —
+  and veil drops snap like token drops: the center quantizes to the veil's
+  own widthCells×heightCells span, landing the veil's edges on cell
+  boundaries (matching the cell-quantized resize math).* Amended 2026-09-06
+  by d0c7fc8: *the threshold is SCREEN-space (client px from the
+  pointer-down origin) so the tap window is zoom-invariant, and every
+  pointer conversion runs against the transformed content frame — the
+  pan/zoom transform and the aspect-fit letterbox live between the outer
+  container and the %-positioned pieces, so container-frame math drifted by
+  (s−c)(1−1/zoom) + pan/zoom plus the letterbox offset; snapping, thresholds
+  and fog coverage all use the content div's frame.*
+- Pan/zoom (0.35–4, pinch + wheel + buttons), DOM-transform based. Amended
+  2026-09-06 by d0c7fc8: *the range is the code truth — `ZOOM_MIN = 0.35`,
+  `ZOOM_MAX = 4` (BattleSurface.tsx); the former "0.35–80" was a spec
+  typo.* Amended 2026-09-06 (parking lot, not scheduled): *the coarse-
+  pointer screen-space art overlay — "portrait tokens render in a
+  screen-space overlay so art stays crisp" — is DROPPED from the spec; the
+  shipped surface renders tokens in the transformed frame with no overlay
+  layer. See the parking lot below.*
 - Veils: add veil/fog, resize from n/e/s/w handles (hidden while scenery is
-  locked).
+  locked). Amended 2026-09-06 by fba12b7: *the shipped resize is
+  CLICK-to-resize — tapping an n/e/s/w handle (a 12px target) quantizes the
+  touched edge to the grid, center-preserving (resizeVeilFromEdge).
+  Drag-resize is deferred to the tablet-hardening pass (see 05-UI
+  §Tablet).*
 - Stage: **⚑ Set stage** (confirm) captures the snapshot; **↻ Reset**
   restores geometry, clears initiative, resets NPC instance HP to artifact
   max, re-spawns missing PCs at the staging ground, stays live.
@@ -268,6 +298,15 @@ here (full inspection happens back on the GM view).
 - Damage/heal: token float controls with a numeric delta (clamped
   `0..maxHp`), writing to the token (NPC) or the pc artifact (PC). A plain
   random roller (d20/d6 totals) is built in; **no 3D dice dependency**.
+
+**Parking lot (not scheduled):**
+
+- Coarse-pointer screen-space art overlay (former spec line, dropped
+  2026-09-06): portrait tokens would render in a screen-space overlay so
+  art stays crisp at high zoom. Nothing implements it — the shipped surface
+  renders tokens in the transformed frame; revisit only with a concrete
+  on-device crispness complaint, together with the tablet-hardening backlog
+  in 05-UI §Tablet.
 
 ---
 
