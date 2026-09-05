@@ -33,17 +33,28 @@ pack chunks are ordinary `statblock` chunks with a **non-null, exact**
 - **Per-source adapters.** "System-agnostic" describes the pipeline, not the
   parsers: every source gets its own mapper, selected by a registered adapter.
   There is no generic JSON→StatBlock inference.
-- **No network, no bundling.** The app never downloads, ships, or re-serves
-  third-party content (§2). The user downloads pack files themselves and
-  imports them.
+- **No bundling; fetching only via 16-BESTIARY-FETCH (amended 2026-09-05).**
+  The app never bundles or ships third-party content (§2). The user either
+  imports pack files manually (unchanged `/rules` fallback) or triggers the
+  **user-triggered pack fetch** (16-BESTIARY-FETCH), which downloads chosen
+  packs from the pinned upstream repos into the user's own browser and feeds
+  the bytes into this pipeline. The import path itself stays network-free:
+  adapters parse bytes they are handed and never fetch (unit-test asserted).
 - **Loud failure policy.** Per-entry validation failures are collected and
   shown in an import report (AGENTS rule 1). Zero valid entries → the book is
   marked `error` and the import throws; an empty "ready" book is forbidden.
 
 ## 2. Licensing constraints (binding)
 
-Campaigner must **never bundle, fetch, or redistribute** the content below.
-The user obtains the files from the source repository and imports them; the
+Campaigner must **never bundle, redistribute, or re-serve** the content below
+(amended 2026-09-05 by 16-BESTIARY-FETCH: *user-triggered fetch from the
+pinned sources there is allowed and changes the acquisition channel, not the
+licensing model — the fetch downloads to the user's own browser storage from
+the upstream repo the user chose; Campaigner never bundles, re-serves, or
+redistributes, and the book stores provenance — source ref, URL, fetch time —
+plus the license, displayed in the UI*).
+The user obtains the files from the source repository (manually or via the
+pinned-source fetch) and imports them; the
 book row stores the license string and the UI displays it. This local-import
 model is what makes the sources usable at all:
 
@@ -279,7 +290,10 @@ all consumers (encounter editor stat-block cards, battle tokens) keep working.
 
 ## 9. Non-goals
 
-- No fetching from any network in the import path (unit-test asserted).
+- No fetching from any network **in the import path** (unit-test asserted).
+  Amended 2026-09-05 by 16-BESTIARY-FETCH: fetching lives exclusively in
+  `src/ingest/packFetch.ts` (user-triggered, pinned sources); the adapters
+  and `packImport` still import no `fetch`.
 - No Foundry *system code*: no rule elements, roll formulas, or automation —
   packs are read once, mapped to `StatBlock`, and the source JSON is not kept.
 - No creature art / token images.
