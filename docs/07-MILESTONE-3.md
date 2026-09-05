@@ -258,7 +258,7 @@ Three zones:
 
 Command-palette dialog (`/src/features/quickfind/`), built on the existing
 cmdk `Command` primitives (`src/components/ui/command.tsx`, already used by
-the settings model combobox): one input searching **artifacts** (name/tags/summary via a MiniSearch index over the campaign) and
+the settings model combobox): one input searching **artifacts** (name/tags/summary/aliases via a MiniSearch index over the campaign) and
 **rule chunks** (existing `searchRules`) in two result groups. Enter on an
 artifact: in play mode set focus, in workspace open editor. Enter on a chunk:
 inline expandable preview inside the palette (GM checks a rule without losing

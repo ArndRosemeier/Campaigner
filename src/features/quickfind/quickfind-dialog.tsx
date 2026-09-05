@@ -20,8 +20,8 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/compone
 
 /**
  * Quick-find command palette (07-MILESTONE-3 M3-C, Ctrl+K): one input over
- * campaign artifacts (name/tags/summary via MiniSearch), modules and their
- * parts (M4-D) and rule chunks (existing searchRules), in three result
+ * campaign artifacts (name/tags/summary/aliases via MiniSearch), modules and
+ * their parts (M4-D) and rule chunks (existing searchRules), in three result
  * groups — plus an optional "Go to" group of screens while the query is
  * empty (P5: the palette doubles as an app map). Enter on an artifact sets
  * focus (play) or opens the editor (workspace); Enter on a module/part
@@ -33,6 +33,38 @@ export type QuickFindMode = 'picker' | 'workspace';
 
 interface ArtifactHit {
   artifact: AnyArtifact;
+  /** Verbatim alias that matched the query, shown as the row's "aka" hint. */
+  matchedAlias?: string | undefined;
+}
+
+/** MiniSearch's default field tokenizer — mirrored only to resolve a matched
+ * index term back to the verbatim alias string for the row hint. */
+const MINISEARCH_TOKEN_SPLIT = /[\n\r\p{Z}\p{P}]+/u;
+
+/**
+ * The first verbatim alias containing a term MiniSearch matched in the
+ * `aliases` field (`match` keys are processed index terms, lowercased; search
+ * is exact-term, so a matched alias term is one of the alias's tokens). A
+ * display hint only — quickfind is a search surface, not a grounding one:
+ * rows are never filtered or deduplicated on it, and a name match on the same
+ * artifact appears just the same.
+ */
+function matchedAliasHint(
+  artifact: AnyArtifact,
+  match: Record<string, string[]>,
+): string | undefined {
+  const aliasTerms = Object.entries(match)
+    .filter(([, fields]) => fields.includes('aliases'))
+    .map(([term]) => term);
+  if (aliasTerms.length === 0) return undefined;
+  for (const alias of artifact.aliases) {
+    const tokens = alias
+      .toLowerCase()
+      .split(MINISEARCH_TOKEN_SPLIT)
+      .filter((token) => token !== '');
+    if (aliasTerms.some((term) => tokens.includes(term))) return alias;
+  }
+  return undefined;
 }
 
 /** One module/part match ("selecting scrolls the reader"). */
@@ -120,10 +152,14 @@ export function QuickFindDialog({
   useEffect(() => {
     if (!open) return;
     const mini = new MiniSearch<AnyArtifact>({
-      fields: ['name', 'tags', 'summary'],
+      fields: ['name', 'tags', 'summary', 'aliases'],
       storeFields: ['id'],
       extractField: (artifact, field) =>
-        field === 'tags' ? artifact.tags.join(' ') : artifact[field as 'name' | 'summary'],
+        field === 'tags'
+          ? artifact.tags.join(' ')
+          : field === 'aliases'
+            ? artifact.aliases.join(' ')
+            : artifact[field as 'name' | 'summary'],
     });
     mini.addAll([...artifacts]);
     index.current = mini;
@@ -143,11 +179,13 @@ export function QuickFindDialog({
       setModuleHits([]);
       return;
     }
-    const ids = index.current?.search(text).slice(0, 10).map((hit) => String(hit.id)) ?? [];
+    const hits = index.current?.search(text).slice(0, 10) ?? [];
     setArtifactHits(
-      ids.flatMap((id) => {
-        const artifact = artifactById.get(id);
-        return artifact === undefined ? [] : [{ artifact }];
+      hits.flatMap((hit) => {
+        const artifact = artifactById.get(String(hit.id));
+        if (artifact === undefined) return [];
+        const matchedAlias = matchedAliasHint(artifact, hit.match);
+        return matchedAlias === undefined ? [{ artifact }] : [{ artifact, matchedAlias }];
       }),
     );
     setModuleHits(matchModules(text, modules ?? []));
@@ -210,7 +248,7 @@ export function QuickFindDialog({
             )}
             {artifactHits.length > 0 && (
               <CommandGroup heading="Artifacts">
-                {artifactHits.map(({ artifact }) => (
+                {artifactHits.map(({ artifact, matchedAlias }) => (
                   <CommandItem
                     key={artifact.id}
                     value={artifact.id}
@@ -224,6 +262,11 @@ export function QuickFindDialog({
                       <span className="ml-2 text-xs text-muted-foreground">
                         {artifact.campaignId === null ? `Library · ${artifact.kind}` : artifact.kind}
                       </span>
+                      {matchedAlias !== undefined && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          aka: {matchedAlias}
+                        </span>
+                      )}
                     </span>
                   </CommandItem>
                 ))}
