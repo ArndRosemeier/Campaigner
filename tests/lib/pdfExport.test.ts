@@ -7,9 +7,9 @@ import {
   buildGmNotesDefinition,
   buildPlayerHandoutDefinition,
   exportArtifactPdf,
-  markdownToText,
   pdfFileName,
 } from '@/lib/pdfExport';
+import { markdownToText } from '@/lib/markdown';
 
 /**
  * PDF export (06-MILESTONES M2): GM notes + player handout templates. The

@@ -435,7 +435,8 @@ describe('EntityPanel', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     await seedBuiltInPersonas();
     await updateSettings({ imagesEnabled: true });
-    chatMock.mockResolvedValue({ text: JSON.stringify({ prompt: 'A portrait', negative: '', styleNotes: 'ink' }), modelUsed: 'test-model', fallback: null });
+    // The prompt draft is deterministic (buildImagePrompt) — the queue never
+    // calls chat; no chat mock is queued for the image path.
     generateImagesMock.mockResolvedValue({ images: [new Blob(['gen'])], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
     intakeImageMock.mockResolvedValue({
       blob: new Blob(['intake']),
@@ -449,6 +450,8 @@ describe('EntityPanel', () => {
       campaignId: campaign.id,
       kind: 'location',
       name: 'Undercroft',
+      summary: 'A crypt beneath the chapel.',
+      body: 'Cold stone, mildew, one broken sarcophagus.',
     });
     const existing = await createImage({
       campaignId: campaign.id,

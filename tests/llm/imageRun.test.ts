@@ -14,8 +14,10 @@ import { clearDatabase } from '../db/helpers';
 
 /**
  * Illustrator persona (07-MILESTONE-3 M3-A): image-mode pipeline — prompt
- * draft (LLM, mocked) → generate (image API, mocked) → pick (ALWAYS pauses;
- * the user's pick decorates the target artifact and discards candidates).
+ * draft (DETERMINISTIC buildImagePrompt — the LLM prompt-crafting call is
+ * gone; chat is asserted never called) → generate (image API, mocked) → pick
+ * (ALWAYS pauses; the user's pick decorates the target artifact and discards
+ * candidates).
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -67,6 +69,8 @@ async function seed(): Promise<{ campaignId: Id; persona: Persona; targetId: Id 
     campaignId: campaign.id,
     kind: 'location',
     name: 'The Lighthouse',
+    summary: 'A storm-lashed beacon on a black cliff.',
+    body: 'Windswept rocks, gulls, one tower of black stone.',
   });
   await saveSettings({
     ...defaultSettings(),
@@ -125,7 +129,6 @@ describe('illustrator run (image persona)', () => {
 
   it('manual flow: pauses at prompt-draft, generates 2 candidates on continue, pauses at pick', async () => {
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: 0.021,
@@ -140,6 +143,20 @@ describe('illustrator run (image persona)', () => {
     let run = await getRun(runId);
     expect(run?.steps.map((step) => step.name)).toEqual(['prompt-draft']);
     expect(run?.steps[0]?.status).toBe('done');
+    // Headline pin (owner amendment): the prompt draft is deterministic —
+    // the openrouter chat mock receives NO prompt-draft call during the run.
+    expect(chatMock).not.toHaveBeenCalled();
+    expect(run?.steps[0]?.output).toEqual({
+      parsed: {
+        prompt: [
+          'A Generic d20 illustration of The Lighthouse (location).',
+          'Summary: A storm-lashed beacon on a black cliff.',
+          'Description: Windswept rocks, gulls, one tower of black stone.',
+        ].join('\n'),
+        negative: '',
+        styleNotes: '',
+      },
+    });
     // The target artifact id is persisted on the run row.
     expect(run?.targetArtifactId).toBe(targetId);
 
@@ -180,7 +197,6 @@ describe('illustrator run (image persona)', () => {
 
   it('pickImages appends keeps to the artifact, sets cover, and deletes discards', async () => {
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: null,
@@ -220,7 +236,6 @@ describe('illustrator run (image persona)', () => {
   it('targets a global artifact while the run stays campaign-anchored', async () => {
     const { campaignId, persona, targetId } = await seed();
     await publishToLibrary(targetId);
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('library-keep'), fakeImageBytes('library-discard')],
       costUsd: null,
@@ -258,7 +273,6 @@ describe('illustrator run (image persona)', () => {
 
   it('pickImages with an empty keep discards all candidates and keeps the artifact untouched', async () => {
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('only')],
       costUsd: null,
@@ -295,7 +309,6 @@ describe('illustrator run (image persona)', () => {
       openRouterApiKey: 'test-key',
       imagesEnabled: false,
     });
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
     await waitFor(async () => {
@@ -314,7 +327,6 @@ describe('illustrator run (image persona)', () => {
     // x-ai/grok-imagine-image-2.0-class models cap n at 1: imageGen retries
     // and reports cappedToOne — the run must NOT continue silently.
     const { campaignId, persona, targetId } = await seed();
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(VALID_PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('single')],
       costUsd: 0.011,
@@ -510,5 +522,76 @@ describe('image persona validation', () => {
         styleNotes: '',
       },
     });
+  });
+
+  it('auto mode grounds the prompt on body/summary/name deterministically without calling LLM chat', async () => {
+    // The headline amendment pin, non-appearance side: a fresh artifact with
+    // no appearance still drafts its prompt from its OWN data — the run goes
+    // prompt-draft → generate → pick with the openrouter chat mock silent.
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+    });
+    const campaign = await createCampaign({ name: 'PF Campaign', system: 'pathfinder2e' });
+    const persona = createPersona({
+      slug: 'illustrator-test-grounding',
+      name: 'Illustrator',
+      description: 'test',
+      systemPrompt: 'You draft image prompts.',
+      mode: 'image',
+      builtIn: true,
+    });
+    const keep = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'location',
+      name: 'Duskhollow Keep',
+      summary: 'A ruined border keep.',
+      body: '## Courtyard\n**Collapsed** walls, bramble-choked wells.',
+    });
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('g1'), fakeImageBytes('g2')],
+      costUsd: null,
+      cappedToOne: false, modelUsed: 'test-image-model',
+    });
+
+    const runId = await runEngine.startRun({
+      campaign: {
+        id: campaign.id,
+        name: 'PF Campaign',
+        system: 'pathfinder2e' as const,
+        description: '',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      },
+      persona,
+      autonomy: 'auto' as const,
+      brief: '',
+      pinnedChunkIds: [],
+      targetArtifactId: keep.id,
+    });
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps).toHaveLength(3);
+      expect(run?.steps[0]?.status).toBe('done');
+      expect(run?.steps[1]?.status).toBe('done');
+    });
+
+    // NO chat call anywhere in the image-prompt path.
+    expect(chatMock).not.toHaveBeenCalled();
+
+    const run = await getRun(runId);
+    const draft = {
+      prompt: [
+        'A Pathfinder 2e illustration of Duskhollow Keep (location).',
+        'Summary: A ruined border keep.',
+        'Description: Courtyard\nCollapsed walls, bramble-choked wells.',
+      ].join('\n'),
+      negative: '',
+      styleNotes: '',
+    };
+    expect(run?.steps[0]?.output).toEqual({ parsed: draft });
+    // The image API received the assembled deterministic prompt.
+    expect(generateImagesMock).toHaveBeenCalledWith(draft.prompt, 2, expect.anything());
   });
 });

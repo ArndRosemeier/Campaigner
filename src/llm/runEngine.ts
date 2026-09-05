@@ -63,7 +63,7 @@ import { getCachedModels } from '@/llm/modelCache';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, visionRepairModel } from '@/llm/modelFallback';
-import { assembleImagePrompt, draftImagePrompt } from '@/llm/imagePromptDraft';
+import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
@@ -1077,7 +1077,7 @@ export class RunEngine {
         }
 
         // Auto autonomy has no user to rescue a rejected step: any step whose
-        // output failed validation (draft, statblock, check, prompt-draft)
+        // output failed validation (draft, statblock, check)
         // fails the run instead of silently continuing toward placeholder
         // output (e.g. an empty artifact named after the persona — the
         // "Worldbuilder"-class bug).
@@ -1147,7 +1147,7 @@ export class RunEngine {
       case 'check':
         return this.runCheck(runId, stepIndex, steps, input, signal, extraInstruction);
       case 'prompt-draft':
-        return this.runPromptDraft(runId, stepIndex, steps, input, signal, extraInstruction);
+        return this.runPromptDraft(stepIndex, steps, input, extraInstruction);
       case 'generate':
         return this.runGenerate(runId, stepIndex, steps, input, signal);
       case 'brief':
@@ -1929,7 +1929,7 @@ export class RunEngine {
 
   /**
    * The effective prompt draft of an image run: the user's edit wins over the
-   * LLM output; both are `{ parsed: {prompt, negative, styleNotes} }`.
+   * deterministic draft; both are `{ parsed: {prompt, negative, styleNotes} }`.
    */
   private effectivePromptDraft(steps: readonly RunStep[]): ImagePromptDraft | null {
     const step = steps.find((candidate) => candidate.name === 'prompt-draft');
@@ -2653,62 +2653,31 @@ export class RunEngine {
     return { step: this.finishStep(steps[stepIndex], { artifactId }), artifactId };
   }
 
-  /** Prompt-draft step (M3-A): drafts an image prompt for the target artifact. */
+  /**
+   * Prompt-draft step (M3-A): assembles the image prompt for the target
+   * artifact deterministically from its own data (owner-directed: the LLM
+   * prompt-crafting call is gone — buildImagePrompt). The step stays in the
+   * pipeline so run history keeps its shape and manual/review autonomy can
+   * still edit the draft before generate.
+   */
   private async runPromptDraft(
-    runId: Id,
     stepIndex: number,
     steps: RunStep[],
     input: StartRunInput,
-    signal: AbortSignal,
     extraInstruction: string,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
-    const settings = await getSettings();
     const targetId = input.targetArtifactId ?? null;
     const target = targetId === null ? undefined : await getAnyArtifact(targetId);
     if (target === undefined) throw new Error('the artifact to illustrate no longer exists');
 
-    // The prompt contract (appearance shortcut, instruction text, one
-    // contract-repair retry on the repair model) is shared with the entity
-    // image queue — see draftImagePrompt.
-    const result = await draftImagePrompt(
+    // The prompt contract (appearance shortcut, body/summary/name grounding)
+    // is shared with the entity image and mob portrait queues — see
+    // buildImagePrompt. Deterministic: no chat call, no repair retry.
+    const draft = buildImagePrompt(
       { name: target.name, kind: target.kind, summary: target.summary, body: target.body, data: target.data },
-      {
-        model: resolveChatModel(settings, input.persona.model),
-        settings,
-        systemPrompt: input.persona.systemPrompt,
-        systemLabel: GAME_SYSTEM_LABELS[input.campaign.system],
-        contextLines: [
-          `Campaign tone: ${input.campaign.name}${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
-          input.brief === '' ? null : `Focus: ${input.brief}`,
-        ],
-        extraInstruction,
-        signal,
-        chatOptions: (model) =>
-          this.chatForStep(runId, stepIndex, {
-            model,
-            temperature: input.persona.temperature,
-            reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-            responseFormat: 'json',
-            signal,
-          }),
-      },
+      { systemLabel: GAME_SYSTEM_LABELS[input.campaign.system], extraInstruction },
     );
-    if (!result.ok) {
-      debugLog('run', 'prompt-draft parse FAILED after retry', { issue: result.issues.join('; ') });
-      const step = this.finishStep(steps[stepIndex], { raw: result.raw, issues: result.issues }, 'rejected');
-      if (input.autonomy === 'auto') return { step };
-      if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
-      return { step, runStatus: 'needs_review' };
-    }
-
-    const step = this.finishStep(
-      steps[stepIndex],
-      withNotice(
-        { parsed: result.draft },
-        result.fallback,
-        contractRepairNotice(result.firstTryModel, result.repairTarget),
-      ),
-    );
+    const step = this.finishStep(steps[stepIndex], { parsed: draft });
     const pausesHere = pauses(input.autonomy, true);
     return pausesHere ? { step, runStatus: 'awaiting_user' } : { step };
   }

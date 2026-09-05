@@ -51,12 +51,6 @@ const VALID_DRAFT = {
   needsStatBlock: false,
 };
 
-const PROMPT_DRAFT = {
-  prompt: 'A soot-stained goblin alchemist over a bubbling retort',
-  negative: 'text, watermark',
-  styleNotes: 'inked bestiary plate',
-};
-
 function blobOf(): Blob {
   return new Blob(['fake-png'], { type: 'image/png' });
 }
@@ -116,9 +110,10 @@ const RUN_INPUT = (campaignId: string, personaId: string) => ({
 describe('post-run extras', () => {
   it('the image extra attaches a cover portrait after the run completes', async () => {
     const { campaignId, personaId } = await seed();
+    // The image extra's portrait draft is deterministic (the artifact has an
+    // appearance — the shortcut wins) and never calls chat.
     chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
     generateImagesMock.mockResolvedValue({
       images: [blobOf()],
       modelUsed: 'image-model',

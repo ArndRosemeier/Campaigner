@@ -16,6 +16,8 @@ import { clearDatabase } from '../db/helpers';
 /**
  * Entity image queue (08-MODULE-DESIGNER M4-C): background generation for the
  * panel's image checkboxes — real Dexie rows, LLM/image entry points mocked.
+ * The prompt draft is deterministic (buildImagePrompt): the openrouter chat
+ * mock must stay silent through every queue path.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -38,12 +40,6 @@ const intakeImageMock = vi.mocked(intakeImage);
 const { toastError } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
 
-const PROMPT_DRAFT = {
-  prompt: 'A weathered gate warden at dusk',
-  negative: 'text, watermark',
-  styleNotes: 'moody ink wash',
-};
-
 function blobOf(text: string): Blob {
   return new Blob([text], { type: 'image/png' });
 }
@@ -58,7 +54,6 @@ beforeEach(async () => {
   toastErrorMock.mockReset();
   useEntityImageQueue.setState({ queued: [], activeJobs: [] });
   useProgressStore.getState().reset();
-  chatMock.mockResolvedValue({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
   generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
   intakeImageMock.mockResolvedValue({
     blob: blobOf('intake'),
@@ -69,12 +64,12 @@ beforeEach(async () => {
 });
 
 describe('entity image queue', () => {
-  it('generates one image per queued entity and attaches it as the cover', async () => {
+  it('generates one image per queued entity, grounded in the artifact text, attached as the cover', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const campaignId = campaign.id;
     const moduleId = newId();
-    await createArtifact({ campaignId, kind: 'npc', name: 'Kael' });
-    await createArtifact({ campaignId, kind: 'npc', name: 'Bram' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Kael', summary: 'Ember\u2019s gate warden.' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Bram', summary: 'A quiet farrier.' });
 
     useEntityImageQueue.getState().enqueue([
       { campaignId, moduleId, name: 'Kael' },
@@ -91,10 +86,11 @@ describe('entity image queue', () => {
     });
 
     expect(generateImagesMock).toHaveBeenCalledTimes(2);
-    expect(chatMock).toHaveBeenCalledTimes(2);
-    // The final prompt folds style + negative guidance in.
-    expect(generateImagesMock.mock.calls[0]?.[0]).toContain('moody ink wash');
-    expect(generateImagesMock.mock.calls[0]?.[0]).toContain('Avoid: text, watermark');
+    // Headline pin (owner amendment): NO prompt-draft chat call — the prompt
+    // is built deterministically from the artifact's own data.
+    expect(chatMock).not.toHaveBeenCalled();
+    expect(generateImagesMock.mock.calls[0]?.[0]).toContain('Kael (npc)');
+    expect(generateImagesMock.mock.calls[0]?.[0]).toContain('Summary: Ember\u2019s gate warden.');
 
     // The stored row records provenance…
     const kael = (await listArtifactsByCampaign(campaignId)).find((a) => a.name === 'Kael');
@@ -114,8 +110,8 @@ describe('entity image queue', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const campaignId = campaign.id;
     const moduleId = newId();
-    await createArtifact({ campaignId, kind: 'npc', name: 'Kael' });
-    const bram = await createArtifact({ campaignId, kind: 'npc', name: 'Bram' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Kael', summary: 'Ember\u2019s gate warden.' });
+    const bram = await createArtifact({ campaignId, kind: 'npc', name: 'Bram', summary: 'A quiet farrier.' });
     const existing = await createImage({
       campaignId,
       blob: blobOf('old'),
@@ -154,17 +150,19 @@ describe('entity image queue', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const campaignId: Id = campaign.id;
     const moduleId = newId();
-    await createArtifact({ campaignId, kind: 'npc', name: 'Kael' });
-    await createArtifact({ campaignId, kind: 'npc', name: 'Mira' });
-    await createArtifact({ campaignId, kind: 'npc', name: 'Ruth' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Kael', summary: 'Ember\u2019s gate warden.' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Mira', summary: 'A tide-watcher.' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Ruth', summary: 'A net-mender.' });
 
-    // Hold every prompt draft until the test releases it — with the default
+    // Hold every image call until the test releases it — with the default
     // parallel limit of 2 both slots fill, and the third job stays pending.
+    // (The prompt draft is deterministic and instant; the abort gate lives on
+    // the image API call, which carries the job's abort signal.)
     let release!: () => void;
     const gate = new Promise<void>((resolve) => {
       release = resolve;
     });
-    chatMock.mockImplementation((_messages, opts) => {
+    generateImagesMock.mockImplementation((_prompt, _n, opts) => {
       const signal = opts.signal;
       if (signal === undefined) return Promise.reject(new Error('no abort signal passed'));
       return new Promise((resolve, reject) => {
@@ -182,7 +180,7 @@ describe('entity image queue', () => {
             abort();
             return;
           }
-          resolve({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
+          resolve({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
         });
       });
     });
@@ -207,7 +205,6 @@ describe('entity image queue', () => {
       expect(useEntityImageQueue.getState().activeJobs).toEqual([]);
     });
     expect(useEntityImageQueue.getState().queued).toEqual([]);
-    expect(generateImagesMock).not.toHaveBeenCalled();
     expect(toastErrorMock).not.toHaveBeenCalled();
     const artifacts = await listArtifactsByCampaign(campaignId);
     expect(artifacts.find((a) => a.name === 'Kael')?.imageIds).toHaveLength(0);

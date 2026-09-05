@@ -616,13 +616,12 @@ describe('PersonaPanel run lifecycle', () => {
       campaignId: campaign.id,
       kind: 'location',
       name: 'The Lighthouse',
+      summary: 'A storm-lashed beacon on a black cliff.',
+      body: 'Windswept rocks, gulls, one tower of black stone.',
     });
     await publishToLibrary(lighthouse.id);
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
-        prompt: 'A storm-lashed lighthouse',
-        negative: 'text',
-        styleNotes: 'oil painting',
-      }), modelUsed: 'test-model', fallback: null });
+    // The prompt draft is deterministic (buildImagePrompt) — the run never
+    // calls chat; the draft pauses with the assembled prompt for editing.
     // The model capped n at 1 (imageGen reports it; the engine persists the
     // notice) — the panel must SHOW it, not quietly present one candidate.
     generateImagesMock.mockResolvedValue({

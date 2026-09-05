@@ -1,15 +1,13 @@
 import { create } from 'zustand';
 
-import type { AnyArtifact, Id, Persona, Settings } from '@/domain';
+import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
-import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
-import { resolveChatModel } from '@/llm/modelFallback';
-import { assembleImagePrompt, draftImagePrompt } from '@/llm/imagePromptDraft';
+import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { intakeImage } from '@/lib/imageIntake';
 import { debugLog } from '@/lib/debug';
@@ -28,8 +26,9 @@ import { resolveWikiLink } from '@/lib/wikilinks';
  *
  * This deliberately does NOT go through the persona run pipeline: the
  * Illustrator's pick step always pauses for a user decision (07 §M3-A),
- * which an unattended queue cannot do. The prompt-draft contract and repair
- * retry mirror runEngine's runPromptDraft/runGenerate one-to-one.
+ * which an unattended queue cannot do. The prompt-draft contract (the
+ * deterministic `buildImagePrompt`) mirrors runEngine's runPromptDraft
+ * one-to-one — no chat call here either.
  */
 
 export interface ImageQueueJob {
@@ -208,19 +207,7 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
     if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
       return 'skipped';
     }
-    const personas = await listPersonas();
-    const illustrator = personas.find((candidate) => candidate.slug === 'illustrator');
-    if (illustrator === undefined) {
-      throw new Error('the Illustrator persona is missing — re-enable built-in personas');
-    }
-    const prompt = await draftPrompt(
-      illustrator,
-      artifact,
-      resolveChatModel(settings, illustrator.model),
-      controller.signal,
-      settings,
-      job.campaignId,
-    );
+    const prompt = await draftPrompt(artifact, job.campaignId);
     const finalPrompt = assembleImagePrompt(prompt);
     // n=1: candidate-count caps (imageGen's n-retry, cappedToOne) cannot
     // trigger on this path — the queue only ever asks for one image.
@@ -257,16 +244,11 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
 }
 
 /** Prompt-draft for one artifact — the shared Illustrator prompt contract
- * (draftImagePrompt: appearance shortcut, instruction text, one repair retry
- * on the repair model) with the queue's wiring: no run row, no streaming
- * surface, and the artifact's rule system resolved for the shortcut.
- * `model` is the already-resolved first-try model. */
+ * (buildImagePrompt: appearance shortcut, body/summary/name grounding) with
+ * the queue's wiring: no run row, and the artifact's rule system resolved for
+ * the style hint. Deterministic: no chat call, no repair retry. */
 async function draftPrompt(
-  illustrator: Persona,
   artifact: AnyArtifact,
-  model: string,
-  signal: AbortSignal,
-  settings: Pick<Settings, 'fallbackChatModel'>,
   campaignId?: Id,
 ): Promise<ImagePromptDraft> {
   let systemLabel = 'D&D 5e';
@@ -276,7 +258,7 @@ async function draftPrompt(
       systemLabel = GAME_SYSTEM_LABELS[campaign.system];
     }
   }
-  const result = await draftImagePrompt(
+  return buildImagePrompt(
     {
       name: artifact.name,
       kind: artifact.kind,
@@ -284,22 +266,6 @@ async function draftPrompt(
       body: artifact.body,
       data: artifact.data,
     },
-    {
-      model,
-      settings,
-      systemPrompt: illustrator.systemPrompt,
-      systemLabel,
-      signal,
-      chatOptions: (attemptModel) => ({
-        model: attemptModel,
-        temperature: illustrator.temperature,
-        reasoningEffort:
-          illustrator.reasoningEffort !== 'default' ? illustrator.reasoningEffort : undefined,
-        responseFormat: 'json',
-        signal,
-      }),
-    },
+    { systemLabel },
   );
-  if (!result.ok) throw new Error(result.issues.join('; '));
-  return result.draft;
 }

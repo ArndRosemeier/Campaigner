@@ -4,6 +4,7 @@ import type { Artifact, StatBlock } from '@/domain';
 import { imageBlob } from '@/domain';
 import { getImage } from '@/db/imageRepo';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
+import { markdownToText } from '@/lib/markdown';
 
 /**
  * PDF export (06-MILESTONES M2): pdfmake definitions for the two templates —
@@ -20,20 +21,6 @@ export interface PdfCoverImage {
   dataUrl: string;
   width: number;
   height: number;
-}
-
-/** Minimal markdown → plain text for PDF rendering (no WYSIWYG in M1/M2). */
-export function markdownToText(markdown: string): string {
-  return markdown
-    .replaceAll(/```[\s\S]*?```/g, (block) => block.replaceAll(/^```[a-z]*\n?|```$/gm, ''))
-    .replaceAll(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replaceAll(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-    .replaceAll(/^#{1,6}\s+/gm, '')
-    .replaceAll(/\*\*([^*]+)\*\*/g, '$1')
-    .replaceAll(/(?<!\w)\*([^*\n]+)\*(?!\w)/g, '$1')
-    .replaceAll(/(?<!_)_([^_\n]+)_(?!_)/g, '$1')
-    .replaceAll(/`([^`]+)`/g, '$1')
-    .trim();
 }
 
 const STYLES: Record<string, NamedStyle> = {

@@ -1,17 +1,16 @@
-import type { Settings } from '@/domain';
-import { chat, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
-import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
-import { repairModel } from '@/llm/modelFallback';
-import { imagePromptDraftSchema, type ImagePromptDraft } from '@/llm/schemas';
-import { ZodError } from 'zod';
+import { markdownToText } from '@/lib/markdown';
+import type { ImagePromptDraft } from '@/llm/schemas';
 
 /**
- * The Illustrator prompt contract — ONE implementation for the two call
+ * The Illustrator prompt contract — ONE implementation for the three call
  * sites that previously mirrored each other by hand (runEngine's prompt-draft
- * step and the entity image queue): the appearance shortcut, the instruction
- * text, the reply contract, and the one contract-repair retry that escalates
- * to the repair model (a violated reply contract is usually a capability
- * weakness of the first-try model).
+ * step, the entity image queue, and the mob portrait queue): the appearance
+ * shortcut and the body/summary/name grounding.
+ *
+ * Owner-directed amendment (2026-09-05): the LLM prompt-crafting call (and its
+ * one contract-repair retry) is GONE. The image prompt is assembled
+ * deterministically from the artifact's own data — no chat call anywhere in
+ * the image-prompt path.
  */
 
 /** The final image-API prompt: draft prompt + style notes + avoid list. */
@@ -35,64 +34,28 @@ export interface ImagePromptTarget {
   data: unknown;
 }
 
-export interface DraftImagePromptOptions {
-  /** The already-resolved first-try model; the repair attempt escalates via
-   * `repairModel` (the configured tier, when one is defined). */
-  model: string;
-  /** Settings for the repair-model resolution. */
-  settings: Pick<Settings, 'fallbackChatModel'>;
-  /** The Illustrator's system prompt. */
-  systemPrompt: string;
-  /** Rule-system label prefixing the appearance shortcut ("Pathfinder 2e"). */
+export interface BuildImagePromptOptions {
+  /** Rule-system label ("Pathfinder 2e") — prefixes the appearance shortcut
+   * and styles the body/summary grounding. */
   systemLabel: string;
-  /** Extra context lines between the description and the reply contract
-   * (campaign tone, focus — the run engine passes these, the queue omits
-   * them). Null entries are dropped. */
-  contextLines?: readonly (string | null)[] | undefined;
-  /** Trailing "Additional instruction" line (user steering, repair texts). */
+  /** Trailing steering line (the run engine's retry/continue instruction). */
   extraInstruction?: string | undefined;
-  signal?: AbortSignal | undefined;
-  /**
-   * Builds the ChatOptions for one attempt at the given model. Streaming
-   * wiring differs per call site (the engine emits run/step token events,
-   * the queue streams nowhere), so the caller owns it.
-   */
-  chatOptions: (model: string) => ChatOptions;
 }
 
-export type DraftImagePromptResult =
-  | {
-      ok: true;
-      draft: ImagePromptDraft;
-      fallback: ChatFallback | null;
-      firstTryModel: string;
-      repairTarget: string;
-    }
-  | {
-      ok: false;
-      /** The raw reply of the last (failed) attempt. */
-      raw: string;
-      /** One human-readable line per problem with the last reply. */
-      issues: string[];
-      fallback: ChatFallback | null;
-      firstTryModel: string;
-      repairTarget: string;
-    };
-
 /**
- * Drafts the image prompt for one artifact. When the artifact data carries a
- * non-empty `appearance`, the deterministic shortcut prompt
- * `"${systemLabel}=>${appearance}"` is returned without any LLM call (the
- * extra instruction, when set, rides on a second line). Otherwise the model
- * drafts the prompt from the artifact fields; a reply that fails the
- * `imagePromptDraftSchema` contract is repaired ONCE on the repair model,
- * naming the concrete zod issues. The second failure is returned as
- * `{ ok: false }` — callers reject loudly (AGENTS rule 1).
+ * Builds the image prompt for one artifact — a pure function, same input →
+ * same prompt. When the artifact data carries a non-empty `appearance`, the
+ * shortcut prompt `"${systemLabel}=>${appearance}"` is used verbatim (the
+ * extra instruction, when set, rides on a second line). Otherwise the prompt
+ * grounds on the artifact's own text — name + kind, summary, and the
+ * markdown-stripped body — styled with the game system. With nothing to
+ * ground on (no appearance, summary, AND body) it throws: a blank image of
+ * nothing is a placeholder, never a fallback (AGENTS rule 1).
  */
-export async function draftImagePrompt(
+export function buildImagePrompt(
   target: ImagePromptTarget,
-  opts: DraftImagePromptOptions,
-): Promise<DraftImagePromptResult> {
+  opts: BuildImagePromptOptions,
+): ImagePromptDraft {
   const data = target.data as Record<string, unknown> | null | undefined;
   const appearance =
     data !== null && typeof data === 'object' && typeof data.appearance === 'string'
@@ -103,58 +66,28 @@ export async function draftImagePrompt(
       opts.extraInstruction === undefined || opts.extraInstruction === ''
         ? `${opts.systemLabel}=>${appearance}`
         : `${opts.systemLabel}=>${appearance}\n${opts.extraInstruction}`;
-    return {
-      ok: true,
-      draft: { prompt, negative: '', styleNotes: '' },
-      fallback: null,
-      firstTryModel: opts.model,
-      repairTarget: opts.model,
-    };
+    return { prompt, negative: '', styleNotes: '' };
   }
 
-  const instruction = [
-    `Artifact: ${target.name} (${target.kind})`,
-    target.summary === '' ? null : `Summary: ${target.summary}`,
-    target.body === '' ? null : `Description (may be truncated):\n${target.body.slice(0, 800)}`,
-    ...(opts.contextLines ?? []),
-    'Reply with ONLY a JSON object with exactly these fields: ["prompt", "negative", "styleNotes"] — `prompt` describes the image to generate for this artifact, `negative` lists what to avoid, `styleNotes` gives style guidance.',
+  const summary = target.summary.trim();
+  // The body is markdown (artifact content): strip the syntax so the image
+  // API receives prose, and cap it deterministically (the drafted
+  // instruction grounded on ≤800 chars too).
+  const description = markdownToText(target.body);
+  if (summary === '' && description === '') {
+    throw new Error(
+      `"${target.name}" has no appearance, summary, or body to ground the image prompt — describe it first`,
+    );
+  }
+  const prompt = [
+    `A ${opts.systemLabel} illustration of ${target.name} (${target.kind}).`,
+    summary === '' ? null : `Summary: ${summary}`,
+    description === '' ? null : `Description: ${description.slice(0, 800)}`,
     opts.extraInstruction === undefined || opts.extraInstruction === ''
       ? null
-      : `Additional instruction: ${opts.extraInstruction}`,
+      : opts.extraInstruction,
   ]
     .filter((part) => part !== null)
-    .join('\n\n');
-
-  const messages: ChatMessage[] = [
-    { role: 'system', content: opts.systemPrompt },
-    { role: 'user', content: instruction },
-  ];
-
-  let fallback: ChatFallback | null = null;
-  let lastFailure: { raw: string; issues: string[] } | null = null;
-  let repairTarget = opts.model;
-  let repairMessage = '';
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const attemptModel = attempt === 0 ? opts.model : (repairTarget = repairModel(opts.model, opts.settings));
-    const { text: raw, fallback: attemptFallback } = await chat(
-      attempt === 0 ? messages : [...messages, { role: 'user' as const, content: repairMessage }],
-      opts.chatOptions(attemptModel),
-    );
-    fallback = attemptFallback ?? fallback;
-    try {
-      return {
-        ok: true,
-        draft: imagePromptDraftSchema.parse(parseJsonReply(raw)),
-        fallback,
-        firstTryModel: opts.model,
-        repairTarget: attemptModel,
-      };
-    } catch (error) {
-      const issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
-      lastFailure = { raw, issues };
-      repairMessage = `Your previous reply was invalid JSON for the schema:\n- ${issues.join('\n- ')}\nReply with corrected JSON only.`;
-    }
-  }
-  const failure = lastFailure ?? { raw: '', issues: ['the prompt draft failed without an error'] };
-  return { ok: false, ...failure, fallback, firstTryModel: opts.model, repairTarget };
+    .join('\n');
+  return { prompt, negative: '', styleNotes: '' };
 }

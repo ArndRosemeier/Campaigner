@@ -21,6 +21,8 @@ import { clearDatabase } from '../db/helpers';
  * Mob portrait queue (owner-ratified arc): one click generates n=1 portrait
  * per cover-less rulebook-cited creature kind, keyed by artifactId, grounded
  * in the chunk's stat-block text — entity-image-queue mechanics, mob flavor.
+ * The prompt draft is deterministic (buildImagePrompt): the openrouter chat
+ * mock must stay silent through every queue path.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -42,12 +44,6 @@ const { intakeImage } = await import('@/lib/imageIntake');
 const intakeImageMock = vi.mocked(intakeImage);
 const { toastError } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
-
-const PROMPT_DRAFT = {
-  prompt: 'A snarling goblin commander with a rusty scimitar',
-  negative: 'text, watermark',
-  styleNotes: 'inked bestiary plate',
-};
 
 const GOBLIN_TEXT = 'Goblin Boss, humanoid, agile commander. HP 21, AC 17.';
 
@@ -132,7 +128,6 @@ beforeEach(async () => {
   toastErrorMock.mockReset();
   useMobPortraitQueue.setState({ queued: [], activeJobs: [] });
   useProgressStore.getState().reset();
-  chatMock.mockResolvedValue({ text: JSON.stringify(PROMPT_DRAFT), modelUsed: 'test-model', fallback: null });
   generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
   intakeImageMock.mockResolvedValue({
     blob: blobOf('intake'),
@@ -160,17 +155,17 @@ describe('mob portrait queue', () => {
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
     // n=1 (owner-ratified): one portrait per creature kind.
     expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
-    // The final prompt folds style + negative guidance in.
-    expect(generateImagesMock.mock.calls[0]?.[0]).toContain('inked bestiary plate');
-    // Chunk grounding: the prompt draft's instruction carries the stat-block
-    // text — the only description a fresh mob artifact has.
-    const draftCall = chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user');
-    expect(draftCall?.content).toContain(GOBLIN_TEXT);
+    // Headline pin (owner amendment): NO prompt-draft chat call — the prompt
+    // is built deterministically from the artifact's own data.
+    expect(chatMock).not.toHaveBeenCalled();
+    // Chunk grounding: the deterministic prompt carries the stat-block text —
+    // the only description a fresh mob artifact has.
+    expect(generateImagesMock.mock.calls[0]?.[0]).toContain(GOBLIN_TEXT);
     // Provenance lands on the image row; the queue and dock drain.
     const mob = await getAnyArtifact(artifactId);
     const stored = await getImage(mob?.coverImageId ?? '');
     expect(stored?.source).toBe('generated');
-    expect(stored?.prompt).toContain('goblin commander');
+    expect(stored?.prompt).toContain(GOBLIN_TEXT);
     expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
     expect(useMobPortraitQueue.getState().activeJobs).toEqual([]);
     expect(

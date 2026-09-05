@@ -1,17 +1,15 @@
 import { create } from 'zustand';
 
-import type { AnyArtifact, Id, Persona, Settings } from '@/domain';
+import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getAnyArtifact, updateArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { createImage } from '@/db/imageRepo';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
-import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
-import { resolveChatModel } from '@/llm/modelFallback';
-import { assembleImagePrompt, draftImagePrompt } from '@/llm/imagePromptDraft';
+import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { intakeImage } from '@/lib/imageIntake';
 import { debugLog } from '@/lib/debug';
@@ -27,7 +25,7 @@ import { toastError } from '@/lib/toast';
  *
  * A deliberate variant of the entity image queue (08 §M4-C) with the SAME
  * mechanics — pump with `maxParallelRequests` workers, intake, the shared
- * `draftImagePrompt` contract, attach-as-cover, skip-if-imaged, loud
+ * `buildImagePrompt` contract, attach-as-cover, skip-if-imaged, loud
  * per-mob toasts (EntityBatchFailure {name, message} style) — but keyed by
  * **artifactId**: the queue's wiki-link name resolution does not fit mob
  * artifacts, and prompt grounding is the creature chunk's stat-block text
@@ -238,7 +236,8 @@ async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
     if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
       return 'skipped';
     }
-    let groundingText: string;
+    const summary = artifact.summary;
+    let body: string;
     if (job.chunkId !== undefined) {
       const chunk = (await getChunksByIds([job.chunkId]))[0];
       if (chunk === undefined) {
@@ -247,33 +246,17 @@ async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
       if (chunk.text.trim() === '') {
         throw new Error('the creature\u2019s stat-block chunk has no text to ground the prompt');
       }
-      groundingText = chunk.text;
+      // Grounding: the creature chunk's stat-block text — the only
+      // description a fresh mob artifact has.
+      body = chunk.text;
     } else {
       // Creation-dialog portrait extra: the artifact's own content grounds
       // the prompt (the appearance shortcut still wins inside the shared
-      // draft contract). An empty body AND empty summary are a loud error —
+      // contract). Empty summary AND body throw in buildImagePrompt —
       // a blank image of nothing is a placeholder, never a fallback.
-      groundingText = [artifact.summary.trim(), artifact.body.trim()]
-        .filter((part) => part !== '')
-        .join('\n\n');
-      if (groundingText === '') {
-        throw new Error(`"${artifact.name}" has no text to ground the image prompt`);
-      }
+      body = artifact.body;
     }
-    const personas = await listPersonas();
-    const illustrator = personas.find((candidate) => candidate.slug === 'illustrator');
-    if (illustrator === undefined) {
-      throw new Error('the Illustrator persona is missing — re-enable built-in personas');
-    }
-    const prompt = await draftPrompt(
-      illustrator,
-      artifact,
-      groundingText,
-      resolveChatModel(settings, illustrator.model),
-      controller.signal,
-      settings,
-      job.campaignId,
-    );
+    const prompt = await draftPrompt(artifact, summary, body, job.campaignId);
     const finalPrompt = assembleImagePrompt(prompt);
     // n=1 (owner-ratified): one portrait per creature kind — candidate-count
     // caps (imageGen's n-retry, cappedToOne) cannot trigger on this path.
@@ -312,18 +295,15 @@ async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
 }
 
 /** Prompt-draft for one mob artifact — the shared Illustrator prompt contract
- * (draftImagePrompt: appearance shortcut, instruction text, one repair retry
- * on the repair model) with the queue's wiring: no run row, no streaming
- * surface, the campaign's rule system for the shortcut, and the grounding
- * text as the description (the creature chunk's stat-block text, or — for
- * the creation-dialog portrait extra — the artifact's own content). */
+ * (buildImagePrompt: appearance shortcut, body/summary/name grounding) with
+ * the queue's wiring: no run row, the campaign's rule system for the style
+ * hint, and the grounding text as the description (the creature chunk's
+ * stat-block text, or — for the creation-dialog portrait extra — the
+ * artifact's own content). Deterministic: no chat call, no repair retry. */
 async function draftPrompt(
-  illustrator: Persona,
   artifact: AnyArtifact,
-  groundingText: string,
-  model: string,
-  signal: AbortSignal,
-  settings: Pick<Settings, 'fallbackChatModel'>,
+  summary: string,
+  body: string,
   campaignId: Id,
 ): Promise<ImagePromptDraft> {
   let systemLabel = 'D&D 5e';
@@ -331,34 +311,16 @@ async function draftPrompt(
   if (campaign !== undefined) {
     systemLabel = GAME_SYSTEM_LABELS[campaign.system];
   }
-  const result = await draftImagePrompt(
+  return buildImagePrompt(
     {
       name: artifact.name,
       kind: artifact.kind,
-      summary: artifact.summary,
-      // Grounding: the creature chunk's stat-block text (mob artifacts) or
-      // the artifact's own content (creation-dialog portrait extra).
-      body: groundingText,
+      summary,
+      body,
       data: artifact.data,
     },
-    {
-      model,
-      settings,
-      systemPrompt: illustrator.systemPrompt,
-      systemLabel,
-      signal,
-      chatOptions: (attemptModel) => ({
-        model: attemptModel,
-        temperature: illustrator.temperature,
-        reasoningEffort:
-          illustrator.reasoningEffort !== 'default' ? illustrator.reasoningEffort : undefined,
-        responseFormat: 'json',
-        signal,
-      }),
-    },
+    { systemLabel },
   );
-  if (!result.ok) throw new Error(result.issues.join('; '));
-  return result.draft;
 }
 
 export interface MobPortraitBatchResult {
