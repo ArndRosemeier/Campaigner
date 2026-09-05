@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import { createPersona, createPersonaRun, defaultSettings, type Persona } from '@/domain';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
-import { derivePostCreateExtras, extrasForPersona } from '@/llm/personas/extras';
+import { derivePostCreateExtras, extrasForPersona, statblockExtraNotice } from '@/llm/personas/extras';
+import { npcDataSchema } from '@/domain/artifact';
 
 function personaBySlug(slug: string): Persona {
   const persona = BUILT_IN_PERSONAS.find((candidate) => candidate.slug === slug);
@@ -84,6 +85,23 @@ describe('post-create extras derivation', () => {
     });
     expect(run.placementModuleId).toBeNull();
     expect(run.runExtras).toBeNull();
+  });
+
+  it('the statblock extra notice is verification-only', () => {
+    const extrasOn = { image: false, statBlock: true, mobPortraits: false, battlemap: false };
+    const statless = npcDataSchema.parse({ appearance: '', personality: '', statBlock: null });
+    expect(statblockExtraNotice('npc', extrasOn, statless)).toBe(
+      'No stat block was generated — add one in the artifact editor.',
+    );
+    const statted = npcDataSchema.parse({
+      appearance: '',
+      personality: '',
+      statBlock: { system: 'dnd5e', level: '3', size: 'Small', creatureType: 'humanoid', ac: 14, acNote: '', hp: 22, hpFormula: '5d6', speed: '30 ft.', abilities: { str: 8, dex: 16, con: 13, int: 14, wis: 10, cha: 12 }, saves: '', skills: '', senses: '', languages: '', traits: [], actions: [], reactions: [], legendary: [], extras: {} },
+    });
+    expect(statblockExtraNotice('npc', extrasOn, statted)).toBeNull();
+    // Non-npc kinds and unticked extras never notice.
+    expect(statblockExtraNotice('location', extrasOn, { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] })).toBeNull();
+    expect(statblockExtraNotice('npc', { ...extrasOn, statBlock: false }, statless)).toBeNull();
   });
 
   it('settings default the remembered extras off', () => {

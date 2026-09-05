@@ -39,14 +39,18 @@ import { toastError } from '@/lib/toast';
 
 export interface MobPortraitJob {
   campaignId: Id;
-  /** The encounter that owns the roster — groups the progress-dock job. */
-  encounterId: Id;
+  /** The encounter that owns the roster — groups the progress-dock job.
+   * Undefined for the creation-dialog portrait extra (a single artifact,
+   * grouped by the artifact itself). */
+  encounterId?: Id;
   /** The mob artifact to illustrate (ONE per creature kind per campaign). */
   artifactId: Id;
   /** Display name (the roster creature name) for progress + failures. */
   name: string;
-  /** The creature's stat-block chunk — grounds the prompt. */
-  chunkId: Id;
+  /** The creature's stat-block chunk — grounds the prompt. Undefined for
+   * the creation-dialog portrait extra, which grounds on the artifact's own
+   * data (name/summary/body + the appearance shortcut). */
+  chunkId?: Id;
 }
 
 interface MobPortraitQueueState {
@@ -103,7 +107,9 @@ const controllers = new Map<string, AbortController>();
 const counters = new Map<string, { total: number; done: number }>();
 
 function jobIdFor(job: MobPortraitJob): string {
-  return `encounter-mob-portraits-${job.encounterId}`;
+  return job.encounterId === undefined
+    ? `artifact-portrait-${job.artifactId}`
+    : `encounter-mob-portraits-${job.encounterId}`;
 }
 
 function bumpTotal(job: MobPortraitJob): void {
@@ -232,12 +238,27 @@ async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
     if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
       return 'skipped';
     }
-    const chunk = (await getChunksByIds([job.chunkId]))[0];
-    if (chunk === undefined) {
-      throw new Error('the creature\u2019s stat-block chunk no longer exists');
-    }
-    if (chunk.text.trim() === '') {
-      throw new Error('the creature\u2019s stat-block chunk has no text to ground the prompt');
+    let groundingText: string;
+    if (job.chunkId !== undefined) {
+      const chunk = (await getChunksByIds([job.chunkId]))[0];
+      if (chunk === undefined) {
+        throw new Error('the creature\u2019s stat-block chunk no longer exists');
+      }
+      if (chunk.text.trim() === '') {
+        throw new Error('the creature\u2019s stat-block chunk has no text to ground the prompt');
+      }
+      groundingText = chunk.text;
+    } else {
+      // Creation-dialog portrait extra: the artifact's own content grounds
+      // the prompt (the appearance shortcut still wins inside the shared
+      // draft contract). An empty body AND empty summary are a loud error —
+      // a blank image of nothing is a placeholder, never a fallback.
+      groundingText = [artifact.summary.trim(), artifact.body.trim()]
+        .filter((part) => part !== '')
+        .join('\n\n');
+      if (groundingText === '') {
+        throw new Error(`"${artifact.name}" has no text to ground the image prompt`);
+      }
     }
     const personas = await listPersonas();
     const illustrator = personas.find((candidate) => candidate.slug === 'illustrator');
@@ -247,7 +268,7 @@ async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
     const prompt = await draftPrompt(
       illustrator,
       artifact,
-      chunk.text,
+      groundingText,
       resolveChatModel(settings, illustrator.model),
       controller.signal,
       settings,
@@ -293,12 +314,13 @@ async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
 /** Prompt-draft for one mob artifact — the shared Illustrator prompt contract
  * (draftImagePrompt: appearance shortcut, instruction text, one repair retry
  * on the repair model) with the queue's wiring: no run row, no streaming
- * surface, the campaign's rule system for the shortcut, and the creature
- * chunk's stat-block text as the description (chunk grounding). */
+ * surface, the campaign's rule system for the shortcut, and the grounding
+ * text as the description (the creature chunk's stat-block text, or — for
+ * the creation-dialog portrait extra — the artifact's own content). */
 async function draftPrompt(
   illustrator: Persona,
   artifact: AnyArtifact,
-  chunkText: string,
+  groundingText: string,
   model: string,
   signal: AbortSignal,
   settings: Pick<Settings, 'fallbackChatModel'>,
@@ -314,9 +336,9 @@ async function draftPrompt(
       name: artifact.name,
       kind: artifact.kind,
       summary: artifact.summary,
-      // Chunk grounding: the stat-block text is what the model drafts from —
-      // the fresh mob artifact's own body is empty by design.
-      body: chunkText,
+      // Grounding: the creature chunk's stat-block text (mob artifacts) or
+      // the artifact's own content (creation-dialog portrait extra).
+      body: groundingText,
       data: artifact.data,
     },
     {
@@ -393,4 +415,20 @@ export async function enqueueMobPortraits(
   }
   useMobPortraitQueue.getState().enqueue(jobs);
   return { enqueued: jobs.length, alreadyImaged };
+}
+
+/**
+ * The creation-dialog "Generate a cover image" extra (ratified): ONE
+ * artifact-keyed portrait job with the SAME mechanics as the batch —
+ * attach-as-cover, skip-if-imaged, loud per-artifact toasts — grounded on
+ * the artifact's own content. Works for every artifact kind.
+ */
+export function enqueueArtifactPortrait(artifact: AnyArtifact, campaignId: Id): void {
+  useMobPortraitQueue.getState().enqueue([
+    {
+      campaignId,
+      artifactId: artifact.id,
+      name: artifact.name,
+    },
+  ]);
 }

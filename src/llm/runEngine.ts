@@ -51,6 +51,7 @@ import {
   type ExpansionExcerpt,
 } from '@/llm/campaignGrounding';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
+import { statblockExtraNotice } from '@/llm/personas/extras';
 import { collectPackRosterWithRetry, formatRosterSection, parseRosterTargetLevel } from '@/llm/encounterRoster';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -3030,7 +3031,16 @@ export class RunEngine {
       { source: 'persona', runId },
     );
 
-    const step = this.finishStep(steps[stepIndex], { artifactId: artifact.id });
+    // Stat-block extra is VERIFICATION-ONLY (ratified): the statblock step
+    // already ran for npc personas; a null statBlock here means the draft
+    // declined or the step produced nothing — the notice says so visibly,
+    // never fabricating a placeholder stat block (AGENTS rule 1).
+    const statblockNotice = statblockExtraNotice(kind, input.extras, data);
+
+    const step = this.finishStep(
+      steps[stepIndex],
+      withNotice({ artifactId: artifact.id }, null, statblockNotice),
+    );
     await updateRun(runId, { resultArtifactId: artifact.id });
     return { step, artifactId: artifact.id };
   }

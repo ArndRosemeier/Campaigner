@@ -11,7 +11,10 @@ import { toastError } from '@/lib/toast';
 
 export interface EncounterMapJob {
   campaignId: Id;
-  moduleId: Id;
+  /** The owning module — groups the dock job and pins the ownership check.
+   * Null for the creation-dialog battlemap extra (a campaign-level encounter
+   * generated via the same unattended Cartographer path). */
+  moduleId: Id | null;
   artifactId: Id;
   name: string;
 }
@@ -21,7 +24,7 @@ interface EncounterMapQueueState {
   active: EncounterMapJob | null;
   failed: EncounterMapJob[];
   enqueue: (jobs: EncounterMapJob[]) => void;
-  retryFailed: (moduleId: Id) => void;
+  retryFailed: (moduleId: Id | null) => void;
   reset: () => void;
 }
 
@@ -45,7 +48,7 @@ export const useEncounterMapQueue = create<EncounterMapQueueState>((set, get) =>
     void pump();
   },
   retryFailed: (moduleId) => {
-    const jobs = get().failed.filter((job) => job.moduleId === moduleId);
+    const jobs = get().failed.filter((job) => (job.moduleId ?? null) === moduleId);
     if (jobs.length === 0) return;
     set((state) => ({ failed: state.failed.filter((job) => job.moduleId !== moduleId) }));
     get().enqueue(jobs);
@@ -57,15 +60,15 @@ export const useEncounterMapQueue = create<EncounterMapQueueState>((set, get) =>
   },
 }));
 
-const counters = new Map<Id, { total: number; done: number }>();
+const counters = new Map<Id | null, { total: number; done: number }>();
 let pumping = false;
 
 function jobKey(job: EncounterMapJob): string {
-  return `${job.moduleId}:${job.artifactId}`;
+  return `${job.moduleId ?? ''}:${job.artifactId}`;
 }
 
-function progressId(moduleId: Id): string {
-  return `module-encounter-maps-${moduleId}`;
+function progressId(moduleId: Id | null): string {
+  return moduleId === null ? 'campaign-encounter-maps' : `module-encounter-maps-${moduleId}`;
 }
 
 function bumpTotal(job: EncounterMapJob): void {
@@ -135,7 +138,9 @@ async function processJob(job: EncounterMapJob): Promise<Error | null> {
     ]);
     if (campaign === undefined) throw new Error('campaign no longer exists');
     if (artifact?.kind !== 'encounter') throw new Error('encounter no longer exists');
-    if (artifact.moduleId !== job.moduleId) throw new Error('encounter is no longer owned by this module');
+    if (job.moduleId !== null && artifact.moduleId !== job.moduleId) {
+      throw new Error('encounter is no longer owned by this module');
+    }
     if (artifact.data.layout !== null && artifact.data.mapImageId !== null) return null;
     const cartographer = personas.find((persona) => persona.slug === 'encounter-cartographer');
     if (cartographer === undefined) throw new Error('Encounter Cartographer persona is missing');

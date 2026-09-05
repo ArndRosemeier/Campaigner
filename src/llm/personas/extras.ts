@@ -1,4 +1,4 @@
-import type { Persona, PostCreateExtra } from '@/domain';
+import type { ArtifactData, ArtifactKind, Persona, PostCreateExtra, RunExtras } from '@/domain';
 
 /**
  * Creation-dialog extras derived from a persona (ratified owner default 1):
@@ -40,4 +40,22 @@ export function derivePostCreateExtras(persona: Persona): PostCreateExtra[] {
 export function extrasForPersona(persona: Persona): PostCreateExtra[] {
   if (persona.postCreateExtras !== undefined) return [...persona.postCreateExtras];
   return derivePostCreateExtras(persona);
+}
+
+/**
+ * The stat-block extra is VERIFICATION-ONLY (ratified): the engine's
+ * statblock step already ran for npc personas, so finalize only CHECKS the
+ * created artifact's data — a null statBlock yields the loud persisted
+ * notice; the engine never fabricates one (AGENTS rule 1). Non-npc kinds
+ * and unticked extras never notice.
+ */
+export function statblockExtraNotice(
+  kind: ArtifactKind,
+  extras: RunExtras | undefined,
+  data: ArtifactData,
+): string | null {
+  if (kind !== 'npc' || extras?.statBlock !== true) return null;
+  return (data as { statBlock?: unknown }).statBlock == null
+    ? 'No stat block was generated — add one in the artifact editor.'
+    : null;
 }

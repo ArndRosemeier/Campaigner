@@ -3,6 +3,8 @@ import { createRoot } from 'react-dom/client';
 
 import '@/index.css';
 import { App } from '@/app/App';
+// Ratified: post-run post-create extras — subscribe to run completion ONCE.
+import '@/features/campaign/post-run-extras';
 
 // Built-in personas are seeded (insert-if-missing) from AppShell's mount
 // effect so a seeding failure surfaces as a visible toast — console-only
