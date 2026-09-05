@@ -1,47 +1,47 @@
 # Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
-# copied from `packs/_source/monsters/humanoid/goblin.yml` on foundryvtt/dnd5e
+# copied from `packs/_source/monsters/monstrosity/roper.yml` on foundryvtt/dnd5e
 # branch 6.0.x — every consumed field verbatim; unconsumed presentation
 # subtrees (prototypeToken, item _stats, activity targeting) removed.
-_id: TjWQOgI3A4UAl7lC
-name: Goblin
+_id: qZyLwdx7lj5d1wfD
+name: Roper
 type: npc
 system:
   abilities:
     str:
-      value: 8
+      value: 18
       proficient: 0
     dex:
-      value: 14
+      value: 8
       proficient: 0
     con:
-      value: 10
+      value: 17
       proficient: 0
     int:
-      value: 10
+      value: 7
       proficient: 0
     wis:
-      value: 8
+      value: 16
       proficient: 0
     cha:
-      value: 8
+      value: 6
       proficient: 0
   attributes:
     ac:
-      flat: null
-      calc: default
+      flat: 20
+      calc: natural
       formula: ''
     hp:
-      value: 7
-      max: 7
-      temp: 0
-      tempmax: 0
-      formula: 2d6
+      value: 93
+      max: 93
+      temp: null
+      tempmax: null
+      formula: 11d10 + 33
     movement:
       burrow: 0
-      climb: 0
+      climb: 10
       fly: 0
       swim: 0
-      walk: 30
+      walk: 10
       units: ft
       hover: false
     senses:
@@ -55,18 +55,16 @@ system:
   details:
     alignment: Neutral Evil
     type:
-      value: humanoid
-      subtype: Goblinoid
+      value: monstrosity
+      subtype: ''
       swarm: ''
       custom: ''
     environment: Underdark
-    cr: 0.25
+    cr: 5
   traits:
-    size: sm
+    size: lg
     languages:
-      value:
-        - common
-        - goblin
+      value: []
       custom: ''
     di:
       value: []
@@ -84,68 +82,22 @@ system:
       value: []
       custom: ''
   skills:
+    prc:
+      value: 1
+      ability: wis
     ste:
       value: 2
       ability: dex
 items:
-  - _id: Ti3XQOmTKdgcnpAa
-    name: Leather Armor
-    type: equipment
-    system:
-      equipped: true
-      type:
-        value: light
-        baseItem: leather
-      armor:
-        value: 11
-        dex: null
-        magicalBonus: null
-  - _id: sSs3hSzkKBMNBgTs
-    name: Shield
-    type: equipment
-    system:
-      equipped: true
-      type:
-        value: shield
-        baseItem: ''
-      armor:
-        value: 2
-        dex: null
-        magicalBonus: null
-  - _id: SxVatHq02vURYDt3
-    name: Nimble Escape
-    type: feat
-    system:
-      description:
-        value: >-
-          <p>The [[lookup @name lowercase]]{monster} can take the &amp;reference[Disengage] or &amp;reference[Hide]
-          action as a bonus action on each of its turns.</p>
-      activities:
-        3Vnkh4NwfhWSFwKy:
-          type: check
-          activation:
-            type: bonus
-            value: null
-            condition: ''
-            override: false
-        Vgf3UERrWoMNgZ5s:
-          type: utility
-          activation:
-            type: bonus
-            value: null
-            condition: ''
-            override: false
-  - _id: S6UTTLu0bEB32HNG
-    name: Scimitar
+  - _id: mBRjMwEitGrPDm5I
+    name: Bite
     type: weapon
     system:
-      proficient: 1
-      properties:
-        - fin
-        - lgt
+      proficient: null
+      properties: []
       type:
-        value: martialM
-        baseItem: scimitar
+        value: natural
+        baseItem: ''
       range:
         value: null
         long: null
@@ -165,16 +117,16 @@ items:
             number: null
             formula: ''
         base:
-          number: 1
-          denomination: 6
+          number: 4
+          denomination: 8
           bonus: ''
           types:
-            - slashing
+            - piercing
           custom:
             enabled: false
             formula: ''
       activities:
-        dnd5eactivity000:
+        VHvpgO6rRZHKwY2Y:
           type: attack
           activation:
             type: action
@@ -182,35 +134,33 @@ items:
             condition: ''
             override: false
           attack:
-            ability: dex
+            ability: ''
             bonus: ''
             flat: false
             critical:
               threshold: null
             type:
-              value: melee
-              classification: weapon
+              value: ''
+              classification: ''
           damage:
             includeBase: true
             parts: []
             critical:
               bonus: ''
-  - _id: YqS3dsIlpWb2Q2UI
-    name: Shortbow
+  - _id: bTiw89tDx64zTqDk
+    name: Tendril
     type: weapon
     system:
-      proficient: 1
-      properties:
-        - two
-        - amm
+      proficient: null
+      properties: []
       type:
-        value: simpleR
-        baseItem: shortbow
+        value: natural
+        baseItem: ''
       range:
-        value: 80
-        long: 320
+        value: null
+        long: null
         units: ft
-        reach: null
+        reach: 50
       damage:
         versatile:
           number: null
@@ -225,16 +175,14 @@ items:
             number: null
             formula: ''
         base:
-          number: 1
-          denomination: 6
+          number: null
+          denomination: null
           bonus: ''
-          types:
-            - piercing
+          types: []
           custom:
             enabled: false
-            formula: ''
       activities:
-        dnd5eactivity000:
+        V3G7YupPtK1OuiYB:
           type: attack
           activation:
             type: action
@@ -242,16 +190,32 @@ items:
             condition: ''
             override: false
           attack:
-            ability: dex
+            ability: ''
             bonus: ''
             flat: false
             critical:
               threshold: null
             type:
-              value: ranged
-              classification: weapon
+              value: ''
+              classification: ''
           damage:
             includeBase: true
             parts: []
             critical:
               bonus: ''
+  - _id: fyF8vQbuvkuLKmKf
+    name: Multiattack
+    type: feat
+    system:
+      description:
+        value: >-
+          <p>The [[lookup @name lowercase]]{monster} makes four attacks with its [[/item .bTiw89tDx64zTqDk]]{tendrils},
+          uses [[/item .iGuyFLbKazqPCcXY]]{reel}, and makes one attack with its [[/item .mBRjMwEitGrPDm5I]]{bite}.</p>
+      activities:
+        lkupXc7YCrWoYWM4:
+          type: utility
+          activation:
+            type: action
+            value: 1
+            condition: ''
+            override: false

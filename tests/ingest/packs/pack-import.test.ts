@@ -207,26 +207,34 @@ describe('importPack', () => {
 describe('importPack (foundry-dnd5e-srd, M-C)', () => {
   it('imports loose .yml files with the dnd5e license and reports failures loudly', async () => {
     const deps = memoryDeps();
+    // The goblin (formerly a loud failure — no flat AC) imports; the
+    // unsupported CR "0.75" in this real wolf document is the loud failure.
     const result = await importPack(
       'foundry-dnd5e-srd',
       [
         { name: 'monsters/beast/ape.yml', bytes: dnd5eFixture('ape.yml') },
         { name: 'monsters/humanoid/goblin.yml', bytes: dnd5eFixture('goblin.yml') },
+        {
+          name: 'monsters/beast/wolf.yml',
+          bytes: new TextEncoder().encode(
+            new TextDecoder().decode(dnd5eFixture('wolf.yml')).replace('cr: 0.25', 'cr: 0.75'),
+          ),
+        },
       ],
       { title: 'SRD Bestiary', deps },
     );
     expect(deps.created).toEqual([
       { title: 'SRD Bestiary', system: 'dnd5e', filename: 'monsters/beast/ape.yml' },
     ]);
-    expect(result.imported).toBe(1);
+    expect(result.imported).toBe(2);
     expect(result.failed).toHaveLength(1);
-    expect(result.failed[0]?.file).toBe('monsters/humanoid/goblin.yml');
-    expect(result.failed[0]?.name).toBe('Goblin');
-    expect(result.failed[0]?.message).toContain('no flat Armor Class');
+    expect(result.failed[0]?.file).toBe('monsters/beast/wolf.yml');
+    expect(result.failed[0]?.name).toBe('Wolf');
+    expect(result.failed[0]?.message).toContain('unsupported CR "0.75"');
     expect(result.book.status).toBe('ready');
     expect(result.book.packMeta?.sourceId).toBe('foundry-dnd5e-srd');
     expect(result.book.packMeta?.license).toContain('CC-BY-4.0');
-    expect(result.book.packMeta?.entriesImported).toBe(1);
+    expect(result.book.packMeta?.entriesImported).toBe(2);
     expect(result.book.packMeta?.entriesFailed).toBe(1);
 
     // The §10 acceptance block survives the full runner boundary.
@@ -236,6 +244,11 @@ describe('importPack (foundry-dnd5e-srd, M-C)', () => {
     expect(chunk?.statBlock?.ac).toBe(12);
     expect(chunk?.statBlock?.hp).toBe(19);
     expect(chunk?.statBlock?.hpFormula).toBe('3d8 + 6');
+    // The armor-derived goblin AC survives too (12-BESTIARY-PACKS §5).
+    const goblinChunk = deps.persisted.flat()[1];
+    expect(goblinChunk?.headingPath).toEqual(['Goblin']);
+    expect(goblinChunk?.statBlock?.ac).toBe(15);
+    expect(goblinChunk?.statBlock?.acNote).toBe('Leather Armor, Shield');
   });
 
   it('expands a zip with nested monster folders and skips non-pack members', async () => {

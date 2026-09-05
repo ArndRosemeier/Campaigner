@@ -68,9 +68,15 @@ export function formatRosterSection(lines: readonly string[], truncated: number)
     .join('\n');
 }
 
-/** Numeric ordering key for printed d20 levels: "3", "-1", "1/2", "1/4". */
+/**
+ * Numeric ordering key for printed d20 levels: "3", "-1", "1/2", "1/4".
+ * The dnd5e system prints "—" for the CR-less summons (avatar of death,
+ * animated objects — `details.cr: null`), which sort after every leveled
+ * creature: their exact printed level IS "—", and they are temporary extras.
+ */
 export function parseLevelSort(level: string): number {
   const trimmed = level.trim();
+  if (trimmed === '—') return Number.POSITIVE_INFINITY;
   const fraction = /^(-?\d+)\s*\/\s*(\d+)$/.exec(trimmed);
   if (fraction !== null) {
     const numerator = fraction[1];

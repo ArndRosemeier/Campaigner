@@ -1,0 +1,133 @@
+# Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
+# copied from `packs/_source/monsters/undead/avatar-of-death.yml` on foundryvtt/dnd5e
+# branch 6.0.x — every consumed field verbatim; unconsumed presentation
+# subtrees (prototypeToken, item _stats, activity targeting) removed.
+_id: XiSWKZzAUxdmFOLL
+name: Avatar of Death
+type: npc
+system:
+  abilities:
+    str:
+      value: 16
+      proficient: 0
+    dex:
+      value: 16
+      proficient: 0
+    con:
+      value: 16
+      proficient: 0
+    int:
+      value: 16
+      proficient: 0
+    wis:
+      value: 16
+      proficient: 0
+    cha:
+      value: 16
+      proficient: 0
+  attributes:
+    ac:
+      flat: 20
+      calc: natural
+      formula: ''
+    hp:
+      value: 1
+      max: 1
+      temp: 0
+      tempmax: 0
+      formula: ''
+    movement:
+      burrow: 0
+      climb: 0
+      fly: 60
+      swim: 0
+      walk: 60
+      units: ft
+      hover: true
+    senses:
+      darkvision: 60
+      blindsight: 0
+      tremorsense: 0
+      truesight: 60
+      units: ft
+      special: ''
+    spellcasting: int
+  details:
+    alignment: Neutral Evil
+    type:
+      value: undead
+      subtype: ''
+      swarm: ''
+      custom: ''
+    environment: ''
+    cr: null
+  traits:
+    size: med
+    languages:
+      value: []
+      custom: All languages known to its summoner
+    di:
+      value:
+        - necrotic
+        - poison
+      bypasses: []
+      custom: ''
+    dr:
+      value: []
+      bypasses: []
+      custom: ''
+    dv:
+      value: []
+      bypasses: []
+      custom: ''
+    ci:
+      value:
+        - charmed
+        - frightened
+        - paralyzed
+        - petrified
+        - poisoned
+        - unconscious
+      custom: ''
+  skills: {}
+items:
+  - _id: 1rEzqo8fiLbeFE07
+    name: Turn Immunity
+    type: feat
+    system:
+      description:
+        value: <p>The [[lookup @name lowercase]]{monster} is immune to features that turn undead.</p>
+      activities: {}
+  - _id: d7ERliHkrcvQAF1X
+    name: Reaping Scythe
+    type: feat
+    system:
+      description:
+        value: >-
+          <p>The avatar sweeps its spectral scythe through a creature within [[lookup @labels.description.range
+          activity=bt778cosuDVj9HQu]] of it, dealing [[/damage average]] damage.</p>
+      activities:
+        bt778cosuDVj9HQu:
+          type: damage
+          activation:
+            type: action
+            value: 1
+            condition: ''
+            override: false
+  - _id: CdbI4aAOzbnxjSGS
+    name: Incorporeal Movement
+    type: feat
+    system:
+      description:
+        value: >-
+          <p>The [[lookup @name lowercase]]{monster} can move through other creatures and objects as if they were
+          &amp;reference[difficult terrain].</p><p>It takes [[/damage average]] damage if it ends its turn inside an
+          object.</p>
+      activities:
+        EMsG8gJaIafZVjS5:
+          type: damage
+          activation:
+            type: special
+            value: null
+            condition: When the [[lookup @name lowercase]]{monster} ends their turn inside an object.
+            override: false

@@ -1,51 +1,51 @@
 # Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
-# copied from `packs/_source/monsters/humanoid/goblin.yml` on foundryvtt/dnd5e
+# copied from `packs/_source/monsters/beast/saber-toothed-tiger.yml` on foundryvtt/dnd5e
 # branch 6.0.x — every consumed field verbatim; unconsumed presentation
 # subtrees (prototypeToken, item _stats, activity targeting) removed.
-_id: TjWQOgI3A4UAl7lC
-name: Goblin
+_id: tYYoifu9teGLetVI
+name: Saber-Toothed Tiger
 type: npc
 system:
   abilities:
     str:
-      value: 8
+      value: 18
       proficient: 0
     dex:
       value: 14
       proficient: 0
     con:
-      value: 10
+      value: 15
       proficient: 0
     int:
-      value: 10
+      value: 3
       proficient: 0
     wis:
-      value: 8
+      value: 12
       proficient: 0
     cha:
       value: 8
       proficient: 0
   attributes:
     ac:
-      flat: null
-      calc: default
+      flat: 12
+      calc: natural
       formula: ''
     hp:
-      value: 7
-      max: 7
-      temp: 0
-      tempmax: 0
-      formula: 2d6
+      value: 52
+      max: 52
+      temp: null
+      tempmax: null
+      formula: 7d10 + 14
     movement:
       burrow: 0
       climb: 0
       fly: 0
       swim: 0
-      walk: 30
+      walk: 40
       units: ft
       hover: false
     senses:
-      darkvision: 60
+      darkvision: 0
       blindsight: 0
       tremorsense: 0
       truesight: 0
@@ -53,20 +53,18 @@ system:
       special: ''
     spellcasting: ''
   details:
-    alignment: Neutral Evil
+    alignment: Unaligned
     type:
-      value: humanoid
-      subtype: Goblinoid
+      value: beast
+      subtype: ''
       swarm: ''
       custom: ''
-    environment: Underdark
-    cr: 0.25
+    environment: Mountain
+    cr: 2
   traits:
-    size: sm
+    size: lg
     languages:
-      value:
-        - common
-        - goblin
+      value: []
       custom: ''
     di:
       value: []
@@ -84,68 +82,22 @@ system:
       value: []
       custom: ''
   skills:
+    prc:
+      value: 1
+      ability: wis
     ste:
       value: 2
       ability: dex
 items:
-  - _id: Ti3XQOmTKdgcnpAa
-    name: Leather Armor
-    type: equipment
-    system:
-      equipped: true
-      type:
-        value: light
-        baseItem: leather
-      armor:
-        value: 11
-        dex: null
-        magicalBonus: null
-  - _id: sSs3hSzkKBMNBgTs
-    name: Shield
-    type: equipment
-    system:
-      equipped: true
-      type:
-        value: shield
-        baseItem: ''
-      armor:
-        value: 2
-        dex: null
-        magicalBonus: null
-  - _id: SxVatHq02vURYDt3
-    name: Nimble Escape
-    type: feat
-    system:
-      description:
-        value: >-
-          <p>The [[lookup @name lowercase]]{monster} can take the &amp;reference[Disengage] or &amp;reference[Hide]
-          action as a bonus action on each of its turns.</p>
-      activities:
-        3Vnkh4NwfhWSFwKy:
-          type: check
-          activation:
-            type: bonus
-            value: null
-            condition: ''
-            override: false
-        Vgf3UERrWoMNgZ5s:
-          type: utility
-          activation:
-            type: bonus
-            value: null
-            condition: ''
-            override: false
-  - _id: S6UTTLu0bEB32HNG
-    name: Scimitar
+  - _id: npiswgaiGzupcEmw
+    name: Bite
     type: weapon
     system:
-      proficient: 1
-      properties:
-        - fin
-        - lgt
+      proficient: null
+      properties: []
       type:
-        value: martialM
-        baseItem: scimitar
+        value: natural
+        baseItem: ''
       range:
         value: null
         long: null
@@ -165,16 +117,16 @@ items:
             number: null
             formula: ''
         base:
-          number: 1
-          denomination: 6
+          number: null
+          denomination: null
           bonus: ''
           types:
-            - slashing
+            - piercing
           custom:
-            enabled: false
-            formula: ''
+            enabled: true
+            formula: 1d10 + @mod + 1
       activities:
-        dnd5eactivity000:
+        y6cNhRnpGiEVHHXw:
           type: attack
           activation:
             type: action
@@ -182,33 +134,31 @@ items:
             condition: ''
             override: false
           attack:
-            ability: dex
+            ability: ''
             bonus: ''
             flat: false
             critical:
               threshold: null
             type:
-              value: melee
-              classification: weapon
+              value: ''
+              classification: ''
           damage:
             includeBase: true
             parts: []
             critical:
               bonus: ''
-  - _id: YqS3dsIlpWb2Q2UI
-    name: Shortbow
+  - _id: I9zJprscDFYpwwJR
+    name: Claw
     type: weapon
     system:
-      proficient: 1
-      properties:
-        - two
-        - amm
+      proficient: null
+      properties: []
       type:
-        value: simpleR
-        baseItem: shortbow
+        value: natural
+        baseItem: ''
       range:
-        value: 80
-        long: 320
+        value: null
+        long: null
         units: ft
         reach: null
       damage:
@@ -225,16 +175,16 @@ items:
             number: null
             formula: ''
         base:
-          number: 1
-          denomination: 6
+          number: null
+          denomination: null
           bonus: ''
           types:
-            - piercing
+            - slashing
           custom:
-            enabled: false
-            formula: ''
+            enabled: true
+            formula: 2d6 + @mod + 1
       activities:
-        dnd5eactivity000:
+        k3Hn0VeMFjz7AKrg:
           type: attack
           activation:
             type: action
@@ -242,16 +192,45 @@ items:
             condition: ''
             override: false
           attack:
-            ability: dex
+            ability: ''
             bonus: ''
             flat: false
             critical:
               threshold: null
             type:
-              value: ranged
-              classification: weapon
+              value: ''
+              classification: ''
           damage:
             includeBase: true
             parts: []
             critical:
               bonus: ''
+  - _id: VoyNdCLFhXcu3pSQ
+    name: Keen Smell
+    type: feat
+    system:
+      description:
+        value: <p>The [[lookup @name lowercase]]{monster} has advantage on Wisdom (Perception) checks that rely on smell.</p>
+      activities: {}
+  - _id: 9Ayx6ARdliy8D5lj
+    name: Pounce
+    type: feat
+    system:
+      description:
+        value: >-
+          <p>If the [[lookup @name lowercase]]{monster} moves at least 20 feet straight toward a creature and then hits
+          it with a @UUID[Compendium.dnd5e.monsters.Actor.FayqbnjBMszO6Pat.Item.7GCnVtakQo6iZyn7]{claw} attack on the
+          same turn, that target must succeed on a [[/save]] saving throw or be knocked &amp;Reference[prone].</p><p>If
+          the target is prone, the [[lookup @name lowercase]]{monster} can make one [[/item .npiswgaiGzupcEmw]]{bite}
+          attack against it as a bonus action.</p>
+      activities:
+        8dIa5DwJPOAhNkpx:
+          type: save
+          activation:
+            type: special
+            value: null
+            condition: >-
+              When the [[lookup @name lowercase]]{monster} moves at least 20 feet straight toward a creature and then
+              hits it with a @UUID[Compendium.dnd5e.monsters.Actor.tYYoifu9teGLetVI.Item.I9zJprscDFYpwwJR]{claw} attack
+              on the same turn.
+            override: false

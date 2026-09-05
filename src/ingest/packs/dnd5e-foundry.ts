@@ -15,43 +15,69 @@ import type { PackAdapter, PackEntry, PackFileParse } from './types';
  * Product Identity creatures. Non-NPC documents are skipped by design and
  * counted, never silently dropped.
  *
- * Field mapping verified against the repository at spec time; the fixture
- * tests (real trimmed `ape.yml`/`wolf.yml`/`kobold.yml`/`goblin.yml` subsets)
- * pin the consumed subset. The consumed sub-fields, all fixture-pinned:
+ * Field mapping verified against the LIVE 6.0.x corpus (all 337 documents,
+ * 2026-09-05); the fixture tests (real trimmed `ape.yml`/`wolf.yml`/
+ * `kobold.yml`/`goblin.yml`/`satyr.yml`/… subsets) pin the consumed subset.
+ * The consumed sub-fields, all fixture-pinned:
  *
  * - `system.abilities.<abil>.value` → StatBlock scores **directly** (dnd5e
  *   stores scores, the exact inverse information of the pf2e adapter);
  *   `<abil>.proficient` (0/1) → rendered save strings.
- * - `system.attributes.ac.flat` → `ac`. A document without a flat AC (armor
- *   creatures store `flat: null, calc: 'default'`, e.g. Goblin) fails loudly
- *   as a per-entry failure: deriving AC from armor items would be Foundry
- *   system automation (§9) and could silently diverge from the printed block,
- *   and `statBlock` must be exact, never best-effort (§1).
+ * - AC: `system.attributes.ac.flat` → `ac` when the document stores one
+ *   (`calc: 'flat'`/`'natural'`). For armor-wearers the document stores NO
+ *   number (`calc: 'default'`, e.g. Goblin, Satyr, Fire Giant): there the AC
+ *   is derived with the dnd5e system's own published formula (6.0.x
+ *   `module/data/actor/templates/attributes.mjs` `prepareArmorClass` +
+ *   `CONFIG.DND5E.armorClasses`, verified equal to the printed SRD value for
+ *   every one of the 34 corpus creatures that store `calc: 'default'`):
+ *   armored `armor.value + min(dexMod, armor.dex ?? ∞)` (heavy armor clamps
+ *   dex to 0), unarmored `10 + dexMod` when no armor is equipped, plus the
+ *   first equipped shield's `armor.value`; the equipped armor/shield names
+ *   become the printed `acNote` ("Leather Armor, Shield"). Any other gear
+ *   shape (multiple armors/shields, unsupported armor type, armor without a
+ *   numeric value) fails the entry loudly — exact or loud, never best-effort.
  * - `system.attributes.hp.max` + `.formula` → `hp` + `hpFormula`.
- * - `system.details.cr` (number, `0.125/0.25/0.5` allowed; string accepted) →
- *   `level` in the printed convention (`"1/2"`) + numeric `levelSort`.
+ * - `system.details.cr` (number, `0.125/0.25/0.5` allowed; string accepted;
+ *   `null` = the system's printed "—", proficiency null) → `level` in the
+ *   printed convention (`"1/2"`, `"—"`) + numeric `levelSort`.
  * - `system.traits.size`, `system.details.type.value` (+ `.subtype` tag),
- *   `system.attributes.movement` (per-type feet values), `senses` (per-sense
- *   feet + `special`), `system.traits.languages.value`/`.custom`,
- *   `system.skills.<id>.{value, ability}` (proficiency level → rendered
- *   "Stealth +6"-style strings), `di`/`dr`/`dv`/`ci` → extras.
+ *   `system.attributes.movement` (per-type feet values; the summons documents
+ *   store `null` for absent speeds and numeric strings such as `"30"` — both
+ *   accepted, `null` → 0, `units: null` → `'ft'`), `senses` (per-sense feet +
+ *   `special`; `units: null` → `'ft'`), `system.traits.languages.value`/
+ *   `.custom`, `system.skills.<id>.{value, ability}` (proficiency level →
+ *   rendered "Stealth +6"-style strings), `di`/`dr`/`dv`/`ci` → extras.
  * - `items[]` `feat` bucketed by activity activation: no activities/passive →
  *   `traits`, `reaction` → `reactions`, else → `actions`; `items[]` `weapon`
  *   → one rendered attack line from the first attack activity.
  *
+ * Attack activities (to-hit; the corpus forms are pinned by fixtures): a FLAT
+ * attack (`attack.flat: true`, e.g. the animated objects' Slam and the tiny
+ * beasts' flat bites) stores the complete bonus and maps as-is. Otherwise the
+ * to-hit is `abilityMod + proficiency + stored bonus`, exactly the system's
+ * roll parts: `attack.ability: 'none'` contributes NO ability modifier (the
+ * stored bonus makes up the printed total, e.g. camel Bite +5 = prof +2 +
+ * stored 3; swarm bonus formulas `@abilities.dex.mod` resolve to the ability
+ * modifier), `attack.ability: 'spellcasting'` uses the creature's stored
+ * `system.attributes.spellcasting.ability`, and an empty ability falls back
+ * to the weapon rules (ranged → Dex, finesse → better of Str/Dex, else Str —
+ * the system's `availableAbilities` defaulting). Damage: normal base dice add
+ * the ability modifier (unless the attack is flat or ability-less, which add
+ * none — matching the printed blocks); a custom base formula
+ * (`damage.base.custom.enabled`, e.g. the badger's flat `"1"` or the
+ * saber-toothed tiger's `"1d10 + @mod + 1"`) resolves `@mod`/`@abilities.<x>
+ * .mod` and NdM/integer terms exactly and renders in the compact `NdM±K`
+ * convention; attacks with no damage at all (roper Tendril, guardian naga
+ * Spit Poison) render name + range/properties without a damage term.
+ *
  * The source stores no computed totals, so save/skill/attack modifiers are
  * rendered with the standard printed-convention derivation from the pinned
  * sub-fields: ability modifier = `abilityModifier(score)` (the shared
- * StatBlock inverse), proficiency bonus = `floor(CR / 4) + 2`, weapon ability
- * = stored `attack.ability`, else finesse melee → better of Str/Dex, ranged →
- * Dex (a ranged natural weapon such as the ape's Rock therefore renders
- * DEX-based, exactly as the dnd5e system computes the stored data — which can
- * differ from the printed book's STR-based listing for thrown rocks; the data,
- * not the book layout, is authoritative for an exact mapping). No other roll
- * math is performed (§9: no Foundry system code) — attack
- * activities' extra damage parts (e.g. `@mod` versatile variants), spell
- * items, equipment and carried weapons without an attack activity are not
- * represented in v1 (documented scope cut, not a failure path).
+ * StatBlock inverse), proficiency bonus = `floor(CR / 4) + 2` (0 for the
+ * CR-less "—" summons, whose stored proficiency is null). No other roll math
+ * is performed (§9: no Foundry system code) — spell items, equipment and
+ * carried weapons without an attack activity are not represented in v1
+ * (documented scope cut, not a failure path).
  */
 
 export const FOUNDRY_DND5E_SRD_ADAPTER_ID = 'foundry-dnd5e-srd';
@@ -106,6 +132,36 @@ const defenseListSchema = z.object({
   custom: z.string().default(''),
 });
 
+/**
+ * A stored movement/sense scalar: a number, `null` (absent speed — the
+ * summons documents), or a numeric string (`walk: "30"`). Narrowed to an
+ * exact number by `feetValue` below — never silently.
+ */
+const scalarFeetSchema = z.union([z.number(), z.string()]).nullish();
+
+/**
+ * Exact numeric feet from a stored movement/sense scalar: numbers pass,
+ * `null`/`''` mean 0 (the system's default for absent speeds), numeric
+ * strings (the summons documents store `walk: "30"`) convert, and anything
+ * else is a loud per-entry failure — never a silent 0.
+ */
+function feetValue(value: number | string | null | undefined, what: string): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === 'number') return value;
+  const trimmed = value.trim();
+  if (trimmed === '') return 0;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) {
+    throw new Error(`unsupported ${what} "${value}"`);
+  }
+  return parsed;
+}
+
+/** Units: a stored string, or `null` → the system default `'ft'`. */
+function unitsValue(value: string | null | undefined): string {
+  return value ?? 'ft';
+}
+
 const dnd5eNpcSchema = z.object({
   name: z.string().min(1),
   type: z.literal('npc'),
@@ -123,32 +179,35 @@ const dnd5eNpcSchema = z.object({
       }),
       movement: z
         .object({
-          burrow: z.number().default(0),
-          climb: z.number().default(0),
-          fly: z.number().default(0),
-          swim: z.number().default(0),
-          walk: z.number().default(0),
-          units: z.string().default('ft'),
+          burrow: scalarFeetSchema.default(0),
+          climb: scalarFeetSchema.default(0),
+          fly: scalarFeetSchema.default(0),
+          swim: scalarFeetSchema.default(0),
+          walk: scalarFeetSchema.default(0),
+          units: z.string().nullish().default('ft'),
           hover: z.boolean().default(false),
         })
-        .default({
-          burrow: 0, climb: 0, fly: 0, swim: 0, walk: 0, units: 'ft', hover: false,
-        }),
+        .default({ burrow: 0, climb: 0, fly: 0, swim: 0, walk: 0, units: 'ft', hover: false }),
       senses: z
         .object({
-          darkvision: z.number().default(0),
-          blindsight: z.number().default(0),
-          tremorsense: z.number().default(0),
-          truesight: z.number().default(0),
-          units: z.string().default('ft'),
+          darkvision: scalarFeetSchema.default(0),
+          blindsight: scalarFeetSchema.default(0),
+          tremorsense: scalarFeetSchema.default(0),
+          truesight: scalarFeetSchema.default(0),
+          units: z.string().nullish().default('ft'),
           special: z.string().default(''),
         })
         .default({
           darkvision: 0, blindsight: 0, tremorsense: 0, truesight: 0, units: 'ft', special: '',
         }),
+      // The creature's spellcasting ability id ('' when it has none) — used
+      // by `attack.ability: 'spellcasting'` attacks (druid, lich).
+      spellcasting: z.string().default(''),
     }),
     details: z.object({
-      cr: z.union([z.number(), z.string()]),
+      // `null` CR is the system's printed "—" (CR-less summons such as the
+      // Avatar of Death and the animated objects); their proficiency is null.
+      cr: z.union([z.number(), z.string()]).nullable(),
       type: z
         .object({ value: z.string().default(''), subtype: z.string().default('') })
         .default({ value: '', subtype: '' }),
@@ -193,9 +252,13 @@ const attackActivitySchema = z.object({
     .object({
       ability: z.string().default(''),
       bonus: z.union([z.string(), z.number()]).default(''),
+      // `flat: true` = the stored bonus IS the complete attack bonus (no
+      // ability modifier, no proficiency — the animated objects' Slam, the
+      // tiny beasts' flat bites).
+      flat: z.boolean().default(false),
       type: z.object({ value: z.string().default('') }).default({ value: '' }),
     })
-    .default({ ability: '', bonus: '', type: { value: '' } }),
+    .default({ ability: '', bonus: '', flat: false, type: { value: '' } }),
 });
 
 const weaponItemSchema = z.object({
@@ -219,6 +282,12 @@ const weaponItemSchema = z.object({
             denomination: z.number().nullish().default(null),
             bonus: z.union([z.string(), z.number()]).default(''),
             types: z.array(z.string()).default([]),
+            // Custom base damage (no dice): the badger's flat `"1"`, the
+            // saber-toothed tiger's `"1d10 + @mod + 1"`.
+            custom: z
+              .object({ enabled: z.boolean().default(false), formula: z.string().default('') })
+              .nullish()
+              .default(null),
           })
           .nullish()
           .default(null),
@@ -228,9 +297,32 @@ const weaponItemSchema = z.object({
   }),
 });
 
+/**
+ * One equipped armor/shield piece (`items[]` `type: 'equipment'`): the exact
+ * inputs of the dnd5e system's published AC formula. Parsed tolerantly so
+ * every real equipment item narrows; the mapping below fails loudly when an
+ * equipped piece is not exactly mappable.
+ */
+const armorPieceSchema = z.object({
+  name: z.string().min(1),
+  type: z.literal('equipment'),
+  system: z.object({
+    equipped: z.boolean().nullish().default(false),
+    type: z.object({ value: z.string().nullish().default('') }).nullish().default({ value: '' }),
+    armor: z
+      .object({
+        value: z.number().nullish().default(null),
+        dex: z.number().nullish().default(null),
+      })
+      .nullish()
+      .default(null),
+  }),
+});
+
 type ParsedNpc = z.infer<typeof dnd5eNpcSchema>;
 type ParsedFeat = z.infer<typeof featItemSchema>;
 type ParsedWeapon = z.infer<typeof weaponItemSchema>;
+type ParsedArmorPiece = z.infer<typeof armorPieceSchema>;
 
 // --- Helpers ---------------------------------------------------------------
 
@@ -298,8 +390,11 @@ function numericBonus(value: string | number, what: string): number {
   return parsed;
 }
 
-/** Printed challenge rating: `0.5` → `"1/2"`, `2` → `"2"`. */
-function levelFromCr(cr: number | string): { level: string; sort: number } {
+/** Printed challenge rating: `0.5` → `"1/2"`, `2` → `"2"`, `null` → `"—"` (the
+ * dnd5e system's `formatCR` output for the CR-less summons; their proficiency
+ * is null, i.e. 0 for rendered bonuses). */
+function levelFromCr(cr: number | string | null): { level: string; sort: number | null } {
+  if (cr === null) return { level: '—', sort: null };
   if (typeof cr === 'number') {
     const fraction = CR_FRACTIONS[String(cr)];
     if (fraction !== undefined) return { level: fraction, sort: cr };
@@ -331,6 +426,189 @@ function defenseList(list: z.infer<typeof defenseListSchema> | undefined): strin
     .join(', ');
 }
 
+// --- Armor Class (12-BESTIARY-PACKS §5, exact-or-loud) ----------------------
+
+const ARMOR_TYPES: ReadonlySet<string> = new Set(['light', 'medium', 'heavy']);
+const SHIELD_TYPE = 'shield';
+
+interface DerivedAc {
+  ac: number;
+  acNote: string;
+}
+
+/**
+ * Derives the exact AC for `ac.calc: 'default'` documents (armor wearers that
+ * store no flat number) with the dnd5e system's own published formula
+ * (6.0.x `prepareArmorClass` + `CONFIG.DND5E.armorClasses`): the armored
+ * formula `armor.value + min(dexMod, armor.dex ?? ∞)` — heavy armor clamps
+ * Dexterity to 0 — or the unarmored formula `10 + dexMod` when nothing is
+ * equipped, plus the first equipped shield. Verified equal to the printed SRD
+ * value for all 34 corpus creatures that store `calc: 'default'`. Any gear
+ * shape outside the formula's exact inputs fails loudly.
+ */
+function deriveAcFromGear(
+  items: readonly unknown[],
+  abilities: Readonly<Record<string, number>>,
+): DerivedAc {
+  let armor: ParsedArmorPiece | null = null;
+  let shield: ParsedArmorPiece | null = null;
+  for (const item of items) {
+    const parsed = armorPieceSchema.safeParse(item);
+    if (parsed.success) {
+      if (parsed.data.system.equipped !== true) continue;
+      const typeValue = parsed.data.system.type?.value ?? '';
+      if (typeValue === SHIELD_TYPE) {
+        if (shield !== null) {
+          throw new Error(`multiple equipped shields ("${shield.name}", "${parsed.data.name}") — the adapter maps only the system's exact single-shield AC inputs`);
+        }
+        shield = parsed.data;
+      } else if (ARMOR_TYPES.has(typeValue)) {
+        if (armor !== null) {
+          throw new Error(`multiple equipped armors ("${armor.name}", "${parsed.data.name}") — the adapter maps only the system's exact single-armor AC inputs`);
+        }
+        armor = parsed.data;
+      } else {
+        throw new Error(
+          `equipped armor "${parsed.data.name}" has unsupported armor type "${typeValue}"`,
+        );
+      }
+      continue;
+    }
+    // An equipment item that carries armor data but does not narrow (e.g. a
+    // non-numeric armor value) must never be silently ignored: the AC would
+    // silently diverge. Fail loudly instead.
+    if (
+      isRecord(item) &&
+      item.type === 'equipment' &&
+      isRecord(item.system) &&
+      'armor' in item.system
+    ) {
+      throw new Error(
+        `equipped armor "${typeof item.name === 'string' ? item.name : '?'}" stores unreadable armor data — cannot map an exact AC`,
+      );
+    }
+  }
+
+  const dexMod = abilityModifier(abilities.dex ?? 0);
+  let ac: number;
+  const notes: string[] = [];
+  if (armor === null) {
+    // Unarmored formula: `10 + @abilities.dex.mod`.
+    ac = 10 + dexMod;
+  } else {
+    const armorValue = armor.system.armor?.value ?? null;
+    if (armorValue === null) {
+      throw new Error(`equipped armor "${armor.name}" has no armor value — cannot map an exact AC`);
+    }
+    // Armored formula: `@attributes.ac.armor + @attributes.ac.clamped.dex`
+    // where clamped dex = `isHeavy ? 0 : min(dexMod, armor.dex ?? ∞)`.
+    const isHeavy = (armor.system.type?.value ?? '') === 'heavy';
+    const dexCap = armor.system.armor?.dex ?? null;
+    const clampedDex = isHeavy ? 0 : Math.min(dexMod, dexCap ?? Infinity);
+    ac = armorValue + clampedDex;
+    notes.push(armor.name);
+  }
+  if (shield !== null) {
+    const shieldValue = shield.system.armor?.value ?? null;
+    if (shieldValue === null) {
+      throw new Error(`equipped shield "${shield.name}" has no armor value — cannot map an exact AC`);
+    }
+    ac += shieldValue;
+    notes.push(shield.name);
+  }
+  return { ac, acNote: notes.join(', ') };
+}
+
+// --- Attack bonus / damage ---------------------------------------------------
+
+/**
+ * The stored per-attack `bonus` term: `''` contributes nothing, integers are
+ * exact, and the `@abilities.<abil>.mod` formula (swarms, Hurl Flame) resolves
+ * to that ability's modifier. Any other formula fails loudly.
+ */
+function resolveAttackBonus(
+  bonus: string | number,
+  abilities: Readonly<Record<string, number>>,
+): number {
+  if (typeof bonus === 'number') return bonus;
+  const trimmed = bonus.trim();
+  if (trimmed === '') return 0;
+  const formula = /^@abilities\.([a-z]+)\.mod$/.exec(trimmed);
+  if (formula !== null) {
+    const score = abilities[formula[1] ?? ''];
+    if (score === undefined) {
+      throw new Error(`attack bonus "${trimmed}" references unknown ability`);
+    }
+    return abilityModifier(score);
+  }
+  const parsed = Number(trimmed);
+  if (Number.isInteger(parsed)) return parsed;
+  throw new Error(`unsupported attack bonus "${bonus}"`);
+}
+
+/**
+ * Resolves a stored custom base-damage formula into the compact `NdM±K`
+ * printed convention. Exact forms (corpus-pinned): dice terms `NdM`, integer
+ * constants, `@mod` (the attack's ability modifier) and
+ * `@abilities.<abil>.mod`, joined by `+`/`-`. Anything else — parentheses
+ * (e.g. the arcane hand's summon-level dice count), other `@`-references,
+ * mixed dice denominations, empty — fails loudly.
+ */
+function resolveDamageFormula(
+  formula: string,
+  mod: number,
+  extraBonus: number,
+  what: string,
+): string {
+  const trimmed = formula.trim();
+  if (trimmed === '') throw new Error(`${what} stores an empty custom damage formula`);
+  // Normalize sign spacing so the no-space corpus form ("2d4 + @mod -3")
+  // tokenizes like the spaced form — then require strict term/operator
+  // alternation (anything else is loud, e.g. parentheses).
+  const tokens = trimmed.replace(/([+-])(?=[\d@])/g, '$1 ').split(/\s+/);
+  let diceCount = 0;
+  let die = 0;
+  let flat = extraBonus;
+  let sign = 1;
+  for (const [index, token] of tokens.entries()) {
+    const isOperator = index % 2 === 1;
+    if (isOperator) {
+      if (token === '+') {
+        sign = 1;
+      } else if (token === '-') {
+        sign = -1;
+      } else {
+        throw new Error(`${what} stores an unsupported damage formula "${formula}"`);
+      }
+      continue;
+    }
+    const dice = /^(\d+)d(\d+)$/.exec(token);
+    if (dice !== null) {
+      if (sign === -1) throw new Error(`${what} stores an unsupported damage formula "${formula}"`);
+      const count = Number(dice[1]);
+      const denomination = Number(dice[2]);
+      if (die !== 0 && die !== denomination) {
+        throw new Error(`${what} stores an unsupported damage formula "${formula}"`);
+      }
+      die = denomination;
+      diceCount += count;
+      continue;
+    }
+    let value: number;
+    if (token === '@mod') {
+      value = mod;
+    } else if (/^\d+$/.test(token)) {
+      value = Number(token);
+    } else {
+      throw new Error(`${what} stores an unsupported damage formula "${formula}"`);
+    }
+    flat += sign * value;
+  }
+  const dicePart = diceCount === 0 ? '' : `${String(diceCount)}d${String(die)}`;
+  if (dicePart === '') return `${flat}`;
+  return `${dicePart}${flat === 0 ? '' : formatModifier(flat)}`;
+}
+
 // --- Mapping ---------------------------------------------------------------
 
 function mapFeat(item: ParsedFeat): { name: string; text: string; bucket: 'traits' | 'actions' | 'reactions' } {
@@ -345,42 +623,94 @@ function mapFeat(item: ParsedFeat): { name: string; text: string; bucket: 'trait
   return { name: item.name, text, bucket: passive ? 'traits' : 'actions' };
 }
 
+interface WeaponContext {
+  abilities: Readonly<Record<string, number>>;
+  pb: number;
+  /** `system.attributes.spellcasting.ability` ('' when absent). */
+  spellcastingAbility: string;
+}
+
 function mapWeapon(
   item: ParsedWeapon,
-  abilities: Readonly<Record<string, number>>,
-  pb: number,
+  ctx: WeaponContext,
 ): { name: string; text: string; ranged: boolean } {
+  const { abilities, pb } = ctx;
   const attack = Object.values(item.system.activities).find((activity) => activity.type === 'attack');
   if (attack === undefined) {
     throw new Error(`weapon "${item.name}" has no attack activity`);
   }
   const base = item.system.damage.base;
   const noBaseDamage = `weapon "${item.name}" has no base damage`;
-  if (base === null) throw new Error(noBaseDamage);
-  if (base.number === null || base.denomination === null) throw new Error(noBaseDamage);
 
   const typeValue = item.system.type.value;
   const ranged = attack.attack.type.value === 'ranged' || typeValue.endsWith('R');
   const strMod = abilityModifier(abilities.str ?? 0);
   const dexMod = abilityModifier(abilities.dex ?? 0);
-  let abilityKey = attack.attack.ability;
-  if (abilityKey === '') {
-    if (ranged) abilityKey = 'dex';
-    else if (item.system.properties.includes('fin')) abilityKey = dexMod >= strMod ? 'dex' : 'str';
-    else abilityKey = 'str';
+  // Ability resolution (exact, system-pinned): 'none' has no ability at all,
+  // 'spellcasting' uses the creature's stored spellcasting ability, an explicit
+  // key must exist, and '' falls back to the weapon rules (ranged → DEX,
+  // finesse → better of Str/Dex, else Str — the system's `availableAbilities`
+  // defaulting, with the empty attack type defaulting to melee).
+  let abilityKey: string | null;
+  if (attack.attack.ability === 'none') {
+    abilityKey = null;
+  } else if (attack.attack.ability === 'spellcasting') {
+    if (ctx.spellcastingAbility === '') {
+      throw new Error(`weapon "${item.name}" attacks with "spellcasting" but the creature stores no spellcasting ability`);
+    }
+    abilityKey = ctx.spellcastingAbility;
+  } else if (attack.attack.ability !== '') {
+    abilityKey = attack.attack.ability;
+  } else if (ranged) {
+    abilityKey = 'dex';
+  } else if (item.system.properties.includes('fin')) {
+    abilityKey = dexMod >= strMod ? 'dex' : 'str';
+  } else {
+    abilityKey = 'str';
   }
-  const abilityScore = abilities[abilityKey];
-  if (abilityScore === undefined) {
+  const abilityScore = abilityKey === null ? null : abilities[abilityKey];
+  if (abilityKey !== null && abilityScore === undefined) {
     throw new Error(`weapon "${item.name}" attacks with unknown ability "${abilityKey}"`);
   }
-  const abilityMod = abilityModifier(abilityScore);
-  // `proficient: 0` means explicitly unproficient; monsters inherit
-  // proficiency with their own attacks (`proficient: null`/`1`).
-  const prof = item.system.proficient === 0 ? 0 : pb;
-  const toHit = abilityMod + prof + numericBonus(attack.attack.bonus, 'attack bonus');
+  const abilityMod = abilityScore === null || abilityScore === undefined ? null : abilityModifier(abilityScore);
 
-  const damageBonus = abilityMod + numericBonus(base.bonus, 'damage bonus');
-  const damage = `${String(base.number)}d${String(base.denomination)}${damageBonus === 0 ? '' : formatModifier(damageBonus)}`;
+  // To-hit = the roll parts the system assembles: `mod + prof + bonus`, with
+  // `mod` dropped for `none`, `prof` dropped for the CR-less summons (stored
+  // proficiency is null), and flat attacks storing the complete bonus as-is.
+  let toHit: number;
+  if (attack.attack.flat) {
+    toHit = numericBonus(attack.attack.bonus, 'attack bonus');
+  } else {
+    const prof = item.system.proficient === 0 ? 0 : pb;
+    toHit = (abilityMod ?? 0) + prof + resolveAttackBonus(attack.attack.bonus, abilities);
+  }
+
+  // Damage: normal base dice add the ability modifier — except for flat and
+  // `none` attacks, whose printed blocks carry no ability damage bonus. A
+  // custom base formula resolves exactly (its `@mod` already carries the
+  // ability term); no dice and no custom formula is a damage-less attack
+  // (roper Tendril, guardian naga Spit Poison), rendered without damage.
+  let damage: string;
+  const baseBonus = numericBonus(base?.bonus ?? 0, 'damage bonus');
+  if (base === null) {
+    damage = '';
+  } else if (base.number !== null && base.denomination !== null) {
+    const damageBonus = (attack.attack.flat || abilityMod === null ? 0 : abilityMod) + baseBonus;
+    damage = `${String(base.number)}d${String(base.denomination)}${damageBonus === 0 ? '' : formatModifier(damageBonus)}`;
+  } else if (base.custom?.enabled === true) {
+    damage = resolveDamageFormula(
+      base.custom.formula,
+      abilityMod ?? 0,
+      baseBonus,
+      `weapon "${item.name}"`,
+    );
+  } else if (baseBonus !== 0 || base.types.length > 0) {
+    // Dice-less but carrying damage data we cannot represent exactly.
+    throw new Error(noBaseDamage);
+  } else {
+    damage = '';
+  }
+
   const properties = item.system.properties
     .map((property) => PROPERTY_LABELS[property])
     .filter((label) => label !== undefined);
@@ -389,7 +719,7 @@ function mapWeapon(
     const long = item.system.range.long === null ? '' : `/${String(item.system.range.long)}`;
     notes.push(`range ${String(item.system.range.value)}${long} ft.`);
   }
-  const parts = [damage, base.types.join(' ')];
+  const parts = [damage, base?.types.join(' ') ?? ''];
   if (notes.length > 0) parts.push(`(${notes.join(', ')})`);
   return {
     name: `${item.name} ${formatModifier(toHit)}`,
@@ -407,15 +737,8 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     throw new Error(`unknown size "${system.traits.size}"`);
   }
   const { level, sort: cr } = levelFromCr(details.cr);
-  const pb = proficiencyBonus(cr);
-
-  const ac = system.attributes.ac.flat;
-  if (ac === null || ac === undefined) {
-    throw new Error(
-      `no flat Armor Class stored (ac.calc "${system.attributes.ac.calc}") — ` +
-        'the adapter maps only exact, stored AC values',
-    );
-  }
+  // The CR-less "—" summons (system prints "—", stores prof: null).
+  const pb = cr === null ? 0 : proficiencyBonus(cr);
 
   const abilities: Record<string, number> = {};
   const saveProficiencies: Record<string, number> = {};
@@ -430,6 +753,26 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     if (score === undefined) throw new Error(`unknown ability "${key}"`);
     return abilityModifier(score);
   };
+
+  // AC: an exactly stored flat value, or — for `calc: 'default'` armor
+  // wearers — the dnd5e system's published formula over the equipped gear
+  // (exact for every corpus document; any other shape fails loudly).
+  let ac: number;
+  let acNote = '';
+  if (system.attributes.ac.calc === 'default') {
+    const derived = deriveAcFromGear(doc.items, abilities);
+    ac = derived.ac;
+    acNote = derived.acNote;
+  } else {
+    const flat = system.attributes.ac.flat;
+    if (flat === null || flat === undefined) {
+      throw new Error(
+        `no flat Armor Class stored (ac.calc "${system.attributes.ac.calc}") — ` +
+          'the adapter maps only exact, stored AC values',
+      );
+    }
+    ac = flat;
+  }
 
   const saves = ABILITY_ORDER
     .filter((key) => (saveProficiencies[key] ?? 0) > 0)
@@ -456,8 +799,8 @@ function mapNpc(doc: ParsedNpc): PackEntry {
       ? abilityMod('wis')
       : abilityMod(perceptionSkill.ability) + perceptionSkill.value * pb);
 
-  if (system.attributes.senses.units !== 'ft') {
-    throw new Error(`unsupported sense units "${system.attributes.senses.units}"`);
+  if (unitsValue(system.attributes.senses.units) !== 'ft') {
+    throw new Error(`unsupported sense units "${String(system.attributes.senses.units)}"`);
   }
   const senses: string[] = (
     [
@@ -468,7 +811,7 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     ] as const
   )
     .map(([key, label]) => {
-      const range = system.attributes.senses[key];
+      const range = feetValue(system.attributes.senses[key], `${key} sense range`);
       return range > 0 ? `${label} ${String(range)} ft.` : '';
     })
     .filter((part) => part !== '');
@@ -481,14 +824,15 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     system.traits.languages.custom.trim(),
   ].filter((part) => part !== '');
 
-  if (system.attributes.movement.units !== 'ft') {
-    throw new Error(`unsupported movement units "${system.attributes.movement.units}"`);
+  if (unitsValue(system.attributes.movement.units) !== 'ft') {
+    throw new Error(`unsupported movement units "${String(system.attributes.movement.units)}"`);
   }
   const movement = system.attributes.movement;
+  const walk = feetValue(movement.walk, 'walk speed');
   const speeds: string[] = [];
-  if (movement.walk > 0) speeds.push(`${String(movement.walk)} feet`);
+  if (walk > 0) speeds.push(`${String(walk)} feet`);
   for (const [key, label] of [['burrow', 'burrow'], ['climb', 'climb'], ['fly', 'fly'], ['swim', 'swim']] as const) {
-    const value = movement[key];
+    const value = feetValue(movement[key], `${key} speed`);
     if (value > 0) speeds.push(`${label} ${String(value)} feet${key === 'fly' && movement.hover ? ' (hover)' : ''}`);
   }
 
@@ -510,7 +854,13 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     }
     const weapon = weaponItemSchema.safeParse(item);
     if (weapon.success) {
-      attacks.push(mapWeapon(weapon.data, abilities, pb));
+      attacks.push(
+        mapWeapon(weapon.data, {
+          abilities,
+          pb,
+          spellcastingAbility: system.attributes.spellcasting,
+        }),
+      );
       continue;
     }
     // Equipment, spells and other non-stat-block items are not represented
@@ -545,7 +895,7 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     size: sizeLabel,
     creatureType,
     ac,
-    acNote: '',
+    acNote,
     hp: system.attributes.hp.max,
     hpFormula,
     speed: speeds.join(', '),
@@ -577,7 +927,7 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   if (skills.length > 0) lines.push(`Skills ${skills.join(', ')}`);
   if (saves.length > 0) lines.push(`Saves ${saves.join(', ')}`);
   lines.push(
-    `AC ${String(ac)}; HP ${String(system.attributes.hp.max)}${hpFormula === '' ? '' : ` (${hpFormula})`}`,
+    `AC ${String(ac)}${acNote === '' ? '' : ` (${acNote})`}; HP ${String(system.attributes.hp.max)}${hpFormula === '' ? '' : ` (${hpFormula})`}`,
   );
   if (speeds.length > 0) lines.push(`Speed ${speeds.join(', ')}`);
   lines.push(
@@ -592,7 +942,9 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     if (label !== '') lines.push(`${key}: ${label}`);
   }
   for (const attack of attacks) {
-    lines.push(`${attack.ranged ? 'Ranged' : 'Melee'} ${attack.name}, ${attack.text}`);
+    // Damage-less attacks (roper Tendril) render without a trailing comma.
+    const label = attack.ranged ? 'Ranged' : 'Melee';
+    lines.push(attack.text === '' ? `${label} ${attack.name}` : `${label} ${attack.name}, ${attack.text}`);
   }
   for (const trait of passiveTraits) {
     lines.push(trait.text === '' ? trait.name : `${trait.name} ${trait.text}`);

@@ -1,0 +1,80 @@
+# Real dnd5e `_source` creature document, trimmed for the adapter fixtures:
+# copied from `packs/_source/monsters/summons/arcane-eye.yml` on foundryvtt/dnd5e
+# branch 6.0.x — every consumed field verbatim; unconsumed presentation
+# subtrees (prototypeToken, item _stats, activity targeting) removed.
+_id: tuHyePQ9GazMTyc0
+name: Arcane Eye
+type: npc
+system:
+  abilities:
+    str:
+      value: 0
+      proficient: 0
+    dex:
+      value: 0
+      proficient: 0
+    con:
+      value: 0
+      proficient: 0
+    int:
+      value: 0
+      proficient: 0
+    wis:
+      value: 0
+      proficient: 0
+    cha:
+      value: 0
+      proficient: 0
+  attributes:
+    ac:
+      flat: 0
+      calc: flat
+    hp:
+      value: 0
+      max: 0
+      temp: 0
+      tempmax: 0
+      formula: ''
+    movement:
+      burrow: null
+      climb: null
+      fly: 30
+      swim: null
+      walk: null
+      units: null
+      hover: true
+    senses:
+      darkvision: null
+      blindsight: null
+      tremorsense: null
+      truesight: null
+      units: null
+      special: ''
+    spellcasting: int
+  details:
+    alignment: ''
+    type: {}
+    environment: ''
+    cr: 0
+  traits:
+    size: med
+    languages:
+      value: []
+      custom: ''
+    di:
+      bypasses: []
+      value: []
+      custom: ''
+    dr:
+      bypasses: []
+      value: []
+      custom: ''
+    dv:
+      bypasses: []
+      value: []
+      custom: ''
+    ci:
+      value: []
+      custom: ''
+  skills: {}
+items: []
