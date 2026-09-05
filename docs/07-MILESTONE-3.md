@@ -86,14 +86,22 @@ async function generateImages(
 
 ### Illustrator persona (slug `illustrator`)
 
+> **Owner amendment (2026-09-05, c3c021f):** prompt-draft no longer runs an
+> LLM call (no chat, no repair retry) — the prompt is assembled
+> deterministically from the artifact's own data. Owner, verbatim: "i thought
+> we ripped that out… I dont want that extra LLM call. Just use the
+> appearance/body."
+
 Not a normal artifact-producing persona — it decorates an **existing**
 artifact. Run steps:
 
-1. **prompt-draft** (LLM, text): given the artifact (name, summary, kind,
-   appearance/description fields, campaign tone), produce
-   `{ prompt: string, negative: string, styleNotes: string }` (zod-validated).
-   This is the checkpoint that matters: in `manual`/`review` the user edits the
-   *prompt*, which is far more effective than rerolling images.
+1. **prompt-draft** (deterministic, no LLM): assembled from the artifact's own
+   data (name, kind, appearance/summary/body — the contract lives in
+   `buildImagePrompt`, see 04 §Image personas). The step output keeps the
+   `{ prompt, negative, styleNotes }` shape so run history and the editable
+   checkpoint are unchanged. This is the checkpoint that matters: in
+   `manual`/`review` the user edits the *prompt*, which is far more effective
+   than rerolling images.
 2. **generate**: produce **2 candidates** in a single `/images` call
    (`n: 2`), store both as StoredImage.
 3. **pick** (always `awaiting_user`, all autonomy levels): user picks 0–2 to

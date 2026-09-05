@@ -205,12 +205,25 @@ Resolution to displayable stat blocks happens in
 
 ### Image personas (M3-A Illustrator)
 
+> **Owner amendment (2026-09-05, c3c021f):** the prompt-draft step no longer
+> makes an LLM call — the chat draft and its one-repair retry are gone; the
+> prompt is assembled deterministically from the artifact's own data. Owner,
+> verbatim: "i thought we ripped that out… I dont want that extra LLM call.
+> Just use the appearance/body."
+
 Steps: `prompt-draft` → `generate` → `pick` (no retrieve — image prompts don't
 use rule excerpts).
 
-1. **prompt-draft** — LLM call (chat, `responseFormat:'json'`) producing
-   `{ prompt, negative, styleNotes }` (zod `imagePromptDraftSchema`, same
-   one-retry policy as drafts). Pauses like a reviewable step: `manual`/`review`
+1. **prompt-draft** — no LLM call: `buildImagePrompt`
+   (`src/llm/imagePromptDraft.ts`) assembles `{ prompt, negative, styleNotes }`
+   deterministically from the artifact's own data. A non-empty `appearance` is
+   used verbatim behind the system label (`"Pathfinder 2e=>…"`, a run
+   extra-instruction rides on a second line); otherwise the prompt grounds on
+   name + kind, `summary`, and the markdown-stripped `body`
+   ("A \<system\> illustration of \<name\> (\<kind\>)."), with empty
+   `negative`/`styleNotes`. Nothing to ground on (no appearance, summary AND
+   body) is a loud error — never a placeholder prompt (AGENTS rule 1). Pauses
+   like a reviewable step: `manual`/`review`
    pause at `awaiting_user`; `auto` continues. The UI presents the three fields
    as editable inputs; continuing stores them as `userEdit: { parsed: … }`
    (the edit wins over the raw output).

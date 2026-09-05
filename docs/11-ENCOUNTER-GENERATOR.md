@@ -79,13 +79,15 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   monsters section). It enumerates the encounter's rulebook entries whose
   mob artifact lacks `coverImageId`; for each, generates n=1 portrait and
   attaches it as cover — the entity-image-queue mechanics (pump / intake /
-  `draftImagePrompt` / attach-cover) keyed by **artifactId** (the queue's
-  wiki-link-name resolution does not fit mob artifacts;
+  deterministic prompt draft / attach-cover) keyed by **artifactId** (the
+  queue's wiki-link-name resolution does not fit mob artifacts;
   `src/features/campaign/mob-portrait-queue.ts`). **Prompt grounding: the
-  chunk's `text`** feeds `draftImagePrompt` — fresh mob artifacts have
+  chunk's `text`** feeds `buildImagePrompt` — fresh mob artifacts have
   empty appearance/body, so the creature's stat-block text is the only
-  source. Failures report loud per mob (`{name, message}` style,
-  `entity-batch.ts` pattern); skip-if-imaged guard (existing queue
+  source. **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
+  deterministic — no LLM call ("I dont want that extra LLM call. Just use
+  the appearance/body."). Failures report loud per mob (`{name, message}`
+  style, `entity-batch.ts` pattern); skip-if-imaged guard (existing queue
   behavior) — no re-generation of mobs that have covers.
 
 ## Pipeline (run-engine steps)

@@ -265,13 +265,15 @@ swaps the row stars for a checkbox per entry —
   (there is no artifact to attach an image to).
 
 Checking an entity enqueues a background generation (`entity-image-queue.ts`,
-one sequential pump): prompt draft via the Illustrator persona's contract
-(`imagePromptDraftSchema`, one JSON-repair retry — mirroring
-`runEngine.runPromptDraft`), then `generateImages` → `intakeImage` →
-`createImage` (source `generated`) → attached to the artifact as the cover
-when it had none. The queue deliberately does NOT go through the persona run
-pipeline: the Illustrator's pick step always pauses for a user decision
-(07 §M3-A), which an unattended queue cannot do. Progress rides the shared
+one sequential pump): deterministic prompt draft from the entity's own data
+(`buildImagePrompt` — appearance shortcut or summary/body grounding,
+mirroring `runEngine.runPromptDraft`; **owner amendment 2026-09-05, c3c021f**:
+the LLM prompt-crafting call + repair retry are gone — "I dont want that
+extra LLM call. Just use the appearance/body."), then `generateImages` →
+`intakeImage` → `createImage` (source `generated`) → attached to the artifact
+as the cover when it had none. The queue deliberately does NOT go through the
+persona run pipeline: the Illustrator's pick step always pauses for a user
+decision (07 §M3-A), which an unattended queue cannot do. Progress rides the shared
 dock (`module-entity-images-<moduleId>`, done/total + per-entity detail);
 the reader stays fully usable. Failures are loud toasts and never stop the
 queue; entities that already gained an image meanwhile are skipped silently.
