@@ -323,6 +323,81 @@ encounter. Image calls ride the existing 5-minute headers timeout. Progress
 docks on the shared `useProgressStore` job for batch, on run steps for
 interactive runs.
 
+## Entrance/exit spawn zones (2026-09-05; 4b6db55, 97f8252, aea57a5)
+
+A generated layout carries **one entrance zone** on the spawn room: the gap
+in the outer wall the party enters through. The zone exists in four layers,
+all anchored to the layout (D7):
+
+- **Geometry** (`LayoutRoom.entrance` — C1, `4b6db55`): the entrance cell +
+  outward side, placed deterministically — the outer-wall cell farthest from
+  the room's own corridor doors (Manhattan min; ties → nearest grid edge →
+  (y, x) → fixed north/west/east/south side order); omitted when no outer
+  wall is reachable. The schema rejects entrance-carrying non-spawn rooms,
+  cells outside the room union, sides that do not face the outer wall, and
+  openings into corridors. `observed {x, y}` (0..1, positions only) is the
+  ONLY pixel-derived field — the sanctioned stagingPoint-style exception to
+  D7, absorbed at pick review.
+- **Marker vocabulary** (schematic + detector, C1/C2): the schematic paints
+  the wall gap, a landing pad, and one solid neon triangle (tip 0.30·cellPx
+  inward, base 0.60·cellPx ⇒ measured blob circularity ≈ 0.73 at stylize
+  scale; room discs ≈ 1.0). The hue is `entranceMarkerConfig(rooms.length)`
+  = the canonical palette entry one past the room count — rooms consume
+  `CANONICAL_ROOM_MARKERS` strictly in order, so the entrance hue can never
+  collide with a room hue. At 10 rooms the palette is exhausted: no marker
+  is drawn or detected and detection is skipped (the layout geometry stays
+  authoritative; placement is unchanged). The triangle never gets a disc or
+  a plaque.
+- **Prompt & detection wiring** (C2, `97f8252`): the stylize prompt declares
+  the entrance gap + triangle and the keep-structure line names the gap;
+  detection pairs triangle-shaped blobs only with the entrance target
+  (`MarkerTarget.shape: 'triangle'`, circularity window [0.45, 0.8],
+  shape-exact tiebreak in the greedy assignment so a disc target can never
+  steal the triangle blob at equal hue distance). ADJUDICATED: entrance-
+  carrying layouts KEEP the packed geometry in every candidate — corridor +
+  room rects are never replaced by marker-derived staging layouts; only
+  `observed` is absorbed. No detected triangle ⇒ no candidate ⇒ finalize
+  uses the packed layout verbatim. Layouts WITHOUT an entrance keep
+  today's marker-staging candidate path unchanged (their own pins).
+- **Verify + seed** (C2/C3): `coarseDriftTolerances` extends the default
+  comparison exclusion (door cells) with the entrance gap and its outward
+  landing cell — the floor-colored opening is expected drift, not a
+  mismatch. Seeding anchors the party at the entrance (see below) and the
+  table surface renders an emerald cell overlay with an inward triangle.
+
+### Seeding extension (C3, `aea57a5`)
+
+`seedBattleFromEncounter` anchors the staging ground at the entrance:
+`stagingBlockRect` — the spawn room's `mobsRect` slid along the entrance
+axis until it hugs the entrance wall while staying inside the room union —
+and stamps `board.entrance` (normalized cell center + side) for the
+BattleSurface overlay. Retrofitted at seed time — **no migration**: old
+battle rows parse with `entrance: null`, and re-seeding any encounter whose
+layout lacks an entrance reproduces the pre-entrance behavior byte-identical
+(mobsRect ground, no stamp).
+
+### D4 exception — spawn-room fog with an entrance (2026-09-05, adjudicated; implemented in `aea57a5`)
+
+> **D4 amendment:** when the encounter layout carries an entrance, seed
+> skips the spawn room's fog veil.
+>
+> Rationale, verbatim from the adjudication: *"the party is standing in the
+> spawn room when the battle opens — the entrance is the way in, so the
+> room they occupy cannot begin veiled."* The GM reveals the remaining
+> rooms as before.
+
+Layouts without an entrance keep D4 exactly: one fog veil per room, exactly
+`mobsRect`, corridors open.
+
+### Exit (non-goal, name reserved)
+
+The party's way OUT is intentionally not modeled in v1 — no exit marker, no
+schema field, no prompt clause. The design is RESERVED, symmetric to the
+entrance: one outer-wall cell per non-spawn room, a neon triangle pointing
+OUT, detected with the same triangle gate, seeded as a `board.exit` overlay.
+The entrance arc (C1 geometry → C2 prompt/detection → C3 seed) is the
+template to follow when this is ratified.
+
 ## Implementation record
 
 Implemented in full on the M6 baseline: deterministic layout and schematic,
