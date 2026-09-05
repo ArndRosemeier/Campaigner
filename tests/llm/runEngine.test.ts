@@ -492,4 +492,101 @@ describe('runEngine', () => {
       }),
     );
   });
+
+  it('creates a module-placed artifact when the run carries placementModuleId', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
+
+    const moduleId = '11111111-1111-4111-8111-111111111111';
+    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const, placementModuleId: moduleId };
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('completed');
+    });
+
+    const run = await getRun(runId);
+    expect(run?.placementModuleId).toBe(moduleId);
+    const resultId = run?.resultArtifactId;
+    if (resultId === null || resultId === undefined) throw new Error('run has no result artifact');
+    const artifact = await getArtifact(resultId);
+    expect(artifact?.moduleId).toBe(moduleId);
+  }, 20000);
+
+  it('a targeted in-place run with placement set fails loudly (placement is fresh-create only)', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+
+    const target = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Ambush at the ford',
+      summary: '',
+      body: '',
+      data: {
+        difficulty: 'medium',
+        levelHint: '3',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+      },
+    });
+
+    const input = {
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      targetArtifactId: target.id,
+      placementModuleId: '11111111-1111-4111-8111-111111111111',
+    };
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+    });
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('Module placement applies only to a newly created artifact');
+  }, 20000);
+
+  it('resumeRun without explicit input rebuilds placement and extras from the run row', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({ text: 'this is not a statblock', modelUsed: 'test-model', fallback: null });
+
+    const moduleId = '22222222-2222-4222-8222-222222222222';
+    const input = {
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      placementModuleId: moduleId,
+      extras: { image: false, statBlock: false, mobPortraits: false, battlemap: false },
+    };
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+    });
+    expect((await getRun(runId))?.placementModuleId).toBe(moduleId);
+
+    chatMock.mockReset();
+    chatMock.mockResolvedValue({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
+
+    await runEngine.resumeRun(runId);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('completed');
+    });
+    const resumed = await getRun(runId);
+    const resumedId = resumed?.resultArtifactId;
+    if (resumedId === null || resumedId === undefined) throw new Error('resumed run has no result artifact');
+    const artifact = await getArtifact(resumedId);
+    expect(artifact?.moduleId).toBe(moduleId);
+  }, 20000);
 });

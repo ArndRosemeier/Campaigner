@@ -10,6 +10,7 @@ import type {
   Persona,
   PersonaRun,
   ReasoningEffort,
+  RunExtras,
   RunStep,
   Settings,
   StatBlock,
@@ -302,6 +303,15 @@ export interface StartRunInput {
   targetArtifactId?: Id;
   /** Encounter generator aspect; persisted on the run for pauses/retries. */
   encounterMapAspect?: EncounterMapAspect;
+  /**
+   * Module placement for the NEWLY created artifact (creation-dialog
+   * choice, one-off per run; null/omitted = campaign level). Applied only
+   * on fresh creates — an in-place fill with placement set is a loud error
+   * (an existing artifact's scope changes only via explicit scope moves).
+   */
+  placementModuleId?: Id;
+  /** Ticked creation-dialog extras; persisted on the run for pause/resume. */
+  extras?: RunExtras;
   /** Module post-pass: one candidate, no user checkpoints. */
   unattended?: boolean;
 }
@@ -762,6 +772,8 @@ export class RunEngine {
         input.persona.mode === 'encounter'
           ? (input.encounterMapAspect ?? (await getSettings()).encounterMapAspect)
           : null,
+      placementModuleId: input.placementModuleId ?? null,
+      runExtras: input.extras ?? null,
     });
     this.draftRetried.delete(run.id);
     this.statblockRetried.delete(run.id);
@@ -912,6 +924,8 @@ export class RunEngine {
         pinnedChunkIds: run.pinnedChunkIds,
         ...(run.targetArtifactId !== null ? { targetArtifactId: run.targetArtifactId } : {}),
         ...(run.encounterMapAspect !== null ? { encounterMapAspect: run.encounterMapAspect } : {}),
+        ...(run.placementModuleId !== null ? { placementModuleId: run.placementModuleId } : {}),
+        ...(run.runExtras !== null ? { extras: run.runExtras } : {}),
       };
     }
 
@@ -2560,6 +2574,11 @@ export class RunEngine {
     if (input.targetArtifactId !== undefined && target === undefined) {
       throw new Error('The encounter to regenerate no longer exists');
     }
+    if (target !== undefined && input.placementModuleId !== undefined) {
+      throw new Error(
+        'Module placement applies only to a newly created artifact — clear the module choice or drop the target',
+      );
+    }
     let artifactId: Id;
     if (target !== undefined) {
       if (target.kind !== 'encounter') throw new Error('Encounter regeneration target changed kind');
@@ -2609,6 +2628,8 @@ export class RunEngine {
       }
       const artifact = await createArtifact({
         campaignId: input.campaign.id,
+        // Creation-dialog placement (one-off), same as generate finalize.
+        ...(input.placementModuleId === undefined ? {} : { moduleId: input.placementModuleId }),
         kind: 'encounter',
         name: parsed.name,
         summary: parsed.summary,
@@ -2948,6 +2969,11 @@ export class RunEngine {
     // encounter run (module stubs): the content is written INTO the existing
     // artifact, preserving its identity, links, images and battlemap.
     if (input.targetArtifactId !== undefined) {
+      if (input.placementModuleId !== undefined) {
+        throw new Error(
+          'Module placement applies only to a newly created artifact — clear the module choice or drop the target',
+        );
+      }
       if (kind !== 'encounter') {
         throw new Error(
           `In-place generation targets encounters only — a "${kind}" run cannot fill an existing artifact`,
@@ -2989,6 +3015,11 @@ export class RunEngine {
     const artifact = await createArtifact(
       {
         campaignId: input.campaign.id,
+        // Creation-dialog placement (one-off): module-owned when chosen,
+        // campaign level otherwise. The module tag that the stub path stamps
+        // via stampModuleOwnership is deliberately not applied here — wiki
+        // links resolve by moduleId, not by tag (owner-ratified risk note).
+        ...(input.placementModuleId === undefined ? {} : { moduleId: input.placementModuleId }),
         kind,
         name: draftName,
         tags: Array.isArray(draft.suggestedTags) ? (draft.suggestedTags as string[]) : [],
