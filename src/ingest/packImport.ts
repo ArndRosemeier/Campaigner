@@ -2,7 +2,7 @@ import { unzipSync } from 'fflate';
 
 import { stampNewEntity, type Id } from '@/domain/entity';
 import type { GameSystem } from '@/domain/gameSystem';
-import type { PackMeta, Rulebook } from '@/domain/rulebook';
+import type { PackMeta, PackProvenance, Rulebook } from '@/domain/rulebook';
 import { ruleChunkSchema, type RuleChunk } from '@/domain/rulebook';
 import type { StatBlock } from '@/domain/statblock';
 import { statBlockSchema } from '@/domain/statblock';
@@ -24,8 +24,11 @@ import type { PackAdapter, PackEntry, PackEntryFailure, PackInputFile } from './
  * "ready" book is forbidden.
  *
  * The Dexie deps are injectable so tests run the whole flow in memory; the
- * UI integration point is `importPack(adapterId, await Promise.all(files.map
- * (fileToPackInput)))` from the /rules import dialog.
+ * UI integration points are `importPack(adapterId, await Promise.all(files.map
+ * (fileToPackInput)))` from the /rules import dialog and, for fetched packs,
+ * `fetchAndImportPack(...)` in `./packFetch.ts` (16-BESTIARY-FETCH), which
+ * hands downloaded bytes in as `PackInputFile`s and passes its collected
+ * download failures + provenance through `options` — no pipeline fork.
  */
 
 export interface PackImportProgress {
@@ -54,6 +57,14 @@ export interface PackImportOptions {
   title?: string | undefined;
   onProgress?: ((progress: PackImportProgress) => void) | undefined;
   deps?: PackImportDeps | undefined;
+  /**
+   * Failures collected BEFORE parsing (16-BESTIARY-FETCH §8: failed pack
+   * downloads). Folded into the report and `packMeta.entriesFailed` so a
+   * fetched book's failure count covers the whole fetch→import action.
+   */
+  extraFailures?: readonly PackEntryFailure[] | undefined;
+  /** Fetch provenance stamped on `packMeta` (absent for manual imports). */
+  provenance?: PackProvenance | undefined;
 }
 
 export const dexiePackImportDeps: PackImportDeps = {
@@ -144,7 +155,7 @@ export async function importPack(
   const deps = options.deps ?? dexiePackImportDeps;
 
   const entries: PackEntry[] = [];
-  const failures: PackEntryFailure[] = [];
+  const failures: PackEntryFailure[] = [...(options.extraFailures ?? [])];
   let skipped = 0;
   for (const expanded of expandFiles(inputs, adapter)) {
     if (expanded.kind === 'unsupported-input') {
@@ -202,12 +213,17 @@ export async function importPack(
     entriesImported: entries.length,
     entriesSkipped: skipped,
     entriesFailed: failures.length,
+    ...options.provenance,
   };
 
   if (entries.length === 0) {
+    const fetchedCount =
+      inputs.length + (options.extraFailures?.length ?? 0);
     const message =
       `no valid creature entries in the pack selection ` +
-      `(${String(skipped)} skipped, ${String(failures.length)} failed)`;
+      `(${String(skipped)} skipped, ${String(failures.length)} failed` +
+      (options.extraFailures === undefined ? '' : ` of ${String(fetchedCount)} fetched files`) +
+      `)`;
     await deps.failBook(book.id, message);
     throw new Error(`${message} — book "${title}" marked as error`);
   }

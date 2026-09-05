@@ -130,7 +130,7 @@ describe('app backup', () => {
     await expect(importBackup(zipSync(stripped))).rejects.toThrow(/missing the binary/);
   });
 
-  it('round-trips a pack rulebook with origin and packMeta unchanged', async () => {
+  it('round-trips a pack rulebook with origin, packMeta and fetch provenance unchanged', async () => {
     const book = await createPackBook({ title: 'PF2e Bestiary', system: 'pathfinder2e', filename: 'bestiary.zip' });
     await finalizePackBook(book.id, {
       sourceId: 'foundry-pf2e',
@@ -138,6 +138,10 @@ describe('app backup', () => {
       entriesImported: 7,
       entriesSkipped: 1,
       entriesFailed: 0,
+      // 16-BESTIARY-FETCH §7: fetched books carry provenance.
+      sourceRef: 'v14-dev',
+      sourceUrl: 'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
+      fetchedAt: 1757100000000,
     });
 
     const { bytes } = await buildBackup();
@@ -153,7 +157,36 @@ describe('app backup', () => {
       entriesImported: 7,
       entriesSkipped: 1,
       entriesFailed: 0,
+      sourceRef: 'v14-dev',
+      sourceUrl: 'https://github.com/foundryvtt/pf2e/tree/v14-dev/packs/pf2e/npc-gallery',
+      fetchedAt: 1757100000000,
     });
+  });
+
+  it('still restores pre-provenance pack rows (additive packMeta fields, no migration)', async () => {
+    const book = await createPackBook({ title: 'Old Pack', system: 'dnd5e', filename: 'srd.zip' });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-dnd5e-srd',
+      license: 'SRD 5.2, CC-BY-4.0',
+      entriesImported: 3,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+
+    const { bytes } = await buildBackup();
+    await clearDatabase();
+    await importBackup(bytes);
+
+    const restored = await db.rulebooks.get(book.id);
+    expect(restored?.packMeta).toEqual({
+      sourceId: 'foundry-dnd5e-srd',
+      license: 'SRD 5.2, CC-BY-4.0',
+      entriesImported: 3,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    expect(restored?.packMeta?.sourceRef).toBeUndefined();
+    expect(restored?.packMeta?.fetchedAt).toBeUndefined();
   });
 
   it('names the file after the export date', () => {

@@ -27,9 +27,20 @@ export const packMetaSchema = z.object({
   entriesSkipped: z.number().int().nonnegative(),
   /** Entries that failed creature mapping/validation (reported, never silent). */
   entriesFailed: z.number().int().nonnegative(),
+  // Provenance of a FETCHED pack (16-BESTIARY-FETCH §7) — absent for manual
+  // file imports; all optional, so old backups parse unchanged (no migration).
+  /** Pinned source ref the pack was fetched from, e.g. 'v14-dev' | '6.0.x'. */
+  sourceRef: z.string().min(1).optional(),
+  /** Human-browsable upstream URL of the fetched pack. */
+  sourceUrl: z.string().min(1).optional(),
+  /** When the pack was downloaded (epoch ms). */
+  fetchedAt: z.number().int().positive().optional(),
 });
 
 export type PackMeta = z.infer<typeof packMetaSchema>;
+
+/** The fetch-provenance subset, stamped by `packFetch` on fetched books. */
+export type PackProvenance = Pick<PackMeta, 'sourceRef' | 'sourceUrl' | 'fetchedAt'>;
 
 export const rulebookSchema = z.object({
   ...BaseEntitySchema.shape,
