@@ -147,7 +147,9 @@ mobs**, through four remaining holes:
 - `buildPackRoster` appends ` — <bookTitle>` to a roster line only when that
   creature name occurs in **more than one** ready pack book (distinct
   `bookId`s per case-insensitive name). The name→chunkId map keeps bare-name
-  keys; ordering (levelSort, then name) is unaffected.
+  keys; the suffix never affects ordering (levelSort, then name — the prompt
+  window's target-level ordering is doc 12 §7's ratified amendment, and the
+  suffix composes with either order).
 
 ### No-pack affordance (decision 6)
 
@@ -180,8 +182,11 @@ mobs**, through four remaining holes:
 - A roster build that fails once succeeds on the automatic retry (2 attempts
   total); a persistent failure fails the run with the named roster error.
 - Roster lines for a name present in two pack books carry the
-  ` — <bookTitle>` suffix; unique names and the level/name ordering are
-  unchanged; `sourceName` resolution still matches the bare name.
+  ` — <bookTitle>` suffix; the suffix never reorders lines and unique names
+  stay bare; `sourceName` resolution still matches the bare name. (Line
+  ordering within the prompt window itself is doc 12 §7's ratified
+  target-level amendment: distance to the target when one exists, otherwise
+  the level/name ascending order this fix landed with.)
 - The encounter run dialog shows the no-pack notice exactly when no ready
   pack book exists for the campaign system.
 - `PackEntry.levelSort`/`traits` are gone; both adapters compile without

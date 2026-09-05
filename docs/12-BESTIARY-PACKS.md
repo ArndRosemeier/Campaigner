@@ -309,11 +309,43 @@ a compact **roster index** from the pack books:
 - Books: `listRulebooks()` filtered to `origin === 'pack'`,
   `system === campaign.system`, `status === 'ready'`; chunks via
   `listChunksByBooks` (both exist).
-- Line format: `Name (level, trait1, trait2)`, one creature per line, sorted
-  by derived level order (`parseLevelSort` over the persisted statBlock's
-  `level`) then name, **capped at 300 lines** with a trailing
-  `"(roster truncated; N more)"` note. Not persisted — recomputed at run time
-  (deterministic for an unchanged library; noted here as accepted behavior).
+- Line format: `Name (level, trait1, trait2)`, one creature per line,
+  **capped at 300 lines** with a trailing `"(roster truncated; N more)"` note.
+  Not persisted — recomputed at run time (deterministic for an unchanged
+  library; noted here as accepted behavior).
+- **Prompt-window order — ratified design (owner amendment).** WHICH creatures
+  fill the 300-line window is ordered by **level distance to the encounter's
+  target level**, so a huge bestiary import surfaces creatures that could
+  actually threaten the party instead of the first 300 low-CR entries. This
+  changes the prompt window only; the cap, the line format, the truncation
+  note and resolution are untouched. Binding points, verbatim:
+  1. **Target-level chain**: (a) the encounter's `levelHint`
+     (`src/domain/artifact.ts`, a free string like "5" or "4–6") — parse the
+     leading integer deterministically; (b) else, when the run is
+     module-scoped, the module's `levelMin`/`levelMax` band midpoint
+     (`src/domain/module.ts`); (c) else **no target** → current behavior
+     (level/name ascending) unchanged.
+  2. **Ordering when a target exists**: `|levelSort − target|` ascending; ties
+     by `levelSort` ascending, then name (locale-compare) — fully
+     deterministic. The "—" CR creatures (`parseLevelSort` → `+Infinity`) sort
+     last, exactly as today.
+  3. **Scope — prompt window only**: `ROSTER_LIMIT = 300` cap unchanged;
+     `formatRosterSection` output format unchanged (same header line +
+     `(roster truncated; N more)` note); `rosterNameIndex` stays built over
+     ALL entries (resolution works for creatures outside the visible window);
+     the encounter dialog's user-facing roster display order is NOT touched.
+  4. **Unparseable/missing `levelHint`** (no leading digits) → falls to (b)/(c)
+     — this is a graceful preference chain, not a failure; it is NOT a silent
+     fallback of erroneous data — `levelHint` is a user preference string, and
+     "no parseable target" is a legitimate state.
+
+  Implementation: the target is resolved at the run-engine boundary
+  (`rosterTargetLevelFor`: the run's target artifact — `levelHint` first, then
+  the artifact's owning module's band midpoint; a module-scoped target whose
+  module row is gone is corrupt data and fails the run loudly) and threaded
+  into `buildPackRoster` via `collectPackRosterWithRetry`; `parseRosterTargetLevel`
+  takes the FIRST digit run of the hint ("4–6" → 4, "CR 5" → 5). Without a
+  target the window is byte-identical to the pre-amendment ascending order.
 - Draft contract (`/src/llm/schemas.ts`): per-monster optional
   `sourceName: z.string().optional()` alongside `sourceChunkIndex` (both the
   encounter draft schema and the roster-regeneration variant).
@@ -406,6 +438,14 @@ document.
   name fails draft validation loudly (repair once, then
   `needs_review`/`failed` per autonomy). The CR-less `"—"` creatures sort
   after every leveled creature in the roster (`parseLevelSort`).
+- **Prompt-window ordering (ratified amendment):** with a 305-creature pack
+  and a target level, the 300-line prompt window holds the 300 creatures
+  closest to the target (the five farthest drop out, the truncation note
+  still counts them, distance ties order by level then name); an empty or
+  unparseable `levelHint` falls to the owning module's band midpoint, and
+  with neither the window is byte-identical to the level/name ascending
+  order; a creature outside the visible window still resolves through the
+  roster name index.
 - An import where every file fails produces a book with `status: 'error'`,
   an `errorMessage` that **leads with the first failure's issue**, and a
   toast — never an empty ready book.
