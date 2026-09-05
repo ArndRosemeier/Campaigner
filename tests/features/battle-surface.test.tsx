@@ -5,12 +5,12 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
-import { createArtifact } from '@/db/artifactRepo';
+import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { getBattleByModule, saveBattleBoard } from '@/db/battleRepo';
 import type * as battleRepoModule from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createImage } from '@/db/imageRepo';
 import type { StatBlock } from '@/domain';
 import { createModule, newId, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
@@ -453,6 +453,100 @@ describe('veil live drag', () => {
     expect(veil?.x).toBe(0.3);
     expect(veil?.y).toBe(0.3);
     expect(screen.getByTestId('delete-veil')).toBeInTheDocument();
+  });
+});
+
+describe('selection card', () => {
+  async function tapToken(label: string, moduleId: string): Promise<void> {
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === label);
+    if (token === undefined) throw new Error(`${label} missing`);
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === label);
+    if (el === undefined) throw new Error(`${label} element missing`);
+    fireEvent.pointerDown(el, { pointerId: 2, clientX: token.x * BOARD_W, clientY: CONTENT_TOP + token.y * CONTENT_H });
+    fireEvent.pointerUp(el, { pointerId: 2 });
+    await flushAsyncUpdates();
+  }
+
+  it('tap shows the card: portrait art, label, HP meter — and GM mode opens the full statblock card in a dialog', async () => {
+    const { moduleId, npcId } = await seedStandardBattle();
+    // Give the troll's NPC artifact portrait art (same useImageUrl path).
+    const image = await createImage({
+      campaignId,
+      blob: new Blob(['fake-png-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 64,
+      height: 64,
+      prompt: 'troll portrait',
+      model: 'google/gemini-2.5-flash-image',
+      source: 'generated',
+    });
+    await updateArtifact(npcId, { coverImageId: image.id });
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await tapToken('Troll', moduleId);
+    const card = screen.getByTestId('selection-card');
+    expect(within(card).getByText('Troll')).toBeInTheDocument();
+    expect(screen.getByTestId('selection-card-portrait')).toBeInTheDocument();
+    expect(screen.getByTestId('selection-card-hp')).toBeInTheDocument();
+    // GM-only full card: the button mounts the existing NpcCard in a dialog —
+    // statblock text appears there (it must NEVER appear on the board).
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('open-token-card'));
+    const dialogCard = await screen.findByTestId('play-npc-card');
+    expect(dialogCard.textContent).toContain('AC');
+    await flushAsyncUpdates();
+  });
+
+  it('player-safe mode shows the card but never the full-card button or stat text', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await tapToken('Troll', moduleId);
+    // The two-tier card: portrait/label/HP show, the statblock button does not.
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('open-token-card')).toBeNull();
+    expect(screen.queryByTestId('play-npc-card')).toBeNull();
+    expect(screen.queryByTestId('token-controls')).toBeNull();
+    // Player-safe DOM contract holds with the card mounted.
+    const surface = screen.getByTestId('battle-surface');
+    expect(surface.textContent).not.toContain('AC');
+    expect(surface.textContent).not.toContain('Hit Dice');
+    expect(surface.textContent).not.toContain('Regenerates');
+    await flushAsyncUpdates();
+  });
+
+  it('tapping the empty board deselects; panning does not', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await tapToken('Troll', moduleId);
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    // Background tap (letterbox strip below the content div): clears it.
+    const board = screen.getByTestId('battle-board');
+    fireEvent.pointerDown(board, { pointerId: 9, clientX: 40, clientY: 550 });
+    fireEvent.pointerUp(board, { pointerId: 9, clientX: 40, clientY: 550 });
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('selection-card')).toBeNull();
+    expect(screen.queryByTestId('token-controls')).toBeNull();
+    // A pan drag (well past the threshold) keeps the selection.
+    await tapToken('Troll', moduleId);
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    fireEvent.pointerDown(board, { pointerId: 10, clientX: 40, clientY: 550 });
+    fireEvent.pointerMove(board, { pointerId: 10, clientX: 340, clientY: 550 });
+    fireEvent.pointerUp(board, { pointerId: 10, clientX: 340, clientY: 550 });
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
   });
 });
 

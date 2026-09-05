@@ -55,6 +55,8 @@ import {
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
+import { NpcCard } from '../artifact-cards';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useBattleState } from './use-battle';
 import { InitiativeSidebar } from './initiative-sidebar';
 import { Button } from '@/components/ui/button';
@@ -352,14 +354,34 @@ export function BattleSurface(): JSX.Element {
   }
 
   function onBoardPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
+    // Background tap (down→up within the screen-space threshold) clears the
+    // selection — tapping empty board is a deselect, not just a no-op pan.
+    // Pan gestures (≥ threshold) keep it. Token/veil pointerdowns stop
+    // propagation, so panRef is only set from the background.
+    const down = panRef.current;
+    if (
+      down !== null &&
+      down.pointerId === event.pointerId &&
+      Math.hypot(event.clientX - down.startX, event.clientY - down.startY) < DRAG_THRESHOLD_PX
+    ) {
+      setSelectedTokenId(null);
+      setSelectedVeilId(null);
+    }
     pinchRef.current.delete(event.pointerId);
     if (pinchRef.current.size < 2) pinchBaseRef.current = null;
     panRef.current = null;
   }
 
   function startTokenDrag(event: React.PointerEvent<HTMLDivElement>, token: BattleToken): void {
-    if (playerSafe) return;
     event.stopPropagation();
+    if (playerSafe) {
+      // Player-safe tap: selection ONLY — the name+image+HP card (the M5-D
+      // token-tap contract). No capture, no live drag, no commit: moving
+      // pieces stays GM-only.
+      setSelectedTokenId(token.id);
+      setSelectedVeilId(null);
+      return;
+    }
     // Pointer capture is a browser nicety; jsdom (tests) lacks it.
     if (typeof event.currentTarget.setPointerCapture === 'function') {
       event.currentTarget.setPointerCapture(event.pointerId);
@@ -392,8 +414,10 @@ export function BattleSurface(): JSX.Element {
   function finishTokenDrag(): void {
     const drag = liveDrag;
     setLiveDrag(null);
-    endBoardGesture();
     if (drag === null) return;
+    // Paired with the begin in startTokenDrag — a pointerup without a begun
+    // gesture (player-safe tap, stray release) must not end one.
+    endBoardGesture();
     if (drag.movedPx < DRAG_THRESHOLD_PX) {
       // Tap: select (player-safe tap shows name/image/HP only).
       setSelectedTokenId(drag.tokenId);
@@ -444,8 +468,9 @@ export function BattleSurface(): JSX.Element {
   function finishVeilDrag(): void {
     const drag = liveDrag;
     setLiveDrag(null);
-    endBoardGesture();
     if (drag?.tokenId.startsWith('veil:') !== true) return;
+    // Paired with the begin in startVeilDrag (same rule as finishTokenDrag).
+    endBoardGesture();
     const veilId = drag.tokenId.slice('veil:'.length);
     if (drag.movedPx < DRAG_THRESHOLD_PX) return;
     // VEIL/TOKEN PARITY (pinned by test): veils snap on drop exactly like
@@ -859,6 +884,18 @@ export function BattleSurface(): JSX.Element {
               void commit((current) => ({ ...current, initiativeEnabled: false, initiativeOrder: [], activeIndex: 0 }));
             }}
           />
+          {selectedToken !== null && (
+            <SelectionCard
+              token={selectedToken}
+              artifact={
+                selectedToken.artifactId === null
+                  ? undefined
+                  : artifactById.get(selectedToken.artifactId)
+              }
+              stats={stats}
+              playerSafe={playerSafe}
+            />
+          )}
           {selectedToken !== null && !playerSafe && (
             <TokenControls
               token={selectedToken}
@@ -1152,6 +1189,92 @@ function VeilView({
             }}
           />
         ))}
+    </div>
+  );
+}
+
+interface SelectionCardProps {
+  token: BattleToken;
+  artifact: AnyArtifact | undefined;
+  stats: FighterStatsLookup;
+  playerSafe: boolean;
+}
+
+/**
+ * The selected-token card (M5-D token-tap contract): portrait art + label +
+ * HP meter, rendered in BOTH modes — it shows only what the board already
+ * shows (cover art, label, HP), so the player-safe DOM contract holds. The
+ * full artifact card (statblock) is GM-only behind an explicit button and
+ * never mounts in player-safe mode.
+ */
+function SelectionCard({ token, artifact, stats, playerSafe }: SelectionCardProps): JSX.Element {
+  const [cardOpen, setCardOpen] = useState(false);
+  // Same art path as TokenView/the artifact cards: useImageUrl over the
+  // artifact's coverImageId — no new image plumbing.
+  const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
+  const url = useImageUrl(coverImageId);
+  const resolved = combatHpForToken(token, stats);
+  const hpRatio = resolved === null ? null : resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
+  const initials = token.label
+    .split(/\s+/u)
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join('');
+  // Full card: NPC artifacts with a statblock (the shape NpcCard renders).
+  // PC artifacts carry their stats in the roster, not on the table.
+  const npc = artifact?.kind === 'npc' && artifact.data.statBlock !== null ? artifact : null;
+  return (
+    <div className="flex flex-col gap-1.5 rounded-md border border-white/10 bg-zinc-900 p-2" data-testid="selection-card">
+      <div className="flex items-center gap-2">
+        {url !== null ? (
+          <img
+            src={url}
+            alt=""
+            className="size-12 shrink-0 rounded-md object-cover"
+            data-testid="selection-card-portrait"
+            draggable={false}
+          />
+        ) : (
+          <span
+            className="flex size-12 shrink-0 items-center justify-center rounded-md bg-zinc-700 font-bold text-white"
+            data-testid="selection-card-initials"
+          >
+            {initials}
+          </span>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-medium">{token.label}</p>
+          {hpRatio !== null && (
+            <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-zinc-700" data-testid="selection-card-hp">
+              <div
+                aria-hidden
+                className="h-full bg-emerald-500"
+                style={{ width: `${String(Math.min(hpRatio, 1) * 100)}%` }}
+              />
+            </div>
+          )}
+        </div>
+      </div>
+      {!playerSafe && npc !== null && (
+        <Dialog open={cardOpen} onOpenChange={setCardOpen}>
+          <Button
+            size="sm"
+            variant="outline"
+            className="min-h-11"
+            data-testid="open-token-card"
+            onClick={() => {
+              setCardOpen(true);
+            }}
+          >
+            Open card
+          </Button>
+          <DialogContent>
+            <DialogTitle>{npc.name}</DialogTitle>
+            <DialogDescription className="sr-only">Full artifact card (GM only)</DialogDescription>
+            <NpcCard npc={npc} />
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
