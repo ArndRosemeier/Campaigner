@@ -1,8 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { foundryPf2eAdapter } from '@/ingest/packs/pf2e-foundry';
 
 import { actionItem, baseNpc, encodeJson, folderDoc, meleeItem } from './fixtures';
+
+const FIXTURE_DIR = join(import.meta.dirname, '..', '..', 'fixtures', 'packs', 'pf2e');
+
+function fixtureBytes(name: string): Uint8Array {
+  return new Uint8Array(readFileSync(join(FIXTURE_DIR, name)));
+}
 
 describe('foundry-pf2e adapter', () => {
   afterEach(() => {
@@ -19,8 +28,37 @@ describe('foundry-pf2e adapter', () => {
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
-  it('maps a creature document onto an exact StatBlock (modifiers → scores)', async () => {
-    const parsed = await foundryPf2eAdapter.parseFile('charau-ka.json', encodeJson(baseNpc()));
+  it('maps the real v14-dev Wolf document (perception moved to system.perception)', async () => {
+    // Real document, trimmed: foundryvtt/pf2e @ v14-dev,
+    // packs/pf2e/pathfinder-monster-core/wolf.json (all consumed fields
+    // verbatim; presentation subtrees removed). The v14 schema moved
+    // perception from `system.attributes.perception` to top-level
+    // `system.perception` — the old schema path no longer exists on ANY
+    // v14-dev NPC, so this exact document failed before the fix (492/492
+    // corpus failures). Senses values below are the live document's.
+    const parsed = await foundryPf2eAdapter.parseFile('wolf.json', fixtureBytes('wolf.json'));
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.skipped).toBe(0);
+    const entry = parsed.entries[0];
+    expect(entry?.name).toBe('Wolf');
+    const block = entry?.statBlock;
+    expect(block?.level).toBe('1');
+    expect(block?.creatureType).toBe('animal');
+    expect(block?.ac).toBe(15);
+    expect(block?.hp).toBe(24);
+    expect(block?.speed).toBe('35 feet');
+    expect(block?.abilities).toEqual({ str: 14, dex: 18, con: 12, int: 2, wis: 14, cha: 6 });
+    expect(block?.saves).toBe('Fort +6, Ref +9, Will +5');
+    expect(block?.skills).toBe('Acrobatics +7, Athletics +6, Stealth +7, Survival +7');
+    // The pin: perception comes from the moved top-level `system.perception`.
+    expect(block?.senses).toBe('Perception +7; low-light-vision, imprecise scent 30 feet');
+    expect(block?.actions.find((action) => action.name === 'Jaws +9')?.text).toBe(
+      '1d6+2 piercing; (unarmed); knockdown',
+    );
+    expect(entry?.text).toContain('Perception +7; low-light-vision, imprecise scent 30 feet');
+  });
+
+  it('maps a creature document onto an exact StatBlock (modifiers → scores)', async () => {    const parsed = await foundryPf2eAdapter.parseFile('charau-ka.json', encodeJson(baseNpc()));
     expect(parsed.entries).toHaveLength(1);
     expect(parsed.skipped).toBe(0);
     expect(parsed.failures).toHaveLength(0);
@@ -80,6 +118,19 @@ describe('foundry-pf2e adapter', () => {
     expect(text).toContain('Quickened'); // @UUID[…Item.Quickened] resolved
     expect(text).not.toContain('<p>');
     expect(text).not.toContain('@UUID');
+  });
+
+  it('maps a null land speed (fly-only creature) without a base-speed entry', async () => {
+    // Real shape: foundryvtt/pf2e @ v14-dev, packs/pf2e/pathfinder-monster-core/
+    // banshee.json — `attributes.speed.value: null` with a 60-foot fly other
+    // speed. The old schema required a number, so this document failed too.
+    const doc = baseNpc('Banshee');
+    const system = doc.system as Record<string, unknown>;
+    const attributes = system.attributes as Record<string, unknown>;
+    attributes.speed = { otherSpeeds: [{ type: 'fly', value: 60 }], value: null };
+    const parsed = await foundryPf2eAdapter.parseFile('banshee.json', encodeJson(doc));
+    expect(parsed.failures).toEqual([]);
+    expect(parsed.entries[0]?.statBlock.speed).toBe('fly 60 feet');
   });
 
   it('handles rare traits, HP details and non-common rarity via extras', async () => {

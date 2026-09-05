@@ -1,7 +1,10 @@
 /**
  * Fixture builders for the pack import tests: a pf2e creature document in the
  * exact shape of the Foundry VTT PF2e system packs (fields verified against
- * foundryvtt/pf2e at spec time — see docs/12-BESTIARY-PACKS.md §3).
+ * foundryvtt/pf2e `v14-dev` — see docs/12-BESTIARY-PACKS.md §3). Note the
+ * v14-dev perception placement: top-level `system.perception`, NOT
+ * `system.attributes.perception` (moved in the v14 schema; verified against
+ * the live Monster Core corpus).
  */
 
 interface MeleeItem {
@@ -97,12 +100,14 @@ export function baseNpc(name = 'Charau-ka'): Record<string, unknown> {
       attributes: {
         ac: { details: '', value: 18 },
         hp: { details: '', max: 18, temp: 0, value: 18 },
-        perception: {
-          details: '',
-          mod: 6,
-          senses: [{ type: 'darkvision' }, { acuity: 'imprecise', range: 30, type: 'scent' }],
-        },
         speed: { otherSpeeds: [{ type: 'climb', value: 25 }], value: 25 },
+      },
+      // v14-dev: perception lives at the system top level, not under
+      // `attributes` (verified against the live Monster Core corpus).
+      perception: {
+        details: '',
+        mod: 6,
+        senses: [{ type: 'darkvision' }, { acuity: 'imprecise', range: 30, type: 'scent' }],
       },
       details: {
         blurb: '',

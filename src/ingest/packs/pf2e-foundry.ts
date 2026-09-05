@@ -8,16 +8,20 @@ import type { PackAdapter, PackEntry, PackFileParse } from './types';
 /**
  * `foundry-pf2e` pack adapter (12-BESTIARY-PACKS §5): creature entries from
  * the Foundry VTT PF2e system content packs ([foundryvtt/pf2e](https://github
- * .com/foundryvtt/pf2e) `packs/pf2e/**`). The current default branch ships one
- * JSON file per creature (`type: 'npc'`); older releases ship the same
- * documents as NDJSON `.db` files — both are accepted. Folder documents and
- * non-NPC documents are skipped by design and counted, never silently dropped.
+ * .com/foundryvtt/pf2e) `packs/pf2e/**`). The current default branch (`v14-dev`)
+ * ships one JSON file per creature (`type: 'npc'`); older releases ship the
+ * same documents as NDJSON `.db` files — both are accepted. Folder documents
+ * and non-NPC documents are skipped by design and counted, never silently
+ * dropped.
  *
- * Field mapping verified against the repository at spec time; the fixture
- * tests pin the consumed subset. pf2e stores ability *modifiers*; the shared
- * StatBlock expects d20 *scores*, so scores are derived as 10 + 2·mod — the
- * exact inverse of `abilityModifier` — and the raw modifiers are kept in
- * `extras['Ability modifiers']` for fidelity.
+ * Field mapping verified against the live `v14-dev` Monster Core corpus (all
+ * 492 documents, 2026-09-05); the fixture tests pin the consumed subset. One
+ * structural v14-dev change from the older shape: **perception moved from
+ * `system.attributes.perception` to top-level `system.perception`** (the old
+ * path no longer exists on any v14-dev NPC). pf2e stores ability *modifiers*;
+ * the shared StatBlock expects d20 *scores*, so scores are derived as
+ * 10 + 2·mod — the exact inverse of `abilityModifier` — and the raw modifiers
+ * are kept in `extras['Ability modifiers']` for fidelity.
  */
 
 export const FOUNDRY_PF2E_ADAPTER_ID = 'foundry-pf2e';
@@ -81,17 +85,21 @@ const pf2eNpcSchema = z.object({
     attributes: z.object({
       ac: z.object({ value: z.number(), details: z.string().default('') }),
       hp: z.object({ max: z.number(), details: z.string().default('') }),
-      perception: z.object({
-        mod: z.number(),
-        details: z.string().default(''),
-        senses: z.array(senseSchema).default([]),
-      }),
       speed: z.object({
-        value: z.number(),
+        // `null` = no land speed (fly-only creatures, e.g. the Banshee).
+        value: z.number().nullable(),
         otherSpeeds: z
           .array(z.object({ type: z.string(), value: z.number() }))
           .default([]),
       }),
+    }),
+    // v14-dev moved perception out of `attributes` to the system top level
+    // (verified across the whole live Monster Core corpus — the old
+    // `system.attributes.perception` path no longer exists on any NPC).
+    perception: z.object({
+      mod: z.number(),
+      details: z.string().default(''),
+      senses: z.array(senseSchema).default([]),
     }),
     saves: z.record(
       z.string(),
@@ -227,6 +235,7 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   const details = doc.system.details;
   const traitsSection = doc.system.traits;
   const attributes = doc.system.attributes;
+  const perception = doc.system.perception;
 
   const sizeLabel = SIZE_LABELS[traitsSection.size.value];
   if (sizeLabel === undefined) {
@@ -254,13 +263,13 @@ function mapNpc(doc: ParsedNpc): PackEntry {
     ([slug, skill]) => `${skillLabel(slug)} ${formatModifier(skill.base)}`,
   );
 
-  const senses: string[] = [`Perception ${formatModifier(attributes.perception.mod)}`];
-  if (attributes.perception.details.trim() !== '') {
-    senses.push(attributes.perception.details.trim());
+  const senses: string[] = [`Perception ${formatModifier(perception.mod)}`];
+  if (perception.details.trim() !== '') {
+    senses.push(perception.details.trim());
   }
-  if (attributes.perception.senses.length > 0) {
+  if (perception.senses.length > 0) {
     senses.push(
-      attributes.perception.senses
+      perception.senses
         .map((sense) => {
           const acuity = sense.acuity ?? '';
           const range = sense.range === undefined ? '' : ` ${String(sense.range)} feet`;
@@ -273,7 +282,8 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   const languages = (details.languages?.value ?? []).map((language) => titleCase(language));
 
   const speeds = [
-    `${String(attributes.speed.value)} feet`,
+    // A null land speed (fly-only creature) simply has no base-speed entry.
+    ...(attributes.speed.value === null ? [] : [`${String(attributes.speed.value)} feet`]),
     ...attributes.speed.otherSpeeds.map((other) => `${other.type} ${String(other.value)} feet`),
   ];
 
