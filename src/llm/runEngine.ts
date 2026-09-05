@@ -6,6 +6,7 @@ import type {
   EncounterLayout,
   EncounterMapAspect,
   Id,
+  MonsterEntry,
   Persona,
   PersonaRun,
   ReasoningEffort,
@@ -34,6 +35,7 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
+import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { createImage, deleteUnreferencedImages, getImage, reanchorImages } from '@/db/imageRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -2504,6 +2506,42 @@ export class RunEngine {
       }, { source: 'persona', runId });
       artifactId = target.id;
     } else {
+      // Mob artifacts (owner-ratified): a rulebook citation gets ONE
+      // image-able npc artifact per campaign per chunkId — roster name +
+      // the data.monsterChunkId marker, NO stat duplication (the chunk
+      // stays the source of truth). The entry stamps mobArtifactId so
+      // seeding pins shared token identity + the portrait path.
+      const mobArtifacts = new Map<Id, Id>();
+      const monsters: MonsterEntry[] = [];
+      for (const monster of parsed.monsters) {
+        // M-B (§7) resolution precedence: cited excerpt index → cited
+        // roster name → inline stat block → none.
+        const chunkId = resolveEncounterMonsterSource(monster, statblockChunkIds, rosterChunkByName);
+        if (chunkId === undefined) {
+          monsters.push({
+            name: monster.name,
+            count: monster.count,
+            notes: monster.notes,
+            source: monster.statBlock !== undefined
+              ? { type: 'inline' as const, statBlock: monster.statBlock }
+              : { type: 'none' as const },
+          });
+          continue;
+        }
+        const mobArtifactId = await getOrCreateMobArtifact(
+          input.campaign.id,
+          chunkId,
+          monster.name,
+          { source: 'persona', runId },
+          mobArtifacts,
+        );
+        monsters.push({
+          name: monster.name,
+          count: monster.count,
+          notes: monster.notes,
+          source: { type: 'rulebook' as const, chunkId, mobArtifactId },
+        });
+      }
       const artifact = await createArtifact({
         campaignId: input.campaign.id,
         kind: 'encounter',
@@ -2514,21 +2552,7 @@ export class RunEngine {
         data: {
           difficulty: parsed.difficulty,
           levelHint: parsed.levelHint,
-          monsters: parsed.monsters.map((monster) => {
-            // M-B (§7) resolution precedence: cited excerpt index → cited
-            // roster name → inline stat block → none.
-            const chunkId = resolveEncounterMonsterSource(monster, statblockChunkIds, rosterChunkByName);
-            return {
-              name: monster.name,
-              count: monster.count,
-              notes: monster.notes,
-              source: chunkId === undefined
-                ? monster.statBlock !== undefined
-                  ? { type: 'inline' as const, statBlock: monster.statBlock }
-                  : { type: 'none' as const }
-                : { type: 'rulebook' as const, chunkId },
-            };
-          }),
+          monsters,
           terrain: parsed.terrain,
           tactics: parsed.tactics,
           treasure: parsed.treasure,
@@ -2751,6 +2775,9 @@ export class RunEngine {
         }
       ).monsters;
       const materializedNpcs = new Map<string, Id>();
+      // Mob artifacts share the materialize cache pattern, keyed by chunkId
+      // (owner-ratified: one artifact per creature kind per campaign).
+      const mobArtifacts = new Map<Id, Id>();
       const monsters: typeof data.monsters = [];
       for (const [index, monster] of data.monsters.entries()) {
         const cited = draftMonsters?.[index];
@@ -2759,11 +2786,18 @@ export class RunEngine {
             ? undefined
             : resolveEncounterMonsterSource(cited, statblockChunkIds, rosterChunkByName);
         if (chunkId !== undefined) {
+          const mobArtifactId = await getOrCreateMobArtifact(
+            input.campaign.id,
+            chunkId,
+            monster.name,
+            { source: 'persona', runId },
+            mobArtifacts,
+          );
           monsters.push({
             name: monster.name,
             count: monster.count,
             notes: monster.notes,
-            source: { type: 'rulebook', chunkId },
+            source: { type: 'rulebook', chunkId, mobArtifactId },
           });
           continue;
         }

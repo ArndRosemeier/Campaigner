@@ -330,6 +330,17 @@ function rosterLineAt(userContent: string, line: string): number {
   return at;
 }
 
+
+/** Looks up THE mob artifact created for `chunkId` — the get-or-create is
+ *  idempotent, so at most one exists per campaign (the arc's core pin). */
+async function mobArtifactIdOf(campaignId: Id, chunkId: Id): Promise<Id> {
+  const mob = (await listArtifactsByCampaign(campaignId)).find(
+    (row) => row.kind === 'npc' && row.data.monsterChunkId === chunkId,
+  );
+  if (mob === undefined) throw new Error(`no mob artifact for chunk ${chunkId}`);
+  return mob.id;
+}
+
 describe('encounter runs (M3-B)', () => {
   beforeEach(async () => {
     await clearDatabase();
@@ -387,7 +398,7 @@ describe('encounter runs (M3-B)', () => {
     expect(artifact?.kind).toBe('encounter');
     if (artifact?.kind !== 'encounter') return;
     const monsters = artifact.data.monsters;
-    expect(monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+    expect(monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId) });
     // fix-02 (decision 1): the uncited monster's inline block materializes
     // into a REAL NPC artifact linked via npc-ref — never inline, never none.
     expect(monsters[1]?.source.type).toBe('npc-ref');
@@ -403,6 +414,41 @@ describe('encounter runs (M3-B)', () => {
     const resolved = await resolveMonsterEntryWithRepos(monsters[1]);
     expect(resolved.origin).toBe('NPC: Cultist');
     expect(resolved.statBlock?.hp).toBe(9);
+  });
+
+  it('two runs citing the same chunk share ONE mob artifact (idempotent get-or-create per chunkId)', async () => {
+    const { campaign, persona } = await seed();
+    const goblinChunkId = await seedPackBook('Dnd5e Bestiary Pack');
+    searchRulesMock.mockResolvedValue([]);
+    const first = await runSmithAgainst(campaign, persona, { levelHint: '1' }, 'Goblin Boss');
+    const second = await runSmithAgainst(campaign, persona, { levelHint: '2' }, 'Goblin Boss');
+
+    async function rulebookSourceOf(runId: Id) {
+      const stored = await getRun(runId);
+      const artifact = await getArtifact(stored?.resultArtifactId ?? '');
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      const source = artifact.data.monsters[0]?.source;
+      if (source?.type !== 'rulebook') throw new Error('not a rulebook source');
+      return source;
+    }
+    const firstSource = await rulebookSourceOf(first.runId);
+    const secondSource = await rulebookSourceOf(second.runId);
+    expect(firstSource.chunkId).toBe(goblinChunkId);
+    expect(secondSource.mobArtifactId).toBe(firstSource.mobArtifactId);
+
+    // Exactly ONE mob artifact exists for the chunk — roster name + marker,
+    // with NO stat text copied from the chunk (the chunk stays the truth).
+    const mobs = (await listArtifactsByCampaign(campaign.id)).filter(
+      (row) => row.kind === 'npc' && row.data.monsterChunkId === goblinChunkId,
+    );
+    expect(mobs).toHaveLength(1);
+    const mob = mobs[0];
+    if (mob?.kind !== 'npc') throw new Error('not an npc');
+    expect(mob.id).toBe(firstSource.mobArtifactId);
+    expect(mob.name).toBe('Goblin Boss');
+    expect(mob.data.statBlock).toBeNull();
+    expect(mob.body).toBe('');
+    expect(mob.summary).toBe('');
   });
 
   it('a materialized monster seeds fighting tokens backed by the NPC artifact (fix-02)', async () => {
@@ -493,7 +539,7 @@ describe('encounter runs (M3-B)', () => {
     expect(updated.summary).toBe(DRAFT.summary);
     expect(updated.body).toBe(DRAFT.body);
     expect(updated.data.difficulty).toBe('deadly');
-    expect(updated.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+    expect(updated.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId) });
     // fix-02 (decision 1): the IN-PLACE Smith path materializes too.
     expect(updated.data.monsters[1]?.source.type).toBe('npc-ref');
     const npcsAfter = (await listArtifactsByCampaign(campaign.id)).filter(
@@ -548,6 +594,7 @@ describe('encounter runs (M3-B)', () => {
     expect(artifact.data.monsters[0]?.source).toEqual({
       type: 'rulebook',
       chunkId: goblinChunkId,
+      mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId),
     });
   });
 
@@ -898,7 +945,7 @@ describe('encounter runs (M3-B)', () => {
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // …and sourceChunkIndex 0 resolved through finalize to the pinned chunk.
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId) });
   });
 
   it('a pinned null-statBlock chunk stays excerpt-context-only (fix-02 pool exclusion)', async () => {
@@ -1021,8 +1068,8 @@ describe('encounter runs (M3-B)', () => {
     ]);
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
-    expect(artifact.data.monsters[1]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId) });
+    expect(artifact.data.monsters[1]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId) });
   });
 
   describe('roster prompt-window ordering (12-BESTIARY-PACKS §7 ratified chain)', () => {
@@ -1062,7 +1109,7 @@ describe('encounter runs (M3-B)', () => {
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
       const { db } = await import('@/db/db');
       const cited = (await db.chunks.toArray()).find((row) => row.headingPath[0] === 'Creature 001');
-      expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: cited?.id });
+      expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: cited?.id, mobArtifactId: await mobArtifactIdOf(campaign.id, cited?.id ?? '') });
     });
 
     it('parses levelHint variants at the run-engine boundary (first digit run wins)', async () => {

@@ -121,6 +121,14 @@ export const npcDataSchema = z.object({
   appearance: z.string(),
   personality: z.string(),
   statBlock: statBlockSchema.nullable(),
+  /**
+   * Mob-artifact marker (owner-ratified mob-artifact arc): set ⇔ this npc
+   * artifact is the ONE image-able artifact for a bestiary creature cited by
+   * `chunkId` in this campaign (keyed by chunkId, never by name). Stats are
+   * NOT duplicated here — the chunk stays the source of truth. Additive +
+   * optional: old rows (and real NPCs) simply leave it unset.
+   */
+  monsterChunkId: z.uuid().optional(),
 });
 
 export type NpcArtifactData = z.infer<typeof npcDataSchema>;
@@ -160,7 +168,18 @@ export type NoteArtifactData = z.infer<typeof noteDataSchema>;
 export const monsterSourceSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('npc-ref'), artifactId: z.uuid() }),
   z.object({ type: z.literal('inline'), statBlock: statBlockSchema }),
-  z.object({ type: z.literal('rulebook'), chunkId: z.uuid() }),
+  z.object({
+    type: z.literal('rulebook'),
+    chunkId: z.uuid(),
+    /**
+     * Mob artifact identity (owner-ratified mob-artifact arc): the ONE
+     * campaign-scoped npc artifact standing in for this creature kind
+     * (`data.monsterChunkId === chunkId`), stamped by finalize — or lazily
+     * at seed time for encounters written before the marker existed.
+     * Additive + optional: old rows parse unchanged and retro-fill at seed.
+     */
+    mobArtifactId: z.uuid().optional(),
+  }),
   z.object({ type: z.literal('none') }),
 ]);
 

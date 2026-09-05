@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { getImage } from '@/db/imageRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -13,7 +13,7 @@ import { saveSettings } from '@/db/settingsRepo';
 import { coarseStructure } from '@/llm/encounterVision';
 import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
-import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Persona } from '@/domain';
+import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Id, type Persona } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
@@ -187,6 +187,17 @@ async function approveUntilPick(runId: string, runInput: StartRunInput): Promise
   return (run?.steps.find((step) => step.name === 'pick')?.output as { candidates: string[] }).candidates;
 }
 
+
+/** Looks up THE mob artifact created for `chunkId` — the get-or-create is
+ *  idempotent, so at most one exists per campaign (the arc's core pin). */
+async function mobArtifactIdOf(campaignId: Id, chunkId: Id): Promise<Id> {
+  const mob = (await listArtifactsByCampaign(campaignId)).find(
+    (row) => row.kind === 'npc' && row.data.monsterChunkId === chunkId,
+  );
+  if (mob === undefined) throw new Error(`no mob artifact for chunk ${chunkId}`);
+  return mob.id;
+}
+
 describe('Encounter Cartographer run', () => {
   it('pauses at brief and pick and finalizes one complete encounter', async () => {
     const { campaign, cartographer } = await setup();
@@ -242,7 +253,7 @@ describe('Encounter Cartographer run', () => {
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // The map finalize remapped the roster citation to the pack chunk.
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId) });
   });
 
   it('finalizes a brief citing a pinned statblock chunk to {type:"rulebook", chunkId}', async () => {
@@ -277,7 +288,7 @@ describe('Encounter Cartographer run', () => {
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // The pinned citation (persisted with the brief through the pick pause)
     // resolved in map finalize to the pinned chunk.
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId) });
   });
 
   it('does not approve a rejected brief into an opaque downstream failure', async () => {
