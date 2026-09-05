@@ -50,6 +50,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     systemPrompt: NPC_SMITH_PROMPT,
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'npc',
+    postCreateExtras: ['image', 'statBlock'],
     builtIn: true,
   }),
   createPersona({
@@ -59,6 +60,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     systemPrompt: WORLDBUILDER_PROMPT,
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'location',
+    postCreateExtras: ['image'],
     builtIn: true,
   }),
   createPersona({
@@ -68,6 +70,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     systemPrompt: FACTION_DESIGNER_PROMPT,
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'faction',
+    postCreateExtras: ['image'],
     builtIn: true,
   }),
   createPersona({
@@ -77,6 +80,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     systemPrompt: PLOT_ARCHITECT_PROMPT,
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'note',
+    postCreateExtras: ['image'],
     builtIn: true,
   }),
   createPersona({
@@ -91,6 +95,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     ].join('\n'),
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'plotarc',
+    postCreateExtras: ['image'],
     builtIn: true,
   }),
   createPersona({
@@ -108,6 +113,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     ].join('\n'),
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'encounter',
+    postCreateExtras: ['image', 'mobPortraits', 'battlemap'],
     builtIn: true,
   }),
   createPersona({
@@ -126,6 +132,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     temperature: 0.5,
     producesKind: 'encounter',
     mode: 'encounter',
+    postCreateExtras: ['image', 'mobPortraits'],
     builtIn: true,
   }),
   createPersona({
@@ -144,6 +151,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     temperature: 0.3,
     producesKind: 'note',
     mode: 'review',
+    postCreateExtras: [],
     builtIn: true,
   }),
   createPersona({
@@ -162,6 +170,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     ].join('\n'),
     temperature: 0.4,
     mode: 'image',
+    postCreateExtras: [],
     builtIn: true,
   }),
 ];

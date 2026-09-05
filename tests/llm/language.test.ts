@@ -46,6 +46,7 @@ const SETTINGS_BASE = {
   },
   encounterMapAspect: '4:3' as const,
   encounterVerifyModel: '',
+  runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,
 };
 

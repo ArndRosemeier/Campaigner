@@ -142,6 +142,19 @@ export const settingsSchema = z.object({
   /** Encounter Cartographer layout aspect preference. */
   encounterMapAspect: encounterMapAspectSchema.default('4:3'),
   /**
+   * Remembered defaults for the creation dialog's "After creation" extras
+   * checkboxes (aspect pattern): the dialog pre-ticks these per persona.
+   * The battlemap extra is deliberately NOT remembered — it is a one-off
+   * offer for the content-only encounter persona, never a standing default.
+   */
+  runExtras: z
+    .object({
+      image: z.boolean().default(false),
+      statBlock: z.boolean().default(false),
+      mobPortraits: z.boolean().default(false),
+    })
+    .default({ image: false, statBlock: false, mobPortraits: false }),
+  /**
    * Chat model for the encounter verify step (docs/11 §verify). It sends the
    * generated map image to the model, so it must accept image input. ''
    * falls back to `defaultChatModel` (a genuine preference default, not a
@@ -183,6 +196,7 @@ export function defaultSettings(): Settings {
       moduleView: defaultScopeToggles('moduleView'),
     },
     encounterMapAspect: '4:3',
+    runExtras: { image: false, statBlock: false, mobPortraits: false },
     encounterVerifyModel: '',
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,

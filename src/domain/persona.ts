@@ -4,6 +4,19 @@ import { BaseEntitySchema } from '@/domain/entity';
 import { artifactKindSchema } from '@/domain/artifact';
 import { reasoningEffortSchema } from '@/domain/settings';
 
+/**
+ * Post-create extras the creation dialog can offer for a freshly created
+ * artifact: the dialog derives the offered checkboxes from the CHOSEN
+ * persona — a declared `postCreateExtras` field on the persona wins;
+ * personas without one fall back to `derivePostCreateExtras`
+ * (src/llm/personas/extras.ts) computed from `mode`/`producesKind`.
+ */
+export const POST_CREATE_EXTRAS = ['image', 'statBlock', 'mobPortraits', 'battlemap'] as const;
+
+export const postCreateExtraSchema = z.enum(POST_CREATE_EXTRAS);
+
+export type PostCreateExtra = z.infer<typeof postCreateExtraSchema>;
+
 export const personaSchema = z
   .object({
     ...BaseEntitySchema.shape,
@@ -30,6 +43,12 @@ export const personaSchema = z
      * produces a complete encounter plus generated room map.
      */
     mode: z.enum(['generate', 'review', 'image', 'encounter']).default('generate'),
+    /**
+     * Extras the creation dialog offers for a freshly created artifact
+     * (POST_CREATE_EXTRAS). Optional: unset → the dialog derives the
+     * offered set from `mode`/`producesKind` (src/llm/personas/extras.ts).
+     */
+    postCreateExtras: z.array(postCreateExtraSchema).optional(),
     /** Built-ins are re-seeded on app start if missing (never overwritten). */
     builtIn: z.boolean(),
   })

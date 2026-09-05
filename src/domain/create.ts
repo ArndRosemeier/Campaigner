@@ -195,6 +195,8 @@ export interface NewPersona {
    */
   producesKind?: ArtifactKind;
   mode?: Persona['mode'];
+  /** Declared creation-dialog extras (unset → derived, see persona.ts). */
+  postCreateExtras?: Persona['postCreateExtras'];
   builtIn: boolean;
 }
 
@@ -214,6 +216,7 @@ export function createPersona(input: NewPersona): Persona {
     temperature: input.temperature ?? DEFAULT_PERSONA_TEMPERATURE,
     ...(input.producesKind === undefined ? {} : { producesKind: input.producesKind }),
     mode: input.mode ?? 'generate',
+    ...(input.postCreateExtras === undefined ? {} : { postCreateExtras: input.postCreateExtras }),
     builtIn: input.builtIn,
   });
 }
@@ -227,6 +230,10 @@ export interface NewPersonaRun {
   /** Review/image/encounter-regenerate target. */
   targetArtifactId?: Id | null;
   encounterMapAspect?: '4:3' | '16:9' | '1:1' | null;
+  /** Module placement for a NEW artifact; null/omitted = campaign level. */
+  placementModuleId?: Id | null;
+  /** Ticked creation-dialog extras; null/omitted = none. */
+  runExtras?: PersonaRun['runExtras'];
 }
 
 export function createPersonaRun(input: NewPersonaRun): PersonaRun {
@@ -243,6 +250,8 @@ export function createPersonaRun(input: NewPersonaRun): PersonaRun {
     resultArtifactId: null,
     targetArtifactId: input.targetArtifactId ?? null,
     encounterMapAspect: input.encounterMapAspect ?? null,
+    placementModuleId: input.placementModuleId ?? null,
+    runExtras: input.runExtras ?? null,
     errorMessage: '',
   });
 }

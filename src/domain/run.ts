@@ -64,7 +64,31 @@ export const personaRunSchema = z.object({
   targetArtifactId: z.uuid().nullable(),
   /** Encounter generator option, null for every other persona mode. */
   encounterMapAspect: encounterMapAspectSchema.nullable().default(null),
+  /**
+   * Module placement chosen in the creation dialog for a NEWLY created
+   * artifact (null = campaign level / unset). One-off per run, never a
+   * remembered preference; ignored by in-place fills (placement of an
+   * existing artifact changes only via the editor's explicit scope moves).
+   */
+  placementModuleId: z.uuid().nullable().default(null),
+  /**
+   * Post-create extras ticked in the creation dialog, persisted so
+   * pause/resume/retry reconstructs the input exactly (like
+   * `encounterMapAspect`). Null for runs started before the field existed.
+   */
+  runExtras: z
+    .object({
+      image: z.boolean(),
+      statBlock: z.boolean(),
+      mobPortraits: z.boolean(),
+      battlemap: z.boolean(),
+    })
+    .nullable()
+    .default(null),
   errorMessage: z.string(),
 });
 
 export type PersonaRun = z.infer<typeof personaRunSchema>;
+
+/** Post-create extras flags carried on the run row. */
+export type RunExtras = NonNullable<PersonaRun['runExtras']>;
