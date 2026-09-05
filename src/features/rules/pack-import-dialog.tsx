@@ -173,7 +173,8 @@ export function PackImportDialog({ open, onOpenChange, onProgress }: PackImportD
   );
 }
 
-function PackImportReport({
+/** The pack import report (16-BESTIARY-FETCH reuses it in Settings). */
+export function PackImportReport({
   result,
   showFailed,
   onToggleFailed,

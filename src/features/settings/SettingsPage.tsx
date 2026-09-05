@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { listPersonas } from '@/db/personaRepo';
 import { HelpButton } from '@/help/HelpButton';
 import { BackupSection } from '@/features/settings/backup-section';
+import { BestiaryFetchSection } from '@/features/settings/bestiary-fetch-section';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { PersonaSection } from '@/features/settings/persona-section';
 import { DangerZone } from '@/features/settings/danger-zone';
@@ -30,6 +31,7 @@ export function SettingsPage(): JSX.Element {
         <HelpButton topic="settings" label="settings" />
       </h1>
       <SettingsSection />
+      <BestiaryFetchSection />
       <Card>
         <CardHeader>
           <CardTitle>Generation language</CardTitle>
