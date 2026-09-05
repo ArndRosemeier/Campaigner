@@ -30,7 +30,17 @@ export interface MarkerTarget {
   letter: string;
   hue: number;
   name?: string;
+  /**
+   * Expected blob shape class: rooms use discs (default), the entrance uses
+   * a filled triangle. Shape gates the circularity window per target — a
+   * triangle blob (circularity ≈ 0.6) can never satisfy a disc target and
+   * vice versa, on top of the hue separation.
+   */
+  shape?: 'disc' | 'triangle';
 }
+
+/** Circularity window a triangle target accepts (equilateral ≈ 0.60). */
+export const TRIANGLE_CIRCULARITY_RANGE: readonly [number, number] = [0.45, 0.8];
 
 /**
  * The entrance marker's canonical hue (entrance/exit spawn zones, doc 11):
@@ -303,24 +313,35 @@ export function detectNeonMarkers(
     blobIndex: number;
     targetIndex: number;
     distance: number;
+    /** 0 when the blob's shape class matches the target's, else 1 — equal
+     * hue distances must not let a disc target steal a triangle blob. */
+    shapePenalty: number;
   }
 
   const pairs: PairDistance[] = [];
   for (let bIndex = 0; bIndex < candidateBlobs.length; bIndex += 1) {
     const blob = candidateBlobs[bIndex];
     if (blob === undefined) continue;
+    const [triangleMin, triangleMax] = TRIANGLE_CIRCULARITY_RANGE;
+    const isTriangleBlob = blob.circularity >= triangleMin && blob.circularity <= triangleMax;
     for (let tIndex = 0; tIndex < targets.length; tIndex += 1) {
       const target = targets[tIndex];
       if (target === undefined) continue;
+      if (target.shape === 'triangle' && !isTriangleBlob) continue;
       const distance = circularHueDistance(blob.meanHue, target.hue);
       if (distance <= maxHueDistance) {
-        pairs.push({ blobIndex: bIndex, targetIndex: tIndex, distance });
+        pairs.push({
+          blobIndex: bIndex,
+          targetIndex: tIndex,
+          distance,
+          shapePenalty: target.shape === 'triangle' ? (isTriangleBlob ? 0 : 1) : isTriangleBlob ? 1 : 0,
+        });
       }
     }
   }
 
-  // Sort ascending by distance
-  pairs.sort((a, b) => a.distance - b.distance);
+  // Sort ascending by distance, shape-exact pairs first on ties
+  pairs.sort((a, b) => a.distance - b.distance || a.shapePenalty - b.shapePenalty);
 
   const assignedBlobs = new Set<number>();
   const assignedTargets = new Set<number>();

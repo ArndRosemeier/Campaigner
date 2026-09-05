@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import type { EncounterLayout } from '@/domain';
+import { entranceOutwardCell, type EncounterLayout } from '@/domain';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { parseJsonReply } from '@/llm/jsonReply';
 import { errorMessage } from '@/lib/errors';
@@ -79,6 +79,39 @@ export function coarseDoorIndexes(layout: EncounterLayout): Set<number> {
     }
   }
   return doors;
+}
+
+/**
+ * Coarse cells covered by the entrance gap and its outward neighbor
+ * (entrance/exit spawn zones, doc 11): the schematic paints a floor-colored
+ * opening and landing pad there, so stylization may vary — the same
+ * tolerance door cells get.
+ */
+export function coarseEntranceIndexes(layout: EncounterLayout): Set<number> {
+  const stride = coarseStride(layout);
+  const cols = Math.ceil(layout.gridW / stride);
+  const cells: { x: number; y: number }[] = [];
+  for (const room of layout.rooms) {
+    const entrance = room.entrance;
+    if (entrance === undefined) continue;
+    cells.push({ x: entrance.x, y: entrance.y });
+    const outward = entranceOutwardCell(entrance);
+    if (outward.x >= 0 && outward.y >= 0 && outward.x < layout.gridW && outward.y < layout.gridH) {
+      cells.push(outward);
+    }
+  }
+  const indexes = new Set<number>();
+  for (const cell of cells) {
+    indexes.add(Math.floor(cell.y / stride) * cols + Math.floor(cell.x / stride));
+  }
+  return indexes;
+}
+
+/** Excluded coarse cells: door openings plus the entrance opening. */
+export function coarseDriftTolerances(layout: EncounterLayout): Set<number> {
+  const indexes = coarseDoorIndexes(layout);
+  for (const index of coarseEntranceIndexes(layout)) indexes.add(index);
+  return indexes;
 }
 
 export function compareStructureGrids(
@@ -190,7 +223,7 @@ export async function verifyEncounterMap(input: {
   return compareStructureGrids(
     expected,
     parsed.data,
-    input.excludedIndexes ?? coarseDoorIndexes(input.layout),
+    input.excludedIndexes ?? coarseDriftTolerances(input.layout),
   );
 }
 

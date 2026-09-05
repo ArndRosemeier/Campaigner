@@ -19,6 +19,7 @@ import {
   detectNeonMarkers,
   encounterDataSchema,
   encounterLayoutSchema,
+  entranceMarkerConfig,
   extractImageData,
   layoutFromStagingMarkers,
   newId,
@@ -2242,13 +2243,32 @@ export class RunEngine {
       })
       .join(' ');
 
+    // Entrance marker (entrance/exit spawn zones, doc 11): declared only when
+    // the layout carries an entrance AND a free canonical hue exists. Rooms
+    // consume the palette strictly in order, so palette[roomCount] cannot
+    // collide with a room marker.
+    const spawnLayoutRoom = layout.rooms.find((room) => room.spawn);
+    const entranceConfig =
+      spawnLayoutRoom?.entrance !== undefined
+        ? entranceMarkerConfig(parsed.rooms.length)
+        : null;
+    const entranceClause =
+      spawnLayoutRoom === undefined || entranceConfig === null
+        ? null
+        : `Entrance marker: The party enters the map through a single open gap in the entry room's outer wall. On the floor just inside that gap sits exactly one solid neon ${entranceConfig.colorName} triangle, about the size of a room disc, with a thick black outline, pointing into the room. The entrance triangle never has a disc or a plaque.`;
+    const entranceRoomClause =
+      spawnLayoutRoom === undefined || entranceConfig === null
+        ? ''
+        : ` Entrance ("${spawnLayoutRoom.name}"): solid neon ${entranceConfig.colorName} triangle just inside the entrance gap in the outer wall, pointing into the room.`;
+
     const prompt = [
       `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
       parsed.styleNotes,
       'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
       'Room staging markers: Each room has exactly one solid circular neon disc on the open floor (approx 1/10th room diameter) with thick black outline, plus a small black plaque with white capital letter immediately to the right.',
-      markerInstructions,
-      'Keep walls, openings and overall structure aligned with the staging markers.',
+      entranceClause,
+      markerInstructions + entranceRoomClause,
+      'Keep walls, openings, the entrance gap and overall structure aligned with the staging markers.',
       'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels other than the room plaques, no characters, no monsters, no tokens, no miniatures.',
       parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
     ].filter((part) => part !== null && part !== '').join(' ');
@@ -2291,8 +2311,53 @@ export class RunEngine {
               name: room.name,
             };
           });
-          const detection = encounterRunAdapters.detectNeonMarkers(imgData, targets);
-          if (detection.detected.length > 0) {
+          // Entrance target: triangle-shaped blob on a hue no room can hold.
+          // Without a layout entrance (or with all ten hues taken) there is no
+          // target and detection behaves exactly as before this feature.
+          const entranceTarget =
+            spawnLayoutRoom?.entrance !== undefined && entranceConfig !== null
+              ? {
+                  id: `${spawnLayoutRoom.id}:entrance`,
+                  letter: '',
+                  hue: entranceConfig.hue,
+                  name: 'entrance',
+                  shape: 'triangle' as const,
+                }
+              : null;
+          const allTargets =
+            entranceTarget === null ? targets : [...targets, entranceTarget];
+          const detection = encounterRunAdapters.detectNeonMarkers(imgData, allTargets);
+          const entranceDetection =
+            entranceTarget === null
+              ? undefined
+              : detection.detected.find((d) => d.id === entranceTarget.id);
+          if (spawnLayoutRoom?.entrance !== undefined) {
+            // Adjudicated: entrance-carrying layouts KEEP the packed geometry
+            // (corridors + entrance) in every candidate — marker detections
+            // refine only the entrance's observed position, never structure.
+            // Without a detected triangle no candidate is stored and finalize
+            // falls back to the packed layout verbatim.
+            if (entranceDetection !== undefined) {
+              const packedEntrance = spawnLayoutRoom.entrance;
+              const spawnRoomId = spawnLayoutRoom.id;
+              candidateLayouts[stored.id] = {
+                ...layout,
+                rooms: layout.rooms.map((room) =>
+                  room.id === spawnRoomId
+                    ? {
+                        ...room,
+                        entrance: {
+                          x: packedEntrance.x,
+                          y: packedEntrance.y,
+                          side: packedEntrance.side,
+                          observed: { x: entranceDetection.x, y: entranceDetection.y },
+                        },
+                      }
+                    : room,
+                ),
+              };
+            }
+          } else if (detection.detected.length > 0) {
             const stagingRooms: StagingRoomInput[] = parsed.rooms.map((room, idx) => {
               const target = targets[idx] ?? {
                 id: layout.rooms[idx]?.id ?? newId(),

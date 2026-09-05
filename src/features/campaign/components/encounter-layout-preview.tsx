@@ -1,6 +1,9 @@
 import type { JSX } from 'react';
 
-import type { EncounterLayout } from '@/domain';
+import { entranceMarkerConfig, type EncounterLayout } from '@/domain';
+
+/** Rotation (deg) of the down-pointing base glyph so it points INWARD. */
+const ENTRANCE_ROTATION = { north: 0, east: 90, south: 180, west: 270 } as const;
 
 export function EncounterLayoutPreview({
   layout,
@@ -68,6 +71,49 @@ export function EncounterLayoutPreview({
             title={`${room.name} staging marker ${room.letter ?? ''}`}
           >
             {room.letter ?? '•'}
+          </div>
+        );
+      })}
+      {layout.rooms.map((room) => {
+        const entrance = room.entrance;
+        if (entrance === undefined) return null;
+        const marker = entranceMarkerConfig(layout.rooms.length);
+        const hue = marker?.hue ?? 300;
+        return (
+          <div key={`${room.id}-entrance-observed`}>
+            {entrance.observed !== undefined && (
+              <div
+                className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-amber-400"
+                style={{
+                  left: `${String(entrance.observed.x * 100)}%`,
+                  top: `${String(entrance.observed.y * 100)}%`,
+                  width: '14px',
+                  height: '14px',
+                }}
+                title={`${room.name} detected entrance`}
+                data-testid="encounter-entrance-observed"
+              />
+            )}
+            <div
+              className="pointer-events-none absolute"
+              style={{
+                left: `${String(((entrance.x + 0.5) / layout.gridW) * 100)}%`,
+                top: `${String(((entrance.y + 0.5) / layout.gridH) * 100)}%`,
+                transform: `translate(-50%, -50%) rotate(${String(ENTRANCE_ROTATION[entrance.side])}deg)`,
+              }}
+              title={`${room.name} entrance`}
+              data-testid="encounter-entrance-marker"
+            >
+              <div
+                style={{
+                  width: 0,
+                  height: 0,
+                  borderLeft: '7px solid transparent',
+                  borderRight: '7px solid transparent',
+                  borderTop: `12px solid hsl(${String(hue)}, 100%, 50%)`,
+                }}
+              />
+            </div>
           </div>
         );
       })}

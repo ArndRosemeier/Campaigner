@@ -56,6 +56,15 @@ describe('neonDetector', () => {
     image: RgbImageLike;
     drawDisc: (cx: number, cy: number, radius: number, r: number, g: number, b: number) => void;
     drawStreak: (x1: number, y: number, length: number, r: number, g: number, b: number) => void;
+    drawTriangle: (
+      apexX: number,
+      apexY: number,
+      baseY: number,
+      baseHalf: number,
+      r: number,
+      g: number,
+      b: number,
+    ) => void;
   } {
     const data = new Uint8ClampedArray(width * height * 4);
     // Fill with desaturated stone background (R=100, G=100, B=100)
@@ -92,10 +101,41 @@ describe('neonDetector', () => {
       }
     };
 
+    /** Solid triangle: apex at (apexX, apexY), horizontal base centered on
+     * apexX at baseY with the given half width — the entrance marker shape. */
+    const drawTriangle = (
+      apexX: number,
+      apexY: number,
+      baseY: number,
+      baseHalf: number,
+      r: number,
+      g: number,
+      b: number,
+    ) => {
+      const from = Math.min(apexY, baseY);
+      const to = Math.max(apexY, baseY);
+      for (let y = Math.max(0, from); y <= Math.min(height - 1, to); y += 1) {
+        const t = to === from ? 1 : (y - from) / (to - from);
+        const half = baseHalf * t;
+        for (
+          let x = Math.max(0, Math.round(apexX - half));
+          x <= Math.min(width - 1, Math.round(apexX + half));
+          x += 1
+        ) {
+          const idx = (y * width + x) * 4;
+          data[idx] = r;
+          data[idx + 1] = g;
+          data[idx + 2] = b;
+          data[idx + 3] = 255;
+        }
+      }
+    };
+
     return {
       image: { width, height, data },
       drawDisc,
       drawStreak,
+      drawTriangle,
     };
   }
 
@@ -193,6 +233,65 @@ describe('neonDetector', () => {
       expect(result.detected.length).toBe(1);
       expect(result.detected[0]?.id).toBe('room-a');
       expect(result.missingRoomIds).toEqual(['room-b']);
+    });
+
+    it('detects a triangle-shaped entrance marker only for triangle targets', () => {
+      const { image, drawTriangle } = createTestCanvas(200, 200);
+
+      // Same hue as a potential room marker — shape alone separates the
+      // entrance triangle (measured circularity ≈ 0.73 at this raster size)
+      // from room discs (≈ 1.0).
+      drawTriangle(100, 110, 180, 35, 0, 255, 255);
+
+      const result = detectNeonMarkers(image, [
+        { id: 'room-b', letter: 'B', hue: 180 },
+        { id: 'entrance', letter: '', hue: 180, shape: 'triangle' },
+      ]);
+
+      const entrance = result.detected.find((d) => d.id === 'entrance');
+      expect(entrance).toBeDefined();
+      if (entrance === undefined) throw new Error('entrance missing');
+      expect(Math.abs(entrance.x - 0.5)).toBeLessThan(0.02);
+      // Triangle centroid sits between apex and base.
+      expect(entrance.y).toBeGreaterThan(0.7);
+      expect(entrance.y).toBeLessThan(0.85);
+      expect(entrance.circularity).toBeGreaterThanOrEqual(0.45);
+      expect(entrance.circularity).toBeLessThanOrEqual(0.8);
+      // The disc target never claims the triangle blob…
+      expect(result.detected.find((d) => d.id === 'room-b')).toBeUndefined();
+      expect(result.missingRoomIds).toEqual(['room-b']);
+    });
+
+    it('a triangle target never claims a disc blob (shape gate both ways)', () => {
+      const { image, drawDisc } = createTestCanvas(200, 200);
+      drawDisc(100, 100, 8, 255, 255, 0);
+
+      const result = detectNeonMarkers(image, [
+        { id: 'entrance', letter: '', hue: 60, shape: 'triangle' },
+      ]);
+
+      expect(result.detected).toEqual([]);
+      expect(result.missingRoomIds).toEqual(['entrance']);
+    });
+
+    it('prefers the shape-exact pair when hue distances tie', () => {
+      const { image, drawDisc, drawTriangle } = createTestCanvas(200, 200);
+      // Disc discovered first (scan order), same hue as the triangle.
+      drawDisc(50, 50, 8, 255, 255, 0);
+      drawTriangle(150, 110, 180, 35, 255, 255, 0);
+
+      const result = detectNeonMarkers(image, [
+        { id: 'room-c', letter: 'C', hue: 60 },
+        { id: 'entrance', letter: '', hue: 60, shape: 'triangle' },
+      ]);
+
+      const disc = result.detected.find((d) => d.id === 'room-c');
+      const entrance = result.detected.find((d) => d.id === 'entrance');
+      expect(disc).toBeDefined();
+      expect(entrance).toBeDefined();
+      if (disc === undefined || entrance === undefined) throw new Error('pairs missing');
+      expect(disc.circularity).toBeGreaterThan(0.8);
+      expect(entrance.circularity).toBeLessThanOrEqual(0.8);
     });
   });
 });

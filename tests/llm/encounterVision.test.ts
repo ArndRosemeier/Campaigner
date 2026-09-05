@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId, packRooms } from '@/domain';
 import {
   coarseDoorIndexes,
+  coarseDriftTolerances,
+  coarseEntranceIndexes,
   coarseStructure,
   compareStructureGrids,
   verifyEncounterMap,
@@ -72,6 +74,36 @@ describe('encounter map vision verification', () => {
         new Set([0]),
       ).mismatchRatio,
     ).toBe(0);
+  });
+
+  it('excludes entrance coarse cells from the default comparison (drift tolerance)', async () => {
+    const packed = layout();
+    const expected = coarseStructure(packed);
+    const entrances = coarseEntranceIndexes(packed);
+    expect(entrances.size).toBeGreaterThan(0);
+    const tolerances = coarseDriftTolerances(packed);
+    for (const door of coarseDoorIndexes(packed)) expect(tolerances.has(door)).toBe(true);
+    for (const index of entrances) expect(tolerances.has(index)).toBe(true);
+
+    // Behavioral pin: flipping EVERY entrance coarse cell in the vision
+    // response still passes the default (doors ∪ entrance) exclusion.
+    const cells = [...expected.cells];
+    for (const index of entrances) {
+      cells[index] = cells[index] === 'floor' ? 'void' : 'floor';
+    }
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ cols: expected.cols, rows: expected.rows, cells }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+    const verification = await verifyEncounterMap({
+      layout: packed,
+      schematicDataUrl: 'data:image/png;base64,schematic',
+      stylizedDataUrl: 'data:image/png;base64,stylized',
+      model: 'test-model',
+    });
+    expect(verification.needsReview).toBe(false);
+    expect(verification.mismatchedIndexes).toEqual([]);
   });
 
   it('sends both images and repairs invalid JSON exactly once', async () => {
