@@ -8,7 +8,7 @@ import { createArtifact } from '@/db/artifactRepo';
 import { createModule as createModuleRow, deleteModule } from '@/db/moduleRepo';
 import { createPersona } from '@/db/personaRepo';
 import { updateSettings } from '@/db/settingsRepo';
-import { getRun } from '@/db/runRepo';
+import { getRun, updateRun } from '@/db/runRepo';
 import { runEngine, type StartRunInput } from '@/llm/runEngine';
 import { noteDraftSchema } from '@/llm/schemas';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -291,6 +291,58 @@ describe('campaign grounding (15-GRAPH-RETRIEVAL)', () => {
     });
     expect(userMessage(1)).toBe(firstDraft);
     expect(searchMock).toHaveBeenCalledTimes(1);
+  }, 20000);
+
+  it('renders the PERSISTED expansionExcerpts verbatim: a sentinel hand-edited into storage is what the prompt shows', async () => {
+    const { campaign } = await seedGroundingCampaign();
+    const persona = await notePersona();
+    chatMock.mockResolvedValue({ text: JSON.stringify(NOTE_DRAFT), modelUsed: 'test-model', fallback: null });
+    const input = { ...INPUT(campaign, persona, 'A scene with [[Grix]].'), autonomy: 'manual' as const };
+
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+      expect(chatMock.mock.calls.length).toBe(1);
+    });
+
+    // Hand-edit the PERSISTED stored output (the data-at-rest boundary): the
+    // derived blocks are replaced by a sentinel block no derivation could
+    // produce. No moduleId → no source validation; the text renders verbatim.
+    const run = await getRun(runId);
+    if (run === undefined) throw new Error('the run vanished before the sentinel hand-edit');
+    const steps = run.steps.map((step) =>
+      step.name === 'retrieve'
+        ? {
+            ...step,
+            output: {
+              ...(step.output as Record<string, unknown>),
+              expansionExcerpts: [
+                {
+                  entityName: 'SENTINEL ENTITY',
+                  source: 'hand-edited sentinel provenance',
+                  text: 'SENTINEL TEXT: the persisted field renders verbatim.',
+                },
+              ],
+            },
+          }
+        : step,
+    );
+    await updateRun(runId, { steps });
+
+    await runEngine.editStep(runId, 0, {}, input);
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+      expect(chatMock.mock.calls.length).toBe(2);
+    });
+
+    // The prompt shows the sentinel — and none of the derived blocks: the
+    // draft renders the stored field, it never re-derives the graph.
+    const prompt = userMessage(1);
+    expect(prompt).toContain(HEADER);
+    expect(prompt).toContain('- SENTINEL ENTITY (hand-edited sentinel provenance):');
+    expect(prompt).toContain('SENTINEL TEXT: the persisted field renders verbatim.');
+    expect(prompt).not.toContain('- Grix (Ashen Vault — Premise):');
+    expect(prompt).not.toContain('- Ashen Cult (Ashen Vault — Premise):');
   }, 20000);
 
   it('renders the section absent entirely when the global toggle is OFF', async () => {

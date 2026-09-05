@@ -19,6 +19,7 @@ import {
   GROUNDING_SECTION_HEADER,
   GROUNDING_SUMMARY_SOURCE,
   renderCampaignGroundingSection,
+  renderExpansionBlock,
   validateExpansionSources,
   type ExpansionExcerpt,
 } from '@/llm/campaignGrounding';
@@ -138,6 +139,22 @@ describe('detection (15 §3.1)', () => {
     expect(detected.map((entry) => entry.name)).toEqual(['Ember Council', 'Ember']);
   });
 
+  it('breaks an alias-of-A == name-of-B spelling tie deterministically by artifact id, never by pool order', () => {
+    const viaAlias = artifact({ name: 'Pyre Wraith', aliases: ['Ember'], summary: 'a wraith.' });
+    const viaName = artifact({ name: 'Ember', summary: 'a spark.' });
+    // The two spellings are the same string: equal length, equal
+    // localeCompare — the artifact-id tie-break (the spellings sort) decides
+    // which one claims the shared span; the loser's only occurrence is
+    // consumed, so exactly ONE of the two detects.
+    const expected = viaAlias.id.localeCompare(viaName.id) <= 0 ? viaAlias : viaName;
+
+    const first = detectCampaignEntities('Ember rises.', [viaAlias, viaName]);
+    const second = detectCampaignEntities('Ember rises.', [viaName, viaAlias]); // pool order flipped
+
+    expect(first.map((entry) => entry.id)).toEqual([expected.id]);
+    expect(second.map((entry) => entry.id)).toEqual([expected.id]);
+  });
+
   it('caps detection at 3 entities (token hits first, then word matches longest-first)', () => {
     const zora = artifact({ name: 'Zora' });
     const long = artifact({ name: 'Very Long Named Entity' });
@@ -210,6 +227,29 @@ describe('expansion (15 §3.2 — co-mention only)', () => {
     // Weight-ranked: the Cult (×2 in the shared document) beats Wren (×1).
     expect(result[1]?.entityName).toBe('Ashen Cult');
     expect(result[1]?.text).toContain('chants');
+  });
+
+  it('expands to a phantom co-mention: an unresolved name grounds its real module prose', () => {
+    const grix = artifact({ name: 'Grix' });
+    // Vaelthorne resolves to nothing (absent from the pool) — a phantom node
+    // — but the derived graph still records its mentions, and co-mention
+    // expansion consumes them through the same module-excerpt path.
+    const module = moduleWith({
+      premise: '[[Grix]] guards the door. [[Vaelthorne]] watches. [[Vaelthorne]] waits.',
+    });
+
+    const result = computeCampaignGrounding({
+      brief: 'A scene with [[Grix]].',
+      modules: [module],
+      pool: [grix],
+    });
+
+    // Grix's top-1 co-mention is the phantom (weight 2, self excluded); the
+    // block carries the phantom's first-seen spelling and its real prose.
+    expect(result.map((block) => block.entityName)).toEqual(['Grix', 'Vaelthorne']);
+    expect(result[1]?.source).toBe('Ashen Vault — Premise');
+    expect(result[1]?.moduleId).toBe(module.id);
+    expect(result[1]?.text).toContain('[[Vaelthorne]] watches');
   });
 
   it('breaks weight ties deterministically by label, then key', () => {
@@ -366,6 +406,59 @@ describe('budget and rendering (15 §3.3/§3.4)', () => {
     const last = first[first.length - 1];
     expect(last?.text.length).toBeLessThan(GROUNDING_EXCERPT_CAP);
     expect(last?.text.endsWith('…')).toBe(true);
+  });
+
+  it('drops a block whose rendering alone exceeds the whole budget (maxText <= 0 breaks, no partial block)', () => {
+    // The block prefix "- <name> (artifact summary):\n" alone is longer than
+    // the 4000-char section budget: the overflow branch computes maxText <= 0
+    // and breaks — the block is dropped WHOLE, never truncated into negative
+    // space and never rendered as a placeholder.
+    const colossus = artifact({
+      name: `Colossus ${'of the Endless Name'.repeat(300)}`, // far beyond the budget
+      summary: 'Too large to ground.',
+    });
+
+    const result = computeCampaignGrounding({
+      brief: `The ${colossus.name} appears.`,
+      modules: [moduleWith({ premise: 'Quiet prose.' })],
+      pool: [colossus],
+    });
+
+    expect(result).toEqual([]);
+  });
+
+  it('keeps a section that accounts to exactly the 4000-char budget whole; one more char truncates the last block', () => {
+    // Three summary-backed self blocks (no co-mentions). Names are 700 chars,
+    // summaries 600/600/580: header(45) + (1323+2) + (1323+2) + (1303+2) =
+    // 4000 — the third block fills the remaining room EXACTLY.
+    const name = (label: string): string => `${label}${'x'.repeat(698)}`; // 700 chars
+    const alpha = artifact({ name: name('A1'), summary: 'a'.repeat(600) });
+    const beta = artifact({ name: name('B2'), summary: 'b'.repeat(600) });
+    const gamma = artifact({ name: name('C3'), summary: 'c'.repeat(580) });
+    const setup = {
+      brief: `${alpha.name}, ${beta.name} and ${gamma.name} convene.`,
+      modules: [moduleWith({ premise: 'Quiet prose.' })],
+      pool: [alpha, beta, gamma],
+    };
+    const accounted = (blocks: readonly ExpansionExcerpt[]): number =>
+      GROUNDING_SECTION_HEADER.length +
+      blocks.reduce((sum, block) => sum + renderExpansionBlock(block).length + 2, 0);
+
+    const exact = computeCampaignGrounding(setup);
+    expect(exact.map((block) => block.entityName)).toEqual([alpha.name, beta.name, gamma.name]);
+    // Every block kept verbatim at the boundary — no ellipsis anywhere.
+    expect(exact.map((block) => block.text)).toEqual([alpha.summary, beta.summary, gamma.summary]);
+    expect(accounted(exact)).toBe(GROUNDING_SECTION_BUDGET);
+
+    // One more char in the last block's summary: it overflows the room by
+    // exactly 1 char and is truncated into it (ellipsis) — earlier blocks
+    // untouched, the accounted total back at exactly the budget.
+    const gammaPlusOne = artifact({ name: gamma.name, summary: 'c'.repeat(581) });
+    const overflow = computeCampaignGrounding({ ...setup, pool: [alpha, beta, gammaPlusOne] });
+    expect(overflow.slice(0, 2)).toEqual(exact.slice(0, 2));
+    expect(overflow[2]?.text.length).toBe(580);
+    expect(overflow[2]?.text.endsWith('…')).toBe(true);
+    expect(accounted(overflow)).toBe(GROUNDING_SECTION_BUDGET);
   });
 
   it('renders the block shape "- entity (provenance):" with the excerpt text', () => {
