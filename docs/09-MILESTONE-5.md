@@ -264,7 +264,23 @@ useImageUrl path, label, HP), plus a GM-only allowance in GM mode: an
 "Open card" button mounts the existing full NpcCard (statblock included) in
 a dialog for NPC tokens that resolve to a statblock. The button never
 renders in player-safe mode — stat text still never enters the DOM there —
-and tapping the empty board deselects.*
+and tapping the empty board deselects.* Amended 2026-09-06 by 8fa7abd:
+*veils render at a ~10% tint in BOTH views — veil `bg-black/10`, fog keeps
+its light tint at `bg-zinc-200/10` — because the veil's job is to mark
+unexplored ground and hide mobs, not to blind the GM to their own map.
+Selection and dragging read via outline + lift (`ring-2 ring-amber-400`,
+drag adds `z-20`), never opacity swings; the solid amber resize handles
+carry the resize affordance, so the translucent fill hides nothing. Coverage
+is scoped to MOB tokens by the seed-chain fighter kind (seedFighters rows
+for rulebook/inline monsters and npc artifacts for npc-ref monsters resolve
+kind 'npc'; PCs resolve 'pc'; statless tokens and stamps are absent from the
+stats lookup and are never coverage-hidden) — no new schema field. Coverage
+removal from the DOM is a player-view behavior: player view removes veiled
+mob tokens, GM view sees everything under its own veils, and every token
+that survives renders ABOVE the veil (veils mount first in the content
+frame). The initiative prune stays mode-independent and mob-scoped: a
+veiled mob is not yet in play and re-enters with an auto-roll on reveal;
+fogged PCs now roll and stay in the order.*
 
 **Interaction:**
 
@@ -286,11 +302,19 @@ and tapping the empty board deselects.*
 - Pan/zoom (0.35–4, pinch + wheel + buttons), DOM-transform based. Amended
   2026-09-06 by d0c7fc8: *the range is the code truth — `ZOOM_MIN = 0.35`,
   `ZOOM_MAX = 4` (BattleSurface.tsx); the former "0.35–80" was a spec
-  typo.* Amended 2026-09-06 (parking lot, not scheduled): *the coarse-
-  pointer screen-space art overlay — "portrait tokens render in a
-  screen-space overlay so art stays crisp" — is DROPPED from the spec; the
-  shipped surface renders tokens in the transformed frame with no overlay
-  layer. See the parking lot below.*
+  typo.* Amended 2026-09-06 by cbe8218: *the pan gesture starts from any
+  non-piece surface — the letterbox background, the map image itself
+  (`data-board-background` on the `<img>`), or the content frame (e.g.
+  while the map image loads); before this, a drag on the map was a dead
+  zone. The same pan gesture semantics hold: a ≥8px screen-space drag pans
+  and keeps the selection, a sub-threshold tap deselects; token/veil
+  pointerdowns still stop propagation (pieces never start a pan), the
+  resize handles still stop propagation, and the pinch pairing still clears
+  pan state when a second finger lands.* Amended 2026-09-06 (parking lot,
+  not scheduled): *the coarse-pointer screen-space art overlay — "portrait
+  tokens render in a screen-space overlay so art stays crisp" — is DROPPED
+  from the spec; the shipped surface renders tokens in the transformed
+  frame with no overlay layer. See the parking lot below.*
 - Veils: add veil/fog, resize from n/e/s/w handles (hidden while scenery is
   locked). Amended 2026-09-06 by fba12b7: *the shipped resize is
   CLICK-to-resize — tapping an n/e/s/w handle (a 12px target) quantizes the
