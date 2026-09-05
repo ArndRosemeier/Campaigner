@@ -136,7 +136,6 @@ describe('post-run extras', () => {
       ...RUN_INPUT(campaignId, personaId),
       extras: { image: true, statBlock: false, mobPortraits: false, battlemap: false },
     });
-    console.log('RUN', JSON.stringify(await getRun(runId)));
     await waitFor(async () => {
       const run = await getRun(runId);
       expect(run?.status).toBe('completed');
