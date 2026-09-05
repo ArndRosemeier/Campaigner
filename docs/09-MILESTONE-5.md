@@ -224,6 +224,15 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    `type: 'none'` (name-only rows) seed as **tokens without HP that are
    excluded from initiative**, shown with a loud "no stats" badge — never a
    placeholder number (AGENTS rule 1).
+   Amended 2026-09-05 by afa23f4/070d4ba (mob-artifact arc): *a statful
+   RULEBOOK entry now seeds all its instances on ONE shared npc artifact —
+   the entry's `mobArtifactId` (stamped by finalize) or, for rows written
+   before the marker, the lazily get-or-created artifact keyed by the cited
+   chunk — and freezes ONE `seedFighters` row under that artifact id (stats
+   still resolved from the chunk via the fighterStats fallthrough). Inline
+   entries keep per-instance synthetic ids; statless entries are unchanged.
+   Portraits ride the existing `coverImageId` token path (11 §"D5 amendment
+   — mob portraits").*
 4. Ensure PC tokens: every `pc` artifact of the campaign spawns row-major in
    the staging ground (default center of the board). Statless PCs are
    skipped with the same loud badge.

@@ -367,6 +367,13 @@ a compact **roster index** from the pack books:
   never a silent fallback to name-only). Duplicate names across books resolve
   deterministically (most recently updated pack book first) and are visible
   in the origin badge (§8), which names the book.
+  Amended 2026-09-05 by afa23f4 (mob-artifact arc): *a RESOLVED rulebook
+  citation now also get-or-creates the campaign's mob artifact — ONE `npc`
+  artifact per cited chunk (`data.monsterChunkId` marker, roster name, no
+  stat duplication; the chunk stays the source of truth) — and stamps its
+  id as the entry's additive `mobArtifactId` so battles seed shared
+  identity and one-click portraits. See 11 §"D5 amendment — mob
+  portraits".*
 - **Pinned chunks join the citable list.** A chunk the user pinned in the run
   dialog is an explicit instruction to use it, so when it parsed
   (`statBlock !== null` — the same invariant as every ranked citable chunk) it
@@ -401,7 +408,12 @@ all consumers (encounter editor stat-block cards, battle tokens) keep working.
   and `packImport` still import no `fetch`.
 - No Foundry *system code*: no rule elements, roll formulas, or automation —
   packs are read once, mapped to `StatBlock`, and the source JSON is not kept.
-- No creature art / token images.
+- No creature art / token images. Amended 2026-09-05 by afa23f4/64b30f9:
+  *ONE generated portrait per rulebook-cited creature kind now exists via
+  the mob-artifact arc (11 §"D5 amendment — mob portraits") — creature art
+  stays OUT of the pack pipeline itself (adapters still fetch and render
+  nothing); the portraits are encounter-side, generated from the chunk's
+  stat-block text on an explicit one-click batch.*
 - No changes to the PDF stat-block detector (02-INGESTION stays as is).
 - No cross-book dedup of re-imports (same policy as PDFs; the `contentHash`
   embedding cache already avoids double embedding cost).

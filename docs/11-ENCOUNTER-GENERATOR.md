@@ -39,9 +39,54 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D2 | **Two autonomies**: interactive runs use the run-engine autonomy (manual/review pause at the checkpoints below; map pick always pauses, M3-A rule). **Unattended auto runs** (module generation) never pause: one stylize candidate, no pick gate — the `entity-image-queue` precedent (08 §M4-C). Any failure fails that encounter loudly; the batch continues. |
 | D3 | Rooms are **unions of rectangles** (1 rect = plain, 2–3 rects = L/T shapes). Every room carries a **mob sub-rectangle** (`mobsRect`) inscribed in the union — it is both the mob placement area and the room's veil footprint. |
 | D4 | **One veil per room**, kind `fog`, exactly `mobsRect`. Corridors stay open (GM can add fog manually). |
-| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. |
+| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below.* |
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. The vision check only flags drift for human review — it can never repair or invent geometry. |
+
+### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
+
+The original D5 was written when a rulebook-cited monster had NO artifact
+identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
+
+- **Mob artifacts**: finalize (BOTH remap sites — the Cartographer's map
+  finalize and the in-place Smith fill) get-or-creates ONE campaign-scoped
+  `npc` artifact per cited chunk. Kind `'npc'` + additive
+  `data.monsterChunkId` marker — NOT a new kind, and NOT a `links` entry
+  (artifact links are artifact→artifact in every consumer; a chunkId there
+  renders as a broken node). The artifact holds the roster creature name +
+  the marker; **NO stat duplication** — the chunk stays the source of truth
+  (`resolveMonsterEntry` keeps reading it). Idempotent across runs and
+  encounters (scan-based lookup mirroring `materializeMonsterNpc`'s
+  one-entity-per-name scan). Key = chunkId: cross-book duplicate creatures
+  get separate artifacts — acceptable v1; the roster disambiguates by book.
+- **Token wiring**: additive optional `mobArtifactId` on the rulebook
+  `monsterSource` variant (zod `.optional()` — old rows valid). At seed
+  time ALL instances of that entry share `artifactId = mobArtifactId` (the
+  npc-ref branch shape) and ONE `seedFighters` row freezes the
+  chunk-resolved stats under that artifact id (the
+  `byArtifactId.get(id) ?? bySeedId.get(id)` fallthrough in fighterStats
+  resolves every instance — the mob artifact itself carries no statBlock).
+  Portraits then render via the existing `coverImageId` path in TokenView —
+  zero BattleSurface changes.
+- **Lazy retro-fill**: existing encounters (no `mobArtifactId`) get their
+  artifacts at SEED time (get-or-create during battleSeed's monster
+  resolution) — no migration, no finalize requirement. The finalize path
+  and the seed path share the same get-or-create helper
+  (`src/db/mobArtifacts.ts`); finalize also creates, so the batch action
+  works right after generation.
+- **Portrait batch (one-click, not auto)**: an encounter-level
+  "Generate mob portraits" action in the encounter editor (beside the
+  monsters section). It enumerates the encounter's rulebook entries whose
+  mob artifact lacks `coverImageId`; for each, generates n=1 portrait and
+  attaches it as cover — the entity-image-queue mechanics (pump / intake /
+  `draftImagePrompt` / attach-cover) keyed by **artifactId** (the queue's
+  wiki-link-name resolution does not fit mob artifacts;
+  `src/features/campaign/mob-portrait-queue.ts`). **Prompt grounding: the
+  chunk's `text`** feeds `draftImagePrompt` — fresh mob artifacts have
+  empty appearance/body, so the creature's stat-block text is the only
+  source. Failures report loud per mob (`{name, message}` style,
+  `entity-batch.ts` pattern); skip-if-imaged guard (existing queue
+  behavior) — no re-generation of mobs that have covers.
 
 ## Pipeline (run-engine steps)
 
@@ -332,7 +377,8 @@ queue. The gate is 90 test files / 576 tests at completion.
 - Line-of-sight simulation, lighting, dynamic fog reveal by movement.
 - Hand-editing room rectangles (regenerate instead); free-form/organic rooms.
 - Multiple maps or multiple "floors" per encounter.
-- Token art generation (D5), token `tracks`, 3D dice.
+- Token art generation (D5 — amended 2026-09-05 for rulebook-cited creatures
+  only: the "Generate mob portraits" batch above), token `tracks`, 3D dice.
 - Player-facing second render surface / sync (M5 non-goal stands).
 - Reading geometry back from stylized images beyond the verify flag.
 - PDF export of layouts.
