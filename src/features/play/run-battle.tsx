@@ -12,6 +12,9 @@ import { Button } from '@/components/ui/button';
 /**
  * Seeds a module's live battle from an encounter. The module reader is the
  * only play view (M6-E); replacing an existing board remains a two-step act.
+ * The artifact editor reuses this exact button — directly for module-owned
+ * encounters, inside a module picker for campaign-scoped ones — so the
+ * two-step replace confirm stays one shared implementation.
  */
 function isRunning(battle: Awaited<ReturnType<typeof getBattleByModule>>): boolean {
   return battle !== undefined && (battle.board.tokens.length > 0 || battle.encounterArtifactId !== null);
@@ -41,10 +44,17 @@ export function RunBattleButton({
   campaignId,
   moduleId,
   encounter,
+  onRun,
 }: {
   campaignId: Id;
   moduleId: Id;
   encounter: AnyArtifact & { kind: 'encounter' };
+  /**
+   * Fired only when a press actually seeds (a press that merely arms the
+   * replace confirm does not count) and the seed succeeded — the editor's
+   * module picker closes its dialog on it. The module view passes nothing.
+   */
+  onRun?: (() => void) | undefined;
 }): JSX.Element {
   const [confirming, setConfirming] = useState(false);
   const existingBattle = useLiveQuery(
@@ -64,7 +74,9 @@ export function RunBattleButton({
           return;
         }
         setConfirming(false);
-        void runBattle(campaignId, moduleId, encounter);
+        void runBattle(campaignId, moduleId, encounter).then((report) => {
+          if (report !== null) onRun?.();
+        });
       }}
       onBlur={() => {
         setConfirming(false);

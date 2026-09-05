@@ -492,7 +492,10 @@ export function BattleSurface(): JSX.Element {
         data-testid="battle-surface-empty"
       >
         <p>No battle is seeded for this module yet.</p>
-        <p className="text-sm text-zinc-500">Open an encounter card and press “Run battle” first.</p>
+        <p className="text-sm text-zinc-500">
+          Open an encounter card in the module reader or the encounter editor and press “Run battle”
+          first.
+        </p>
         <Button
           variant="outline"
           size="sm"

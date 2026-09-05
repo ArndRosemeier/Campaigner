@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { HistoryIcon, SparklesIcon } from 'lucide-react';
+import { HistoryIcon, SparklesIcon, SwordsIcon } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -52,6 +52,8 @@ import { MentionsPanel } from '@/features/campaign/components/mentions-panel';
 import { ImagesSection } from '@/features/campaign/components/images-section';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { PeekModal } from '@/features/modules/peek-modal';
+import { RunBattleButton } from '@/features/play/run-battle';
+import { ModuleBattlePicker } from '@/features/campaign/components/run-battle-picker';
 import { RevisionDialog } from '@/features/campaign/components/revision-dialog';
 import { TagEditor } from '@/features/campaign/components/tag-editor';
 import { useRevisions } from '@/features/campaign/hooks';
@@ -265,6 +267,13 @@ export function ArtifactEditor({
           {artifact.moduleId !== null && (
             <ModuleOwnerLink campaignId={campaignId} moduleId={artifact.moduleId} />
           )}
+          {artifact.kind === 'encounter' && (
+            <EncounterRunAction
+              artifact={artifact}
+              campaignId={campaignId}
+              campaignArtifacts={campaignArtifacts}
+            />
+          )}
           <ScopeAction artifact={artifact} />
           <HelpButton topic="editor" label="artifact editor" className="ml-auto" />
           <span
@@ -462,6 +471,52 @@ function EncounterAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Elemen
         {!hasContent ? 'Generate with AI' : armed ? 'Overwrite content — confirm?' : 'Regenerate with AI'}
       </Button>
     </div>
+  );
+}
+
+/**
+ * Run-battle affordance for the editor header (owner-ratified: own-module
+ * anchor + picker fallback). Battles still anchor per module (10-MILESTONE-6
+ * D10): a module-owned encounter runs through the module view's own
+ * `RunBattleButton`, anchored to its own module; a campaign- or
+ * library-scoped encounter opens a module picker whose rows render the same
+ * button — one two-step replace confirm, never a fork.
+ */
+function EncounterRunAction({
+  artifact,
+  campaignId,
+  campaignArtifacts,
+}: {
+  artifact: AnyArtifact & { kind: 'encounter' };
+  campaignId: Id;
+  campaignArtifacts: readonly AnyArtifact[];
+}): JSX.Element {
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const moduleId = artifact.moduleId;
+  if (moduleId !== null) {
+    return <RunBattleButton campaignId={campaignId} moduleId={moduleId} encounter={artifact} />;
+  }
+  return (
+    <>
+      <Button
+        variant="outline"
+        size="sm"
+        data-testid="run-battle-picker"
+        onClick={() => {
+          setPickerOpen(true);
+        }}
+      >
+        <SwordsIcon aria-hidden data-icon="inline-start" />
+        Run battle…
+      </Button>
+      <ModuleBattlePicker
+        campaignId={campaignId}
+        encounter={artifact}
+        campaignArtifacts={campaignArtifacts}
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+      />
+    </>
   );
 }
 
