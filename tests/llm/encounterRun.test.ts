@@ -12,6 +12,7 @@ import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import {
   createPersona,
+  createModule as buildModule,
   defaultSettings,
   ruleChunkSchema,
   stampNewEntity,
@@ -20,6 +21,7 @@ import {
   type Persona,
   type StatBlock,
 } from '@/domain';
+import { createModule as persistModule } from '@/db/moduleRepo';
 import { sha256Hex } from '@/lib/hash';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
@@ -207,6 +209,125 @@ async function seedPackBook(title: string): Promise<Id> {
   const { db } = await import('@/db/db');
   const chunk = (await db.chunks.where('bookId').equals(book.id).first());
   return chunk?.id ?? '';
+}
+
+/**
+ * Seeds a ready pack book with `count` validated creatures named
+ * "Creature 001"… whose printed level (and levelSort) is 1..count — a
+ * >ROSTER_LIMIT bestiary import, so the 300-line prompt window's ordering
+ * becomes observable in the run's draft prompt.
+ */
+async function seedLargePackBook(count: number): Promise<void> {
+  const book = await createPackBook({ title: 'Huge Bestiary Pack', system: 'dnd5e', filename: 'huge.zip' });
+  await finalizePackBook(book.id, {
+    sourceId: 'foundry-pf2e',
+    license: 'Community Use Policy',
+    entriesImported: count,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+  });
+  const chunks = [];
+  for (let level = 1; level <= count; level += 1) {
+    const name = `Creature ${String(level).padStart(3, '0')}`;
+    const text = `${name}, a ladder creature at level ${String(level)}.`;
+    chunks.push(
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: level,
+        pageEnd: level,
+        chunkType: 'statblock',
+        headingPath: [name],
+        text,
+        statBlock: statBlockSchema.parse({
+          system: 'dnd5e',
+          level: String(level),
+          size: 'Small',
+          creatureType: 'humanoid',
+          ac: 10,
+          acNote: '',
+          hp: 1,
+          hpFormula: '',
+          speed: '',
+          abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+          saves: '',
+          skills: '',
+          senses: '',
+          languages: '',
+          traits: [],
+          actions: [],
+          reactions: [],
+          legendary: [],
+          extras: {},
+        }),
+        contentHash: await sha256Hex(text),
+      }),
+    );
+  }
+  await putChunks(chunks);
+}
+
+type EncounterCampaign = Awaited<ReturnType<typeof createCampaign>>;
+
+/**
+ * Runs a stub-fill Smith run against the seeded pack with a stub encounter
+ * carrying the given levelHint/module ownership, and resolves with the run id
+ * plus the draft prompt's user content (where the roster section renders).
+ * The draft cites `sourceName` so the resolution path is exercised too.
+ */
+async function runSmithAgainst(
+  campaign: EncounterCampaign,
+  persona: Persona,
+  stub: { levelHint: string; moduleId?: Id },
+  sourceName: string,
+): Promise<{ runId: Id; userContent: string }> {
+  const stubArtifact = await createArtifact({
+    campaignId: campaign.id,
+    kind: 'encounter',
+    name: 'Window Probe',
+    ...(stub.moduleId === undefined ? {} : { moduleId: stub.moduleId }),
+    data: {
+      difficulty: '',
+      levelHint: stub.levelHint,
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+    },
+  });
+  const callIndex = chatMock.mock.calls.length;
+  chatMock.mockResolvedValue({
+    text: JSON.stringify({
+      ...DRAFT,
+      monsters: [{ name: sourceName, count: 1, notes: '', sourceName }],
+    }),
+    modelUsed: 'test-model',
+    fallback: null,
+  });
+  const runId = await runEngine.startRun({
+    campaign,
+    persona,
+    brief: 'A probe encounter',
+    autonomy: 'auto',
+    pinnedChunkIds: [],
+    targetArtifactId: stubArtifact.id,
+  });
+  await vi.waitFor(async () => {
+    expect((await getRun(runId))?.status).toBe('completed');
+  });
+  const rawContent =
+    chatMock.mock.calls[callIndex]?.[0].find((message) => message.role === 'user')?.content ?? '';
+  const userContent = typeof rawContent === 'string' ? rawContent : '';
+  return { runId, userContent };
+}
+
+/** Index of a roster line inside the prompt — asserting relative order. */
+function rosterLineAt(userContent: string, line: string): number {
+  const at = userContent.indexOf(line);
+  expect(at).toBeGreaterThanOrEqual(0);
+  return at;
 }
 
 describe('encounter runs (M3-B)', () => {
@@ -902,5 +1023,178 @@ describe('encounter runs (M3-B)', () => {
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId });
     expect(artifact.data.monsters[1]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId });
+  });
+
+  describe('roster prompt-window ordering (12-BESTIARY-PACKS §7 ratified chain)', () => {
+    it('orders the window by distance to the target encounter levelHint and resolves names outside it', async () => {
+      const { campaign, persona } = await seed();
+      await seedLargePackBook(305);
+      searchRulesMock.mockResolvedValue([]);
+
+      const { runId, userContent } = await runSmithAgainst(
+        campaign,
+        persona,
+        { levelHint: '300' },
+        'Creature 001',
+      );
+
+      // Closest 300 of levels 1..305 = levels 6..305: the five farthest
+      // (1..5) drop out, the near-target 301..305 are in — the ascending
+      // window would have shown exactly the opposite tail.
+      expect(userContent).toContain('(roster truncated; 5 more)');
+      expect(userContent).toContain('Creature 305 (305)');
+      expect(userContent).not.toContain('Creature 001 (1)');
+      // Distance order around 300; the 299/301 tie breaks by level ascending.
+      expect(rosterLineAt(userContent, 'Creature 300 (300)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 299 (299)'),
+      );
+      expect(rosterLineAt(userContent, 'Creature 299 (299)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 301 (301)'),
+      );
+      expect(rosterLineAt(userContent, 'Creature 301 (301)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 298 (298)'),
+      );
+
+      // Resolution is NOT windowed: the draft cites Creature 001, which is
+      // outside the visible window, and the all-entries index resolves it.
+      const storedRun = await getRun(runId);
+      const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      const { db } = await import('@/db/db');
+      const cited = (await db.chunks.toArray()).find((row) => row.headingPath[0] === 'Creature 001');
+      expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: cited?.id });
+    });
+
+    it('parses levelHint variants at the run-engine boundary (first digit run wins)', async () => {
+      const { campaign, persona } = await seed();
+      await seedLargePackBook(305);
+      searchRulesMock.mockResolvedValue([]);
+
+      const band = await runSmithAgainst(campaign, persona, { levelHint: '4–6' }, 'Creature 305');
+      // "4–6" parses to 4: the window leads with level 4 and its neighbors,
+      // and the far tail (301..305) is truncated away.
+      expect(rosterLineAt(band.userContent, 'Creature 004 (4)')).toBeLessThan(
+        rosterLineAt(band.userContent, 'Creature 003 (3)'),
+      );
+      expect(rosterLineAt(band.userContent, 'Creature 003 (3)')).toBeLessThan(
+        rosterLineAt(band.userContent, 'Creature 005 (5)'),
+      );
+      expect(band.userContent).toContain('Creature 001 (1)');
+      expect(band.userContent).not.toContain('Creature 305 (305)');
+      expect(band.userContent).toContain('(roster truncated; 5 more)');
+
+      const cr = await runSmithAgainst(campaign, persona, { levelHint: 'CR 5' }, 'Creature 305');
+      // "CR 5" parses to 5 — the first digit run anywhere in the hint.
+      expect(rosterLineAt(cr.userContent, 'Creature 005 (5)')).toBeLessThan(
+        rosterLineAt(cr.userContent, 'Creature 004 (4)'),
+      );
+    });
+
+    it('falls back to the owning module level-band midpoint when the levelHint has no digits', async () => {
+      const { campaign, persona } = await seed();
+      await seedLargePackBook(305);
+      searchRulesMock.mockResolvedValue([]);
+      const module = await persistModule(
+        buildModule({
+          campaignId: campaign.id,
+          title: 'Endgame Module',
+          concept: 'The final chapter of the campaign.',
+          levelMin: 18,
+          levelMax: 20,
+          tone: 'climactic',
+          sizeDial: 'standard',
+        }),
+      );
+
+      const { runId, userContent } = await runSmithAgainst(
+        campaign,
+        persona,
+        { levelHint: '', moduleId: module.id },
+        'Creature 001',
+      );
+
+      // Midpoint (18+20)/2 = 19: the window leads with level 19 and its
+      // neighbors — not the ascending level 1 — while the closest-300 set
+      // (levels 1..300) is unchanged and still truncated by 5.
+      expect(rosterLineAt(userContent, 'Creature 019 (19)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 018 (18)'),
+      );
+      expect(rosterLineAt(userContent, 'Creature 018 (18)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 020 (20)'),
+      );
+      expect(rosterLineAt(userContent, 'Creature 020 (20)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 017 (17)'),
+      );
+      expect(userContent).toContain('Creature 001 (1)');
+      expect(userContent).toContain('(roster truncated; 5 more)');
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+    });
+
+    it('keeps the ascending window when neither a levelHint nor a module band applies', async () => {
+      const { campaign, persona } = await seed();
+      await seedLargePackBook(305);
+      searchRulesMock.mockResolvedValue([]);
+
+      const { userContent } = await runSmithAgainst(
+        campaign,
+        persona,
+        { levelHint: '' },
+        'Creature 305',
+      );
+
+      // No target anywhere in the chain: the window is the historical
+      // level/name ascending order, byte-identical to the pre-chain behavior.
+      expect(rosterLineAt(userContent, 'Creature 001 (1)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 002 (2)'),
+      );
+      expect(rosterLineAt(userContent, 'Creature 002 (2)')).toBeLessThan(
+        rosterLineAt(userContent, 'Creature 003 (3)'),
+      );
+      expect(userContent).not.toContain('Creature 305 (305)');
+      expect(userContent).toContain('(roster truncated; 5 more)');
+    });
+
+    it('fails loudly when a module-scoped target references a module that does not exist', async () => {
+      const { campaign, persona } = await seed();
+      await seedLargePackBook(305);
+      searchRulesMock.mockResolvedValue([]);
+      chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
+
+      const stub = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Orphaned Probe',
+        moduleId: crypto.randomUUID(),
+        data: {
+          difficulty: '',
+          levelHint: '',
+          monsters: [],
+          terrain: '',
+          tactics: '',
+          treasure: '',
+          mapImageId: null,
+          layout: null,
+        },
+      });
+      const runId = await runEngine.startRun({
+        campaign,
+        persona,
+        brief: 'A probe encounter',
+        autonomy: 'auto',
+        pinnedChunkIds: [],
+        targetArtifactId: stub.id,
+      });
+
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('failed');
+      });
+      const storedRun = await getRun(runId);
+      // A dangling module anchor is corrupt data, not a preference state —
+      // the run fails with a named error instead of silently ordering
+      // without a target.
+      expect(storedRun?.errorMessage).toContain('which does not exist');
+    });
   });
 });

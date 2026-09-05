@@ -38,7 +38,7 @@ import { createImage, deleteUnreferencedImages, getImage, reanchorImages } from 
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
-import { listModulesByCampaign } from '@/db/moduleRepo';
+import { listModulesByCampaign, getModule } from '@/db/moduleRepo';
 import {
   computeCampaignGrounding,
   expansionExcerptSchema,
@@ -47,7 +47,7 @@ import {
   type ExpansionExcerpt,
 } from '@/llm/campaignGrounding';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
-import { collectPackRosterWithRetry, formatRosterSection } from '@/llm/encounterRoster';
+import { collectPackRosterWithRetry, formatRosterSection, parseRosterTargetLevel } from '@/llm/encounterRoster';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -1189,6 +1189,41 @@ export class RunEngine {
       : null;
   }
 
+  /**
+   * The roster prompt window's target level (12-BESTIARY-PACKS §7, ratified
+   * chain), resolved at the run-engine boundary from what the run carries:
+   * (a) the target encounter's free-text `levelHint` ("5", "4–6", "CR 5" —
+   * the first digit run wins); (b) else, when the run is module-scoped (the
+   * target artifact is owned by a module), that module's
+   * `levelMin`/`levelMax` band midpoint; (c) else undefined — the window
+   * keeps the level/name-ascending order. The chain is graceful by design:
+   * an empty/unparseable levelHint is a legitimate preference state (the
+   * hint is a user preference string, not data that failed), so it falls to
+   * the next preference. A target artifact claiming module ownership whose
+   * module row is gone is corrupt data and fails loudly instead of silently
+   * ordering without a target.
+   */
+  private async rosterTargetLevelFor(input: StartRunInput): Promise<number | undefined> {
+    if (input.targetArtifactId === undefined) return undefined;
+    const target = await getAnyArtifact(input.targetArtifactId);
+    // A vanished target is unreachable in the sanctioned flow (the encounter
+    // brief validates it before this runs); without one there is no target
+    // preference and the window stays ascending.
+    if (target === undefined) return undefined;
+    if (target.kind === 'encounter') {
+      const fromHint = parseRosterTargetLevel(target.data.levelHint);
+      if (fromHint !== undefined) return fromHint;
+    }
+    if (target.moduleId === null) return undefined;
+    const module = await getModule(target.moduleId);
+    if (module === undefined) {
+      throw new Error(
+        `roster target level: "${target.name}" references module ${target.moduleId}, which does not exist`,
+      );
+    }
+    return (module.levelMin + module.levelMax) / 2;
+  }
+
   private async retrieveContext(runId: Id, input: StartRunInput): Promise<RetrieveContext> {
     // First semantic search after enabling embeddings backfills the whole
     // library — minutes of embedding requests before the first LLM call. The
@@ -1255,7 +1290,18 @@ export class RunEngine {
         // creatures to field. fix-02 (decision 4): one automatic retry for a
         // transient failure, then the named error fails the run loudly — a
         // corrupt pack chunk or dead book never degrades to inline-only.
-        const roster = await collectPackRosterWithRetry(input.campaign.system);
+        // §7 ratified amendment: the 300-line PROMPT WINDOW is ordered by
+        // level distance to the run's target level (levelHint → module band
+        // midpoint → none), so a huge import surfaces threatening creatures
+        // instead of the first 300 low-CR entries. Resolution is unaffected:
+        // the name index still covers every entry.
+        const rosterTargetLevel = await this.rosterTargetLevelFor(input);
+        const roster = await collectPackRosterWithRetry(
+          input.campaign.system,
+          undefined,
+          undefined,
+          rosterTargetLevel,
+        );
         rosterLines = roster.lines;
         rosterTruncated = roster.truncated;
         rosterChunkByName = Object.fromEntries(roster.chunkByName);
