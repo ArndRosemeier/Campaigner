@@ -7,6 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact } from '@/db/artifactRepo';
 import { getBattleByModule, saveBattleBoard } from '@/db/battleRepo';
+import type * as battleRepoModule from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -17,6 +18,14 @@ import { BattleSurface } from '@/features/play/battle/BattleSurface';
 import { battleGridStyle } from '@/domain/battle/gridSnap';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
+
+// Wrap (not replace) saveBattleBoard so veil-drag tests can count commits —
+// zero writes while a drag is live, exactly one on release. Every other test
+// keeps the real behavior.
+vi.mock('@/db/battleRepo', async (importOriginal) => {
+  const actual = await importOriginal<typeof battleRepoModule>();
+  return { ...actual, saveBattleBoard: vi.fn(actual.saveBattleBoard) };
+});
 
 /**
  * The table surface (09-MILESTONE-5 M5-D): the player-safe DOM contract,
@@ -361,6 +370,89 @@ describe('drag & tap', () => {
     expect(within(controls).getByTestId('token-hp').textContent).toContain('84');
     expect(controls.textContent).not.toContain('fears fire');
     await flushAsyncUpdates();
+  });
+});
+
+describe('veil live drag', () => {
+  it('tracks the pointer with ZERO Dexie writes and a dragging visual, then commits the snapped drop exactly once', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    // Seed a 2×2 veil away from the fighters.
+    const seeded = await currentBattle(moduleId);
+    const veilId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const veilEl = screen.getByTestId('battle-veil');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    // Press on the veil and drag — the LOCAL veil must follow the pointer.
+    fireEvent.pointerDown(veilEl, { pointerId: 5, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.55), clientY: cy(0.62) });
+    await flushAsyncUpdates();
+    expect(Number.parseFloat(veilEl.style.left) / 100).toBeCloseTo(0.55, 9);
+    expect(Number.parseFloat(veilEl.style.top) / 100).toBeCloseTo(0.62, 9);
+    // Dragging visual mirrors tokens: lifted (z-20), slightly translucent.
+    expect(veilEl.className).toContain('z-20');
+    expect(veilEl.className).toContain('opacity-90');
+    // Zero persistence while the drag is live — the battle row is untouched.
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    const during = await currentBattle(moduleId);
+    expect(during.board.veils.find((veil) => veil.id === veilId)?.x).toBe(0.3);
+    // Release: exactly one commit, snapped like a token drop.
+    fireEvent.pointerUp(veilEl, { pointerId: 5 });
+    await flushAsyncUpdates();
+    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    const after = await currentBattle(moduleId);
+    const dropped = after.board.veils.find((veil) => veil.id === veilId);
+    if (dropped === undefined) throw new Error('veil vanished');
+    expect(dropped.x).not.toBe(0.3);
+    // Span-aware snap (2×2 → centre ≡ 0 mod 72 content px on both axes):
+    // drop fraction (0.55, 0.62) → (432/800, 288/450) = (0.54, 0.64).
+    expect(dropped.x).toBeCloseTo(0.54, 9);
+    expect(dropped.y).toBeCloseTo(0.64, 9);
+    expect(Math.abs((dropped.x * BOARD_W) % 72)).toBeLessThan(1e-6);
+    expect(Math.abs((dropped.y * CONTENT_H) % 72)).toBeLessThan(1e-6);
+  });
+
+  it('does not commit a veil tap below the screen-space threshold', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const veilId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const veilEl = screen.getByTestId('battle-veil');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    fireEvent.pointerDown(veilEl, { pointerId: 5, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.3) + 3, clientY: cy(0.3) });
+    fireEvent.pointerUp(veilEl, { pointerId: 5 });
+    await flushAsyncUpdates();
+    // A 3px nudge is a tap (veil selection), never a teleport or a commit.
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    const after = await currentBattle(moduleId);
+    const veil = after.board.veils.find((entry) => entry.id === veilId);
+    expect(veil?.x).toBe(0.3);
+    expect(veil?.y).toBe(0.3);
+    expect(screen.getByTestId('delete-veil')).toBeInTheDocument();
   });
 });
 

@@ -260,6 +260,18 @@ export function BattleSurface(): JSX.Element {
       .map((token) => (drag !== null && token.id === drag.tokenId ? { ...token, x: drag.x, y: drag.y } : token));
   }, [battle, liveDrag, coveredTokenIds]);
 
+  // Same live-render contract as displayedTokens: a dragged veil follows the
+  // pointer in local state (persisted exactly once on release).
+  const displayedVeils = useMemo(() => {
+    if (battle === undefined) return [];
+    const drag = liveDrag;
+    if (drag?.tokenId.startsWith('veil:') !== true) return battle.board.veils;
+    const veilId = drag.tokenId.slice('veil:'.length);
+    return battle.board.veils.map((veil) =>
+      veil.id === veilId ? { ...veil, x: drag.x, y: drag.y } : veil,
+    );
+  }, [battle, liveDrag]);
+
   const artifactById = useMemo(() => new Map(artifacts.map((entry) => [entry.id, entry])), [artifacts]);
   const selectedToken = displayedTokens.find((token) => token.id === selectedTokenId) ?? null;
 
@@ -436,9 +448,19 @@ export function BattleSurface(): JSX.Element {
     if (drag?.tokenId.startsWith('veil:') !== true) return;
     const veilId = drag.tokenId.slice('veil:'.length);
     if (drag.movedPx < DRAG_THRESHOLD_PX) return;
+    // VEIL/TOKEN PARITY (pinned by test): veils snap on drop exactly like
+    // tokens — the center quantizes to a widthCells×heightCells grid block,
+    // which lands the veil's EDGES on cell boundaries and matches the
+    // cell-quantized resize math (resizeVeilFromEdge). An unsnapped commit
+    // was the inconsistency, not a choice.
+    const veil = battle?.board.veils.find((entry) => entry.id === veilId);
+    const snapped = snapPoint(drag.x, drag.y, {
+      x: veil?.widthCells ?? 1,
+      y: veil?.heightCells ?? 1,
+    });
     void commit((board) => ({
       ...board,
-      veils: board.veils.map((veil) => (veil.id === veilId ? { ...veil, x: drag.x, y: drag.y } : veil)),
+      veils: board.veils.map((veil) => (veil.id === veilId ? { ...veil, x: snapped.x, y: snapped.y } : veil)),
     }));
   }
 
@@ -791,7 +813,7 @@ export function BattleSurface(): JSX.Element {
                 />
               ))}
               {/* Veils */}
-              {board.veils.map((veil) => (
+              {displayedVeils.map((veil) => (
                 <VeilView
                   key={veil.id}
                   veil={veil}
@@ -799,6 +821,7 @@ export function BattleSurface(): JSX.Element {
                   cellWidthPx={cellWidthPx}
                   cellHeightPx={cellHeightPx}
                   selected={veil.id === selectedVeilId}
+                  dragging={liveDrag?.tokenId === `veil:${veil.id}`}
                   resizable={!playerSafe && !board.sceneryMovementLocked}
                   onPointerDown={(event) => {
                     startVeilDrag(event, veil);
@@ -1059,6 +1082,7 @@ interface VeilViewProps {
   cellWidthPx: number;
   cellHeightPx: number;
   selected: boolean;
+  dragging: boolean;
   resizable: boolean;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
@@ -1073,6 +1097,7 @@ function VeilView({
   cellWidthPx,
   cellHeightPx,
   selected,
+  dragging,
   resizable,
   onPointerDown,
   onPointerMove,
@@ -1094,6 +1119,9 @@ function VeilView({
         'absolute -translate-x-1/2 -translate-y-1/2 touch-none',
         veil.kind === 'fog' ? 'bg-zinc-200' : 'bg-zinc-800',
         selected ? 'opacity-70 ring-2 ring-amber-400' : 'opacity-100',
+        // Dragging visual mirrors TokenView: lifted above siblings, slightly
+        // translucent (wins over the selected opacity via cn's last-wins).
+        dragging && 'z-20 opacity-90',
         !resizable && 'cursor-default',
       )}
       style={{
