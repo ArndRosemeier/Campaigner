@@ -59,6 +59,7 @@ export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle
       activeIndex: 0,
       stage: null,
       stagingGround: null,
+      entrance: null,
     },
   };
   return saveBattle(created);

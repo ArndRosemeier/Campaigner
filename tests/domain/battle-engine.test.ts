@@ -16,6 +16,7 @@ import {
   applyStageReset,
   combatHpForToken,
   captureStageSnapshot,
+  cloneStageSnapshot,
   emptyBoard,
   ensurePcTokens,
   fallbackSpawnPoint,
@@ -470,6 +471,22 @@ describe('scrub & stage reset', () => {
     expect(reset.tokens[0]?.initiativeRoll).toBeNull();
     expect(reset.initiativeEnabled).toBe(false);
     expect(reset.initiativeOrder).toEqual([]);
+  });
+
+  it('carries the entrance through capture, clone and reset (doc 11)', () => {
+    const entrance = { x: 0.125, y: 0.041666666666666664, side: 'north' as const };
+    const opened: BattleBoard = {
+      ...emptyBoard(),
+      mapLayout: { cols: 12, rows: 12 },
+      entrance,
+    };
+    const stage = captureStageSnapshot(opened);
+    expect(stage.entrance).toEqual(entrance);
+    const drifted: BattleBoard = { ...opened, entrance: null };
+    const reset = applyStageReset(drifted, cloneStageSnapshot(stage), stats, []);
+    expect(reset.entrance).toEqual(entrance);
+    // Legacy boards stay null.
+    expect(captureStageSnapshot(emptyBoard()).entrance).toBeNull();
   });
 
   it('re-spawns missing PCs at the staging ground on reset', () => {

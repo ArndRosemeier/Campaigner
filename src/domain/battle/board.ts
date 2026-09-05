@@ -32,6 +32,7 @@ export function emptyBoard(): BattleBoard {
     activeIndex: 0,
     stage: null,
     stagingGround: null,
+    entrance: null,
   };
 }
 
@@ -266,6 +267,7 @@ export function captureStageSnapshot(board: BattleBoard): StageSnapshot {
       board.stagingGround === null
         ? null
         : { ...board.stagingGround },
+    entrance: board.entrance ? { ...board.entrance } : null,
   };
 }
 
@@ -278,6 +280,7 @@ export function cloneStageSnapshot(stage: StageSnapshot): StageSnapshot {
     tokens: stage.tokens.map((token) => ({ ...token, conditions: [...token.conditions] })),
     veils: stage.veils.map((veil) => ({ ...veil })),
     stagingGround: stage.stagingGround === null ? null : { ...stage.stagingGround },
+    entrance: stage.entrance ? { ...stage.entrance } : null,
   };
 }
 
@@ -322,6 +325,7 @@ export function applyStageReset(
     tokens,
     veils: stage.veils.map((veil) => ({ ...veil })),
     stagingGround: stage.stagingGround === null ? null : { ...stage.stagingGround },
+    entrance: stage.entrance ? { ...stage.entrance } : null,
     activeIndex: 0,
     initiativeEnabled: false,
     initiativeOrder: [],

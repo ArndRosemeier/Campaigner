@@ -1091,4 +1091,39 @@ describe('stage snapshot', () => {
     battle = await currentBattle(moduleId);
     expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(84);
   });
+
+describe('entrance overlay (doc 11)', () => {
+  it('renders the stamped entrance cell with the inward-pointing triangle, player view included', async () => {
+    const { moduleId } = await seedStandardBattle();
+    const battle = await currentBattle(moduleId);
+    // Entrance at cell (1,1) of a 12×12 grid, west side — inward is east.
+    await saveBattleBoard(battle.id, {
+      ...battle.board,
+      mapLayout: { cols: 12, rows: 12 },
+      entrance: { x: 0.125, y: 0.125, side: 'west' },
+    });
+    await renderSurface(moduleId);
+
+    const entrance = screen.getByTestId('battle-entrance');
+    // One map cell: centered on the entrance cell, sized 1/cols × 1/rows.
+    expect(entrance.style.left).toBe(`${String(0.125 * 100 - 50 / 12)}%`);
+    expect(entrance.style.top).toBe(`${String(0.125 * 100 - 50 / 12)}%`);
+    expect(entrance.style.width).toBe(`${String(100 / 12)}%`);
+    expect(entrance.style.height).toBe(`${String(100 / 12)}%`);
+    const glyph = entrance.firstElementChild as HTMLElement | null;
+    if (glyph === null) throw new Error('entrance glyph missing');
+    // West side opens outward — a down-pointing glyph rotated 270deg.
+    expect(glyph.style.transform).toBe('rotate(270deg)');
+
+    // Board material: survives the player-safe toggle.
+    await userEvent.click(screen.getByTestId('player-safe-toggle'));
+    expect(screen.getByTestId('battle-entrance')).toBeInTheDocument();
+  });
+
+  it('renders nothing when no entrance is stamped', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    expect(screen.queryByTestId('battle-entrance')).toBeNull();
+  });
+});
 });

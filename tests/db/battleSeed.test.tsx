@@ -12,6 +12,7 @@ import { buildFighterStatsLookup, fighterStatsFromPc } from '@/db/fighterStats';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { createRulebook } from '@/db/rulebookRepo';
 import { fighterTokens } from '@/domain/battle/board';
+import { stagingBlockRect } from '@/domain/encounterMap/layout';
 import type { Artifact, EncounterLayout, Id, StatBlock } from '@/domain';
 import { newId, packRooms, placeMonsters, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
@@ -293,8 +294,15 @@ describe('roster expansion', () => {
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
 
     expect(battle.board.mapLayout).toEqual({ cols: layout.gridW, rows: layout.gridH });
-    expect(battle.board.veils).toHaveLength(layout.rooms.length);
+    // Adjudicated fog exception (doc 11): with an entrance the party STARTS
+    // in the spawn room, so its fog veil is skipped at seed.
+    const spawnRoomOfLayout = layout.rooms.find((room) => room.spawn);
+    const expectedVeils = layout.rooms.length - (spawnRoomOfLayout?.entrance !== undefined ? 1 : 0);
+    expect(battle.board.veils).toHaveLength(expectedVeils);
     expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
+    expect(battle.board.veils.some((veil) => veil.id === spawnRoomOfLayout?.id)).toBe(
+      spawnRoomOfLayout?.entrance === undefined,
+    );
     const expected = placeMonsters(layout, monsters);
     const npcTokens = battle.board.tokens.filter((token) => token.currentHp !== null);
     expect(npcTokens.map((token) => [token.x, token.y])).toEqual(
@@ -306,10 +314,17 @@ describe('roster expansion', () => {
     if (entry === undefined) throw new Error('spawn room missing');
     const pc = battle.board.tokens.find((token) => token.currentHp === null && token.artifactId !== null);
     if (pc === undefined) throw new Error('pc token missing');
-    expect(pc.x).toBeGreaterThanOrEqual(entry.mobsRect.x / layout.gridW);
-    expect(pc.x).toBeLessThanOrEqual((entry.mobsRect.x + entry.mobsRect.w) / layout.gridW);
-    expect(pc.y).toBeGreaterThanOrEqual(entry.mobsRect.y / layout.gridH);
-    expect(pc.y).toBeLessThanOrEqual((entry.mobsRect.y + entry.mobsRect.h) / layout.gridH);
+    // Entrance-anchored staging: the party block is slid to the entrance wall,
+    // so PCs fill the STAGING BLOCK inside the spawn room UNION (the border
+    // ring included) — no longer pinned to the mobsRect bounds.
+    const unionCells = new Set<string>();
+    for (const rect of entry.rects) {
+      for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+        for (let x = rect.x; x < rect.x + rect.w; x += 1) unionCells.add(`${String(x)},${String(y)}`);
+      }
+    }
+    const pcCell = `${String(Math.floor(pc.x * layout.gridW))},${String(Math.floor(pc.y * layout.gridH))}`;
+    expect(unionCells.has(pcCell)).toBe(true);
   });
 
   it('rejects non-encounter artifacts (loud, no empty seed)', async () => {
@@ -524,4 +539,78 @@ describe('pc stats resolution', () => {
     expect(stats?.maxHp).toBe(20);
     expect(stats?.currentHp).toBe(20);
   });
+
+describe('entrance-anchored staging (adjudicated)', () => {
+  function gatehouseLayout(): EncounterLayout {
+    const roomA = newId();
+    const roomB = newId();
+    return packRooms({
+      theme: 'Ruined gatehouse',
+      aspect: '4:3',
+      entryRoomId: roomA,
+      rosterCounts: [1],
+      rooms: [
+        { id: roomA, name: 'Gate', description: '', size: 'small', monsterIndexes: [], adjacentRoomIds: [roomB] },
+        { id: roomB, name: 'Barracks', description: '', size: 'large', monsterIndexes: [0], adjacentRoomIds: [roomA] },
+      ],
+    });
+  }
+
+  const monsters = [{ name: 'Goblin', count: 1, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } }];
+
+  it('anchors the staging block at the entrance wall and stamps board.entrance', async () => {
+    const layout = gatehouseLayout();
+    const encounter = await addEncounter({ monsters, layout });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    const spawn = layout.rooms.find((room) => room.spawn);
+    if (spawn === undefined) throw new Error('spawn room missing');
+    if (spawn.entrance === undefined) throw new Error('packed layout has no entrance');
+
+    const block = stagingBlockRect(spawn);
+    expect(battle.board.stagingGround).toEqual({
+      x: (block.x + block.w / 2) / layout.gridW,
+      y: (block.y + block.h / 2) / layout.gridH,
+      cellWidth: block.w / 3 / layout.gridW,
+      cellHeight: block.h / 3 / layout.gridH,
+    });
+    expect(battle.board.entrance).toEqual({
+      x: (spawn.entrance.x + 0.5) / layout.gridW,
+      y: (spawn.entrance.y + 0.5) / layout.gridH,
+      side: spawn.entrance.side,
+    });
+    // The block actually MOVED toward the wall: it hugs the entrance axis.
+    expect(block).not.toEqual(spawn.mobsRect);
+  });
+
+  it('skips the spawn-room fog veil when an entrance exists (adjudicated)', async () => {
+    const layout = gatehouseLayout();
+    const encounter = await addEncounter({ monsters, layout });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    const spawn = layout.rooms.find((room) => room.spawn);
+    if (spawn?.entrance === undefined) throw new Error('entrance missing');
+    expect(battle.board.veils.some((veil) => veil.id === spawn.id)).toBe(false);
+    expect(battle.board.veils).toHaveLength(layout.rooms.length - 1);
+    expect(battle.board.veils.every((veil) => veil.id !== spawn.id)).toBe(true);
+  });
+
+  it('keeps legacy behavior byte-identical when the layout has no entrance', async () => {
+    const packed = gatehouseLayout();
+    const legacy: EncounterLayout = {
+      ...packed,
+      rooms: packed.rooms.map((room) => ({ ...room, entrance: undefined })),
+    };
+    const encounter = await addEncounter({ monsters, layout: legacy });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    const spawn = legacy.rooms.find((room) => room.spawn);
+    if (spawn === undefined) throw new Error('spawn room missing');
+    expect(battle.board.stagingGround).toEqual({
+      x: (spawn.mobsRect.x + spawn.mobsRect.w / 2) / legacy.gridW,
+      y: (spawn.mobsRect.y + spawn.mobsRect.h / 2) / legacy.gridH,
+      cellWidth: spawn.mobsRect.w / 3 / legacy.gridW,
+      cellHeight: spawn.mobsRect.h / 3 / legacy.gridH,
+    });
+    expect(battle.board.entrance).toBeNull();
+    expect(battle.board.veils).toHaveLength(legacy.rooms.length);
+  });
+});
 });

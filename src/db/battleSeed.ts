@@ -1,6 +1,12 @@
-import type { AnyArtifact, Battle, BattleToken, Id, SeedFighter } from '@/domain';
+import type { AnyArtifact, Battle, BattleToken, BattleVeil, Id, SeedFighter } from '@/domain';
 import { GRID_SIZE_DEFAULT, newId, placeMonsters, spawnRoom, veilsFromRooms } from '@/domain';
-import { ensurePcTokens, fallbackSpawnPoint, stagingGroundAt, tokenFromFighter } from '@/domain/battle/board';
+import {
+  ensurePcTokens,
+  fallbackSpawnPoint,
+  stagingGroundAt,
+  tokenFromFighter,
+} from '@/domain/battle/board';
+import { stagingBlockRect } from '@/domain/encounterMap/layout';
 import { abilityModifier } from '@/domain/statblock';
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
@@ -180,24 +186,44 @@ export async function seedBattleFromEncounter(
   // normalize-on-write; statful only — a statless PC is skipped and badged.
   const artifacts = await listArtifactsByCampaign(campaignId);
   const entryRoom = layout === null ? undefined : spawnRoom(layout);
+  // Entrance-anchored staging (entrance/exit spawn zones, doc 11): the party
+  // block is the mobsRect-sized rect slid along the entrance axis until it
+  // hugs the entrance wall (staying inside the room union). Without an
+  // entrance (legacy layouts) this is exactly the mobsRect — byte-identical
+  // to the pre-entrance behavior.
+  const stagingRect = layout === null || entryRoom === undefined ? null : stagingBlockRect(entryRoom);
   const stagingGround =
-    layout === null || entryRoom === undefined
+    stagingRect === null || layout === null
       ? defaultStagingGround()
       : {
-          x: (entryRoom.mobsRect.x + entryRoom.mobsRect.w / 2) / layout.gridW,
-          y: (entryRoom.mobsRect.y + entryRoom.mobsRect.h / 2) / layout.gridH,
+          x: (stagingRect.x + stagingRect.w / 2) / layout.gridW,
+          y: (stagingRect.y + stagingRect.h / 2) / layout.gridH,
           // ensurePcTokens fills a 3×3 staging block; scale that block to the
-          // entry room's exact mobsRect even when it is only two cells wide.
-          cellWidth: entryRoom.mobsRect.w / 3 / layout.gridW,
-          cellHeight: entryRoom.mobsRect.h / 3 / layout.gridH,
+          // staging rect even when it is only two cells wide.
+          cellWidth: stagingRect.w / 3 / layout.gridW,
+          cellHeight: stagingRect.h / 3 / layout.gridH,
         };
+  const entrance =
+    layout === null || entryRoom?.entrance === undefined
+      ? null
+      : {
+          x: (entryRoom.entrance.x + 0.5) / layout.gridW,
+          y: (entryRoom.entrance.y + 0.5) / layout.gridH,
+          side: entryRoom.entrance.side,
+        };
+  // Adjudicated fog exception: with an entrance the party STARTS in the spawn
+  // room, so seeding skips that room's fog veil (the GM reveals the rest).
+  let veils: BattleVeil[] = layout === null ? [] : veilsFromRooms(layout);
+  if (layout !== null && entryRoom?.entrance !== undefined) {
+    veils = veils.filter((veil) => veil.id !== entryRoom.id);
+  }
   const board = ensurePcTokens(
     {
       mapImageId,
       mapLayout: layout === null ? null : { cols: layout.gridW, rows: layout.gridH },
       live: false,
       tokens: rosterTokens,
-      veils: layout === null ? [] : veilsFromRooms(layout),
+      veils,
       gridSize: GRID_SIZE_DEFAULT,
       tokenSize: 64,
       sceneryMovementLocked: false,
@@ -206,6 +232,7 @@ export async function seedBattleFromEncounter(
       activeIndex: 0,
       stage: null,
       stagingGround,
+      entrance,
     },
     pcFightersOf(artifacts),
   );

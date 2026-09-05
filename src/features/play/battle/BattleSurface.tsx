@@ -94,6 +94,13 @@ import { cn } from '@/lib/utils';
  * letterbox in), px math via its layout size — never the outer container.
  */
 
+/**
+ * Entrance glyph rotation (entrance/exit spawn zones, doc 11): the base glyph
+ * points down (south), i.e. 0deg for a north-side entrance whose inward
+ * direction is south.
+ */
+const ENTRANCE_ROTATION = { north: 0, east: 90, south: 180, west: 270 } as const;
+
 const ZOOM_MIN = 0.35;
 const ZOOM_MAX = 4;
 const DRAG_THRESHOLD_PX = 8;
@@ -837,6 +844,32 @@ export function BattleSurface(): JSX.Element {
                     height: `${String(3 * board.stagingGround.cellHeight * 100)}%`,
                   }}
                 />
+              )}
+              {/* Entrance zone (board material — visible in player view):
+                  the party's way in, one map cell with an inward triangle. */}
+              {(board.entrance ?? null) !== null && board.mapLayout !== null && (
+                <div
+                  aria-hidden
+                  className="pointer-events-none absolute flex items-center justify-center border border-emerald-400/50 bg-emerald-400/10"
+                  style={{
+                    left: `${String((board.entrance?.x ?? 0) * 100 - 50 / board.mapLayout.cols)}%`,
+                    top: `${String((board.entrance?.y ?? 0) * 100 - 50 / board.mapLayout.rows)}%`,
+                    width: `${String(100 / board.mapLayout.cols)}%`,
+                    height: `${String(100 / board.mapLayout.rows)}%`,
+                  }}
+                  data-testid="battle-entrance"
+                >
+                  <div
+                    style={{
+                      width: 0,
+                      height: 0,
+                      borderLeft: `${String(Math.max(6, cellWidthPx * 0.28))}px solid transparent`,
+                      borderRight: `${String(Math.max(6, cellWidthPx * 0.28))}px solid transparent`,
+                      borderTop: `${String(Math.max(10, cellHeightPx * 0.44))}px solid #34d399`,
+                      transform: `rotate(${String(ENTRANCE_ROTATION[board.entrance?.side ?? 'north'])}deg)`,
+                    }}
+                  />
+                </div>
               )}
               {/* Veils — UNDER the tokens: covered mob tokens are removed in
                   player view, and every token that survives (PCs, other

@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { layoutEntranceSideSchema } from '@/domain/encounterMap/schema';
 import { BaseEntitySchema, type Id } from '@/domain/entity';
 
 /**
@@ -121,6 +122,19 @@ export const stagingGroundSchema = z.object({
 
 export type StagingGround = z.infer<typeof stagingGroundSchema>;
 
+/**
+ * The entrance zone stamped at seed time (entrance/exit spawn zones, doc 11):
+ * normalized CENTER of the entrance cell plus its outward side, so the table
+ * surface can render the party's way in. null for legacy seeds.
+ */
+export const battleEntranceSchema = z.object({
+  x: z.number(),
+  y: z.number(),
+  side: layoutEntranceSideSchema,
+});
+
+export type BattleEntrance = z.infer<typeof battleEntranceSchema>;
+
 /** Saved opening layout for Reset; null until the GM sets the stage. */
 export const battleMapLayoutSchema = z.object({
   cols: z.number().int().positive(),
@@ -136,6 +150,7 @@ export const stageSnapshotSchema = z.object({
   tokens: z.array(battleTokenSchema),
   veils: z.array(battleVeilSchema),
   stagingGround: stagingGroundSchema.nullable(),
+  entrance: battleEntranceSchema.nullable().default(null),
 });
 
 export type StageSnapshot = z.infer<typeof stageSnapshotSchema>;
@@ -157,6 +172,8 @@ export const battleBoardSchema = z.object({
   activeIndex: z.number().int().min(0),
   stage: stageSnapshotSchema.nullable(),
   stagingGround: stagingGroundSchema.nullable(),
+  /** Entrance zone (doc 11); null for legacy seeds and uploaded maps. */
+  entrance: battleEntranceSchema.nullable().default(null),
 });
 
 export type BattleBoard = z.infer<typeof battleBoardSchema>;
