@@ -199,7 +199,10 @@ function SystemDialog({
 /**
  * Content license of an imported bestiary pack (12-BESTIARY-PACKS §2/§6):
  * shown verbatim from `packMeta.license` — the user imported the files
- * locally, and the UI must state the provenance terms.
+ * locally, and the UI must state the provenance terms. Fetched packs
+ * (16-BESTIARY-FETCH §7) additionally show their fetch provenance — source
+ * ref, source URL, fetched-at — when the book carries it; pre-provenance
+ * (manual) books render the dialog exactly as before.
  */
 function LicenseDialog({
   book,
@@ -210,6 +213,11 @@ function LicenseDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const provenance = book.packMeta;
+  const hasProvenance =
+    provenance?.sourceRef !== undefined ||
+    provenance?.sourceUrl !== undefined ||
+    provenance?.fetchedAt !== undefined;
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -223,6 +231,31 @@ function LicenseDialog({
         <p className="my-3 max-h-64 overflow-y-auto text-sm whitespace-pre-wrap" data-testid="pack-license">
           {book.packMeta?.license ?? ''}
         </p>
+        {hasProvenance && (
+          <div className="my-3 space-y-1 text-xs text-muted-foreground" data-testid="pack-provenance">
+            {provenance.sourceRef !== undefined && (
+              <p data-testid="pack-provenance-ref">Source ref: {provenance.sourceRef}</p>
+            )}
+            {provenance.sourceUrl !== undefined && (
+              <p data-testid="pack-provenance-url">
+                Source:{' '}
+                <a
+                  href={provenance.sourceUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="underline"
+                >
+                  {provenance.sourceUrl}
+                </a>
+              </p>
+            )}
+            {provenance.fetchedAt !== undefined && (
+              <p data-testid="pack-provenance-fetched-at">
+                Fetched at: {new Date(provenance.fetchedAt).toISOString()}
+              </p>
+            )}
+          </div>
+        )}
         <DialogFooter>
           <Button
             type="button"

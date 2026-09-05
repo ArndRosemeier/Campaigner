@@ -122,6 +122,24 @@ const githubTreeSchema = z.object({
   tree: z.array(z.object({ path: z.string(), type: z.string() })),
 });
 
+/**
+ * Listing-integrity boundary (16-BESTIARY-FETCH §8): the trees-API listing is
+ * hostile input — a path with a `..` segment, a backslash, or an absolute form
+ * could escape the pack directory in a careless consumer. A hostile path fails
+ * the WHOLE listing loudly (a named error quoting the offending path), never a
+ * silent per-path filter that would mask a tampered listing.
+ */
+function assertListingIntegrity(paths: readonly string[]): void {
+  for (const path of paths) {
+    if (path.split('/').includes('..') || path.includes('\\') || path.startsWith('/')) {
+      throw new Error(
+        'pack listing failed: listing-integrity violation — hostile tree path ' +
+          `"${path}" (a ".." segment, a backslash, or an absolute path)`,
+      );
+    }
+  }
+}
+
 export interface PackTreeListing {
   /** Every blob path in the repo at the pinned ref. */
   blobPaths: readonly string[];
@@ -166,8 +184,19 @@ async function loadTreeListing(
           : ''),
     );
   }
-  // Validate at the boundary (AGENTS rule 3): a malformed listing is an error.
-  const parsed = githubTreeSchema.parse(await response.json());
+  // Validate at the boundary (AGENTS rule 3): parse INSIDE the named-error
+  // scope, so a malformed listing body fails as a named listing failure, not
+  // as a raw SyntaxError escaping from response.json().
+  let parsed: z.infer<typeof githubTreeSchema>;
+  try {
+    parsed = githubTreeSchema.parse(await response.json());
+  } catch (error) {
+    throw new Error(
+      `pack listing failed: could not parse the listing response — ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
+  assertListingIntegrity(parsed.tree.map((entry) => entry.path));
   if (parsed.truncated) {
     throw new Error(
       'pack listing failed: GitHub truncated the repo tree (over the 100k-entry cap) — fetch a specific curated pack instead',
@@ -247,6 +276,30 @@ function rawUrl(source: PackFetchSource, path: string): string {
 
 type DownloadOutcome = { ok: true; file: PackInputFile } | { ok: false; failure: PackEntryFailure };
 
+/**
+ * Per-file fetch hardening (16-BESTIARY-FETCH §8): one raw document must
+ * neither hang the fetch nor smuggle in an absurd payload — real creature
+ * files are ≪ 1 MB (docs/16 §4: the 337 dnd5e YAMLs total 9.37 MB). A timeout
+ * or an oversize body is a COLLECTED failure entry for that file (same shape
+ * as every other download failure), never a throw that kills the pack.
+ */
+/** Hard ceiling for one raw file download (AbortSignal.timeout). */
+export const PACK_FETCH_TIMEOUT_MS = 30_000;
+/** Sanity cap for one raw creature document; real files land far below it. */
+export const PACK_FETCH_MAX_BYTES = 5 * 1024 * 1024;
+
+/** Names a failed download's cause; a fetch timeout gets its own named message. */
+function downloadFailureCause(error: unknown): string {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    (error as { name?: unknown }).name === 'TimeoutError'
+  ) {
+    return `timed out after ${String(PACK_FETCH_TIMEOUT_MS)}ms (AbortSignal.timeout)`;
+  }
+  return errorMessage(error);
+}
+
 async function downloadOne(
   source: PackFetchSource,
   path: string,
@@ -256,7 +309,9 @@ async function downloadOne(
   // filename stay readable ('pathfinder-monster-core/goblin.json').
   const name = path.slice(source.packRoot.length + 1);
   try {
-    const response = await fetchFn(rawUrl(source, path));
+    const response = await fetchFn(rawUrl(source, path), {
+      signal: AbortSignal.timeout(PACK_FETCH_TIMEOUT_MS),
+    });
     if (!response.ok) {
       return {
         ok: false,
@@ -267,7 +322,32 @@ async function downloadOne(
         },
       };
     }
+    const declaredLength = response.headers.get('content-length');
+    if (declaredLength !== null && Number(declaredLength) > PACK_FETCH_MAX_BYTES) {
+      return {
+        ok: false,
+        failure: {
+          file: name,
+          name: '',
+          message:
+            `download failed: ${declaredLength} bytes — over the ` +
+            `${String(PACK_FETCH_MAX_BYTES)}-byte sanity cap`,
+        },
+      };
+    }
     const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.byteLength > PACK_FETCH_MAX_BYTES) {
+      return {
+        ok: false,
+        failure: {
+          file: name,
+          name: '',
+          message:
+            `download failed: ${String(bytes.byteLength)} bytes — over the ` +
+            `${String(PACK_FETCH_MAX_BYTES)}-byte sanity cap`,
+        },
+      };
+    }
     if (bytes.byteLength === 0) {
       return { ok: false, failure: { file: name, name: '', message: 'download failed: empty body' } };
     }
@@ -275,7 +355,7 @@ async function downloadOne(
   } catch (error) {
     return {
       ok: false,
-      failure: { file: name, name: '', message: `download failed: ${errorMessage(error)}` },
+      failure: { file: name, name: '', message: `download failed: ${downloadFailureCause(error)}` },
     };
   }
 }
@@ -295,6 +375,55 @@ export interface PackFetchOptions {
 export const PACK_FETCH_CONCURRENCY = 4;
 
 /**
+ * Progress throttle window (~10 Hz, 16-BESTIARY-FETCH §5/§8): a 492-file pack
+ * would otherwise drive one UI setState per downloaded file and re-render the
+ * card hundreds of times; callbacks coalesce to at most ~10 emits per second.
+ */
+export const PACK_FETCH_PROGRESS_INTERVAL_MS = 100;
+
+interface ThrottledProgress<T> {
+  send: (value: T) => void;
+  /** Emits the newest held update now (cancels the trailing timer). */
+  flush: () => void;
+}
+
+/**
+ * Leading+trailing throttle for progress callbacks: the first send emits
+ * immediately, sends inside the window coalesce into one trailing emit of the
+ * NEWEST value, and `flush()` emits whatever is held without waiting — the
+ * final update (e.g. done === total) is never dropped.
+ */
+export function throttleProgress<T>(
+  emit: (value: T) => void,
+  intervalMs: number,
+): ThrottledProgress<T> {
+  let lastEmittedAt = 0;
+  let pending: T | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const emitPending = (): void => {
+    timer = undefined;
+    if (pending === null) return;
+    const value = pending;
+    pending = null;
+    lastEmittedAt = Date.now();
+    emit(value);
+  };
+  return {
+    send: (value: T): void => {
+      pending = value;
+      if (timer !== undefined) return;
+      const elapsed = Date.now() - lastEmittedAt;
+      if (elapsed >= intervalMs) emitPending();
+      else timer = setTimeout(emitPending, intervalMs - elapsed);
+    },
+    flush: (): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      emitPending();
+    },
+  };
+}
+
+/**
  * Fetches one pack from its pinned source repo and imports it through the
  * unchanged `importPack` (ratified decision 4). Loud failure policy
  * (16-BESTIARY-FETCH §8): a failed download is a collected failure entry in
@@ -310,8 +439,19 @@ export async function fetchAndImportPack(
   const source = getPackFetchSource(adapterId);
   const adapter = getPackAdapter(source.adapterId);
   const fetchFn = fetchFnOf(options.fetchDeps);
+  // ~10 Hz progress (16-BESTIARY-FETCH §5): per-file setState would re-render
+  // the settings card hundreds of times per pack; flush() guarantees the final
+  // update of each phase always lands.
+  const fetchProgress = throttleProgress(
+    (progress: PackFetchProgress) => options.onFetchProgress?.(progress),
+    PACK_FETCH_PROGRESS_INTERVAL_MS,
+  );
+  const importProgress = throttleProgress(
+    (progress: PackImportProgress) => options.onProgress?.(progress),
+    PACK_FETCH_PROGRESS_INTERVAL_MS,
+  );
 
-  options.onFetchProgress?.({
+  fetchProgress.send({
     phase: 'listing',
     done: 0,
     total: 0,
@@ -330,17 +470,23 @@ export async function fetchAndImportPack(
   const title = curated?.label ?? recipeId.slice(source.packRoot.length + 1);
 
   let done = 0;
-  const outcomes = await mapWithConcurrency(files, PACK_FETCH_CONCURRENCY, async (path) => {
-    const outcome = await downloadOne(source, path, fetchFn);
-    done += 1;
-    options.onFetchProgress?.({
-      phase: 'downloading',
-      done,
-      total: files.length,
-      detail: outcome.ok ? outcome.file.name : path,
+  let outcomes: DownloadOutcome[];
+  try {
+    outcomes = await mapWithConcurrency(files, PACK_FETCH_CONCURRENCY, async (path) => {
+      const outcome = await downloadOne(source, path, fetchFn);
+      done += 1;
+      fetchProgress.send({
+        phase: 'downloading',
+        done,
+        total: files.length,
+        detail: outcome.ok ? outcome.file.name : path,
+      });
+      return outcome;
     });
-    return outcome;
-  });
+  } finally {
+    // The final downloading update always flushes — even if the loop fails.
+    fetchProgress.flush();
+  }
 
   const inputs: PackInputFile[] = [];
   const downloadFailures: PackEntryFailure[] = [];
@@ -361,15 +507,19 @@ export async function fetchAndImportPack(
     );
   }
 
-  return importPack(source.adapterId, inputs, {
-    title,
-    onProgress: options.onProgress,
-    deps: options.deps,
-    extraFailures: downloadFailures,
-    provenance: {
-      sourceRef: source.ref,
-      sourceUrl: `https://github.com/${source.owner}/${source.repo}/tree/${source.ref}/${recipeId}`,
-      fetchedAt: Date.now(),
-    },
-  });
+  try {
+    return await importPack(source.adapterId, inputs, {
+      title,
+      onProgress: importProgress.send,
+      deps: options.deps,
+      extraFailures: downloadFailures,
+      provenance: {
+        sourceRef: source.ref,
+        sourceUrl: `https://github.com/${source.owner}/${source.repo}/tree/${source.ref}/${recipeId}`,
+        fetchedAt: Date.now(),
+      },
+    });
+  } finally {
+    importProgress.flush();
+  }
 }
