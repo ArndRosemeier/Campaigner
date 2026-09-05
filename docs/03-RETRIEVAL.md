@@ -6,6 +6,14 @@ Module `/src/search`. Public API (used by rules browser and persona engine):
 interface SearchOptions {
   bookIds?: Id[];               // restrict to these books; default: all 'ready' books
   chunkTypes?: RuleChunk['chunkType'][];
+  hasStatBlock?: boolean;       // only chunks with a parsed, non-null statBlock (fix-02
+                                // decision 3) — applied to keyword hits and the semantic
+                                // candidate set alike, so the citable pool never
+                                // contains unparsed chunks
+  system?: GameSystem;          // book-system filter when the query resolves no explicit
+                                // bookIds — the campaign-scoped citable pool never
+                                // crosses game systems; unset keeps all ready books
+                                // (the global Rules browser stays cross-system)
   limit?: number;               // default 12
 }
 interface SearchHit { chunk: RuleChunk; score: number; source: 'keyword' | 'semantic' | 'both'; }
