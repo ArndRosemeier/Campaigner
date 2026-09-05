@@ -145,10 +145,9 @@ no-network / rate-limit / unknown-pack failures are loud and named. Fetching
 
 ```
 Settings card click (user-triggered)
-  → packFetch.recipesFor(adapterId)          (curated constant)
-  → [advanced] listPacks(adapterId)          (trees API, on demand)
-  → fetchPackFiles(adapterId, recipe, {onFetchProgress})
-       listing → select creature files (skip non-creature docs)
+  → listPackRecipes(adapterId)               (curated constant; full:true → trees API, cached)
+  → fetchAndImportPack(adapterId, recipeId, {onFetchProgress, onProgress})
+       listing (one cached trees-API call) → select creature files (skip non-creature docs)
        → mapWithConcurrency(4) fetch raw.githubusercontent.com
        → PackInputFile[]  (+ collected download failures)
   → importPack(adapterId, files, { title, onProgress, deps })
@@ -156,9 +155,9 @@ Settings card click (user-triggered)
   → finalize: packMeta + provenance (sourceRef, sourceUrl, fetchedAt)
 ```
 
-`importPack` is called exactly as the `/rules` dialog calls it. `packFetch`
-never touches Dexie or chunk persistence — the import runner owns that. Zero
-valid entries → existing error-book semantics.
+`fetchAndImportPack` calls `importPack` exactly as the `/rules` dialog calls
+it. `packFetch` never touches Dexie or chunk persistence — the import runner
+owns that. Zero valid entries → existing error-book semantics.
 
 ## 7. packMeta provenance extension (additive, no migration)
 
@@ -179,13 +178,19 @@ migration, no schema bump.
   path, `message` = `download failed: <status/statusText/network cause>`),
   folded into `importPack`'s existing failures list → visible in the report
   and `entriesFailed`. Never catch-and-continue into silence.
-- Network/CORS failure on the FIRST request (before any file): the fetch
-  throws a named error (`Failed to fetch <url>: <cause>`); the UI toasts it
-  and the card shows the failed state. Never a silent empty book.
+- Network/CORS failures are not special-cased by phase: a raw fetch that
+  cannot connect (or times out / exceeds the per-file sanity cap) fails that
+  file's download → the collected failure entry above, with the cause named.
+  Only when EVERY file fails does `fetchAndImportPack` throw one named error
+  (`all N downloads failed for "<title>" — no pack book was created. <first
+  three entries>`) before any book is created; the UI toasts it and the card
+  shows the failed state. Never a silent empty book.
 - Zero valid entries after downloads → existing `importPack` error-book path.
 - Trees-API listing failure (rate limit, network): loud named error mentioning
-  the 60 req/h per-IP GitHub limit when applicable; curated fetches never
-  need the listing API.
+  the 60 req/h per-IP GitHub limit when applicable. Every fetch — curated
+  recipes included — makes exactly one trees-API listing call (cached per
+  session) plus its raw file GETs, so curated fetches cost that one cached
+  listing call + the raw GETs and ARE subject to the 60 req/h cap.
 
 ## 9. Acceptance criteria
 
