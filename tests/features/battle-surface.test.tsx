@@ -639,6 +639,149 @@ describe('selection card', () => {
   });
 });
 
+describe('pan from the map', () => {
+  /** The transformed background wrapper (pan/zoom transform lives here). */
+  function panWrapper(): HTMLElement {
+    const wrapper = screen
+      .getByTestId('battle-board')
+      .querySelector<HTMLElement>(':scope > [data-board-background="true"]');
+    if (wrapper === null) throw new Error('background wrapper missing');
+    return wrapper;
+  }
+
+  /** Surface with a real map image so gestures start on the <img> itself. */
+  async function renderWithMap(): Promise<string> {
+    const { moduleId } = await seedStandardBattle();
+    const image = await createImage({
+      campaignId,
+      blob: new Blob(['fake-png-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 64,
+      height: 64,
+      prompt: 'battlemap',
+      model: 'google/gemini-2.5-flash-image',
+      source: 'generated',
+    });
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, { ...seeded.board, mapImageId: image.id });
+      await flushAsyncUpdates();
+    });
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getByTestId('battle-map')).toBeInTheDocument();
+    });
+    return moduleId;
+  }
+
+  it('pans the board when the drag starts on the map image — no commits, selection preserved, tap still deselects', async () => {
+    const moduleId = await renderWithMap();
+    // Select a token first: pan-dragging the map must preserve it.
+    const battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((el) => el.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    fireEvent.pointerDown(trollEl, { pointerId: 2, clientX: troll.x * BOARD_W, clientY: CONTENT_TOP + troll.y * CONTENT_H });
+    fireEvent.pointerUp(trollEl, { pointerId: 2 });
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+
+    vi.mocked(saveBattleBoard).mockClear();
+    // Drag on the map image (120, -40 client px): the board transform follows.
+    const map = screen.getByTestId('battle-map');
+    fireEvent.pointerDown(map, { pointerId: 11, clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(map, { pointerId: 11, clientX: 520, clientY: 260 });
+    await flushAsyncUpdates();
+    expect(panWrapper().style.transform).toContain('translate(120px');
+    expect(panWrapper().style.transform).toContain('-40px');
+    fireEvent.pointerUp(map, { pointerId: 11, clientX: 520, clientY: 260 });
+    await flushAsyncUpdates();
+    // Well past the 8px screen-space threshold: a pan, not a tap-deselect —
+    // the selection survives — and ZERO Dexie writes (no token/veil commit).
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+
+    // A sub-threshold press+release on the map is a TAP: it deselects.
+    fireEvent.pointerDown(map, { pointerId: 12, clientX: 300, clientY: 300 });
+    fireEvent.pointerUp(map, { pointerId: 12, clientX: 300, clientY: 300 });
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('selection-card')).toBeNull();
+
+    // A token drag still moves the TOKEN, not the camera: exactly one commit
+    // (the snapped token drop) and the pan transform is untouched.
+    const fresh = await currentBattle(moduleId);
+    const serren = fresh.board.tokens.find((token) => token.label === 'Serren');
+    if (serren === undefined) throw new Error('serren missing');
+    const serrenEl = screen
+      .getAllByTestId('battle-token')
+      .find((el) => el.getAttribute('data-token-label') === 'Serren');
+    if (serrenEl === undefined) throw new Error('serren element missing');
+    fireEvent.pointerDown(serrenEl, { pointerId: 13, clientX: serren.x * BOARD_W, clientY: CONTENT_TOP + serren.y * CONTENT_H });
+    fireEvent.pointerMove(serrenEl, { pointerId: 13, clientX: serren.x * BOARD_W + 60, clientY: CONTENT_TOP + serren.y * CONTENT_H });
+    fireEvent.pointerUp(serrenEl, { pointerId: 13 });
+    await flushAsyncUpdates();
+    const after = await currentBattle(moduleId);
+    const moved = after.board.tokens.find((token) => token.label === 'Serren');
+    if (moved === undefined) throw new Error('serren vanished');
+    expect(moved.x).not.toBe(serren.x);
+    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(panWrapper().style.transform).toContain('translate(120px');
+    expect(panWrapper().style.transform).toContain('-40px');
+  });
+
+  it('keeps pinch zoom working when both fingers land on the map image', async () => {
+    await renderWithMap();
+    const map = screen.getByTestId('battle-map');
+    // Two pointers down on the map → pinch (pan state is cleared), the same
+    // pairing the letterbox background has always had. The first move only
+    // captures the pinch base; the second one drives the zoom.
+    fireEvent.pointerDown(map, { pointerId: 20, clientX: 400, clientY: 300 });
+    fireEvent.pointerDown(map, { pointerId: 21, clientX: 410, clientY: 300 });
+    fireEvent.pointerMove(map, { pointerId: 20, clientX: 500, clientY: 300 });
+    fireEvent.pointerMove(map, { pointerId: 20, clientX: 1300, clientY: 300 });
+    await flushAsyncUpdates();
+    // 90px base → 890px spread ≈ ×9.9, clamped to the 4× maximum.
+    expect(screen.getByText('400%')).toBeInTheDocument();
+    // Release clears the pinch; a later map drag pans again (no stuck pinch).
+    fireEvent.pointerUp(map, { pointerId: 20, clientX: 500, clientY: 300 });
+    fireEvent.pointerUp(map, { pointerId: 21, clientX: 410, clientY: 300 });
+    fireEvent.pointerDown(map, { pointerId: 22, clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(map, { pointerId: 22, clientX: 440, clientY: 300 });
+    fireEvent.pointerUp(map, { pointerId: 22, clientX: 440, clientY: 300 });
+    await flushAsyncUpdates();
+    expect(panWrapper().style.transform).toContain('translate(40px');
+  });
+
+  it('pans from the mapless viewport board too (fallback gradient is a pan surface)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const content = screen
+      .getByTestId('battle-board')
+      .querySelector<HTMLElement>('[data-board-content="true"]');
+    if (content === null) throw new Error('content frame missing');
+    const gradient = content.firstElementChild;
+    if (
+      !(gradient instanceof HTMLElement) ||
+      gradient.getAttribute('data-board-background') !== 'true'
+    ) {
+      throw new Error('fallback gradient missing');
+    }
+    fireEvent.pointerDown(gradient, { pointerId: 14, clientX: 400, clientY: 300 });
+    fireEvent.pointerMove(gradient, { pointerId: 14, clientX: 460, clientY: 330 });
+    fireEvent.pointerUp(gradient, { pointerId: 14 });
+    await flushAsyncUpdates();
+    const wrapper = panWrapper();
+    expect(wrapper.style.transform).toContain('translate(60px');
+    expect(wrapper.style.transform).toContain('30px');
+  });
+});
+
 describe('content-frame pointer conversion', () => {
   it('commits a token where the pointer was under zoom AND pan', async () => {
     const { moduleId } = await seedStandardBattle();

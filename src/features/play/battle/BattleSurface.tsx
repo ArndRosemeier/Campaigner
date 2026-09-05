@@ -82,7 +82,8 @@ import { cn } from '@/lib/utils';
  *
  * Interactions: drag with a local live position + a single repo commit on
  * release (8px SCREEN-space tap threshold — client px, so the tap window does
- * not scale with zoom); wheel/button/pinch pan-zoom; veil add/resize;
+ * not scale with zoom); pan from the letterbox, the map image, or the content
+ * frame; wheel/button/pinch pan-zoom; veil add/resize;
  * stage set/reset; gated initiative reconcile; HP floats writing to the
  * token (NPC) or the pc artifact (PC).
  *
@@ -318,14 +319,22 @@ export function BattleSurface(): JSX.Element {
   // --- Pointer handling ------------------------------------------------------
 
   function onBoardPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
-    // Two fingers → pinch; one finger/middle-drag on the background → pan.
+    // Two fingers → pinch; one finger on any non-piece surface → pan: the
+    // letterbox background, the map image itself, or the content frame (the
+    // map is the background layer — M5-D amendment; before it, a drag on the
+    // map did nothing). Token/veil pointerdowns stop propagation, so pieces
+    // never reach this handler.
     pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pinchRef.current.size === 2) {
       panRef.current = null;
       return;
     }
     const target = event.target as HTMLElement;
-    if (event.target === event.currentTarget || target.dataset.boardBackground === 'true') {
+    if (
+      event.target === event.currentTarget ||
+      target.dataset.boardBackground === 'true' ||
+      target.dataset.boardContent === 'true'
+    ) {
       panRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -798,11 +807,14 @@ export function BattleSurface(): JSX.Element {
               className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
               style={{ width: '100%', aspectRatio: String(aspect), maxWidth: '100%' }}
             >
-              {/* Map (or viewport board) */}
+              {/* Map (or viewport board) — both are pan-start surfaces */}
               {mapImage !== undefined ? (
                 <MapLayer imageId={mapImage.id} />
               ) : (
-                <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,#27272a_0%,#18181b_100%)]" />
+                <div
+                  data-board-background="true"
+                  className="absolute inset-0 bg-[radial-gradient(circle_at_center,#27272a_0%,#18181b_100%)]"
+                />
               )}
               {/* Grid */}
               {(board.gridSize !== null || board.mapLayout !== null) && (
@@ -1009,11 +1021,23 @@ function useInitiativeReconcile(
   }, [battle, coveredTokenIds, stats, commit]);
 }
 
-/** The battlemap layer: object-fit cover so the normalized grid matches. */
+/** The battlemap layer: object-fit cover so the normalized grid matches.
+ * The image is a pan-start surface (M5-D amendment): pressing it drags the
+ * board exactly like the letterbox background — a drag on the map used to be
+ * a dead zone. */
 function MapLayer({ imageId }: { imageId: Id }): JSX.Element | null {
   const url = useImageUrl(imageId);
   if (url === null) return null;
-  return <img src={url} alt="" className="absolute inset-0 h-full w-full object-cover" draggable={false} />;
+  return (
+    <img
+      src={url}
+      alt=""
+      className="absolute inset-0 h-full w-full object-cover"
+      draggable={false}
+      data-board-background="true"
+      data-testid="battle-map"
+    />
+  );
 }
 
 interface TokenViewProps {
