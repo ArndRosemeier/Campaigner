@@ -64,30 +64,48 @@ model is what makes the sources usable at all:
 | `foundry-dnd5e-srd` | [foundryvtt/dnd5e](https://github.com/foundryvtt/dnd5e) `packs/_source/monsters/**` | SRD 5.1 / SRD 5.2, CC-BY-4.0 (stated in that repo's README); system code MIT. Clean to import; attribution string stored. SRD scope only — no Monster Manual Product Identity creatures. |
 | Cosmere | — | No machine-readable bestiary source known. No adapter; Cosmere campaigns keep the current inline/LLM path. |
 
-## 3. Verified source formats (verified at spec time; fixture tests pin them)
+## 3. Verified source formats (re-verified against the full live corpora 2026-09-06; fixture tests pin them)
 
 **pf2e** — repo default branch (`v14-dev`): `packs/pf2e/<pack>/<...>/<creature>.json`,
 **one JSON file per creature** (`type: 'npc'`); 98 packs, including the core
 bestiaries *and* every Adventure Path bestiary. Older releases ship the same
-docs as NDJSON (`.db`) files — the adapter accepts both. Relevant shape:
+docs as NDJSON (`.db`) files — the adapter accepts both. Relevant shape (all
+492 v14-dev documents parsed and mapped — 0 failures, 0 skips):
 `system.details.level.value` (object `{value: n}`), `system.traits.value`
 (trait strings) + `system.traits.size.value` (`'med'`…),
 `system.abilities.<abil>.mod` — **modifiers, not scores**,
 `system.attributes.ac.value` (+ `.details`), `system.attributes.hp.max`
 (no roll formula), `system.saves`/`system.skills` (mod values),
-`system.attributes.perception`, `system.attributes.speed.value` +
+**`system.perception` (top-level since v13/v14: `{mod, details, senses[]}` —
+the old `system.attributes.perception` location is gone from the corpus)**,
+`system.attributes.speed.value` (**nullable** — fly-only creatures such as the
+Banshee have no land speed; a null yields no speed entry, not `0 feet`) +
 `otherSpeeds`, `system.details.languages?.value`, and an `items[]` array with
 `melee` (attacks) and `action` entries (name + description + action type).
 
 **dnd5e** — branch `6.0.x`: `packs/_source/monsters/<creatureType>/<slug>.yml`,
-**one YAML file per creature** (`type: 'npc'`), **337 SRD monsters**.
-`system.abilities.<abil>.value` — **scores, direct mapping**,
-`system.attributes.ac.flat`, `system.attributes.hp.max` + `.formula`
-(`"3d8 + 6"`), `system.details.cr` (number, `0.5` allowed),
-`system.traits.size`, `system.details.type.value`, `system.attributes.movement`
-(per-type feet values), senses/languages strings, and `items[]` with `feat`
-(Multiattack, traits, actions) and `weapon` (attacks) entries. YAML parsing
-needs one new pure-JS dependency (`js-yaml`).
+**one YAML file per creature** (`type: 'npc'`), **337 SRD monsters**. Shape
+notes beyond the obvious (all verified over the full corpus):
+`system.abilities.<abil>.value` — **scores, direct mapping**;
+`system.attributes.ac` is either `{flat: n}` **or** `{flat: null,
+calc: 'default'}` plus equipped `equipment` items (`type.value`
+`light|medium|heavy|shield`, `armor.value`, `armor.dex`) — 34 of 337 corpus
+creatures are armor wearers; `system.attributes.hp.max` + `.formula`
+(`"3d8 + 6"`); `system.details.cr` is a number (`0.5` allowed) **or `null`**
+(8 summons-type docs — the system prints `"—"`); `system.traits.size`;
+`system.details.type.value`; `system.attributes.movement` per-type values are
+**numbers, numeric strings (`walk: "30"`), or `null`** (summons templates),
+with `units` nullable (default `'ft'`); senses mirror that (`units` nullable ×9
+corpus docs); `system.attributes.spellcasting` is a plain ability-id string
+(`"wis"`, `"int"`, …); weapon items carry `proficient` (`0` explicitly
+unproficient, `1`, `null` → use the actor's proficiency), and their attack
+activity stores `attack.ability` (`''` → the system's own defaulting,
+`'none'` = no ability term, `'spellcasting'` → the stored caster ability, or
+an ability id), `attack.flat` (the stored `bonus` **is** the complete to-hit),
+`attack.bonus` (`''`, an integer, or `@abilities.<abil>.mod`), and damage
+`base` as dice (`number`/`denomination`/`bonus`/`types`) **or** a custom
+formula (`custom: {enabled, formula}` — e.g. `"1"`, `"1d10 + @mod + 1"`,
+`"2d4 + @mod -3"`). YAML parsing needs one pure-JS dependency (`js-yaml`).
 
 ## 4. Data model (delta to 01-DATA-MODEL)
 
@@ -173,9 +191,9 @@ is one action.
 | `attributes.hp.max` | `hp`; `hpFormula: ''` (pf2e has none) |
 | `system.saves` (mods) | `saves` = `"Fort +7, Ref +9, Will +5"` (`formatModifier`) |
 | `system.skills` (mods) | `skills` = `"Athletics +9, Stealth +7"` |
-| perception + senses | `senses` |
+| perception (`system.perception`, top level) + senses | `senses` |
 | `details.languages?.value` | `languages` |
-| `attributes.speed.value` + `otherSpeeds` | `"25 feet, climb 25 feet"` |
+| `attributes.speed.value` + `otherSpeeds` | `"25 feet, climb 25 feet"`; a **null** land speed (fly-only creatures) yields no speed entry |
 | `items[]` of type `melee` | `actions`: rendered `"Sickle +9 (agile, finesse), 1d6+3 slashing"`-style lines |
 | `items[]` of type `action` | passive → `traits`, reaction → `reactions`, otherwise `actions` |
 | everything else worth keeping (rarity, …) | `extras` |
@@ -189,17 +207,59 @@ test.
 | dnd5e `_source` field | StatBlock target |
 |---|---|
 | `name` | identity + `headingPath[0]` |
-| `system.details.cr` | `level` (`0.5` → `"1/2"` as printed convention) |
+| `system.details.cr` | `level` (`0.5` → `"1/2"` as printed convention; `null` → `"—"` exactly as the system prints it) |
 | `system.abilities.*.value` | scores **directly** (no conversion) |
-| `system.attributes.ac.flat` | `ac` |
+| `system.attributes.ac.flat` (number) | `ac` |
+| `ac.calc === 'default'` + equipped gear | **derived exact AC** (below) |
 | `attributes.hp.max` + `.formula` | `hp` + `hpFormula` |
 | `system.traits.size` | `size` |
 | `system.details.type.value` | `creatureType` |
-| `attributes.movement` | `"30 feet, climb 30 feet"` |
-| senses / languages | strings |
+| `attributes.movement` | `"30 feet, climb 30 feet"`; null scalars → no entry, numeric strings parse, `units: null` → `'ft'` |
+| senses / languages | strings; sense scalars as movement (null/numeric-string, `units: null` → `'ft'`) |
 | `items[]` `feat` by activation | passive → `traits`, reaction → `reactions`, else `actions` |
-| `items[]` `weapon` | `actions`: rendered attack lines |
+| `items[]` `weapon` | `actions`: rendered attack lines (resolution below) |
 | saves/skills/proficiencies | rendered strings; exact sub-fields pinned by the fixture test |
+
+**Derived AC (calc `'default'`)** — follows the dnd5e system's published
+formula exactly (`prepareArmorClass`, `module/data/actor/templates/
+attributes.mjs` @ 6.0.x): exactly one equipped armor piece
+(`light|medium|heavy`) + at most one equipped shield, else loud failure;
+`ac = armor.value + min(dexMod, armor.dex ?? ∞)` with heavy armor clamping
+dex to 0, plus the shield's `armor.value`; unarmored = `10 + dexMod`. The
+gear names become `acNote` (`"Leather Armor, Shield"`). All 34 corpus armor
+wearers were verified equal to the printed SRD value (goblin 15
+`(Leather Armor, Shield)`, satyr 14 `(Leather Armor)`, ogre 11
+`(Hide Armor)`, …). Unsupported gear shapes stay loud: >1 armor or >1
+shield, unsupported `type.value`, armor without a numeric value.
+
+**Weapon attacks** — the system's `constructParts` semantics over the stored
+activity (`module/data/activity/attack-data.mjs` @ 6.0.x):
+
+- to-hit = ability mod + proficiency + resolved stored `bonus`, except
+  `attack.flat: true` where the stored `bonus` **is** the to-hit alone
+  (animated objects' `Slam +8`); `proficient: 0` drops the proficiency term.
+- ability resolution: explicit ability id → that mod; `'none'` → **no ability
+  term** (camel `Bite +5` = prof 2 + stored 3, damage `1d4` without a mod);
+  `'spellcasting'` → the stored `system.attributes.spellcasting` ability
+  (lich `Paralyzing Touch +12, 3d6+5`); `''` → the system's own defaulting:
+  ranged weapons → DEX, natural melee → STR (finesse property → better of the
+  two).
+- damage: dice base + (ability mod unless flat/`'none'`, + stored `bonus`);
+  custom formulas resolve term-by-term (`NdM`, integers, `@mod` → the
+  attack's ability mod) into a compact `NdM±K` (`"1d10 + @mod + 1"` →
+  `1d10+5`; `"2d4 + @mod -3"` → `2d4+2`; flat `"1"` → `1`); a weapon with no
+  resolvable damage at all renders damage-less (`Melee Tendril +7` — no
+  trailing comma), which is exact, not best-effort.
+
+**Exact-vs-book note (binding stance).** The adapter maps the **stored data
+exactly**, applying the system's own derivation rules — it does not correct
+data that disagrees with a printed book layout. Where the corpus data
+diverges from the printed SRD 5.1 text (e.g. the flying snake's and badger's
+empty-ability natural attacks resolve via the system's melee→STR defaulting,
+or the barbed devil's stored CHA differs from the printed attack bonus), the
+data-derived value is what Campaigner stores, per the same rule that pins
+the ape's STR-based `Rock` throw. This keeps every mapped number reproducible
+from the document alone.
 
 ## 6. Import flow (`/src/ingest/packImport.ts` + `/rules` UI)
 
@@ -223,14 +283,21 @@ YAML parsing is fast; no worker):
    `{ book, imported, skipped, failed }`.
 6. **Zero imported entries** → `updateRulebook({ status: 'error',
    errorMessage })` + throw; the UI toasts the report. No empty ready book.
+   The error message **leads with a representative failure** — the first
+   entry's `file (name): issue` — before the
+   `no valid creature entries … (N skipped, N failed)` summary (added for
+   16-BESTIARY-FETCH §6 after the live Monster Core import surfaced 492
+   failures with no visible reason). A skipped-only selection (no failure at
+   all) keeps the bare summary — no invented reason.
 
 UI (`05-UI.md §Rules` delta): a second **"Import bestiary pack"** button next
 to "Import PDFs" opens a dialog — adapter select (registered adapters only),
-multi-file input, then the import report (imported / skipped / failed counts
-with an expandable failed-entries list). Book cards get a **Pack** badge and
-show `packMeta.license` in the book menu. The search browser, quick-find and
-the monster-source dialog need **no changes**: pack chunks are statblock
-chunks and flow through `searchRules` as-is.
+multi-file input, then the import report (imported / skipped / failed counts;
+when entries fail, the report leads with the first failure's `file (name):
+issue` line above the expandable failed-entries list). Book cards get a
+**Pack** badge and show `packMeta.license` in the book menu. The search
+browser, quick-find and the monster-source dialog need **no changes**: pack
+chunks are statblock chunks and flow through `searchRules` as-is.
 
 ## 7. Encounter pipeline: roster grounding + name citation
 
@@ -302,19 +369,46 @@ all consumers (encounter editor stat-block cards, battle tokens) keep working.
   embedding cache already avoids double embedding cost).
 - No spellcasting data in v1.
 
+**Derived printed-convention numbers (note).** Two dnd5e mappings are
+*derived* values rather than parsed ones, both following the dnd5e system's
+own published rules so they are reproducible from the document alone:
+calc-`'default'` AC (armor + dex clamp + shield, §5) and custom damage
+formulas (term-by-term `@mod`/dice/integer resolution, §5). The pf2e mapping
+already reconstructs ability *scores* from stored modifiers the same way
+(`10 + 2·mod`, §5 table). Everything else is a direct, exact read of the
+document.
+
 ## 10. Acceptance criteria
 
 - Importing a pf2e bestiary pack (fixture subset) yields a ready pack book in
   which **every** chunk has a non-null `statBlock`; an encounter entry citing
   one resolves with origin `"<book>: <creature>"` and renders the full block.
+- **Corpus sweep (proven 2026-09-06):** all **492/492** pf2e `v14-dev`
+  documents parse and map with 0 failures and 0 skips; **336/337** dnd5e
+  6.0.x `_source` monsters map exactly, with **one documented exclusion**
+  (the Arcane Hand's Clenched Fist stores the summon-level dice-count formula
+  `"(4 + 2 * (@flags.dnd5e.summon.level - 5))d8"` whose flag is absent from
+  the document — genuinely unresolvable, so it stays a loud per-entry
+  failure). All 251 previously-passing dnd5e documents render byte-identical
+  after the fix (regression-diffed). The one-error book of the live Monster
+  Core import is thereby fixed; re-fetching it yields 492 ready chunks.
 - Importing the `ape.yml` fixture yields `abilities.str = 16`, `ac = 12`,
   `hp = 19` with `hpFormula "3d8 + 6"` (score-based dnd5e mapping proven).
+  Real-data pins (trimmed verbatim corpus documents, source path in each
+  fixture header) cover every fixed failure class: goblin + satyr (derived
+  AC), badger + saber-toothed tiger (custom damage), camel (ability `'none'`),
+  arcane-eye (null movement/sense scalars), avatar-of-death + tiny-animated-
+  object (CR `null` → `"—"`, flat attacks, multi-type damage), roper
+  (damage-less), lich (`'spellcasting'` ability) and the pf2e wolf
+  (top-level perception, real senses/saves lines).
 - An encounter run with a pack book present receives the roster section; a
   valid `sourceName` citation resolves to the correct `chunkId`; a nonsense
   name fails draft validation loudly (repair once, then
-  `needs_review`/`failed` per autonomy).
+  `needs_review`/`failed` per autonomy). The CR-less `"—"` creatures sort
+  after every leveled creature in the roster (`parseLevelSort`).
 - An import where every file fails produces a book with `status: 'error'`,
-  an `errorMessage`, and a toast — never an empty ready book.
+  an `errorMessage` that **leads with the first failure's issue**, and a
+  toast — never an empty ready book.
 - Existing backups restore unchanged; PDF ingestion and all current encounter
   flows regress none of their tests.
 - Zero network calls from the adapters (mocked-fetch test asserts).
