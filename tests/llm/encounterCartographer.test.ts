@@ -56,10 +56,10 @@ const BRIEF = {
   theme: 'ash-choked temple',
   styleNotes: 'inked fantasy map, volcanic stone',
   negative: 'text, labels, tokens',
-  monsters: [{ name: 'Ash Cultist', count: 2, notes: '', statBlock: INLINE_STATBLOCK }],
+  monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: 'Robes: 2 gp, an ash charm', statBlock: INLINE_STATBLOCK }],
   rooms: [
-    { name: 'Entry', description: 'Broken doors', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1] },
-    { name: 'Sanctum', description: 'Ash altar', size: 'large', monsterIndexes: [0], adjacentRoomIndexes: [0] },
+    { name: 'Entry', description: 'Broken doors', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1], key: 'Cracked doors hang off one hinge.', keyTreasure: 'Fallen banner: 15 gp' },
+    { name: 'Sanctum', description: 'Ash altar', size: 'large', monsterIndexes: [0], adjacentRoomIndexes: [0], key: 'The altar still smolders.', keyTreasure: '' },
   ],
   entryRoomIndex: 0,
 };
@@ -502,7 +502,7 @@ describe('Encounter Cartographer run', () => {
       links: [{ targetId: newId(), relation: 'at' }],
       data: {
         difficulty: 'old', levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null,
       },
@@ -525,6 +525,46 @@ describe('Encounter Cartographer run', () => {
     expect(updated.data.monsters).toEqual(target.data.monsters);
     expect(updated.data.layout).not.toBeNull();
     expect(updated.data.mapImageId).toBe(candidates[0]);
+    // Map regeneration replaces the room keys with the fresh brief's keys —
+    // an accepted consequence, stated in the UI regeneration copy and the
+    // prompt clause (owner-ratified).
+    const freshKeys = updated.data.layout?.rooms.map((room) => room.key) ?? [];
+    expect(freshKeys).toContain('Cracked doors hang off one hinge.');
+    expect(freshKeys).toContain('The altar still smolders.');
+    // The encounter-scoped roster treasure survives the map run verbatim.
+    expect(updated.data.monsters[0]?.treasure).toBe('Ogre pocket: 4 gp');
+  });
+
+  it('persists brief room keys and monster treasure onto the finalized artifact', async () => {
+    const { campaign, cartographer } = await setup();
+    // The brief prompt teaches the room-key contract and the treasure
+    // structure (fresh encounter: the Cartographer authors both).
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const briefContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    expect(briefContent).toContain('Room keys: every room carries a "key"');
+    expect(briefContent).toContain('Outdoor encounters get room keys too');
+    expect(briefContent).toContain('key:string,keyTreasure:string');
+    expect(briefContent).toContain('Treasure structure (owner-ratified)');
+
+    const candidates = await approveUntilPick(runId, runInput);
+    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    // Keys ride their rooms through packing; treasure rides the entry.
+    const entry = artifact.data.layout?.rooms.find((room) => room.name === 'Entry');
+    expect(entry?.key).toBe('Cracked doors hang off one hinge.');
+    expect(entry?.keyTreasure).toBe('Fallen banner: 15 gp');
+    expect(artifact.data.monsters[0]?.treasure).toBe('Robes: 2 gp, an ash charm');
   });
 
   it('ignores inline stat-block stubs when regenerating an existing encounter', async () => {
@@ -537,7 +577,7 @@ describe('Encounter Cartographer run', () => {
       links: [],
       data: {
         difficulty: 'old', levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null,
       },
@@ -557,9 +597,10 @@ describe('Encounter Cartographer run', () => {
     });
     expect(chatMock).toHaveBeenCalledTimes(1);
     const output = (await getRun(runId))?.steps[0]?.output as {
-      parsed: { monsters: { name: string; count: number; notes: string }[] };
+      parsed: { monsters: { name: string; count: number; notes: string; treasure: string }[] };
     };
-    expect(output.parsed.monsters).toEqual([{ name: 'Original Ogre', count: 1, notes: 'keep' }]);
+    // Regenerate mode copies the target roster verbatim INCLUDING treasure.
+    expect(output.parsed.monsters).toEqual([{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '' }]);
   });
 
   it('rejects a regenerate brief whose roster length diverges from the target', async () => {
@@ -572,7 +613,7 @@ describe('Encounter Cartographer run', () => {
       links: [],
       data: {
         difficulty: 'old', levelHint: '2',
-        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', source: { type: 'none' } }],
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
         mapImageId: null, layout: null,
       },

@@ -12,6 +12,8 @@ const ENTRY_ROOM: EncounterLayout['rooms'][number] = {
   description: '',
   monsterIndexes: [],
   spawn: true,
+  key: '',
+  keyTreasure: '',
   entrance: {
     x: 1,
     y: 1,

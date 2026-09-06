@@ -189,6 +189,14 @@ export const monsterEntrySchema = z.object({
   name: z.string(),
   count: z.number().int().positive(),
   notes: z.string(),
+  /**
+   * Mob treasure (owner-ratified room-keys/treasure arc): what ONE instance
+   * of this entry carries, as GM checklist text — one item per line, '' when
+   * it carries nothing. Encounter-scoped by construction (it lives on the
+   * encounter's roster entry, never on the creature-kind artifact); frozen
+   * onto each seeded token at seed time for the GM token card.
+   */
+  treasure: z.string().default(''),
   source: monsterSourceSchema,
 });
 

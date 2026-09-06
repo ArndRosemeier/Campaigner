@@ -54,6 +54,7 @@ import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { statblockExtraNotice } from '@/llm/personas/extras';
 import { collectPackRosterWithRetry, formatRosterSection, parseRosterTargetLevel } from '@/llm/encounterRoster';
 import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounterItems';
+import { roomKeyGuidanceFor, treasureGuidanceFor } from '@/llm/treasureGuidance';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -454,8 +455,11 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         difficulty: asString(draft.difficulty),
         levelHint: asString(draft.levelHint),
         monsters: Array.isArray(draft.monsters)
-          ? (draft.monsters as { name: string; count: number; notes: string }[]).map((monster) => ({
+          ? (draft.monsters as { name: string; count: number; notes: string; treasure?: string }[]).map((monster) => ({
               ...monster,
+              // Mob treasure rides the entry verbatim ('' when the draft
+              // omitted it — optional enrichment, not a failure).
+              treasure: monster.treasure ?? '',
               // Finalize replaces these with cited/inline sources (M3-B).
               source: { type: 'none' } as const,
             }))
@@ -690,12 +694,15 @@ function parseEncounterBrief(
   }
   if (opts.dropInlineStats === true && json !== null && typeof json === 'object' && Array.isArray((json as { monsters?: unknown }).monsters)) {
     const record = json as { monsters: unknown[] };
+    // The strip drops only stat-source fields: mob `treasure` is data the
+    // contract keeps (the roster contract asks for it verbatim).
     record.monsters = record.monsters.map((monster) =>
       monster !== null && typeof monster === 'object'
         ? {
             name: (monster as { name?: unknown }).name,
             count: (monster as { count?: unknown }).count,
             notes: (monster as { notes?: unknown }).notes,
+            treasure: (monster as { treasure?: unknown }).treasure,
           }
         : monster,
     );
@@ -1319,6 +1326,22 @@ export class RunEngine {
             statblockChunkIds.push(hit.chunk.id);
           }
         }
+        // Treasure grounding (owner-ratified room-keys/treasure arc): one
+        // bounded third search over rules/table chunks so the budget rules —
+        // pf2e's GM Core Treasure chapter VERBATIM (CUP-pinned), or any
+        // system's own treasure text — reach the prompt window. Excerpt
+        // context only: never a citation, never a stat source.
+        const treasureHits = await searchRules('treasure budget by level party wealth hoard coins', {
+          limit: 3,
+          chunkTypes: ['section', 'table'],
+          system: input.campaign.system,
+          onEmbeddingProgress,
+        });
+        for (const hit of treasureHits) {
+          if (!merged.includes(hit.chunk.id)) {
+            merged.push(hit.chunk.id);
+          }
+        }
         // M-B (§7): the roster index over every ready pack book grounds WHICH
         // creatures to field. fix-02 (decision 4): one automatic retry for a
         // transient failure, then the named error fails the run loudly — a
@@ -1627,6 +1650,10 @@ export class RunEngine {
             '- "needsStatBlock": true only when the character is likely to fight or their stats matter at the table (adversaries, rivals, guards, bosses); false for contacts, merchants, innkeepers, informants, quest-givers.',
           ].join('\n')
         : null,
+      // Mob treasure (owner-ratified): structure + per-system budget. Renders
+      // for encounter drafts only; coheres with the item-pool section above
+      // (it adds structure/budget, never re-states the pool instruction).
+      kind === 'encounter' ? treasureGuidanceFor(input.campaign.system) : null,
       `Reply with ONLY a JSON object with exactly these fields: ${JSON.stringify(contract.keys)}`,
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     ]
@@ -2067,18 +2094,22 @@ export class RunEngine {
           'Generate its content first (artifact editor → "Generate with AI") or add monsters manually.',
       );
     }
+    // Regenerate mode keeps the roster verbatim INCLUDING mob treasure: a
+    // map run replaces layout + room keys, never the encounter-scoped
+    // treasure authored on the entries (owner-ratified D1 extension).
     const rosterContract = targetRoster !== undefined
-      ? `Regeneration target roster — reply with these EXACT entries, same order, same names and counts (name/count/notes only; never add sourceChunkIndex, sourceName or statBlock, the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
+      ? `Regeneration target roster — reply with these EXACT entries, same order, same names, counts and treasure (name/count/notes/treasure only; never add sourceChunkIndex, sourceName or statBlock, the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
           targetRoster.map((monster) => ({
             name: monster.name,
             count: monster.count,
             notes: monster.notes,
+            treasure: monster.treasure,
           })),
         )}`
       : 'Design a concrete monster roster appropriate to the requested difficulty.';
     const monsterFieldSpec = targetRoster !== undefined
-      ? 'monsters [{name,count,notes}] (the target roster copied verbatim)'
-      : 'monsters [{name,count,notes,sourceChunkIndex? or sourceName? or statBlock?}]';
+      ? 'monsters [{name,count,notes,treasure}] (the target roster copied verbatim)'
+      : 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}]';
     const inlineStatHint = targetRoster === undefined && retrieval.statblockChunkIds.length === 0
       ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
       : null;
@@ -2106,7 +2137,13 @@ export class RunEngine {
       formatItemPoolSection(retrieval.itemLines, retrieval.itemTruncated),
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
       inlineStatHint,
-      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}] (1–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
+      // Owner-ratified room keys + mob treasure: structure + per-system
+      // budget (treasureGuidanceFor coheres with the item-pool section above)
+      // and the room-key field contract (Cartographer only — the brief owns
+      // the rooms).
+      roomKeyGuidanceFor(),
+      treasureGuidanceFor(input.campaign.system),
+      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string}] (1–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
     ].filter((part) => part !== null).join('\n\n');
     const messages: ChatMessage[] = [
       { role: 'system', content: input.persona.systemPrompt },
@@ -2195,12 +2232,16 @@ export class RunEngine {
     }
     let parsed: EncounterGeneratorBrief = evaluated.brief;
     if (targetRoster !== undefined) {
+      // Regenerate mode replaces the roster with the target's verbatim
+      // entries — mob treasure included (the brief was told to copy it
+      // verbatim; the target's own values win over any model drift).
       parsed = {
         ...parsed,
         monsters: targetRoster.map((monster) => ({
           name: monster.name,
           count: monster.count,
           notes: monster.notes,
+          treasure: monster.treasure,
         })),
       };
     }
@@ -2251,6 +2292,10 @@ export class RunEngine {
             if (adjacentId === undefined) throw new Error(`Room ${room.name} has invalid adjacency`);
             return adjacentId;
           }),
+          // The GM room key travels with the room through packing (packRooms
+          // may rotate the room order — a parallel list would desync).
+          key: room.key,
+          keyTreasure: room.keyTreasure,
         };
       }),
     }, this.encounterLayoutVariants.get(runId) ?? 0);
@@ -2438,6 +2483,10 @@ export class RunEngine {
                 markerHue: target.hue,
                 markerColorName: CANONICAL_ROOM_MARKERS[idx]?.colorName ?? 'magenta',
                 stagingPoint: found ? { x: found.x, y: found.y } : { x: fallbackX, y: fallbackY },
+                // Room keys thread through the staging rebuild so the
+                // candidate layouts keep the brief's key text per room.
+                key: room.key,
+                keyTreasure: room.keyTreasure,
               };
             });
             candidateLayouts[stored.id] = encounterRunAdapters.layoutFromStagingMarkers({
@@ -2651,6 +2700,7 @@ export class RunEngine {
             name: monster.name,
             count: monster.count,
             notes: monster.notes,
+            treasure: monster.treasure,
             source: monster.statBlock !== undefined
               ? { type: 'inline' as const, statBlock: monster.statBlock }
               : { type: 'none' as const },
@@ -2668,6 +2718,7 @@ export class RunEngine {
           name: monster.name,
           count: monster.count,
           notes: monster.notes,
+          treasure: monster.treasure,
           source: { type: 'rulebook' as const, chunkId, mobArtifactId },
         });
       }
@@ -2897,6 +2948,7 @@ export class RunEngine {
             name: monster.name,
             count: monster.count,
             notes: monster.notes,
+            treasure: monster.treasure,
             source: { type: 'rulebook', chunkId, mobArtifactId },
           });
           continue;
@@ -2915,6 +2967,7 @@ export class RunEngine {
             name: monster.name,
             count: monster.count,
             notes: monster.notes,
+            treasure: monster.treasure,
             source: { type: 'npc-ref', artifactId },
           });
           continue;

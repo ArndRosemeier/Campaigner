@@ -73,7 +73,7 @@ async function seed(): Promise<{ deliverable: Deliverable; npcId: string; gmNote
       difficulty: 'deadly',
       levelHint: '5',
       monsters: [
-        { name: 'Cultist', count: 4, notes: 'netters', source: { type: 'inline', statBlock: statBlockFixture() } },
+        { name: 'Cultist', count: 4, notes: 'netters', treasure: '', source: { type: 'inline', statBlock: statBlockFixture() } },
       ],
       terrain: 'wet planks',
       tactics: 'surround and drag under',

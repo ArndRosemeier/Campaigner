@@ -24,6 +24,8 @@ const SAMPLE_LAYOUT: EncounterLayout = {
       mobsRect: { x: 4, y: 4, w: 6, h: 4 },
       monsterIndexes: [0],
       spawn: true,
+      key: '',
+      keyTreasure: '',
       stagingPoint: { x: 0.25, y: 0.3 },
       markerHue: 120,
       letter: 'A',

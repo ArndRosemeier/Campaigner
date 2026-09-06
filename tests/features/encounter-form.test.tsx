@@ -73,8 +73,8 @@ describe('encounter form monster sources', () => {
       difficulty: 'deadly',
       levelHint: '5',
       monsters: [
-        { name: 'Vexra', count: 1, notes: '', source: { type: 'npc-ref', artifactId: npc.id } },
-        { name: 'Ghost', count: 1, notes: '', source: { type: 'rulebook', chunkId: '00000000-0000-4000-8000-0000000000999' } },
+        { name: 'Vexra', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } },
+        { name: 'Ghost', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId: '00000000-0000-4000-8000-0000000000999' } },
       ],
       terrain: '',
       tactics: '',
@@ -108,7 +108,7 @@ describe('encounter form monster sources', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Bandit', count: 4, notes: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -161,7 +161,7 @@ describe('encounter form monster sources', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Giant', count: 1, notes: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
       terrain: '',
       tactics: '',
       treasure: '',
@@ -223,7 +223,7 @@ describe('encounter form monster sources', () => {
     const data: EncounterArtifactData = {
       difficulty: '',
       levelHint: '',
-      monsters: [{ name: 'Giant', count: 1, notes: '', source: { type: 'none' } }],
+      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
       terrain: '',
       tactics: '',
       treasure: '',

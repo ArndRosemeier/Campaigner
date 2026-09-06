@@ -473,12 +473,14 @@ describe('campaign grounding (15-GRAPH-RETRIEVAL)', () => {
       expect(chatMock.mock.calls.length).toBe(1);
     });
 
-    // The encounter brief's retrieval is unchanged: the general search and
-    // the FROZEN citable stat-block search (limit 6, hasStatBlock, system) —
-    // and nothing else.
-    expect(searchMock).toHaveBeenCalledTimes(2);
+    // The encounter brief's retrieval: the general search, the FROZEN
+    // citable stat-block search (limit 6, hasStatBlock, system), and the
+    // treasure-budget search (room-keys/treasure arc: pf2e GM Core grounding
+    // — excerpt context only, never a citation).
+    expect(searchMock).toHaveBeenCalledTimes(3);
     const generalOptions = searchMock.mock.calls[0]?.[1];
     const citableOptions = searchMock.mock.calls[1]?.[1];
+    const treasureOptions = searchMock.mock.calls[2]?.[1];
     expect(generalOptions).toMatchObject({ limit: 8, system: 'dnd5e' });
     expect(citableOptions).toMatchObject({
       limit: 6,
@@ -486,6 +488,12 @@ describe('campaign grounding (15-GRAPH-RETRIEVAL)', () => {
       hasStatBlock: true,
       system: 'dnd5e',
     });
+    expect(treasureOptions).toMatchObject({
+      limit: 3,
+      chunkTypes: ['section', 'table'],
+      system: 'dnd5e',
+    });
+    expect(treasureOptions?.hasStatBlock).toBeUndefined();
 
     // The brief prompt renders the grounding section right after the brief
     // line, before the campaign/rules sections.

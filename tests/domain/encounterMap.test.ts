@@ -35,6 +35,8 @@ function brief(): EncounterMapBrief {
         size: 'small',
         monsterIndexes: [],
         adjacentRoomIds: [ROOM_B],
+        key: '',
+        keyTreasure: '',
       },
       {
         id: ROOM_B,
@@ -43,6 +45,8 @@ function brief(): EncounterMapBrief {
         size: 'large',
         monsterIndexes: [0],
         adjacentRoomIds: [ROOM_A, ROOM_C],
+        key: '',
+        keyTreasure: '',
       },
       {
         id: ROOM_C,
@@ -51,6 +55,8 @@ function brief(): EncounterMapBrief {
         size: 'medium',
         monsterIndexes: [1],
         adjacentRoomIds: [ROOM_B],
+        key: '',
+        keyTreasure: '',
       },
     ],
   };
@@ -79,6 +85,48 @@ describe('encounter map layout engine', () => {
     const impossible = brief();
     impossible.rosterCounts = [100, 1];
     expect(() => packRooms(impossible)).toThrow(/does not fit/);
+  });
+
+  it('carries each room key with its room through packing rotation and the staging rebuild', () => {
+    // Variant 1 forces the retry ladder's rotation (attempt % count) — the
+    // packed rooms array is REORDERED relative to the brief. A key must stay
+    // on its own room (id-keyed), never drift with the array index.
+    const withKeys = brief();
+    withKeys.rooms = withKeys.rooms.map((room, index) => ({
+      ...room,
+      key: `Key for ${room.name}`,
+      keyTreasure: index === 0 ? 'Loose coins behind the gate: 25 gp' : '',
+    }));
+    const rotated = packRooms(withKeys, 1);
+    expect(rotated.rooms.map((room) => room.name)).not.toEqual(withKeys.rooms.map((room) => room.name));
+    for (const room of rotated.rooms) {
+      expect(room.key).toBe(`Key for ${room.name}`);
+      expect(room.keyTreasure).toBe(room.id === ROOM_A ? 'Loose coins behind the gate: 25 gp' : '');
+    }
+
+    // The staging rebuild (marker-detected candidates) keeps keys per room too.
+    const staging = layoutFromStagingMarkers({
+      theme: 'Cistern of Echoes',
+      aspect: '4:3',
+      rosterCounts: [1],
+      rooms: [
+        {
+          id: ROOM_A,
+          name: 'Flooded Stair',
+          description: '',
+          monsterIndexes: [0],
+          spawn: true,
+          letter: 'A',
+          markerHue: 300,
+          markerColorName: 'magenta',
+          stagingPoint: { x: 0.47, y: 0.84 },
+          key: 'Staging key',
+          keyTreasure: 'Stash: 10 gp',
+        },
+      ],
+    });
+    expect(staging.rooms[0]?.key).toBe('Staging key');
+    expect(staging.rooms[0]?.keyTreasure).toBe('Stash: 10 gp');
   });
 
   it('reports structural violations instead of repairing geometry', () => {
@@ -184,6 +232,8 @@ describe('encounter map layout engine', () => {
         description: '',
         monsterIndexes: [],
         spawn: true,
+        key: '',
+        keyTreasure: '',
       };
     }
 
@@ -238,6 +288,8 @@ describe('encounter map layout engine', () => {
             markerHue: 300,
             markerColorName: 'magenta',
             stagingPoint: { x: 0.47, y: 0.84 },
+            key: '',
+            keyTreasure: '',
           },
           {
             id: ROOM_B,
@@ -249,6 +301,8 @@ describe('encounter map layout engine', () => {
             markerHue: 180,
             markerColorName: 'cyan',
             stagingPoint: { x: 0.15, y: 0.5 },
+            key: '',
+            keyTreasure: '',
           },
           {
             id: ROOM_C,
@@ -260,6 +314,8 @@ describe('encounter map layout engine', () => {
             markerHue: 60,
             markerColorName: 'yellow',
             stagingPoint: { x: 0.75, y: 0.54 },
+            key: '',
+            keyTreasure: '',
           },
         ],
       });
@@ -390,6 +446,8 @@ describe('encounter map layout engine', () => {
             monsterIndexes: [],
             spawn: true,
             entrance: { x: 1, y: 1, side: 'north' },
+            key: '',
+            keyTreasure: '',
           },
         ],
         corridors: [],
@@ -453,6 +511,8 @@ describe('encounter map layout engine', () => {
             markerHue: 300,
             markerColorName: 'magenta',
             stagingPoint: { x: 0.47, y: 0.84 },
+            key: 'Steps descend into black water.',
+            keyTreasure: 'Flooded offering bowl: 15 gp',
           },
           {
             id: ROOM_B,
@@ -464,6 +524,8 @@ describe('encounter map layout engine', () => {
             markerHue: 180,
             markerColorName: 'cyan',
             stagingPoint: { x: 0.15, y: 0.50 },
+            key: 'The basin churns.',
+            keyTreasure: '',
           },
           {
             id: ROOM_C,
@@ -475,6 +537,8 @@ describe('encounter map layout engine', () => {
             markerHue: 60,
             markerColorName: 'yellow',
             stagingPoint: { x: 0.75, y: 0.54 },
+            key: '',
+            keyTreasure: '',
           },
         ],
       });
@@ -511,6 +575,8 @@ describe('encounter map layout engine', () => {
         markerHue: (index * 36) % 360,
         markerColorName: 'marker-color',
         stagingPoint: { x: (index % 4) * 0.25 + 0.1, y: Math.floor(index / 4) * 0.3 + 0.15 },
+        key: `Key ${String(index + 1)}`,
+        keyTreasure: '',
       }));
 
       const layout = layoutFromStagingMarkers({

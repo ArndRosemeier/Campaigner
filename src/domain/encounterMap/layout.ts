@@ -88,6 +88,10 @@ function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout
       description: room.description,
       monsterIndexes: [...room.monsterIndexes],
       spawn: room.id === brief.entryRoomId,
+      // The room's GM key travels WITH the room: packing rotates `brief.rooms`
+      // (attempt % count), so any parallel key list would desync.
+      key: room.key,
+      keyTreasure: room.keyTreasure,
       rects: sized.rects.map((rect) => translate(rect, xOffset, yOffset)),
       mobsRect: translate(sized.mobsRect, xOffset, yOffset),
     };
@@ -262,6 +266,9 @@ export interface StagingRoomInput {
   markerHue: number;
   markerColorName: string;
   stagingPoint: { x: number; y: number };
+  /** GM-only room key + room treasure, threaded from the brief (defaults ''). */
+  key: string;
+  keyTreasure: string;
 }
 
 export interface StagingLayoutInput {
@@ -331,6 +338,8 @@ export function layoutFromStagingMarkers(input: StagingLayoutInput): EncounterLa
       markerHue: room.markerHue,
       markerColorName: room.markerColorName,
       stagingPoint: { ...room.stagingPoint },
+      key: room.key,
+      keyTreasure: room.keyTreasure,
       rects: [mobsRect],
       mobsRect,
     };

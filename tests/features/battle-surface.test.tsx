@@ -244,7 +244,7 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
     data: {
       difficulty: 'deadly',
       levelHint: '5',
-      monsters: [{ name: 'Troll', count: 1, notes: '', source: { type: 'npc-ref', artifactId: npc.id } }],
+      monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } }],
       terrain: '',
       tactics: 'Regenerates — a GM tactic note.',
       treasure: '',

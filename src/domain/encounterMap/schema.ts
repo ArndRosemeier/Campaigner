@@ -21,6 +21,10 @@ export const encounterMapRoomBriefSchema = z.object({
   size: encounterRoomSizeSchema,
   monsterIndexes: z.array(z.number().int().nonnegative()),
   adjacentRoomIds: z.array(z.uuid()),
+  /** GM-only room key (read at the staging point); '' when the brief gave none. */
+  key: z.string().default(''),
+  /** This room's treasure checklist (one item per line); '' when none. */
+  keyTreasure: z.string().default(''),
 });
 export type EncounterMapRoomBrief = z.infer<typeof encounterMapRoomBriefSchema>;
 
@@ -95,6 +99,15 @@ export const layoutRoomSchema = z.object({
   letter: z.string().optional(),
   markerHue: z.number().optional(),
   markerColorName: z.string().optional(),
+  /**
+   * GM-only room key (owner-ratified room-keys/treasure arc): the room
+   * information the GM reads at the room's staging-point key marker, and the
+   * room's own treasure checklist. Persisted ON the room — packRooms may
+   * reorder rooms (packing rotation), so a parallel roomId-keyed array could
+   * orphan; the key travels with the room through every rebuild. '' = none.
+   */
+  key: z.string().default(''),
+  keyTreasure: z.string().default(''),
   /**
    * The party's way in (entrance/exit spawn zones, doc 11): one opening in
    * the spawn room's outer wall. Only the spawn room may carry one, and a

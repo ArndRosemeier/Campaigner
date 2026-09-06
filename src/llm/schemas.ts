@@ -161,6 +161,10 @@ export const encounterDraftSchema = z.object({
       /** Models often send "4"; accept numeric strings. */
       count: z.coerce.number().int().positive(),
       notes: z.string(),
+      /** Mob treasure (owner-ratified): what ONE instance carries — GM
+       * checklist text, '' when nothing. Optional enrichment, never a
+       * rejection (the guidance-fields convention). */
+      treasure: z.string().default(''),
       /** M3-B: index into the numbered stat-block excerpts of the retrieve
        * step — mapped back to { type: 'rulebook', chunkId } on finalize. */
       sourceChunkIndex: z.number().int().nonnegative().optional(),
@@ -207,6 +211,9 @@ export const encounterGeneratorBriefSchema = z
         name: z.string().min(1),
         count: z.coerce.number().int().positive(),
         notes: z.string().default(''),
+        /** Mob treasure (owner-ratified): what ONE instance carries — GM
+         * checklist text, '' when nothing. Optional enrichment. */
+        treasure: z.string().default(''),
         sourceChunkIndex: rosterIndex.optional(),
         sourceName: z.string().optional(),
         statBlock: statBlockSchema.optional(),
@@ -219,6 +226,10 @@ export const encounterGeneratorBriefSchema = z
         size: enumCaseInsensitive(['small', 'medium', 'large']).default('medium'),
         monsterIndexes: z.array(rosterIndex),
         adjacentRoomIndexes: z.array(rosterIndex).default([]),
+        /** GM-only room key + this room's treasure checklist (one item per
+         * line). Optional enrichment — '' when the brief gave none. */
+        key: z.string().default(''),
+        keyTreasure: z.string().default(''),
       }),
     ).min(1).max(10),
     entryRoomIndex: rosterIndex,

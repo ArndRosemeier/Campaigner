@@ -278,6 +278,8 @@ describe('roster expansion', () => {
           size: 'small',
           monsterIndexes: [],
           adjacentRoomIds: [roomB],
+          key: '',
+          keyTreasure: '',
         },
         {
           id: roomB,
@@ -286,6 +288,8 @@ describe('roster expansion', () => {
           size: 'large',
           monsterIndexes: [0, 1],
           adjacentRoomIds: [roomA],
+          key: '',
+          keyTreasure: '',
         },
       ],
     });
@@ -550,8 +554,8 @@ describe('entrance-anchored staging (adjudicated)', () => {
       entryRoomId: roomA,
       rosterCounts: [1],
       rooms: [
-        { id: roomA, name: 'Gate', description: '', size: 'small', monsterIndexes: [], adjacentRoomIds: [roomB] },
-        { id: roomB, name: 'Barracks', description: '', size: 'large', monsterIndexes: [0], adjacentRoomIds: [roomA] },
+        { id: roomA, name: 'Gate', description: '', size: 'small', monsterIndexes: [], adjacentRoomIds: [roomB], key: '', keyTreasure: '' },
+        { id: roomB, name: 'Barracks', description: '', size: 'large', monsterIndexes: [0], adjacentRoomIds: [roomA], key: '', keyTreasure: '' },
       ],
     });
   }

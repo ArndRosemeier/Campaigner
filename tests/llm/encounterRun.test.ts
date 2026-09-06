@@ -1345,4 +1345,158 @@ describe('encounter runs (M3-B)', () => {
       expect(storedRun?.errorMessage).toContain('which does not exist');
     });
   });
+
+  describe('mob treasure (owner-ratified room-keys/treasure arc)', () => {
+    it('carries draft treasure onto the finalized entries and prompts the structure + per-system budget', async () => {
+      const { campaign, persona, trollChunkId } = await seed();
+      const { db } = await import('@/db/db');
+      const chunk = await db.chunks.get(trollChunkId);
+      searchRulesMock.mockResolvedValue(
+        chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+      );
+      chatMock.mockResolvedValue({
+        text: JSON.stringify({
+          ...DRAFT,
+          treasure: 'Saddlebags behind the altar: 40 gp',
+          monsters: [
+            { name: 'Troll', count: 2, notes: 'cut off the retreat', sourceChunkIndex: 0, treasure: 'Pouch: 5 gp, a bone key' },
+            { name: 'Cultist', count: 4, notes: 'netters', statBlock: monsterBlock(), treasure: '' },
+          ],
+        }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+      const runId = await runEngine.startRun({
+        campaign,
+        persona,
+        brief: 'A bridge ambush for level 5',
+        autonomy: 'auto',
+        pinnedChunkIds: [],
+      });
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+
+      // The Smith's draft prompt carries the structure clause and the dnd5e
+      // budget clause (our own approximation — no DMG text).
+      const draftCall = chatMock.mock.calls[0];
+      const userContent = draftCall?.[0].find((message) => message.role === 'user')?.content ?? '';
+      expect(userContent).toContain('Treasure structure (owner-ratified)');
+      expect(userContent).toContain('Campaigner\'s own documented approximation');
+      expect(userContent).toContain('not licensable');
+
+      const storedRun = await getRun(runId);
+      const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+      expect(artifact?.kind).toBe('encounter');
+      if (artifact?.kind !== 'encounter') return;
+      expect(artifact.data.monsters[0]?.treasure).toBe('Pouch: 5 gp, a bone key');
+      expect(artifact.data.monsters[1]?.treasure).toBe('');
+      expect(artifact.data.treasure).toBe('Saddlebags behind the altar: 40 gp');
+    });
+
+    it('switches the budget guidance to GM Core verbatim grounding for pf2e', async () => {
+      const { persona } = await seed();
+      const pf2e = await createCampaign({ name: 'Pf2e Encounters', system: 'pathfinder2e' });
+      searchRulesMock.mockResolvedValue([]);
+      // No excerpts and no pf2e roster: every monster must inline a block
+      // (fix-02) — the citation in DRAFT would be rejected here.
+      chatMock.mockResolvedValue({
+        text: JSON.stringify({
+          ...DRAFT,
+          monsters: [
+            { name: 'Troll', count: 2, notes: '', statBlock: monsterBlock({ creatureType: 'giant', hp: 84 }) },
+            { name: 'Cultist', count: 4, notes: 'netters', statBlock: monsterBlock() },
+          ],
+        }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+      const runId = await runEngine.startRun({
+        campaign: pf2e,
+        persona,
+        brief: 'A troll bridge',
+        autonomy: 'auto',
+        pinnedChunkIds: [],
+      });
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const draftCall = chatMock.mock.calls[0];
+      const userContent = draftCall?.[0].find((message) => message.role === 'user')?.content ?? '';
+      expect(userContent).toContain('GM Core treasure rules are the law');
+      expect(userContent).toContain('VERBATIM');
+      expect(userContent).toContain('do not invent amounts');
+      // The dnd5e approximation never leaks into a pf2e prompt.
+      expect(userContent).not.toContain('documented approximation');
+    });
+
+    it('preserves layout room keys on the in-place Smith content fill', async () => {
+      const { campaign, persona, trollChunkId } = await seed();
+      const { db } = await import('@/db/db');
+      const chunk = await db.chunks.get(trollChunkId);
+      searchRulesMock.mockResolvedValue(
+        chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+      );
+      const stub = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Ford Ambush',
+        tags: [],
+        summary: '',
+        body: '',
+        data: {
+          difficulty: 'deadly',
+          levelHint: '5',
+          monsters: [{ name: 'Troll', count: 2, notes: '', treasure: '', source: { type: 'rulebook', chunkId: trollChunkId } }],
+          terrain: '',
+          tactics: '',
+          treasure: '',
+          mapImageId: null,
+          layout: {
+            gridW: 24,
+            gridH: 18,
+            theme: 'Ford',
+            rooms: [{
+              id: '00000000-0000-4000-8000-0000000000a9',
+              name: 'Gatehouse',
+              rects: [{ x: 0, y: 0, w: 6, h: 6 }],
+              mobsRect: { x: 1, y: 1, w: 4, h: 4 },
+              description: '',
+              monsterIndexes: [0],
+              spawn: true,
+              key: 'GM-authored key that must survive a content fill',
+              keyTreasure: 'Hoard: 250 gp',
+            }],
+            corridors: [],
+          },
+        },
+      });
+      chatMock.mockResolvedValue({
+        text: JSON.stringify({ ...DRAFT, monsters: [{ name: 'Troll', count: 2, notes: '', sourceChunkIndex: 0, treasure: 'Fresh: 3 gp' }] }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+      const runId = await runEngine.startRun({
+        campaign,
+        persona,
+        brief: 'Regenerate the ford ambush',
+        autonomy: 'auto',
+        pinnedChunkIds: [],
+        targetArtifactId: stub.id,
+      });
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact(stub.id);
+      expect(artifact?.kind).toBe('encounter');
+      if (artifact?.kind !== 'encounter') return;
+      // The content fill rewrites the roster (fresh treasure) but the
+      // battlemap — and its GM-authored room keys — are preserved.
+      expect(artifact.data.monsters[0]?.treasure).toBe('Fresh: 3 gp');
+      expect(artifact.data.layout?.rooms[0]?.key).toBe('GM-authored key that must survive a content fill');
+      expect(artifact.data.layout?.rooms[0]?.keyTreasure).toBe('Hoard: 250 gp');
+    });
+  });
 });

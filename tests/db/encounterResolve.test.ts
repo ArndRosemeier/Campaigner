@@ -63,6 +63,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Vexra',
       count: 1,
       notes: '',
+      treasure: '',
       source: { type: 'npc-ref', artifactId: npc.id },
     });
     expect(resolved.origin).toBe('NPC: Vexra');
@@ -85,6 +86,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Villager',
       count: 3,
       notes: '',
+      treasure: '',
       source: { type: 'npc-ref', artifactId: npc.id },
     });
     expect(resolved.origin).toBe('NPC: Plain Villager');
@@ -96,6 +98,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Ghost',
       count: 1,
       notes: '',
+      treasure: '',
       source: { type: 'npc-ref', artifactId: newId() },
     });
     expect(resolved.origin).toBe('missing ref');
@@ -124,6 +127,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Troll',
       count: 2,
       notes: '',
+      treasure: '',
       source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
     });
     expect(resolved.origin).toBe('Bestiary p.132');
@@ -161,6 +165,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Goblin Warrior',
       count: 4,
       notes: '',
+      treasure: '',
       source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
     });
     expect(resolved.origin).toBe('PF2e Bestiary: Goblin Warrior');
@@ -196,6 +201,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Ape',
       count: 1,
       notes: '',
+      treasure: '',
       source: { type: 'rulebook', chunkId: chunks[0]?.id ?? '' },
     });
     expect(resolved.origin).toBe('D&D 5e SRD Bestiary: Ape');
@@ -207,6 +213,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Owlbear',
       count: 1,
       notes: '',
+      treasure: '',
       source: { type: 'rulebook', chunkId: newId() },
     });
     expect(resolved.origin).toBe('missing ref');
@@ -218,6 +225,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Bandit',
       count: 4,
       notes: '',
+      treasure: '',
       source: { type: 'inline', statBlock: statBlock() },
     });
     expect(inline.origin).toBe('inline');
@@ -227,6 +235,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       name: 'Something unnamed',
       count: 1,
       notes: '',
+      treasure: '',
       source: { type: 'none' },
     });
     expect(none.origin).toBe('');

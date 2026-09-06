@@ -434,7 +434,7 @@ function MonsterListEditor({
         size="xs"
         className="self-start"
         onClick={() => {
-          onChange([...monsters, { name: '', count: 1, notes: '', source: { type: 'none' } }]);
+          onChange([...monsters, { name: '', count: 1, notes: '', treasure: '', source: { type: 'none' } }]);
         }}
       >
         Add monster

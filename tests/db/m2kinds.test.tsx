@@ -29,7 +29,7 @@ describe('encounter / plotarc kinds', () => {
         difficulty: 'deadly',
         levelHint: '5',
         monsters: [
-          { name: 'Troll', count: 2, notes: 'regenerates', source: { type: 'none' } },
+          { name: 'Troll', count: 2, notes: 'regenerates', treasure: '', source: { type: 'none' } },
         ],
         terrain: 'river crossing',
         tactics: 'hit and run',

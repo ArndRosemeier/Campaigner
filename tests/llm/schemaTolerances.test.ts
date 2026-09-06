@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { moduleSpineSchema } from '@/domain/module';
 import { statBlockSchema } from '@/domain/statblock';
-import { continuityReportSchema, npcDraftSchema } from '@/llm/schemas';
+import { continuityReportSchema, encounterDraftSchema, encounterGeneratorBriefSchema, npcDraftSchema } from '@/llm/schemas';
 
 /**
  * Meaning-preserving schema tolerances (AGENTS rule 3 — validation stays,
@@ -113,5 +113,41 @@ describe('draft and report tolerances', () => {
     expect(spine.themes).toEqual([]);
     expect(spine.partPlan[0]?.synopsis).toBe('');
     expect(spine.partPlan[0]?.levelUpTrigger).toBe('');
+  });
+
+  it('defaults omitted mob treasure and room-key fields on the encounter drafts', () => {
+    const draft = encounterDraftSchema.parse({
+      name: 'X',
+      summary: 'S',
+      body: 'B',
+      difficulty: 'hard',
+      levelHint: '4',
+      monsters: [{ name: 'Goblin', count: '2', notes: '' }],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+    });
+    expect(draft.monsters[0]?.treasure).toBe('');
+    expect(draft.monsters[0]?.count).toBe(2);
+
+    const brief = encounterGeneratorBriefSchema.parse({
+      name: 'Y',
+      summary: '',
+      body: '',
+      difficulty: '',
+      levelHint: '',
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      theme: 'crypt',
+      monsters: [{ name: 'Goblin', count: 1 }],
+      rooms: [{ name: 'Gate', monsterIndexes: [0], adjacentRoomIndexes: [] }],
+      entryRoomIndex: 0,
+    });
+    // Keys/treasure are optional enrichment — a brief that omits them parses
+    // with '' and is never rejected over their absence.
+    expect(brief.monsters[0]?.treasure).toBe('');
+    expect(brief.rooms[0]?.key).toBe('');
+    expect(brief.rooms[0]?.keyTreasure).toBe('');
   });
 });

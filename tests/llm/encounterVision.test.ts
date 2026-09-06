@@ -30,6 +30,8 @@ function layout() {
         size: 'small',
         monsterIndexes: [],
         adjacentRoomIds: [b],
+        key: '',
+        keyTreasure: '',
       },
       {
         id: b,
@@ -38,6 +40,8 @@ function layout() {
         size: 'medium',
         monsterIndexes: [0],
         adjacentRoomIds: [a],
+        key: '',
+        keyTreasure: '',
       },
     ],
   });
