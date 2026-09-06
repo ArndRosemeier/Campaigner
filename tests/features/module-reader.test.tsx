@@ -226,6 +226,23 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('renders the document article at the full pane width (no prose max-width cap)', async () => {
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findPartSection(0);
+
+    const article = document.querySelector('article');
+    if (article === null) throw new Error('reader article missing');
+    // Owner directive: the middle pane must use its full width — the cap is
+    // gone, comfortable padding and the type scale stay.
+    expect(article.className).not.toContain('max-w-[70ch]');
+    expect(article.className).not.toContain('mx-auto');
+    expect(article.className).toContain('px-8');
+    expect(article.className).toContain('py-10');
+    expect(article.className).toContain('text-[15px]');
+    await flushAsyncUpdates();
+  });
+
   it('shows module-failed-banner when module.status is failed and provides Resume button', async () => {
     const { campaignId, moduleId } = await seedReaderModule({
       status: 'failed',

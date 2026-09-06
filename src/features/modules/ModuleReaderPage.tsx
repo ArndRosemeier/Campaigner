@@ -55,7 +55,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * Module reader (08-MODULE-DESIGNER M4-A): the module front and center — one
- * scrollable document, prose width (~70ch), large type, parts as chapters
+ * full-width scrollable document, large type, parts as chapters
  * (H1 = part title with level-band badge), spine premise as the intro.
  * Sticky mini-ToC on the left, entity panel on the right, per-part ✎ editing
  * (save on blur), wiki-link chips everywhere through the shared WikiMarkdown.
@@ -323,7 +323,7 @@ export function ModuleReaderPage(): JSX.Element {
 
       {/* Document */}
       <div ref={documentRef} className="min-h-0 flex-1 overflow-y-auto">
-        <article className="mx-auto max-w-[70ch] px-6 py-10 text-[15px] leading-relaxed">
+        <article className="px-8 py-10 text-[15px] leading-relaxed">
           <header className="mb-8 border-b pb-4">
             <ModuleTitleInput module={module} />
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
