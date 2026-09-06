@@ -235,6 +235,13 @@ export async function removeImageFromArtifact(artifactId: Id, imageId: Id): Prom
 /**
  * Restores a historical snapshot by saving it as a new revision (05-UI:
  * "restore = save as new revision"); the old revisions stay untouched.
+ *
+ * Scope is pinned to the CURRENT row (updateArtifact semantics): a snapshot
+ * taken under a different scope restores CONTENT-ONLY — campaignId/moduleId
+ * never time-travel, because the explicit scope transitions (moveToModule /
+ * adoptIntoCampaign / publishToLibrary, via moveScope) are the only
+ * sanctioned pathway for scope changes and the revision list UI keeps
+ * offering them.
  */
 export async function restoreRevision(artifactId: Id, revision: number): Promise<Artifact> {
   return db.transaction('rw', db.artifacts, db.revisions, async () => {
@@ -247,6 +254,9 @@ export async function restoreRevision(artifactId: Id, revision: number): Promise
     if (!current) throw new NotFoundError('Artifact', artifactId);
     const next = artifactSchema.parse({
       ...row.snapshot,
+      // Scope pin: the snapshot's own campaignId/moduleId are ignored.
+      campaignId: current.campaignId,
+      moduleId: current.moduleId,
       currentRevision: current.currentRevision + 1,
       updatedAt: Date.now(),
     });

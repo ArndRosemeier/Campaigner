@@ -207,6 +207,66 @@ describe('deleteArtifact', () => {
   });
 });
 
+describe('restoreRevision scope pinning', () => {
+  beforeEach(clearDatabase);
+
+  function moduleInput(campaignId: string, title: string) {
+    return createModuleSchema({
+      campaignId,
+      title,
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'sketch',
+    });
+  }
+
+  it('restoring revision 1 of a module-owned artifact keeps module ownership', async () => {
+    const campaignId = newId();
+    const module = await createModule(moduleInput(campaignId, 'Ember Crypt'));
+    const artifact = await createArtifact({
+      campaignId,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Kael',
+      body: 'revision one body',
+    });
+    await updateArtifact(artifact.id, { body: 'revision two body' });
+    await updateArtifact(artifact.id, { body: 'revision three body' });
+
+    const restored = await restoreRevision(artifact.id, 1);
+
+    expect(restored.body).toBe('revision one body');
+    // The scope does not time-travel with the snapshot.
+    expect(restored.moduleId).toBe(module.id);
+    expect(restored.campaignId).toBe(campaignId);
+    expect((await getArtifact(artifact.id))?.moduleId).toBe(module.id);
+  });
+
+  it('a snapshot whose scope differs restores content-only (explicit scope moves stay the only pathway)', async () => {
+    const campaignId = newId();
+    const module = await createModule(moduleInput(campaignId, 'Ember Crypt'));
+    // Revision 1 is campaign-level; revision 2 moves the row into the module
+    // via the sanctioned moveScope pathway.
+    const artifact = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Kael',
+      body: 'campaign-level snapshot body',
+    });
+    await moveToModule(artifact.id, module.id);
+    expect((await getArtifact(artifact.id))?.moduleId).toBe(module.id);
+
+    const restored = await restoreRevision(artifact.id, 1);
+
+    // The pre-move snapshot carries moduleId: null — restoring it must NOT
+    // release the artifact back to campaign level; only the body came back.
+    expect(restored.body).toBe('campaign-level snapshot body');
+    expect(restored.moduleId).toBe(module.id);
+    expect(restored.campaignId).toBe(campaignId);
+  });
+});
+
 describe('stampModuleOwnership', () => {
   beforeEach(clearDatabase);
 
