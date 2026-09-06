@@ -35,7 +35,10 @@ export default defineConfig(({ mode }) => {
       css: false,
       // jsdom + PDF/image suites are memory-heavy; unbounded workers caused
       // event-loop starvation and false 5s timeouts on constrained CI/dev VMs.
-      maxWorkers: 4,
+      // 6 workers on the 8-core dev box (peak ~480-490MB RSS per worker,
+      // ~3GB tree) measured the full suite 84.8s -> 58.1s with no timeouts;
+      // 4 workers left half the machine idle.
+      maxWorkers: 6,
       testTimeout: 20_000,
     },
   };
