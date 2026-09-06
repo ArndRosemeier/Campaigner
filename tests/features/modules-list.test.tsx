@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { modulesPath } from '@/app/routes';
+import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign, getCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
@@ -324,6 +325,42 @@ describe('ModulesListPage', () => {
     await waitFor(() => {
       expect(screen.queryByText('Sunken Cult')).not.toBeInTheDocument();
     });
+    expect(toastSuccessMock).toHaveBeenCalledWith('Module deleted');
+    // The in-flight generation cancel is triggered on delete (best-effort —
+    // a parts pass must not keep writing into a removed module).
+    const { cancelModuleGen } = await import('@/llm/moduleGen');
+    expect(cancelModuleGen).toHaveBeenCalledWith(failedId);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('an artifact that lands after the dialog opened is cascaded, not released', async () => {
+    const user = userEvent.setup();
+    const { campaignId, failedId } = await seedModules();
+    renderAppAt(modulesPath(campaignId));
+    await screen.findByText('Sunken Cult', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByRole('button', { name: 'Delete Sunken Cult' }));
+    await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
+    // The dialog counted ZERO owned artifacts ("Delete", keep-branch on the
+    // stale count). An owned artifact lands while the dialog is open.
+    const lateLooter = await createArtifact({
+      campaignId,
+      moduleId: failedId,
+      kind: 'npc',
+      name: 'Late Looter',
+    });
+
+    // Confirming must recount at confirm time: the fresh count (1) picks the
+    // cascade branch — deleting the late artifact, never releasing it.
+    await user.click(within(await screen.findByRole('alertdialog')).getByTestId('delete-module-confirm'));
+
+    await waitFor(
+      async () => {
+        expect(await getModule(failedId)).toBeUndefined();
+        expect(await getArtifact(lateLooter.id)).toBeUndefined();
+      },
+      { timeout: 10_000 },
+    );
     expect(toastSuccessMock).toHaveBeenCalledWith('Module deleted');
     await flushAsyncUpdates();
   }, 20_000);

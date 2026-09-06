@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -47,23 +47,16 @@ export function ModulesListPage(): JSX.Element {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Module | null>(null);
-  /** Artifacts owned by the delete target — the cascade/keep choice (D5). */
-  const [ownedCount, setOwnedCount] = useState<number | null>(null);
-
-  useEffect(() => {
-    setOwnedCount(null);
-    if (deleteTarget === null) return;
-    let alive = true;
-    listArtifactsByModule(deleteTarget.id)
-      .then((rows) => {
-        if (alive) setOwnedCount(rows.length);
-      })
-      .catch((error: unknown) => {
-        toastError('Could not count the artifacts owned by the module', error);
-      });
-    return () => {
-      alive = false;
-    };
+  /**
+   * Artifacts owned by the delete target (10-MILESTONE-6 D5), LIVE: the
+   * count re-derives while the dialog is open, so the user reads what the
+   * module owns NOW, not what it owned when the dialog opened. undefined =
+   * still counting (or no target); the confirm handler recounts once more
+   * before choosing the branch.
+   */
+  const ownedCount = useLiveQuery(async () => {
+    if (deleteTarget === null) return null;
+    return (await listArtifactsByModule(deleteTarget.id)).length;
   }, [deleteTarget]);
 
   /** Runs one delete branch (10-MILESTONE-6 D5): the user picked what happens
@@ -77,6 +70,21 @@ export function ModulesListPage(): JSX.Element {
       .catch((error: unknown) => {
         toastError('Could not delete the module', error);
       });
+  }
+
+  /** The plain "Delete" button's branch: derived from a FRESH count at
+   * confirm time, never from the count that was live when the dialog opened
+   * (an artifact that lands in between must be cascaded, not released —
+   * deleteModule re-lists the rows inside its transaction either way). */
+  async function confirmDelete(target: Module): Promise<void> {
+    let freshCount: number;
+    try {
+      freshCount = (await listArtifactsByModule(target.id)).length;
+    } catch (error) {
+      toastError('Could not recount the artifacts owned by the module', error);
+      return;
+    }
+    runDelete(target, freshCount > 0 ? 'cascade' : 'keep');
   }
 
   if (modules === undefined || campaign === undefined) {
@@ -217,7 +225,7 @@ export function ModulesListPage(): JSX.Element {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            {ownedCount !== null && ownedCount > 0 && (
+            {ownedCount !== null && ownedCount !== undefined && ownedCount > 0 && (
               <AlertDialogAction
                 data-testid="delete-module-keep"
                 onClick={() => {
@@ -230,15 +238,19 @@ export function ModulesListPage(): JSX.Element {
               </AlertDialogAction>
             )}
             <AlertDialogAction
-              className={ownedCount !== null && ownedCount > 0 ? 'text-destructive' : undefined}
+              className={
+                ownedCount !== null && ownedCount !== undefined && ownedCount > 0
+                  ? 'text-destructive'
+                  : undefined
+              }
               data-testid="delete-module-confirm"
               onClick={() => {
                 const target = deleteTarget;
                 if (target === null) return;
-                runDelete(target, ownedCount !== null && ownedCount > 0 ? 'cascade' : 'keep');
+                void confirmDelete(target);
               }}
             >
-              {ownedCount !== null && ownedCount > 0
+              {ownedCount !== null && ownedCount !== undefined && ownedCount > 0
                 ? `Delete module and ${String(ownedCount)} artifact${ownedCount === 1 ? '' : 's'}`
                 : 'Delete'}
             </AlertDialogAction>

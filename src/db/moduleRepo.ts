@@ -83,25 +83,53 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
  * stays). The choice is explicit and loud — the confirm dialog in the module
  * list is the only caller — so a silent orphaning or a silent wipe can
  * never happen by accident.
+ *
+ * The whole disposal is ONE `rw` transaction over every touched table, and
+ * the owned rows are re-listed INSIDE it: the chosen branch applies to the
+ * rows that exist at delete time (never to a snapshot counted when the
+ * dialog opened), and a half-applied cascade is impossible — any failure
+ * rolls the module delete back with it.
+ *
+ * Any in-flight spine/parts pass for this module is aborted first (it would
+ * keep writing into a module that is being removed). Runs already in flight
+ * FAIL loudly at finalize (their placement existence check refuses a
+ * deleted module) — the deletion contract is: in-flight runs fail loudly,
+ * already-finalized rows cascade/release, nothing dangles.
  */
 export async function deleteModule(
   id: Id,
   ownedArtifacts: 'cascade' | 'keep',
 ): Promise<void> {
-  const ownedRows = await listArtifactsByModule(id);
-  // Battles are live play state, not authored module content; neither delete
-  // branch can leave one pointing at a removed module.
-  await deleteBattlesByModule(id);
-  if (ownedArtifacts === 'keep') {
-    // Module-owned rows carry the module's campaignId, so clearing the
-    // module binding drops them back into plain campaign ownership with
-    // their images/links/revisions untouched.
-    await db.artifacts.where('moduleId').equals(id).modify({ moduleId: null });
-    await db.modules.delete(id);
-    return;
-  }
-  for (const artifact of ownedRows) {
-    await deleteArtifact(artifact.id);
-  }
-  await db.modules.delete(id);
+  // Dynamic import: moduleGen transitively imports this repo — a static
+  // import would be a module cycle.
+  const { cancelModuleGen } = await import('@/llm/moduleGen');
+  cancelModuleGen(id);
+  await db.transaction(
+    'rw',
+    db.modules,
+    db.artifacts,
+    db.revisions,
+    db.images,
+    db.battles,
+    async () => {
+      // Re-listed INSIDE the transaction (count honesty): rows that landed
+      // after the dialog opened are disposed by the same branch.
+      const ownedRows = await listArtifactsByModule(id);
+      // Battles are live play state, not authored module content; neither
+      // delete branch can leave one pointing at a removed module.
+      await deleteBattlesByModule(id);
+      if (ownedArtifacts === 'keep') {
+        // Module-owned rows carry the module's campaignId, so clearing the
+        // module binding drops them back into plain campaign ownership with
+        // their images/links/revisions untouched.
+        await db.artifacts.where('moduleId').equals(id).modify({ moduleId: null });
+        await db.modules.delete(id);
+        return;
+      }
+      for (const artifact of ownedRows) {
+        await deleteArtifact(artifact.id);
+      }
+      await db.modules.delete(id);
+    },
+  );
 }
