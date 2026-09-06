@@ -474,3 +474,79 @@ nearly as-is (engine + types), ~1k re-binds to Dexie/repos, ~4k UI re-plug.
   pipeline covers map creation), cross-module battle persistence beyond the
   session row.
 - Importing GM Cockpit archives.
+
+## Onboarding addendum — setup wizard + first-module guide (post-M5)
+
+Owner-ratified onboarding arc (discovery + design banked before
+implementation), spec'd in 05-UI.md §Onboarding. It closes the gap between
+install and first use: until now a fresh browser landed on the picker's
+empty state with no path to the key → rulebook → first module loop, and all
+teaching lived in contextual help tips.
+
+### Scope
+
+- **Settings row** gains `onboarding: { status: fresh|active|dismissed|complete,
+  stepState: [{id,state}] }` (missing entries read as pending; `.default()` so
+  old rows and backups parse — the post-M3 convention). One-time-flag precedent:
+  `retiredSessionNotesRemoved`.
+- **Setup wizard** (`features/onboarding/`): checklist dialog mounted in the
+  AppShell, six steps linking out to Settings / Rules / the picker, detection
+  auto-ticks (key, language, rulebook, campaign+module), skip/resume, Finish +
+  Don't-show-again persistence, one-time auto-open guarded on fresh status AND
+  zero campaigns with a liveness check against unmounted shells. Re-open
+  affordances: picker header, picker empty card, welcome panel, help `setup`
+  topic.
+- **First-module guide** (`features/guide/`, routes `/guide`,
+  `/guide/:chapterId`): nine structured chapters (`guideContent.ts`,
+  helpContent pattern) rendered through the WikiMarkdown pipeline, opened in
+  another tab from the wizard's last step / help / the modules empty state;
+  chapter CTAs deep-link into the app (static routes; campaign-scoped ones
+  resolve against the most recently updated campaign, disabled hint when none).
+
+### Decisions
+
+- **Checklist, not stepper**: steps are skipped and resumed independently, so a
+  linear stepper misrepresents the flow; the list states progress honestly.
+- **Link out, never re-implement**: the wizard teaches by pointing at the
+  existing ingest surfaces (Settings, Rules) and tracks completion — no second
+  ingest UI to maintain or drift.
+- **Step state as a list, not a record**: zod v4's record-with-enum-keys is
+  exhaustive (an empty default would fail parse); a `{id,state}` list keeps the
+  missing-means-pending semantics type-clean for future steps.
+- **Auto-open upgrades safely**: an existing install (campaigns > 0) never sees
+  the wizard pop; the entry points stay available instead.
+- **Guide as an in-app route, not a static file**: same origin keeps IndexedDB
+  (deep links resolve the real campaign), it themes with the app, ships in the
+  bundle for offline/PWA use, and stays test-enforced.
+
+### Acceptance criteria
+
+- A fresh browser (no settings row, no campaigns) auto-opens the wizard exactly
+  once per launch-until-changed; the status row reads `active` immediately
+  after; a second mount does not auto-open.
+- An install with ≥1 campaign never auto-opens, whatever the onboarding status.
+- Saving an OpenRouter key, importing a book, or creating campaign + module
+  ticks the matching pending step automatically (persisted in the settings row).
+- Begin/Mark done/Skip persist; closing and reopening the wizard focuses the
+  first unresolved step; Finish is disabled until all six resolve and then
+  persists `complete`; "Don't show again" persists `dismissed`.
+- The guide renders all nine chapters with working prev/next and chapter nav;
+  an unknown chapter id renders the not-found page; a campaign-scoped CTA
+  carries the real path when a campaign exists and the disabled hint when not;
+  the wizard's author step and the modules empty state open `/guide` with
+  `target="_blank"`.
+- `pnpm lint && pnpm typecheck && pnpm test` passes with the wizard and guide
+  registries completeness-covered (30 new tests across
+  `tests/domain/settings-onboarding.test.ts`,
+  `tests/features/onboarding-wizard.test.tsx`, `tests/features/guide.test.tsx`).
+
+### Non-goals
+
+- Interactive tours / spotlight overlays anchored to live surfaces; a checklist
+  with deep links covers v1.
+- Per-chapter "mark complete" sync between guide checkpoints and wizard steps
+  (the wizard's detection signals already cover the real completion state).
+- Bundled sample rulebooks (the repo's `Sample rules/` are unlicensed fixtures,
+  not shippable content).
+- Localizing the wizard and guide copy (generation content localizes; UI chrome
+  stays English).
