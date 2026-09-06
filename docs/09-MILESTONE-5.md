@@ -328,9 +328,23 @@ fogged PCs now roll and stay in the order.*
   and NPCs alike); reconcile-on-change (reveal → auto-roll, cover/hide →
   prune) suppressed during sidebar reorder drags via the gesture gate;
   drag-to-reorder; **>>>** next turn with the floating turn marker.
-- Damage/heal: token float controls with a numeric delta (clamped
-  `0..maxHp`), writing to the token (NPC) or the pc artifact (PC). A plain
-  random roller (d20/d6 totals) is built in; **no 3D dice dependency**.
+- Damage/heal: token float controls with quick ± steppers (Damage −10/−5/−1,
+  Heal +1/+5/+10, every control ≥44px) that apply the delta directly (clamped
+  `0..maxHp`), writing to the token (NPC) or the pc artifact (PC). Amended
+  2026-09-06 by 4e3de75: *the typed ±HP input is gone — even flat-value
+  adjustments are button-driven, and arbitrary amounts go through the dice
+  roller's ± modifier steppers. The former "plain random roller (d20/d6
+  totals) is built in; no 3D dice dependency" clause is superseded: Roll
+  damage / Roll heal open the reusable dice roller (`src/features/dice/`,
+  `@3d-dice/dice-box` under the hood) with a captured intent; a settled
+  total is applied signed by the intent (damage ⇒ −|total|, heal ⇒ +|total|)
+  through the unchanged applyHp path and confirmed with a formula toast.
+  The 3D engine is dynamic-imported on first dialog open — the battle
+  surface's main bundle pays nothing — and every engine failure is loud
+  (inline status + toast + Retry; dice rolls blocked, flat steppers and
+  modifier-only rolls unaffected; never a silent 2D degradation). The last
+  rolled tray persists as a user preference (`dice.lastTray`); player view
+  renders neither the roll controls nor the roller.*
 
 **Parking lot (not scheduled):**
 
