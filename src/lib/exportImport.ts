@@ -179,6 +179,12 @@ export interface ImportResult {
  * overwritten): fresh ids for the campaign and every artifact/revision;
  * image ids are kept so artifact `imageIds`/`coverImageId` references stay
  * valid (M3-A). `files` carries zip image binaries keyed by archive path.
+ *
+ * The whole import is ONE rw transaction over the four touched tables (the
+ * same contract as backup.ts's restore): a failure mid-import — a revision
+ * row failing validation halfway through — rolls back the campaign row and
+ * any already-written artifacts/images instead of stranding a half-imported
+ * campaign that the picker would offer forever after.
  */
 export async function importExport(
   raw: unknown,
@@ -204,57 +210,60 @@ export async function importExport(
           createdAt: stamp,
           updatedAt: stamp,
         });
-  await db.campaigns.add(campaign);
-
-  // Restore images first so artifact references resolve on first read (M3-A).
-  for (const image of parsed.images ?? []) {
-    const bytes =
-      image.dataBase64 !== null
-        ? bytesFromBase64(image.dataBase64)
-        : files[`images/${image.id}.${imageFileExtension(image.mimeType)}`];
-    if (bytes === undefined) continue; // plain JSON without binaries: refs stay, blobs are gone
-    await db.images.put(
-      storedImageSchema.parse({
-        id: image.id,
-        createdAt: image.createdAt,
-        updatedAt: image.updatedAt,
-        campaignId: newCampaignId,
-        bytes,
-        mimeType: image.mimeType,
-        width: image.width,
-        height: image.height,
-        prompt: image.prompt,
-        model: image.model,
-        source: image.source,
-      }),
-    );
-  }
 
   let created = 0;
-  for (const exported of parsed.artifacts) {
-    const artifactId = crypto.randomUUID();
-    const { revisions, ...artifactFields } = exported;
-    const artifact = artifactSchema.parse({
-      ...artifactFields,
-      id: artifactId,
-      campaignId: newCampaignId,
-      createdAt: stamp,
-      updatedAt: stamp,
-    });
-    await db.artifacts.add(artifact);
-    created += 1;
-    for (const revision of revisions) {
-      await db.revisions.add(
-        artifactRevisionSchema.parse({
-          ...revision,
-          id: crypto.randomUUID(),
-          artifactId,
-          createdAt: stamp,
-          updatedAt: stamp,
+  await db.transaction('rw', [db.campaigns, db.images, db.artifacts, db.revisions], async () => {
+    await db.campaigns.add(campaign);
+
+    // Restore images first so artifact references resolve on first read (M3-A).
+    for (const image of parsed.images ?? []) {
+      const bytes =
+        image.dataBase64 !== null
+          ? bytesFromBase64(image.dataBase64)
+          : files[`images/${image.id}.${imageFileExtension(image.mimeType)}`];
+      if (bytes === undefined) continue; // plain JSON without binaries: refs stay, blobs are gone
+      await db.images.put(
+        storedImageSchema.parse({
+          id: image.id,
+          createdAt: image.createdAt,
+          updatedAt: image.updatedAt,
+          campaignId: newCampaignId,
+          bytes,
+          mimeType: image.mimeType,
+          width: image.width,
+          height: image.height,
+          prompt: image.prompt,
+          model: image.model,
+          source: image.source,
         }),
       );
     }
-  }
+
+    for (const exported of parsed.artifacts) {
+      const artifactId = crypto.randomUUID();
+      const { revisions, ...artifactFields } = exported;
+      const artifact = artifactSchema.parse({
+        ...artifactFields,
+        id: artifactId,
+        campaignId: newCampaignId,
+        createdAt: stamp,
+        updatedAt: stamp,
+      });
+      await db.artifacts.add(artifact);
+      created += 1;
+      for (const revision of revisions) {
+        await db.revisions.add(
+          artifactRevisionSchema.parse({
+            ...revision,
+            id: crypto.randomUUID(),
+            artifactId,
+            createdAt: stamp,
+            updatedAt: stamp,
+          }),
+        );
+      }
+    }
+  });
   return { campaignId: newCampaignId, createdArtifacts: created };
 }
 

@@ -17,7 +17,6 @@ import {
   getBattle,
   getBattleByModule,
   patchBattle,
-  saveBattleBoard,
 } from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
@@ -309,16 +308,21 @@ export async function seedBattleFromEncounter(
   // BEFORE the normalized save (the stats lookup drives HP clamping). When a
   // battle already ran, the row records the destructive re-seed — who (the
   // acting seed), when, and what replaced the board (encounter-resume arc).
+  // Provenance and board land in ONE patchBattle (it merges + normalizes
+  // once) — the previous two-phase patch-then-board-save normalized the row
+  // twice and briefly persisted a half-seeded board.
   const existing = await getBattleByModule(moduleId);
   const battle = await ensureBattle(campaignId, moduleId);
   const reseed =
     existing === undefined
       ? null
       : { at: Date.now(), encounterArtifactId, encounterName: encounter.name };
-  await patchBattle(battle.id, { encounterArtifactId, seedFighters, reseed });
-  await saveBattleBoard(battle.id, board);
-  const saved = await getBattle(battle.id);
-  if (saved === undefined) throw new NotFoundError('Battle', battle.id);
+  const saved = await patchBattle(battle.id, {
+    encounterArtifactId,
+    seedFighters,
+    reseed,
+    board,
+  });
   return { battle: saved, statless };
 }
 
@@ -375,16 +379,19 @@ export async function spawnRosterInstance(
     forceNumbering: true,
   });
   // Frozen seed rows merge FIRST (deduped by id — a mob artifact already
-  // carrying a row must not gain a second), so the normalized board save
-  // resolves HP/initiative bonuses through the new rows.
+  // carrying a row must not gain a second), so the ONE normalized save
+  // resolves HP/initiative bonuses for the appended tokens through the new
+  // rows. Provenance patch and board land in ONE patchBattle call.
   const merged = [...battle.seedFighters];
   for (const seed of expansion.seedFighters) {
     if (!merged.some((existingSeed) => existingSeed.id === seed.id)) merged.push(seed);
   }
-  await patchBattle(battle.id, { seedFighters: merged });
-  await saveBattleBoard(battle.id, {
-    ...battle.board,
-    tokens: [...battle.board.tokens, ...expansion.tokens],
+  await patchBattle(battle.id, {
+    seedFighters: merged,
+    board: {
+      ...battle.board,
+      tokens: [...battle.board.tokens, ...expansion.tokens],
+    },
   });
   return { statless: expansion.statless };
 }

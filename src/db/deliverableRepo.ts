@@ -28,15 +28,20 @@ export async function updateDeliverable(
   id: Id,
   patch: Partial<Omit<Deliverable, 'id' | 'createdAt'>>,
 ): Promise<Deliverable> {
-  const current = await db.deliverables.get(id);
-  if (current === undefined) throw new Error(`Deliverable ${id} not found`);
-  const merged = deliverableSchema.parse({
-    ...current,
-    ...patch,
-    updatedAt: Date.now(),
+  // Read-modify-write in a transaction like its sibling repos: the parse is
+  // computed from the row as it exists at write time, so two racing outline
+  // edits cannot overwrite each other with a stale merge.
+  return db.transaction('rw', db.deliverables, async () => {
+    const current = await db.deliverables.get(id);
+    if (current === undefined) throw new Error(`Deliverable ${id} not found`);
+    const merged = deliverableSchema.parse({
+      ...current,
+      ...patch,
+      updatedAt: Date.now(),
+    });
+    await db.deliverables.put(merged);
+    return merged;
   });
-  await db.deliverables.put(merged);
-  return merged;
 }
 
 export async function deleteDeliverable(id: Id): Promise<void> {

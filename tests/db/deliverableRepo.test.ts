@@ -11,6 +11,7 @@ import {
 } from '@/db/deliverableRepo';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { db } from '@/db/db';
 import { clearDatabase } from './helpers';
 
 /**
@@ -59,5 +60,46 @@ describe('deliverableRepo', () => {
 
     await deleteDeliverable(created.id);
     expect(await listDeliverablesByCampaign(campaign.id)).toHaveLength(0);
+  });
+});
+
+/**
+ * Transactional update pin (F9 remainder): updateDeliverable runs its
+ * read-modify-write in one rw transaction over deliverables, like its
+ * sibling repos — the merge is computed from the row as it exists at write
+ * time, so two racing outline edits cannot clobber each other with a stale
+ * merge. Structural pin: exactly one 'rw' transaction per update.
+ */
+describe('updateDeliverable transaction', () => {
+  beforeEach(clearDatabase);
+
+  it('wraps the read-modify-write in a single rw transaction', async () => {
+    const campaign = await createCampaign({ name: 'Tx campaign', system: 'dnd5e' });
+    const created = await createDeliverable({
+      campaignId: campaign.id,
+      title: 'Outline',
+      subtitle: '',
+      audience: 'gm',
+      coverImageId: null,
+      outline: [],
+    });
+
+    const calls: unknown[][] = [];
+    const original = db.transaction.bind(db) as (...args: unknown[]) => unknown;
+    const target = db as unknown as {
+      transaction: (...args: unknown[]) => unknown;
+    };
+    target.transaction = (...args: unknown[]) => {
+      calls.push(args);
+      return original(...args);
+    };
+    try {
+      await updateDeliverable(created.id, { title: 'Renamed' });
+    } finally {
+      target.transaction = original;
+    }
+    const txs = calls.filter((args) => args[0] === 'rw' && args[1] === db.deliverables);
+    expect(txs).toHaveLength(1);
+    expect((await getDeliverable(created.id))?.title).toBe('Renamed');
   });
 });
