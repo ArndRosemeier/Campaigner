@@ -8,6 +8,7 @@ import {
   placeEntrance,
   placeMonsters,
   renderSchematic,
+  schematicCellPx,
   stagingBlockRect,
   validateEncounterLayout,
   veilsFromRooms,
@@ -63,6 +64,18 @@ function brief(): EncounterMapBrief {
 }
 
 describe('encounter map layout engine', () => {
+  it('keeps schematic cell px inside the 4096 map cap (96 for standard grids)', () => {
+    // Base-tier grids keep the doc-11 default byte-identical.
+    expect(schematicCellPx({ gridW: 24, gridH: 18 })).toBe(96);
+    expect(schematicCellPx({ gridW: 56, gridH: 32 })).toBe(73);
+    // The dungeon preset's fixed ×2 tier would overflow at 96 (48×36×96 =
+    // 4608px > 4096) — scaled down to exactly the cap, never below 1.
+    expect(schematicCellPx({ gridW: 48, gridH: 36 })).toBe(85);
+    expect(schematicCellPx({ gridW: 56, gridH: 32 }) * 56).toBeLessThanOrEqual(4096);
+    expect(schematicCellPx({ gridW: 48, gridH: 36 }) * 36).toBeLessThanOrEqual(4096);
+    expect(schematicCellPx({ gridW: 6000, gridH: 2 })).toBe(1);
+  });
+
   it('packs the same brief deterministically into a valid connected layout', () => {
     const first = packRooms(brief());
     const second = packRooms(brief());

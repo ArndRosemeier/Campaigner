@@ -26,6 +26,7 @@ import {
   newId,
   packRooms,
   renderSchematic,
+  schematicCellPx,
   type StagingRoomInput,
 } from '@/domain';
 import {
@@ -2310,7 +2311,7 @@ export class RunEngine {
     steps: RunStep[],
   ): { step: RunStep } {
     const layout = this.effectiveEncounterLayout(steps);
-    const schematic = encounterRunAdapters.renderSchematic(layout, 96);
+    const schematic = encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
     this.encounterSchematics.set(runId, schematic);
     return {
       step: this.finishStep(steps[stepIndex], {
@@ -2331,7 +2332,7 @@ export class RunEngine {
     if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
     const layout = this.effectiveEncounterLayout(steps);
     const { parsed, aspect } = this.effectiveEncounterBrief(steps);
-    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, 96);
+    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
     this.encounterSchematics.set(runId, schematic);
 
     const defaultMarker = CANONICAL_ROOM_MARKERS[0] ?? {
@@ -2521,7 +2522,7 @@ export class RunEngine {
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     const settings = await getSettings();
     const layout = this.effectiveEncounterLayout(steps);
-    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, 96);
+    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
     const stylize = steps.find((step) => step.name === 'stylize')?.output as
       | { imageIds?: Id[]; candidateLayouts?: Record<Id, EncounterLayout> }
       | undefined;

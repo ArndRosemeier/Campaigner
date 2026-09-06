@@ -14,6 +14,25 @@ export interface SchematicResult {
 
 export type CanvasFactory = (width: number, height: number) => HTMLCanvasElement;
 
+/** The images-table map cap (docs/11: role 'map' keeps up to 4096px). */
+export const SCHEMATIC_PX_CAP = 4096;
+
+/** Default cell px for a base-tier schematic (docs/11 layout engine). */
+const SCHEMATIC_CELL_PX = 96;
+
+/**
+ * Cell px for the run-engine schematic call: 96 while the grid fits the map
+ * cap, scaled down just enough to stay inside it for larger grids (the
+ * dungeon preset's fixed ×2 tier — 48×36 at 96 would be 4608px). Standard
+ * layouts keep 96 byte-identical; line weights derive from cellPx, so the
+ * drawing vocabulary survives the scale-down.
+ */
+export function schematicCellPx(layout: Pick<EncounterLayout, 'gridW' | 'gridH'>): number {
+  const byWidth = Math.floor(SCHEMATIC_PX_CAP / layout.gridW);
+  const byHeight = Math.floor(SCHEMATIC_PX_CAP / layout.gridH);
+  return Math.max(1, Math.min(SCHEMATIC_CELL_PX, byWidth, byHeight));
+}
+
 /**
  * Renders the validated structure before any image model sees it. Geometry is
  * always read from layout JSON; pixels are output only and never authoritative.
