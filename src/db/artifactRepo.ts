@@ -19,7 +19,14 @@ import {
 } from '@/domain';
 import { db } from '@/db/db';
 import { scrubArtifactFromBattles } from '@/db/battleRepo';
-import { deleteImageIfUnreferenced, pruneUnreferencedImages, reanchorImages } from '@/db/imageRepo';
+import {
+  createImage,
+  deleteImageIfUnreferenced,
+  deleteUnreferencedImages,
+  pruneUnreferencedImages,
+  reanchorImages,
+  type NewStoredImage,
+} from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
 /** Who is saving, and (for persona saves) which run produced the content. */
@@ -158,6 +165,75 @@ export async function updateArtifact(
       throw new Error('An artifact update may not change its kind.');
     }
     await writeRevision(next, meta);
+    return next;
+  });
+}
+
+/** One generated blob, stored and attached in the same transaction. */
+export interface AttachableImage extends NewStoredImage {
+  /** The created image becomes the artifact's cover (the queues' single
+   * candidate; the skip-if-imaged guards guarantee no cover exists yet). */
+  asCover?: boolean;
+}
+
+/**
+ * The image-attach seam (F4): everything between "image row exists" and
+ * "the artifact references it" happens in ONE rw transaction over images +
+ * artifacts + revisions. The three historical call sites wrote the image
+ * row, then the artifact row, then (pick step) the step row and the prune —
+ * four unrelated transactions, so a crash in between leaked the blob as an
+ * unreferenced-orphan or left the artifact pointing at nothing.
+ *
+ * Callers keep their own surrounding semantics (run-step writes, toasts);
+ * only the image/artifact pair is owned here. `updateArtifact` joins as a
+ * nested transaction; the prune runs last, so kept images are already
+ * referenced when the candidate scan runs.
+ */
+export async function attachImagesToArtifact(
+  id: Id,
+  input: {
+    /** Image rows stored INSIDE the attach transaction (generated-image paths). */
+    createImages?: readonly AttachableImage[];
+    /** Already-stored image ids appended to the artifact's imageIds. */
+    appendImageIds?: readonly Id[];
+    /** Re-anchor the attached images to this campaign anchor (D2/D9 — `null`
+     * moves them into the library before a global target references them). */
+    anchorImagesTo?: Id | null;
+    /** The cover after the attach: explicit id, `null` clears, undefined keeps. */
+    coverImageId?: Id | null;
+    /** Post-attach prune: discards among these candidates that nothing
+     * references anymore are deleted from `campaignId`'s images. */
+    pruneCandidates?: { campaignId: Id; candidateIds: readonly Id[] };
+  },
+): Promise<AnyArtifact> {
+  return db.transaction('rw', [db.images, db.artifacts, db.revisions], async () => {
+    const created: Id[] = [];
+    let createdCover: Id | null = null;
+    for (const newImage of input.createImages ?? []) {
+      const stored = await createImage(newImage);
+      created.push(stored.id);
+      if (newImage.asCover === true) createdCover = stored.id;
+    }
+    const attached = [...created, ...(input.appendImageIds ?? [])];
+    if (input.anchorImagesTo !== undefined && attached.length > 0) {
+      await reanchorImages(attached, input.anchorImagesTo);
+    }
+    const current = await getAnyArtifact(id);
+    if (current === undefined) throw new NotFoundError('Artifact', id);
+    const mergedImages = [
+      ...current.imageIds,
+      ...attached.filter((imageId) => !current.imageIds.includes(imageId)),
+    ];
+    const next = await updateArtifact(id, {
+      imageIds: mergedImages,
+      coverImageId: input.coverImageId !== undefined ? input.coverImageId : createdCover,
+    });
+    if (input.pruneCandidates !== undefined) {
+      await deleteUnreferencedImages(
+        input.pruneCandidates.campaignId,
+        input.pruneCandidates.candidateIds,
+      );
+    }
     return next;
   });
 }

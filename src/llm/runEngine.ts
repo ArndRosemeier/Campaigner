@@ -33,6 +33,7 @@ import {
   type StagingRoomInput,
 } from '@/domain';
 import {
+  attachImagesToArtifact,
   createArtifact,
   getAnyArtifact,
   listArtifactsByCampaign,
@@ -2933,6 +2934,9 @@ export class RunEngine {
    * Applies the user's pick for an image run (M3-A): appends kept ids to the
    * target artifact (the first keep becomes the cover if none exists), prunes
    * discarded candidates, and completes the run with the target as result.
+   * The attach (re-anchor → artifact update → prune) is ONE repo
+   * transaction — attachImagesToArtifact; the step write and run completion
+   * stay with the engine (runs table).
    */
   async pickImages(runId: Id, keep: readonly Id[]): Promise<void> {
     const run = await getRun(runId);
@@ -2945,11 +2949,28 @@ export class RunEngine {
     const existing = new Set(target.imageIds);
     const kept = keep.filter((id) => !existing.has(id));
     // A run stays anchored to its campaign, but kept images become library
-    // images before they are attached to a global target (D2/D9).
-    if (target.campaignId === null) await reanchorImages(kept, null);
-    await updateArtifact(targetId, {
-      imageIds: [...target.imageIds, ...kept],
+    // images before they are attached to a global target (D2/D9) — re-anchored
+    // inside the attach transaction. The prune runs in the SAME transaction,
+    // after the artifact update, so kept images are already referenced when
+    // the candidate scan runs; pass only discards — kept global images were
+    // re-anchored above and campaign reference scans intentionally cannot
+    // see them.
+    const pickStep = run.steps.find((step) => step.name === 'pick');
+    const pickOutput = (pickStep?.output ?? {}) as { candidates?: unknown };
+    const candidates = Array.isArray(pickOutput.candidates)
+      ? (pickOutput.candidates as Id[])
+      : [];
+    const keepIds = new Set(keep);
+    await attachImagesToArtifact(targetId, {
+      appendImageIds: kept,
+      // Only a global target re-anchors its kept images (D2/D9): omitting the
+      // key leaves the campaign anchors untouched.
+      ...(target.campaignId === null ? { anchorImagesTo: null } : {}),
       coverImageId: target.coverImageId ?? keep[0] ?? null,
+      pruneCandidates: {
+        campaignId: run.campaignId,
+        candidateIds: candidates.filter((id) => !keepIds.has(id)),
+      },
     });
 
     const stepIndex = run.steps.findIndex((step) => step.name === 'pick');
@@ -2957,20 +2978,6 @@ export class RunEngine {
       await this.updateStep(runId, stepIndex, { userEdit: { keep: [...keep] }, status: 'approved' });
       this.emit({ kind: 'step', runId, stepIndex, status: 'approved' });
     }
-    // Discarded candidates (from the pick step's candidate list) are pruned.
-    const pickStep = run.steps[stepIndex];
-    const pickOutput = (pickStep?.output ?? {}) as { candidates?: unknown };
-    const candidates = Array.isArray(pickOutput.candidates)
-      ? (pickOutput.candidates as Id[])
-      : [];
-    // Discarded candidates remain campaign-anchored. Pass only discards:
-    // kept global images were re-anchored above and campaign reference scans
-    // intentionally cannot see them.
-    const keepIds = new Set(keep);
-    await deleteUnreferencedImages(
-      run.campaignId,
-      candidates.filter((id) => !keepIds.has(id)),
-    );
     await updateRun(runId, { status: 'completed', resultArtifactId: targetId });
     this.emit({ kind: 'run', runId, status: 'completed' });
   }

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { artifactScope, newId, type AnyArtifact, type ArtifactRevision } from '@/domain';
 import {
   adoptIntoCampaign,
+  attachImagesToArtifact,
   countArtifactsByCampaign,
   createArtifact,
   deleteArtifact,
@@ -822,5 +823,154 @@ describe('moveScope owns its image re-anchor (single transaction)', () => {
     const adopted = await adoptIntoCampaign(globalId, campaignId);
     expect(adopted.campaignId).toBe(campaignId);
     expect((await db.images.get(imageId))?.campaignId).toBe(campaignId);
+  });
+});
+
+/**
+ * The image-attach seam (F4): image row + artifact reference (+ cover,
+ * re-anchor, prune) happen in ONE rw transaction. The historical call sites
+ * (run pick step, mob portrait queue, entity image queue) wrote the image
+ * row and the artifact row in unrelated transactions — a crash in between
+ * leaked the blob as an unreferenced orphan or left a dangling reference.
+ */
+describe('attachImagesToArtifact (single-transaction seam)', () => {
+  beforeEach(clearDatabase);
+
+  const campaignId = '00000000-0000-4000-8000-000000000c01';
+
+  it('stores and attaches a generated image as cover atomically', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Portrait target' });
+    const next = await attachImagesToArtifact(npc.id, {
+      createImages: [
+        {
+          campaignId,
+          blob: new Blob([new Uint8Array([7, 7, 7])]),
+          mimeType: 'image/png',
+          width: 3,
+          height: 3,
+          prompt: 'p',
+          model: 'm',
+          source: 'generated',
+          asCover: true,
+        },
+      ],
+    });
+    if (next.kind !== 'npc') throw new Error('wrong kind');
+    expect(next.imageIds).toHaveLength(1);
+    expect(next.coverImageId).toBe(next.imageIds[0]);
+    if (next.coverImageId === null) throw new Error('no cover attached');
+    // The image row exists and is referenced (a prune cannot touch it).
+    const storedImageId = next.coverImageId;
+    const stored = await db.images.get(storedImageId);
+    expect(stored?.prompt).toBe('p');
+    await pruneUnreferencedImages(campaignId);
+    expect(await db.images.get(storedImageId)).toBeDefined();
+    // The attach is a real revision.
+    expect(next.currentRevision).toBe(2);
+  });
+
+  it('rolls the image row back when the artifact write fails (no orphan blob)', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Rollback target' });
+    const putSpy = vi.spyOn(db.artifacts, 'put').mockRejectedValueOnce(new Error('injected failure'));
+    await expect(
+      attachImagesToArtifact(npc.id, {
+        createImages: [
+          {
+            campaignId,
+            blob: new Blob([new Uint8Array([1])]),
+            mimeType: 'image/png',
+            width: 1,
+            height: 1,
+            prompt: '',
+            model: '',
+            source: 'generated',
+            asCover: true,
+          },
+        ],
+      }),
+    ).rejects.toThrow('injected failure');
+    putSpy.mockRestore();
+    // The injected rejection hit the attach's own artifact write — the
+    // created image row rolled back with it. Nothing is left orphaned.
+    expect(await db.images.count()).toBe(0);
+    const unchanged = await getAnyArtifact(npc.id);
+    if (unchanged?.kind !== 'npc') throw new Error('wrong kind');
+    expect(unchanged.imageIds).toEqual([]);
+    expect(unchanged.coverImageId).toBeNull();
+  });
+
+  it('appends kept images and prunes discarded candidates in the same transaction', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Pick target' });
+    const keptId = newId();
+    const discardId = newId();
+    for (const imageId of [keptId, discardId]) {
+      await db.images.put({
+        id: imageId,
+        createdAt: 1,
+        updatedAt: 1,
+        campaignId,
+        bytes: new Uint8Array([1]),
+        mimeType: 'image/png',
+        width: 1,
+        height: 1,
+        prompt: '',
+        model: '',
+        source: 'generated',
+        role: 'artwork',
+      });
+    }
+    const next = await attachImagesToArtifact(npc.id, {
+      appendImageIds: [keptId],
+      coverImageId: keptId,
+      pruneCandidates: { campaignId, candidateIds: [discardId] },
+    });
+    expect(next.imageIds).toEqual([keptId]);
+    expect(next.coverImageId).toBe(keptId);
+    expect(await db.images.get(keptId)).toBeDefined();
+    expect(await db.images.get(discardId)).toBeUndefined();
+  });
+
+  it('re-anchors attached images to the library for a global target (D2/D9)', async () => {
+    const globalId = '00000000-0000-4000-8000-00000000c004';
+    await db.artifacts.put({
+      id: globalId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: null,
+      moduleId: null,
+      kind: 'npc',
+      name: 'Global portrait target',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    const keptId = newId();
+    await db.images.put({
+      id: keptId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      bytes: new Uint8Array([1]),
+      mimeType: 'image/png',
+      width: 1,
+      height: 1,
+      prompt: '',
+      model: '',
+      source: 'generated',
+      role: 'artwork',
+    });
+    await attachImagesToArtifact(globalId, {
+      appendImageIds: [keptId],
+      anchorImagesTo: null,
+      coverImageId: keptId,
+    });
+    // The kept image followed the global target into the library.
+    expect((await db.images.get(keptId))?.campaignId).toBeNull();
   });
 });

@@ -2,9 +2,8 @@ import { create } from 'zustand';
 
 import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
-import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { listArtifactsByCampaign, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
-import { createImage } from '@/db/imageRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
@@ -218,20 +217,24 @@ async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
     const blob = generated.images[0];
     if (blob === undefined) throw new Error('the image API returned no image');
     const intake = await intakeImage(blob);
-    const stored = await createImage({
-      campaignId: job.campaignId,
-      blob: intake.blob,
-      mimeType: intake.mimeType,
-      width: intake.width,
-      height: intake.height,
-      prompt: finalPrompt,
-      model: generated.modelUsed,
-      source: 'generated',
-    });
-    await updateArtifact(artifact.id, {
-      imageIds: [...artifact.imageIds, stored.id],
-      // The skip branch above guarantees the artifact had no image yet.
-      coverImageId: stored.id,
+    // Store + attach (as cover) is ONE repo transaction — a crash between
+    // the image write and the artifact update must not leak the blob as an
+    // unreferenced orphan or leave the artifact pointing at nothing.
+    await attachImagesToArtifact(artifact.id, {
+      createImages: [
+        {
+          campaignId: job.campaignId,
+          blob: intake.blob,
+          mimeType: intake.mimeType,
+          width: intake.width,
+          height: intake.height,
+          prompt: finalPrompt,
+          model: generated.modelUsed,
+          source: 'generated',
+          // The skip branch above guarantees the artifact had no image yet.
+          asCover: true,
+        },
+      ],
     });
     return 'done';
   } catch (error) {

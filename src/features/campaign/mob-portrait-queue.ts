@@ -2,10 +2,9 @@ import { create } from 'zustand';
 
 import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
-import { getAnyArtifact, updateArtifact } from '@/db/artifactRepo';
+import { getAnyArtifact, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
-import { createImage } from '@/db/imageRepo';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
@@ -267,20 +266,24 @@ async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
     const blob = generated.images[0];
     if (blob === undefined) throw new Error('the image API returned no image');
     const intake = await intakeImage(blob);
-    const stored = await createImage({
-      campaignId: job.campaignId,
-      blob: intake.blob,
-      mimeType: intake.mimeType,
-      width: intake.width,
-      height: intake.height,
-      prompt: finalPrompt,
-      model: generated.modelUsed,
-      source: 'generated',
-    });
-    await updateArtifact(artifact.id, {
-      imageIds: [...artifact.imageIds, stored.id],
-      // The skip branch above guarantees the artifact had no image yet.
-      coverImageId: stored.id,
+    // Store + attach (as cover) is ONE repo transaction — a crash between
+    // the image write and the artifact update must not leak the blob as an
+    // unreferenced orphan or leave the artifact pointing at nothing.
+    await attachImagesToArtifact(artifact.id, {
+      createImages: [
+        {
+          campaignId: job.campaignId,
+          blob: intake.blob,
+          mimeType: intake.mimeType,
+          width: intake.width,
+          height: intake.height,
+          prompt: finalPrompt,
+          model: generated.modelUsed,
+          source: 'generated',
+          // The skip branch above guarantees the artifact had no image yet.
+          asCover: true,
+        },
+      ],
     });
     return 'done';
   } catch (error) {
