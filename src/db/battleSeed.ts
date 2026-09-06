@@ -1,8 +1,9 @@
-import type { AnyArtifact, Battle, BattleToken, BattleVeil, Id, SeedFighter } from '@/domain';
+import type { AnyArtifact, Battle, BattleToken, BattleVeil, Id, MonsterEntry, SeedFighter } from '@/domain';
 import { GRID_SIZE_DEFAULT, newId, placeMonsters, spawnRoom, veilsFromRooms } from '@/domain';
 import {
   ensurePcTokens,
   fallbackSpawnPoint,
+  spawnPointInStagingGround,
   stagingGroundAt,
   tokenFromFighter,
 } from '@/domain/battle/board';
@@ -78,45 +79,59 @@ export interface SeedReport {
   statless: string[];
 }
 
-export async function seedBattleFromEncounter(
+export interface RosterExpansion {
+  tokens: BattleToken[];
+  /** Frozen stat rows to merge into the battle row (deduped by id). */
+  seedFighters: SeedFighter[];
+  /** Labels expanded without stats ("Goblin 2 (missing ref)") — loud badge. */
+  statless: string[];
+}
+
+export interface RosterExpansionOptions {
+  /** Token visibility (seed: layout presence; in-battle spawn: the live board). */
+  visible: boolean;
+  /**
+   * Placement per instance (1-based instanceIndex). Seeding resolves layout
+   * room cells (and throws when a layout lacks one); in-battle spawn hands
+   * the next staging-ground cell. Returning undefined falls back to the
+   * cascade layout.
+   */
+  placeAt: (monsterIndex: number, instanceIndex: number) => { x: number; y: number } | undefined;
+  /** 1-based label numbering start (in-battle spawn continues the count). */
+  numberFrom?: number;
+  /** Always suffix the label with its number (spawned single instances). */
+  forceNumbering?: boolean;
+}
+
+/**
+ * Roster → tokens + frozen seed rows (M5-C step 3). THE identity rules live
+ * here and are shared by seeding and in-battle spawn: npc-ref entries resolve
+ * through the real artifact; rulebook entries share ONE mob artifact per
+ * cited chunk with ONE seed row (get-or-create is idempotent); inline entries
+ * freeze per-instance synthetic rows; statless entries produce HP-less
+ * tokens excluded from initiative and are reported loudly (AGENTS rule 1).
+ */
+export async function expandRosterEntries(
   campaignId: Id,
-  moduleId: Id,
-  encounterArtifactId: Id,
-): Promise<SeedReport> {
-  const encounter = await getAnyArtifact(encounterArtifactId);
-  if (encounter === undefined) throw new NotFoundError('Encounter artifact', encounterArtifactId);
-  if (encounter.kind !== 'encounter') {
-    throw new Error(`Artifact “${encounter.name}” is not an encounter`);
-  }
-
-  const mapImageId = await resolveMapImageId(encounter);
-  const layout = encounter.data.layout;
-  const placements = layout === null ? [] : placeMonsters(layout, encounter.data.monsters);
-  const placementByInstance = new Map(
-    placements.map((placement) => [
-      `${String(placement.monsterIndex)}:${String(placement.instanceIndex)}`,
-      placement,
-    ]),
-  );
-
-  // Expand the roster (M5-C step 3): each entry with stats produces `count`
-  // portrait tokens at fresh max HP (the token instance owns it); statless
-  // entries produce HP-less tokens excluded from initiative.
+  entries: readonly MonsterEntry[],
+  options: RosterExpansionOptions,
+): Promise<RosterExpansion> {
   const seedFighters: SeedFighter[] = [];
-  // Mob artifacts (owner-ratified): deduplicates get-or-creates within this
-  // seed when several roster entries cite the same creature chunk.
-  const seedMobArtifacts = new Map<Id, Id>();
+  // Mob artifacts: deduplicates get-or-creates within one expansion when
+  // several roster entries cite the same creature chunk.
+  const mobArtifacts = new Map<Id, Id>();
   const statless: string[] = [];
-  const rosterTokens: BattleToken[] = [];
-  for (const [monsterIndex, entry] of encounter.data.monsters.entries()) {
+  const tokens: BattleToken[] = [];
+  for (const [monsterIndex, entry] of entries.entries()) {
     const resolved = await resolveMonsterEntryWithRepos(entry);
+    const numberStart = options.numberFrom ?? 1;
     for (let index = 1; index <= entry.count; index += 1) {
-      const label = entry.count > 1 ? `${entry.name} ${String(index)}` : entry.name;
-      const placement = placementByInstance.get(`${String(monsterIndex)}:${String(index - 1)}`);
-      if (layout !== null && placement === undefined) {
-        throw new Error(`The generated layout has no room cell for ${label}`);
-      }
-      const at = placement ?? fallbackSpawnPoint(rosterTokens.length);
+      const number = numberStart + index - 1;
+      const label =
+        entry.count > 1 || options.forceNumbering === true
+          ? `${entry.name} ${String(number)}`
+          : entry.name;
+      const at = options.placeAt(monsterIndex, index) ?? fallbackSpawnPoint(tokens.length);
       if (resolved.statBlock === null) {
         statless.push(`${label} (${resolved.origin === '' ? 'no stats' : resolved.origin})`);
         const statlessToken: BattleToken = {
@@ -127,7 +142,7 @@ export async function seedBattleFromEncounter(
           label,
           x: at.x,
           y: at.y,
-          visible: layout !== null,
+          visible: options.visible,
           scale: 1,
           shape: 'portrait',
           color: null,
@@ -136,7 +151,7 @@ export async function seedBattleFromEncounter(
           initiativeBonus: null,
           conditions: [],
         };
-        rosterTokens.push(statlessToken);
+        tokens.push(statlessToken);
         continue;
       }
       const maxHp = resolved.statBlock.hp;
@@ -163,7 +178,7 @@ export async function seedBattleFromEncounter(
             entry.source.chunkId,
             entry.name,
             { source: 'user' },
-            seedMobArtifacts,
+            mobArtifacts,
           ));
         if (!seedFighters.some((seed) => seed.id === artifactId)) {
           seedFighters.push({ id: artifactId, name: entry.name, maxHp, initiativeBonus: bonus });
@@ -176,17 +191,56 @@ export async function seedBattleFromEncounter(
       }
       // tokenFromFighter gives a fresh NPC instance max HP and empty
       // initiative — exactly the seeding rule.
-      rosterTokens.push(
-        tokenFromFighter(
-          artifactId,
-          { kind: 'npc', name: label, maxHp },
-          rosterTokens.length,
-          layout !== null,
-          at,
-        ),
-      );
+      tokens.push(tokenFromFighter(artifactId, { kind: 'npc', name: label, maxHp }, tokens.length, options.visible, at));
     }
   }
+  return { tokens, seedFighters, statless };
+}
+
+export async function seedBattleFromEncounter(
+  campaignId: Id,
+  moduleId: Id,
+  encounterArtifactId: Id,
+): Promise<SeedReport> {
+  const encounter = await getAnyArtifact(encounterArtifactId);
+  if (encounter === undefined) throw new NotFoundError('Encounter artifact', encounterArtifactId);
+  if (encounter.kind !== 'encounter') {
+    throw new Error(`Artifact “${encounter.name}” is not an encounter`);
+  }
+
+  const mapImageId = await resolveMapImageId(encounter);
+  const layout = encounter.data.layout;
+  const placements = layout === null ? [] : placeMonsters(layout, encounter.data.monsters);
+  const placementByInstance = new Map(
+    placements.map((placement) => [
+      `${String(placement.monsterIndex)}:${String(placement.instanceIndex)}`,
+      placement,
+    ]),
+  );
+
+  // Expand the roster (M5-C step 3): each entry with stats produces `count`
+  // portrait tokens at fresh max HP (the token instance owns it); statless
+  // entries produce HP-less tokens excluded from initiative. The expansion
+  // (identity rules, mob-artifact dedupe, seed freezing) is shared with
+  // in-battle spawn (encounter-resume arc) — only placement differs.
+  const expansion = await expandRosterEntries(campaignId, encounter.data.monsters, {
+    visible: layout !== null,
+    placeAt: (monsterIndex, instanceIndex) => {
+      const placement = placementByInstance.get(
+        `${String(monsterIndex)}:${String(instanceIndex - 1)}`,
+      );
+      if (layout !== null && placement === undefined) {
+        const entry = encounter.data.monsters[monsterIndex];
+        if (entry === undefined) throw new Error('Roster entry missing from the encounter');
+        const label = entry.count > 1 ? `${entry.name} ${String(instanceIndex)}` : entry.name;
+        throw new Error(`The generated layout has no room cell for ${label}`);
+      }
+      return placement;
+    },
+  });
+  const rosterTokens = expansion.tokens;
+  const seedFighters = expansion.seedFighters;
+  const statless = expansion.statless;
 
   // M5-C step 4: PCs spawn row-major in the staging ground via
   // normalize-on-write; statful only — a statless PC is skipped and badged.
@@ -263,4 +317,71 @@ export async function seedBattleFromEncounter(
   const saved = await getBattle(battle.id);
   if (saved === undefined) throw new NotFoundError('Battle', battle.id);
   return { battle: saved, statless };
+}
+
+export interface SpawnReport {
+  /** Labels spawned without stats — loud badge, never placeholder numbers. */
+  statless: string[];
+}
+
+/**
+ * In-battle spawn (encounter-resume arc, M5-C addition): appends ONE
+ * instance of a provenance-encounter roster entry to the LIVE board through
+ * the shared expandRosterEntries path — the same identity rules as seeding
+ * (one mob artifact per cited chunk, one frozen seed row, npc-ref by
+ * reference), never a stat copy. Labels continue the on-board count
+ * ("Goblin 4" when three are out); placement is the next staging-ground
+ * cell, else the fallback cascade. Spawned tokens are visible and get
+ * auto-rolled by useInitiativeReconcile when initiative is on.
+ */
+export async function spawnRosterInstance(
+  battleId: Id,
+  monsterIndex: number,
+): Promise<SpawnReport> {
+  const battle = await getBattle(battleId);
+  if (battle === undefined) throw new NotFoundError('Battle', battleId);
+  if (battle.encounterArtifactId === null) {
+    throw new Error('This battle has no seeding encounter to spawn from');
+  }
+  const encounter = await getAnyArtifact(battle.encounterArtifactId);
+  if (encounter === undefined) {
+    throw new NotFoundError('Encounter artifact', battle.encounterArtifactId);
+  }
+  if (encounter.kind !== 'encounter') {
+    throw new Error(`Artifact “${encounter.name}” is not an encounter`);
+  }
+  const entry = encounter.data.monsters[monsterIndex];
+  if (entry === undefined) {
+    throw new Error(`The seeding encounter has no roster entry ${String(monsterIndex)}`);
+  }
+  // Numbering continues the on-board count: "Goblin", "Goblin 2" … occupy
+  // label slots named exactly or numbered after the entry.
+  const escaped = entry.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const slotPattern = new RegExp(`^${escaped}(?: \\d+)?$`);
+  const existing = battle.board.tokens.filter((token) => slotPattern.test(token.label)).length;
+  const at =
+    battle.board.stagingGround === null
+      ? fallbackSpawnPoint(battle.board.tokens.length)
+      : spawnPointInStagingGround(battle.board.tokens.length, battle.board.stagingGround);
+  // ONE instance per spawn: clone the entry with count 1 — the expansion's
+  // per-entry count would stamp the whole designed group.
+  const expansion = await expandRosterEntries(battle.campaignId, [{ ...entry, count: 1 }], {
+    visible: true,
+    placeAt: () => at,
+    numberFrom: existing + 1,
+    forceNumbering: true,
+  });
+  // Frozen seed rows merge FIRST (deduped by id — a mob artifact already
+  // carrying a row must not gain a second), so the normalized board save
+  // resolves HP/initiative bonuses through the new rows.
+  const merged = [...battle.seedFighters];
+  for (const seed of expansion.seedFighters) {
+    if (!merged.some((existingSeed) => existingSeed.id === seed.id)) merged.push(seed);
+  }
+  await patchBattle(battle.id, { seedFighters: merged });
+  await saveBattleBoard(battle.id, {
+    ...battle.board,
+    tokens: [...battle.board.tokens, ...expansion.tokens],
+  });
+  return { statless: expansion.statless };
 }

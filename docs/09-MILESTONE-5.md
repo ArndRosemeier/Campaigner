@@ -228,6 +228,18 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    entity stamps) — so the row itself answers who/when/what replaced the
    board, and the battle surface offers a destructive two-step **Re-seed**
    that re-runs this exact path against the row's own provenance encounter.*
+   Amended 2026-09-06 (encounter-resume arc, in-battle spawn): *the battle
+   surface's GM rail gains a **Spawn** panel listing the PROVENANCE
+   encounter's roster (GM mode only; hidden without provenance). Each
+   "Spawn" appends ONE instance to the live board through the shared
+   `expandRosterEntries` path — the exact seeding identity rules (npc-ref by
+   reference, ONE mob artifact per cited chunk with ONE deduped seed row,
+   inline frozen rows, statless entries HP-less + loud toast), never a stat
+   copy. Labels continue the on-board count ("Troll 2"), placement takes the
+   next staging-ground cell (fallback cascade without one), and with
+   initiative on the latecomer is auto-rolled into the order
+   (useInitiativeReconcile). Spawn appends — live/everLive, the stage
+   snapshot and existing pieces are untouched.*
 2. Seed map: the encounter's `mapImageId`, else the linked location's cover
    image if it is map-role, else no map (viewport board — source behavior).
 3. Expand the roster: each `MonsterEntry` with resolved stats

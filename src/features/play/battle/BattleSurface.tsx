@@ -58,6 +58,7 @@ import {
 import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
+import { spawnRosterInstance } from '@/db/battleSeed';
 import { runBattle } from '@/features/play/run-battle';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
@@ -697,6 +698,23 @@ export function BattleSurface(): JSX.Element {
     }));
   }
 
+  /** Mid-fight spawn (M5-C addition): appends one instance of the provenance
+   * roster entry through the shared seed path; statless instances toast
+   * loudly (AGENTS rule 1 — no placeholder numbers). */
+  async function spawnMonster(entryIndex: number): Promise<void> {
+    if (battle === undefined) return;
+    try {
+      const result = await spawnRosterInstance(battle.id, entryIndex);
+      if (result.statless.length > 0) {
+        toastError(
+          `No combat stats for: ${result.statless.join('; ')} — they will not roll initiative`,
+        );
+      }
+    } catch (error) {
+      toastError('Could not spawn from the roster', error);
+    }
+  }
+
   async function applyHp(token: BattleToken, delta: number): Promise<boolean> {
     if (battle === undefined || token.artifactId === null) return false;
     const resolved = combatHpForToken(token, stats);
@@ -825,6 +843,16 @@ export function BattleSurface(): JSX.Element {
   const provenanceEncounter =
     encounterArtifact === 'loading' || encounterArtifact === null ? null : encounterArtifact;
   const reseed = battle.reseed ?? null;
+  // Spawn source (M5-C addition): mid-fight spawn draws from the PROVENANCE
+  // encounter's roster — only a real, loaded encounter artifact offers it
+  // ('loading' and a missing artifact spawn nothing; the provenance rail
+  // above stays loud for the missing case).
+  const spawnSource =
+    provenanceEncounter === null || provenanceEncounter === undefined
+      ? null
+      : provenanceEncounter.kind === 'encounter'
+        ? provenanceEncounter
+        : null;
   // The px frame tokens/veils resolve against: the content div, not the
   // container (under letterbox the two differ — the %-denominator must match
   // what the browser resolves the % against).
@@ -1317,6 +1345,39 @@ export function BattleSurface(): JSX.Element {
               >
                 <TrashIcon aria-hidden />
               </Button>
+            </div>
+          )}
+          {spawnSource !== null && !playerSafe && (
+            <div className="rounded-md border border-white/10 bg-zinc-900 p-2" data-testid="spawn-panel">
+              <p className="mb-1 text-xs font-medium text-zinc-400">
+                Spawn — “{spawnSource.name}”
+              </p>
+              {spawnSource.data.monsters.length === 0 ? (
+                <p className="text-xs text-zinc-500">The seeding encounter has no roster.</p>
+              ) : (
+                <ul className="space-y-1">
+                  {spawnSource.data.monsters.map((entry, index) => (
+                    <li
+                      key={`${entry.name}:${String(index)}`}
+                      className="flex items-center justify-between gap-2"
+                    >
+                      <span className="min-w-0 truncate text-xs">
+                        {entry.name} ×{String(entry.count)}
+                      </span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        data-testid={`spawn-monster-${String(index)}`}
+                        onClick={() => {
+                          void spawnMonster(index);
+                        }}
+                      >
+                        Spawn
+                      </Button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
           )}
           {!board.initiativeEnabled && !playerSafe && (

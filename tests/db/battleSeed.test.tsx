@@ -3,8 +3,8 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
-import { seedBattleFromEncounter } from '@/db/battleSeed';
-import { getBattleByModule } from '@/db/battleRepo';
+import { seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
+import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createImage } from '@/db/imageRepo';
@@ -613,4 +613,92 @@ describe('entrance-anchored staging (adjudicated)', () => {
     expect(battle.board.veils).toHaveLength(legacy.rooms.length);
   });
 });
+});
+
+describe('in-battle spawn (encounter-resume arc)', () => {
+  it('appends one rulebook instance through the shared path — same mob artifact, label numbering continues, ONE seed row', async () => {
+    const chunkId = await seedGoblinChunk();
+    const encounter = await addEncounter({
+      monsters: [{ name: 'Goblin Boss', count: 3, source: { type: 'rulebook', chunkId } }],
+    });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    expect(fighterTokens(battle.board).map((token) => token.label)).toEqual([
+      'Goblin Boss 1',
+      'Goblin Boss 2',
+      'Goblin Boss 3',
+    ]);
+    const beforeSeedRows = battle.seedFighters.length;
+    const report = await spawnRosterInstance(battle.id, 0);
+    expect(report.statless).toEqual([]);
+    const after = await getBattleByModule(battle.moduleId);
+    if (after === undefined) throw new Error('battle missing');
+    const fighters = fighterTokens(after.board);
+    expect(fighters).toHaveLength(4);
+    const spawned = fighters[3];
+    if (spawned === undefined) throw new Error('spawned token missing');
+    // Numbering continues the on-board count.
+    expect(spawned.label).toBe('Goblin Boss 4');
+    // Visible on the live board, fresh max HP, SAME shared mob artifact.
+    expect(spawned.visible).toBe(true);
+    expect(spawned.currentHp).toBe(21);
+    expect(spawned.artifactId).toBe(fighters[0]?.artifactId);
+    expect(spawned.initiativeRoll).toBeNull();
+    // NO stat duplication: the shared seed row is deduped, not duplicated.
+    expect(after.seedFighters).toHaveLength(beforeSeedRows);
+    const stats = buildFighterStatsLookup(after, await listArtifactsByCampaign(campaignId));
+    expect(stats(spawned.artifactId ?? '')?.maxHp).toBe(21);
+    // Placement: inside the staging ground region, on the live board.
+    expect(spawned.x).toBeGreaterThanOrEqual(0);
+    expect(spawned.x).toBeLessThanOrEqual(1);
+    expect(spawned.y).toBeGreaterThanOrEqual(0);
+    expect(spawned.y).toBeLessThanOrEqual(1);
+    // The rest of the board is untouched — spawn appends, never reseeds
+    // (everLive is the surface's first-entry act; the repo path leaves it).
+    expect(after.board.live).toBe(battle.board.live);
+    expect(after.board.everLive).toBe(battle.board.everLive);
+    expect(after.board.stage).toEqual(battle.board.stage);
+    expect(after.board.tokens.slice(0, 3)).toEqual(battle.board.tokens);
+  });
+
+  it('spawns npc-ref instances by reference — no seed-row freeze, stats through the artifact', async () => {
+    const npc = await addNpc('Vexra', true);
+    const encounter = await addEncounter({
+      monsters: [{ name: 'Vexra', count: 1, source: { type: 'npc-ref', artifactId: npc.id } }],
+    });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    const rowsBefore = battle.seedFighters.length;
+    const report = await spawnRosterInstance(battle.id, 0);
+    expect(report.statless).toEqual([]);
+    const after = await getBattleByModule(battle.moduleId);
+    if (after === undefined) throw new Error('battle missing');
+    const fighters = fighterTokens(after.board);
+    expect(fighters.map((token) => token.label)).toEqual(['Vexra', 'Vexra 2']);
+    expect(fighters[1]?.artifactId).toBe(npc.id);
+    expect(fighters[1]?.currentHp).toBeGreaterThan(0);
+    // npc-ref resolves through the artifact — the battle row never grows.
+    expect(after.seedFighters).toHaveLength(rowsBefore);
+  });
+
+  it('spawns statless entries as HP-less tokens and reports them loudly', async () => {
+    const npc = await addNpc('Wisp', false);
+    const encounter = await addEncounter({
+      monsters: [{ name: 'Wisp', count: 1, source: { type: 'npc-ref', artifactId: npc.id } }],
+    });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    const report = await spawnRosterInstance(battle.id, 0);
+    expect(report.statless).toHaveLength(1);
+    const after = await getBattleByModule(battle.moduleId);
+    if (after === undefined) throw new Error('battle missing');
+    const fighters = fighterTokens(after.board);
+    expect(fighters[1]?.label).toBe('Wisp 2');
+    expect(fighters[1]?.currentHp).toBeNull();
+    expect(fighters[1]?.initiativeRoll).toBeNull();
+  });
+
+  it('throws loudly without provenance — a battle with no seeding encounter cannot spawn', async () => {
+    const bare = await ensureBattle(campaignId, newId());
+    await expect(spawnRosterInstance(bare.id, 0)).rejects.toThrow(
+      'This battle has no seeding encounter to spawn from',
+    );
+  });
 });

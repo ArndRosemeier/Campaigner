@@ -1360,6 +1360,70 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
   });
 });
 
+describe('in-battle spawn (encounter-resume arc)', () => {
+  it('offers the provenance roster in the GM rail and appends a spawned fighter to the live board', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const panel = screen.getByTestId('spawn-panel');
+    expect(panel).toHaveTextContent('Spawn — “Bridge ambush”');
+    expect(panel).toHaveTextContent('Troll ×1');
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('spawn-monster-0'));
+    await flushAsyncUpdates();
+    const row = await currentBattle(moduleId);
+    const fighters = row.board.tokens.filter((token) => token.visible);
+    const spawned = fighters.find((token) => token.label === 'Troll 2');
+    if (spawned === undefined) throw new Error('spawned troll missing');
+    // npc-ref identity: the spawned instance points at the SAME troll
+    // artifact and resolves its HP through it (no stat duplication).
+    const original = fighters.find((token) => token.label === 'Troll');
+    if (original === undefined) throw new Error('original troll missing');
+    expect(spawned.artifactId).toBe(original.artifactId);
+    expect(spawned.currentHp).toBe(84);
+    expect(spawned.visible).toBe(true);
+    // The new token renders on the board next to the original.
+    await waitFor(() => {
+      const labels = screen.getAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
+      expect(labels).toContain('Troll 2');
+    });
+  });
+
+  it('auto-rolls a spawned fighter into initiative (late-arrival rule)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('toggle-initiative'));
+    await flushAsyncUpdates();
+    let battle = await currentBattle(moduleId);
+    expect(battle.board.initiativeOrder).toHaveLength(3);
+    await user.click(screen.getByTestId('spawn-monster-0'));
+    await flushAsyncUpdates();
+    battle = await currentBattle(moduleId);
+    expect(battle.board.initiativeOrder).toHaveLength(4);
+    const rolled = battle.board.tokens.find((token) => token.label === 'Troll 2');
+    expect(rolled?.initiativeRoll).not.toBeNull();
+  });
+
+  it('hides the spawn panel in player view', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByTestId('spawn-panel')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('spawn-panel')).toBeNull();
+  });
+});
+
 describe('stage snapshot', () => {
   it('resets to the saved opening layout through the toolbar', async () => {
     const { moduleId } = await seedStandardBattle();
