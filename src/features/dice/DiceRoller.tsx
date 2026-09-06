@@ -54,8 +54,8 @@ interface LogEntry {
 export interface DiceRollerProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  intent?: RollIntent;
-  onResult?: (result: DiceRollResult) => void;
+  intent?: RollIntent | undefined;
+  onResult?: ((result: DiceRollResult) => void) | undefined;
 }
 
 export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerProps): JSX.Element {
