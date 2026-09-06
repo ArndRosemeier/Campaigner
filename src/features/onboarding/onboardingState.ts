@@ -8,7 +8,7 @@ import type {
 } from '@/domain';
 import { ONBOARDING_STEP_IDS } from '@/domain';
 
-import { db } from '@/db/db';
+import { countCampaigns } from '@/db/campaignRepo';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 
@@ -89,7 +89,7 @@ export async function maybeAutoOpenWizard(
 ): Promise<boolean> {
   const settings = await readSettings();
   if (settings.onboarding.status !== 'fresh') return false;
-  const campaigns = await db.campaigns.count();
+  const campaigns = await countCampaigns();
   if (campaigns > 0) return false;
   if (!shouldOpen()) return false;
   useOnboardingStore.getState().openWizard();

@@ -16,6 +16,11 @@ export async function listCampaigns(): Promise<Campaign[]> {
   return rows.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** Total campaign count (onboarding detection, guide routing). */
+export async function countCampaigns(): Promise<number> {
+  return db.campaigns.count();
+}
+
 export async function getCampaign(id: string): Promise<Campaign | undefined> {
   return db.campaigns.get(id);
 }

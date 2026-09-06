@@ -1,7 +1,9 @@
 import { useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { db } from '@/db/db';
+import { countCampaigns } from '@/db/campaignRepo';
+import { countRulebooks } from '@/db/rulebookRepo';
+import { countModules } from '@/db/moduleRepo';
 import { readSettings } from '@/db/settingsRepo';
 import { WIZARD_STEPS } from '@/features/onboarding/onboardingContent';
 import { onboardingOf, stepStateOf } from '@/features/onboarding/onboardingState';
@@ -42,9 +44,9 @@ export interface OnboardingProgress {
 
 export function useOnboardingProgress(): OnboardingProgress {
   const settings = useLiveQuery(() => readSettings(), [], undefined);
-  const campaignsCount = useLiveQuery(() => db.campaigns.count(), [], 0);
-  const rulebooksCount = useLiveQuery(() => db.rulebooks.count(), [], 0);
-  const modulesCount = useLiveQuery(() => db.modules.count(), [], 0);
+  const campaignsCount = useLiveQuery(() => countCampaigns(), [], 0);
+  const rulebooksCount = useLiveQuery(() => countRulebooks(), [], 0);
+  const modulesCount = useLiveQuery(() => countModules(), [], 0);
 
   return useMemo<OnboardingProgress>(() => {
     const onboarding = onboardingOf(settings ?? defaultSettings());

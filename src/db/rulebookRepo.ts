@@ -33,6 +33,11 @@ export async function listRulebooks(): Promise<Rulebook[]> {
   return rows.map(parseRulebookRow).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** Total book count (onboarding detection). */
+export async function countRulebooks(): Promise<number> {
+  return db.rulebooks.count();
+}
+
 export async function getRulebook(id: string): Promise<Rulebook | undefined> {
   const row = await db.rulebooks.get(id);
   return row === undefined ? undefined : parseRulebookRow(row);

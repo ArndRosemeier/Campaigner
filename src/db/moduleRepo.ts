@@ -32,6 +32,11 @@ export async function listModulesByCampaign(campaignId: Id): Promise<Module[]> {
   return rows.map(parseModuleRow).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/** Total module count (onboarding detection). */
+export async function countModules(): Promise<number> {
+  return db.modules.count();
+}
+
 /** Creates a module row (factory builds + validates). */
 export async function createModule(module: Module): Promise<Module> {
   const valid = moduleSchema.parse({ ...module, updatedAt: Date.now() });

@@ -29,7 +29,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import type { AnyArtifact, Deliverable, Module, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
-import { db } from '@/db/db';
+import { listImagesByCampaign } from '@/db/imageRepo';
 import { useArtifacts, useGlobalArtifacts } from '@/features/campaign/hooks';
 import {
   createDeliverable,
@@ -90,10 +90,7 @@ export function DeliverablesPage(): JSX.Element {
   // nodes implicitly — seedOutlineFromModule keeps the M6-D skip rule
   // (10-MILESTONE-6 D).
   const artifacts = [...(ownedArtifacts ?? []), ...(globalArtifacts ?? [])];
-  const images = useLiveQuery(
-    () => db.images.where('campaignId').equals(campaignId).toArray(),
-    [campaignId],
-  );
+  const images = useLiveQuery(() => listImagesByCampaign(campaignId), [campaignId]);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [generating, setGenerating] = useState(false);

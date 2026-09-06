@@ -15,7 +15,7 @@ import { Badge } from '@/components/ui/badge';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { GUIDE_CHAPTERS, guideChapter } from '@/features/guide/guideContent';
 import type { GuideAppLink } from '@/features/guide/guideContent';
-import { db } from '@/db/db';
+import { listCampaigns } from '@/db/campaignRepo';
 import { cn } from '@/lib/utils';
 
 /**
@@ -143,10 +143,8 @@ export function GuidePage(): JSX.Element {
  * disabled hint (the campaign-tabs disabled precedent).
  */
 function GuideLinkButton({ link }: { link: GuideAppLink }): JSX.Element {
-  const latestCampaign = useLiveQuery(async () => {
-    const all = await db.campaigns.toArray();
-    return all.sort((a, b) => b.updatedAt - a.updatedAt)[0];
-  }, [], undefined);
+  // The repo's list is already most-recently-updated first — [0] IS latest.
+  const latestCampaign = useLiveQuery(async () => (await listCampaigns())[0], [], undefined);
 
   if (link.route.kind === 'static') {
     return (
