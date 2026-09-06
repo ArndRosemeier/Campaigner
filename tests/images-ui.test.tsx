@@ -128,7 +128,7 @@ describe('images ui', () => {
     await flushAsyncUpdates();
   });
 
-  it('opens the artifact lightbox fullscreen: viewport-filling dialog, contain-fit image, footer strip intact', async () => {
+  it('opens the artifact lightbox fullscreen: viewport-filling dialog, image fills the reserved box (contain, upscale allowed), footer strip intact', async () => {
     const user = userEvent.setup();
     const { artifactPath: path } = await seedWithImage();
     renderAppAt(path);
@@ -146,8 +146,14 @@ describe('images ui', () => {
     expect(dialog.className).toContain('bg-black/90');
     expect(dialog.className).not.toContain('max-w-2xl');
     const image = await screen.findByAltText('Artifact image, large view');
+    // Fill contract: the img owns the whole reserved box (`h-… w-full`), so
+    // object-contain can scale UP past natural size — shrink-only max-* caps
+    // (or `w-auto`) render a 1024×1024 image at half a big screen.
     expect(image.className).toContain('object-contain');
-    expect(image.className).toContain('max-h-[calc(100dvh-6rem)]');
+    expect(image.className).toContain('h-[calc(100dvh-6rem)]');
+    expect(image.className).toContain('w-full');
+    expect(image.className).toContain('max-h-[100dvh]');
+    expect(image.className).not.toContain('w-auto');
     expect(image.className).not.toContain('max-h-96');
     // The bottom overlay strip keeps the metadata line and the actions.
     const footer = screen.getByTestId('artifact-image-lightbox-footer');

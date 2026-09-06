@@ -316,7 +316,12 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
           a fraction of a big screen. The Dialog defaults (grid, w-full,
           max-w-[calc(100%-2rem)], sm:max-w-sm, p-4, gap-4, rounded-xl,
           bg-popover, ring-1) are all overridden via tailwind-merge; Esc and
-          backdrop-close flow through the unchanged onOpenChange. */}
+          backdrop-close flow through the unchanged onOpenChange. Fill
+          contract: the img owns the whole reserved box —
+          `h-[calc(100dvh-6rem)] w-full` (the 6rem footer strip reservation),
+          object-contain fits the picture inside, upscaling past natural size
+          included; shrink-only max-* caps would render a 1024×1024 image at
+          half a big screen. */}
       <Dialog
         open={lightboxId !== null}
         onOpenChange={(open) => {
@@ -332,7 +337,7 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
               <DialogTitle className="sr-only">Image</DialogTitle>
               <LightboxImage
                 imageId={lightboxImage.id}
-                className="max-h-[calc(100dvh-6rem)] w-auto border-0"
+                className="h-[calc(100dvh-6rem)] w-full max-h-[100dvh] border-0"
               />
               <div
                 className="absolute inset-x-0 bottom-0 flex flex-col items-center gap-1.5 bg-black/80 p-2 text-center"

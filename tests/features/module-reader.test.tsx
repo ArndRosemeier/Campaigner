@@ -663,6 +663,55 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('the peek fullscreen viewer fills the viewport for an NPC image (fill + contain, upscale allowed)', async () => {
+    const user = userEvent.setup();
+    // jsdom lacks object URL support; the hooks revoke what they create.
+    Object.defineProperty(URL, 'createObjectURL', {
+      value: vi.fn(() => `blob:mock-${Math.random()}`),
+      configurable: true,
+    });
+    Object.defineProperty(URL, 'revokeObjectURL', { value: vi.fn(), configurable: true });
+
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: 'The [[Silt Warden]] collects the toll at the flooded gate.',
+    });
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Silt Warden' });
+    const stored = await createImage({
+      campaignId,
+      blob: new Blob(['warden-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 1024,
+      height: 1024,
+      source: 'uploaded',
+    });
+    await updateArtifact(npc.id, { imageIds: [stored.id], coverImageId: stored.id });
+
+    renderAppAt(modulePath(campaignId, moduleId));
+    const rows = await screen.findAllByTestId('entity-row', {}, { timeout: 10_000 });
+    const wardenRow = rows.find((row) => row.textContent.includes('Silt Warden'));
+    if (wardenRow === undefined) throw new Error('Silt Warden row not found in the entity panel');
+    await user.click(wardenRow);
+
+    const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
+    const banner = await within(peek).findByTestId('peek-image', {}, { timeout: 5_000 });
+    await user.click(banner);
+    const fullscreen = await screen.findByTestId('peek-image-fullscreen', {}, { timeout: 5_000 });
+    // Class-pin precedent (jsdom cannot measure pixels): the img must own the
+    // WHOLE viewport so object-contain can scale UP past natural size — the
+    // old shrink-only `max-h-full max-w-full` caps rendered a 1024×1024
+    // generated image at half of a 2560px screen (owner report).
+    const image = await within(fullscreen).findByAltText('Artifact image, large view', {}, { timeout: 5_000 });
+    expect(image.className).toContain('h-dvh');
+    expect(image.className).toContain('w-dvw');
+    expect(image.className).toContain('object-contain');
+    expect(image.className).toContain('max-h-[100dvh]');
+    expect(image.className).toContain('max-w-[100dvw]');
+    expect(image.className).not.toContain('max-h-full');
+    expect(image.className).not.toContain('max-w-full');
+    expect(image.className).not.toContain('w-auto');
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('moves an entity into the Focused group and back via the star toggle', async () => {
     const user = userEvent.setup();
     const { campaignId, moduleId } = await seedReaderModule();

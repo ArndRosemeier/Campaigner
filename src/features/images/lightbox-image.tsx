@@ -7,11 +7,16 @@ import { useImageUrl } from '@/features/images/use-image-url';
 /**
  * Large image view (07-MILESTONE-3 M3-A, shared with the entity card's
  * fullscreen preview since M4-C): resolves the image id to an object URL and
- * renders it as large as the container allows, never cropped. The default
- * carries no fixed size cap (`max-h-full` fills whatever encloses it) —
- * `className` overrides the size classes (tailwind-merge), so fullscreen
- * consumers pass viewport-filling ones: the module reader's peek viewer and
- * the editor's artifact lightbox do exactly that.
+ * renders it with `object-contain` — never cropped, never distorted.
+ *
+ * Fill-viewport contract: a fullscreen viewer (the editor's artifact
+ * lightbox, the peek modal's fullscreen viewer) must hand the img the WHOLE
+ * reserved box via viewport-filling size classes (`h-… w-full …` — tailwind-
+ * merged over this default) so `object-contain` can fit the picture into it,
+ * scaling UP past natural size included. CSS `max-*` constraints only ever
+ * shrink, so capping with them renders a generated 1024×1024 image at half a
+ * 2560px screen. The default here stays the bounded-embed fit
+ * (`max-h-full w-auto`); the `className` overrides the size classes.
  */
 export function LightboxImage({
   imageId,

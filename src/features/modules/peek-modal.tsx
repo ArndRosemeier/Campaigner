@@ -163,9 +163,18 @@ export function PeekModal({
             >
               <XIcon aria-hidden />
             </Button>
+            {/* Fill contract: the img box IS the viewport (`h-dvh w-dvw`) and
+                object-contain fits the picture into it — upscaling included.
+                The old `max-h-full max-w-full` caps only ever SHRANK (CSS
+                max-* never scales up), so a generated 1024×1024 image rendered
+                at natural size, half of a big screen (owner report). Viewport
+                units, not `h-full`, because the ZoomableImage wrapper divs in
+                between are auto-sized and would never resolve a percentage;
+                the arbitrary max-* overrides neutralize the renderer's base
+                cap (tailwind-merge groups them) and equal the fill size. */}
             <ZoomableImage
               imageId={fullscreenImageId}
-              className="max-h-full max-w-full border-0"
+              className="h-dvh w-dvw max-h-[100dvh] max-w-[100dvw] border-0"
               onCloseRequest={() => {
                 setFullscreenImageId(null);
               }}
