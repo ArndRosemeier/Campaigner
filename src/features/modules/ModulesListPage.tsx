@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpenIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { BookOpenIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 
 import { guidePath, modulePath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
@@ -23,6 +23,7 @@ import { listArtifactsByModule } from '@/db/artifactRepo';
 import { deleteModule } from '@/db/moduleRepo';
 import { useModules } from '@/features/modules/hooks';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
+import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
 import { useProgressStore } from '@/lib/progress';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -31,7 +32,8 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * and progress, plus the "New Module" entry point. A module that is being
  * forged right now shows the live dock detail ("Writing part 2 of 5: …") on
  * its row — generation stays visible wherever the user is, not only in the
- * workspace.
+ * workspace. The header carries a compact campaign context line (name +
+ * description, when set) with the "Edit campaign" affordance.
  */
 export function ModulesListPage(): JSX.Element {
   const { campaignId = '' } = useParams<{ campaignId: string }>();
@@ -43,6 +45,7 @@ export function ModulesListPage(): JSX.Element {
     [campaignId],
   );
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Module | null>(null);
   /** Artifacts owned by the delete target — the cascade/keep choice (D5). */
   const [ownedCount, setOwnedCount] = useState<number | null>(null);
@@ -90,7 +93,31 @@ export function ModulesListPage(): JSX.Element {
   return (
     <div className="mx-auto max-w-3xl p-6" data-testid="modules-page">
       <div className="mb-4 flex items-center gap-3">
-        <h1 className="font-heading text-xl font-semibold">Modules</h1>
+        <div className="min-w-0 flex-1">
+          <h1 className="font-heading text-xl font-semibold">Modules</h1>
+          {/* Campaign context line: the campaign this list belongs to, plus
+              its description when one is set (quiet, clamped — context, not
+              a banner). */}
+          <p
+            className="mt-0.5 line-clamp-2 text-sm text-muted-foreground"
+            data-testid="campaign-landing-context"
+          >
+            <span className="font-medium text-foreground">{campaign.name}</span>
+            {campaign.description !== '' ? ` — ${campaign.description}` : ''}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          aria-label="Edit campaign"
+          onClick={() => {
+            setEditOpen(true);
+          }}
+          data-testid="edit-campaign"
+        >
+          <PencilIcon aria-hidden data-icon="inline-start" />
+          Edit
+        </Button>
         <Button
           size="sm"
           onClick={() => {
@@ -167,6 +194,8 @@ export function ModulesListPage(): JSX.Element {
       )}
 
       <NewModuleDialog campaign={campaign} open={dialogOpen} onOpenChange={setDialogOpen} />
+
+      <EditCampaignDialog campaign={campaign} open={editOpen} onOpenChange={setEditOpen} />
 
       <AlertDialog
         open={deleteTarget !== null}

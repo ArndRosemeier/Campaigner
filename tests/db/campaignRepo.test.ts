@@ -53,6 +53,26 @@ describe('campaignRepo', () => {
     await expectNotFound(updateCampaign('missing-id', { name: 'X' }));
   });
 
+  it('round-trips a description edit and bumps updatedAt', async () => {
+    const campaign = await addCampaign({
+      name: 'Emberfall',
+      description: 'A sunless sea.',
+      system: 'dnd5e',
+    });
+    expect(campaign.description).toBe('A sunless sea.');
+
+    await new Promise((resolve) => setTimeout(resolve, 2));
+    const updated = await updateCampaign(campaign.id, { description: 'A drowned city.' });
+    expect(updated.description).toBe('A drowned city.');
+    expect(updated.name).toBe('Emberfall'); // untouched fields survive the patch
+    expect(updated.updatedAt).toBeGreaterThan(campaign.updatedAt);
+    expect((await getCampaign(campaign.id))?.description).toBe('A drowned city.');
+
+    // Clearing the description is a valid edit.
+    await updateCampaign(campaign.id, { description: '' });
+    expect((await getCampaign(campaign.id))?.description).toBe('');
+  });
+
   it('rejects schema-invalid patches', async () => {
     const campaign = await addCampaign({ name: 'Valid', system: 'dnd5e' });
     await expect(updateCampaign(campaign.id, { name: '' })).rejects.toThrow();

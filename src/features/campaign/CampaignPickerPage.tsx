@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { EllipsisVerticalIcon, FileDownIcon, FileUpIcon, PlusIcon } from 'lucide-react';
+import { EllipsisVerticalIcon, FileDownIcon, FileUpIcon, PencilIcon, PlusIcon } from 'lucide-react';
 
 import { useLiveQuery } from 'dexie-react-hooks';
 
@@ -57,6 +57,7 @@ import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { readSettings } from '@/db/settingsRepo';
 import { SparklesIcon } from 'lucide-react';
 import { ExportCampaignDialog } from '@/features/campaign/components/export-dialog';
+import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
 import { importExport, importZip } from '@/lib/exportImport';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useNavigate as useNav } from 'react-router-dom';
@@ -65,8 +66,10 @@ import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * Campaign picker (05-UI §Campaign picker): card grid of campaigns (name,
- * system badge, artifact count, last updated) + "New Campaign" dialog;
- * deleting a campaign cascades via the repo and asks for confirmation.
+ * description snippet, system badge, artifact count, last updated) + "New
+ * Campaign" dialog; deleting a campaign cascades via the repo and asks for
+ * confirmation; the card menu also opens "Edit campaign…" (name +
+ * description — the system is fixed).
  */
 export function CampaignPickerPage(): JSX.Element {
   const summaries = useCampaignSummaries();
@@ -214,6 +217,7 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
   const { campaign, artifactCount } = summary;
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
   const exportArtifacts = useLiveQuery(() => listArtifactsByCampaign(campaign.id), [campaign.id]);
 
   async function handleDelete(): Promise<void> {
@@ -252,6 +256,14 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
               <DropdownMenuContent align="end">
                 <DropdownMenuItem
                   onClick={() => {
+                    setEditOpen(true);
+                  }}
+                >
+                  <PencilIcon aria-hidden data-icon="inline-start" />
+                  Edit campaign…
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => {
                     setExportOpen(true);
                   }}
                 >
@@ -270,13 +282,24 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
             </DropdownMenu>
           </CardAction>
         </CardHeader>
-        <CardContent className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="secondary">{GAME_SYSTEM_LABELS[campaign.system]}</Badge>
-          <span>
-            {artifactCount} artifact{artifactCount === 1 ? '' : 's'}
-          </span>
+        <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
+          {/* Context snippet — quiet, clamped; only when the campaign has a
+              description (creation leaves it blank). */}
+          {campaign.description !== '' && (
+            <p className="line-clamp-2" data-testid={`campaign-card-description-${campaign.id}`}>
+              {campaign.description}
+            </p>
+          )}
+          <div className="flex items-center gap-2">
+            <Badge variant="secondary">{GAME_SYSTEM_LABELS[campaign.system]}</Badge>
+            <span>
+              {artifactCount} artifact{artifactCount === 1 ? '' : 's'}
+            </span>
+          </div>
         </CardContent>
       </Card>
+
+      <EditCampaignDialog campaign={campaign} open={editOpen} onOpenChange={setEditOpen} />
 
       <ExportCampaignDialog
         campaignId={campaign.id}

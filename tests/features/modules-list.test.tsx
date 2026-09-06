@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { modulesPath } from '@/app/routes';
-import { createCampaign } from '@/db/campaignRepo';
+import { createCampaign, getCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
@@ -324,6 +324,92 @@ describe('ModulesListPage', () => {
       expect(screen.queryByText('Sunken Cult')).not.toBeInTheDocument();
     });
     expect(toastSuccessMock).toHaveBeenCalledWith('Module deleted');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('shows the campaign name and description in the landing header', async () => {
+    const campaign = await createCampaign({
+      name: 'Ember',
+      description: 'A sunless sea beneath a dying star.',
+      system: 'dnd5e',
+    });
+    renderAppAt(modulesPath(campaign.id));
+
+    const context = await screen.findByTestId(
+      'campaign-landing-context',
+      {},
+      { timeout: 10_000 },
+    );
+    expect(context).toHaveTextContent('Ember');
+    expect(context).toHaveTextContent('A sunless sea beneath a dying star.');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('drops the description from the landing header when it is empty', async () => {
+    const campaign = await createCampaign({ name: 'Barren', system: 'dnd5e' });
+    renderAppAt(modulesPath(campaign.id));
+
+    const context = await screen.findByTestId(
+      'campaign-landing-context',
+      {},
+      { timeout: 10_000 },
+    );
+    // Name only — no stray separator for the missing description.
+    expect(context.textContent).toBe('Barren');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('edits the campaign from the landing and refreshes the header', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({
+      name: 'Ember',
+      description: 'Old description.',
+      system: 'dnd5e',
+    });
+    renderAppAt(modulesPath(campaign.id));
+    await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByTestId('edit-campaign'));
+    const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
+    expect(within(dialog).getByLabelText('Campaign name')).toHaveValue('Ember');
+    expect(within(dialog).getByLabelText('Campaign description')).toHaveValue('Old description.');
+    // The system is fixed — shown disabled, not editable.
+    expect(within(dialog).getByLabelText('Game system (fixed)')).toBeDisabled();
+
+    await user.clear(within(dialog).getByLabelText('Campaign description'));
+    await user.type(within(dialog).getByLabelText('Campaign description'), 'A drowned city.');
+    await user.click(within(dialog).getByTestId('save-campaign'));
+
+    // Persisted through the repo…
+    await waitFor(async () => {
+      expect((await getCampaign(campaign.id))?.description).toBe('A drowned city.');
+    });
+    // …and the liveQuery header picked it up.
+    await waitFor(() => {
+      expect(screen.getByTestId('campaign-landing-context')).toHaveTextContent('A drowned city.');
+    });
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('clears the description and removes it from the landing header', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({
+      name: 'Ember',
+      description: 'Old description.',
+      system: 'dnd5e',
+    });
+    renderAppAt(modulesPath(campaign.id));
+    await screen.findByTestId('edit-campaign', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByTestId('edit-campaign'));
+    const dialog = await screen.findByTestId('edit-campaign-dialog', {}, { timeout: 5_000 });
+    await user.clear(within(dialog).getByLabelText('Campaign description'));
+    await user.click(within(dialog).getByTestId('save-campaign'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('campaign-landing-context').textContent).toBe('Ember');
+    });
+    expect(await getCampaign(campaign.id)).toMatchObject({ description: '' });
     await flushAsyncUpdates();
   }, 20_000);
 });
