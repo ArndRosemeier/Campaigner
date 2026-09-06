@@ -42,6 +42,7 @@ describe('buildNotation', () => {
 
   it('appends percentile dice in STANDARD_DICE order', () => {
     expect(buildNotation([die(100, 'p'), die(6, 'a'), die(100, 'q')])).toEqual(['1d6', '2d%']);
+    expect(buildNotation([die(100, 'p')])).toEqual(['1d%']);
   });
 
   it('returns an empty notation for an empty tray', () => {
@@ -66,6 +67,7 @@ describe('formatTraySummary', () => {
 
   it('formats a zero modifier as dice only and an empty tray as empty string', () => {
     expect(formatTraySummary(tray([die(4, 'a')]))).toBe('1d4');
+    expect(formatTraySummary(tray([die(100, 'p')]))).toBe('1d%');
     expect(formatTraySummary(tray([]))).toBe('');
   });
 });

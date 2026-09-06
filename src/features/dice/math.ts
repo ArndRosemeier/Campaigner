@@ -26,7 +26,7 @@ export function countPercentileDice(dice: TrayDie[]): number {
 
 function formatDieGroup(sides: DieSides, qty: number): string {
   if (sides === 100) {
-    return qty === 1 ? 'd%' : `${String(qty)}d%`;
+    return `${String(qty)}d%`;
   }
   return `${String(qty)}d${String(sides)}`;
 }
