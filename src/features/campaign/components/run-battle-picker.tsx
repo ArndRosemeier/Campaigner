@@ -64,7 +64,8 @@ export function ModuleBattlePicker({
           <DialogTitle>Run battle in which module?</DialogTitle>
           <DialogDescription>
             Battles anchor to a module — the picked module’s battle table is seeded with
-            “{encounter.name}”.
+            “{encounter.name}”. A module already running this encounter reopens it instead of
+            replacing the board.
           </DialogDescription>
         </DialogHeader>
         {modules === undefined ? (

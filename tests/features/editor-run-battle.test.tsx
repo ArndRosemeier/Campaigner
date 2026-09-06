@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact } from '@/db/artifactRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
+import { getBattleByModule, saveBattleBoard } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { saveModule } from '@/db/moduleRepo';
@@ -20,9 +21,12 @@ import { flushAsyncUpdates } from '../helpers/flush';
  * The editor's run-battle affordance (owner-ratified: own-module anchor +
  * picker fallback): module-scoped encounters run through the module view's
  * own RunBattleButton anchored to their own module; campaign-scoped ones
- * pick a module; both paths keep the two-step replace confirm; zero modules
- * is a named empty state; non-encounter kinds stay untouched. A successful
- * seed navigates straight to the seeded module's battle table.
+ * pick a module; zero modules is a named empty state; non-encounter kinds
+ * stay untouched. Owner-ratified resume-by-default (encounter-resume arc): a
+ * module already running THIS encounter offers "Open battle" — a plain
+ * navigation that reattaches the persisted board — while a different
+ * encounter keeps the two-step replace confirm. A successful seed navigates
+ * straight to the seeded module's battle table.
  */
 
 /** Renders the current router location so tests can assert the navigation. */
@@ -115,6 +119,70 @@ describe('artifact editor run battle', () => {
         battlePath(campaignId, crypt.id),
       );
     });
+    await flushAsyncUpdates();
+  });
+
+  it('same-encounter press resumes: Open battle navigates without replacing the board', async () => {
+    const user = userEvent.setup();
+    const { campaignId, encounter, modules } = await seedWorld(['Ember Crypt']);
+    const crypt = requireModule(modules, 0);
+    const owned = await createArtifact({
+      campaignId,
+      moduleId: crypt.id,
+      kind: 'encounter',
+      name: 'Crypt Gate',
+    });
+    await seedBattleFromEncounter(campaignId, crypt.id, owned.id);
+    // Drift the running board: a re-seed would reset activeIndex to 0 and
+    // discard the stage — resume must keep it verbatim.
+    const running = await getBattleByModule(crypt.id);
+    if (running === undefined) throw new Error('running battle missing');
+    await saveBattleBoard(running.id, { ...running.board, activeIndex: 2 });
+    renderEditor(owned, campaignId, [encounter, owned]);
+
+    await waitFor(() =>
+      expect(screen.getByTestId('run-battle')).toHaveTextContent('Open battle'),
+    );
+    await user.click(screen.getByTestId('run-battle'));
+    await waitFor(() => {
+      expect(screen.getByTestId('route-location')).toHaveTextContent(
+        battlePath(campaignId, crypt.id),
+      );
+    });
+    const battle = await getBattleByModule(crypt.id);
+    expect(battle?.encounterArtifactId).toBe(owned.id);
+    // The drift survived — nothing was re-seeded.
+    expect(battle?.board.activeIndex).toBe(2);
+    await flushAsyncUpdates();
+  });
+
+  it('picker row for a module running this encounter offers Open battle and reattaches without a re-seed', async () => {
+    const user = userEvent.setup();
+    const { campaignId, encounter, modules } = await seedWorld(['Ember Crypt']);
+    const crypt = requireModule(modules, 0);
+    await seedBattleFromEncounter(campaignId, crypt.id, encounter.id);
+    const running = await getBattleByModule(crypt.id);
+    if (running === undefined) throw new Error('running battle missing');
+    await saveBattleBoard(running.id, { ...running.board, activeIndex: 1 });
+    renderEditor(encounter, campaignId, [encounter]);
+
+    await user.click(screen.getByTestId('run-battle-picker'));
+    const row = await screen.findByTestId(`run-battle-module-${crypt.id}`);
+    await waitFor(() => {
+      expect(within(row).getByRole('button', { name: 'Open battle' })).toBeInTheDocument();
+    });
+    await user.click(within(row).getByRole('button', { name: 'Open battle' }));
+    await waitFor(() => {
+      expect(screen.queryByTestId('run-battle-module-picker')).toBeNull();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('route-location')).toHaveTextContent(
+        battlePath(campaignId, crypt.id),
+      );
+    });
+    const battle = await getBattleByModule(crypt.id);
+    expect(battle?.encounterArtifactId).toBe(encounter.id);
+    expect(battle?.board.activeIndex).toBe(1);
     await flushAsyncUpdates();
   });
 

@@ -13,12 +13,17 @@ import { Button } from '@/components/ui/button';
 
 /**
  * Seeds a module's live battle from an encounter. The module reader is the
- * only play view (M6-E); replacing an existing board remains a two-step act.
+ * only play view (M6-E). Owner-ratified resume-by-default (encounter-resume
+ * arc): a module whose running battle was seeded from THIS encounter offers
+ * "Open battle" — a plain navigation that reattaches the persisted board —
+ * and re-seeding becomes an explicit destructive act ("Re-run battle", then
+ * the two-step "Replace running battle?" confirm). A battle from a DIFFERENT
+ * encounter (or with no provenance) keeps the two-step replace confirm.
  * The artifact editor reuses this exact button — directly for module-owned
  * encounters, inside a module picker for campaign-scoped ones — so the
- * two-step replace confirm stays one shared implementation. A successful
- * seed NAVIGATES straight to that module's battle table (the toast only
- * confirms the seed — it never tells the user to go open it themselves).
+ * resume/replace split stays one shared implementation. A successful seed
+ * NAVIGATES straight to that module's battle table (the toast only confirms
+ * the seed — it never tells the user to go open it themselves).
  */
 function isRunning(battle: Awaited<ReturnType<typeof getBattleByModule>>): boolean {
   return battle !== undefined && (battle.board.tokens.length > 0 || battle.encounterArtifactId !== null);
@@ -54,9 +59,10 @@ export function RunBattleButton({
   moduleId: Id;
   encounter: AnyArtifact & { kind: 'encounter' };
   /**
-   * Fired only when a press actually seeds (a press that merely arms the
-   * replace confirm does not count) and the seed succeeded — the editor's
-   * module picker closes its dialog on it. The module view passes nothing.
+   * Fired when a press commits a navigation — a successful seed OR a resume
+   * "Open battle" press — so the editor's module picker closes its dialog on
+   * it. A press that merely arms the replace confirm does not count. The
+   * module view passes nothing.
    */
   onRun?: (() => void) | undefined;
 }): JSX.Element {
@@ -68,12 +74,20 @@ export function RunBattleButton({
     undefined,
   );
   const running = isRunning(existingBattle);
+  // Resume-by-default: the running battle carries THIS encounter's
+  // provenance, so opening it loses nothing — never seed through it.
+  const resumes = existingBattle?.encounterArtifactId === encounter.id;
   return (
     <Button
       size="sm"
-      variant={confirming ? 'destructive' : 'outline'}
+      variant={!resumes && confirming ? 'destructive' : 'outline'}
       data-testid="run-battle"
       onClick={() => {
+        if (resumes) {
+          onRun?.();
+          navigate(battlePath(campaignId, moduleId));
+          return;
+        }
         if (running && !confirming) {
           setConfirming(true);
           return;
@@ -90,7 +104,7 @@ export function RunBattleButton({
       }}
     >
       <SwordsIcon aria-hidden data-icon="inline-start" />
-      {confirming ? 'Replace running battle?' : running ? 'Re-run battle' : 'Run battle'}
+      {resumes ? 'Open battle' : confirming ? 'Replace running battle?' : running ? 'Re-run battle' : 'Run battle'}
     </Button>
   );
 }

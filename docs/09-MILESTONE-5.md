@@ -215,6 +215,13 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
 
 1. `ensureBattle(activeSessionId)`; if a battle already runs, confirm
    (replace = fresh seed, stage snapshot discarded).
+   Amended 2026-09-06 (encounter-resume arc, resume-by-default): *a module
+   whose running battle already carries THIS encounter's provenance
+   (`battle.encounterArtifactId === encounter.id`) never re-seeds from the
+   button — it offers **Open battle**, a plain navigation onto the persisted
+   board. Re-seeding the same encounter is the explicit **Re-run battle** →
+   "Replace running battle?" two-step; a battle from a different encounter
+   keeps the confirm-first replace.*
 2. Seed map: the encounter's `mapImageId`, else the linked location's cover
    image if it is map-role, else no map (viewport board — source behavior).
 3. Expand the roster: each `MonsterEntry` with resolved stats
