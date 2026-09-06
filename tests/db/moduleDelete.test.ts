@@ -97,3 +97,51 @@ describe('deleteModule — transaction atomicity', () => {
     expect((await getArtifact(owned.id))?.campaignId).toBe(campaignId);
   });
 });
+
+/**
+ * Last-module shortcut pin (F2 remainder): a module deletion clears
+ * settings.lastModule when it pointed at the deleted module — the TopBar
+ * shortcut would otherwise navigate to a dead reader route. Both disposal
+ * branches (cascade/keep) share the same transaction, so one pin per branch.
+ */
+describe('deleteModule — last-module shortcut', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    deleteArtifactMock.mockImplementation(realDeleteArtifact);
+  });
+
+  it('clears settings.lastModule when the deleted module was the shortcut (cascade)', async () => {
+    const { updateSettings } = await import('@/db/settingsRepo');
+    const campaignId = newId();
+    const module = await createModule(
+      createModuleSchema({ campaignId, title: 'Shortlived Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await updateSettings({
+      lastModule: { campaignId, moduleId: module.id, name: module.title },
+    });
+
+    await deleteModule(module.id, 'cascade');
+
+    const settings = await (await import('@/db/db')).db.settings.get('settings');
+    expect(settings?.lastModule).toBeNull();
+  });
+
+  it('keeps settings.lastModule when an unrelated module is deleted (keep)', async () => {
+    const { updateSettings } = await import('@/db/settingsRepo');
+    const campaignId = newId();
+    const survivor = await createModule(
+      createModuleSchema({ campaignId, title: 'Survivor Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const other = await createModule(
+      createModuleSchema({ campaignId, title: 'Deleted Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await updateSettings({
+      lastModule: { campaignId, moduleId: survivor.id, name: survivor.title },
+    });
+
+    await deleteModule(other.id, 'keep');
+
+    const settings = await (await import('@/db/db')).db.settings.get('settings');
+    expect(settings?.lastModule?.moduleId).toBe(survivor.id);
+  });
+});

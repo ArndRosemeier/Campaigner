@@ -106,11 +106,7 @@ export async function deleteModule(
   cancelModuleGen(id);
   await db.transaction(
     'rw',
-    db.modules,
-    db.artifacts,
-    db.revisions,
-    db.images,
-    db.battles,
+    [db.modules, db.artifacts, db.revisions, db.images, db.battles, db.settings],
     async () => {
       // Re-listed INSIDE the transaction (count honesty): rows that landed
       // after the dialog opened are disposed by the same branch.
@@ -118,6 +114,12 @@ export async function deleteModule(
       // Battles are live play state, not authored module content; neither
       // delete branch can leave one pointing at a removed module.
       await deleteBattlesByModule(id);
+      // The TopBar last-module shortcut must not outlive the module it
+      // points at — a stale shortcut navigates to a dead reader route.
+      const settings = await db.settings.get('settings');
+      if (settings?.lastModule?.moduleId === id) {
+        await db.settings.update('settings', { lastModule: null });
+      }
       if (ownedArtifacts === 'keep') {
         // Module-owned rows carry the module's campaignId, so clearing the
         // module binding drops them back into plain campaign ownership with

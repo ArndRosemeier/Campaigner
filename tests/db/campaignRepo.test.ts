@@ -114,3 +114,77 @@ describe('campaignRepo', () => {
     expect(await db.runs.get(run.id)).toBeUndefined();
   });
 });
+
+/**
+ * Cascade completeness pin (F2): modules, live battles and deliverable
+ * outlines all carry the campaign's id but had no delete path — deleting a
+ * campaign stranded them as permanent orphans that every backup re-exports.
+ * The TopBar's last-module shortcut is cleared when it pointed into the
+ * deleted campaign (a stale shortcut navigates to a dead reader route).
+ */
+describe('deleteCampaign cascade completeness', () => {
+  beforeEach(clearDatabase);
+
+  it('deletes the campaign\'s modules, battles and deliverables in the same transaction', async () => {
+    const { createModule } = await import('@/db/moduleRepo');
+    const { createModule: buildModule } = await import('@/domain');
+    const { ensureBattle } = await import('@/db/battleRepo');
+    const { createDeliverable } = await import('@/db/deliverableRepo');
+
+    const campaign = await addCampaign({ name: 'Doomed', system: 'dnd5e' });
+    const other = await addCampaign({ name: 'Survivor', system: 'dnd5e' });
+    const doomedModule = await createModule(
+      buildModule({ campaignId: campaign.id, title: 'Doomed Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const keptModule = await createModule(
+      buildModule({ campaignId: other.id, title: 'Kept Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const battle = await ensureBattle(campaign.id, doomedModule.id);
+    await createDeliverable({
+      campaignId: campaign.id,
+      title: 'Vault outline',
+      subtitle: '',
+      audience: 'gm',
+      coverImageId: null,
+      outline: [],
+    });
+
+    await deleteCampaign(campaign.id);
+
+    expect(await db.modules.get(doomedModule.id)).toBeUndefined();
+    expect(await db.battles.get(battle.id)).toBeUndefined();
+    expect(await db.deliverables.where('campaignId').equals(campaign.id).count()).toBe(0);
+    // Neighbouring campaign keeps its rows.
+    expect(await db.modules.get(keptModule.id)).toBeDefined();
+    expect(await db.battles.where('campaignId').equals(other.id).count()).toBe(0);
+  });
+
+  it('clears settings.lastModule only when it pointed into the deleted campaign', async () => {
+    const { createModule } = await import('@/db/moduleRepo');
+    const { createModule: buildModule } = await import('@/domain');
+    const { updateSettings } = await import('@/db/settingsRepo');
+
+    const campaign = await addCampaign({ name: 'Shortlived', system: 'dnd5e' });
+    const doomedModule = await createModule(
+      buildModule({ campaignId: campaign.id, title: 'Shortlived Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await updateSettings({
+      lastModule: { campaignId: campaign.id, moduleId: doomedModule.id, name: doomedModule.title },
+    });
+
+    await deleteCampaign(campaign.id);
+    expect((await db.settings.get('settings'))?.lastModule).toBeNull();
+
+    // A shortcut into a surviving campaign is untouched by another delete.
+    const survivor = await addCampaign({ name: 'Elsewhere', system: 'dnd5e' });
+    const keptModule = await createModule(
+      buildModule({ campaignId: survivor.id, title: 'Kept Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await updateSettings({
+      lastModule: { campaignId: survivor.id, moduleId: keptModule.id, name: keptModule.title },
+    });
+    const unrelated = await addCampaign({ name: 'Unrelated', system: 'dnd5e' });
+    await deleteCampaign(unrelated.id);
+    expect((await db.settings.get('settings'))?.lastModule?.moduleId).toBe(keptModule.id);
+  });
+});

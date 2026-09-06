@@ -42,17 +42,31 @@ export async function updateCampaign(id: string, patch: CampaignPatch): Promise<
 
 /**
  * Deletes a campaign and everything that hangs off it in one transaction:
- * its artifacts, those artifacts' revisions, its persona runs, and its
- * images (M3-A).
+ * its artifacts, those artifacts' revisions, its persona runs, its images
+ * (M3-A), plus the campaign-anchored rows that carry its id but have no
+ * delete path of their own — its modules, the modules' live battles and
+ * their deliverable outlines. Everything else prunes only by reference;
+ * these tables key on `campaignId` directly, so leaving them behind would
+ * strand permanent orphans that every backup re-exports forever.
+ *
+ * The TopBar's last-module shortcut is cleared when it pointed into this
+ * campaign — a stale shortcut would navigate to a deleted module's reader
+ * route (dead route).
  */
 export async function deleteCampaign(id: string): Promise<void> {
   await db.transaction(
     'rw',
-    db.campaigns,
-    db.artifacts,
-    db.revisions,
-    db.runs,
-    db.images,
+    [
+      db.campaigns,
+      db.artifacts,
+      db.revisions,
+      db.runs,
+      db.images,
+      db.modules,
+      db.battles,
+      db.deliverables,
+      db.settings,
+    ],
     async () => {
       const artifacts = await db.artifacts.where('campaignId').equals(id).toArray();
       const artifactIds = artifacts.map((artifact) => artifact.id);
@@ -63,6 +77,13 @@ export async function deleteCampaign(id: string): Promise<void> {
       await db.artifacts.where('campaignId').equals(id).delete();
       await db.runs.where('campaignId').equals(id).delete();
       await db.images.where('campaignId').equals(id).delete();
+      await db.modules.where('campaignId').equals(id).delete();
+      await db.battles.where('campaignId').equals(id).delete();
+      await db.deliverables.where('campaignId').equals(id).delete();
+      const settings = await db.settings.get('settings');
+      if (settings?.lastModule?.campaignId === id) {
+        await db.settings.update('settings', { lastModule: null });
+      }
       await db.campaigns.delete(id);
     },
   );
