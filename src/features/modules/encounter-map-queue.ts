@@ -152,6 +152,9 @@ async function processJob(job: EncounterMapJob): Promise<Error | null> {
       pinnedChunkIds: [],
       targetArtifactId: artifact.id,
       encounterMapAspect: settings.encounterMapAspect,
+      // Dungeon preset (docs/11 D10): the campaign's Settings preference —
+      // the unattended path only produces dungeons when the campaign opted in.
+      encounterPreset: settings.encounterPreset,
       unattended: true,
     });
     const run = await waitForRunStatus(runId);

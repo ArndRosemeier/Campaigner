@@ -5,6 +5,7 @@ import type {
   Campaign,
   EncounterLayout,
   EncounterMapAspect,
+  EncounterPreset,
   Id,
   MonsterEntry,
   Persona,
@@ -318,6 +319,13 @@ export interface StartRunInput {
   targetArtifactId?: Id;
   /** Encounter generator aspect; persisted on the run for pauses/retries. */
   encounterMapAspect?: EncounterMapAspect;
+  /**
+   * Encounter generator preset (docs/11 D10): the Dungeon preset generates
+   * the layout on the fixed ×2 grid tier and biases the brief toward a
+   * multi-room complex. Persisted on the run for pauses/retries like the
+   * aspect.
+   */
+  encounterPreset?: EncounterPreset;
   /**
    * Module placement for the NEWLY created artifact (creation-dialog
    * choice, one-off per run; null/omitted = campaign level). Applied only
@@ -796,6 +804,10 @@ export class RunEngine {
         input.persona.mode === 'encounter'
           ? (input.encounterMapAspect ?? (await getSettings()).encounterMapAspect)
           : null,
+      encounterPreset:
+        input.persona.mode === 'encounter'
+          ? (input.encounterPreset ?? (await getSettings()).encounterPreset)
+          : null,
       placementModuleId: input.placementModuleId ?? null,
       runExtras: input.extras ?? null,
     });
@@ -948,6 +960,7 @@ export class RunEngine {
         pinnedChunkIds: run.pinnedChunkIds,
         ...(run.targetArtifactId !== null ? { targetArtifactId: run.targetArtifactId } : {}),
         ...(run.encounterMapAspect !== null ? { encounterMapAspect: run.encounterMapAspect } : {}),
+        ...(run.encounterPreset !== null ? { encounterPreset: run.encounterPreset } : {}),
         ...(run.placementModuleId !== null ? { placementModuleId: run.placementModuleId } : {}),
         ...(run.runExtras !== null ? { extras: run.runExtras } : {}),
       };
@@ -2017,6 +2030,7 @@ export class RunEngine {
   private effectiveEncounterBrief(steps: readonly RunStep[]): {
     parsed: EncounterGeneratorBrief;
     aspect: EncounterMapAspect;
+    preset: EncounterPreset;
     statblockChunkIds: Id[];
     rosterChunkByName: Record<string, Id>;
   } {
@@ -2028,6 +2042,7 @@ export class RunEngine {
     const value = effective as {
       parsed?: unknown;
       aspect?: unknown;
+      preset?: unknown;
       statblockChunkIds?: unknown;
       rosterChunkByName?: unknown;
     };
@@ -2043,6 +2058,9 @@ export class RunEngine {
     return {
       parsed: parsed.data,
       aspect: value.aspect === '16:9' || value.aspect === '1:1' ? value.aspect : '4:3',
+      // Runs from before the preset existed read back as 'standard' — the
+      // exact geometry they generated (docs/11 D10 default).
+      preset: value.preset === 'dungeon' ? 'dungeon' : 'standard',
       statblockChunkIds: Array.isArray(value.statblockChunkIds)
         ? value.statblockChunkIds.filter((id): id is Id => typeof id === 'string')
         : [],
@@ -2080,6 +2098,7 @@ export class RunEngine {
     const settings = await getSettings();
     const run = await getRun(runId);
     const aspect = run?.encounterMapAspect ?? input.encounterMapAspect ?? settings.encounterMapAspect;
+    const preset = run?.encounterPreset ?? input.encounterPreset ?? settings.encounterPreset;
     const target = input.targetArtifactId === undefined
       ? undefined
       : await getAnyArtifact(input.targetArtifactId);
@@ -2132,6 +2151,12 @@ export class RunEngine {
       groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
       `Map aspect: ${aspect}`,
+      // Dungeon preset (docs/11 D10): bias the brief toward a connected
+      // multi-room complex. Soft clause — the layout engine validates the
+      // result loudly either way; the fixed ×2 grid tier is applied by code.
+      preset === 'dungeon'
+        ? 'Preset: Dungeon — design a connected dungeon complex of 4–8 rooms (not a single battlefield): distinct chambers joined by corridors, dressing rooms between fights, with the entry room as the party\'s way in.'
+        : null,
       rosterContract,
       context.length === 0 ? null : `Context: ${JSON.stringify(context)}`,
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
@@ -2256,6 +2281,7 @@ export class RunEngine {
           {
             parsed,
             aspect,
+            preset,
             statblockChunkIds: retrieval.statblockChunkIds,
             rosterChunkByName: retrieval.rosterChunkByName,
           },
@@ -2273,13 +2299,16 @@ export class RunEngine {
     steps: RunStep[],
     _input: StartRunInput,
   ): { step: RunStep; runStatus?: PersonaRun['status'] } {
-    const { parsed, aspect } = this.effectiveEncounterBrief(steps);
+    const { parsed, aspect, preset } = this.effectiveEncounterBrief(steps);
     const roomIds = parsed.rooms.map(() => newId());
     const entryRoomId = roomIds[parsed.entryRoomIndex];
     if (entryRoomId === undefined) throw new Error('Encounter brief has no valid entry room');
     const layout = packRooms({
       theme: parsed.theme,
       aspect,
+      // The preset chooses the grid tier (dungeon = the fixed ×2 tier,
+      // docs/11 D10) — geometry itself stays deterministic packer output.
+      preset,
       entryRoomId,
       rosterCounts: parsed.monsters.map((monster) => monster.count),
       rooms: parsed.rooms.map((room, index) => {
@@ -2334,7 +2363,7 @@ export class RunEngine {
     const settings = await getSettings();
     if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
     const layout = this.effectiveEncounterLayout(steps);
-    const { parsed, aspect } = this.effectiveEncounterBrief(steps);
+    const { parsed, aspect, preset } = this.effectiveEncounterBrief(steps);
     const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
     this.encounterSchematics.set(runId, schematic);
 
@@ -2495,6 +2524,7 @@ export class RunEngine {
             });
             candidateLayouts[stored.id] = encounterRunAdapters.layoutFromStagingMarkers({
               aspect,
+              preset,
               theme: parsed.theme,
               rooms: stagingRooms,
               rosterCounts: parsed.monsters.map((m) => m.count),
@@ -2684,7 +2714,15 @@ export class RunEngine {
       const imageIds = target.imageIds.includes(selected) ? target.imageIds : [...target.imageIds, selected];
       await updateArtifact(target.id, {
         imageIds,
-        data: { ...target.data, layout, mapImageId: selected },
+        data: {
+          ...target.data,
+          layout,
+          mapImageId: selected,
+          // The run's preset is authoritative for the map it just produced
+          // (regenerate keeps the target's preset via the run input; an
+          // explicit change re-tiers the map — docs/11 D10).
+          preset: this.effectiveEncounterBrief(steps).preset,
+        },
       }, { source: 'persona', runId });
       artifactId = target.id;
     } else {
@@ -2744,9 +2782,9 @@ export class RunEngine {
           treasure: parsed.treasure,
           mapImageId: selected,
           layout,
-          // Pre-threading value; the preset threading (next commit) replaces
-          // this with the run's resolved preset (docs/11 D10).
-          preset: 'standard' as const,
+          // The run's preset (brief step, resolved from run input/settings)
+          // is authoritative for the map it just produced — both branches.
+          preset: this.effectiveEncounterBrief(steps).preset,
         },
       }, { source: 'persona', runId });
       artifactId = artifact.id;

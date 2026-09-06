@@ -1032,4 +1032,65 @@ describe('Encounter Cartographer run', () => {
       expect(layout.rooms[0]?.stagingPoint).toEqual({ x: 0.2, y: 0.4 });
     });
   });
+
+  describe('dungeon preset (docs/11 D10)', () => {
+    it('persists the preset, biases the brief contract, generates the x2 layout and stamps the artifact', async () => {
+      const { campaign, cartographer } = await setup();
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer), encounterPreset: 'dungeon' as const };
+      const runId = await runEngine.startRun(runInput);
+      // Persisted on the run row for pause/resume (aspect pattern).
+      expect((await getRun(runId))?.encounterPreset).toBe('dungeon');
+
+      // The brief prompt carries the dungeon-complex clause (soft bias — the
+      // geometry itself is deterministic packer output, not model output).
+      await waitFor(() => {
+        expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+      });
+      const briefContent =
+        chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+      expect(briefContent).toContain('Preset: Dungeon');
+      expect(briefContent).toContain('connected dungeon complex of 4\u20138 rooms');
+
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const run = await getRun(runId);
+      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      // The fixed x2 tier for 4:3: 48x36 (standard would be 24x18).
+      expect(artifact.data.layout?.gridW).toBe(48);
+      expect(artifact.data.layout?.gridH).toBe(36);
+      expect(artifact.data.preset).toBe('dungeon');
+    });
+
+    it('defaults to standard: no dungeon clause, base-tier layout, standard artifact stamp', async () => {
+      const { campaign, cartographer } = await setup();
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer);
+      const runId = await runEngine.startRun(runInput);
+      expect((await getRun(runId))?.encounterPreset).toBe('standard');
+
+      await waitFor(() => {
+        expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+      });
+      const briefContent =
+        chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+      expect(briefContent).not.toContain('Preset: Dungeon');
+
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const run = await getRun(runId);
+      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(artifact.data.layout?.gridW).toBe(24);
+      expect(artifact.data.layout?.gridH).toBe(18);
+      expect(artifact.data.preset).toBe('standard');
+    });
+  });
 });
