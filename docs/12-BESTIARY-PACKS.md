@@ -512,3 +512,13 @@ an encounter.
   is printed in the source material — nothing campaign-hidden.
 - **Filters.** Name substring (case-insensitive) and game system; data-error
   rows are never filtered out.
+- **Spawn into module (11-ENCOUNTER-GENERATOR D5 amendment, third writer).**
+  The detail pane's "Spawn into module" get-or-creates the campaign's mob
+  artifact for the creature's chunk (`spawnMobArtifactIntoModule`) and puts
+  it into the picked module via `stampModuleOwnership` — module-owned,
+  `module:<title>` tagged, single placement (spawning into another module
+  MOVES it; same-module spawn is an idempotent no-op with no revision
+  churn). `/rules` is campaign-agnostic, so the picker chooses the campaign
+  too (one campaign preselects; zero campaigns/modules are named empty
+  states). Success toasts `"<creature> spawned into '<module>'"` with an
+  "Open module" action that navigates to the module reader.

@@ -2,7 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { SkullIcon, TriangleAlertIcon } from 'lucide-react';
+import { MapPinnedIcon, SkullIcon, TriangleAlertIcon } from 'lucide-react';
 
 import type { Id, RuleChunk, StatBlock } from '@/domain';
 import { GAME_SYSTEM_LABELS, type GameSystem } from '@/domain/gameSystem';
@@ -15,7 +15,9 @@ import {
   type RosterEntry,
   type RosterRow,
 } from '@/features/bestiary/roster';
+import { SpawnModulePicker, type SpawnCreature } from '@/features/bestiary/spawn-dialog';
 import { Input } from '@/components/ui/input';
+import { Button } from '@/components/ui/button';
 import {
   Select,
   SelectContent,
@@ -42,6 +44,7 @@ export function BestiaryRoster(): JSX.Element {
   const [query, setQuery] = useState('');
   const [system, setSystem] = useState<GameSystem | 'all'>('all');
   const [selectedId, setSelectedId] = useState<Id | null>(null);
+  const [spawnCreature, setSpawnCreature] = useState<SpawnCreature | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const loaded = useLiveQuery(async () => {
@@ -200,10 +203,29 @@ export function BestiaryRoster(): JSX.Element {
                 {selected.entry.origin}
               </p>
               <StatBlockCard statBlock={selected.statBlock} name={selected.entry.name} />
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3 w-full"
+                data-testid="spawn-into-module"
+                onClick={() => {
+                  setSpawnCreature({ name: selected.entry.name, chunkId: selected.entry.chunkId });
+                }}
+              >
+                <MapPinnedIcon aria-hidden data-icon="inline-start" />
+                Spawn into module
+              </Button>
             </div>
           )}
         </div>
       </div>
+      <SpawnModulePicker
+        creature={spawnCreature}
+        open={spawnCreature !== null}
+        onOpenChange={(next) => {
+          if (!next) setSpawnCreature(null);
+        }}
+      />
     </div>
   );
 }

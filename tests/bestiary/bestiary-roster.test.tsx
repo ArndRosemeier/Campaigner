@@ -1,14 +1,20 @@
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter } from 'react-router-dom';
 
 import type { StatBlock } from '@/domain';
-import { ruleChunkSchema, statBlockSchema, stampNewEntity } from '@/domain';
+import { createModule as createModuleSchema, ruleChunkSchema, statBlockSchema, stampNewEntity } from '@/domain';
 import { BestiaryRoster } from '@/features/bestiary/bestiary-roster';
 import { RulesPage } from '@/features/rules/RulesPage';
 import { putChunks } from '@/db/chunkRepo';
+import { createCampaign } from '@/db/campaignRepo';
+import { createModule } from '@/db/moduleRepo';
 import { createPackBook, createRulebook, finalizePackBook, updateRulebook } from '@/db/rulebookRepo';
+import { db } from '@/db/db';
 import { clearDatabase } from '../db/helpers';
+
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
 /**
  * Bestiary roster tab (source-viewers arc): the virtualized creature list
@@ -123,7 +129,7 @@ describe('BestiaryRoster', () => {
       creatures: [{ name: 'Goblin', level: '1/3' }, { name: 'Ogre', level: '2' }],
     });
 
-    render(<BestiaryRoster />);
+    render(<MemoryRouter><BestiaryRoster /></MemoryRouter>);
 
     const list = await screen.findByTestId('roster-list');
     await waitFor(() => {
@@ -159,7 +165,7 @@ describe('BestiaryRoster', () => {
     });
     await seedPackBook({ title: 'Good Pack', creatures: [{ name: 'Goblin', level: '1/3' }] });
 
-    render(<BestiaryRoster />);
+    render(<MemoryRouter><BestiaryRoster /></MemoryRouter>);
 
     const list = await screen.findByTestId('roster-list');
     await waitFor(() => {
@@ -185,7 +191,7 @@ describe('BestiaryRoster', () => {
     const user = userEvent.setup();
     await seedPackBook({ title: 'SRD Pack', creatures: [{ name: 'Goblin', level: '1/3' }, { name: 'Ogre', level: '2' }] });
 
-    render(<BestiaryRoster />);
+    render(<MemoryRouter><BestiaryRoster /></MemoryRouter>);
     const list = await screen.findByTestId('roster-list');
     await waitFor(() => {
       expect(within(list).getAllByTestId('roster-row')).toHaveLength(2);
@@ -206,7 +212,12 @@ describe('BestiaryRoster', () => {
   it('is reachable from the Rules screen Bestiary tab', async () => {
     await seedPackBook({ title: 'SRD Pack', creatures: [{ name: 'Goblin', level: '1/3' }] });
 
-    render(<RulesPage />);
+    // MemoryRouter: the spawn dialog navigates to the module reader.
+    render(
+      <MemoryRouter>
+        <RulesPage />
+      </MemoryRouter>,
+    );
 
     // Default tab is Search; the Bestiary trigger swaps the right pane.
     expect(screen.getByTestId('rules-search')).toBeInTheDocument();
@@ -216,5 +227,83 @@ describe('BestiaryRoster', () => {
       expect(within(list).getAllByTestId('roster-row')).toHaveLength(1);
     });
     expect(within(list).getByTestId('roster-row')).toHaveTextContent('SRD Pack: Goblin');
+  }, 30000);
+
+  it('spawns a creature into a picked module and toasts with an Open module action', async () => {
+    const user = userEvent.setup();
+    const { toastSuccess } = await import('@/lib/toast');
+    const toastSuccessMock = vi.mocked(toastSuccess);
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const vault = await createModule(
+      createModuleSchema({ campaignId: campaign.id, title: 'Vault of Whispers', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await seedPackBook({ title: 'SRD Pack', creatures: [{ name: 'Goblin', level: '1/3' }] });
+
+    render(<MemoryRouter><BestiaryRoster /></MemoryRouter>);
+    const list = await screen.findByTestId('roster-list');
+    await waitFor(() => {
+      expect(within(list).getAllByTestId('roster-row')).toHaveLength(1);
+    });
+    await user.click(within(list).getByTestId('roster-row'));
+    await user.click(screen.getByTestId('spawn-into-module'));
+
+    // One campaign preselects itself; the picker lists its modules.
+    const picker = await screen.findByTestId('spawn-module-picker');
+    const option = await within(picker).findByTestId('spawn-module-option');
+    expect(option).toHaveTextContent('Vault of Whispers');
+    await user.click(option);
+
+    const { toastError } = await import('@/lib/toast');
+    await waitFor(() => {
+      expect(
+        toastSuccessMock.mock.calls.length + vi.mocked(toastError).mock.calls.length,
+      ).toBeGreaterThan(0);
+    });
+    if (toastSuccessMock.mock.calls.length === 0) {
+      throw new Error(`spawn errored: ${JSON.stringify(vi.mocked(toastError).mock.calls)}`);
+    }
+    expect(toastSuccessMock).toHaveBeenCalledTimes(1);
+    const [message, action] = toastSuccessMock.mock.calls[0] ?? [];
+    expect(message).toBe("Goblin spawned into 'Vault of Whispers'");
+    expect(action).toMatchObject({ label: 'Open module' });
+
+    // The artifact exists exactly once, owned by the module, tagged.
+    const mobs = (await db.artifacts.toArray()).filter(
+      (artifact) => artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined,
+    );
+    expect(mobs).toHaveLength(1);
+    const mob = mobs[0];
+    if (mob === undefined) throw new Error('mob artifact missing');
+    expect(mob.campaignId).toBe(campaign.id);
+    expect(mob.moduleId).toBe(vault.id);
+    expect(mob.tags).toContain('module:Vault of Whispers');
+    // The picker closes after a successful spawn.
+    await waitFor(() => {
+      expect(screen.queryByTestId('spawn-module-picker')).not.toBeInTheDocument();
+    });
+  }, 30000);
+
+  it('names the empty state loudly when the campaign has no modules', async () => {
+    const user = userEvent.setup();
+    await createCampaign({ name: 'Barren', system: 'dnd5e' });
+    await seedPackBook({ title: 'SRD Pack', creatures: [{ name: 'Goblin', level: '1/3' }] });
+
+    render(<MemoryRouter><BestiaryRoster /></MemoryRouter>);
+    const list = await screen.findByTestId('roster-list');
+    await waitFor(() => {
+      expect(within(list).getAllByTestId('roster-row')).toHaveLength(1);
+    });
+    await user.click(within(list).getByTestId('roster-row'));
+    await user.click(screen.getByTestId('spawn-into-module'));
+
+    expect(await screen.findByTestId('spawn-picker-no-modules')).toHaveTextContent(
+      'No modules in “Barren” yet.',
+    );
+    // Nothing was created — a closed path is not a silent success.
+    expect(
+      (await db.artifacts.toArray()).filter(
+        (artifact) => artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined,
+      ),
+    ).toHaveLength(0);
   }, 30000);
 });

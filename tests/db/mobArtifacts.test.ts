@@ -2,12 +2,14 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
-import { findMobArtifactByChunk, getOrCreateMobArtifact } from '@/db/mobArtifacts';
+import { createModule } from '@/db/moduleRepo';
+import { findMobArtifactByChunk, getOrCreateMobArtifact, spawnMobArtifactIntoModule } from '@/db/mobArtifacts';
 import { createRulebook } from '@/db/rulebookRepo';
-import { encounterDataSchema, monsterSourceSchema, newId, npcDataSchema, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
+import { createModule as createModuleSchema, encounterDataSchema, monsterSourceSchema, newId, npcDataSchema, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
+import { db } from '@/db/db';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from './helpers';
 
@@ -160,5 +162,80 @@ describe('additive zod (old rows parse unchanged)', () => {
     expect(parsed.mapImageId).toBeNull();
     expect(parsed.layout).toBeNull();
     expect(parsed.monsters[0]?.source).toMatchObject({ type: 'rulebook' });
+  });
+});
+
+describe('spawnMobArtifactIntoModule', () => {
+  it('creates the mob artifact and stamps module ownership (moduleId + module:<title> tag)', async () => {
+    const { chunkId } = await seedGoblinChunk();
+    const vault = await createModule(
+      createModuleSchema({ campaignId, title: 'The Sunless Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+
+    const { artifactId, stamped } = await spawnMobArtifactIntoModule(
+      campaignId, chunkId, 'Goblin Boss', vault.id, vault.title,
+    );
+
+    expect(stamped).toBe(true);
+    const mob = await getArtifact(artifactId);
+    if (mob === undefined) throw new Error('mob artifact missing');
+    expect(mob.moduleId).toBe(vault.id);
+    expect(mob.tags).toContain(`module:${vault.title}`);
+    expect(mob.currentRevision).toBe(2); // creation + ownership stamp
+    const revisions = await db.revisions.where('artifactId').equals(artifactId).toArray();
+    expect(revisions.length).toBe(2);
+  });
+
+  it('is idempotent for the same module: no second stamp, no revision churn', async () => {
+    const { chunkId } = await seedGoblinChunk();
+    const vault = await createModule(
+      createModuleSchema({ campaignId, title: 'The Sunless Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await spawnMobArtifactIntoModule(campaignId, chunkId, 'Goblin Boss', vault.id, vault.title);
+    const before = (await getArtifact(
+      (await findMobArtifactByChunk(campaignId, chunkId))?.id ?? newId(),
+    ))?.currentRevision;
+
+    const second = await spawnMobArtifactIntoModule(campaignId, chunkId, 'Goblin Boss', vault.id, vault.title);
+
+    expect(second.stamped).toBe(false);
+    const mob = await findMobArtifactByChunk(campaignId, chunkId);
+    expect(mob?.currentRevision).toBe(before);
+    expect(mob?.moduleId).toBe(vault.id);
+  });
+
+  it('moves the artifact when spawned into a different module (single placement, tag history kept)', async () => {
+    const { chunkId } = await seedGoblinChunk();
+    const vault = await createModule(
+      createModuleSchema({ campaignId, title: 'The Sunless Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const mill = await createModule(
+      createModuleSchema({ campaignId, title: 'The Old Mill', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await spawnMobArtifactIntoModule(campaignId, chunkId, 'Goblin Boss', vault.id, vault.title);
+
+    const moved = await spawnMobArtifactIntoModule(campaignId, chunkId, 'Goblin Boss', mill.id, mill.title);
+
+    expect(moved.stamped).toBe(true);
+    const mob = await findMobArtifactByChunk(campaignId, chunkId);
+    expect(mob?.moduleId).toBe(mill.id); // single placement — it moved
+    expect(mob?.tags).toContain(`module:${vault.title}`); // history kept
+    expect(mob?.tags).toContain(`module:${mill.title}`);
+  });
+
+  it('stamps an artifact that already existed from an earlier encounter run', async () => {
+    const { chunkId } = await seedGoblinChunk();
+    const existingId = await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
+    const crypt = await createModule(
+      createModuleSchema({ campaignId, title: 'Ember Crypt', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+
+    const { artifactId, stamped } = await spawnMobArtifactIntoModule(
+      campaignId, chunkId, 'Goblin Boss', crypt.id, crypt.title,
+    );
+
+    expect(artifactId).toBe(existingId);
+    expect(stamped).toBe(true);
+    expect((await getArtifact(artifactId))?.moduleId).toBe(crypt.id);
   });
 });

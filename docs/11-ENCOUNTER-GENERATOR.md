@@ -75,6 +75,15 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   and the seed path share the same get-or-create helper
   (`src/db/mobArtifacts.ts`); finalize also creates, so the batch action
   works right after generation.
+- **Third writer — bestiary roster spawn (2026-09-06, owner-ratified
+  single placement)**: the Rules screen's Bestiary tab (12-BESTIARY-PACKS
+  §12) spawns a creature into a module directly from its stat-block chunk —
+  `spawnMobArtifactIntoModule` get-or-creates via the SAME helper and then
+  `stampModuleOwnership`s the artifact into the picked module
+  (`module:<title>` tag, one placement at a time; same-module spawn is an
+  idempotent no-op, a different module MOVES the artifact with the old tag
+  kept as history). No encounter artifact is required — the chunk is the
+  source of truth exactly as above.
 - **Portrait batch (one-click, not auto)**: an encounter-level
   "Generate mob portraits" action in the encounter editor (beside the
   monsters section). It enumerates the encounter's rulebook entries whose

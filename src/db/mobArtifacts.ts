@@ -1,7 +1,10 @@
 import type { Id, NpcArtifact } from '@/domain';
+import { moduleTagFor } from '@/domain/module';
 import {
   createArtifact,
+  getArtifact,
   listArtifactsByCampaign,
+  stampModuleOwnership,
   type RevisionMeta,
 } from '@/db/artifactRepo';
 
@@ -81,4 +84,41 @@ export async function getOrCreateMobArtifact(
   );
   cache?.set(chunkId, created.id);
   return created.id;
+}
+
+export interface SpawnResult {
+  artifactId: Id;
+  /** false = the artifact already lived in this module (no revision churn). */
+  stamped: boolean;
+}
+
+/**
+ * Bestiary-roster spawn (owner-ratified single placement): get-or-create the
+ * campaign's mob artifact for `chunkId` and put it into `moduleId` via
+ * `stampModuleOwnership` — the artifact is module-owned (one placement at a
+ * time) and carries the `module:<title>` compatibility tag. Spawning the
+ * same creature into the SAME module again is an idempotent no-op (no
+ * revision bump); into a DIFFERENT module it MOVES the artifact (the tag
+ * list keeps the previous module tag as history, per stampModuleOwnership).
+ */
+export async function spawnMobArtifactIntoModule(
+  campaignId: Id,
+  chunkId: Id,
+  name: string,
+  moduleId: Id,
+  moduleTitle: string,
+  meta: RevisionMeta = { source: 'user' },
+  cache?: Map<Id, Id>,
+): Promise<SpawnResult> {
+  const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, name, meta, cache);
+  const artifact = await getArtifact(artifactId);
+  if (artifact === undefined) throw new Error(`mob artifact ${artifactId} vanished after get-or-create`);
+  if (artifact.campaignId !== campaignId) {
+    throw new Error(`mob artifact ${artifactId} belongs to another campaign`);
+  }
+  if (artifact.moduleId === moduleId) {
+    return { artifactId, stamped: false };
+  }
+  await stampModuleOwnership(artifactId, moduleId, moduleTagFor(moduleTitle), meta);
+  return { artifactId, stamped: true };
 }

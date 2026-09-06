@@ -28,8 +28,18 @@ export function toastErrorPersistent(message: string, error?: unknown): void {
   }
 }
 
-export function toastSuccess(message: string): void {
-  toast.success(message);
+/** Optional one-click follow-up attached to a success toast. */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
+export function toastSuccess(message: string, action?: ToastAction): void {
+  if (action === undefined) {
+    toast.success(message);
+    return;
+  }
+  toast.success(message, { action: { label: action.label, onClick: action.onClick } });
 }
 
 export function toastInfo(message: string): void {
