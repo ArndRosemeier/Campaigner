@@ -80,14 +80,14 @@ export function itemPoolNameIndex(
   return index;
 }
 
-/** Prompt section (§12): the pool listing plus the item-citation instruction. */
+/** Prompt section (§12): the pool listing plus the item-grounding instruction. */
 export function formatItemPoolSection(lines: readonly string[], truncated: number): string | null {
   if (lines.length === 0) return null;
   return [
     'Item pool — equipment available in the imported pack books:',
     ...lines,
     truncated > 0 ? `(pool truncated; ${String(truncated)} more)` : null,
-    'For treasure and equipment rewards: pick an item from this pool by its exact name via "itemName" (the item name itself — never the parenthesized details or a " — book" suffix). Never invent magic items that are not in this pool.',
+    'For treasure and equipment rewards: when the encounter includes treasure, name items from this pool verbatim in the "treasure" field (exact item names — never the parenthesized details or a " — book" suffix). Never invent magic items that are not in this pool.',
   ]
     .filter((part) => part !== null)
     .join('\n');
@@ -240,7 +240,7 @@ export async function collectItemPool(
       rarity: item.rarity,
       chunkId: chunk.id,
       levelSort: itemLevelSort(level),
-      priceSort: item.priceCp === null ? Number.POSITIVE_INFINITY : item.priceCp,
+      priceSort: item.priceCp ?? Number.POSITIVE_INFINITY,
       bookId: chunk.bookId,
       bookTitle: titleById.get(chunk.bookId) ?? '',
     });

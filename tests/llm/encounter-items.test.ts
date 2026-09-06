@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { Id, Rulebook, RuleChunk } from '@/domain';
 import { ruleChunkSchema } from '@/domain';
+import type { ItemData } from '@/domain/itemData';
 import {
   buildItemPool,
   collectItemPool,
@@ -195,7 +196,7 @@ describe('formatItemPoolSection', () => {
     const section = formatItemPoolSection(['Arrows (ammo, Level 0, 1 cp)'], 3) ?? '';
     expect(section.startsWith('Item pool — equipment available in the imported pack books:')).toBe(true);
     expect(section).toContain('(pool truncated; 3 more)');
-    expect(section).toContain('"itemName"');
+    expect(section).toContain('"treasure" field');
   });
 });
 
@@ -207,9 +208,9 @@ describe('collectItemPool (12-BESTIARY-PACKS §12)', () => {
       id: itemsBookId,
       title: 'PF2e Equipment',
       packMeta: {
-        sourceId: 'foundry-pf2e-equipment', sourceRef: 'v14-dev',
-        sourceUrl: '', attemptedRefs: [], imported: 2, entriesImported: 2,
-        fetchedAt: 1, itemsImported: 2,
+        sourceId: 'foundry-pf2e-equipment', license: 'Paizo CUP', sourceRef: 'v14-dev',
+        sourceUrl: '', attemptedRefs: [], entriesImported: 2,
+        entriesSkipped: 0, entriesFailed: 0, itemsImported: 2,
       },
     });
     const creatureBook = book({ id: creaturesBookId, title: 'Monster Core' });
@@ -230,11 +231,11 @@ describe('collectItemPool (12-BESTIARY-PACKS §12)', () => {
   });
 
   it('excludes ready pack books without items, drafts, and other systems', async () => {
-    const ready = book({ id: 'ready', packMeta: { sourceId: 's', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], imported: 1, entriesImported: 1, fetchedAt: 1, itemsImported: 1 } });
-    const noItems = book({ id: 'no-items', packMeta: { sourceId: 's', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], imported: 1, entriesImported: 1, fetchedAt: 1, itemsImported: 0 } });
+    const ready = book({ id: 'ready', packMeta: { sourceId: 's', license: 'test', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], entriesImported: 1, entriesSkipped: 0, entriesFailed: 0, itemsImported: 1 } });
+    const noItems = book({ id: 'no-items', packMeta: { sourceId: 's', license: 'test', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], entriesImported: 1, entriesSkipped: 0, entriesFailed: 0, itemsImported: 0 } });
     const noMeta = book({ id: 'no-meta', packMeta: null });
-    const draft = book({ id: 'draft', status: 'processing', packMeta: { sourceId: 's', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], imported: 1, entriesImported: 1, fetchedAt: 1, itemsImported: 1 } });
-    const wrongSystem = book({ id: 'wrong', system: 'dnd5e', packMeta: { sourceId: 's', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], imported: 1, entriesImported: 1, fetchedAt: 1, itemsImported: 1 } });
+    const draft = book({ id: 'draft', status: 'processing', packMeta: { sourceId: 's', license: 'test', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], entriesImported: 1, entriesSkipped: 0, entriesFailed: 0, itemsImported: 1 } });
+    const wrongSystem = book({ id: 'wrong', system: 'dnd5e', packMeta: { sourceId: 's', license: 'test', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], entriesImported: 1, entriesSkipped: 0, entriesFailed: 0, itemsImported: 1 } });
     const seen: Id[][] = [];
     await collectItemPool('pathfinder2e', {
       listBooks: () => Promise.resolve([ready, noItems, noMeta, draft, wrongSystem]),
@@ -261,7 +262,7 @@ describe('collectItemPool (12-BESTIARY-PACKS §12)', () => {
       statBlock: null,
       contentHash: crypto.randomUUID().replaceAll('-', '0').padEnd(64, '0'),
     });
-    const itemBook = book({ id: bookId, packMeta: { sourceId: 's', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], imported: 1, entriesImported: 1, fetchedAt: 1, itemsImported: 1 } });
+    const itemBook = book({ id: bookId, packMeta: { sourceId: 's', license: 'test', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], entriesImported: 1, entriesSkipped: 0, entriesFailed: 0, itemsImported: 1 } });
     await expect(collectItemPool('pathfinder2e', depsOf([itemBook], [broken]))).rejects.toThrow(
       'has no validated item data — re-import the pack',
     );
@@ -271,7 +272,7 @@ describe('collectItemPool (12-BESTIARY-PACKS §12)', () => {
     const bookId = crypto.randomUUID();
     const unnamed = itemChunk('Temp', itemData(), bookId);
     const fixed = ruleChunkSchema.parse({ ...unnamed, headingPath: ['  '] });
-    const itemBook = book({ id: bookId, packMeta: { sourceId: 's', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], imported: 1, entriesImported: 1, fetchedAt: 1, itemsImported: 1 } });
+    const itemBook = book({ id: bookId, packMeta: { sourceId: 's', license: 'test', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], entriesImported: 1, entriesSkipped: 0, entriesFailed: 0, itemsImported: 1 } });
     await expect(collectItemPool('pathfinder2e', depsOf([itemBook], [fixed]))).rejects.toThrow(
       'has no item name in its heading',
     );
@@ -282,7 +283,7 @@ describe('collectItemPoolWithRetry (roster convention)', () => {
   it('retries transient failures and throws a named error after ITEM_POOL_ATTEMPTS', async () => {
     expect(ITEM_POOL_ATTEMPTS).toBe(2);
     let calls = 0;
-    const itemBook = book({ packMeta: { sourceId: 's', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], imported: 1, entriesImported: 1, fetchedAt: 1, itemsImported: 1 } });
+    const itemBook = book({ packMeta: { sourceId: 's', license: 'test', sourceRef: 'r', sourceUrl: '', attemptedRefs: [], entriesImported: 1, entriesSkipped: 0, entriesFailed: 0, itemsImported: 1 } });
     const flaky: ItemPoolDeps = {
       listBooks: () => Promise.resolve([itemBook]),
       listChunks: () => {

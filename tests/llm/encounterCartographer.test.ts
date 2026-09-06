@@ -134,6 +134,48 @@ async function seedPackBook(): Promise<string> {
   return chunk?.id ?? '';
 }
 
+/**
+ * Seeds a ready pack book that imported ITEMS (12-BESTIARY-PACKS §12):
+ * one validated item chunk (a dnd5e Bag of Beans) with itemsImported > 0 —
+ * the collectItemPool book filter's positive case.
+ */
+async function seedItemPackBook(): Promise<string> {
+  const book = await createPackBook({ title: 'Dnd5e Equipment Pack', system: 'dnd5e', filename: 'equipment.zip' });
+  await finalizePackBook(book.id, {
+    sourceId: 'foundry-dnd5e-equipment',
+    license: 'CC-BY-4.0',
+    entriesImported: 1,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+    itemsImported: 1,
+  });
+  const text = 'Bag of Beans — equipment · 2000 gp · rare';
+  await putChunks([
+    ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: book.id,
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'item',
+      headingPath: ['Bag of Beans'],
+      text,
+      statBlock: null,
+      itemData: {
+        system: 'dnd5e',
+        category: 'equipment',
+        level: null,
+        priceDisplay: '2000 gp',
+        priceCp: 200000,
+        rarity: 'rare',
+        traits: [],
+        rulesEdition: '2024',
+      },
+      contentHash: await sha256Hex(text),
+    }),
+  ]);
+  return book.id;
+}
+
 function input(
   campaign: Awaited<ReturnType<typeof createCampaign>>,
   cartographer: Persona,
@@ -227,6 +269,7 @@ describe('Encounter Cartographer run', () => {
   it('grounds the brief in the pack roster and resolves sourceName through map finalize (§7)', async () => {
     const { campaign, cartographer } = await setup();
     const goblinChunkId = await seedPackBook();
+    await seedItemPackBook();
     const rosterBrief = {
       ...BRIEF,
       monsters: [{ name: 'Goblin Boss', count: 2, notes: '', sourceName: 'Goblin Boss' }],
@@ -243,6 +286,10 @@ describe('Encounter Cartographer run', () => {
       chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
     expect(briefContent).toContain('Bestiary roster');
     expect(briefContent).toContain('Goblin Boss (1, humanoid, goblinoid)');
+    // §12: the item pool grounds the brief's treasure field too (the item
+    // pack book was seeded alongside the bestiary pack).
+    expect(briefContent).toContain('Item pool — equipment available in the imported pack books:');
+    expect(briefContent).toContain('Bag of Beans (equipment, 2000 gp, rare)');
 
     const candidates = await approveUntilPick(runId, runInput);
     await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);

@@ -212,6 +212,48 @@ async function seedPackBook(title: string): Promise<Id> {
 }
 
 /**
+ * Seeds a ready pack book that imported ITEMS (12-BESTIARY-PACKS §12):
+ * one validated item chunk (a dnd5e Bag of Beans) with itemsImported > 0 —
+ * the collectItemPool book filter's positive case.
+ */
+async function seedItemPackBook(): Promise<string> {
+  const book = await createPackBook({ title: 'Dnd5e Equipment Pack', system: 'dnd5e', filename: 'equipment.zip' });
+  await finalizePackBook(book.id, {
+    sourceId: 'foundry-dnd5e-equipment',
+    license: 'CC-BY-4.0',
+    entriesImported: 1,
+    entriesSkipped: 0,
+    entriesFailed: 0,
+    itemsImported: 1,
+  });
+  const text = 'Bag of Beans — equipment · 2000 gp · rare';
+  await putChunks([
+    ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: book.id,
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'item',
+      headingPath: ['Bag of Beans'],
+      text,
+      statBlock: null,
+      itemData: {
+        system: 'dnd5e',
+        category: 'equipment',
+        level: null,
+        priceDisplay: '2000 gp',
+        priceCp: 200000,
+        rarity: 'rare',
+        traits: [],
+        rulesEdition: '2024',
+      },
+      contentHash: await sha256Hex(text),
+    }),
+  ]);
+  return book.id;
+}
+
+/**
  * Seeds a ready pack book with `count` validated creatures named
  * "Creature 001"… whose printed level (and levelSort) is 1..count — a
  * >ROSTER_LIMIT bestiary import, so the 300-line prompt window's ordering
@@ -597,6 +639,65 @@ describe('encounter runs (M3-B)', () => {
       mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId),
     });
   });
+
+  it('renders no item pool section without item books (prompt byte-identical to the pre-arc shape)', async () => {
+    const { campaign, persona } = await seed();
+    await seedPackBook('Dnd5e Bestiary Pack');
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [{ name: 'Goblin Boss', count: 1, notes: '', sourceName: 'Goblin Boss' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+    const runId = await runEngine.startRun({
+      campaign, persona, brief: 'A goblin ambush', autonomy: 'auto', pinnedChunkIds: [],
+    });
+    await vi.waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const userContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    expect(userContent).toContain('Bestiary roster');
+    expect(userContent).not.toContain('Item pool — equipment');
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+  }, 20000);
+
+  it('grounds the draft in the item pool from an item pack book (12-BESTIARY-PACKS §12)', async () => {
+    const { campaign, persona } = await seed();
+    await seedPackBook('Dnd5e Bestiary Pack');
+    await seedItemPackBook();
+    searchRulesMock.mockResolvedValue([]);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [{ name: 'Goblin Boss', count: 1, notes: '', sourceName: 'Goblin Boss' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+    const runId = await runEngine.startRun({
+      campaign, persona, brief: 'A goblin ambush with treasure', autonomy: 'auto', pinnedChunkIds: [],
+    });
+    await vi.waitFor(() => {
+      expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+    });
+    const userContent =
+      chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+    // The pool section renders after the roster section, listing the item.
+    expect(userContent).toContain('Item pool — equipment available in the imported pack books:');
+    expect(userContent).toContain('Bag of Beans (equipment, 2000 gp, rare)');
+    expect(userContent).toContain('"treasure" field');
+    const promptText = typeof userContent === 'string' ? userContent : JSON.stringify(userContent);
+    expect(promptText.indexOf('Bestiary roster')).toBeLessThan(promptText.indexOf('Item pool — equipment'));
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+  }, 20000);
 
   it('fails loudly after one repair attempt when a sourceName misses the roster', async () => {
     const { campaign, persona } = await seed();

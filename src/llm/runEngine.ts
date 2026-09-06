@@ -53,6 +53,7 @@ import {
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { statblockExtraNotice } from '@/llm/personas/extras';
 import { collectPackRosterWithRetry, formatRosterSection, parseRosterTargetLevel } from '@/llm/encounterRoster';
+import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounterItems';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -129,6 +130,13 @@ const storedRetrieveOutputSchema = z.object({
   rosterChunkByName: z.record(z.string(), z.string()).default({}),
   rosterLines: z.array(z.string()).default([]),
   rosterTruncated: z.number().default(0),
+  // 12-BESTIARY-PACKS §12: the item pool (the roster's equipment
+  // counterpart), persisted so the encounter prompts render it
+  // byte-identically without re-collection (additive fields; older runs
+  // read back as empty).
+  itemChunkByName: z.record(z.string(), z.string()).default({}),
+  itemLines: z.array(z.string()).default([]),
+  itemTruncated: z.number().default(0),
   // 15-GRAPH-RETRIEVAL: the derived campaign-grounding blocks, persisted so
   // the draft renders them byte-identically without re-derivation (additive
   // field; older runs read back as []).
@@ -148,6 +156,10 @@ interface RetrieveContext {
   rosterLines: string[];
   rosterTruncated: number;
   rosterChunkByName: Record<string, Id>;
+  /** §12 (item-corpus arc): the item pool + name→chunkId map. */
+  itemLines: string[];
+  itemTruncated: number;
+  itemChunkByName: Record<string, Id>;
   /** 15-GRAPH-RETRIEVAL: the derived campaign-grounding blocks (already
    * budget-truncated by the derivation). The draft renders them verbatim;
    * the statblock step never does. */
@@ -1274,6 +1286,9 @@ export class RunEngine {
       let rosterLines: string[] = [];
       let rosterTruncated = 0;
       let rosterChunkByName: Record<string, Id> = {};
+      let itemLines: string[] = [];
+      let itemTruncated = 0;
+      let itemChunkByName: Record<string, Id> = {};
       if (input.persona.producesKind === 'encounter') {
         // Pinned-citability: an explicitly pinned chunk is an instruction to
         // use it, so a pinned chunk joins the citation list in PIN ORDER,
@@ -1323,6 +1338,20 @@ export class RunEngine {
         rosterLines = roster.lines;
         rosterTruncated = roster.truncated;
         rosterChunkByName = Object.fromEntries(roster.chunkByName);
+        // §12 (item-corpus arc): the item pool — the roster's equipment
+        // counterpart — over every ready pack book that imported items,
+        // ordered by the same resolved target level. Retry + loud failure
+        // match the roster; a corrupt item chunk never degrades the run.
+        const pool = await collectItemPoolWithRetry(
+          input.campaign.system,
+          undefined,
+          undefined,
+          {},
+          rosterTargetLevel,
+        );
+        itemLines = pool.lines;
+        itemTruncated = pool.truncated;
+        itemChunkByName = Object.fromEntries(pool.chunkByName);
       }
       for (const hit of hits) {
         if (merged.length >= 12) break;
@@ -1362,6 +1391,9 @@ export class RunEngine {
         rosterLines,
         rosterTruncated,
         rosterChunkByName,
+        itemLines,
+        itemTruncated,
+        itemChunkByName,
         expansionExcerpts,
       };
     } finally {
@@ -1410,6 +1442,10 @@ export class RunEngine {
       // second roster collection.
       rosterLines: context.rosterLines,
       rosterTruncated: context.rosterTruncated,
+      // §12: the item pool persists with the same contract as the roster.
+      itemChunkByName: context.itemChunkByName,
+      itemLines: context.itemLines,
+      itemTruncated: context.itemTruncated,
       // 15-GRAPH-RETRIEVAL: the campaign-grounding blocks persist with the
       // selection so the draft renders the stored ones byte-identically —
       // nothing re-derives the graph at draft time.
@@ -1495,6 +1531,9 @@ export class RunEngine {
       rosterLines: output.rosterLines,
       rosterTruncated: output.rosterTruncated,
       rosterChunkByName: output.rosterChunkByName,
+      itemLines: output.itemLines,
+      itemTruncated: output.itemTruncated,
+      itemChunkByName: output.itemChunkByName,
       expansionExcerpts: output.expansionExcerpts,
     };
   }
@@ -1569,6 +1608,9 @@ export class RunEngine {
         : `Rule excerpts:\n${context.excerpts}`,
       buildStatblockCitationSection(context.statblockTitles),
       formatRosterSection(context.rosterLines, context.rosterTruncated),
+      // §12: the item pool renders after the roster — null (nothing rendered)
+      // without item books, so prompts stay byte-identical to the pre-arc shape.
+      formatItemPoolSection(context.itemLines, context.itemTruncated),
       // fix-02 (decision 1): with neither excerpts nor a roster there is
       // nothing to cite — the draft must inline a complete block per monster,
       // which finalize then materializes into a real NPC artifact.
@@ -2060,6 +2102,8 @@ export class RunEngine {
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
       buildStatblockCitationSection(retrieval.statblockTitles),
       formatRosterSection(retrieval.rosterLines, retrieval.rosterTruncated),
+      // §12: the item pool grounds the treasure field here too.
+      formatItemPoolSection(retrieval.itemLines, retrieval.itemTruncated),
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
       inlineStatHint,
       `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[]}] (1–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
