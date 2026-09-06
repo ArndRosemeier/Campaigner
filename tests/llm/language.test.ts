@@ -49,6 +49,7 @@ const SETTINGS_BASE = {
   encounterVerifyModel: '',
   runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,
+  onboarding: { status: 'fresh' as const, stepState: [] },
 };
 
 beforeEach(async () => {

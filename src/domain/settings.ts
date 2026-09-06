@@ -86,6 +86,48 @@ export type ReasoningEffort = (typeof REASONING_EFFORT_OPTIONS)[number];
 
 export const reasoningEffortSchema = z.enum(REASONING_EFFORT_OPTIONS);
 
+/** The setup wizard's steps, in display order ('welcome' resolves on Begin). */
+export const ONBOARDING_STEP_IDS = [
+  'welcome',
+  'openrouter',
+  'language',
+  'rulebook',
+  'pack',
+  'author',
+] as const;
+
+export type OnboardingStepId = (typeof ONBOARDING_STEP_IDS)[number];
+
+/** One step's resolution. A step missing from `stepState` reads as 'pending'. */
+export const onboardingStepStateSchema = z.enum(['pending', 'done', 'skipped']);
+
+export type OnboardingStepState = z.infer<typeof onboardingStepStateSchema>;
+
+export const onboardingStepEntrySchema = z.object({
+  id: z.enum(ONBOARDING_STEP_IDS),
+  state: onboardingStepStateSchema,
+});
+
+export type OnboardingStepEntry = z.infer<typeof onboardingStepEntrySchema>;
+
+export const onboardingStatusSchema = z.enum(['fresh', 'active', 'dismissed', 'complete']);
+
+export type OnboardingStatus = z.infer<typeof onboardingStatusSchema>;
+
+/**
+ * First-run wizard state (stored as a list of per-step entries; an id absent
+ * from the list is pending — old rows and backups written before the field
+ * parse via the `.default()` post-M3 field convention). `status` drives the
+ * one-time auto-open: 'fresh' shows it once, 'dismissed' never again,
+ * 'complete' retires it; re-open affordances stay available in every state.
+ */
+export const onboardingSchema = z.object({
+  status: onboardingStatusSchema.default('fresh'),
+  stepState: z.array(onboardingStepEntrySchema).default([]),
+});
+
+export type Onboarding = z.infer<typeof onboardingSchema>;
+
 export const settingsSchema = z.object({
   id: z.literal(SETTINGS_ID),
   /** '' when unset. */
@@ -180,6 +222,8 @@ export const settingsSchema = z.object({
   maxParallelRequests: z.number().int().min(1).max(4).default(2),
   /** v11 migration notice, consumed once by AppShell after it is shown. */
   retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
+  /** First-run setup wizard (see onboardingSchema above). */
+  onboarding: onboardingSchema.default({ status: 'fresh', stepState: [] }),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -209,5 +253,6 @@ export function defaultSettings(): Settings {
     encounterVerifyModel: '',
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
+    onboarding: { status: 'fresh', stepState: [] },
   };
 }

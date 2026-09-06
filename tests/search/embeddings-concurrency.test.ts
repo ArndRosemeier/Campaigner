@@ -76,6 +76,7 @@ const SETTINGS = {
   runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,
   language: 'en' as const,
+  onboarding: { status: 'fresh' as const, stepState: [] },
 };
 
 beforeEach(async () => {

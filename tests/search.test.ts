@@ -97,6 +97,7 @@ async function enableEmbeddings(): Promise<void> {
   runExtras: { image: false, statBlock: false, mobPortraits: false },
     retiredSessionNotesRemoved: 0,
     language: 'en' as const,
+    onboarding: { status: 'fresh' as const, stepState: [] },
   });
 }
 
