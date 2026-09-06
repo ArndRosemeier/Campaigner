@@ -31,3 +31,20 @@ conventions` are binding.
   set per-commit via
   `git -c user.name='Campaigner Dev' -c user.email='dev@campaigner.local' commit`.
 - One logical task per commit; push to `origin/main` after committing.
+
+## Parallel writers
+
+Two agents may write concurrently only after a dispatch-time safety check —
+never by default:
+
+1. **File disjointness**: enumerate the files each task will touch; ANY shared
+   file = serialize (or re-scope the tasks until disjoint).
+2. **Gate budget**: combined test workers must stay within the machine's cores
+   — the second agent runs gates with a reduced `--maxWorkers`.
+3. **Rebase discipline**: `git pull --rebase origin main` before every push;
+   any conflict means the disjointness check missed something — stop and
+   report instead of resolving.
+4. **Re-verify duty**: whichever brief was written against an older HEAD
+   re-verifies its findings at landing time.
+
+Read-only agents always run in parallel with anything.
