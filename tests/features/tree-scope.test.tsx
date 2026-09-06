@@ -80,6 +80,42 @@ describe('workspace tree scope control', () => {
     await flushAsyncUpdates();
   });
 
+  it('renders a row whose module row is gone as an explicit orphaned group with a re-anchor action', async () => {
+    const user = userEvent.setup();
+    // A module-owned row whose module row is missing (a pre-integrity-fix
+    // dangling write or external tampering): the tree must NOT silently
+    // blend it into the kind groups — it shows an explicit "Orphaned" group.
+    const deadModuleId = '00000000-0000-4000-8000-0000000000de';
+    const orphan = await createArtifact({
+      campaignId,
+      moduleId: deadModuleId,
+      kind: 'npc',
+      name: 'Ghost Orphan',
+    });
+    renderWorkspace(workspacePath(campaignId));
+    await screen.findByText('Ghost Orphan');
+    await flushAsyncUpdates();
+
+    expect(screen.getByText('Orphaned')).toBeInTheDocument();
+    // The orphan lives in the orphan group — never inside the kind groups.
+    const miraList = screen.getByText('Mira').closest('ul') as HTMLElement;
+    expect(within(miraList).queryByText('Ghost Orphan')).toBeNull();
+    const orphanList = screen.getByText('Ghost Orphan').closest('ul') as HTMLElement;
+    expect(within(orphanList).queryByText('Mira')).toBeNull();
+    expect(within(orphanList).getAllByText('Ghost Orphan')).toHaveLength(1);
+
+    // One-click honesty: re-anchor moves the row back into campaign
+    // ownership (the sanctioned moveScope pathway) — no silent blending.
+    await openRowMenu(user, 'Ghost Orphan');
+    await user.click(await screen.findByTestId('tree-reanchor'));
+    await waitFor(async () => {
+      const row = await getAnyArtifact(orphan.id);
+      expect(row?.moduleId).toBeNull();
+      expect(row?.campaignId).toBe(campaignId);
+    });
+    await flushAsyncUpdates();
+  }, 20000);
+
   it('publishes a library-kind artifact via the loud confirm; notes are not publishable', async () => {
     const user = userEvent.setup();
     renderWorkspace(workspacePath(campaignId));

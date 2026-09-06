@@ -13,7 +13,7 @@ import { useModules } from '@/features/modules/hooks';
 import { useScopeToggles } from '@/features/campaign/hooks';
 import { ScopeControl } from '@/features/campaign/components/scope-control';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
-import { publishToLibrary } from '@/db/artifactRepo';
+import { adoptIntoCampaign, publishToLibrary } from '@/db/artifactRepo';
 import { graphPath, workspacePath } from '@/app/routes';
 import { Link } from 'react-router-dom';
 import { artifactRepo } from '@/db';
@@ -168,9 +168,12 @@ export function CampaignTree({
   );
 
   // Scope split (10-MILESTONE-6 D3): the library group, one group per owning
-  // module, and the plain campaign rows in their kind groups. A module-owned
-  // row whose module row is missing (external tampering — both delete paths
-  // clean up ownership) falls back to the plain groups so it stays visible.
+  // module, the plain campaign rows in their kind groups — and an explicit
+  // "Orphaned" group for module-owned rows whose module row is missing
+  // (external tampering or a pre-integrity-fix dangling write). Orphans are
+  // NOT blended into the kind groups: they stay visible AS orphans, each
+  // with a one-click "Re-anchor to campaign" (moveScope) instead of a silent
+  // scope change.
   const moduleTitleById = useMemo(
     () => new Map((modules ?? []).map((module) => [module.id, module.title])),
     [modules],
@@ -191,13 +194,29 @@ export function CampaignTree({
       rows,
     }));
   }, [filtered, scopes.module, moduleTitleById]);
-  const plainRows = useMemo(() => {
-    const orphans = filtered.filter(
-      (artifact) => artifact.moduleId !== null && !moduleTitleById.has(artifact.moduleId),
-    );
-    return scopes.campaign ? [...filtered.filter((artifact) => artifact.moduleId === null), ...orphans] : [];
-  }, [filtered, scopes.campaign, moduleTitleById]);
+  const orphanRows = useMemo(
+    () =>
+      scopes.campaign
+        ? filtered.filter(
+            (artifact) => artifact.moduleId !== null && !moduleTitleById.has(artifact.moduleId),
+          )
+        : [],
+    [filtered, scopes.campaign, moduleTitleById],
+  );
+  const plainRows = useMemo(
+    () => (scopes.campaign ? filtered.filter((artifact) => artifact.moduleId === null) : []),
+    [filtered, scopes.campaign],
+  );
   const libraryRows = scopes.global ? filteredGlobals : [];
+
+  async function handleReanchor(artifact: Artifact): Promise<void> {
+    try {
+      await adoptIntoCampaign(artifact.id);
+      toastSuccess(`"${artifact.name}" re-anchored to the campaign`);
+    } catch (error) {
+      toastError('Could not re-anchor the artifact', error);
+    }
+  }
 
   async function handleCreate(kind: ArtifactKind): Promise<void> {
     try {
@@ -391,6 +410,43 @@ export function CampaignTree({
             </ul>
           </TreeGroup>
         ))}
+        {orphanRows.length > 0 && (
+          <TreeGroup
+            label="Orphaned"
+            count={orphanRows.length}
+            open={!closedGroups.has('orphaned')}
+            onToggle={setGroupOpenState}
+          >
+            <p className="px-2 py-1 text-xs text-muted-foreground">
+              These artifacts point at a module that no longer exists. Re-anchor them to keep the
+              tree honest.
+            </p>
+            <ul className="mt-0.5">
+              {orphanRows.map((artifact) => (
+                <li key={artifact.id}>
+                  <TreeRow
+                    artifact={artifact}
+                    orphaned
+                    selected={artifact.id === selectedArtifactId}
+                    onSelect={() => {
+                      onSelectArtifact(artifact.id);
+                    }}
+                    onRename={() => {
+                      setRenameTarget(artifact);
+                      setRenameValue(artifact.name);
+                    }}
+                    onDelete={() => {
+                      setDeleteTarget(artifact);
+                    }}
+                    onReanchor={() => {
+                      void handleReanchor(artifact);
+                    }}
+                  />
+                </li>
+              ))}
+            </ul>
+          </TreeGroup>
+        )}
         {ARTIFACT_KINDS.map((kind) => {
           const items = plainRows.filter((artifact) => artifact.kind === kind);
           const open = !closedKinds.has(kind);
@@ -602,6 +658,10 @@ interface TreeRowProps {
   onPublish?: (() => void) | undefined;
   /** Global rows only: adopt into a campaign (C). */
   onAdopt?: (() => void) | undefined;
+  /** Orphan rows only: one-click re-anchor into the campaign (moveScope). */
+  onReanchor?: (() => void) | undefined;
+  /** Orphan rows render an explicit "orphaned" badge (never silent). */
+  orphaned?: boolean | undefined;
 }
 
 /** 16px cover-image thumbnail, shown only when the artifact has one (M3-A). */
@@ -629,6 +689,8 @@ function TreeRow({
   onExportPdfPlayer,
   onPublish,
   onAdopt,
+  onReanchor,
+  orphaned,
 }: TreeRowProps) {
   return (
     <ContextMenu>
@@ -646,6 +708,14 @@ function TreeRow({
         >
           <CoverThumb artifact={artifact} />
           <span className="min-w-0 flex-1 truncate">{artifact.name}</span>
+          {orphaned === true && (
+            <Badge
+              variant="outline"
+              className="shrink-0 border-amber-500/60 px-1 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+            >
+              orphaned
+            </Badge>
+          )}
           <Button
             variant="ghost"
             size="icon-sm"
@@ -665,6 +735,11 @@ function TreeRow({
       </Tooltip>
       <ContextMenuContent>
         <ContextMenuItem onClick={onRename}>Rename</ContextMenuItem>
+        {onReanchor !== undefined && (
+          <ContextMenuItem data-testid="tree-reanchor" onClick={onReanchor}>
+            Re-anchor to campaign
+          </ContextMenuItem>
+        )}
         {onDuplicate !== undefined && (
           <ContextMenuItem
             onClick={() => {
