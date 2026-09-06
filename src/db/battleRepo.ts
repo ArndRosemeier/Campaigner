@@ -53,6 +53,7 @@ export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle
       everLive: false,
       tokens: [],
       veils: [],
+      effects: [],
       gridSize: null,
       tokenSize: 64,
       sceneryMovementLocked: false,

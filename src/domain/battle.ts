@@ -85,6 +85,31 @@ export const battleVeilSchema = z.object({
 
 export type BattleVeil = z.infer<typeof battleVeilSchema>;
 
+/**
+ * Geometric effect markers (D7, encounter-resume arc): GM-stamped showpieces
+ * — a spell disc, a square zone. Geometry is layout-anchored (`sizeCells` in
+ * grid cells), never screen pixels; the fill renders at ~70% transparency and
+ * the marker is board material, visible in BOTH GM and player views.
+ */
+export const battleEffectShapeSchema = z.enum(['disc', 'square']);
+export type BattleEffectShape = z.infer<typeof battleEffectShapeSchema>;
+
+export const battleEffectSchema = z.object({
+  id: battleTokenIdSchema,
+  shape: battleEffectShapeSchema,
+  /** Normalized content coords (0..1) of the marker CENTER. */
+  x: z.number(),
+  y: z.number(),
+  /** Diameter (disc) / side (square) in grid cells — layout-anchored. */
+  sizeCells: z.number().int().min(1),
+  /** Fill color; one of TOKEN_STAMP_COLORS. */
+  color: z.string(),
+  /** Optional caption. */
+  label: z.string().default(''),
+});
+
+export type BattleEffect = z.infer<typeof battleEffectSchema>;
+
 export const battleTokenSchema = z.object({
   id: battleTokenIdSchema,
   /** Artifact-backed (pc/npc) or null for geometric stamps. */
@@ -149,6 +174,7 @@ export const stageSnapshotSchema = z.object({
   tokenSize: z.number(),
   tokens: z.array(battleTokenSchema),
   veils: z.array(battleVeilSchema),
+  effects: z.array(battleEffectSchema).default([]),
   stagingGround: stagingGroundSchema.nullable(),
   entrance: battleEntranceSchema.nullable().default(null),
 });
@@ -171,6 +197,8 @@ export const battleBoardSchema = z.object({
   everLive: z.boolean().default(false),
   tokens: z.array(battleTokenSchema),
   veils: z.array(battleVeilSchema),
+  /** GM-stamped geometric effect markers (D7); rendered in both views. */
+  effects: z.array(battleEffectSchema).default([]),
   /** Cell size in CSS px; null hides the grid. */
   gridSize: z.number().min(GRID_SIZE_MIN).max(GRID_SIZE_MAX).nullable(),
   tokenSize: z.number(),

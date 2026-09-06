@@ -21,8 +21,8 @@ import {
   XIcon,
 } from 'lucide-react';
 
-import type { AnyArtifact, Battle, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
-import { nextTokenScale, tokenSizeFittingGrid, VEIL_DEFAULT_CELLS } from '@/domain/battle';
+import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
+import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import { modulePath } from '@/app/routes';
 import {
@@ -137,6 +137,7 @@ export function BattleSurface(): JSX.Element {
   const [liveDrag, setLiveDrag] = useState<LiveDrag | null>(null);
   const [selectedTokenId, setSelectedTokenId] = useState<BattleTokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
+  const [selectedEffectId, setSelectedEffectId] = useState<BattleEffect['id'] | null>(null);
   const [playerSafe, setPlayerSafe] = useState(false);
   const [stageArmed, setStageArmed] = useState(false);
   const [reseedArmed, setReseedArmed] = useState(false);
@@ -319,8 +320,21 @@ export function BattleSurface(): JSX.Element {
     );
   }, [battle, liveDrag]);
 
+  // Effect markers (D7): the same live-render contract — and NO player-safe
+  // filter: effects are showpieces, board material in BOTH views.
+  const displayedEffects = useMemo(() => {
+    if (battle === undefined) return [];
+    const drag = liveDrag;
+    if (drag?.tokenId.startsWith('effect:') !== true) return battle.board.effects;
+    const effectId = drag.tokenId.slice('effect:'.length);
+    return battle.board.effects.map((effect) =>
+      effect.id === effectId ? { ...effect, x: drag.x, y: drag.y } : effect,
+    );
+  }, [battle, liveDrag]);
+
   const artifactById = useMemo(() => new Map(artifacts.map((entry) => [entry.id, entry])), [artifacts]);
   const selectedToken = displayedTokens.find((token) => token.id === selectedTokenId) ?? null;
+  const selectedEffect = battle?.board.effects.find((effect) => effect.id === selectedEffectId) ?? null;
 
   function boardPointFromEvent(event: { clientX: number; clientY: number }): { x: number; y: number } {
     // Convert against the CONTENT element's post-transform rect: it bakes the
@@ -419,6 +433,7 @@ export function BattleSurface(): JSX.Element {
     ) {
       setSelectedTokenId(null);
       setSelectedVeilId(null);
+      setSelectedEffectId(null);
     }
     pinchRef.current.delete(event.pointerId);
     if (pinchRef.current.size < 2) pinchBaseRef.current = null;
@@ -564,6 +579,61 @@ export function BattleSurface(): JSX.Element {
     }
   }
 
+  // --- Effect-marker gestures (D7): the veil drag contract, keyed 'effect:' —
+  // scenery lock gates the move exactly like veils/stamps; rendering stays in
+  // BOTH views (no playerSafe gate on the pointer handlers' visual result).
+
+  function startEffectDrag(event: React.PointerEvent<HTMLDivElement>, effect: BattleEffect): void {
+    if (playerSafe || battle?.board.sceneryMovementLocked === true) return;
+    event.stopPropagation();
+    if (typeof event.currentTarget.setPointerCapture === 'function') {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    }
+    beginBoardGesture();
+    setLiveDrag({
+      tokenId: `effect:${effect.id}`,
+      x: effect.x,
+      y: effect.y,
+      movedPx: 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    });
+    setSelectedEffectId(effect.id);
+    setSelectedTokenId(null);
+    setSelectedVeilId(null);
+  }
+
+  function moveEffectDrag(event: React.PointerEvent<HTMLDivElement>): void {
+    const drag = liveDrag;
+    if (drag?.tokenId.startsWith('effect:') !== true) return;
+    const at = boardPointFromEvent(event);
+    const movedPx = Math.max(
+      drag.movedPx,
+      Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
+    );
+    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
+  }
+
+  function finishEffectDrag(): void {
+    const drag = liveDrag;
+    setLiveDrag(null);
+    if (drag?.tokenId.startsWith('effect:') !== true) return;
+    endBoardGesture();
+    const effectId = drag.tokenId.slice('effect:'.length);
+    if (drag.movedPx < DRAG_THRESHOLD_PX) return;
+    // Same drop rule as veils/tokens: the center quantizes to the effect's
+    // own sizeCells span, so its edges land on cell boundaries (D7:
+    // geometry is layout-anchored, never screen pixels).
+    const effect = battle?.board.effects.find((entry) => entry.id === effectId);
+    const snapped = snapPoint(drag.x, drag.y, { x: effect?.sizeCells ?? 1, y: effect?.sizeCells ?? 1 });
+    void commit((board) => ({
+      ...board,
+      effects: board.effects.map((entry) =>
+        entry.id === effectId ? { ...entry, x: snapped.x, y: snapped.y } : entry,
+      ),
+    }));
+  }
+
   // --- Actions ---------------------------------------------------------------
 
   function enableInitiative(): void {
@@ -592,6 +662,39 @@ export function BattleSurface(): JSX.Element {
     };
     void commit((board) => ({ ...board, veils: [...board.veils, veil] }));
     setSelectedVeilId(veil.id);
+  }
+
+  /** Geometric effect marker (D7): spawns at the board center, one cell
+   * across, first stamp color — then the GM drags/resizes it like any piece. */
+  function addEffect(shape: BattleEffectShape): void {
+    if (battle === undefined) return;
+    const color = TOKEN_STAMP_COLORS[0];
+    if (color === undefined) throw new Error('TOKEN_STAMP_COLORS is empty');
+    const effect: BattleEffect = {
+      id: crypto.randomUUID(),
+      shape,
+      x: 0.5,
+      y: 0.5,
+      sizeCells: 1,
+      color,
+      label: '',
+    };
+    void commit((board) => ({ ...board, effects: [...board.effects, effect] }));
+    setSelectedEffectId(effect.id);
+    setSelectedTokenId(null);
+    setSelectedVeilId(null);
+  }
+
+  /** Cell-quantized resize of the selected effect (min one cell). */
+  function resizeEffect(effectId: BattleEffect['id'], delta: -1 | 1): void {
+    void commit((board) => ({
+      ...board,
+      effects: board.effects.map((effect) =>
+        effect.id === effectId
+          ? { ...effect, sizeCells: Math.max(1, effect.sizeCells + delta) }
+          : effect,
+      ),
+    }));
   }
 
   async function applyHp(token: BattleToken, delta: number): Promise<boolean> {
@@ -768,6 +871,16 @@ export function BattleSurface(): JSX.Element {
           addVeil('fog');
         }} disabled={playerSafe}>
           Fog
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => {
+          addEffect('disc');
+        }} disabled={playerSafe} data-testid="add-effect-disc">
+          Disc
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => {
+          addEffect('square');
+        }} disabled={playerSafe} data-testid="add-effect-square">
+          Square
         </Button>
         <Button
           size="sm"
@@ -1010,6 +1123,25 @@ export function BattleSurface(): JSX.Element {
                   }}
                 />
               ))}
+              {/* Effect markers (D7) — board material in BOTH views, under
+                  the tokens so fighters stay readable above the fill. */}
+              {displayedEffects.map((effect) => (
+                <EffectView
+                  key={effect.id}
+                  effect={effect}
+                  content={contentPx}
+                  cellWidthPx={cellWidthPx}
+                  cellHeightPx={cellHeightPx}
+                  selected={effect.id === selectedEffectId}
+                  dragging={liveDrag?.tokenId === `effect:${effect.id}`}
+                  draggable={!playerSafe && !board.sceneryMovementLocked}
+                  onPointerDown={(event) => {
+                    startEffectDrag(event, effect);
+                  }}
+                  onPointerMove={moveEffectDrag}
+                  onPointerUp={finishEffectDrag}
+                />
+              ))}
               {/* Tokens — covered/hidden are REMOVED in player view, never dimmed */}
               {displayedTokens.map((token) => (
                 <TokenView
@@ -1141,6 +1273,51 @@ export function BattleSurface(): JSX.Element {
               <TrashIcon aria-hidden data-icon="inline-start" />
               Delete veil
             </Button>
+          )}
+          {selectedEffect !== null && !playerSafe && (
+            <div className="flex gap-1" data-testid="effect-controls">
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1"
+                aria-label="Grow effect"
+                data-testid="grow-effect"
+                onClick={() => {
+                  resizeEffect(selectedEffect.id, 1);
+                }}
+              >
+                <PlusIcon aria-hidden />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1"
+                aria-label="Shrink effect"
+                data-testid="shrink-effect"
+                disabled={selectedEffect.sizeCells <= 1}
+                onClick={() => {
+                  resizeEffect(selectedEffect.id, -1);
+                }}
+              >
+                <MinusIcon aria-hidden />
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="flex-1 text-destructive"
+                aria-label="Delete effect"
+                data-testid="delete-effect"
+                onClick={() => {
+                  void commit((current) => ({
+                    ...current,
+                    effects: current.effects.filter((effect) => effect.id !== selectedEffect.id),
+                  }));
+                  setSelectedEffectId(null);
+                }}
+              >
+                <TrashIcon aria-hidden />
+              </Button>
+            </div>
           )}
           {!board.initiativeEnabled && !playerSafe && (
             <p className="text-xs text-zinc-500">
@@ -1413,6 +1590,76 @@ function VeilView({
             }}
           />
         ))}
+    </div>
+  );
+}
+
+interface EffectViewProps {
+  effect: BattleEffect;
+  content: { w: number; h: number };
+  cellWidthPx: number;
+  cellHeightPx: number;
+  selected: boolean;
+  dragging: boolean;
+  draggable: boolean;
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+}
+
+/**
+ * A geometric effect marker (D7, encounter-resume arc): a disc or square
+ * zone whose fill renders at ~70% transparency (fill alpha 0x4d ≈ 30%,
+ * border alpha 0xcc ≈ 80% — static values, never animated: selection reads
+ * via outline + lift, the veil contract). Geometry is layout-anchored — the
+ * span is `sizeCells` grid cells in the content frame, never screen pixels.
+ * Board material: it renders in BOTH GM and player views (the showpiece is
+ * FOR the table); the optional label carries no stat text, so the
+ * player-safe DOM contract holds.
+ */
+function EffectView({
+  effect,
+  content,
+  cellWidthPx,
+  cellHeightPx,
+  selected,
+  dragging,
+  draggable,
+  onPointerDown,
+  onPointerMove,
+  onPointerUp,
+}: EffectViewProps): JSX.Element | null {
+  if (content.w === 0 || content.h === 0) return null;
+  const widthPct = ((effect.sizeCells * cellWidthPx) / content.w) * 100;
+  const heightPct = ((effect.sizeCells * cellHeightPx) / content.h) * 100;
+  return (
+    <div
+      className={cn(
+        'absolute -translate-x-1/2 -translate-y-1/2 touch-none border-2',
+        effect.shape === 'disc' ? 'rounded-full' : 'rounded-sm',
+        (selected || dragging) && 'ring-2 ring-amber-400',
+        dragging && 'z-20',
+        draggable ? 'cursor-grab' : 'cursor-default',
+      )}
+      style={{
+        left: `${String(effect.x * 100)}%`,
+        top: `${String(effect.y * 100)}%`,
+        width: `${String(widthPct)}%`,
+        height: `${String(heightPct)}%`,
+        backgroundColor: `${effect.color}4d`,
+        borderColor: `${effect.color}cc`,
+      }}
+      data-testid="battle-effect"
+      data-effect-shape={effect.shape}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+    >
+      {effect.label.length > 0 && (
+        <span className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-[10px] font-medium text-zinc-100 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
+          {effect.label}
+        </span>
+      )}
     </div>
   );
 }

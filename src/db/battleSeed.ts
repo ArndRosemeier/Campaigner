@@ -233,6 +233,7 @@ export async function seedBattleFromEncounter(
       everLive: false,
       tokens: rosterTokens,
       veils,
+      effects: [],
       gridSize: GRID_SIZE_DEFAULT,
       tokenSize: 64,
       sceneryMovementLocked: false,

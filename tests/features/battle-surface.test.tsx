@@ -1202,6 +1202,164 @@ describe('re-seed + provenance (encounter-resume arc)', () => {
   });
 });
 
+describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => {
+  it('adds a disc from the toolbar and renders it in BOTH views at ~70% transparent fill', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('add-effect-disc'));
+    await flushAsyncUpdates();
+    const effect = screen.getByTestId('battle-effect');
+    expect(effect).toHaveAttribute('data-effect-shape', 'disc');
+    // ~70% transparent: the fill carries alpha 0x4d (≈30% opacity) and the
+    // border reads at 0xcc — static values, never opacity swings. (jsdom
+    // normalizes the 8-digit hex to rgba.)
+    expect(effect.style.backgroundColor).toBe('rgba(255, 0, 0, 0.3)');
+    expect(effect.style.borderColor).toBe('rgba(255, 0, 0, 0.8)');
+    const row = await currentBattle(moduleId);
+    expect(row.board.effects).toHaveLength(1);
+    expect(row.board.effects[0]?.shape).toBe('disc');
+    expect(row.board.effects[0]?.sizeCells).toBe(1);
+    // Player view: the marker is board material — still on the table, but
+    // the GM-only creation affordances are disabled.
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('battle-effect')).toBeInTheDocument();
+    expect(screen.getByTestId('add-effect-disc')).toBeDisabled();
+  });
+
+  it('drags an effect with a live position and commits the snapped drop exactly once', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const effectId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ffe600', label: '' }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const effectEl = screen.getByTestId('battle-effect');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    fireEvent.pointerDown(effectEl, { pointerId: 7, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerMove(effectEl, { pointerId: 7, clientX: cx(0.55), clientY: cy(0.62) });
+    await flushAsyncUpdates();
+    // The LOCAL marker follows the pointer, lifted while dragging.
+    expect(Number.parseFloat(effectEl.style.left) / 100).toBeCloseTo(0.55, 9);
+    expect(Number.parseFloat(effectEl.style.top) / 100).toBeCloseTo(0.62, 9);
+    expect(effectEl.className).toContain('z-20');
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    // Release: exactly one commit, snapped like a token/veil drop.
+    fireEvent.pointerUp(effectEl, { pointerId: 7 });
+    await flushAsyncUpdates();
+    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    const after = await currentBattle(moduleId);
+    const dropped = after.board.effects.find((entry) => entry.id === effectId);
+    if (dropped === undefined) throw new Error('effect vanished');
+    // Drop fraction (0.55, 0.62) → a 1×1 span quantizes its center to the
+    // middle of a 72px cell: (468/800, 252/450) = (0.585, 0.56).
+    expect(dropped.x).toBeCloseTo(0.585, 9);
+    expect(dropped.y).toBeCloseTo(0.56, 9);
+    // The marker's EDGES land on cell boundaries (center ≡ ½cell mod cell).
+    expect(Math.abs((dropped.x * BOARD_W - 36) % 72)).toBeLessThan(1e-6);
+    expect(Math.abs((dropped.y * CONTENT_H - 36) % 72)).toBeLessThan(1e-6);
+  });
+
+  it('resizes and deletes the selected effect from the rail (GM view only)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const effectId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        effects: [{ id: effectId, shape: 'disc', x: 0.7, y: 0.4, sizeCells: 1, color: '#000000', label: '' }],
+      });
+      await flushAsyncUpdates();
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('battle-effect'));
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('effect-controls')).toBeInTheDocument();
+    await user.click(screen.getByTestId('grow-effect'));
+    await flushAsyncUpdates();
+    expect((await currentBattle(moduleId)).board.effects[0]?.sizeCells).toBe(2);
+    await user.click(screen.getByTestId('shrink-effect'));
+    await flushAsyncUpdates();
+    expect((await currentBattle(moduleId)).board.effects[0]?.sizeCells).toBe(1);
+    await user.click(screen.getByTestId('delete-effect'));
+    await flushAsyncUpdates();
+    expect((await currentBattle(moduleId)).board.effects).toHaveLength(0);
+    expect(screen.queryByTestId('effect-controls')).toBeNull();
+  });
+
+  it('scenery lock blocks effect drags — no movement, no commit', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const effectId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        sceneryMovementLocked: true,
+        effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const effectEl = screen.getByTestId('battle-effect');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    fireEvent.pointerDown(effectEl, { pointerId: 9, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerMove(effectEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
+    fireEvent.pointerUp(effectEl, { pointerId: 9 });
+    await flushAsyncUpdates();
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    const after = await currentBattle(moduleId);
+    expect(after.board.effects.find((entry) => entry.id === effectId)?.x).toBe(0.3);
+  });
+
+  it('stage reset restores removed effects from the snapshot', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('add-effect-square'));
+    await flushAsyncUpdates();
+    await user.click(screen.getByTestId('set-stage'));
+    await user.click(screen.getByTestId('confirm-stage'));
+    await flushAsyncUpdates();
+    // Drift: remove the effect entirely.
+    const drifted = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(drifted.id, { ...drifted.board, effects: [] });
+      await flushAsyncUpdates();
+    });
+    expect(screen.queryByTestId('battle-effect')).toBeNull();
+    await user.click(screen.getByTestId('reset-stage'));
+    await flushAsyncUpdates();
+    const restored = screen.getByTestId('battle-effect');
+    expect(restored).toHaveAttribute('data-effect-shape', 'square');
+  });
+});
+
 describe('stage snapshot', () => {
   it('resets to the saved opening layout through the toolbar', async () => {
     const { moduleId } = await seedStandardBattle();

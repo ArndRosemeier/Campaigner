@@ -473,6 +473,16 @@ describe('scrub & stage reset', () => {
     expect(reset.initiativeOrder).toEqual([]);
   });
 
+  it('carries effect markers through capture, clone and reset (D7)', () => {
+    const effect = { id: newId(), shape: 'disc' as const, x: 0.5, y: 0.5, sizeCells: 2, color: '#ff0000', label: 'Web' };
+    const opened: BattleBoard = { ...emptyBoard(), effects: [effect] };
+    const stage = captureStageSnapshot(opened);
+    expect(stage.effects).toEqual([effect]);
+    const drifted: BattleBoard = { ...opened, effects: [] };
+    const reset = applyStageReset(drifted, cloneStageSnapshot(stage), stats, []);
+    expect(reset.effects).toEqual([effect]);
+  });
+
   it('carries the entrance through capture, clone and reset (doc 11)', () => {
     const entrance = { x: 0.125, y: 0.041666666666666664, side: 'north' as const };
     const opened: BattleBoard = {

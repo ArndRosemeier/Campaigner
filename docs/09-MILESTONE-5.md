@@ -344,6 +344,14 @@ could see.*
   touched edge to the grid, center-preserving (resizeVeilFromEdge).
   Drag-resize is deferred to the tablet-hardening pass (see 05-UI
   §Tablet).*
+- Effect markers (D8, added 2026-09-06 by the encounter-resume arc):
+  **Disc**/**Square** toolbar stamps — a geometric form spawns at the board
+  center one cell across in the first stamp color, then drags with the veil
+  contract (live local position, zero writes mid-drag, one snap-quantized
+  commit on release). Selected markers grow/shrink (cell-quantized, min one
+  cell) and delete from the rail; scenery lock gates their moves like veils;
+  the fill renders at ~70% transparency and the marker is board material in
+  BOTH views (D8); the stage snapshot captures and restores them.
 - Stage: **⚑ Set stage** (confirm) captures the snapshot; **↻ Reset**
   restores geometry, clears initiative, resets NPC instance HP to artifact
   max, re-spawns missing PCs at the staging ground, stays live.
