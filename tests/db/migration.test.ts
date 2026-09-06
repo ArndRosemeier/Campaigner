@@ -827,3 +827,90 @@ describe('v14 → v15 migration (dungeon preset, docs/11 D10)', () => {
     await db.delete();
   }, 20000);
 });
+
+describe('v15 → v16 migration (one live battle per module)', () => {
+  it('rebuilds the battles moduleId index as UNIQUE and preserves rows', async () => {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(15).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, moduleId',
+      pdfFiles: 'id, &bookId',
+      settings: 'id',
+    });
+    await legacy.open();
+    const campaignId = '00000000-0000-4000-8000-00000000c616';
+    const moduleId = '00000000-0000-4000-8000-000000000b16';
+    await legacy.table('campaigns').put({
+      id: campaignId,
+      name: 'Battle migration',
+      system: 'dnd5e',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('battles').put({
+      id: '00000000-0000-4000-8000-00000000f616',
+      campaignId,
+      moduleId,
+      encounterArtifactId: null,
+      seedFighters: [],
+      board: {
+        mapImageId: null,
+        mapLayout: null,
+        live: false,
+        everLive: false,
+        tokens: [],
+        veils: [],
+        effects: [],
+        gridSize: null,
+        tokenSize: 64,
+        sceneryMovementLocked: false,
+        initiativeEnabled: false,
+        initiativeOrder: [],
+        activeIndex: 0,
+        stage: null,
+        stagingGround: null,
+        entrance: null,
+      },
+      reseed: null,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB rebuilds the battles indexes — the
+    // surviving row is untouched and still parses against the battle schema.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const battle = await db.battles.get('00000000-0000-4000-8000-00000000f616');
+    expect(battle?.moduleId).toBe(moduleId);
+    const { battleSchema } = await import('@/domain');
+    expect(battleSchema.parse(battle).moduleId).toBe(moduleId);
+
+    // The UNIQUE `&moduleId` index is live: a second row claiming the same
+    // module's one live battle is refused by the schema itself.
+    await expect(
+      db.battles.put({ ...battle, id: '00000000-0000-4000-8000-00000000f617' } as never),
+    ).rejects.toMatchObject({ name: 'ConstraintError' });
+    // A different module still gets its own battle.
+    await expect(
+      db.battles.put({
+        ...battle,
+        id: '00000000-0000-4000-8000-00000000f618',
+        moduleId: '00000000-0000-4000-8000-00000000b617',
+      } as never),
+    ).resolves.toBeDefined();
+    await db.delete();
+  }, 20000);
+});

@@ -44,9 +44,27 @@ export async function saveBattle(battle: Battle): Promise<Battle> {
   return normalized;
 }
 
+/** Whether `error` is a Dexie unique-index violation (fake-indexeddb
+ * surfaces the same name on its DOMException) — the loser of a concurrent
+ * get-or-create re-reads the winner's row instead of failing. */
+function isConstraintError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'name' in error &&
+    (error as { name?: unknown }).name === 'ConstraintError'
+  );
+}
+
 /**
  * One live battle per module (the module reader is the play view).
  * Returns the existing row or lazily creates an empty prep board.
+ *
+ * Concurrency: two seeds racing for the same module both see "no row" and
+ * both attempt a save — the UNIQUE `&moduleId` index (Dexie v16) elects one
+ * writer and the loser catches the ConstraintError and re-reads the
+ * winner's battle (idempotent get-or-create; the index is the arbiter, the
+ * re-read keeps every caller on the shared row).
  */
 export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle> {
   const existing = await db.battles.where('moduleId').equals(moduleId).first();
@@ -80,7 +98,14 @@ export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle
       entrance: null,
     },
   };
-  return saveBattle(created);
+  try {
+    return await saveBattle(created);
+  } catch (error) {
+    if (!isConstraintError(error)) throw error;
+    const winner = await db.battles.where('moduleId').equals(moduleId).first();
+    if (winner === undefined) throw error;
+    return parseBattleRow(winner);
+  }
 }
 
 export async function getBattle(id: Id): Promise<Battle | undefined> {

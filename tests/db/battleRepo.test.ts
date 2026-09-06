@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createArtifact,
@@ -109,6 +109,65 @@ describe('ensureBattle', () => {
     expect(await getBattleByModule(moduleId)).toBeDefined();
     const other = await ensureBattle(campaignId, newId());
     expect(other.id).not.toBe(first.id);
+  });
+
+  /**
+   * Race window pin (F5): the UNIQUE `&moduleId` index (Dexie v16) is the
+   * arbiter of "one live battle per module". A stale pre-put read (the
+   * concurrent-seed window) makes the second save hit the unique index —
+   * ensureBattle catches the ConstraintError and re-reads the winner's row
+   * instead of materializing a second battle. The rejection here is a
+   * name-exact ConstraintError; the REAL unique-index violation fires in
+   * the concurrent pin below and in the v15→v16 golden migration test.
+   */
+  it('converges on the winner when a stale read loses the unique race', async () => {
+    const moduleId = newId();
+    const winner = await ensureBattle(campaignId, moduleId);
+
+    const staleViolation = Object.assign(new Error('unique index violation'), {
+      name: 'ConstraintError',
+    });
+    const putSpy = vi.spyOn(db.battles, 'put').mockRejectedValueOnce(staleViolation);
+    try {
+      const raced = await ensureBattle(campaignId, moduleId);
+      expect(raced.id).toBe(winner.id);
+      expect(await db.battles.where('moduleId').equals(moduleId).count()).toBe(1);
+    } finally {
+      putSpy.mockRestore();
+    }
+  });
+
+  /**
+   * Deterministic deferred-promise interleave: both seeds' PUTS are parked
+   * on a gate that opens when the second put registers. By then both pre-put
+   * reads have completed and both saw an empty module — the real unique
+   * index then elects the first writer and the loser converges on its row.
+   */
+  it('two concurrent seeds for one module converge on one battle', async () => {
+    const moduleId = newId();
+    let parkedPuts = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const realPut = db.battles.put.bind(db.battles);
+    const putSpy = vi
+      .spyOn(db.battles, 'put')
+      .mockImplementation(((value: Battle) => {
+        parkedPuts += 1;
+        if (parkedPuts === 2) release();
+        return gate.then(() => realPut(value));
+      }) as never);
+    try {
+      const [first, second] = await Promise.all([
+        ensureBattle(campaignId, moduleId),
+        ensureBattle(campaignId, moduleId),
+      ]);
+      expect(second.id).toBe(first.id);
+      expect(await db.battles.where('moduleId').equals(moduleId).count()).toBe(1);
+    } finally {
+      putSpy.mockRestore();
+    }
   });
 });
 

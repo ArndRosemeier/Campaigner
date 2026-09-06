@@ -7,6 +7,7 @@ import {
   stampModuleOwnership,
   type RevisionMeta,
 } from '@/db/artifactRepo';
+import { db } from '@/db/db';
 
 /**
  * Mob artifacts (owner-ratified mob-artifact arc): a creature the encounter
@@ -50,6 +51,14 @@ export async function findMobArtifactByChunk(
  * verbatim, mirroring `materializeMonsterNpc`). An empty name is a loud
  * error — never an unnamed artifact (AGENTS rule 1). `cache` deduplicates
  * repeated citations of the same chunk within one caller (one run/seed).
+ *
+ * Concurrency: scan + create run in ONE rw transaction (artifacts +
+ * revisions — the nested createArtifact joins as a subset). Two concurrent
+ * get-or-creates for the same chunk serialize: the loser's scan sees the
+ * winner's committed row and reuses it. The previous check-then-act across
+ * two unrelated transactions could materialize TWO mob artifacts for one
+ * cited chunk, splitting token identity and portraits (the ratified
+ * ONE-artifact-per-chunk rule, docs/11 D5 amendment).
  */
 export async function getOrCreateMobArtifact(
   campaignId: Id,
@@ -65,25 +74,27 @@ export async function getOrCreateMobArtifact(
   const cached = cache?.get(chunkId);
   if (cached !== undefined) return cached;
 
-  const existing = await findMobArtifactByChunk(campaignId, chunkId);
-  if (existing !== undefined) {
-    cache?.set(chunkId, existing.id);
-    return existing.id;
-  }
+  return db.transaction('rw', [db.artifacts, db.revisions], async () => {
+    const existing = await findMobArtifactByChunk(campaignId, chunkId);
+    if (existing !== undefined) {
+      cache?.set(chunkId, existing.id);
+      return existing.id;
+    }
 
-  const created = await createArtifact(
-    {
-      campaignId,
-      kind: 'npc',
-      name: trimmedName,
-      // Name + marker only — the chunk's stat block is the source of truth,
-      // so nothing is copied (no stat duplication, no drift).
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: chunkId },
-    },
-    meta,
-  );
-  cache?.set(chunkId, created.id);
-  return created.id;
+    const created = await createArtifact(
+      {
+        campaignId,
+        kind: 'npc',
+        name: trimmedName,
+        // Name + marker only — the chunk's stat block is the source of truth,
+        // so nothing is copied (no stat duplication, no drift).
+        data: { appearance: '', personality: '', statBlock: null, monsterChunkId: chunkId },
+      },
+      meta,
+    );
+    cache?.set(chunkId, created.id);
+    return created.id;
+  });
 }
 
 export interface SpawnResult {

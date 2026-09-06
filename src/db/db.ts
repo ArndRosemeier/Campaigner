@@ -473,6 +473,33 @@ export class CampaignerDB extends Dexie {
           if (setting.encounterPreset === undefined) setting.encounterPreset = 'standard';
         });
       });
+
+    // Uniqueness for the "one live battle per module" invariant (M6-E): the
+    // `moduleId` index becomes UNIQUE (`&moduleId`) — a REAL schema change,
+    // hence the version bump (index rebuild), unlike the additive-default
+    // bumps around it. ensureBattle's read-then-create window could
+    // materialize two live battles for one module under concurrent seeds;
+    // the index makes the second put fail loudly (ConstraintError) and the
+    // repo converge on the winner's row. No upgrade function: v11 cleared
+    // every battle row and rows created since always carry a moduleId, so
+    // no duplicate can exist to violate the new index — the rebuild itself
+    // is the migration (golden test in tests/db/migration.test.ts).
+    this.version(16).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      settings: 'id',
+    });
   }
 }
 

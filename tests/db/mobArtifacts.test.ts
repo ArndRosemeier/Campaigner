@@ -239,3 +239,48 @@ describe('spawnMobArtifactIntoModule', () => {
     expect((await getArtifact(artifactId))?.moduleId).toBe(crypt.id);
   });
 });
+
+/**
+ * Race window pin (F5): the scan + create run in ONE rw transaction, so
+ * concurrent get-or-creates for the same chunk serialize on it and converge
+ * on ONE artifact (the ratified one-artifact-per-chunk rule). The previous
+ * check-then-act across two transactions could materialize duplicates.
+ */
+describe('getOrCreateMobArtifact concurrency', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    campaignId = (await createCampaign({ name: 'Mob concurrency', system: 'dnd5e' })).id;
+  });
+
+  it('eight concurrent get-or-creates for one chunk converge on one artifact', async () => {
+    const { chunkId } = await seedGoblinChunk();
+    const ids = await Promise.all(
+      Array.from({ length: 8 }, () => getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss')),
+    );
+    expect(new Set(ids).size).toBe(1);
+    const mobs = (await listArtifactsByCampaign(campaignId)).filter(
+      (artifact) => artifact.kind === 'npc' && artifact.data.monsterChunkId === chunkId,
+    );
+    expect(mobs).toHaveLength(1);
+  });
+
+  it('structurally wraps the scan+create in a single rw transaction', async () => {
+    const { chunkId } = await seedGoblinChunk();
+    const calls: unknown[][] = [];
+    const original = db.transaction.bind(db) as (...args: unknown[]) => unknown;
+    const target = db as unknown as { transaction: (...args: unknown[]) => unknown };
+    target.transaction = (...args: unknown[]) => {
+      calls.push(args);
+      return original(...args);
+    };
+    try {
+      await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
+    } finally {
+      target.transaction = original;
+    }
+    // Exactly one call passes the table ARRAY (the outer get-or-create tx);
+    // createArtifact's nested tx passes the tables variadically.
+    const arrayForm = calls.filter((args) => args[0] === 'rw' && Array.isArray(args[1]));
+    expect(arrayForm).toHaveLength(1);
+  });
+});
