@@ -252,6 +252,7 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
       mapImageId: null,
       layout: null,
       preset: 'standard',
+      locationKind: 'other',
     },
   });
   const module = await saveModule(
@@ -409,6 +410,7 @@ describe('token render size', () => {
         mapImageId: null,
         layout,
         preset: 'standard',
+        locationKind: 'other',
       },
     });
     const module = await saveModule(
@@ -1749,6 +1751,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
         mapImageId: null,
         layout,
         preset: 'standard',
+        locationKind: 'other',
       },
     });
     const module = await saveModule(

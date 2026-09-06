@@ -548,7 +548,11 @@ describe('PersonaPanel run lifecycle', () => {
     await setAutonomy(user, 'Manual');
     await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: cartographer.name }));
-    // The Dungeon preset rides Settings (genuine preference) like the aspect.
+    // Auto is the DEFAULT (docs/11 D10 amendment): each encounter's own
+    // locationKind decides its tier, the Settings choice only backstops.
+    expect(screen.getByRole('combobox', { name: 'Preset' })).toHaveTextContent('Auto');
+    // An explicit Dungeon choice still overrides, riding Settings (genuine
+    // preference) like the aspect.
     await user.click(screen.getByRole('combobox', { name: 'Preset' }));
     await user.click(await screen.findByRole('option', { name: 'Dungeon' }));
     const { readSettings } = await import('@/db/settingsRepo');
@@ -560,7 +564,10 @@ describe('PersonaPanel run lifecycle', () => {
     await user.type(screen.getByLabelText('Brief'), 'a dungeon crawl beneath the keep');
     await user.click(screen.getByTestId('start-run'));
     const run = await getRun(await onlyRunId());
-    expect(run?.encounterPreset).toBe('dungeon');
+    // The run row persists the EXPLICIT choice only — a fresh panel run is
+    // Auto (null) even when Settings says Dungeon; the brief step stamps the
+    // resolved tier (settings fallback for an unclassified fresh encounter).
+    expect(run?.encounterPreset).toBeNull();
     await flushAsyncUpdates();
     await runEngine.cancel(await onlyRunId());
     await flushAsyncUpdates();
@@ -1139,6 +1146,7 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
         mapImageId: null,
         layout: null,
         preset: 'standard',
+        locationKind: 'other',
       },
     });
 

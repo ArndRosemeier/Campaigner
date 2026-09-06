@@ -538,6 +538,7 @@ describe('runEngine', () => {
         mapImageId: null,
         layout: null,
         preset: 'standard',
+        locationKind: 'other',
       },
     });
 

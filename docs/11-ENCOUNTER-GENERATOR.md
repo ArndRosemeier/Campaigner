@@ -44,7 +44,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. The vision check only flags drift for human review — it can never repair or invent geometry. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
 | D9 | **Room keys & mob treasure are GM-only text that travels with its structure** (owner-ratified, 2026-09-07): every layout room carries additive `key`/`keyTreasure` (persisted ON the room — `packRooms` rotates brief rooms, so a parallel roomId-keyed array would orphan), every roster entry carries additive `treasure` (persisted ON the entry — the editor removes roster rows, so an index-keyed array would orphan). The encounter editor edits them; battle seed freezes roster `treasure` onto each token (frozen-copy precedent, initiativeBonus); the battle surface renders GM-only key markers at room staging points + a rail key card + a GM-only token-treasure block — none of which mounts in player view (M5-D contract, 09 amendment). Map regeneration replaces room keys with the fresh brief's (accepted, stated in UI copy and the prompt clause). |
-| D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). |
+| D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). **D10 amendment (locationKind, owner-ratified)**: encounters classify themselves — the encounter persona's EXISTING draft call gains a bounded `locationKind` (`'dungeon' | 'building' | 'wilderness' | 'other'`, persisted additively on the encounter artifact, owner-correctable in the editor, no extra LLM call), and the preset resolves per encounter: **explicit per-run choice > the encounter's own `locationKind` (`'dungeon'` → Dungeon tier, `'building'`/`'wilderness'` → Standard) > the Settings fallback** for unclassified (`'other'`) rows. The persona-panel Preset select gains **Auto** as its default (self-classification is the norm; Standard/Dungeon remain explicit overrides). See "D10 amendment — per-encounter locationKind" below. |
 
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
 
@@ -532,8 +532,10 @@ renders at 85px/cell, inside the 4096px map cap).
   pattern), `encounterPreset` in Settings. Dexie **v15** backfills the
   additive defaults (`'standard'` / `null` / `'standard'` — the M5-C
   `mapImageId` pattern).
-- **Run-engine threading** (4bf06b6): the preset resolves run row →
-  `StartRunInput` → Settings; `startRun` persists it for pauses/resumes;
+- **Run-engine threading** (4bf06b6; amended by the locationKind arc): the
+  preset resolves **explicit per-run choice → the encounter's locationKind →
+  Settings** (`resolveEncounterPreset`); `startRun` persists only an EXPLICIT
+  choice (null = Auto) for pauses/resumes;
   the brief step stamps it next to `aspect` and, for Dungeon, adds a soft
   contract clause ("connected dungeon complex of 4–8 rooms joined by
   corridors; the entry room is the party's way in") — the geometry itself
@@ -541,17 +543,43 @@ renders at 85px/cell, inside the 4096px map cap).
   preset's tier, the stylize staging rebuild re-tiers identically, and
   finalize writes the run's preset into the artifact data in BOTH branches
   (fresh create and regenerate — the run is authoritative for the map it
-  just produced). The unattended module queue passes
-  `settings.encounterPreset`: module generation only produces dungeons when
-  the campaign opted in.
-- **UI** (d69455e): the persona panel gains a Settings-backed Preset select
-  beside Map aspect (one-line hint: connected multi-room complex, finer
-  grid). A **regenerate keeps the target encounter's own preset** — the
+  just produced; an in-place Smith content fill keeps the target's preset —
+  it never re-tiers the map on file). The unattended queue passes NO explicit
+  choice: the job's preset resolves from the encounter's own `locationKind`,
+  with `settings.encounterPreset` backstopping unclassified rows.
+- **UI** (d69455e; amended): the persona panel's Settings-backed Preset
+  select beside Map aspect defaults to **Auto**; Standard/Dungeon force the
+  tier. A **regenerate keeps the target encounter's own preset** — the
   panel passes the target's preset over the Settings value, so an existing
   map is never silently re-tiered (stated in the regenerate-target copy:
   "keeping its map preset"); the images section captions a dungeon map
   "Dungeon layout on file".
 
+## D10 amendment — per-encounter locationKind (owner-ratified)
+
+The Dungeon preset originally resolved from one global Settings value: an
+unattended queue run could only produce dungeons when the campaign opted in
+for EVERY map, and an encounter's actual setting (a cellar vs. a river
+crossing) played no role. The amendment lets encounters classify themselves:
+
+- **Classification rides the EXISTING draft call** — no extra LLM call, no
+  verification pass. The Encounter Smith's draft contract gains a bounded
+  `locationKind: 'dungeon' | 'building' | 'wilderness' | 'other'`
+  (case-insensitive coercion, `'other'` default when the model declines);
+  the Cartographer's brief already stages `environment` ('dungeon' |
+  'outdoor') and it maps onto the artifact as dungeon/wilderness.
+- **Persistence is additive**: `locationKind` on the encounter artifact data
+  with the `'other'` zod default — legacy rows parse without a Dexie bump
+  (the M5-C `mapImageId` pattern). The encounter editor shows a small
+  owner-correctable selector beside the map fields.
+- **Resolution order** (`resolveEncounterPreset`): explicit per-run choice
+  (the run row's persisted preset; Auto writes null) → the encounter's own
+  `locationKind` ('dungeon' → Dungeon tier; 'building'/'wilderness' →
+  Standard) → the Settings fallback for unclassified rows, with 'standard'
+  as the terminal default. The persona-panel select writes Settings (null =
+  Auto, the default); a fresh panel run passes NO preset so the chain — not
+  a coerced Settings value — decides; a regenerate keeps the target's own
+  persisted preset (D10's "never silently re-tiered" rule, unchanged).
 ## Implementation record
 
 Implemented in full on the M6 baseline: deterministic layout and schematic,

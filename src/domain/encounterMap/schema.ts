@@ -17,6 +17,45 @@ export type EncounterRoomSize = z.infer<typeof encounterRoomSizeSchema>;
 export const encounterPresetSchema = z.enum(['standard', 'dungeon']);
 export type EncounterPreset = z.infer<typeof encounterPresetSchema>;
 
+/**
+ * Where an encounter takes place, classified by the encounter persona in its
+ * EXISTING draft call (no extra LLM call, no verification pass — docs/11
+ * D10 amendment). Persisted on the encounter artifact; owner-correctable in
+ * the encounter editor. `'other'` is the unclassified value: legacy rows and
+ * drafts that decline to classify parse to it via the zod default.
+ */
+export const encounterLocationKindSchema = z.enum([
+  'dungeon',
+  'building',
+  'wilderness',
+  'other',
+]);
+export type EncounterLocationKind = z.infer<typeof encounterLocationKindSchema>;
+
+/**
+ * The D10 preset resolution order (docs/11 D10 amendment):
+ * 1. an explicit per-run choice (the run row's persisted preset — the
+ *    persona-panel Auto select writes null here, Standard/Dungeon override),
+ * 2. the encounter's own `locationKind` — `'dungeon'` generates on the D10
+ *    dungeon tier, `'building'`/`'wilderness'` on the standard tier,
+ * 3. `settings.encounterPreset` as the fallback for unclassified
+ *    (`'other'`/unknown) encounters — the legacy opt-in keeps its meaning.
+ *
+ * `explicit` is null/undefined = Auto (no per-run override); the settings
+ * fallback is null when the campaign never chose a preset — the terminal
+ * default is 'standard' (the D10 base tier).
+ */
+export function resolveEncounterPreset(
+  explicit: EncounterPreset | null | undefined,
+  locationKind: EncounterLocationKind | null | undefined,
+  settingsFallback: EncounterPreset | null | undefined,
+): EncounterPreset {
+  if (explicit !== null && explicit !== undefined) return explicit;
+  if (locationKind === 'dungeon') return 'dungeon';
+  if (locationKind === 'building' || locationKind === 'wilderness') return 'standard';
+  return settingsFallback ?? 'standard';
+}
+
 export const layoutRectSchema = z.object({
   x: z.number().int().min(0),
   y: z.number().int().min(0),

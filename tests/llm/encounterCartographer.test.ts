@@ -504,7 +504,7 @@ describe('Encounter Cartographer run', () => {
         difficulty: 'old', levelHint: '2',
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
-        mapImageId: null, layout: null, preset: 'standard',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
       },
     });
     if (target.kind !== 'encounter') throw new Error('encounter target missing');
@@ -579,7 +579,7 @@ describe('Encounter Cartographer run', () => {
         difficulty: 'old', levelHint: '2',
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
-        mapImageId: null, layout: null, preset: 'standard',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
       },
     });
     // The model echoes the roster but decorates it with a stub inline stat
@@ -615,7 +615,7 @@ describe('Encounter Cartographer run', () => {
         difficulty: 'old', levelHint: '2',
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
-        mapImageId: null, layout: null, preset: 'standard',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
       },
     });
     chatMock.mockResolvedValue({ text: JSON.stringify({
@@ -689,7 +689,7 @@ describe('Encounter Cartographer run', () => {
       links: [],
       data: {
         difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
-        mapImageId: null, layout: null, preset: 'standard',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
       },
     });
     const runInput = input(campaign, cartographer, target.id);
@@ -1071,7 +1071,10 @@ describe('Encounter Cartographer run', () => {
       chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
       const runInput = input(campaign, cartographer);
       const runId = await runEngine.startRun(runInput);
-      expect((await getRun(runId))?.encounterPreset).toBe('standard');
+      // D10 amendment: no explicit choice means Auto — the run row persists
+      // null and the brief's resolution chain decides (no target here, no
+      // Settings choice → the 'standard' terminal default).
+      expect((await getRun(runId))?.encounterPreset).toBeNull();
 
       await waitFor(() => {
         expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);

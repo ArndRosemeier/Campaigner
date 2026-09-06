@@ -28,8 +28,8 @@ const nodeTestGlobs = [
   // db (all 17 — m2kinds/battleSeed are .tsx but pure-Dexie, no rendering)
   'tests/db/**/*.test.ts',
   'tests/db/{m2kinds,battleSeed}.test.tsx',
-  // domain (11 of 12 — encounterMap draws on canvas)
-  'tests/domain/{artifact-ownership,battle-engine,battle-pointer-frame,create-defaults,encounterNeonDetector,entityNormalization}.test.ts',
+  // domain (12 of 13 — encounterMap draws on canvas)
+  'tests/domain/{artifact-ownership,battle-engine,battle-pointer-frame,create-defaults,encounterNeonDetector,encounter-location-kind,entityNormalization}.test.ts',
   'tests/domain/{itemData,module,pc-artifact,settings-onboarding,wikiGraph}.test.ts',
   // lib (8 of 13 — file-picker/globalErrors touch window, imageAspect/
   // imageIntake use canvas, graphLayout renders)

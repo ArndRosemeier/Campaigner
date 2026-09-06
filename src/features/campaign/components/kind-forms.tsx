@@ -2,6 +2,7 @@ import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import type { AnyArtifact,
   EncounterArtifactData,
@@ -502,6 +503,42 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
         }}
       />
       <MonsterStatblocksPanel monsters={data.monsters} />
+      <Field label="Location kind">
+        <Select
+          value={data.locationKind}
+          items={{
+            dungeon: 'Dungeon',
+            building: 'Building',
+            wilderness: 'Wilderness',
+            other: 'Other / unclassified',
+          }}
+          onValueChange={(value) => {
+            if (
+              value === 'dungeon' ||
+              value === 'building' ||
+              value === 'wilderness' ||
+              value === 'other'
+            ) {
+              patch({ locationKind: value });
+            }
+          }}
+        >
+          <SelectTrigger aria-label="Location kind" className="h-7 text-sm">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="dungeon">Dungeon</SelectItem>
+            <SelectItem value="building">Building</SelectItem>
+            <SelectItem value="wilderness">Wilderness</SelectItem>
+            <SelectItem value="other">Other / unclassified</SelectItem>
+          </SelectContent>
+        </Select>
+        <span className="text-[11px] font-normal text-muted-foreground">
+          Where this encounter takes place. An automatic battlemap maps dungeons on the
+          Dungeon tier (finer grid) and everything else on Standard; the encounter
+          personas classify this themselves and you can correct it here.
+        </span>
+      </Field>
       {data.layout !== null && (
         <RoomKeysEditor
           layout={data.layout}

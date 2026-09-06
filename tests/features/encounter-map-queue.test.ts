@@ -85,11 +85,11 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const first = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'First',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
     });
     const second = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'Second',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
     });
     let verificationCalls = 0;
     vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
@@ -129,5 +129,54 @@ describe('module encounter map queue', () => {
     expect(generateCalls.every((call) => call[1] === 1)).toBe(true);
     expect(generateCalls[0]?.[2].inputReferences?.[0]?.dataUrl).toContain('schematic');
     expect(useProgressStore.getState().jobs).toEqual([]);
+  }, 30000);
+
+  it('resolves the unattended job preset from the encounter locationKind (docs/11 D10 amendment)', async () => {
+    const campaign = await createCampaign({ name: 'Queue Preset', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    // Settings stay Auto (null) — the encounter's own classification decides.
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
+      const expected = coarseStructure(layout);
+      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false });
+    });
+    const dungeon = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon' },
+    });
+    const hall = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Great Hall',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'building' },
+    });
+    useEncounterMapQueue.getState().enqueue([
+      { campaignId: campaign.id, moduleId: dungeon.moduleId, artifactId: dungeon.id, name: dungeon.name },
+      { campaignId: campaign.id, moduleId: hall.moduleId, artifactId: hall.id, name: hall.name },
+    ]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toBeNull();
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+      expect(useEncounterMapQueue.getState().failed).toEqual([]);
+    }, { timeout: 15000 });
+    const dungeonAfter = await getArtifact(dungeon.id);
+    const hallAfter = await getArtifact(hall.id);
+    if (dungeonAfter?.kind !== 'encounter' || hallAfter?.kind !== 'encounter') {
+      throw new Error('encounter rows disappeared');
+    }
+    // dungeon kind → the D10 fixed x2 tier (48x36 for 4:3); building kind →
+    // the standard base tier (24x18) even though Settings still says Auto.
+    expect(dungeonAfter.data.preset).toBe('dungeon');
+    expect(dungeonAfter.data.layout?.gridW).toBe(48);
+    expect(dungeonAfter.data.layout?.gridH).toBe(36);
+    expect(hallAfter.data.preset).toBe('standard');
+    expect(hallAfter.data.layout?.gridW).toBe(24);
+    expect(hallAfter.data.layout?.gridH).toBe(18);
   }, 30000);
 });

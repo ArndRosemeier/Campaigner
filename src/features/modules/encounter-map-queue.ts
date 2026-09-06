@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 
 import type { Id } from '@/domain';
+import { resolveEncounterPreset } from '@/domain';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -152,9 +153,15 @@ async function processJob(job: EncounterMapJob): Promise<Error | null> {
       pinnedChunkIds: [],
       targetArtifactId: artifact.id,
       encounterMapAspect: settings.encounterMapAspect,
-      // Dungeon preset (docs/11 D10): the campaign's Settings preference —
-      // the unattended path only produces dungeons when the campaign opted in.
-      encounterPreset: settings.encounterPreset,
+      // Dungeon preset (docs/11 D10, amended): the unattended path makes no
+      // explicit per-run choice — the encounter's own locationKind decides
+      // the tier ('dungeon' → Dungeon, building/wilderness → Standard) with
+      // the campaign's Settings preference backstopping unclassified rows.
+      encounterPreset: resolveEncounterPreset(
+        null,
+        artifact.data.locationKind,
+        settings.encounterPreset,
+      ),
       unattended: true,
     });
     const run = await waitForRunStatus(runId);

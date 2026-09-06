@@ -21,12 +21,14 @@ import {
   detectNeonMarkers,
   encounterDataSchema,
   encounterLayoutSchema,
+  encounterLocationKindSchema,
   entranceMarkerConfig,
   extractImageData,
   layoutFromStagingMarkers,
   newId,
   packRooms,
   renderSchematic,
+  resolveEncounterPreset,
   schematicCellPx,
   type StagingRoomInput,
 } from '@/domain';
@@ -476,6 +478,10 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         terrain: asString(draft.terrain),
         tactics: asString(draft.tactics),
         treasure: asString(draft.treasure),
+        // D10 amendment: the draft's own location classification (the draft
+        // step already validated it against the bounded enum; an omitted
+        // field parses to 'other'). Guides the automatic battlemap's preset.
+        locationKind: encounterLocationKindSchema.parse(draft.locationKind),
         mapImageId: null,
         layout: null,
         // The content-only Smith run produces no map: always standard (the
@@ -804,10 +810,12 @@ export class RunEngine {
         input.persona.mode === 'encounter'
           ? (input.encounterMapAspect ?? (await getSettings()).encounterMapAspect)
           : null,
+      // D10 amendment: the run row persists the EXPLICIT per-run choice only
+      // (null = Auto). The Settings fallback is applied by the brief's
+      // resolution chain (resolveEncounterPreset), never coerced here —
+      // coercing would outrank the encounter's own locationKind.
       encounterPreset:
-        input.persona.mode === 'encounter'
-          ? (input.encounterPreset ?? (await getSettings()).encounterPreset)
-          : null,
+        input.persona.mode === 'encounter' ? (input.encounterPreset ?? null) : null,
       placementModuleId: input.placementModuleId ?? null,
       runExtras: input.extras ?? null,
     });
@@ -1671,6 +1679,14 @@ export class RunEngine {
       // for encounter drafts only; coheres with the item-pool section above
       // (it adds structure/budget, never re-states the pool instruction).
       kind === 'encounter' ? treasureGuidanceFor(input.campaign.system) : null,
+      // D10 amendment: the encounter draft classifies its own location kind
+      // (no extra call) — it drives the automatic battlemap's grid tier.
+      kind === 'encounter'
+        ? [
+            'Field guidance for this encounter:',
+            '- "locationKind": where the encounter takes place — "dungeon" (underground/ruin complex), "building" (indoor structure), "wilderness" (open terrain), or "other" when nothing fits.',
+          ].join('\n')
+        : null,
       `Reply with ONLY a JSON object with exactly these fields: ${JSON.stringify(contract.keys)}`,
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     ]
@@ -2098,7 +2114,6 @@ export class RunEngine {
     const settings = await getSettings();
     const run = await getRun(runId);
     const aspect = run?.encounterMapAspect ?? input.encounterMapAspect ?? settings.encounterMapAspect;
-    const preset = run?.encounterPreset ?? input.encounterPreset ?? settings.encounterPreset;
     const target = input.targetArtifactId === undefined
       ? undefined
       : await getAnyArtifact(input.targetArtifactId);
@@ -2108,6 +2123,15 @@ export class RunEngine {
     if (target !== undefined && target.kind !== 'encounter') {
       throw new Error(`"${target.name}" is not an encounter and cannot be regenerated`);
     }
+    // D10 amendment — the preset resolution order: an explicit per-run
+    // choice (the persisted run row; the panel's Auto writes null) beats the
+    // regeneration target's own locationKind, which beats the Settings
+    // fallback for unclassified encounters.
+    const preset = resolveEncounterPreset(
+      run?.encounterPreset ?? input.encounterPreset,
+      target?.kind === 'encounter' ? target.data.locationKind : undefined,
+      settings.encounterPreset,
+    );
     const context = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const retrieval = await this.retrieveContext(runId, input);
     const targetRoster = target?.kind === 'encounter' ? target.data.monsters : undefined;
@@ -2785,6 +2809,11 @@ export class RunEngine {
           // The run's preset (brief step, resolved from run input/settings)
           // is authoritative for the map it just produced — both branches.
           preset: this.effectiveEncounterBrief(steps).preset,
+          // The Cartographer's brief already stages the encounter (dungeon |
+          // outdoor) — carry it as the artifact's location kind so
+          // Cartographer-created encounters classify themselves too (D10
+          // amendment; the Smith draft classifies via its own field).
+          locationKind: parsed.environment === 'dungeon' ? 'dungeon' : 'wilderness',
         },
       }, { source: 'persona', runId });
       artifactId = artifact.id;
@@ -3113,9 +3142,13 @@ export class RunEngine {
           data: encounterDataSchema.parse({
             ...data,
             // Identity of the artifact wins: an existing battlemap survives a
-            // content regeneration untouched.
+            // content regeneration untouched — including its persisted preset
+            // (D10: the label describes the layout on file; only an explicit
+            // Cartographer run re-tiers the map). The draft's locationKind
+            // DOES re-classify: the fresh content describes the encounter.
             mapImageId: target.data.mapImageId,
             layout: target.data.layout,
+            preset: target.data.preset,
           }),
         },
         { source: 'persona', runId },

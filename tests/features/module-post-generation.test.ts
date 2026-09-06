@@ -269,6 +269,7 @@ describe('runModulePostGeneration', () => {
         mapImageId: null,
         layout: null,
         preset: 'standard',
+        locationKind: 'other',
       },
     });
     await saveSettings({ ...defaultSettings(), imagesEnabled: true });

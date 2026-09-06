@@ -265,6 +265,7 @@ describe('images ui', () => {
         mapImageId: image.id,
         layout: null,
         preset: 'standard',
+        locationKind: 'other',
       },
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));
@@ -314,6 +315,7 @@ describe('images ui', () => {
         mapImageId: image.id,
         layout: null,
         preset: 'dungeon',
+        locationKind: 'other',
       },
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));

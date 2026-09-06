@@ -287,8 +287,10 @@ export function PersonaPanel({
     if (selectedPersona === undefined) return;
     if (selectedPersona.mode === 'encounter') {
       // Regenerate keeps the target encounter's own preset (docs/11 D10): an
-      // existing map is never silently re-tiered; the Settings select below
-      // governs fresh generation and the queue's default.
+      // existing map is never silently re-tiered. A fresh run passes NO
+      // preset — Auto — so the brief's resolution chain decides (explicit
+      // choice > the encounter's locationKind > the Settings fallback); the
+      // Settings select below is that fallback, not a per-run override.
       const targetArtifact = targetArtifacts.find((artifact) => artifact.id === targetArtifactId);
       const targetPreset = targetArtifact?.kind === 'encounter' ? targetArtifact.data.preset : undefined;
       const runId = await runEngine.startRun({
@@ -298,7 +300,9 @@ export function PersonaPanel({
         brief,
         pinnedChunkIds: pinned.map((chunk) => chunk.id),
         encounterMapAspect: settings?.encounterMapAspect ?? '4:3',
-        encounterPreset: targetPreset ?? settings?.encounterPreset ?? 'standard',
+        ...(targetArtifactId !== '' && targetPreset !== undefined
+          ? { encounterPreset: targetPreset }
+          : {}),
         ...(targetArtifactId === '' ? {} : { targetArtifactId }),
         // Fresh encounter creates carry the dialog's placement + extras;
         // targeted fills get neither (placement is fresh-create only).
@@ -576,11 +580,14 @@ export function PersonaPanel({
                 </Select>
                 <Label htmlFor="encounter-preset">Preset</Label>
                 <Select
-                  value={settings?.encounterPreset ?? 'standard'}
-                  items={{ standard: 'Standard', dungeon: 'Dungeon' }}
+                  value={settings?.encounterPreset ?? 'auto'}
+                  items={{ auto: 'Auto', standard: 'Standard', dungeon: 'Dungeon' }}
                   onValueChange={(value) => {
-                    if (value === 'standard' || value === 'dungeon') {
-                      void updateSettings({ encounterPreset: value }).catch((error: unknown) => {
+                    if (value === 'auto' || value === 'standard' || value === 'dungeon') {
+                      // Auto (null) is the default: each encounter's own
+                      // locationKind decides its grid tier (docs/11 D10
+                      // amendment); Standard/Dungeon force the tier.
+                      void updateSettings({ encounterPreset: value === 'auto' ? null : value }).catch((error: unknown) => {
                         toastError('Could not save map preset', error);
                       });
                     }
@@ -590,13 +597,16 @@ export function PersonaPanel({
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
+                    <SelectItem value="auto">Auto</SelectItem>
                     <SelectItem value="standard">Standard</SelectItem>
                     <SelectItem value="dungeon">Dungeon</SelectItem>
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Dungeon generates a connected multi-room complex on a finer grid
-                  (each cell is half the size).
+                  Auto: each encounter's own location kind decides — dungeons map on
+                  the Dungeon tier (a connected multi-room complex on a finer grid,
+                  each cell half the size), everything else on Standard. Standard or
+                  Dungeon forces the tier for every map.
                 </p>
                 {/* fix-02 (decision 6): one lightweight, non-blocking notice
                 when this campaign's system has no ready bestiary pack. */}

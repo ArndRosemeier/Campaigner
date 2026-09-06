@@ -99,6 +99,7 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
         mapImageId: null,
         layout: null,
         preset: 'standard',
+        locationKind: 'other',
       };
     case 'plotarc':
       return { arcType: '', premise: '', stakes: '', beats: [], hooks: [], climax: '' };

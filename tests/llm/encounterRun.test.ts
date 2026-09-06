@@ -100,6 +100,7 @@ const DRAFT = {
   terrain: 'river crossing',
   tactics: 'hit and run',
   treasure: 'none',
+  locationKind: 'dungeon',
 };
 
 async function seed(): Promise<{
@@ -338,6 +339,7 @@ async function runSmithAgainst(
       mapImageId: null,
       layout: null,
       preset: 'standard',
+      locationKind: 'other',
     },
   });
   const callIndex = chatMock.mock.calls.length;
@@ -440,6 +442,8 @@ describe('encounter runs (M3-B)', () => {
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     expect(artifact?.kind).toBe('encounter');
     if (artifact?.kind !== 'encounter') return;
+    // D10 amendment: the draft's own classification persists on the artifact.
+    expect(artifact.data.locationKind).toBe('dungeon');
     const monsters = artifact.data.monsters;
     expect(monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId) });
     // fix-02 (decision 1): the uncited monster's inline block materializes
@@ -553,7 +557,7 @@ describe('encounter runs (M3-B)', () => {
       links: [{ targetId: bridge.id, relation: 'at' }],
       data: {
         difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
-        mapImageId, layout: null, preset: 'standard',
+        mapImageId, layout: null, preset: 'dungeon', locationKind: 'wilderness',
       },
     });
     chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
@@ -589,9 +593,14 @@ describe('encounter runs (M3-B)', () => {
       (row) => row.kind === 'npc',
     );
     expect(npcsAfter.map((row) => row.name)).toContain('Cultist');
-    // The (not yet generated) battlemap is untouched by a content run.
+    // The (not yet generated) battlemap is untouched by a content run —
+    // including its persisted preset (D10: the label describes the layout on
+    // file; only an explicit Cartographer run re-tiers the map).
     expect(updated.data.mapImageId).toBe(mapImageId);
     expect(updated.data.layout).toBeNull();
+    expect(updated.data.preset).toBe('dungeon');
+    // The fresh draft DOES re-classify the location kind (new content).
+    expect(updated.data.locationKind).toBe('dungeon');
   });
 
   it('grounds the draft in the pack roster and resolves a sourceName citation (12-BESTIARY-PACKS §7)', async () => {
@@ -1326,6 +1335,7 @@ describe('encounter runs (M3-B)', () => {
           mapImageId: null,
           layout: null,
           preset: 'standard',
+          locationKind: 'other',
         },
       });
       const runId = await runEngine.startRun({
@@ -1456,6 +1466,7 @@ describe('encounter runs (M3-B)', () => {
           treasure: '',
           mapImageId: null,
           preset: 'standard',
+          locationKind: 'other',
           layout: {
             gridW: 24,
             gridH: 18,

@@ -115,6 +115,7 @@ async function addEncounter(monsters: { name: string; count: number; source: Rec
       mapImageId: null,
       layout: null,
       preset: 'standard',
+      locationKind: 'other',
     },
   });
 }

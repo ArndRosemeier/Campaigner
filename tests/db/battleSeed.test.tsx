@@ -115,6 +115,7 @@ async function addEncounter(over: SeedOptions = {}): Promise<Artifact> {
       mapImageId: over.mapImageId ?? null,
       layout: over.layout ?? null,
       preset: 'standard',
+      locationKind: 'other',
     },
     links: over.linkLocationId === undefined ? [] : [{ targetId: over.linkLocationId, relation: 'at' }],
   });

@@ -2,7 +2,11 @@ import { z } from 'zod';
 
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
 import { statBlockSchema } from '@/domain/statblock';
-import { encounterLayoutSchema, encounterPresetSchema } from '@/domain/encounterMap/schema';
+import {
+  encounterLayoutSchema,
+  encounterLocationKindSchema,
+  encounterPresetSchema,
+} from '@/domain/encounterMap/schema';
 
 /** Artifact kinds; M1 shipped npc/location/faction/note, M2 adds the rest.
  * M5-A puts `pc` first — the campaign tree renders kinds in this order, and
@@ -221,6 +225,15 @@ export const encounterDataSchema = z.object({
    * backfill (Dexie v15); a regenerate run keeps the target's preset.
    */
   preset: encounterPresetSchema.default('standard'),
+  /**
+   * Where the encounter takes place (docs/11 D10 amendment), classified by
+   * the encounter persona's own draft call and owner-correctable in the
+   * encounter editor. Drives the automatic battlemap's preset resolution —
+   * explicit per-run choice > locationKind > Settings fallback. 'other' is
+   * the unclassified default: legacy rows parse without a Dexie bump (the
+   * additive M5-C pattern).
+   */
+  locationKind: encounterLocationKindSchema.default('other'),
 });
 
 export type EncounterArtifactData = z.infer<typeof encounterDataSchema>;

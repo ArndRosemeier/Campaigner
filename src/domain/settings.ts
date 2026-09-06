@@ -203,13 +203,15 @@ export const settingsSchema = z.object({
   /** Encounter Cartographer layout aspect preference. */
   encounterMapAspect: encounterMapAspectSchema.default('4:3'),
   /**
-   * Encounter Cartographer preset preference (docs/11 D10): the Dungeon
-   * preset generates the layout on the fixed ×2 grid tier. Default
-   * 'standard' — unattended module generation only produces dungeons when
-   * the campaign opts in here (the aspect pattern: a genuine preference,
-   * never a failure mask).
+   * Encounter Cartographer preset preference (docs/11 D10, amended):
+   * `null` = **Auto** (the default) — each encounter's own `locationKind`
+   * decides its grid tier (dungeon → Dungeon; building/wilderness →
+   * Standard), and this setting only backstops unclassified ('other')
+   * encounters. An explicit 'standard'/'dungeon' choice here remains the
+   * override for campaigns that want the old fixed behavior (a genuine
+   * preference, never a failure mask).
    */
-  encounterPreset: encounterPresetSchema.default('standard'),
+  encounterPreset: encounterPresetSchema.nullable().default(null),
   /**
    * Remembered defaults for the creation dialog's "After creation" extras
    * checkboxes (aspect pattern): the dialog pre-ticks these per persona.
@@ -269,7 +271,7 @@ export function defaultSettings(): Settings {
       moduleView: defaultScopeToggles('moduleView'),
     },
     encounterMapAspect: '4:3',
-    encounterPreset: 'standard',
+    encounterPreset: null,
     runExtras: { image: false, statBlock: false, mobPortraits: false },
     encounterVerifyModel: '',
     maxParallelRequests: 2,

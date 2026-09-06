@@ -178,6 +178,14 @@ export const encounterDraftSchema = z.object({
   terrain: z.string(),
   tactics: z.string(),
   treasure: z.string(),
+  /**
+   * D10 amendment: the persona classifies WHERE the encounter takes place in
+   * its existing draft call (no extra LLM call). Guides the automatic
+   * battlemap's preset resolution; omitted drafts default to unclassified.
+   */
+  locationKind: enumCaseInsensitive(['dungeon', 'building', 'wilderness', 'other']).default(
+    'other',
+  ),
 });
 
 export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
