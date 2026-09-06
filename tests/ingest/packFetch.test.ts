@@ -169,9 +169,12 @@ describe('pack fetch sources (ratified pins)', () => {
     expect(PACK_FETCH_NEWEST_REF).toBe('HEAD');
     expect(PACK_FETCH_FALLBACK_VALID_RATIO).toBe(0.5);
     // Every source's chain: newest (HEAD) first, then its pinned verified ref.
+    // The two pf2e sources share the repo ref; the item source joined with the
+    // item-corpus arc (12-BESTIARY-PACKS §12).
     expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
+      ['HEAD', 'v14-dev'],
     ]);
   });
 
@@ -856,5 +859,110 @@ describe('throttleProgress (~10 Hz progress, F7)', () => {
     expect(downloading.at(-1)?.total).toBe(fileCount);
     // Throttled: 20 files inside one window cannot produce 20 UI updates.
     expect(downloading.length).toBeLessThan(fileCount);
+  });
+});
+
+// --- Item source (12-BESTIARY-PACKS §12): foundry-pf2e-equipment ---------------
+
+describe('item fetch source foundry-pf2e-equipment (12-BESTIARY-PACKS §12)', () => {
+  /** A minimal real-shaped pf2e equipment document (Torch / Arrows class). */
+  function itemDoc(name: string, coin: Record<string, number>, per?: number): Record<string, unknown> {
+    return {
+      _id: `id-${name}`,
+      name,
+      type: 'equipment',
+      img: null,
+      system: {
+        level: { value: 0 },
+        price: per === undefined ? { value: coin } : { value: coin, per },
+        traits: { value: [], rarity: 'common' },
+        description: { value: `<p>${name} description.</p>` },
+        publication: { title: 'GM Core', license: 'OGL' },
+      },
+    };
+  }
+
+  const ITEM_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/equipment/torch.json', type: 'blob' },
+      { path: 'packs/pf2e/equipment/arrows.json', type: 'blob' },
+      { path: 'packs/pf2e/equipment/_folders.json', type: 'blob' },
+      // Other packs of the shared packRoot: fetchable only through their own source.
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const itemRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(ITEM_TREE),
+    [PINNED_LIST_URL]: listingResponse(ITEM_TREE),
+    [RAW('packs/pf2e/equipment/torch.json')]: creatureResponse(itemDoc('Torch', { cp: 1 })),
+    [RAW('packs/pf2e/equipment/arrows.json')]: creatureResponse(itemDoc('Arrows', { sp: 1 }, 10)),
+    [RAW_PINNED('packs/pf2e/equipment/torch.json')]: creatureResponse(itemDoc('Torch', { cp: 1 })),
+    [RAW_PINNED('packs/pf2e/equipment/arrows.json')]: creatureResponse(itemDoc('Arrows', { sp: 1 }, 10)),
+  });
+
+  it('pins the equipment source: shared repo ref, packDirs restriction, verified curated count', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-equipment');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    // The pf2e equipment source shares the packRoot with the creature source:
+    // without packDirs the advanced listing would offer all 98 bestiary packs.
+    expect(source?.packDirs).toEqual(['equipment']);
+    expect(source?.curated).toEqual([
+      { id: 'packs/pf2e/equipment', label: 'Pathfinder 2e Equipment', creatures: 5707, unit: 'items' },
+    ]);
+  });
+
+  it('fetches & imports the equipment pack into an item book with provenance', async () => {
+    const fetchFn = mockFetch(itemRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e-equipment', 'packs/pf2e/equipment', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(2);
+    expect(result.itemsImported).toBe(2);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceId).toBe('foundry-pf2e-equipment');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/equipment',
+    );
+    expect(result.book.packMeta?.attemptedRefs).toEqual(['HEAD']);
+    const chunks = deps.persisted.flat();
+    expect(chunks.map((chunk) => chunk.chunkType)).toEqual(['item', 'item']);
+    expect(chunks[0]?.itemData?.priceDisplay).toBe('1 cp');
+    expect(chunks[1]?.itemData?.priceDisplay).toBe('1 sp (per 10)');
+  });
+
+  it('restricts the full listing to packDirs — the bestiary packs never appear', async () => {
+    const fetchFn = mockFetch(itemRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-equipment', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      { id: 'packs/pf2e/equipment', label: 'equipment', creatures: 2 },
+    ]);
+  });
+
+  it('keeps creature sources unrestricted: their full listing is unchanged', async () => {
+    const fetchFn = mockFetch({
+      [HEAD_LIST_URL]: listingResponse(ITEM_TREE),
+      [PINNED_LIST_URL]: listingResponse(ITEM_TREE),
+    });
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e', { full: true, fetchDeps: { fetchFn } });
+    // The same tree lists EVERY .json-bearing folder for the creature source —
+    // packDirs only scopes the sources that declare it. (The equipment folder
+    // was always listed here; the item source is the one that narrows.)
+    expect(recipes.map((recipe) => recipe.id)).toEqual([
+      'packs/pf2e/equipment',
+      'packs/pf2e/pathfinder-monster-core',
+    ]);
   });
 });

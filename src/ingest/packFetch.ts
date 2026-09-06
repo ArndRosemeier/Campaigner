@@ -44,6 +44,8 @@ export interface PackRecipe {
   label: string;
   /** Verified creature-file count (display only; the listing decides what is fetched). */
   creatures: number;
+  /** Entry noun for the count label ('creatures' default; item packs: 'items'). */
+  unit?: 'creatures' | 'items';
 }
 
 export interface PackFetchSource {
@@ -59,6 +61,14 @@ export interface PackFetchSource {
   ref: string;
   /** Repo-root path whose direct children are the packs. */
   packRoot: string;
+  /**
+   * When set, the "list everything" listing only offers packs directly under
+   * these packRoot children (12-BESTIARY-PACKS §12): an item source sharing a
+   * packRoot with a creature source (pf2e: `packs/pf2e`) — or sitting under a
+   * broad source root (dnd5e: `packs/_source`) — must not list the dozens of
+   * folders its adapter cannot parse. Curated mode is unaffected.
+   */
+  packDirs?: readonly string[];
   /** Curated default recipes (ratified decision 1); counts verified against the pinned ref. */
   curated: readonly PackRecipe[];
 }
@@ -94,6 +104,27 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
     packRoot: 'packs/_source/monsters',
     curated: [
       { id: 'packs/_source/monsters', label: 'D&D 5e SRD Monsters', creatures: 337 },
+    ],
+  },
+  {
+    // Item-corpus arc (12-BESTIARY-PACKS §12): pf2e equipment shares the repo
+    // and packRoot with the creature source; packDirs keeps the advanced
+    // listing scoped to the one folder this adapter parses.
+    adapterId: 'foundry-pf2e-equipment',
+    owner: 'foundryvtt',
+    repo: 'pf2e',
+    ref: 'v14-dev',
+    packRoot: 'packs/pf2e',
+    packDirs: ['equipment'],
+    curated: [
+      // 5707 .json documents in packs/pf2e/equipment at v14-dev (trees API,
+      // 2026-09-07, corpus sweep) — incl. _folders.json, a counted skip.
+      {
+        id: 'packs/pf2e/equipment',
+        label: 'Pathfinder 2e Equipment',
+        creatures: 5707,
+        unit: 'items',
+      },
     ],
   },
 ];
@@ -252,7 +283,10 @@ async function loadTreeListing(
 /**
  * All fetchable packs in the repo (the advanced "list everything" toggle,
  * ratified decision 1). Costs one git/trees API call (cached per session);
- * curated mode is a constant and touches no network.
+ * curated mode is a constant and touches no network. Sources with `packDirs`
+ * list only those packRoot children — an item source sharing a packRoot with
+ * a creature source (or under a broad root like `packs/_source`) must not
+ * offer folders its adapter cannot parse (12-BESTIARY-PACKS §12).
  */
 export async function listPackRecipes(
   adapterId: string,
@@ -261,6 +295,10 @@ export async function listPackRecipes(
   const source = getPackFetchSource(adapterId);
   if (options.full !== true) return source.curated;
 
+  const allowedDirs =
+    source.packDirs === undefined
+      ? null
+      : new Set(source.packDirs.map((dir) => `${source.packRoot}/${dir}`));
   const listing = await loadTreeListing(source, fetchFnOf(options.fetchDeps));
   const groups = new Map<string, number>();
   for (const path of listing.blobPaths) {
@@ -269,6 +307,7 @@ export async function listPackRecipes(
     const packDir = relative.split('/')[0];
     if (packDir === undefined || packDir === '') continue;
     const key = `${source.packRoot}/${packDir}`;
+    if (allowedDirs !== null && !allowedDirs.has(key)) continue;
     const creatureFiles = selectCreatureFiles(
       getPackAdapter(source.adapterId).extensions,
       source.packRoot,

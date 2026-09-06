@@ -1,0 +1,35 @@
+{
+  "_id": "3lgwjrFEsQVKzhh7",
+  "name": "Backpack",
+  "type": "backpack",
+  "img": "icons/containers/bags/pack-leather-white-tan.webp",
+  "system": {
+    "level": {
+      "value": 0
+    },
+    "price": {
+      "value": {
+        "sp": 1
+      }
+    },
+    "traits": {
+      "rarity": "common",
+      "value": []
+    },
+    "description": {
+      "value": "<p>A backpack holds up to 4 Bulk of items and the first 2 Bulk of these items don't count against your Bulk limits. If you're carrying or stowing the pack rather than wearing it on your back, its Bulk is light instead of negligible</p>"
+    },
+    "publication": {
+      "license": "ORC",
+      "remaster": true,
+      "title": "Pathfinder Player Core"
+    },
+    "bulk": {
+      "capacity": 4,
+      "heldOrStowed": 0.1,
+      "ignored": 2,
+      "value": 0
+    },
+    "rules": []
+  }
+}

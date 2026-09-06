@@ -149,7 +149,17 @@ export function BestiaryFetchSection(): JSX.Element {
                     <span className="text-sm">
                       {recipe.label}{' '}
                       <span className="text-xs text-muted-foreground">
-                        ({String(recipe.creatures)} {recipe.creatures === 1 ? 'creature' : 'creatures'})
+                        {/* Item packs (12-BESTIARY-PACKS §12) count documents
+                            in "items"; the listing counts adapter-parseable
+                            files either way. */}
+                        ({String(recipe.creatures)}{' '}
+                        {recipe.unit === 'items'
+                          ? recipe.creatures === 1
+                            ? 'item'
+                            : 'items'
+                          : recipe.creatures === 1
+                            ? 'creature'
+                            : 'creatures'})
                       </span>
                     </span>
                     <Button
@@ -177,8 +187,9 @@ export function BestiaryFetchSection(): JSX.Element {
                     Advanced: list everything in the repo
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    All {source.repo} packs (GitHub API, 60 requests/hour per IP). Fetching a
-                    non-bestiary pack fails loudly with zero entries.
+                    All {source.repo} packs (GitHub API, 60 requests/hour per IP). Sources that only
+                    parse part of the repo list just their folders; fetching a pack this adapter
+                    cannot parse fails loudly with zero entries.
                   </p>
                 </div>
                 <Switch

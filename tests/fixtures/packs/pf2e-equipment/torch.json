@@ -1,0 +1,112 @@
+{
+  "_id": "8Jdw4yAzWYylGePS",
+  "name": "Torch",
+  "type": "equipment",
+  "img": "icons/sundries/lights/torch-brown.webp",
+  "system": {
+    "level": {
+      "value": 0
+    },
+    "price": {
+      "value": {
+        "cp": 1
+      }
+    },
+    "traits": {
+      "rarity": "common",
+      "value": []
+    },
+    "description": {
+      "value": "<p>A torch sheds bright light in a 20-foot radius (and dim light to the next 20 feet) for 1 hour. It can be used as an improvised weapon that deals 1d4 bludgeoning damage plus 1 fire damage.</p>"
+    },
+    "publication": {
+      "license": "ORC",
+      "remaster": true,
+      "title": "Pathfinder Player Core"
+    },
+    "bulk": {
+      "value": 0.1
+    },
+    "rules": [
+      {
+        "key": "TokenLight",
+        "predicate": [
+          "lit-torch"
+        ],
+        "value": {
+          "alpha": 0.3,
+          "animation": {
+            "intensity": 1,
+            "speed": 2,
+            "type": "flame"
+          },
+          "attenuation": 0.4,
+          "bright": 20,
+          "color": "#ffae3d",
+          "coloration": 101,
+          "dim": 40,
+          "shadows": 0.2
+        }
+      },
+      {
+        "category": "simple",
+        "damage": {
+          "base": {
+            "damageType": "bludgeoning",
+            "dice": 1,
+            "die": "d4"
+          }
+        },
+        "key": "Strike",
+        "otherTags": [
+          "improvised"
+        ],
+        "predicate": [
+          {
+            "not": "lit-torch"
+          }
+        ]
+      },
+      {
+        "category": "simple",
+        "damage": {
+          "base": {
+            "damageType": "bludgeoning",
+            "dice": 1,
+            "die": "d4"
+          }
+        },
+        "img": "icons/sundries/lights/torch-brown-lit.webp",
+        "key": "Strike",
+        "otherTags": [
+          "improvised"
+        ],
+        "predicate": [
+          "lit-torch"
+        ]
+      },
+      {
+        "damageType": "fire",
+        "key": "FlatModifier",
+        "predicate": [
+          "lit-torch"
+        ],
+        "selector": "{item|_id}-damage",
+        "value": 1
+      },
+      {
+        "key": "RollOption",
+        "label": "PF2E.SpecificRule.LitTorch",
+        "option": "lit-torch",
+        "toggleable": true
+      },
+      {
+        "key": "TokenEffectIcon",
+        "predicate": [
+          "lit-torch"
+        ],
+        "value": "icons/sundries/lights/torch-brown-lit.webp"
+      }
+    ]
+  }
+}
