@@ -832,14 +832,17 @@ export function BattleSurface(): JSX.Element {
   const keyedRooms = useMemo(() => {
     if (encounterArtifact === 'loading' || encounterArtifact === null || encounterArtifact === undefined) return [];
     if (encounterArtifact.kind !== 'encounter') return [];
-    return encounterArtifact.data.layout === null
-      ? []
-      : encounterArtifact.data.layout.rooms
-          .map((room, index) => ({
-            room,
-            letter: room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1),
-          }))
-          .filter((entry) => entry.room.key !== '' || entry.room.keyTreasure !== '');
+    // Legacy encounter rows (written before layouts existed and never
+    // rewritten) read `layout` as undefined despite the `| null` type —
+    // the schema's `.default(null)` only materializes on parse. Treat the
+    // absent key exactly like the declared null: a layoutless encounter.
+    if (encounterArtifact.data.layout == null) return [];
+    return encounterArtifact.data.layout.rooms
+      .map((room, index) => ({
+        room,
+        letter: room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1),
+      }))
+      .filter((entry) => entry.room.key !== '' || entry.room.keyTreasure !== '');
   }, [encounterArtifact]);
   const selectedKeyRoom = keyedRooms.find((entry) => entry.room.id === selectedKeyRoomId) ?? null;
 

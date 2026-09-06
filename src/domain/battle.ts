@@ -135,7 +135,7 @@ export const battleTokenSchema = z.object({
    *  roster rows can vanish, so the token keeps its own copy — same
    *  frozen-copy precedent as initiativeBonus). */
   treasure: z.string().default(''),
-  conditions: z.array(z.string()),
+  conditions: z.array(z.string()).default([]),
 });
 
 export type BattleToken = z.infer<typeof battleTokenSchema>;
@@ -172,24 +172,24 @@ export const battleMapLayoutSchema = z.object({
 export type BattleMapLayout = z.infer<typeof battleMapLayoutSchema>;
 
 export const stageSnapshotSchema = z.object({
-  mapImageId: z.uuid().nullable(),
+  mapImageId: z.uuid().nullable().default(null),
   mapLayout: battleMapLayoutSchema.nullable().default(null),
-  gridSize: z.number().min(GRID_SIZE_MIN).max(GRID_SIZE_MAX).nullable(),
-  tokenSize: z.number(),
-  tokens: z.array(battleTokenSchema),
-  veils: z.array(battleVeilSchema),
+  gridSize: z.number().min(GRID_SIZE_MIN).max(GRID_SIZE_MAX).nullable().default(null),
+  tokenSize: z.number().default(TOKEN_SIZE_DEFAULT),
+  tokens: z.array(battleTokenSchema).default([]),
+  veils: z.array(battleVeilSchema).default([]),
   effects: z.array(battleEffectSchema).default([]),
-  stagingGround: stagingGroundSchema.nullable(),
+  stagingGround: stagingGroundSchema.nullable().default(null),
   entrance: battleEntranceSchema.nullable().default(null),
 });
 
 export type StageSnapshot = z.infer<typeof stageSnapshotSchema>;
 
 export const battleBoardSchema = z.object({
-  mapImageId: z.uuid().nullable(),
+  mapImageId: z.uuid().nullable().default(null),
   mapLayout: battleMapLayoutSchema.nullable().default(null),
   /** false = prep scratch, true = on the table. */
-  live: z.boolean(),
+  live: z.boolean().default(false),
   /**
    * The first-entry reveal (the source's `liveBoard` rule) is spent exactly
    * once per seed: entering the table reveals every token only while this is
@@ -199,20 +199,20 @@ export const battleBoardSchema = z.object({
    * flag is written canonically.
    */
   everLive: z.boolean().default(false),
-  tokens: z.array(battleTokenSchema),
-  veils: z.array(battleVeilSchema),
+  tokens: z.array(battleTokenSchema).default([]),
+  veils: z.array(battleVeilSchema).default([]),
   /** GM-stamped geometric effect markers (D7); rendered in both views. */
   effects: z.array(battleEffectSchema).default([]),
   /** Cell size in CSS px; null hides the grid. */
-  gridSize: z.number().min(GRID_SIZE_MIN).max(GRID_SIZE_MAX).nullable(),
-  tokenSize: z.number(),
-  sceneryMovementLocked: z.boolean(),
-  initiativeEnabled: z.boolean(),
+  gridSize: z.number().min(GRID_SIZE_MIN).max(GRID_SIZE_MAX).nullable().default(null),
+  tokenSize: z.number().default(TOKEN_SIZE_DEFAULT),
+  sceneryMovementLocked: z.boolean().default(false),
+  initiativeEnabled: z.boolean().default(false),
   /** Turn order by token id; indexes `activeIndex` when initiative is on. */
-  initiativeOrder: z.array(battleTokenIdSchema),
-  activeIndex: z.number().int().min(0),
-  stage: stageSnapshotSchema.nullable(),
-  stagingGround: stagingGroundSchema.nullable(),
+  initiativeOrder: z.array(battleTokenIdSchema).default([]),
+  activeIndex: z.number().int().min(0).default(0),
+  stage: stageSnapshotSchema.nullable().default(null),
+  stagingGround: stagingGroundSchema.nullable().default(null),
   /** Entrance zone (doc 11); null for legacy seeds and uploaded maps. */
   entrance: battleEntranceSchema.nullable().default(null),
 });

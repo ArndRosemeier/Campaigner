@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { db } from '@/db/db';
 import {
   ensureBattle,
   getBattleByModule,
@@ -13,10 +14,10 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import type * as battleRepoModule from '@/db/battleRepo';
+import type { Battle, StatBlock } from '@/domain';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
-import type { StatBlock } from '@/domain';
 import { createModule, newId, packRooms, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { BattleSurface } from '@/features/play/battle/BattleSurface';
@@ -293,6 +294,77 @@ describe('layout-anchored grid rendering', () => {
       backgroundSize: `${String(100 / 24)}% ${String(100 / 18)}%`,
     });
     expect(battleGridStyle(null, 72).backgroundImage).toContain('72px');
+  });
+});
+
+/**
+ * Regression pin (deployed-bundle crash `Cannot read properties of undefined
+ * (reading 'find')` on the Battle table button): the battle route must render
+ * a row written by an OLDER app version — one whose board predates later-arc
+ * fields (effects, mapLayout, entrance, everLive, reseed, token treasure).
+ * The row is inserted raw (only the fields an old board had); the surface
+ * renders it, the stamp token shows, and no render throws.
+ */
+describe('legacy battle row (pre-effects board)', () => {
+  it('renders a board written before the later-arc fields existed', async () => {
+    const moduleId = newId();
+    const stamp = Date.now();
+    // Stored RAW (cast — the missing keys are the point): the pre-arc shape
+    // an older app version wrote, which the current type can't express.
+    await db.battles.put({
+      id: newId(),
+      createdAt: stamp,
+      updatedAt: stamp,
+      campaignId,
+      moduleId,
+      encounterArtifactId: null,
+      seedFighters: [],
+      board: {
+        mapImageId: null,
+        live: false,
+        tokens: [
+          {
+            id: newId(),
+            artifactId: null,
+            label: 'Brazier stamp',
+            x: 0.5,
+            y: 0.5,
+            visible: true,
+            scale: 1,
+            shape: 'square',
+            color: '#ff0000',
+            currentHp: null,
+            initiativeRoll: null,
+            initiativeBonus: null,
+            conditions: [],
+          },
+        ],
+        veils: [],
+        gridSize: 72,
+        tokenSize: 64,
+        sceneryMovementLocked: false,
+        initiativeEnabled: false,
+        initiativeOrder: [],
+        activeIndex: 0,
+        stage: null,
+        stagingGround: null,
+      },
+    } as unknown as Battle);
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    // The board (not the "no battle" empty state) renders, with the legacy
+    // stamp token and the fixed-grid viewport — the absent later-arc pieces
+    // (effects, veils, entrance, layout) render as their empty states.
+    expect(screen.getByTestId('battle-board')).toBeInTheDocument();
+    expect(screen.getByTestId('battle-token')).toBeInTheDocument();
+    expect(screen.getByTestId('battle-token')).toHaveTextContent('Brazier stamp');
+    expect(screen.getByTestId('battle-grid')).toBeInTheDocument();
+    expect(screen.queryByTestId('battle-entrance')).not.toBeInTheDocument();
+    // The first-entry reveal write re-persists the board with the
+    // materialized defaults — the row leaves the legacy shape on disk.
+    const stored = await getBattleByModule(moduleId);
+    expect(stored?.board.effects).toEqual([]);
+    expect(stored?.board.everLive).toBe(true);
   });
 });
 

@@ -19,8 +19,9 @@ import {
 } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc, isBattleEmpty } from '@/db/fighterStats';
+import { db } from '@/db/db';
 import { captureStageSnapshot, combatHpForToken, fighterTokens, tokenFromFighter } from '@/domain/battle/board';
-import type { BattleToken, FighterStats, FighterStatsLookup, StatBlock } from '@/domain';
+import type { Battle, BattleToken, FighterStats, FighterStatsLookup, StatBlock } from '@/domain';
 import { newId, statBlockSchema } from '@/domain';
 import { clearDatabase } from './helpers';
 
@@ -108,6 +109,97 @@ describe('ensureBattle', () => {
     expect(await getBattleByModule(moduleId)).toBeDefined();
     const other = await ensureBattle(campaignId, newId());
     expect(other.id).not.toBe(first.id);
+  });
+});
+
+/**
+ * Regression pin (deployed-bundle crash `Cannot read properties of undefined
+ * (reading 'find')` on the battle route): a row written by an OLDER app
+ * version predates board fields added in later arcs (effects, veils-era
+ * stamps, mapLayout, entrance, everLive, reseed, token treasure). Reads are
+ * the legacy-row boundary: every repo getter parse-normalizes, so the zod
+ * schema's `.default(...)` values materialize instead of handing the UI
+ * `undefined` arrays.
+ */
+describe('legacy rows (parse-normalize on read)', () => {
+  /** The oldest battle row shape that can exist (M5-B board on an M6-E row:
+   * the v12 session migration re-anchored/cleared everything older). */
+  function legacyRow(moduleId: string) {
+    const stamp = Date.now();
+    return {
+      id: newId(),
+      createdAt: stamp,
+      updatedAt: stamp,
+      campaignId,
+      moduleId,
+      encounterArtifactId: null,
+      seedFighters: [],
+      board: {
+        mapImageId: null,
+        live: false,
+        tokens: [
+          {
+            id: newId(),
+            artifactId: null,
+            label: 'Brazier stamp',
+            x: 0.5,
+            y: 0.5,
+            visible: true,
+            scale: 1,
+            shape: 'square',
+            color: '#ff0000',
+            currentHp: null,
+            initiativeRoll: null,
+            initiativeBonus: null,
+            conditions: [],
+            // NO `treasure` — added in a later arc.
+          },
+        ],
+        veils: [],
+        gridSize: 72,
+        tokenSize: 64,
+        sceneryMovementLocked: false,
+        initiativeEnabled: false,
+        initiativeOrder: [],
+        activeIndex: 0,
+        stage: null,
+        stagingGround: null,
+        // NO `mapLayout`, `everLive`, `effects`, `entrance` — later arcs.
+      },
+      // NO `reseed` — added in a later arc.
+    };
+  }
+
+  /** Stores the row RAW: the missing keys are the point (a pre-arc write). */
+  async function putLegacyRow(moduleId: string): Promise<void> {
+    await db.battles.put(legacyRow(moduleId) as unknown as Battle);
+  }
+
+  it('materializes later-arc fields with their schema defaults on read', async () => {
+    const moduleId = newId();
+    await putLegacyRow(moduleId);
+    const battle = await getBattleByModule(moduleId);
+    expect(battle).toBeDefined();
+    expect(battle?.board.effects).toEqual([]);
+    expect(battle?.board.entrance).toBeNull();
+    expect(battle?.board.mapLayout).toBeNull();
+    expect(battle?.board.everLive).toBe(false);
+    expect(battle?.reseed).toBeNull();
+    expect(battle?.board.tokens[0]?.treasure).toBe('');
+    expect(battle?.board.tokens[0]?.conditions).toEqual([]);
+  });
+
+  it('persists the materialized defaults back on the next write', async () => {
+    const moduleId = newId();
+    const row = legacyRow(moduleId);
+    await db.battles.put(row as unknown as Battle);
+    const battle = await getBattleByModule(moduleId);
+    if (battle === undefined) throw new Error('legacy row vanished');
+    await patchBattle(battle.id, {});
+    const stored = await db.battles.get(battle.id);
+    expect(stored?.board.effects).toEqual([]);
+    expect(stored?.board.entrance).toBeNull();
+    expect(stored?.board.tokens[0]?.treasure).toBe('');
   });
 });
 

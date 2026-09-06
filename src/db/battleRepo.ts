@@ -1,4 +1,5 @@
 import type { Artifact, Battle, BattleBoard, FighterStatsLookup, Id } from '@/domain';
+import { battleSchema } from '@/domain';
 import {
   applyStageReset,
   ensurePcTokens,
@@ -12,12 +13,26 @@ import { stampNewEntity } from '@/domain/entity';
 
 /**
  * Battle persistence (10-MILESTONE-6 M6-E): one live battle per module,
- * created lazily on first mutation, deleted when it empties. Every write is
- * NORMALIZED (the analog of the source's `normalizeEncounter` /
+ * created lazily on first mutation, deleted when it empties. Every read AND
+ * write is PARSE-NORMALIZED through `battleSchema`: a row persisted by an
+ * older app version predates later-arc board fields (effects, mapLayout,
+ * entrance, everLive, reseed, token treasure), and the schema's
+ * `.default(...)` values materialize them at the read boundary — the UI
+ * never sees an `undefined` array the type claims exists. Every write is
+ * also NORMALIZED (the analog of the source's `normalizeEncounter` /
  * `fillTokenCurrentHp`): NPC token HP re-filled/clamped from the backing
  * stats, PC tokens re-ensured for every statful pc artifact, HP clamped to
  * [0, maxHp]. UI reads via useLiveQuery; drag commits are single repo calls.
  */
+
+/**
+ * Legacy-row guard at the Dexie boundary: zod fills the schema defaults for
+ * fields the stored row lacks. A corrupt row fails loudly here (AGENTS rule
+ * 3) instead of crashing a render with an `undefined` field.
+ */
+function parseBattleRow(row: Battle): Battle {
+  return battleSchema.parse(row);
+}
 
 /** Mutable battle fields; identity (`campaignId`/`moduleId`) is immutable. */
 export type BattlePatch = Partial<Omit<Battle, 'id' | 'campaignId' | 'moduleId'>>;
@@ -36,7 +51,7 @@ export async function saveBattle(battle: Battle): Promise<Battle> {
 export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle> {
   const existing = await db.battles.where('moduleId').equals(moduleId).first();
   if (existing !== undefined) {
-    return existing;
+    return parseBattleRow(existing);
   }
   const stamp = stampNewEntity();
   const created: Battle = {
@@ -69,11 +84,13 @@ export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle
 }
 
 export async function getBattle(id: Id): Promise<Battle | undefined> {
-  return db.battles.get(id);
+  const row = await db.battles.get(id);
+  return row === undefined ? undefined : parseBattleRow(row);
 }
 
 export async function getBattleByModule(moduleId: Id): Promise<Battle | undefined> {
-  return db.battles.where('moduleId').equals(moduleId).first();
+  const row = await db.battles.where('moduleId').equals(moduleId).first();
+  return row === undefined ? undefined : parseBattleRow(row);
 }
 
 /** Race-safe read-modify-write with normalize-on-write (module pattern). */
@@ -85,7 +102,7 @@ export async function patchBattle(id: Id, patch: BattlePatch): Promise<Battle> {
     const current = await db.battles.get(id);
     if (current === undefined) throw new NotFoundError('Battle', id);
     // Identity fields are immutable; the board is merged wholesale by the caller.
-    return saveBattle({ ...current, ...patch, campaignId: current.campaignId, moduleId: current.moduleId });
+    return saveBattle({ ...parseBattleRow(current), ...patch, campaignId: current.campaignId, moduleId: current.moduleId });
   });
 }
 
@@ -147,7 +164,8 @@ export async function deleteBattleIfEmpty(id: Id): Promise<void> {
  */
 export async function scrubArtifactFromBattles(campaignId: Id, artifactId: Id): Promise<void> {
   const battles = await db.battles.where('campaignId').equals(campaignId).toArray();
-  for (const battle of battles) {
+  for (const row of battles) {
+    const battle = parseBattleRow(row);
     const hasToken = battle.board.tokens.some((token) => token.artifactId === artifactId);
     if (!hasToken) continue;
     const tokens = battle.board.tokens.filter((token) => token.artifactId !== artifactId);
@@ -176,14 +194,16 @@ export async function deleteBattlesByModule(moduleId: Id): Promise<void> {
  * through `artifactRepo.updateArtifact`).
  */
 async function normalizeBattle(battle: Battle): Promise<Battle> {
+  // Parse-normalize first (defaults for legacy rows), then normalize-on-write.
+  const parsed = battleSchema.parse(battle);
   const [artifacts, globals] = await Promise.all([
-    listArtifactsByCampaign(battle.campaignId),
+    listArtifactsByCampaign(parsed.campaignId),
     listGlobalArtifacts(),
   ]);
-  const stats = buildFighterStatsLookup(battle, [...artifacts, ...globals]);
-  let board = ensurePcTokens(battle.board, pcFightersOf(artifacts));
+  const stats = buildFighterStatsLookup(parsed, [...artifacts, ...globals]);
+  let board = ensurePcTokens(parsed.board, pcFightersOf(artifacts));
   board = fillNpcTokenHp(board, stats);
-  return { ...battle, board };
+  return { ...parsed, board };
 }
 
 async function requireBoard(id: Id): Promise<BattleBoard> {
