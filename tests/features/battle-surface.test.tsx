@@ -27,6 +27,32 @@ vi.mock('@/db/battleRepo', async (importOriginal) => {
   return { ...actual, saveBattleBoard: vi.fn(actual.saveBattleBoard) };
 });
 
+// Stub the dice roller (its own engine/UX is covered by dice-roller tests):
+// here it only has to prove the integration boundary — the surface opens it
+// with the captured intent and applies the settled total signed by intent.
+vi.mock('@/features/dice/DiceRoller', () => ({
+  DiceRoller: function StubDiceRoller(props: {
+    open: boolean;
+    intent?: { kind: string; subject?: string } | undefined;
+    onResult?: (result: { total: number; summary: string; perDie: number[] }) => void;
+  }) {
+    if (!props.open) return null;
+    return (
+      <div data-testid="dice-roller-stub">
+        <span data-testid="stub-intent-kind">{props.intent?.kind ?? 'none'}</span>
+        <span data-testid="stub-intent-subject">{props.intent?.subject ?? ''}</span>
+        <button
+          type="button"
+          data-testid="stub-apply-roll"
+          onClick={() => props.onResult?.({ total: 7, summary: '2d6+1', perDie: [3, 4] })}
+        >
+          apply-7
+        </button>
+      </div>
+    );
+  },
+}));
+
 /**
  * The table surface (09-MILESTONE-5 M5-D): the player-safe DOM contract,
  * drag commits, initiative reconcile (fog coverage), and HP ownership split
@@ -949,8 +975,7 @@ describe('HP ownership split writes', () => {
 
     // NPC damage: token instance HP changes; the artifact never does.
     await selectByLabel('Troll');
-    await user.type(screen.getByLabelText('HP delta'), '10');
-    await user.click(screen.getByTestId('damage'));
+    await user.click(screen.getByRole('button', { name: 'Damage 10' }));
     await waitFor(() => {
       expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 74 / 84');
     });
@@ -962,8 +987,7 @@ describe('HP ownership split writes', () => {
 
     // PC damage: the pc artifact's currentHp changes (persists across battles).
     await selectByLabel('Serren');
-    await user.type(screen.getByLabelText('HP delta'), '5');
-    await user.click(screen.getByTestId('damage'));
+    await user.click(screen.getByRole('button', { name: 'Damage 5' }));
     await waitFor(() => {
       expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 15 / 20 (persists)');
     });
@@ -1126,4 +1150,79 @@ describe('entrance overlay (doc 11)', () => {
     expect(screen.queryByTestId('battle-entrance')).toBeNull();
   });
 });
+});
+
+describe('dice-roller damage/heal (M5-D amendment)', () => {
+  async function selectByLabel(moduleId: string, label: string): Promise<void> {
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === label);
+    if (token === undefined) throw new Error(`${label} missing`);
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === label);
+    if (el === undefined) throw new Error(`${label} element missing`);
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: token.x * BOARD_W, clientY: token.y * BOARD_H });
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    await flushAsyncUpdates();
+  }
+
+  it('opens the roller with the captured intent and applies the total as damage onto the token', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+
+    await selectByLabel(moduleId, 'Troll');
+    await user.click(screen.getByTestId('roll-damage'));
+    // The roller is open, aimed at the captured fighter with the damage intent.
+    expect(screen.getByTestId('dice-roller-stub')).toHaveTextContent('damage');
+    expect(screen.getByTestId('stub-intent-subject')).toHaveTextContent('Troll');
+    // A settled roll of 7 lands as −7 HP on the NPC token instance.
+    await user.click(screen.getByTestId('stub-apply-roll'));
+    await waitFor(() => {
+      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 77 / 84');
+    });
+    const battle = await currentBattle(moduleId);
+    expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(77);
+  });
+
+  it('applies a rolled heal through the pc artifact and clamps at max HP', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+
+    await selectByLabel(moduleId, 'Serren');
+    await user.click(screen.getByTestId('roll-heal'));
+    expect(screen.getByTestId('stub-intent-kind')).toHaveTextContent('heal');
+    // 7 heal on a full-HP PC: clamped to max, written to the artifact.
+    await user.click(screen.getByTestId('stub-apply-roll'));
+    await waitFor(() => {
+      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 20 / 20 (persists)');
+    });
+    const refreshed = await listArtifactsByCampaign(campaignId);
+    const serren = refreshed.find((artifact) => artifact.kind === 'pc' && artifact.name === 'Serren');
+    if (serren?.kind !== 'pc') throw new Error('serren missing');
+    expect(serren.data.currentHp).toBe(20);
+  });
+
+  it('never renders the roll controls or the roller in player view', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await selectByLabel(moduleId, 'Troll');
+    expect(screen.getByTestId('token-controls')).toBeInTheDocument();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    expect(screen.queryByTestId('token-controls')).toBeNull();
+    expect(screen.queryByTestId('roll-damage')).toBeNull();
+    expect(screen.queryByTestId('dice-roller-stub')).toBeNull();
+    await flushAsyncUpdates();
+  });
 });

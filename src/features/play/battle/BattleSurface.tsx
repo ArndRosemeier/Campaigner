@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { toast } from 'sonner';
 import {
+  DicesIcon,
   EyeIcon,
   EyeOffIcon,
   FlagIcon,
@@ -57,10 +59,11 @@ import { getImage } from '@/db/imageRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { NpcCard } from '../artifact-cards';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { DiceRoller } from '@/features/dice/DiceRoller';
+import type { DiceRollResult, RollIntent } from '@/features/dice/types';
 import { useBattleState } from './use-battle';
 import { InitiativeSidebar } from './initiative-sidebar';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { toastError } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
@@ -133,7 +136,11 @@ export function BattleSurface(): JSX.Element {
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
   const [playerSafe, setPlayerSafe] = useState(false);
   const [stageArmed, setStageArmed] = useState(false);
-  const [hpDelta, setHpDelta] = useState('');
+  // The dice roller's open state IS the pending roll intent (M5-D amendment);
+  // the roll target is captured at open time so a mid-roll deselect cannot
+  // misdirect the applied delta.
+  const [diceIntent, setDiceIntent] = useState<RollIntent | null>(null);
+  const pendingRollRef = useRef<{ tokenId: BattleTokenId; kind: 'damage' | 'heal' } | null>(null);
   const [, setEpochTick] = useState(initiativeDragEpoch());
   const boardRef = useRef<HTMLDivElement | null>(null);
   // The aspect-fitted content div tokens/veils are %-positioned in — both the
@@ -565,12 +572,12 @@ export function BattleSurface(): JSX.Element {
     setSelectedVeilId(veil.id);
   }
 
-  async function applyHp(token: BattleToken, delta: number): Promise<void> {
-    if (battle === undefined || token.artifactId === null) return;
+  async function applyHp(token: BattleToken, delta: number): Promise<boolean> {
+    if (battle === undefined || token.artifactId === null) return false;
     const resolved = combatHpForToken(token, stats);
     if (resolved === null) {
       toastError(`No combat stats for “${token.label}” — HP cannot change`);
-      return;
+      return false;
     }
     const next = clampHp(resolved.currentHp + delta, resolved.maxHp);
     try {
@@ -586,8 +593,31 @@ export function BattleSurface(): JSX.Element {
           tokens: board.tokens.map((entry) => (entry.id === token.id ? { ...entry, currentHp: next } : entry)),
         }));
       }
+      return true;
     } catch (error) {
       toastError('Could not update HP', error);
+      return false;
+    }
+  }
+
+  /** A settled dice roll becomes the applied HP delta, signed by the intent
+   * captured at open time (damage ⇒ −|total|, heal ⇒ +|total|). */
+  async function applyDiceRoll(result: DiceRollResult): Promise<void> {
+    const pending = pendingRollRef.current;
+    if (pending === null || battle === undefined) return;
+    const token = battle.board.tokens.find((entry) => entry.id === pending.tokenId);
+    if (token === undefined) {
+      toastError(`Could not apply ${result.summary} — the fighter left the board`);
+      pendingRollRef.current = null;
+      return;
+    }
+    const delta = pending.kind === 'damage' ? -Math.abs(result.total) : Math.abs(result.total);
+    const applied = await applyHp(token, delta);
+    pendingRollRef.current = null;
+    if (applied) {
+      toast.success(
+        `${token.label} ${delta < 0 ? '−' : '+'}${String(Math.abs(delta))} HP (${result.summary})`,
+      );
     }
   }
 
@@ -759,6 +789,8 @@ export function BattleSurface(): JSX.Element {
           aria-pressed={playerSafe}
           onClick={() => {
             setPlayerSafe((value) => !value);
+            setDiceIntent(null);
+            pendingRollRef.current = null;
           }}
         >
           <UsersIcon aria-hidden data-icon="inline-start" />
@@ -955,11 +987,12 @@ export function BattleSurface(): JSX.Element {
             <TokenControls
               token={selectedToken}
               stats={stats}
-              hpDelta={hpDelta}
-              onHpDeltaChange={setHpDelta}
               onApplyHp={(delta) => {
                 void applyHp(selectedToken, delta);
-                setHpDelta('');
+              }}
+              onRollHp={(kind) => {
+                pendingRollRef.current = { tokenId: selectedToken.id, kind };
+                setDiceIntent({ kind, subject: selectedToken.label });
               }}
               onToggleVisibility={() => {
                 void commit((current) => ({
@@ -1012,6 +1045,21 @@ export function BattleSurface(): JSX.Element {
             </p>
           )}
         </div>
+
+        {/* Dice roller (M5-D amendment): GM-only, mounted above the rail so a
+        mid-roll deselect cannot unmount it; player-safe mode never renders it. */}
+        {!playerSafe && (
+          <DiceRoller
+            open={diceIntent !== null}
+            onOpenChange={(next) => {
+              if (!next) setDiceIntent(null);
+            }}
+            intent={diceIntent ?? undefined}
+            onResult={(result) => {
+              void applyDiceRoll(result);
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -1355,21 +1403,22 @@ function SelectionCard({ token, artifact, stats, playerSafe }: SelectionCardProp
 interface TokenControlsProps {
   token: BattleToken;
   stats: FighterStatsLookup;
-  hpDelta: string;
-  onHpDeltaChange: (value: string) => void;
   onApplyHp: (delta: number) => void;
+  onRollHp: (kind: 'damage' | 'heal') => void;
   onToggleVisibility: () => void;
   onScale: (delta: -1 | 1) => void;
   onRemove: (() => void) | undefined;
 }
 
-/** Selected-token floats: HP delta, visibility, scale, remove. */
+/** Selected-token floats: HP steppers + dice rolls, visibility, scale,
+ * remove. Tablet-first (M5-D amendment): every HP control is a ≥44px button
+ * — the typed delta input is gone; arbitrary amounts go through the dice
+ * roller's ± steppers. */
 function TokenControls({
   token,
   stats,
-  hpDelta,
-  onHpDeltaChange,
   onApplyHp,
+  onRollHp,
   onToggleVisibility,
   onScale,
   onRemove,
@@ -1388,37 +1437,63 @@ function TokenControls({
           No combat stats — excluded from initiative
         </p>
       )}
-      <div className="flex items-center gap-1">
-        <Input
-          value={hpDelta}
-          inputMode="numeric"
-          placeholder="±HP"
-          aria-label="HP delta"
-          className="h-7 w-16 text-sm"
-          onChange={(event) => {
-            onHpDeltaChange(event.target.value);
-          }}
-        />
+      <div className="grid grid-cols-3 gap-1" role="group" aria-label="Quick damage">
+        {[10, 5, 1].map((amount) => (
+          <Button
+            key={`damage-${String(amount)}`}
+            size="sm"
+            variant="outline"
+            className="min-h-11 text-destructive"
+            data-testid={`damage-${String(amount)}`}
+            aria-label={`Damage ${String(amount)}`}
+            onClick={() => {
+              onApplyHp(-amount);
+            }}
+          >
+            −{String(amount)}
+          </Button>
+        ))}
+      </div>
+      <div className="grid grid-cols-3 gap-1" role="group" aria-label="Quick heal">
+        {[1, 5, 10].map((amount) => (
+          <Button
+            key={`heal-${String(amount)}`}
+            size="sm"
+            variant="outline"
+            className="min-h-11 text-emerald-400"
+            data-testid={`heal-${String(amount)}`}
+            aria-label={`Heal ${String(amount)}`}
+            onClick={() => {
+              onApplyHp(amount);
+            }}
+          >
+            +{String(amount)}
+          </Button>
+        ))}
+      </div>
+      <div className="flex gap-1">
         <Button
-          size="xs"
+          size="sm"
           variant="outline"
-          data-testid="damage"
+          className="min-h-11 flex-1"
+          data-testid="roll-damage"
           onClick={() => {
-            const parsed = Number.parseInt(hpDelta, 10);
-            if (!Number.isNaN(parsed)) onApplyHp(-Math.abs(parsed));
+            onRollHp('damage');
           }}
         >
+          <DicesIcon aria-hidden data-icon="inline-start" />
           Damage
         </Button>
         <Button
-          size="xs"
+          size="sm"
           variant="outline"
-          data-testid="heal"
+          className="min-h-11 flex-1"
+          data-testid="roll-heal"
           onClick={() => {
-            const parsed = Number.parseInt(hpDelta, 10);
-            if (!Number.isNaN(parsed)) onApplyHp(Math.abs(parsed));
+            onRollHp('heal');
           }}
         >
+          <DicesIcon aria-hidden data-icon="inline-start" />
           Heal
         </Button>
       </div>
