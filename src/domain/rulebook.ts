@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import { BaseEntitySchema } from '@/domain/entity';
 import { gameSystemSchema } from '@/domain/gameSystem';
+import { itemDataSchema } from '@/domain/itemData';
 import { statBlockSchema } from '@/domain/statblock';
 
 export const rulebookStatusSchema = z.enum(['processing', 'ready', 'error']);
@@ -27,6 +28,13 @@ export const packMetaSchema = z.object({
   entriesSkipped: z.number().int().nonnegative(),
   /** Entries that failed creature mapping/validation (reported, never silent). */
   entriesFailed: z.number().int().nonnegative(),
+  /**
+   * Valid item entries in this book (12-BESTIARY-PACKS §12, the item-corpus
+   * arc) — absent on pack books imported before the arc; new imports always
+   * write it. Optional, so old rows parse unchanged. `entriesImported`
+   * counts both lanes.
+   */
+  itemsImported: z.number().int().nonnegative().optional(),
   // Provenance of a FETCHED pack (16-BESTIARY-FETCH §7) — absent for manual
   // file imports; all optional, so old backups parse unchanged (no migration).
   /** The ref the pack was ACTUALLY imported from: 'HEAD' (newest) or the
@@ -72,7 +80,7 @@ export const rulebookSchema = z.object({
 
 export type Rulebook = z.infer<typeof rulebookSchema>;
 
-export const chunkTypeSchema = z.enum(['section', 'statblock', 'table']);
+export const chunkTypeSchema = z.enum(['section', 'statblock', 'table', 'item']);
 
 export type ChunkType = z.infer<typeof chunkTypeSchema>;
 
@@ -91,6 +99,14 @@ export const ruleChunkSchema = z.object({
   text: z.string(),
   /** Parsed, when chunkType === 'statblock'. */
   statBlock: statBlockSchema.nullable(),
+  /**
+   * Parsed equipment/item payload, when chunkType === 'item' (12-BESTIARY-PACKS
+   * §12) — absent/null on every other chunk. `.nullish()` (not a default) is
+   * deliberate: chunks are read raw from Dexie in several repos, and rows
+   * written before this arc genuinely lack the key — the type must say so.
+   * No migration, no Dexie index change (`chunkType` is already indexed).
+   */
+  itemData: itemDataSchema.nullish(),
   /** SHA-256 hex of `text`, for the embedding cache. */
   contentHash: sha256HexSchema,
 });
