@@ -64,8 +64,10 @@ const artifactBaseShape = {
   kind: artifactKindSchema,
   name: z.string().min(1),
   tags: z.array(z.string()),
-  /** Alternate names module wiki-links may resolve against (M4-A). */
-  aliases: z.array(z.string()),
+  /** Alternate names module wiki-links may resolve against (M4-A). Additive
+   * `.default([])` — the v6 upgrade backfilled rows, and parse-on-read keeps
+   * every historical row (and revision snapshot) valid without a migration. */
+  aliases: z.array(z.string()).default([]),
   /** 1–3 sentences, shown in tree tooltips. */
   summary: z.string(),
   /** Markdown — the main free-text content. */
@@ -74,10 +76,12 @@ const artifactBaseShape = {
   links: z.array(artifactLinkSchema),
   /** 1-based; every content save appends a matching revision row. */
   currentRevision: z.number().int().positive(),
-  /** Referenced image blobs (images table), in gallery order (M3-A). */
-  imageIds: z.array(z.uuid()),
+  /** Referenced image blobs (images table), in gallery order (M3-A). Additive
+   * `.default([])`/`.default(null)` mirror the v2 upgrade backfill, so rows
+   * and revision snapshots written before M3 parse at the read boundary. */
+  imageIds: z.array(z.uuid()).default([]),
   /** The artifact's cover image (thumbnail in tree/PDF), or null. */
-  coverImageId: z.uuid().nullable(),
+  coverImageId: z.uuid().nullable().default(null),
 };
 
 /** Fields shared by every artifact kind. */

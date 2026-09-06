@@ -24,18 +24,31 @@ export async function createPersona(input: Parameters<typeof buildPersona>[0]): 
   return addPersona(buildPersona(input));
 }
 
+/**
+ * Legacy-row guard at the Dexie boundary (the ratified `parseBattleRow`
+ * template): M1-era rows predate `mode`/`reasoningEffort` — the schema
+ * defaults materialize on read ('generate'/'default'), and a corrupt row
+ * fails loudly instead of leaking a partial type (AGENTS rules 1+3).
+ * Built-in seeding skips existing slugs, so old rows are never rewritten.
+ */
+function parsePersonaRow(row: Persona): Persona {
+  return personaSchema.parse(row);
+}
+
 export async function getPersona(id: Id): Promise<Persona | undefined> {
-  return db.personas.get(id);
+  const row = await db.personas.get(id);
+  return row === undefined ? undefined : parsePersonaRow(row);
 }
 
 /** All personas, alphabetically (dropdown order). */
 export async function listPersonas(): Promise<Persona[]> {
   const rows = await db.personas.toArray();
-  return rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows.map(parsePersonaRow).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function findPersonaBySlug(slug: string): Promise<Persona | undefined> {
-  return db.personas.where('slug').equals(slug).first();
+  const row = await db.personas.where('slug').equals(slug).first();
+  return row === undefined ? undefined : parsePersonaRow(row);
 }
 
 export async function updatePersona(id: Id, patch: PersonaPatch): Promise<Persona> {

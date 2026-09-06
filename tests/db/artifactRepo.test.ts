@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { artifactScope, newId, type AnyArtifact } from '@/domain';
+import { artifactScope, newId, type AnyArtifact, type ArtifactRevision } from '@/domain';
 import {
   adoptIntoCampaign,
   countArtifactsByCampaign,
@@ -610,5 +610,117 @@ describe('ownership queries (M6-A)', () => {
       }),
     );
     await expect(adoptIntoCampaign(orphanId)).rejects.toThrow(/pick a campaign/);
+  });
+});
+
+/**
+ * Parse-on-read at the Dexie boundary (the ratified `parseBattleRow`
+ * template): rows written by an OLDER app version predate later-arc fields
+ * (moduleId, the encounter map/preset/locationKind block, M3 image fields,
+ * the revision envelope's source/runId). Every repo getter schema-parses, so
+ * the zod defaults materialize instead of handing the UI `undefined` — no
+ * Dexie migration rides along (the additive-fields convention).
+ */
+describe('legacy rows (parse-on-read materializes defaults)', () => {
+  beforeEach(clearDatabase);
+
+  it('materializes encounter + ownership defaults on an artifact row lacking them', async () => {
+    const campaignId = (await createCampaign({ name: 'Legacy', system: 'dnd5e' })).id;
+    const legacyEncounter = {
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      kind: 'encounter',
+      name: 'Pre-b290f12 ambush',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      data: {
+        difficulty: 'medium',
+        levelHint: '3',
+        monsters: [{ name: 'Troll', count: 2, notes: 'regenerates', source: { type: 'none' } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        // NO mapImageId/layout/preset/locationKind, NO moduleId/imageIds/…
+      },
+    };
+    await db.artifacts.put(legacyEncounter as unknown as AnyArtifact);
+
+    const artifact = await getArtifact(legacyEncounter.id);
+    if (artifact?.kind !== 'encounter') {
+      throw new Error('legacy encounter vanished or changed kind');
+    }
+    expect(artifact.data.locationKind).toBe('other');
+    expect(artifact.data.preset).toBe('standard');
+    expect(artifact.data.mapImageId).toBeNull();
+    expect(artifact.data.layout).toBeNull();
+    expect(artifact.data.monsters[0]?.treasure).toBe('');
+    expect(artifact.moduleId).toBeNull();
+    expect(artifact.imageIds).toEqual([]);
+    expect(artifact.aliases).toEqual([]);
+  });
+
+  it('materializes defaults through the list reads as well', async () => {
+    const campaignId = (await createCampaign({ name: 'Legacy list', system: 'dnd5e' })).id;
+    await db.artifacts.put({
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      kind: 'note',
+      name: 'Legacy note',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      data: {},
+    } as unknown as AnyArtifact);
+    const [parsed] = await listArtifactsByCampaign(campaignId);
+    expect(parsed?.moduleId).toBeNull();
+    expect(parsed?.imageIds).toEqual([]);
+    expect(parsed?.coverImageId).toBeNull();
+    expect(parsed?.aliases).toEqual([]);
+  });
+
+  it('materializes revision-envelope and snapshot defaults on listRevisions', async () => {
+    const campaignId = (await createCampaign({ name: 'Legacy revs', system: 'dnd5e' })).id;
+    const snapshot = {
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      kind: 'npc',
+      name: 'Old Grimm',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      data: { appearance: '', personality: '', statBlock: null },
+      // NO moduleId/imageIds/coverImageId/aliases (pre-M3/M6 snapshot).
+    };
+    await db.artifacts.put(snapshot as unknown as AnyArtifact);
+    await db.revisions.put({
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      artifactId: snapshot.id,
+      revision: 1,
+      snapshot,
+      // NO source/runId — added in a later arc.
+    } as unknown as ArtifactRevision);
+
+    const [revision] = await listRevisions(snapshot.id);
+    expect(revision?.source).toBe('user');
+    expect(revision?.runId).toBeNull();
+    expect(revision?.snapshot.moduleId).toBeNull();
+    if (revision?.snapshot.kind !== 'npc') throw new Error('wrong snapshot kind');
+    expect(revision.snapshot.imageIds).toEqual([]);
+    expect(revision.snapshot.aliases).toEqual([]);
   });
 });

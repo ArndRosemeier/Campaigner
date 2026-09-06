@@ -2,8 +2,9 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { rulebookSchema, ruleChunkSchema, stampNewEntity, type RuleChunk } from '@/domain';
+import { rulebookSchema, ruleChunkSchema, stampNewEntity, type RuleChunk, type Rulebook } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
+import { db } from '@/db/db';
 import {
   createPackBook,
   createRulebook,
@@ -198,5 +199,48 @@ describe('pack rulebooks (12-BESTIARY-PACKS §4)', () => {
     expect(renamed.title).toBe('PF2e Bestiary');
     expect(renamed.origin).toBe('pack');
     expect(renamed.packMeta).toBeNull();
+  });
+});
+
+/**
+ * Parse-on-read at the Dexie boundary (the ratified `parseBattleRow`
+ * template): a book row written before the pack arc lacks `origin`/
+ * `packMeta` — the reads schema-parse, so the additive defaults materialize
+ * on read ('pdf'/null) and a corrupt row fails loudly (AGENTS rules 1+3).
+ */
+describe('rulebookRepo legacy rows (parse-on-read materializes defaults)', () => {
+  beforeEach(clearDatabase);
+
+  async function putLegacyBook(): Promise<{ id: string }> {
+    const legacy = {
+      id: '00000000-0000-4000-8000-0000000000bb',
+      createdAt: 1,
+      updatedAt: 1,
+      title: 'Pre-pack PDF',
+      system: 'dnd5e',
+      filename: 'pre-pack.pdf',
+      pageCount: 120,
+      status: 'ready',
+      errorMessage: '',
+      // NO origin/packMeta — added with the pack arc.
+    };
+    await db.rulebooks.put(legacy as unknown as Rulebook);
+    return { id: legacy.id };
+  }
+
+  it('getRulebook materializes origin/packMeta defaults', async () => {
+    const { id } = await putLegacyBook();
+    const book = await getRulebook(id);
+    expect(book?.origin).toBe('pdf');
+    expect(book?.packMeta).toBeNull();
+  });
+
+  it('listRulebooks materializes origin/packMeta defaults', async () => {
+    const { id } = await putLegacyBook();
+    const books = await listRulebooks();
+    expect(books).toHaveLength(1);
+    expect(books[0]?.id).toBe(id);
+    expect(books[0]?.origin).toBe('pdf');
+    expect(books[0]?.packMeta).toBeNull();
   });
 });

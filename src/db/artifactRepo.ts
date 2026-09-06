@@ -1,5 +1,6 @@
 import {
   anyArtifactSchema,
+  artifactRevisionSchema,
   artifactSchema,
   createArtifact as buildArtifact,
   newId,
@@ -29,41 +30,74 @@ export interface RevisionMeta {
 
 const USER_SAVE: RevisionMeta = { source: 'user' };
 
+/**
+ * Legacy-row guard at the Dexie boundary (the ratified `parseBattleRow`
+ * template, battleRepo): zod materializes schema defaults for fields an
+ * older row lacks — `moduleId` (v10 backfill equivalent), the encounter
+ * data block's `mapImageId`/`layout`/`preset`/`locationKind`, the M3 image
+ * fields on pre-v2 rows — and a genuinely corrupt row fails loudly here
+ * (AGENTS rules 1+3) instead of crashing a render with `undefined` fields.
+ * Every read function below parses; every write path already parses.
+ */
+function parseArtifactRow<T extends AnyArtifact>(row: T): T {
+  // The union parse returns whichever variant matched — same variant as the
+  // input row (scope fields are not changed by parsing), so the generic cast
+  // is truthful.
+  return anyArtifactSchema.parse(row) as T;
+}
+
+/** Same guard for revision rows: the snapshot is parsed against the artifact
+ * schema, so historical snapshots gain the same defaults (and old envelope
+ * fields `source`/`runId` default to their pre-M3 values). */
+function parseRevisionRow(row: ArtifactRevision): ArtifactRevision {
+  return artifactRevisionSchema.parse(row);
+}
+
 export async function getArtifact(id: Id): Promise<Artifact | undefined> {
   const row = await db.artifacts.get(id);
   // The campaignId index guarantees ownership for campaign-scoped reads;
   // a global row here would be a caller bug (no global writer exists until
   // M6-C, which switches cross-scope readers to getAnyArtifact).
-  return row !== undefined && row.campaignId !== null ? row : undefined;
+  if (row === undefined) return undefined;
+  const parsed = parseArtifactRow(row);
+  return parsed.campaignId !== null ? parsed : undefined;
 }
 
 /** Any-scope read (10-MILESTONE-6): owned or global. Cross-scope surfaces
  * (publish/adopt, the library, battle stat lookup) use this. */
 export async function getAnyArtifact(id: Id): Promise<AnyArtifact | undefined> {
-  return db.artifacts.get(id);
+  const row = await db.artifacts.get(id);
+  return row === undefined ? undefined : parseArtifactRow(row);
 }
 
 /** bulkGet preserving no particular order; missing ids dropped. Returns any
  * scope — callers that require owned rows narrow on `campaignId`. */
 export async function listArtifactsByIds(ids: readonly Id[]): Promise<AnyArtifact[]> {
   const rows = await db.artifacts.bulkGet([...ids]);
-  return rows.filter((row): row is AnyArtifact => row !== undefined);
+  return rows
+    .filter((row): row is AnyArtifact => row !== undefined)
+    .map(parseArtifactRow);
 }
 
 export async function listArtifactsByCampaign(campaignId: Id): Promise<Artifact[]> {
   // The campaignId index only contains rows whose campaignId is a valid key
-  // — every hit is owned (campaign- or module-scoped), never global.
+  // — every hit is owned (campaign- or module-scoped), never global. Rows are
+  // schema-parsed on load: on large campaigns this parses every row, which is
+  // cheap next to the Dexie IO that fetched them.
   const rows = (await db.artifacts.where('campaignId').equals(campaignId).toArray()).filter(
     (row): row is Artifact => row.campaignId !== null,
   );
-  return rows.sort((a, b) => a.name.localeCompare(b.name));
+  return rows.map(parseArtifactRow).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Global library rows (10-MILESTONE-6): a full scan — global artifacts are
  * few and there is no index on a null key. Alphabetical by name. */
 export async function listGlobalArtifacts(): Promise<GlobalArtifact[]> {
   const rows = await db.artifacts.filter((row) => row.campaignId === null).toArray();
-  return rows.filter((row): row is GlobalArtifact => row.campaignId === null).sort((a, b) => a.name.localeCompare(b.name));
+  return rows
+    .filter((row): row is GlobalArtifact => row.campaignId === null)
+    .map(parseArtifactRow)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Artifacts owned by one module (10-MILESTONE-6). The [moduleId+kind] index
@@ -71,7 +105,10 @@ export async function listGlobalArtifacts(): Promise<GlobalArtifact[]> {
  * therefore campaign-anchored. Alphabetical by name. */
 export async function listArtifactsByModule(moduleId: Id): Promise<Artifact[]> {
   const rows = await db.artifacts.where('moduleId').equals(moduleId).toArray();
-  return rows.filter((row): row is Artifact => row.campaignId !== null).sort((a, b) => a.name.localeCompare(b.name));
+  return rows
+    .filter((row): row is Artifact => row.campaignId !== null)
+    .map(parseArtifactRow)
+    .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export async function countArtifactsByCampaign(campaignId: Id): Promise<number> {
@@ -209,8 +246,9 @@ export async function removeImageFromArtifact(artifactId: Id, imageId: Id): Prom
     }
     const revisions = await db.revisions.where('artifactId').equals(artifactId).toArray();
     for (const revision of revisions) {
-      // Read defensively (pre-M3 snapshots lack both fields — see
-      // referencedImageIds); rows are not schema-parsed on load.
+      // Snapshot images are scrubbed in place; the row is parsed on load
+      // everywhere else (parseRevisionRow), so only the two fields this
+      // function touches are read here.
       const snapshot = revision.snapshot as {
         imageIds?: Id[];
         coverImageId?: Id | null;
@@ -392,7 +430,7 @@ export async function campaignsReferencingArtifact(id: Id): Promise<Id[]> {
 
 export async function listRevisions(artifactId: Id): Promise<ArtifactRevision[]> {
   const rows = await db.revisions.where('artifactId').equals(artifactId).toArray();
-  return rows.sort((a, b) => b.revision - a.revision);
+  return rows.map(parseRevisionRow).sort((a, b) => b.revision - a.revision);
 }
 
 /** Deletes an artifact and its revision history. Idempotent. */

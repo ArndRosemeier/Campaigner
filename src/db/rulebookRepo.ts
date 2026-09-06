@@ -16,14 +16,26 @@ import { NotFoundError } from '@/lib/errors';
 
 export type RulebookPatch = EntityPatch<Rulebook>;
 
+/**
+ * Legacy-row guard at the Dexie boundary (the ratified `parseBattleRow`
+ * template): rows written before the pack arc lack `origin`/`packMeta` —
+ * the schema defaults materialize on read ('pdf'/null, exactly what the
+ * pack arc's additive-zod note promises), and a corrupt row fails loudly
+ * (AGENTS rules 1+3).
+ */
+function parseRulebookRow(row: Rulebook): Rulebook {
+  return rulebookSchema.parse(row);
+}
+
 /** All books, most recently updated first. */
 export async function listRulebooks(): Promise<Rulebook[]> {
   const rows = await db.rulebooks.toArray();
-  return rows.sort((a, b) => b.updatedAt - a.updatedAt);
+  return rows.map(parseRulebookRow).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 export async function getRulebook(id: string): Promise<Rulebook | undefined> {
-  return db.rulebooks.get(id);
+  const row = await db.rulebooks.get(id);
+  return row === undefined ? undefined : parseRulebookRow(row);
 }
 
 export async function createRulebook(input: NewRulebook): Promise<Rulebook> {

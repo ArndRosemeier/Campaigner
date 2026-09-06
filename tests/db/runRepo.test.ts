@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { newId } from '@/domain';
+import { newId, type PersonaRun } from '@/domain';
 import { createPersona } from '@/db/personaRepo';
 import {
   createRun,
@@ -134,5 +134,42 @@ describe('runRepo', () => {
     });
     await deleteRun(run.id);
     expect(await db.runs.get(run.id)).toBeUndefined();
+  });
+
+  /**
+   * Parse-on-read at the Dexie boundary (the ratified `parseBattleRow`
+   * template): a run row written before the additive option fields existed
+   * materializes the schema defaults on read — resume/retry reconstructs
+   * the input exactly instead of seeing `undefined`.
+   */
+  it('materializes run-option defaults on a legacy row without them', async () => {
+    const personaId = await makePersona();
+    const campaignId = newId();
+    const legacy = {
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      personaId,
+      autonomy: 'manual',
+      status: 'completed',
+      userBrief: 'pre-D10 run',
+      pinnedChunkIds: [],
+      steps: [],
+      resultArtifactId: null,
+      targetArtifactId: null,
+      errorMessage: '',
+      // NO encounterMapAspect/encounterPreset/placementModuleId/runExtras.
+    };
+    await db.runs.put(legacy as unknown as PersonaRun);
+
+    const run = await getRun(legacy.id);
+    expect(run?.encounterMapAspect).toBeNull();
+    expect(run?.encounterPreset).toBeNull();
+    expect(run?.placementModuleId).toBeNull();
+    expect(run?.runExtras).toBeNull();
+    const listed = await listRunsByCampaign(campaignId);
+    expect(listed[0]?.encounterPreset).toBeNull();
+    expect(listed[0]?.runExtras).toBeNull();
   });
 });

@@ -15,10 +15,13 @@ export const artifactRevisionSchema = z.object({
   revision: z.number().int().positive(),
   /** Deep copy of the artifact at save time (any scope, M6-C). */
   snapshot: anyArtifactSchema,
-  /** Who produced this revision. */
-  source: revisionSourceSchema,
-  /** PersonaRun that produced it, if source === 'persona'. */
-  runId: z.uuid().nullable(),
+  /** Who produced this revision. Additive `.default('user')`: revisions
+   * written before the field existed were all user saves — parse-on-read
+   * materializes it without a migration. */
+  source: revisionSourceSchema.default('user'),
+  /** PersonaRun that produced it, if source === 'persona'. Additive
+   * `.default(null)` for the same pre-M3 rows. */
+  runId: z.uuid().nullable().default(null),
 });
 
 export type ArtifactRevision = z.infer<typeof artifactRevisionSchema>;

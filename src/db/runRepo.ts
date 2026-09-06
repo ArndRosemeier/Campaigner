@@ -17,14 +17,27 @@ export async function createRun(input: NewPersonaRun): Promise<PersonaRun> {
   return run;
 }
 
+/**
+ * Legacy-row guard at the Dexie boundary (the ratified `parseBattleRow`
+ * template): zod materializes the additive run options on rows written
+ * before they existed — `encounterMapAspect`, `encounterPreset`,
+ * `placementModuleId`, `runExtras` — so resume/retry sees the schema
+ * defaults instead of `undefined`, and a corrupt row fails loudly
+ * (AGENTS rules 1+3). Writes already parse (updateRun/failRunningRuns).
+ */
+function parseRunRow(row: PersonaRun): PersonaRun {
+  return personaRunSchema.parse(row);
+}
+
 export async function getRun(id: Id): Promise<PersonaRun | undefined> {
-  return db.runs.get(id);
+  const row = await db.runs.get(id);
+  return row === undefined ? undefined : parseRunRow(row);
 }
 
 /** Past runs of a campaign, most recent first (Runs tab). */
 export async function listRunsByCampaign(campaignId: Id): Promise<PersonaRun[]> {
   const rows = await db.runs.where('campaignId').equals(campaignId).toArray();
-  return rows.sort((a, b) => b.updatedAt - a.updatedAt);
+  return rows.map(parseRunRow).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** The run engine persists after every state change through this function. */
