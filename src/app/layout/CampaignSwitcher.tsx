@@ -3,7 +3,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { ChevronDown, CheckIcon } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 
-import { campaignIdFromPath, workspacePath } from '@/app/routes';
+import { campaignIdFromPath, modulesPath } from '@/app/routes';
 import { buttonVariants } from '@/components/ui/button';
 import {
   DropdownMenu,
@@ -17,8 +17,8 @@ import { cn } from '@/lib/utils';
 /**
  * Top-bar campaign switcher (05-UI.md §Top bar): lists every campaign live
  * (Dexie observable — new campaigns appear without a reload), shows the
- * current campaign in the trigger, and opens a campaign's workspace on
- * selection.
+ * current campaign in the trigger, and opens a campaign's modules view on
+ * selection — the central view (same landing as the campaign picker).
  */
 export function CampaignSwitcher(): JSX.Element {
   const campaigns = useLiveQuery(() => campaignRepo.listCampaigns(), []);
@@ -54,7 +54,7 @@ export function CampaignSwitcher(): JSX.Element {
             <DropdownMenuItem
               key={campaign.id}
               onClick={() => {
-                navigate(workspacePath(campaign.id));
+                navigate(modulesPath(campaign.id));
               }}
             >
               <CheckIcon

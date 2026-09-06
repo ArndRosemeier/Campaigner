@@ -11,6 +11,7 @@ import { createArtifact, listArtifactsByCampaign, publishToLibrary, updateArtifa
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
+import { readSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
   createModule,
@@ -241,6 +242,24 @@ describe('ModuleReaderPage', () => {
     expect(article.className).toContain('py-10');
     expect(article.className).toContain('text-[15px]');
     await flushAsyncUpdates();
+  });
+
+  it('persists the opened module as settings.lastModule for the top-bar shortcut', async () => {
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findPartSection(0);
+
+    await waitFor(async () => {
+      const settings = await readSettings();
+      expect(settings.lastModule).toMatchObject({ campaignId, moduleId, name: MODULE_TITLE });
+    });
+    // Re-mounting the same reader must not churn the row — the effect
+    // writes only when the stored value differs.
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findPartSection(0);
+    await flushAsyncUpdates();
+    const settings = await readSettings();
+    expect(settings.lastModule).toMatchObject({ campaignId, moduleId, name: MODULE_TITLE });
   });
 
   it('shows module-failed-banner when module.status is failed and provides Resume button', async () => {

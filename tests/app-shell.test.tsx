@@ -9,6 +9,7 @@ import {
   ROUTES,
   deliverablesPath,
   graphPath,
+  modulePath,
   modulesPath,
   workspacePath,
 } from '@/app/routes';
@@ -145,10 +146,11 @@ describe('campaign switcher', () => {
       await screen.findByRole('menuitem', { name: 'The Sunless Sea' }),
     ).toBeInTheDocument();
 
-    // Selecting a campaign opens its workspace and updates the trigger.
+    // Selecting a campaign opens its modules view (the central view — same
+    // landing as the campaign picker) and updates the trigger.
     await user.click(screen.getByRole('menuitem', { name: 'The Sunless Sea' }));
     expect(await screen.findByTestId('current-campaign')).toHaveTextContent('The Sunless Sea');
-    expect(window.location.pathname).toBe(workspacePath(campaign.id));
+    expect(window.location.pathname).toBe(modulesPath(campaign.id));
   });
 
   it('shows the empty state before any campaign exists', async () => {
@@ -173,13 +175,16 @@ describe('campaign switcher', () => {
     });
   });
 
-  it('points the campaign tabs at the open campaign', async () => {
+  it('points the campaign tabs at the open campaign, Modules first', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
 
     renderAppAt(workspacePath(campaign.id));
     await waitFor(() => {
       expect(screen.getByTestId('current-campaign')).toHaveTextContent('Ember');
     });
+    // Modules is the FIRST tab (the central view the rest feeds).
+    const tabs = within(screen.getByTestId('campaign-bar')).getAllByRole('link');
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Modules', 'Workspace', 'Deliverables', 'Graph']);
     expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
       'href',
       workspacePath(campaign.id),
@@ -196,6 +201,49 @@ describe('campaign switcher', () => {
       'href',
       graphPath(campaign.id),
     );
+  });
+});
+
+describe('last-module shortcut (top bar)', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    await seedSettledOnboarding();
+  });
+
+  it('is hidden while no module reader has been opened (lastModule null)', async () => {
+    renderAppAt(ROUTES.campaignPicker);
+    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByTestId('topbar-last-module')).not.toBeInTheDocument();
+  });
+
+  it('shows the last module name and navigates to its reader', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    await saveSettings({
+      ...defaultSettings(),
+      onboarding: { status: 'complete', stepState: [] },
+      lastModule: { campaignId: campaign.id, moduleId: module.id, name: module.title },
+    });
+
+    renderAppAt(ROUTES.campaignPicker);
+    const shortcut = await screen.findByTestId('topbar-last-module');
+    expect(shortcut).toHaveAttribute('href', modulePath(campaign.id, module.id));
+    expect(within(shortcut).getByText('The Drowned Vault')).toBeInTheDocument();
+
+    await userEvent.setup().click(shortcut);
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(modulePath(campaign.id, module.id));
+    });
+    expect(screen.getByTestId('module-reader')).toBeInTheDocument();
   });
 });
 

@@ -32,6 +32,7 @@ import { MODULE_SIZE_LABELS, entityKindFor, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
+import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { useArtifacts, useCampaign, useGlobalArtifacts, useScopedArtifacts } from '@/features/campaign/hooks';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
@@ -148,6 +149,37 @@ export function ModuleReaderPage(): JSX.Element {
     const element = document.getElementById(`part-${match[1] ?? ''}`);
     element?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }, [location.hash, module]);
+
+  // Last-used module shortcut (settings.lastModule): opening a reader is the
+  // "most recent module" event, so the mount persists it for the TopBar
+  // entry. Written whole (updateSettings merges one level deep) and only
+  // when it differs — re-mounting the same module must not churn the row.
+  useEffect(() => {
+    if (module === undefined || module === null) return;
+    const next = {
+      campaignId,
+      moduleId,
+      name: module.title,
+    };
+    void readSettings()
+      .then(async (current) => {
+        const last = current.lastModule;
+        if (
+          last !== null &&
+          last.campaignId === next.campaignId &&
+          last.moduleId === next.moduleId &&
+          last.name === next.name
+        ) {
+          return;
+        }
+        await updateSettings({ lastModule: next });
+      })
+      .catch((error: unknown) => {
+        // The shortcut is an enrichment, not a reader requirement — but a
+        // failure is never silent (AGENTS rule 2).
+        toastError('Could not save the last-used module', error);
+      });
+  }, [campaignId, moduleId, module]);
 
   if (
     campaign === undefined ||

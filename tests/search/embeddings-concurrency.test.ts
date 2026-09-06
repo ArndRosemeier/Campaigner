@@ -77,6 +77,7 @@ const SETTINGS = {
   retiredSessionNotesRemoved: 0,
   language: 'en' as const,
   onboarding: { status: 'fresh' as const, stepState: [] },
+  lastModule: null,
 };
 
 beforeEach(async () => {

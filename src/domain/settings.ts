@@ -128,6 +128,25 @@ export const onboardingSchema = z.object({
 
 export type Onboarding = z.infer<typeof onboardingSchema>;
 
+/**
+ * Last-used module shortcut (stored on the settings row): the module whose
+ * READER was opened most recently. `null` = none yet (the TopBar shortcut is
+ * hidden). Written whole by the reader's mount effect — `updateSettings`
+ * merges one level deep, so the object is always replaced atomically. Rows
+ * and backups written before the field parse via the `.default(null)`
+ * post-M3 field convention.
+ */
+export const lastModuleSchema = z
+  .object({
+    campaignId: z.uuid(),
+    moduleId: z.uuid(),
+    name: z.string().min(1),
+  })
+  .nullable()
+  .default(null);
+
+export type LastModule = z.infer<typeof lastModuleSchema>;
+
 export const settingsSchema = z.object({
   id: z.literal(SETTINGS_ID),
   /** '' when unset. */
@@ -224,6 +243,8 @@ export const settingsSchema = z.object({
   retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
   /** First-run setup wizard (see onboardingSchema above). */
   onboarding: onboardingSchema.default({ status: 'fresh', stepState: [] }),
+  /** Last-used module shortcut (see lastModuleSchema above). */
+  lastModule: lastModuleSchema,
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -254,5 +275,6 @@ export function defaultSettings(): Settings {
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
     onboarding: { status: 'fresh', stepState: [] },
+    lastModule: null,
   };
 }

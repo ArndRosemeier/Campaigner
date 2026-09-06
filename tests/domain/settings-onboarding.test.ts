@@ -35,6 +35,13 @@ describe('onboarding settings field', () => {
     expect(parsed.onboarding).toEqual({ status: 'fresh', stepState: [] });
   });
 
+  it('parses an old row without lastModule into null (shortcut hidden)', () => {
+    const oldRow = { ...defaultSettings() };
+    delete (oldRow as Partial<Settings>).lastModule;
+    const parsed = settingsSchema.parse(oldRow);
+    expect(parsed.lastModule).toBeNull();
+  });
+
   it('defaults the default settings row to a fresh wizard', () => {
     expect(defaultSettings().onboarding).toEqual({ status: 'fresh', stepState: [] });
   });

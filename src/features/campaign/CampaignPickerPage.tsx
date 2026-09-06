@@ -5,7 +5,7 @@ import { EllipsisVerticalIcon, FileDownIcon, FileUpIcon, PlusIcon } from 'lucide
 
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { workspacePath } from '@/app/routes';
+import { modulesPath, workspacePath } from '@/app/routes';
 import { campaignRepo } from '@/db';
 import { GAME_SYSTEMS, GAME_SYSTEM_LABELS, type GameSystem } from '@/domain';
 import {
@@ -98,7 +98,7 @@ export function CampaignPickerPage(): JSX.Element {
           <div>
             <h1 className="text-xl font-semibold">Campaigns</h1>
             <p className="text-sm text-muted-foreground">
-              Pick a campaign to open its workspace, or start a new one.
+              Pick a campaign to open its modules, or start a new one.
             </p>
           </div>
           <div className="flex items-center gap-2">
@@ -190,7 +190,9 @@ export function CampaignPickerPage(): JSX.Element {
                 <CampaignCard
                   summary={summary}
                   onOpen={() => {
-                    navigate(workspacePath(summary.campaign.id));
+                    // Opening a campaign lands on its MODULES view — the
+                    // central view the rest of the app feeds (owner-ratified).
+                    navigate(modulesPath(summary.campaign.id));
                   }}
                 />
               </li>

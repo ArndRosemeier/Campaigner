@@ -9,10 +9,11 @@ import { getModule } from '@/db/moduleRepo';
 import { cn } from '@/lib/utils';
 
 /**
- * Campaign bar (05-UI.md §Top bar): the campaign-level tabs — Workspace /
- * Modules / Deliverables / Graph — rendered on every route directly below the
- * top bar so the app's structure stays visible. Tabs are disabled (with a
- * hint) while no campaign is open instead of hidden.
+ * Campaign bar (05-UI.md §Top bar): the campaign-level tabs — Modules /
+ * Workspace / Deliverables / Graph, Modules first (the central view) —
+ * rendered on every route directly below the top bar so the app's structure
+ * stays visible. Tabs are disabled (with a hint) while no campaign is open
+ * instead of hidden.
  *
  * The right side carries the breadcrumb for nested screens (a module in the
  * reader, the battle table), so deep screens always show where you are and
