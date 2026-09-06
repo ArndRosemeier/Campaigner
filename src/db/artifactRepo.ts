@@ -151,6 +151,11 @@ async function moveScope(
  * Assign a generated campaign artifact to its module while preserving the
  * compatibility tag in the same revision. Plain `updateArtifact` pins scope
  * fields, so generation writers must use this explicit ownership pathway.
+ *
+ * Loud existence check (AGENTS rule 1): the module row must still exist —
+ * a module deleted while its generation was in flight can never receive an
+ * ownership stamp, so a dangling `moduleId` pointing at a removed row is
+ * impossible to create through this pathway.
  */
 export async function stampModuleOwnership(
   id: Id,
@@ -158,11 +163,18 @@ export async function stampModuleOwnership(
   moduleTag: string,
   meta: RevisionMeta = USER_SAVE,
 ): Promise<Artifact> {
-  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+  return db.transaction('rw', db.artifacts, db.revisions, db.modules, async () => {
     const current = await db.artifacts.get(id);
     if (current === undefined) throw new NotFoundError('Artifact', id);
     if (current.campaignId === null) {
       throw new Error('A global library entry cannot be stamped into a module.');
+    }
+    const module = await db.modules.get(moduleId);
+    if (module === undefined) {
+      throw new Error(
+        `Cannot stamp module ownership: module ${moduleId} no longer exists — ` +
+          'it was deleted while its generation was still running.',
+      );
     }
     const next = artifactSchema.parse({
       ...current,

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { createModule, moduleSchema, type Campaign, type Module } from '@/domain';
 import { useArtifacts } from '@/features/campaign/hooks';
@@ -141,6 +142,9 @@ describe('entity batch — real chain persistence and live resolution', () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = moduleFixture(campaign.id);
+    // Batch artifacts are module-owned FROM BIRTH — the module row must
+    // exist (finalize re-checks it loudly, AGENTS rule 1).
+    await saveModule(module);
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(draft), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce({ text: JSON.stringify(statblock), modelUsed: 'test-model', fallback: null });
@@ -184,6 +188,9 @@ describe('entity batch — real chain persistence and live resolution', () => {
   it('generates independent entities concurrently up to maxParallelRequests', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = moduleFixture(campaign.id);
+    // Batch artifacts are module-owned FROM BIRTH — the module row must
+    // exist (finalize re-checks it loudly, AGENTS rule 1).
+    await saveModule(module);
     await updateSettings({ maxParallelRequests: 2 });
     const NAMES = ['Kael', 'Bree', 'Ruth'] as const;
 

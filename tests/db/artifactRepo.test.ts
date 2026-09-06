@@ -18,10 +18,11 @@ import {
   publishToLibrary,
   campaignsReferencingArtifact,
   restoreRevision,
+  stampModuleOwnership,
   updateArtifact,
 } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule } from '@/db/moduleRepo';
+import { createModule, deleteModule } from '@/db/moduleRepo';
 import { pruneUnreferencedImages } from '@/db/imageRepo';
 import { createModule as createModuleSchema } from '@/domain';
 import { db } from '@/db/db';
@@ -203,6 +204,47 @@ describe('deleteArtifact', () => {
     expect(afterNote?.links).toEqual([{ targetId: location.id, relation: 'about' }]);
     expect(await getArtifact(npc.id)).toBeUndefined();
     expect(await listRevisions(npc.id)).toEqual([]);
+  });
+});
+
+describe('stampModuleOwnership', () => {
+  beforeEach(clearDatabase);
+
+  function moduleInput(campaignId: string, title: string) {
+    return createModuleSchema({
+      campaignId,
+      title,
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'sketch',
+    });
+  }
+
+  it('stamps a campaign-level artifact into an existing module (idempotent tag)', async () => {
+    const campaignId = newId();
+    const module = await createModule(moduleInput(campaignId, 'Ember Crypt'));
+    const artifact = await createArtifact({ campaignId, kind: 'npc', name: 'Kael' });
+
+    const stamped = await stampModuleOwnership(artifact.id, module.id, 'module:Ember Crypt');
+
+    expect(stamped.moduleId).toBe(module.id);
+    expect(stamped.tags).toContain('module:Ember Crypt');
+    expect(stamped.campaignId).toBe(campaignId);
+  });
+
+  it('throws loudly (naming the id) when the module row is gone — no dangling ownership', async () => {
+    const campaignId = newId();
+    const module = await createModule(moduleInput(campaignId, 'Doomed Vault'));
+    const artifact = await createArtifact({ campaignId, kind: 'npc', name: 'Kael' });
+    // The module is deleted while its "generation" is between create + stamp.
+    await deleteModule(module.id, 'keep');
+
+    await expect(stampModuleOwnership(artifact.id, module.id, 'module:Doomed Vault')).rejects.toThrow(
+      `module ${module.id} no longer exists`,
+    );
+    // The write was refused wholesale — the artifact stays campaign-level.
+    expect((await getArtifact(artifact.id))?.moduleId).toBeNull();
   });
 });
 

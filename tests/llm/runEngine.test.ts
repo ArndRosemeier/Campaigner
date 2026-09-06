@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import type { Persona } from '@/domain';
+import { createModule as createModuleSchema, type Persona } from '@/domain';
 import { createPersona } from '@/db/personaRepo';
 import {
   createArtifact,
@@ -13,6 +13,7 @@ import {
 } from '@/db/artifactRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
+import { createModule as createModuleRow, deleteModule } from '@/db/moduleRepo';
 import { runEngine } from '@/llm/runEngine';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { waitFor } from '@testing-library/react';
@@ -522,8 +523,18 @@ describe('runEngine', () => {
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
-    const moduleId = '11111111-1111-4111-8111-111111111111';
-    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const, placementModuleId: moduleId };
+    // A REAL module row — finalize re-checks existence loudly (AGENTS rule 1).
+    const module = await createModuleRow(
+      createModuleSchema({
+        campaignId,
+        title: 'Ember Crypt',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const, placementModuleId: module.id };
     const runId = await runEngine.startRun(input);
     await waitFor(async () => {
       const run = await getRun(runId);
@@ -531,11 +542,11 @@ describe('runEngine', () => {
     });
 
     const run = await getRun(runId);
-    expect(run?.placementModuleId).toBe(moduleId);
+    expect(run?.placementModuleId).toBe(module.id);
     const resultId = run?.resultArtifactId;
     if (resultId === null || resultId === undefined) throw new Error('run has no result artifact');
     const artifact = await getArtifact(resultId);
-    expect(artifact?.moduleId).toBe(moduleId);
+    expect(artifact?.moduleId).toBe(module.id);
   }, 20000);
 
   it('a targeted in-place run with placement set fails loudly (placement is fresh-create only)', async () => {
@@ -580,17 +591,78 @@ describe('runEngine', () => {
     expect(run?.errorMessage).toContain('Module placement applies only to a newly created artifact');
   }, 20000);
 
+  it('a run whose placement module is deleted mid-run fails loudly and leaves no dangling artifact', async () => {
+    const { campaignId, persona } = await seed();
+    const module = await createModuleRow(
+      createModuleSchema({
+        campaignId,
+        title: 'Doomed Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+
+    // Hold the statblock reply back so the delete lands while the run is
+    // mid-pipeline — finalize (with the placement re-check) runs after it.
+    type ChatReply = Awaited<ReturnType<typeof chat>>;
+    let releaseStatblock: ((reply: ChatReply) => void) | undefined;
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockImplementationOnce(
+        () =>
+          new Promise<ChatReply>((resolve) => {
+            releaseStatblock = resolve;
+          }),
+      );
+
+    const input = { ...INPUT(campaignId, persona), autonomy: 'auto' as const, placementModuleId: module.id };
+    const runId = await runEngine.startRun(input);
+    await waitFor(() => {
+      expect(chatMock).toHaveBeenCalledTimes(2);
+    });
+    if (releaseStatblock === undefined) throw new Error('the run never reached the statblock step');
+    expect((await getRun(runId))?.status).toBe('running');
+
+    // The module goes away while the run is in flight…
+    await deleteModule(module.id, 'keep');
+    // …the queued statblock reply lands, and finalize now hits the missing module.
+    releaseStatblock({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
+
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('was deleted while the run was running');
+    expect(run?.resultArtifactId).toBeNull();
+    // Zero dangling rows: nothing owns the removed module id.
+    const artifacts = await listArtifactsByCampaign(campaignId);
+    expect(artifacts.filter((artifact) => artifact.moduleId === module.id)).toEqual([]);
+    expect(artifacts).toHaveLength(0);
+  }, 20000);
+
   it('resumeRun without explicit input rebuilds placement and extras from the run row', async () => {
     const { campaignId, persona } = await seed();
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
       .mockResolvedValue({ text: 'this is not a statblock', modelUsed: 'test-model', fallback: null });
 
-    const moduleId = '22222222-2222-4222-8222-222222222222';
+    // A REAL module row — finalize re-checks existence loudly (AGENTS rule 1).
+    const module = await createModuleRow(
+      createModuleSchema({
+        campaignId,
+        title: 'Tide Gate',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
     const input = {
       ...INPUT(campaignId, persona),
       autonomy: 'auto' as const,
-      placementModuleId: moduleId,
+      placementModuleId: module.id,
       extras: { image: false, statBlock: false, mobPortraits: false, battlemap: false },
     };
     const runId = await runEngine.startRun(input);
@@ -598,7 +670,7 @@ describe('runEngine', () => {
       const run = await getRun(runId);
       expect(run?.status).toBe('failed');
     });
-    expect((await getRun(runId))?.placementModuleId).toBe(moduleId);
+    expect((await getRun(runId))?.placementModuleId).toBe(module.id);
 
     chatMock.mockReset();
     chatMock.mockResolvedValue({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
@@ -612,7 +684,7 @@ describe('runEngine', () => {
     const resumedId = resumed?.resultArtifactId;
     if (resumedId === null || resumedId === undefined) throw new Error('resumed run has no result artifact');
     const artifact = await getArtifact(resumedId);
-    expect(artifact?.moduleId).toBe(moduleId);
+    expect(artifact?.moduleId).toBe(module.id);
   }, 20000);
   it('pilot (strict structured outputs): the encounter draft step sends a strict json_schema responseFormat', async () => {
     const { campaignId } = await seed();

@@ -548,6 +548,9 @@ describe('EntityPanel', () => {
     });
 
     const module = moduleFixture(campaign.id);
+    // The batch runs write module-owned artifacts — the module row must
+    // exist (finalize re-checks it loudly, AGENTS rule 1).
+    await saveModule(module);
     render(
       <EntityPanel
         module={module}
@@ -622,9 +625,13 @@ describe('EntityPanel', () => {
       })(messages),
     );
 
+    // The batch writes module-owned artifacts — the module row must exist
+    // (finalize re-checks it loudly, AGENTS rule 1).
+    const module = moduleFixture(campaign.id);
+    await saveModule(module);
     render(
       <EntityPanel
-        module={moduleFixture(campaign.id)}
+        module={module}
         artifacts={[mira]}
         campaign={campaign}
         onStub={vi.fn()}
@@ -698,6 +705,9 @@ describe('EntityPanel', () => {
       },
       entityKinds: [...base.entityKinds, { name: 'Cora', kind: 'npc', absorbed: [] }],
     });
+    // The batch writes module-owned artifacts — the module row must exist
+    // (finalize re-checks it loudly, AGENTS rule 1).
+    await saveModule(module);
 
     // Bram's draft call fails; Kael and Cora complete in parallel. The
     // failed list is the produced-artifact diff, not a run-status tally —

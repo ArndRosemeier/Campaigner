@@ -2738,6 +2738,18 @@ export class RunEngine {
         'Module placement applies only to a newly created artifact — clear the module choice or drop the target',
       );
     }
+    // Loud existence check (AGENTS rule 1): a module deleted while the run
+    // was in flight FAILS the run here — never a dangling artifact whose
+    // moduleId points at a removed row.
+    if (target === undefined && input.placementModuleId !== undefined) {
+      const placedModule = await getModule(input.placementModuleId);
+      if (placedModule === undefined) {
+        throw new Error(
+          `finalize: the module placed for this encounter (${input.placementModuleId}) was deleted ` +
+            'while the run was running — refusing to create an artifact owned by a module that no longer exists',
+        );
+      }
+    }
     let artifactId: Id;
     if (target !== undefined) {
       if (target.kind !== 'encounter') throw new Error('Encounter regeneration target changed kind');
@@ -2972,6 +2984,24 @@ export class RunEngine {
     const draft = this.effectiveDraft(steps) ?? {};
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not produce artifacts');
+    // Loud existence check (AGENTS rule 1), BEFORE any finalize work: a
+    // module deleted while the run was in flight FAILS the run — never a
+    // dangling artifact whose moduleId points at a removed row. Review
+    // personas finalize campaign-level continuity notes and never honor
+    // placement, so they are out of scope here.
+    if (
+      input.targetArtifactId === undefined &&
+      input.placementModuleId !== undefined &&
+      input.persona.mode !== 'review'
+    ) {
+      const placedModule = await getModule(input.placementModuleId);
+      if (placedModule === undefined) {
+        throw new Error(
+          `finalize: the module placed for this artifact (${input.placementModuleId}) was deleted ` +
+            'while the run was running — refusing to create an artifact owned by a module that no longer exists',
+        );
+      }
+    }
     const data = dataForDraft(kind, draft);
     // Attach the parsed stat block for NPC artifacts before creating (the
     // finalize revision is the baseline snapshot).
