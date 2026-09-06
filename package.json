@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run",
+    "test:fast": "vitest run tests/domain tests/db tests/lib tests/ingest tests/search",
     "format": "prettier --write ."
   },
   "dependencies": {
