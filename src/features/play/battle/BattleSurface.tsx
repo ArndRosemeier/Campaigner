@@ -295,7 +295,14 @@ export function BattleSurface(): JSX.Element {
         : mapImage.width / mapImage.height;
 
   useEffect(() => {
-    if (battle === undefined || mapLayout === null || contentSize.w <= 0 || contentSize.h <= 0) return;
+    // The `live` guard also prevents a mount-time lost update: this effect and
+    // the first-entry reveal above both write the full board. On the prep row
+    // (live: false) the auto-fit write would queue after the reveal write from
+    // the same stale row and overwrite it — PC tokens (seeded hidden, revealed
+    // only by that write) would never appear, and `everLive` would make the
+    // loss permanent. Waiting for the live flip re-runs this effect on the
+    // revealed row; a resumed battle (live: true) re-captures immediately.
+    if (battle === undefined || !battle.board.live || mapLayout === null || contentSize.w <= 0 || contentSize.h <= 0) return;
     const desired = tokenSizeFittingGrid(Math.max(1, Math.floor(Math.min(cellWidthPx, cellHeightPx))));
     if (desired === battle.board.tokenSize) return;
     void commit((board) => ({ ...board, tokenSize: desired }));
@@ -1232,6 +1239,7 @@ export function BattleSurface(): JSX.Element {
                   key={token.id}
                   token={token}
                   content={contentPx}
+                  tokenSize={board.tokenSize}
                   artifact={token.artifactId === null ? undefined : artifactById.get(token.artifactId)}
                   stats={stats}
                   selected={token.id === selectedTokenId}
@@ -1547,6 +1555,8 @@ interface TokenViewProps {
   token: BattleToken;
   /** Content-div px frame — the %-denominator for size/position. */
   content: { w: number; h: number };
+  /** The board's token size in content px (cell-filling on layout boards). */
+  tokenSize: number;
   artifact: AnyArtifact | undefined;
   stats: FighterStatsLookup;
   selected: boolean;
@@ -1563,6 +1573,7 @@ interface TokenViewProps {
 function TokenView({
   token,
   content,
+  tokenSize,
   artifact,
   stats,
   selected,
@@ -1577,10 +1588,15 @@ function TokenView({
   const url = useImageUrl(coverImageId);
   const resolved = combatHpForToken(token, stats);
   if (content.w === 0 || content.h === 0) return null;
-  // Token size: tokenSize in content px scaled by token.scale — the content
-  // div is the reference frame, so width is a percentage of content width.
-  const widthPct = ((64 * token.scale) / content.w) * 100;
-  const heightPct = ((64 * token.scale) / content.h) * 100;
+  // Token size: board.tokenSize in content px scaled by token.scale — the
+  // content div is the reference frame, so width is a percentage of content
+  // width. board.tokenSize is the SAME number the fog-coverage math uses
+  // (use-battle), so a rendered token and its coverage rect agree: on layout
+  // boards the auto-fit effect keeps it cell-filling (docs/11 §M5-D
+  // extension) — the former hardcoded 64px rendered a token the coverage
+  // test treated as smaller, so fog edges stopped covering fine-grid tokens.
+  const widthPct = ((tokenSize * token.scale) / content.w) * 100;
+  const heightPct = ((tokenSize * token.scale) / content.h) * 100;
   const hpRatio = resolved === null ? null : resolved.maxHp === 0 ? 0 : resolved.currentHp / resolved.maxHp;
   const downed = hpRatio === 0;
   const initials = token.label

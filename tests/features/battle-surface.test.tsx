@@ -295,6 +295,65 @@ describe('layout-anchored grid rendering', () => {
   });
 });
 
+describe('token render size', () => {
+  it('renders tokens at board.tokenSize — the same number the fog-coverage math uses', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    const token = screen.getAllByTestId('battle-token')[0];
+    if (token === undefined) throw new Error('token missing');
+    // Mapless seed: tokenSize stays the 64px default (auto-fit only runs on
+    // layout boards) — width% = 64 / 800.
+    expect(token.style.width).toBe(`${String((64 / 800) * 100)}%`);
+  });
+
+  it('follows the auto-fit tokenSize on a layout board (cell-filling, docs/11)', async () => {
+    const pc1 = await addPc('Serren', 20);
+    void pc1;
+    const roomA = newId();
+    const roomB = newId();
+    const layout = packRooms({
+      theme: 'Fit hall',
+      aspect: '16:9',
+      entryRoomId: roomA,
+      rosterCounts: [],
+      rooms: [
+        { id: roomA, name: 'Entry', description: '', size: 'small', monsterIndexes: [], adjacentRoomIds: [roomB], key: '', keyTreasure: '' },
+        { id: roomB, name: 'Hall', description: '', size: 'medium', monsterIndexes: [], adjacentRoomIds: [roomA], key: '', keyTreasure: '' },
+      ],
+    });
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Fit battle',
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout,
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Fit Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+    );
+    await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+    await renderSurface(module.id);
+    // The auto-fit effect re-captures tokenSize from the measured cell via a
+    // Dexie round-trip; the rendered width must track whatever tokenSize the
+    // row settles on (rendered size ≡ coverage size, no hardcoded 64px).
+    await waitFor(async () => {
+      const battle = await currentBattle(module.id);
+      const token = screen.getByTestId('battle-token');
+      expect(token.style.width).toBe(`${String((battle.board.tokenSize / 800) * 100)}%`);
+      expect(battle.board.tokenSize).not.toBe(64);
+    });
+  });
+});
+
 describe('player-safe DOM contract', () => {
   it('renders only board pieces: names, HP, initiative — never stat text or secrets', async () => {
     const { moduleId } = await seedStandardBattle();
