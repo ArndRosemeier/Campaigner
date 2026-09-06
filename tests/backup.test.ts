@@ -11,8 +11,9 @@ import { db } from '@/db/db';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { backupFileName, buildBackup, importBackup } from '@/lib/backup';
-import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
-import { unzipSync, zipSync } from 'fflate';
+import { putBookPdf } from '@/db/pdfRepo';
+import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
+import { unzipSync, zipSync, strToU8 } from 'fflate';
 import { clearDatabase } from './db/helpers';
 
 /**
@@ -190,6 +191,57 @@ describe('app backup', () => {
     });
     expect(restored?.packMeta?.sourceRef).toBeUndefined();
     expect(restored?.packMeta?.fetchedAt).toBeUndefined();
+  });
+
+  it('excludes retained PDF bytes always, reporting them for the backup note', async () => {
+    const book = await createRulebook({ title: 'PHB', system: 'dnd5e', filename: 'phb.pdf' });
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46, 1, 2, 3, 4]);
+    await putBookPdf({ bookId: book.id, bytes: pdfBytes, filename: 'phb.pdf', mimeType: 'application/pdf' });
+
+    const { bytes, pdfExcluded } = await buildBackup();
+    expect(pdfExcluded).toEqual({ count: 1, totalBytes: pdfBytes.byteLength });
+
+    // The manifest carries the pdfFiles key — empty — so restore's
+    // missing-table check passes and the count is honestly 0.
+    const entries = unzipSync(bytes);
+    const manifest = JSON.parse(
+      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
+    ) as { data?: { pdfFiles?: unknown[] }; tableCounts?: Record<string, number> };
+    expect(manifest.data?.pdfFiles).toEqual([]);
+    expect(manifest.tableCounts?.pdfFiles).toBe(0);
+    // No pdf payload file rides the zip either.
+    expect(Object.keys(entries).some((path) => path.startsWith('pdf'))).toBe(false);
+
+    // Restore: the book and its chunks survive; retained bytes do not.
+    await clearDatabase();
+    await importBackup(bytes);
+    expect((await db.rulebooks.toArray()).some((row) => row.id === book.id)).toBe(true);
+    expect(await db.pdfFiles.toArray()).toEqual([]);
+  });
+
+  it('still restores a pre-retention backup whose zip lacks the pdfFiles table', async () => {
+    await seedBuiltInPersonas();
+    const { bytes } = await buildBackup();
+
+    // Simulate a zip made before pdfFiles existed (no table key at all).
+    const entries = unzipSync(bytes);
+    const manifest = JSON.parse(
+      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
+    ) as { data?: Record<string, unknown[]>; tableCounts?: Record<string, number> };
+    if (manifest.data === undefined || manifest.tableCounts === undefined) {
+      throw new Error('backup manifest is missing data/tableCounts');
+    }
+    delete manifest.data.pdfFiles;
+    delete manifest.tableCounts.pdfFiles;
+    const oldZip = zipSync({ ...entries, 'campaigner-backup.json': strToU8(JSON.stringify(manifest)) });
+
+    // The book rows restore; the optional table restores empty (no retained
+    // bytes — the truth for pre-retention backups), not a loud failure.
+    await clearDatabase();
+    const result = await importBackup(new Uint8Array(oldZip));
+    expect(await db.personas.count()).toBeGreaterThan(0);
+    expect(await db.pdfFiles.toArray()).toEqual([]);
+    expect(result.tableCounts.pdfFiles).toBe(0);
   });
 
   it('names the file after the export date', () => {

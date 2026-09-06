@@ -12,13 +12,16 @@ import * as backupModule from '@/lib/backup';
 import * as exportImport from '@/lib/exportImport';
 import * as filePicker from '@/lib/filePicker';
 import { createCampaign } from '@/db/campaignRepo';
+import { putBookPdf } from '@/db/pdfRepo';
+import { createRulebook } from '@/db/rulebookRepo';
 import Dexie from 'dexie';
 import { clearDatabase } from './db/helpers';
 import { flushAsyncUpdates } from './helpers/flush';
 
 /**
  * Settings screen (T6): API key + "Test key" (mocked /models), embeddings
- * toggle persistence, and the typed-DELETE danger zone.
+ * toggle persistence, the typed-DELETE danger zone, and the backup PDF
+ * exclusion note.
  */
 
 beforeEach(async () => {
@@ -135,6 +138,26 @@ describe('SettingsPage', () => {
     expect(db.isOpen()).toBe(false);
   }, 30000);
 
+  it('shows the loud PDF-exclusion note when books carry retained PDFs', async () => {
+    await db.open();
+    const book = await createRulebook({ title: 'PHB', system: 'dnd5e', filename: 'phb.pdf' });
+    await putBookPdf({
+      bookId: book.id,
+      bytes: new Uint8Array(1536 * 1024),
+      filename: 'phb.pdf',
+      mimeType: 'application/pdf',
+    });
+
+    render(<SettingsPage />);
+    await flushAsyncUpdates();
+
+    // Shown before the save button, never a post-hoc toast (owner-ratified).
+    const note = await screen.findByTestId('pdf-backup-note');
+    expect(note).toHaveTextContent('1 attached rulebook PDF');
+    expect(note).toHaveTextContent('~2 MB');
+    expect(note).toHaveTextContent('re-import those PDFs');
+  });
+
   it('saves and restores a full backup zip with a fallback file picker', async () => {
     const user = userEvent.setup();
     // The danger-zone test above closed the database; Dexie will not
@@ -243,12 +266,10 @@ describe('SettingsPage', () => {
     // stubGlobal sets window.showSaveFilePicker in jsdom; afterEach unstubs.
     vi.stubGlobal('showSaveFilePicker', savePicker);
 
-    let resolveBuild!: (value: { bytes: Uint8Array; manifest: backupModule.BackupManifest }) => void;
-    const buildPromise = new Promise<{ bytes: Uint8Array; manifest: backupModule.BackupManifest }>(
-      (resolve) => {
-        resolveBuild = resolve;
-      },
-    );
+    let resolveBuild!: (value: backupModule.BackupFile) => void;
+    const buildPromise = new Promise<backupModule.BackupFile>((resolve) => {
+      resolveBuild = resolve;
+    });
     const buildSpy = vi
       .spyOn(backupModule, 'buildBackup')
       .mockImplementation(() => {
@@ -274,6 +295,7 @@ describe('SettingsPage', () => {
         dbVersion: db.verno,
         tableCounts: {},
       },
+      pdfExcluded: { count: 0, totalBytes: 0 },
     });
 
     await waitFor(() => {

@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { DownloadIcon, FolderOpenIcon, SaveIcon } from 'lucide-react';
 
 import { buildBackup, backupFileName, importBackup } from '@/lib/backup';
+import { pdfBackupStats } from '@/db/pdfRepo';
 import { BACKUP_TYPES, openSaveTarget, pickBackupFile, supportsFilePickers } from '@/lib/filePicker';
 import { storagePersistedStatus } from '@/lib/deviceCapabilities';
 import { useProgressStore } from '@/lib/progress';
@@ -58,13 +60,21 @@ function StorageStatus(): JSX.Element | null {
   );
 }
 
+/** ~size for the PDF-exclusion note: KB under 1 MB, else rounded MB. */
+function pdfBytesLabel(totalBytes: number): string {
+  if (totalBytes < 1024 * 1024) return `${String(Math.ceil(totalBytes / 1024))} KB`;
+  return `~${String(Math.round(totalBytes / (1024 * 1024)))} MB`;
+}
+
 /**
  * Backup & restore (M4-C): saves the ENTIRE app state (every IndexedDB
  * table — campaigns, artifacts, rulebooks, personas, runs, modules, images —
  * as one zip) and restores it. The OpenRouter API key never leaves the
  * browser: it is excluded from saves and the locally stored key survives
- * restores. Native file dialogs where the browser offers them, plain
- * download / file-input fallback otherwise.
+ * restores. Retained rulebook PDFs are NEVER included (owner-ratified) —
+ * when books carry retained PDFs, a loud note above the save button says so
+ * and points at re-import. Native file dialogs where the browser offers
+ * them, plain download / file-input fallback otherwise.
  */
 export function BackupSection(): JSX.Element {
   const [saving, setSaving] = useState(false);
@@ -73,6 +83,7 @@ export function BackupSection(): JSX.Element {
   const progressStart = useProgressStore((state) => state.start);
   const progressFinish = useProgressStore((state) => state.finish);
   const hasNativePickers = supportsFilePickers();
+  const pdfStats = useLiveQuery(pdfBackupStats, []);
 
   async function handleSave(): Promise<void> {
     setSaving(true);
@@ -145,11 +156,25 @@ export function BackupSection(): JSX.Element {
           Saves everything — all campaigns, artifacts, rulebooks, personas, runs and images — as
           one zip file, and restores it. Your OpenRouter API key is never saved into the file, and
           the key stored in this browser is kept on restore. Restoring replaces all current data.
+          Retained rulebook PDFs are never included.
           {hasNativePickers
             ? ' Your browser lets you pick the save location.'
             : ' Your browser downloads the file instead.'}
         </CardDescription>
       </CardHeader>
+      {pdfStats !== undefined && pdfStats.count > 0 && (
+        <p
+          className="border-t px-6 pt-3 text-xs font-medium text-destructive"
+          data-testid="pdf-backup-note"
+        >
+          This backup does not include{' '}
+          {pdfStats.count === 1
+            ? '1 attached rulebook PDF'
+            : `${String(pdfStats.count)} attached rulebook PDFs`}{' '}
+          ({pdfBytesLabel(pdfStats.totalBytes)}). After restoring, re-import those PDFs if you want
+          to view them again — your rules, chunks and search are fully backed up.
+        </p>
+      )}
       <CardContent className="flex gap-2">
         <Button
           variant="outline"
