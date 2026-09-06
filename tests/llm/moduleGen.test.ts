@@ -290,9 +290,18 @@ describe('runSpine', () => {
     const firstCall = chatMock.mock.calls[0];
     if (firstCall === undefined) throw new Error('chat was not called');
     const [messages, options] = firstCall;
-    // The call used the seeded settings.defaultChatModel and JSON mode.
+    // The call used the seeded settings.defaultChatModel and the strict
+    // structured-output schema (spine + entity list, one reply).
     expect(options.model).toBe(TEST_MODEL);
-    expect(options.responseFormat).toBe('json');
+    expect(options.responseFormat).toMatchObject({ kind: 'schema', name: 'module-spine' });
+    const spineSchema = (options.responseFormat as { jsonSchema?: { properties?: Record<string, unknown> } })
+      .jsonSchema;
+    expect(Object.keys(spineSchema?.properties ?? {})).toEqual([
+      'premise',
+      'themes',
+      'partPlan',
+      'entities',
+    ]);
     expect(messages[0]?.role).toBe('system');
     expect(messages[0]?.content).toContain('Module Architect');
     const userContent = messages.find((message) => message.role === 'user')?.content ?? '';

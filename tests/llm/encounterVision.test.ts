@@ -133,7 +133,12 @@ describe('encounter map vision verification', () => {
         { type: 'image_url', image_url: { url: 'data:image/webp;base64,stylized' } },
       ]),
     );
-    expect(chatMock.mock.calls[0]?.[1]).toMatchObject({ responseFormat: 'json' });
+    expect(chatMock.mock.calls[0]?.[1]).toMatchObject({
+      responseFormat: { kind: 'schema', name: 'structure-grid' },
+    });
+    expect(chatMock.mock.calls[1]?.[1]).toMatchObject({
+      responseFormat: { kind: 'schema', name: 'structure-grid' },
+    });
   });
 
   it('fails loudly when the repair response is still invalid', async () => {

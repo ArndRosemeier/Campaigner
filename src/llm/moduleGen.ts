@@ -8,6 +8,7 @@ import { getSettings } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { repairModel } from '@/llm/modelFallback';
+import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
 import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
 // The engine triggers the module's own post-generation automation (the
@@ -208,7 +209,7 @@ export async function runSpine(
       model: settings.defaultChatModel,
       temperature: 0.8,
       reasoningEffort: settings.defaultReasoningEffort,
-      responseFormat: 'json',
+      responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
       signal: controller.signal,
       ...streamHandlers,
     });
@@ -236,7 +237,7 @@ export async function runSpine(
             model: repairModel(settings.defaultChatModel, settings),
             temperature: 0.8,
             reasoningEffort: settings.defaultReasoningEffort,
-            responseFormat: 'json',
+            responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
             signal: controller.signal,
             ...streamHandlers,
           },
@@ -290,6 +291,17 @@ export function parseSpine(raw: string): ModuleSpine {
 
 /** The pass-0 entity record schema ({ entities: [{ name, kind }] }). */
 const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSchema) });
+
+/**
+ * The STRICT structured-output contract for the spine pass: one reply carries
+ * the spine AND the entity list (both parse from the same JSON), so the
+ * emitted schema is their composition. Runtime parsing keeps the two separate
+ * schemas — this is emission-only.
+ */
+const spineReplySchema = z.object({
+  ...moduleSpineSchema.shape,
+  entities: z.array(moduleEntityKindSchema),
+});
 
 /**
  * Parses the entity list the spine pass records alongside the spine (08
@@ -843,7 +855,7 @@ async function normalizationCall(
     model,
     temperature: 0.2,
     reasoningEffort: settings.defaultReasoningEffort,
-    responseFormat: 'json' as const,
+    responseFormat: schemaResponseFormat('entity-normalization', normalizationReplySchema),
   };
   const run = (raw: string): NormalizationEntry[] => {
     const parsed = normalizationReplySchema.parse(parseJsonReply(raw)).entities;

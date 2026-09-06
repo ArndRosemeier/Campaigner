@@ -650,18 +650,62 @@ describe('runEngine', () => {
     expect(required).toContain('locationKind');
   }, 20000);
 
-  it('pilot scope: non-encounter draft kinds keep the old json_object mode until the rollout', async () => {
+  it('rollout: the npc draft and statblock steps send their strict json_schema responseFormats', async () => {
     const { campaignId, persona } = await seed();
-    chatMock.mockResolvedValue({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
 
     const runId = await runEngine.startRun(INPUT(campaignId, persona));
     await waitFor(async () => {
       const run = await getRun(runId);
       expect(run?.status).toBe('awaiting_user');
     });
+    await runEngine.approve(runId, INPUT(campaignId, persona)); // draft approved -> statblock runs
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps.map((step) => step.name)).toContain('statblock');
+    });
 
-    const opts = chatMock.mock.calls[0]?.[1] as { responseFormat?: unknown };
-    expect(opts.responseFormat).toBe('json');
+    const draftFormat = (chatMock.mock.calls[0]?.[1] as { responseFormat?: { kind?: string; name?: string } })
+      .responseFormat;
+    expect(draftFormat).toMatchObject({ kind: 'schema', name: 'npc-draft' });
+    const statblockFormat = (chatMock.mock.calls[1]?.[1] as { responseFormat?: { kind?: string; name?: string } })
+      .responseFormat;
+    expect(statblockFormat).toMatchObject({ kind: 'schema', name: 'statblock' });
+    // The statblock contract drops the free-form extras record (strict subset).
+    const statblockSchema = (chatMock.mock.calls[1]?.[1] as {
+      responseFormat?: { jsonSchema?: { properties?: Record<string, unknown> } };
+    }).responseFormat?.jsonSchema;
+    expect(statblockSchema?.properties?.extras).toBeUndefined();
+  }, 20000);
+
+  it('rollout: the continuity check step sends its strict json_schema responseFormat', async () => {
+    const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
+    if (editor === undefined) throw new Error('continuity-editor persona missing');
+    const { campaignId, persona } = await seed();
+    const editorPersona = persona.mode === 'review' ? persona : editor;
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({ verdict: 'consistent', summary: 'All consistent.', issues: [] }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+    const target = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Review Target',
+      body: 'The target body.',
+    });
+
+    const input = { ...INPUT(campaignId, editorPersona), targetArtifactId: target.id, autonomy: 'auto' as const };
+    const runId = await runEngine.startRun(input);
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    const checkFormat = (chatMock.mock.calls[0]?.[1] as { responseFormat?: { kind?: string; name?: string } })
+      .responseFormat;
+    expect(checkFormat).toMatchObject({ kind: 'schema', name: 'continuity-report' });
   }, 20000);
 
 });

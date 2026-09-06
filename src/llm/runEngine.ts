@@ -1727,15 +1727,11 @@ export class RunEngine {
         model: repairTarget,
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-        // PILOT (strict structured outputs): the encounter personas' draft
-        // step runs with a token-enforced JSON schema; every other kind
-        // keeps the old json_object mode until the rollout commit. The
-        // Settings strictOutputs toggle downgrades this to json_object ONLY
-        // when the user flips it — never automatically.
-        responseFormat:
-          kind === 'encounter'
-            ? schemaResponseFormat(contract.name, contract.schema)
-            : 'json',
+        // Strict structured outputs (owner decision): every contract step
+        // sends its zod schema token-enforced. The Settings strictOutputs
+        // toggle downgrades this to json_object ONLY when the user flips it
+        // — never automatically.
+        responseFormat: schemaResponseFormat(contract.name, contract.schema),
         signal,
       }),
     );
@@ -1878,7 +1874,7 @@ export class RunEngine {
         model: repairTarget,
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-        responseFormat: 'json',
+        responseFormat: schemaResponseFormat('statblock', statBlockSchema),
         signal,
       }),
     );
@@ -2013,7 +2009,7 @@ export class RunEngine {
         model: resolveChatModel(settings, input.persona.model),
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-        responseFormat: 'json',
+        responseFormat: schemaResponseFormat('continuity-report', continuityReportSchema),
         signal,
       }),
     );
@@ -2156,7 +2152,7 @@ export class RunEngine {
     // map run replaces layout + room keys, never the encounter-scoped
     // treasure authored on the entries (owner-ratified D1 extension).
     const rosterContract = targetRoster !== undefined
-      ? `Regeneration target roster — reply with these EXACT entries, same order, same names, counts and treasure (name/count/notes/treasure only; never add sourceChunkIndex, sourceName or statBlock, the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
+      ? `Regeneration target roster — reply with these EXACT entries, same order, same names, counts and treasure (name/count/notes/treasure; emit null for sourceChunkIndex, sourceName and statBlock — the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
           targetRoster.map((monster) => ({
             name: monster.name,
             count: monster.count,
@@ -2217,7 +2213,7 @@ export class RunEngine {
       model: resolveChatModel(settings, input.persona.model),
       temperature: input.persona.temperature,
       reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-      responseFormat: 'json' as const,
+      responseFormat: schemaResponseFormat('encounter-brief', encounterGeneratorBriefSchema),
       signal,
       onToken: (delta: string) => {
         this.emit({ kind: 'token', runId, stepIndex, delta });

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { entranceOutwardCell, type EncounterLayout } from '@/domain';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { parseJsonReply } from '@/llm/jsonReply';
+import { schemaResponseFormat } from '@/llm/strictSchema';
 import { errorMessage } from '@/lib/errors';
 
 export const structureCellSchema = z.enum(['floor', 'wall', 'void']);
@@ -189,10 +190,15 @@ export async function verifyEncounterMap(input: {
       ],
     },
   ];
+  // Strict structured outputs (owner decision): the grid shape (cols/rows/
+  // cells, enum members) is enforced token-level; the SEMANTIC checks below
+  // (dimension equality with the expected grid, cell count) still apply and
+  // still route to the vision repair model when they fail.
+  const responseFormat = schemaResponseFormat('structure-grid', structureGridSchema);
   let { text: raw } = await chat(messages, {
     model: input.model,
     temperature: 0,
-    responseFormat: 'json',
+    responseFormat,
     signal: input.signal,
   });
   let parsed = parseGrid(raw, expected);
@@ -212,7 +218,7 @@ export async function verifyEncounterMap(input: {
           // (vision-capable fallback) when configured.
           model: input.repairModel ?? input.model,
           temperature: 0,
-          responseFormat: 'json',
+          responseFormat,
           signal: input.signal,
         },
       )

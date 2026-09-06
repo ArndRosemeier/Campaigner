@@ -6,7 +6,11 @@
 interface ChatMessage { role: 'system' | 'user' | 'assistant'; content: string }
 interface ChatOptions {
   model: string; temperature: number;
-  responseFormat?: 'json';       // sets response_format: { type: 'json_object' }
+  responseFormat?: 'json' | SchemaResponseFormat;
+  // 'json'               → response_format: { type: 'json_object' } (best-effort)
+  // SchemaResponseFormat → response_format: { type: 'json_schema',
+  //                        json_schema: { name, strict: true, schema } }
+  // (build with schemaResponseFormat(name, zodSchema), /src/llm/strictSchema.ts)
   signal?: AbortSignal;
   onToken?: (delta: string) => void;   // streaming callback
   onReasoning?: (delta: string) => void; // reasoning-delta stream (illustration only)
@@ -57,6 +61,64 @@ async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>
   contract failure runs on the fallback model when configured
   (`repairModel()`; vision repairs via `visionRepairModel()`), because a
   violated contract is usually a capability weakness of the first-try model.
+  Under strict structured outputs (below) the decoder can no longer produce
+  a wrong SHAPE, so these paths fire rarely (providers that silently ignore
+  strict mode) — they are deliberately KEPT for the censorship and
+  congestion classes and for parse failures.
+
+### Strict structured outputs (owner decision)
+
+Every contract-shaped chat call sends its zod schema as
+`response_format: { type: 'json_schema', json_schema: { name, strict: true,
+schema } }`; OpenRouter enforces it token-level for supporting models, so the
+model CANNOT produce a wrong shape. `/src/llm/strictSchema.ts` converts and
+normalizes each contract to the strict subset:
+
+- `additionalProperties: false` on every object; ALL properties required.
+  zod v4 `io:'output'` conversion makes `.default()` fields required (the
+  runtime default only fires for non-LLM inputs); `.optional()` fields are
+  re-emitted required + nullable and their LLM-facing schemas parse `null`
+  back to `undefined` (the "absentable" convention — draft/brief
+  `sourceChunkIndex`, `sourceName`, `statBlock`).
+- Preprocessors/coercions emit their inner output shape (booleanish →
+  boolean, case-insensitive enums → the enum, `z.coerce.number()` →
+  integer); the parsers keep tolerating legacy variants for non-strict
+  sources (hand edits, old rows, pack imports).
+- Free-form `z.record()` properties cannot exist in strict mode — the
+  StatBlock `extras` record is DROPPED from the emitted schema: LLM-drafted
+  stat blocks carry no extras; hand edits and pack imports still do.
+- Constraint keywords (minLength/maxLength/minimum/maximum/minItems/
+  maxItems/pattern/format/`default`/`$schema`) are stripped — the zod parse
+  at the boundary still enforces them.
+- Recursion (`$ref` cycles), record roots and non-object roots throw
+  `StrictSchemaError` loudly. No current contract recurses.
+
+Failure behavior (loud, never silent):
+
+- A provider that rejects the schema (HTTP 400/422) fails the step as
+  `kind: 'schema-rejected'`, naming the model. No downgrade, no escalation.
+- A model refusal arrives as OpenAI-style `delta.refusal` →
+  `kind: 'refusal'`, classified `filter`: with a fallback model configured
+  the chain retries censorship there (owner: "we still need repair models,
+  for censorship and congestion"); without one the step fails visibly with
+  the refusal text.
+- Strict mode fixes SHAPE only. All semantic checks are unchanged: fix-02
+  uncited-draft repair, verification notices, review pauses. A parse failure
+  (a provider ignoring strict mode) still lands in the existing repair
+  retry → pause/review path.
+
+The Settings toggle **Strict structured outputs** (`strictOutputs`, default
+ON; old rows parse via the post-M3 field convention) is the ONLY way a call
+downgrades to the old best-effort `json_object` mode — for models whose
+provider genuinely cannot enforce schemas. There is no automatic downgrade
+anywhere.
+
+**Coverage (contract-shaped calls):** runEngine draft (all kinds) /
+statblock / continuity check / encounter brief; module spine + its repair
+retry; entity normalization + its repair retry; encounter-map verify +
+vision repair. Pure-prose calls have no zod contract and stay
+unconstrained: module part writing (length-only retry), image prompts
+(no LLM draft call).
 
 ## Built-in personas (`/src/llm/personas/builtins.ts`)
 
@@ -129,7 +191,8 @@ Steps for every persona (M1):
 2. **draft** — messages: persona systemPrompt; user message containing:
    campaign name/system/description, the brief, rule excerpts (each prefixed
    `[<bookTitle> p.<pageStart>] <headingPath joined by ' > '>`), and the JSON
-   output instruction for the persona's kind (below). `responseFormat:'json'`.
+   output instruction for the persona's kind (below). Strict structured
+   outputs: `responseFormat: schemaResponseFormat('<kind>-draft', schema)`.
    Parse with the kind's zod draft schema. Parse failure → one automatic retry
    appending "Your previous reply was invalid JSON for the schema: <issues>.
    Reply with corrected JSON only." Second failure → run `status:'needs_review'`
