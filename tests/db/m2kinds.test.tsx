@@ -36,6 +36,7 @@ describe('encounter / plotarc kinds', () => {
         treasure: 'none',
         mapImageId: null,
         layout: null,
+        preset: 'standard',
       },
     });
     const stored = await getArtifact(encounter.id);
@@ -61,6 +62,7 @@ describe('encounter / plotarc kinds', () => {
           treasure: '',
           mapImageId: null,
           layout: null,
+          preset: 'standard',
         },
       }),
     ).rejects.toThrow();

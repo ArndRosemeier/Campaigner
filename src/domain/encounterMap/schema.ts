@@ -6,6 +6,17 @@ export type EncounterMapAspect = z.infer<typeof encounterMapAspectSchema>;
 export const encounterRoomSizeSchema = z.enum(['small', 'medium', 'large']);
 export type EncounterRoomSize = z.infer<typeof encounterRoomSizeSchema>;
 
+/**
+ * The Dungeon preset (owner-ratified, docs/11 D10): a user-facing naming over
+ * the existing layout engine — a fixed ×2 grid tier (each cell renders at
+ * half the px, so the same viewport shows a bigger multi-room complex) with
+ * the standard room size classes, monsters spread per room and the D4 room
+ * veils. Persisted on the encounter artifact; the battle needs no field
+ * (the board is a pure function of the layout, docs/11 D6).
+ */
+export const encounterPresetSchema = z.enum(['standard', 'dungeon']);
+export type EncounterPreset = z.infer<typeof encounterPresetSchema>;
+
 export const layoutRectSchema = z.object({
   x: z.number().int().min(0),
   y: z.number().int().min(0),
@@ -31,6 +42,8 @@ export type EncounterMapRoomBrief = z.infer<typeof encounterMapRoomBriefSchema>;
 export const encounterMapBriefSchema = z.object({
   theme: z.string(),
   aspect: encounterMapAspectSchema,
+  /** Which grid tier the packer works on (dungeon = the fixed ×2 tier). */
+  preset: encounterPresetSchema.default('standard'),
   entryRoomId: z.uuid(),
   rosterCounts: z.array(z.number().int().positive()),
   rooms: z.array(encounterMapRoomBriefSchema).min(1).max(10),

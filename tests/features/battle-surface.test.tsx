@@ -250,6 +250,7 @@ async function seedStandardBattle(): Promise<{ moduleId: string; encounterId: st
       treasure: '',
       mapImageId: null,
       layout: null,
+      preset: 'standard',
     },
   });
   const module = await saveModule(
@@ -335,6 +336,7 @@ describe('token render size', () => {
         treasure: '',
         mapImageId: null,
         layout,
+        preset: 'standard',
       },
     });
     const module = await saveModule(
@@ -1674,6 +1676,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
         treasure: '',
         mapImageId: null,
         layout,
+        preset: 'standard',
       },
     });
     const module = await saveModule(

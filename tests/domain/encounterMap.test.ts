@@ -22,10 +22,18 @@ const ROOM_A = '00000000-0000-4000-8000-0000000000a1';
 const ROOM_B = '00000000-0000-4000-8000-0000000000b2';
 const ROOM_C = '00000000-0000-4000-8000-0000000000c3';
 
+/** The preset's fixed \u00d72 tier per aspect (mirrors GRID_BY_ASPECT_DUNGEON). */
+const DUNGEON_GRIDS = {
+  '4:3': { gridW: 48, gridH: 36 },
+  '16:9': { gridW: 56, gridH: 32 },
+  '1:1': { gridW: 40, gridH: 40 },
+} as const;
+
 function brief(): EncounterMapBrief {
   return {
     theme: 'Flooded dwarven crypt',
     aspect: '4:3',
+    preset: 'standard',
     entryRoomId: ROOM_A,
     rosterCounts: [2, 1],
     rooms: [
@@ -603,6 +611,80 @@ describe('encounter map layout engine', () => {
       expect(layout.gridH).toBe(36);
       expect(layout.rooms).toHaveLength(10);
       expect(validateEncounterLayout(layout, Array(10).fill(1) as number[])).toEqual([]);
+    });
+  });
+
+  describe('dungeon preset grid (docs/11 D10)', () => {
+    it('packs on the fixed \u00d72 tier per aspect, independent of room count', () => {
+      for (const aspect of ['4:3', '16:9', '1:1'] as const) {
+        const layout = packRooms({ ...brief(), aspect, preset: 'dungeon' });
+        expect(layout.gridW).toBe(DUNGEON_GRIDS[aspect].gridW);
+        expect(layout.gridH).toBe(DUNGEON_GRIDS[aspect].gridH);
+        expect(validateEncounterLayout(layout, brief().rosterCounts)).toEqual([]);
+      }
+    });
+
+    it('keeps a dungeon pack deterministic and identical across room counts', () => {
+      const first = packRooms({ ...brief(), preset: 'dungeon' });
+      const second = packRooms({ ...brief(), preset: 'dungeon' });
+      expect(first).toEqual(second);
+      // A 1-room brief gets the SAME fixed tier (fixed scale, not adaptive).
+      const single = packRooms({
+        theme: 'Crypt antechamber',
+        aspect: '4:3',
+        preset: 'dungeon',
+        entryRoomId: ROOM_A,
+        rosterCounts: [2],
+        rooms: [
+          { id: ROOM_A, name: 'Antechamber', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIds: [], key: '', keyTreasure: '' },
+        ],
+      });
+      expect(single.gridW).toBe(48);
+      expect(single.gridH).toBe(36);
+    });
+
+    it('packs a 10-room dungeon complex and derives veils on the fine grid', () => {
+      const ids = Array.from({ length: 10 }, (_, i) => `00000000-0000-4000-8000-0000000001${String(i).padStart(2, '0')}`);
+      const layout = packRooms({
+        theme: 'Deep complex',
+        aspect: '4:3',
+        preset: 'dungeon',
+        entryRoomId: ids[0] ?? ROOM_A,
+        rosterCounts: Array(10).fill(1) as number[],
+        rooms: ids.map((id, index) => ({
+          id,
+          name: `Chamber ${String(index + 1)}`,
+          description: '',
+          size: index % 3 === 0 ? 'large' as const : 'medium' as const,
+          monsterIndexes: [index],
+          adjacentRoomIds: index === 0 ? [ids[1] ?? id] : [ids[index - 1] ?? id],
+          key: '',
+          keyTreasure: '',
+        })),
+      });
+      expect(layout.gridW).toBe(48);
+      expect(layout.gridH).toBe(36);
+      expect(validateEncounterLayout(layout, Array(10).fill(1) as number[])).toEqual([]);
+      const veils = veilsFromRooms(layout);
+      expect(veils).toHaveLength(10);
+      expect(veils.every((veil) => veil.kind === 'fog')).toBe(true);
+    });
+
+    it('uses the fixed \u00d72 tier for staging-marker dungeon layouts (not the adaptive ladder)', () => {
+      const stagingLayout = layoutFromStagingMarkers({
+        theme: 'Cistern of Echoes',
+        aspect: '4:3',
+        preset: 'dungeon',
+        rosterCounts: [3, 1, 2],
+        rooms: [
+          { id: ROOM_A, name: 'Flooded Stair', description: '', monsterIndexes: [0], spawn: true, letter: 'A', markerHue: 300, markerColorName: 'magenta', stagingPoint: { x: 0.47, y: 0.84 }, key: '', keyTreasure: '' },
+          { id: ROOM_B, name: 'Settling Basin', description: '', monsterIndexes: [1], spawn: false, letter: 'B', markerHue: 180, markerColorName: 'cyan', stagingPoint: { x: 0.15, y: 0.5 }, key: '', keyTreasure: '' },
+        ],
+      });
+      // 2 rooms would adaptively get 24x18; the dungeon preset pins 48x36.
+      expect(stagingLayout.gridW).toBe(48);
+      expect(stagingLayout.gridH).toBe(36);
+      expect(validateEncounterLayout(stagingLayout, [3, 1])).toEqual([]);
     });
   });
 });

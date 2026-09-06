@@ -537,6 +537,7 @@ describe('runEngine', () => {
         treasure: '',
         mapImageId: null,
         layout: null,
+        preset: 'standard',
       },
     });
 

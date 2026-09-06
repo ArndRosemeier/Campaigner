@@ -1,4 +1,5 @@
 import { errorMessage } from '@/lib/errors';
+import type { z } from 'zod';
 import type { BattleVeil } from '@/domain/battle';
 import {
   encounterLayoutSchema,
@@ -9,6 +10,7 @@ import {
   type EncounterLayout,
   type EncounterMapAspect,
   type EncounterMapBrief,
+  type EncounterPreset,
   type EncounterRoomSize,
   type LayoutCorridor,
   type LayoutEntrance,
@@ -29,6 +31,24 @@ const GRID_BY_ASPECT: Readonly<Record<EncounterMapAspect, { gridW: number; gridH
   '1:1': { gridW: 20, gridH: 20 },
 };
 
+/**
+ * The Dungeon preset's FIXED finer grid (docs/11 D10): exactly ×2 the base
+ * tier per aspect, independent of room count — the same viewport then shows
+ * twice the cells per side (each cell at half the px), which is what makes a
+ * multi-room dungeon complex fit on one board. Room size classes stay in
+ * standard cells (cells keep their in-world meaning); the schema max (60)
+ * already admits every dungeon dimension. All values ≤ 60 by construction.
+ */
+const GRID_BY_ASPECT_DUNGEON: Readonly<Record<EncounterMapAspect, { gridW: number; gridH: number }>> = {
+  '4:3': { gridW: 48, gridH: 36 },
+  '16:9': { gridW: 56, gridH: 32 },
+  '1:1': { gridW: 40, gridH: 40 },
+};
+
+function gridDimensionsFor(preset: EncounterPreset, aspect: EncounterMapAspect): { gridW: number; gridH: number } {
+  return preset === 'dungeon' ? GRID_BY_ASPECT_DUNGEON[aspect] : GRID_BY_ASPECT[aspect];
+}
+
 const BASE_SIZE: Readonly<Record<EncounterRoomSize, { w: number; h: number }>> = {
   small: { w: 4, h: 4 },
   medium: { w: 6, h: 5 },
@@ -45,8 +65,13 @@ export class EncounterLayoutError extends Error {
   }
 }
 
-/** Deterministic bounded packer. No coordinates ever come from the LLM. */
-export function packRooms(input: EncounterMapBrief, variant = 0): EncounterLayout {
+/** Deterministic bounded packer. No coordinates ever come from the LLM.
+ * The input is the brief's INPUT type: fields with schema defaults (`preset`)
+ * stay optional for callers — the parse below fills them. */
+export function packRooms(
+  input: z.input<typeof encounterMapBriefSchema>,
+  variant = 0,
+): EncounterLayout {
   const brief = encounterMapBriefSchema.parse(input);
   const attempts: string[] = [];
   for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -65,7 +90,7 @@ export function packRooms(input: EncounterMapBrief, variant = 0): EncounterLayou
 }
 
 function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout {
-  const { gridW, gridH } = GRID_BY_ASPECT[brief.aspect];
+  const { gridW, gridH } = gridDimensionsFor(brief.preset, brief.aspect);
   const count = brief.rooms.length;
   const columns = Math.min(brief.aspect === '16:9' ? 4 : 3, count);
   const rows = Math.ceil(count / columns);
@@ -274,6 +299,8 @@ export interface StagingRoomInput {
 export interface StagingLayoutInput {
   theme: string;
   aspect: EncounterMapAspect;
+  /** Dungeon preset: the fixed ×2 grid tier instead of the adaptive ladder. */
+  preset?: EncounterPreset;
   rooms: StagingRoomInput[];
   rosterCounts?: readonly number[];
 }
@@ -304,7 +331,11 @@ export function adaptiveGridDimensions(
  */
 export function layoutFromStagingMarkers(input: StagingLayoutInput): EncounterLayout {
   const { aspect, theme, rooms, rosterCounts = [] } = input;
-  const { gridW, gridH } = adaptiveGridDimensions(aspect, rooms.length);
+  // Dungeon preset: the FIXED ×2 tier (never the room-count ladder — the
+  // preset's whole point is a stable, finer cell across dungeon maps).
+  const { gridW, gridH } = input.preset === 'dungeon'
+    ? GRID_BY_ASPECT_DUNGEON[aspect]
+    : adaptiveGridDimensions(aspect, rooms.length);
 
   const baseVeilW = Math.max(6, Math.round(gridW * 0.28));
   const baseVeilH = Math.max(5, Math.round(gridH * 0.28));

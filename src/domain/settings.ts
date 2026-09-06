@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
-import { encounterMapAspectSchema } from '@/domain/encounterMap/schema';
+import { encounterMapAspectSchema, encounterPresetSchema } from '@/domain/encounterMap/schema';
 
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
@@ -142,6 +142,14 @@ export const settingsSchema = z.object({
   /** Encounter Cartographer layout aspect preference. */
   encounterMapAspect: encounterMapAspectSchema.default('4:3'),
   /**
+   * Encounter Cartographer preset preference (docs/11 D10): the Dungeon
+   * preset generates the layout on the fixed ×2 grid tier. Default
+   * 'standard' — unattended module generation only produces dungeons when
+   * the campaign opts in here (the aspect pattern: a genuine preference,
+   * never a failure mask).
+   */
+  encounterPreset: encounterPresetSchema.default('standard'),
+  /**
    * Remembered defaults for the creation dialog's "After creation" extras
    * checkboxes (aspect pattern): the dialog pre-ticks these per persona.
    * The battlemap extra is deliberately NOT remembered — it is a one-off
@@ -196,6 +204,7 @@ export function defaultSettings(): Settings {
       moduleView: defaultScopeToggles('moduleView'),
     },
     encounterMapAspect: '4:3',
+    encounterPreset: 'standard',
     runExtras: { image: false, statBlock: false, mobPortraits: false },
     encounterVerifyModel: '',
     maxParallelRequests: 2,

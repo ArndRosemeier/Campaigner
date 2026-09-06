@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { BaseEntitySchema } from '@/domain/entity';
-import { encounterMapAspectSchema } from '@/domain/encounterMap/schema';
+import { encounterMapAspectSchema, encounterPresetSchema } from '@/domain/encounterMap/schema';
 
 export const autonomySchema = z.enum(['manual', 'review', 'auto']);
 
@@ -64,6 +64,13 @@ export const personaRunSchema = z.object({
   targetArtifactId: z.uuid().nullable(),
   /** Encounter generator option, null for every other persona mode. */
   encounterMapAspect: encounterMapAspectSchema.nullable().default(null),
+  /**
+   * Encounter generator option (docs/11 D10): the Dungeon preset — which
+   * grid tier the layout generates on. Persisted so pause/resume/retry
+   * reconstructs the input exactly (like `encounterMapAspect`); null for
+   * runs started before the field existed and for every other persona mode.
+   */
+  encounterPreset: encounterPresetSchema.nullable().default(null),
   /**
    * Module placement chosen in the creation dialog for a NEWLY created
    * artifact (null = campaign level / unset). One-off per run, never a

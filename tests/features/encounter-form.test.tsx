@@ -82,6 +82,7 @@ describe('encounter form monster sources', () => {
       treasure: '',
       mapImageId: null,
       layout: null,
+      preset: 'standard',
     };
     render(
       <EncounterForm
@@ -115,6 +116,7 @@ describe('encounter form monster sources', () => {
       treasure: '',
       mapImageId: null,
       layout: null,
+      preset: 'standard',
     };
     let latest: EncounterArtifactData | null = null;
 
@@ -168,6 +170,7 @@ describe('encounter form monster sources', () => {
       treasure: '',
       mapImageId: null,
       layout: null,
+      preset: 'standard',
     };
     render(
       <EncounterForm
@@ -230,6 +233,7 @@ describe('encounter form monster sources', () => {
       treasure: '',
       mapImageId: null,
       layout: null,
+      preset: 'standard',
     };
     render(
       <EncounterForm
@@ -296,6 +300,7 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
       tactics: '',
       treasure: '',
       mapImageId: null,
+      preset: 'standard',
       layout: {
         gridW: 24,
         gridH: 18,
@@ -342,6 +347,7 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
           treasure: '',
           mapImageId: null,
           layout: null,
+          preset: 'standard',
         }}
       />,
     );
@@ -376,6 +382,7 @@ describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
           treasure: '',
           mapImageId: null,
           layout: null,
+          preset: 'standard',
         }}
         campaignArtifacts={[]}
         campaignSystem="dnd5e"

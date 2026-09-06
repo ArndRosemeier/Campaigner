@@ -268,6 +268,7 @@ describe('runModulePostGeneration', () => {
         treasure: '',
         mapImageId: null,
         layout: null,
+        preset: 'standard',
       },
     });
     await saveSettings({ ...defaultSettings(), imagesEnabled: true });

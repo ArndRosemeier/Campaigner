@@ -225,6 +225,7 @@ describe('images ui', () => {
         treasure: '',
         mapImageId: image.id,
         layout: null,
+        preset: 'standard',
       },
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));

@@ -738,3 +738,92 @@ describe('v12 → v13 migration', () => {
     await db.delete();
   }, 20000);
 });
+
+describe('v14 → v15 migration (dungeon preset, docs/11 D10)', () => {
+  it('backfills encounter preset, run encounterPreset and settings encounterPreset', async () => {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(14).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, moduleId',
+      pdfFiles: 'id, &bookId',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-000000000a15',
+      campaignId: '00000000-0000-4000-8000-000000000c15',
+      kind: 'encounter',
+      name: 'Pre-preset encounter',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('runs').put({
+      id: '00000000-0000-4000-8000-000000000b15',
+      campaignId: '00000000-0000-4000-8000-000000000c15',
+      personaId: '00000000-0000-4000-8000-000000000d15',
+      mode: 'encounter',
+      status: 'completed',
+      autonomy: 'auto',
+      userBrief: '',
+      pinnedChunkIds: [],
+      steps: [],
+      resultArtifactId: null,
+      targetArtifactId: null,
+      encounterMapAspect: '4:3',
+      placementModuleId: null,
+      runExtras: null,
+      errorMessage: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('settings').put({
+      id: 'settings',
+      encounterMapAspect: '4:3',
+      retiredSessionNotesRemoved: 0,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs the version-15 upgrade.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const encounter = await db.artifacts.get('00000000-0000-4000-8000-000000000a15');
+    const run = await db.runs.get('00000000-0000-4000-8000-000000000b15');
+    const settings = await db.settings.get('settings');
+    expect(encounter?.kind === 'encounter' ? encounter.data.preset : undefined).toBe('standard');
+    expect(run?.encounterPreset).toBeNull();
+    expect(settings?.encounterPreset).toBe('standard');
+    const { artifactSchema, personaRunSchema } = await import('@/domain');
+    expect(artifactSchema.parse(encounter).id).toBe('00000000-0000-4000-8000-000000000a15');
+    expect(personaRunSchema.parse(run).id).toBe('00000000-0000-4000-8000-000000000b15');
+    await db.delete();
+  }, 20000);
+});

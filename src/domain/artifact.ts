@@ -2,7 +2,7 @@ import { z } from 'zod';
 
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
 import { statBlockSchema } from '@/domain/statblock';
-import { encounterLayoutSchema } from '@/domain/encounterMap/schema';
+import { encounterLayoutSchema, encounterPresetSchema } from '@/domain/encounterMap/schema';
 
 /** Artifact kinds; M1 shipped npc/location/faction/note, M2 adds the rest.
  * M5-A puts `pc` first — the campaign tree renders kinds in this order, and
@@ -215,6 +215,12 @@ export const encounterDataSchema = z.object({
   mapImageId: z.uuid().nullable().default(null),
   /** Authoritative generated room geometry (v12); null for uploaded maps. */
   layout: encounterLayoutSchema.nullable().default(null),
+  /**
+   * The Dungeon preset (docs/11 D10): which grid tier the layout was
+   * generated on, and the user-facing label. 'standard' default — upgrade
+   * backfill (Dexie v15); a regenerate run keeps the target's preset.
+   */
+  preset: encounterPresetSchema.default('standard'),
 });
 
 export type EncounterArtifactData = z.infer<typeof encounterDataSchema>;

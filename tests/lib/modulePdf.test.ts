@@ -80,6 +80,7 @@ async function seed(): Promise<{ deliverable: Deliverable; npcId: string; gmNote
       treasure: 'silver bell charm',
       mapImageId: null,
       layout: null,
+      preset: 'standard',
     },
     links: [{ targetId: location.id, relation: 'at' }],
   });

@@ -337,6 +337,7 @@ async function runSmithAgainst(
       treasure: '',
       mapImageId: null,
       layout: null,
+      preset: 'standard',
     },
   });
   const callIndex = chatMock.mock.calls.length;
@@ -552,7 +553,7 @@ describe('encounter runs (M3-B)', () => {
       links: [{ targetId: bridge.id, relation: 'at' }],
       data: {
         difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
-        mapImageId, layout: null,
+        mapImageId, layout: null, preset: 'standard',
       },
     });
     chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
@@ -1324,6 +1325,7 @@ describe('encounter runs (M3-B)', () => {
           treasure: '',
           mapImageId: null,
           layout: null,
+          preset: 'standard',
         },
       });
       const runId = await runEngine.startRun({
@@ -1453,6 +1455,7 @@ describe('encounter runs (M3-B)', () => {
           tactics: '',
           treasure: '',
           mapImageId: null,
+          preset: 'standard',
           layout: {
             gridW: 24,
             gridH: 18,

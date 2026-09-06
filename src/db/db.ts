@@ -47,6 +47,10 @@ import type { Id } from '@/domain';
  * `&bookId` unique) so the in-app viewer renders them without the file;
  * no migration (the table starts empty; pre-retention books simply have
  * no row — the viewer's loud absent state).
+ *
+ * Version 15 (docs/11 D10 dungeon preset): encounter artifacts gain
+ * `preset: 'standard'`, runs gain `encounterPreset: null`, settings gain
+ * `encounterPreset: 'standard'` (additive backfills, M5-C pattern).
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -430,6 +434,45 @@ export class CampaignerDB extends Dexie {
       pdfFiles: 'id, &bookId',
       settings: 'id',
     });
+
+    // Dungeon preset (docs/11 D10): encounter artifacts gain `preset:
+    // 'standard'`, runs gain `encounterPreset: null`, settings gain
+    // `encounterPreset: 'standard'` — additive defaults only, same backfill
+    // pattern as the M5-C `mapImageId`.
+    this.version(15)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, moduleId',
+        pdfFiles: 'id, &bookId',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const artifacts = tx.table('artifacts');
+        await artifacts.toCollection().modify((artifact: Record<string, unknown>) => {
+          if (artifact.kind === 'encounter' && artifact.data !== undefined && artifact.data !== null) {
+            const data = artifact.data as Record<string, unknown>;
+            if (data.preset === undefined) data.preset = 'standard';
+          }
+        });
+        const runs = tx.table('runs');
+        await runs.toCollection().modify((run: Record<string, unknown>) => {
+          if (run.encounterPreset === undefined) run.encounterPreset = null;
+        });
+        const settings = tx.table('settings');
+        await settings.toCollection().modify((setting: Record<string, unknown>) => {
+          if (setting.encounterPreset === undefined) setting.encounterPreset = 'standard';
+        });
+      });
   }
 }
 

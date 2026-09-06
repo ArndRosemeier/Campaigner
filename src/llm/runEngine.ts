@@ -470,6 +470,9 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         treasure: asString(draft.treasure),
         mapImageId: null,
         layout: null,
+        // The content-only Smith run produces no map: always standard (the
+        // Cartographer map run owns the preset, docs/11 D10).
+        preset: 'standard',
       };
     case 'plotarc':
       return {
@@ -2741,6 +2744,9 @@ export class RunEngine {
           treasure: parsed.treasure,
           mapImageId: selected,
           layout,
+          // Pre-threading value; the preset threading (next commit) replaces
+          // this with the run's resolved preset (docs/11 D10).
+          preset: 'standard' as const,
         },
       }, { source: 'persona', runId });
       artifactId = artifact.id;

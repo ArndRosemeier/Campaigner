@@ -32,6 +32,7 @@ const SETTINGS = {
     moduleView: { global: true, campaign: true, module: true },
   },
   encounterMapAspect: '4:3' as const,
+  encounterPreset: 'standard' as const,
   encounterVerifyModel: '',
   runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,

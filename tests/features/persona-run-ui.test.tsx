@@ -1073,6 +1073,7 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
         treasure: '',
         mapImageId: null,
         layout: null,
+        preset: 'standard',
       },
     });
 

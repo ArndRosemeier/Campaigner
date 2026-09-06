@@ -85,11 +85,11 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const first = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'First',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard' },
     });
     const second = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'Second',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard' },
     });
     let verificationCalls = 0;
     vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
