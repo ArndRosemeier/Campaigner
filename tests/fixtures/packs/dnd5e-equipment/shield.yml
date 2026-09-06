@@ -1,0 +1,29 @@
+# Verbatim-trimmed live corpus document.
+# Source: foundryvtt/dnd5e packs/_source/equipment24/armor/shield.yml @6.0.x
+# Trimmed to the consumed subset (name/type/system.description.value/system.price/system.rarity/system.source.rules/system.properties) plus unknown keys that must be ignored.
+name: Shield
+system:
+  description:
+    value: <p>You gain the Armor Class benefit of a Shield only if you have training with it.</p>
+    chat: ""
+  price:
+    value: 10
+    denomination: gp
+  rarity: ""
+  source:
+    custom: ""
+    rules: "2024"
+    license: CC-BY-4.0
+    book: ""
+  properties: []
+  type:
+    value: shield
+    baseItem: shield
+  quantity: 1
+  weight:
+    value: 6
+    units: lb
+_id: phbarmShield0000
+type: equipment
+ownership:
+  default: 0

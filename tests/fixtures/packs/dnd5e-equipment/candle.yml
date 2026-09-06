@@ -1,0 +1,29 @@
+# Verbatim-trimmed live corpus document.
+# Source: foundryvtt/dnd5e packs/_source/equipment24/adventuring-gear/candle.yml @6.0.x
+# Trimmed to the consumed subset (name/type/system.description.value/system.price/system.rarity/system.source.rules/system.properties) plus unknown keys that must be ignored.
+name: Candle
+system:
+  description:
+    value: <p>For 1 hour, a lit Candle sheds Bright Light in a 5-foot radius and Dim Light for an additional 5 feet.</p>
+    chat: ""
+  price:
+    value: 1
+    denomination: cp
+  rarity: ""
+  source:
+    custom: ""
+    rules: "2024"
+    license: CC-BY-4.0
+    book: ""
+  properties: []
+  type:
+    value: trinket
+    subtype: ""
+  quantity: 1
+  weight:
+    value: 0
+    units: lb
+_id: phbagCandle00000
+type: consumable
+ownership:
+  default: 0

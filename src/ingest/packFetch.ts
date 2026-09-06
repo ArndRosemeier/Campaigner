@@ -127,6 +127,23 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
       },
     ],
   },
+  {
+    // Item-corpus arc (12-BESTIARY-PACKS §12): the dnd5e item folders sit
+    // OUTSIDE the monsters packRoot, under the broad `packs/_source` root —
+    // packDirs scopes the advanced listing to exactly the three folders this
+    // adapter parses (the sweep-verified counts are below).
+    adapterId: 'foundry-dnd5e-equipment',
+    owner: 'foundryvtt',
+    repo: 'dnd5e',
+    ref: '6.0.x',
+    packRoot: 'packs/_source',
+    packDirs: ['equipment24', 'items', 'tradegoods'],
+    curated: [
+      { id: 'packs/_source/equipment24', label: 'D&D 5e Equipment (2024 rules)', creatures: 679, unit: 'items' },
+      { id: 'packs/_source/items', label: 'D&D 5e Items (2014 rules)', creatures: 889, unit: 'items' },
+      { id: 'packs/_source/tradegoods', label: 'D&D 5e Trade Goods', creatures: 23, unit: 'items' },
+    ],
+  },
 ];
 
 export function getPackFetchSource(adapterId: string): PackFetchSource {

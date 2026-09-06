@@ -1,3 +1,4 @@
+import { foundryDnd5eEquipmentAdapter } from './dnd5e-equipment';
 import { foundryDnd5eSrdAdapter } from './dnd5e-foundry';
 import { foundryPf2eAdapter } from './pf2e-foundry';
 import { foundryPf2eEquipmentAdapter } from './pf2e-equipment';
@@ -13,6 +14,7 @@ export const PACK_ADAPTERS: readonly PackAdapter[] = [
   foundryPf2eAdapter,
   foundryDnd5eSrdAdapter,
   foundryPf2eEquipmentAdapter,
+  foundryDnd5eEquipmentAdapter,
 ];
 
 export function getPackAdapter(id: string): PackAdapter {

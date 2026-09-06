@@ -86,6 +86,14 @@ const RAW = (path: string): string =>
 const RAW_PINNED = (path: string): string =>
   `https://raw.githubusercontent.com/foundryvtt/pf2e/v14-dev/${path}`;
 
+/** dnd5e listing/raw URLs — the creature and item sources share repo + ref. */
+const DND5E_HEAD_LIST_URL = 'https://api.github.com/repos/foundryvtt/dnd5e/git/trees/HEAD?recursive=1';
+const DND5E_PINNED_LIST_URL = 'https://api.github.com/repos/foundryvtt/dnd5e/git/trees/6.0.x?recursive=1';
+const DND5E_RAW = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/dnd5e/HEAD/${path}`;
+const DND5E_RAW_PINNED = (path: string): string =>
+  `https://raw.githubusercontent.com/foundryvtt/dnd5e/6.0.x/${path}`;
+
 type MemoryDeps = PackImportDeps & {
   created: { title: string; system: string; filename: string }[];
   persisted: RuleChunk[][];
@@ -169,12 +177,13 @@ describe('pack fetch sources (ratified pins)', () => {
     expect(PACK_FETCH_NEWEST_REF).toBe('HEAD');
     expect(PACK_FETCH_FALLBACK_VALID_RATIO).toBe(0.5);
     // Every source's chain: newest (HEAD) first, then its pinned verified ref.
-    // The two pf2e sources share the repo ref; the item source joined with the
-    // item-corpus arc (12-BESTIARY-PACKS §12).
+    // The pf2e pair shares v14-dev and the dnd5e pair shares 6.0.x; the item
+    // sources joined with the item-corpus arc (12-BESTIARY-PACKS §12).
     expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
       ['HEAD', 'v14-dev'],
+      ['HEAD', '6.0.x'],
     ]);
   });
 
@@ -964,5 +973,107 @@ describe('item fetch source foundry-pf2e-equipment (12-BESTIARY-PACKS §12)', ()
       'packs/pf2e/equipment',
       'packs/pf2e/pathfinder-monster-core',
     ]);
+  });
+});
+
+describe('item fetch source foundry-dnd5e-equipment (12-BESTIARY-PACKS §12)', () => {
+  /** A minimal real-shaped dnd5e item document (Candle / Chicken class). */
+  function itemDoc(name: string, value: number, denomination: string): Record<string, unknown> {
+    return {
+      _id: `id-${name}`,
+      name,
+      type: 'loot',
+      ownership: { default: 0 },
+      system: {
+        description: { value: `<p>${name} description.</p>` },
+        price: { value, denomination },
+        rarity: '',
+        source: { custom: '', rules: '2014' },
+        quantity: 1,
+      },
+    };
+  }
+
+  const D5_ITEM_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/_source/equipment24/adventuring-gear/candle.yml', type: 'blob' },
+      { path: 'packs/_source/tradegoods/chicken.yml', type: 'blob' },
+      { path: 'packs/_source/tradegoods/_folder.yml', type: 'blob' },
+      // A monsters folder of the shared packRoot: fetchable only through the
+      // creature source.
+      { path: 'packs/_source/monsters/aberration/gibbering-mouther.yml', type: 'blob' },
+    ],
+  };
+  const d5ItemRoutes = () => ({
+    [DND5E_HEAD_LIST_URL]: listingResponse(D5_ITEM_TREE),
+    [DND5E_PINNED_LIST_URL]: listingResponse(D5_ITEM_TREE),
+    [DND5E_RAW('packs/_source/equipment24/adventuring-gear/candle.yml')]: creatureResponse(itemDoc('Candle', 1, 'cp')),
+    [DND5E_RAW('packs/_source/tradegoods/chicken.yml')]: creatureResponse(itemDoc('Chicken', 2, 'cp')),
+    [DND5E_RAW_PINNED('packs/_source/equipment24/adventuring-gear/candle.yml')]: creatureResponse(itemDoc('Candle', 1, 'cp')),
+    [DND5E_RAW_PINNED('packs/_source/tradegoods/chicken.yml')]: creatureResponse(itemDoc('Chicken', 2, 'cp')),
+  });
+
+  it('pins the equipment source: broad packRoot, three packDirs, verified curated counts', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-dnd5e-equipment');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('dnd5e');
+    expect(source?.ref).toBe('6.0.x');
+    expect(source?.packRoot).toBe('packs/_source');
+    // The dnd5e item folders sit under the broad _source root: without
+    // packDirs the advanced listing would offer every monsters/creatureType
+    // subfolder of the creature source.
+    expect(source?.packDirs).toEqual(['equipment24', 'items', 'tradegoods']);
+    // Counts verified against 6.0.x with the trees API (2026-09-07 sweep).
+    expect(source?.curated).toEqual([
+      { id: 'packs/_source/equipment24', label: 'D&D 5e Equipment (2024 rules)', creatures: 679, unit: 'items' },
+      { id: 'packs/_source/items', label: 'D&D 5e Items (2014 rules)', creatures: 889, unit: 'items' },
+      { id: 'packs/_source/tradegoods', label: 'D&D 5e Trade Goods', creatures: 23, unit: 'items' },
+    ]);
+  });
+
+  it('fetches & imports a tradegoods pack into an item book with provenance', async () => {
+    const fetchFn = mockFetch(d5ItemRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-dnd5e-equipment', 'packs/_source/tradegoods', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.itemsImported).toBe(1);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceId).toBe('foundry-dnd5e-equipment');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/dnd5e/tree/HEAD/packs/_source/tradegoods',
+    );
+    const chunk = deps.persisted.flat()[0];
+    expect(chunk?.chunkType).toBe('item');
+    expect(chunk?.itemData?.priceDisplay).toBe('2 cp');
+    expect(chunk?.itemData?.rulesEdition).toBe('2014');
+  });
+
+  it('restricts the full listing to packDirs across the broad _source root', async () => {
+    const fetchFn = mockFetch(d5ItemRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-dnd5e-equipment', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes.map((recipe) => recipe.id)).toEqual([
+      'packs/_source/equipment24',
+      'packs/_source/tradegoods',
+    ]);
+  });
+
+  it('keeps the dnd5e creature source unrestricted (monsters folders still listed)', async () => {
+    const fetchFn = mockFetch({
+      [DND5E_HEAD_LIST_URL]: listingResponse(D5_ITEM_TREE),
+      [DND5E_PINNED_LIST_URL]: listingResponse(D5_ITEM_TREE),
+    });
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-dnd5e-srd', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes.map((recipe) => recipe.id)).toEqual(['packs/_source/monsters/aberration']);
   });
 });

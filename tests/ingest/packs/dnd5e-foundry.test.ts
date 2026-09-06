@@ -398,6 +398,7 @@ describe('foundry-dnd5e-srd adapter', () => {
       'foundry-pf2e',
       FOUNDRY_DND5E_SRD_ADAPTER_ID,
       'foundry-pf2e-equipment',
+      'foundry-dnd5e-equipment',
     ]);
     const adapter = getPackAdapter('foundry-dnd5e-srd');
     expect(adapter.system).toBe('dnd5e');
@@ -408,7 +409,7 @@ describe('foundry-dnd5e-srd adapter', () => {
     expect(adapter.license).toContain('SRD');
     expect(adapter.license).toContain('not for redistribution');
     expect(() => getPackAdapter('foundry-4e')).toThrow(
-      'unknown pack adapter "foundry-4e" (available: foundry-pf2e, foundry-dnd5e-srd, foundry-pf2e-equipment)',
+      'unknown pack adapter "foundry-4e" (available: foundry-pf2e, foundry-dnd5e-srd, foundry-pf2e-equipment, foundry-dnd5e-equipment)',
     );
   });
 });

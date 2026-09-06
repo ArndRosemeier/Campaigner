@@ -1,0 +1,33 @@
+# Verbatim-trimmed live corpus document.
+# Source: foundryvtt/dnd5e packs/_source/items/armor/chain-mail.yml @6.0.x
+# Trimmed to the consumed subset (name/type/system.description.value/system.price/system.rarity/system.source.rules/system.properties) plus unknown keys that must be ignored.
+name: Chain Mail
+system:
+  description:
+    value: >-
+      <p>Made of interlocking metal rings, chain mail includes a layer of quilted fabric worn underneath the mail to
+      prevent chafing and to cushion the impact of blows. The suit includes gauntlets.</p>
+    chat: ""
+  price:
+    value: 75
+    denomination: gp
+  rarity: ""
+  source:
+    custom: ""
+    book: ""
+    page: ""
+    license: CC-BY-4.0
+    rules: "2014"
+  properties:
+    - stealthDisadvantage
+  type:
+    value: heavy
+    baseItem: chainmail
+  quantity: 1
+  weight:
+    value: 55
+    units: lb
+_id: rLMflzmxpe8JGTOA
+type: equipment
+ownership:
+  default: 0
