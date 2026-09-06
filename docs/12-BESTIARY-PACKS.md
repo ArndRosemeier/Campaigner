@@ -674,3 +674,33 @@ shapes:
   only when an item pack book exists, and stays byte-identical otherwise;
   the stored retrieve output round-trips across pause/resume.
 - Every gate passes against exactly the committed slice, per commit.
+
+
+## 14. Treasure-budget grounding (room-keys/treasure arc, 2026-09-07)
+
+The item pool (§13) grounds WHAT the treasure names; the room-keys/treasure
+arc (11-ENCOUNTER-GENERATOR D9) grounds HOW MUCH. The encounter prompts'
+treasure clause is per-system, and the licensing shape is binding:
+
+- **dnd5e** — Campaigner ships its OWN documented approximation (pocket
+  treasure ≈ 5 × CR in mixed gp-equivalent coins; hoards ≈ 50 gp × average
+  encounter level; at most one magic item per two encounter levels). The
+  DMG treasure chapters are **not licensable**: no DMG text is quoted,
+  paraphrased or restated anywhere in the product — the approximation lives
+  in `src/llm/treasureGuidance.ts` and its unit tests are the pin.
+- **pathfinder2e** — the GM Core treasure rules are the law. Campaigner
+  ships NO Paizo text; the model grounds amounts in the **VERBATIM** GM
+  Core excerpts the retrieve step surfaced (user-ingested rulebook, Paizo's
+  Community Use Policy, personal use) via the encounter personas' third
+  bounded search (`'treasure budget by level party wealth hoard coins'`,
+  limit 3, `chunkTypes: ['section', 'table']`) — excerpt context, never a
+  citation channel, never re-ranked into the citable list. Without such an
+  excerpt the model gives unquantified treasure rather than inventing
+  amounts.
+- Both budgets cohere with the §13 item-pool section: the pool clause names
+  items verbatim, the budget clause sizes the reward — the prompt carries
+  structure/budget ONLY around the pool wording, never re-states it.
+- The free-text `treasure` output shape stands (no structured loot schema,
+  §13.6 non-goals): hoard-level finds go to the encounter's top-level
+  `treasure` field or the room's `keyTreasure`, pocket finds to the roster
+  entry's additive `treasure` string.

@@ -307,6 +307,17 @@ frame). The initiative prune stays mode-independent and mob-scoped: a
 veiled mob is not yet in play and re-enters with an auto-roll on reveal;
 fogged PCs now roll and stay in the order.*
 
+Amended 2026-09-07 by 01a0b5e (room-keys/treasure arc, owner-ratified; D9 in
+11-ENCOUNTER-GENERATOR): *GM view additionally renders room-key markers — one
+tappable badge per keyed layout room at its staging point, derived from the
+provenance encounter's current layout and rendered under the veils — a key
+card in the right rail (room key + room-treasure checklist) when a marker is
+tapped, and a treasure block on the selection card for tokens whose seeded
+mob treasure is non-empty. All three are GM-only content: they never mount in
+the player-safe DOM, and the contract test pins the key/treasure strings as
+absent from `document.body`. Background taps and the player-safe toggle clear
+the marker selection.*
+
 Amended 2026-09-06 (encounter-resume arc, `everLive`): *entering the table
 reveals every token exactly ONCE per seed — the board carries an additive
 `everLive` flag (default false; legacy rows read `undefined`, which counts as

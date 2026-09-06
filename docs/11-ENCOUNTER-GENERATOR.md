@@ -43,6 +43,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. The vision check only flags drift for human review — it can never repair or invent geometry. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
+| D9 | **Room keys & mob treasure are GM-only text that travels with its structure** (owner-ratified, 2026-09-07): every layout room carries additive `key`/`keyTreasure` (persisted ON the room — `packRooms` rotates brief rooms, so a parallel roomId-keyed array would orphan), every roster entry carries additive `treasure` (persisted ON the entry — the editor removes roster rows, so an index-keyed array would orphan). The encounter editor edits them; battle seed freezes roster `treasure` onto each token (frozen-copy precedent, initiativeBonus); the battle surface renders GM-only key markers at room staging points + a rail key card + a GM-only token-treasure block — none of which mounts in player view (M5-D contract, 09 amendment). Map regeneration replaces room keys with the fresh brief's (accepted, stated in UI copy and the prompt clause). |
 
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
 
@@ -250,6 +251,97 @@ When `board.mapLayout !== null` (D6):
 
 Without `mapLayout` (uploaded maps): exact current behavior, byte-for-byte.
 
+## Room keys & mob treasure (owner-ratified, 2026-09-07; e489a65 → 01a0b5e)
+
+The encounter generator now authors the GM-only text a live table reads:
+what the GM says when the party first enters each room (**room keys**),
+what treasure sits in each room (**room treasure**), and what ONE instance
+of each creature carries (**mob treasure**). All of it is free-text GM
+checklist content — never player-facing, never structured loot output.
+
+### Data model (additive defaults, D9)
+
+- `encounterMapRoomBriefSchema` and `layoutRoomSchema` gain
+  `key: z.string().default('')` and `keyTreasure: z.string().default('')`.
+  Persisted **on the room**: `packRooms` rotates brief rooms
+  (`rotate(brief.rooms, attempt % count)`), so a parallel roomId-keyed
+  array could orphan on every retry. `packAttempt` copies both onto the
+  packed `LayoutRoom`, and `layoutFromStagingMarkers` copies them through
+  the staging rebuild — a key survives rotation, review edits and the
+  detector round-trip with its room (test: packing-rotation survival).
+- `monsterEntrySchema` (domain + the Smith's draft/brief schemas) gains
+  `treasure: z.string().default('')`, persisted **on the entry**: the
+  editor removes roster rows, so an index-keyed side array would re-key and
+  corrupt. Both finalize remap sites (map finalize + in-place Smith fill)
+  persist draft treasure; the regenerate contract copies the target roster
+  verbatim INCLUDING treasure ("same names, counts and treasure").
+- Keys and treasure are *optional enrichment* defaults (AGENTS rule 1) — a
+  brief that omits them parses with `''` and is never rejected over their
+  absence; a dropped legacy artifact still reads valid.
+
+### Generation (prompt clauses + retrieval)
+
+- `src/llm/treasureGuidance.ts` (new, unit-tested):
+  `treasureGuidanceFor(system)` teaches the shared treasure structure
+  (one string per roster entry = what ONE instance carries; hoard-level
+  finds go to the encounter's top-level `treasure` / the room's
+  `keyTreasure`; permanent/magic items come ONLY from the item pool by
+  exact name — never re-stating the pool section, only adding structure
+  and budget around it) plus a **per-system budget**:
+  - **dnd5e** — Campaigner's OWN documented approximation (pocket treasure
+    ≈ 5 × CR in mixed gp-equivalent coins; hoards ≈ 50 gp × average
+    encounter level; at most one magic item per two encounter levels). The
+    **DMG is not licensable** — no DMG text is quoted, paraphrased or
+    restated; the doc you are reading IS the shipped approximation.
+  - **pathfinder2e** — the GM Core treasure rules are the law: when the
+    retrieved excerpts include the treasure chapter the model follows its
+    budgets **VERBATIM** under Paizo's Community Use Policy (personal use);
+    no Paizo text ships with Campaigner. Without such an excerpt the model
+    gives unquantified treasure instead of inventing amounts — a
+    paraphrased budget would be a silent fabrication.
+  `roomKeyGuidanceFor()` teaches the Cartographer the key contract: a
+  1–3-sentence read-aloud-style key per room + a one-item-per-line room
+  treasure checklist; outdoor encounters get keys on their staging areas
+  too; and the regeneration consequence ("room keys regenerate together
+  with the map").
+- The Smith's draft prompt carries `treasureGuidanceFor(system)`; the
+  Cartographer's brief prompt carries both clauses plus the
+  `,key:string,keyTreasure:string` reply fields.
+- Encounter retrieval gains a bounded **third search**
+  (`'treasure budget by level party wealth hoard coins'`, limit 3,
+  `chunkTypes: ['section', 'table']`) merged into the merged context —
+  excerpt grounding for the budget, never a citation channel. The frozen
+  citable stat-block search is untouched (pinned at 3 calls).
+
+### Editor, seeding and surface
+
+- **Editor** (`kind-forms.tsx`): a per-row treasure textarea in
+  `MonsterListEditor`; a **Room keys** section (only when
+  `data.layout !== null`) with one key + room-treasure textarea per room,
+  labelled `Room <canonical letter> — <name>`. Edits touch only the key
+  fields — room rectangles stay regenerate-only (non-goals). The
+  battlemap section states the regeneration consequence ("Regenerating the
+  layout & map writes fresh room keys"), and the persona panel's
+  pre-filled brief says so for map runs.
+- **Seeding**: `battleTokenSchema` gains `treasure` (default `''`,
+  mirroring the `initiativeBonus` frozen-copy precedent);
+  `tokenFromFighter` takes an optional treasure; `expandRosterEntries`
+  stamps `entry.treasure` on every instance token (statless tokens
+  included). In-battle spawn shares the same expansion path, so a
+  mid-fight spawn inherits the checklist.
+- **Battle surface**: key markers derive — never stamp — from the
+  provenance encounter's CURRENT layout (useLiveQuery), one tappable badge
+  per keyed room at its `stagingPoint` (canonical marker letter), rendered
+  before the veils so a covered room hides its key marker exactly like it
+  hides its mobs. Only rooms with key content get a marker. Tapping opens
+  the key card in the right rail (room header, key text, room treasure,
+  `whitespace-pre-line`); background tap and the player-safe toggle clear
+  the selection. The selection card gains a GM-only treasure block
+  (`data-testid="token-treasure"`) for non-empty token treasure.
+- **Player-safe DOM contract (09 §M5-D amendment)**: markers, key card and
+  treasure text mount ONLY in GM view — pinned by a contract test
+  asserting the key/treasure strings are absent from `document.body`.
+
 ## Seeding (`seedBattleFromEncounter` extension)
 
 For an encounter with `layout !== null`:
@@ -418,7 +510,11 @@ template to follow when this is ratified.
 Implemented in full on the M6 baseline: deterministic layout and schematic,
 Dexie v12, room-aware seeding, reference-image/vision clients, interactive
 Cartographer runs, layout-anchored battle metrics, and the unattended module
-queue. The gate is 90 test files / 576 tests at completion.
+queue. The gate is 90 test files / 576 tests at completion. The room-keys &
+mob-treasure arc (D9, 2026-09-07, e489a65 → 01a0b5e) shipped in five
+bounded commits (generation, editor, seed, surface, docs) on top of the
+room-key persistence; the gate at completion is 140 test files / 1265
+tests.
 
 ## Build order (completed)
 
@@ -459,6 +555,16 @@ queue. The gate is 90 test files / 576 tests at completion.
   with maps unattended; a failing encounter reports loudly and does not stop
   the queue; retry re-runs only the failed job.
 - An uploaded-map encounter (no layout) behaves exactly as today.
+- Room keys & mob treasure (D9): a generated brief's room keys persist on
+  the finalized layout rooms through packing rotation and the staging
+  rebuild; the Smith's draft treasure lands on the finalized roster entries;
+  a map regeneration replaces keys with the fresh brief's while the roster
+  (and its treasure) survives verbatim; seeded tokens freeze their entry's
+  treasure (spawn included); GM view shows key markers + rail key card +
+  token treasure; player view shows none of it (contract test).
+- The dnd5e budget guidance is our own documented approximation and the
+  pf2e guidance demands verbatim GM Core grounding — asserted by unit
+  tests on `treasureGuidanceFor`.
 - `pnpm lint && pnpm typecheck && pnpm test` passes with the layout engine,
   seed and surface-metric modules covered.
 
