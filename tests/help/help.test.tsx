@@ -11,6 +11,8 @@ import { HelpButton } from '@/help/HelpButton';
 import { useHelpStore } from '@/help/helpStore';
 import { MemoryRouter } from 'react-router-dom';
 import { AppShell } from '@/app/layout/AppShell';
+import { defaultSettings } from '@/domain';
+import { saveSettings } from '@/db/settingsRepo';
 
 /**
  * In-app help system: content registry completeness, the searchable dialog,
@@ -95,6 +97,13 @@ describe('HelpDialog', () => {
 
 describe('? shortcut', () => {
   it('opens help from the app shell unless typing in a field', async () => {
+    // This test exercises the shell's help affordances, not the first-run
+    // wizard — seed the onboarding state as finished so the wizard's
+    // one-time auto-open (fresh status + zero campaigns) never fires here.
+    await saveSettings({
+      ...defaultSettings(),
+      onboarding: { status: 'complete' as const, stepState: [] },
+    });
     render(
       <MemoryRouter initialEntries={['/']}>
         <AppShell />

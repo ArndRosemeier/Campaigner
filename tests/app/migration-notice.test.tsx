@@ -22,7 +22,13 @@ beforeEach(async () => {
 });
 
 it('shows and consumes the v11 retired-session notice once', async () => {
-  await saveSettings({ ...defaultSettings(), retiredSessionNotesRemoved: 2 });
+  // onboarding is seeded finished: this test exercises the migration notice,
+  // not the first-run wizard's auto-open (fresh status + zero campaigns).
+  await saveSettings({
+    ...defaultSettings(),
+    retiredSessionNotesRemoved: 2,
+    onboarding: { status: 'complete' as const, stepState: [] },
+  });
   window.history.replaceState(null, '', '/');
   render(<RouterProvider router={createAppRouter()} />);
 

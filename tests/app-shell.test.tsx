@@ -15,13 +15,27 @@ import {
 import { DEFAULT_THEME, THEME_STORAGE_KEY, useThemeStore } from '@/app/theme/theme';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
-import { createModule } from '@/domain';
+import { createModule, defaultSettings } from '@/domain';
+import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from './db/helpers';
 
 /**
  * App shell behavior (T1): shell + theme toggle on every route, the campaign
  * bar (campaign tabs + breadcrumb) and the routed pages as they become real.
  */
+
+/**
+ * These tests exercise the shell, not the first-run wizard — seed the
+ * onboarding state as finished so the wizard's one-time auto-open
+ * (fresh status + zero campaigns) never fires here. The wizard's own
+ * auto-open behavior is covered in tests/features/onboarding-wizard.test.tsx.
+ */
+async function seedSettledOnboarding(): Promise<void> {
+  await saveSettings({
+    ...defaultSettings(),
+    onboarding: { status: 'complete' as const, stepState: [] },
+  });
+}
 
 function renderAppAt(path: string): void {
   window.history.replaceState(null, '', path);
@@ -38,8 +52,9 @@ function persistedTheme(): string | undefined {
   return envelope.state.theme;
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   useThemeStore.setState({ theme: DEFAULT_THEME });
+  await seedSettledOnboarding();
 });
 
 describe('app shell', () => {
@@ -114,6 +129,7 @@ describe('app shell', () => {
 describe('campaign switcher', () => {
   beforeEach(async () => {
     await clearDatabase();
+    await seedSettledOnboarding();
   });
 
   it('lists created campaigns, navigates on selection and shows the current one', async () => {
@@ -186,6 +202,7 @@ describe('campaign switcher', () => {
 describe('campaign bar breadcrumb', () => {
   beforeEach(async () => {
     await clearDatabase();
+    await seedSettledOnboarding();
   });
 
   it('shows Campaigns / Modules / title on the module reader route', async () => {
@@ -270,6 +287,7 @@ describe('theme toggle', () => {
 describe('generation language select', () => {
   beforeEach(async () => {
     await clearDatabase();
+    await seedSettledOnboarding();
   });
 
   it('is choosable on the main page and persists the choice in settings', async () => {

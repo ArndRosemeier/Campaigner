@@ -8,7 +8,9 @@ import type {
 } from '@/domain';
 import { ONBOARDING_STEP_IDS } from '@/domain';
 
+import { db } from '@/db/db';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
+import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 
 /**
  * Pure state semantics + the two persisted writers for the first-run wizard
@@ -71,4 +73,26 @@ export async function setOnboardingStatus(status: OnboardingStatus): Promise<voi
 
 async function readOnboarding(): Promise<Onboarding> {
   return (await readSettings()).onboarding;
+}
+
+/**
+ * The one-time auto-open (called from the AppShell mount effect): opens the
+ * wizard only for a genuinely fresh, EMPTY browser — status 'fresh' AND no
+ * campaigns (an upgraded install with existing data must not be hijacked;
+ * its entry points stay available). Persists 'active' immediately so the
+ * open is idempotent under StrictMode's double effect. `shouldOpen` is the
+ * caller's liveness check — a shell that unmounted while the settings/count
+ * reads were in flight must not pop the wizard afterwards.
+ */
+export async function maybeAutoOpenWizard(
+  shouldOpen: () => boolean = () => true,
+): Promise<boolean> {
+  const settings = await readSettings();
+  if (settings.onboarding.status !== 'fresh') return false;
+  const campaigns = await db.campaigns.count();
+  if (campaigns > 0) return false;
+  if (!shouldOpen()) return false;
+  useOnboardingStore.getState().openWizard();
+  await setOnboardingStatus('active');
+  return true;
 }

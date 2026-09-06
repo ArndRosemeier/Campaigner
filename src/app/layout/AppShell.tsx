@@ -18,6 +18,9 @@ import { toastError, toastInfo } from '@/lib/toast';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
+import { SetupWizardDialog } from '@/features/onboarding/SetupWizardDialog';
+import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
+import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
 
 /**
  * App frame shown on every route: the top bar (app name, campaign switcher,
@@ -35,6 +38,20 @@ import { useHelpStore } from '@/help/helpStore';
 export function AppShell(): JSX.Element {
   useThemeSync();
   const openHelp = useHelpStore((state) => state.openHelp);
+  const wizardOpen = useOnboardingStore((state) => state.open);
+
+  useEffect(() => {
+    // First-run wizard: opens once on a fresh, empty browser (see
+    // maybeAutoOpenWizard); re-open affordances live elsewhere. The
+    // liveness check stops an unmounted shell from opening it.
+    let active = true;
+    void maybeAutoOpenWizard(() => active).catch((error: unknown) => {
+      toastError('Could not check first-run setup state', error);
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     void readSettings()
@@ -102,6 +119,7 @@ export function AppShell(): JSX.Element {
         />
         <ProgressDock />
         <HelpDialog />
+        {wizardOpen && <SetupWizardDialog />}
         <QuickFindHotkey />
       </div>
     </TooltipProvider>

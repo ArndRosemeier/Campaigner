@@ -9,8 +9,10 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
 import { HELP_CONTENT, HELP_TOPIC_IDS, type HelpTopic } from '@/help/helpContent';
 import { useHelpStore } from '@/help/helpStore';
+import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { cn } from '@/lib/utils';
 
 /**
@@ -115,9 +117,33 @@ export function HelpDialog(): JSX.Element {
                 </li>
               ))}
             </ul>
+            {active === 'setup' && <ReopenWizardButton />}
           </div>
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * The setup topic's re-open affordance: closes help and opens the first-run
+ * wizard (05-UI.md §Onboarding). Rendered only on the 'setup' topic.
+ */
+function ReopenWizardButton(): JSX.Element {
+  const closeHelp = useHelpStore((state) => state.closeHelp);
+  const openWizard = useOnboardingStore((state) => state.openWizard);
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="mt-4"
+      data-testid="help-reopen-wizard"
+      onClick={() => {
+        closeHelp();
+        openWizard();
+      }}
+    >
+      Reopen the setup wizard
+    </Button>
   );
 }

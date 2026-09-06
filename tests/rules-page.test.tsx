@@ -8,6 +8,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { ROUTES } from '@/app/routes';
+import { defaultSettings } from '@/domain';
+import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from './db/helpers';
 import { flushAsyncUpdates } from './helpers/flush';
 import { baseNpc, encodeJson, folderDoc } from './ingest/packs/fixtures';
@@ -49,7 +51,18 @@ function importPackFiles(files: File[]): void {
   fireEvent.change(input);
 }
 
-beforeEach(clearDatabase);
+beforeEach(async () => {
+  await clearDatabase();
+  // These tests exercise the Rules screen, not the first-run wizard — seed
+  // the onboarding state as finished so the wizard's one-time auto-open
+  // (fresh status + zero campaigns) never overlays the page here. The
+  // wizard's own auto-open behavior is covered in
+  // tests/features/onboarding-wizard.test.tsx.
+  await saveSettings({
+    ...defaultSettings(),
+    onboarding: { status: 'complete' as const, stepState: [] },
+  });
+});
 afterEach(cleanup);
 
 describe('rules screen', () => {

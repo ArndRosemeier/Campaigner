@@ -5,6 +5,7 @@
  */
 
 export type HelpTopic =
+  | 'setup'
   | 'start'
   | 'campaigns'
   | 'tree'
@@ -31,6 +32,18 @@ export interface HelpEntry {
 }
 
 export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
+  setup: {
+    title: 'Welcome & setup wizard',
+    summary:
+      'The first-run wizard walks you through the OpenRouter key, rulebook, bestiary pack and your first campaign — five minutes, everything stays local.',
+    tips: [
+      'The wizard links out to the real screens (Settings, Rules, the campaign picker) instead of re-implementing them, and ticks steps automatically: a saved OpenRouter key, an imported rulebook, a created campaign with a module.',
+      'Every step can be skipped; progress is saved in this browser and the wizard resumes at the first unresolved step.',
+      'Dismissed ("Don\u2019t show again") never nags again — reopen it here with the button below, from the campaign picker\u2019s "Get set up" button, or from the workspace welcome panel.',
+      'The last step points to the First-Module Guide, which opens in another tab and walks your first module end to end.',
+    ],
+    keywords: 'setup wizard onboarding first run api key openrouter welcome',
+  },
   start: {
     title: 'Welcome & quick start',
     summary:

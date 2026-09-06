@@ -53,6 +53,9 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useCampaignSummaries, type CampaignSummary } from '@/features/campaign/hooks';
+import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
+import { readSettings } from '@/db/settingsRepo';
+import { SparklesIcon } from 'lucide-react';
 import { ExportCampaignDialog } from '@/features/campaign/components/export-dialog';
 import { importExport, importZip } from '@/lib/exportImport';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -67,6 +70,8 @@ import { toastError, toastSuccess } from '@/lib/toast';
  */
 export function CampaignPickerPage(): JSX.Element {
   const summaries = useCampaignSummaries();
+  const settings = useLiveQuery(() => readSettings(), []);
+  const openWizard = useOnboardingStore((state) => state.openWizard);
   const [createOpen, setCreateOpen] = useState(false);
   const navigate = useNavigate();
   const importInputRef = useRef<HTMLInputElement | null>(null);
@@ -98,6 +103,20 @@ export function CampaignPickerPage(): JSX.Element {
           </div>
           <div className="flex items-center gap-2">
             <HelpButton topic="campaigns" label="campaigns" />
+            {/* Re-open affordance for the first-run setup wizard: hidden only
+                once the user finished it (05-UI.md §Onboarding). */}
+            {settings !== undefined && settings.onboarding.status !== 'complete' && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  openWizard();
+                }}
+                data-testid="get-set-up"
+              >
+                <SparklesIcon aria-hidden data-icon="inline-start" />
+                Get set up
+              </Button>
+            )}
             <input
               ref={importInputRef}
               type="file"
@@ -142,7 +161,17 @@ export function CampaignPickerPage(): JSX.Element {
                 Create your first campaign to start building a world.
               </CardDescription>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex items-center justify-center gap-2">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  openWizard();
+                }}
+                data-testid="empty-set-up"
+              >
+                <SparklesIcon aria-hidden data-icon="inline-start" />
+                Set up Campaigner
+              </Button>
               <Button
                 variant="outline"
                 onClick={() => {

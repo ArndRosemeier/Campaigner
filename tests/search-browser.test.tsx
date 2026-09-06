@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import { ROUTES } from '@/app/routes';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
+import { defaultSettings } from '@/domain';
+import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from './db/helpers';
 
 /**
@@ -24,7 +26,16 @@ function renderAppAt(path: string): void {
 const fixturePath = join(import.meta.dirname, 'fixtures', 'sample-rulebook.pdf');
 const fixtureBytes = readFileSync(fixturePath);
 
-beforeEach(clearDatabase);
+beforeEach(async () => {
+  await clearDatabase();
+  // These tests exercise the search browser, not the first-run wizard — seed
+  // the onboarding state as finished so the wizard's one-time auto-open
+  // (fresh status + zero campaigns) never overlays the page here.
+  await saveSettings({
+    ...defaultSettings(),
+    onboarding: { status: 'complete' as const, stepState: [] },
+  });
+});
 afterEach(cleanup);
 
 describe('rules search browser', () => {
