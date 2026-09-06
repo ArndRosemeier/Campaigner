@@ -239,6 +239,10 @@ export interface NewPersonaRun {
   placementModuleId?: Id | null;
   /** Ticked creation-dialog extras; null/omitted = none. */
   runExtras?: PersonaRun['runExtras'];
+  /** Module post-pass mode (no user checkpoints); null/omitted = interactive. */
+  unattended?: boolean | null;
+  /** Writers'-room chain grounding for the draft prompt; null/omitted = none. */
+  contextArtifactIds?: readonly Id[] | null;
 }
 
 export function createPersonaRun(input: NewPersonaRun): PersonaRun {
@@ -258,6 +262,11 @@ export function createPersonaRun(input: NewPersonaRun): PersonaRun {
     encounterPreset: input.encounterPreset ?? null,
     placementModuleId: input.placementModuleId ?? null,
     runExtras: input.runExtras ?? null,
+    unattended: input.unattended ?? null,
+    contextArtifactIds:
+      input.contextArtifactIds === undefined || input.contextArtifactIds === null
+        ? null
+        : [...input.contextArtifactIds],
     errorMessage: '',
   });
 }

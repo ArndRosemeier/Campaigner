@@ -21,9 +21,10 @@ export async function createRun(input: NewPersonaRun): Promise<PersonaRun> {
  * Legacy-row guard at the Dexie boundary (the ratified `parseBattleRow`
  * template): zod materializes the additive run options on rows written
  * before they existed — `encounterMapAspect`, `encounterPreset`,
- * `placementModuleId`, `runExtras` — so resume/retry sees the schema
- * defaults instead of `undefined`, and a corrupt row fails loudly
- * (AGENTS rules 1+3). Writes already parse (updateRun/failRunningRuns).
+ * `placementModuleId`, `runExtras`, `unattended`, `contextArtifactIds` —
+ * so resume/retry sees the schema defaults instead of `undefined`, and a
+ * corrupt row fails loudly (AGENTS rules 1+3). Writes already parse
+ * (updateRun/failRunningRuns).
  */
 function parseRunRow(row: PersonaRun): PersonaRun {
   return personaRunSchema.parse(row);

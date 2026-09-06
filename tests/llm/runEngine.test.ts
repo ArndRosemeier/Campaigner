@@ -686,6 +686,63 @@ describe('runEngine', () => {
     const artifact = await getArtifact(resumedId);
     expect(artifact?.moduleId).toBe(module.id);
   }, 20000);
+
+  it('resumeRun without explicit input rebuilds the unattended mode and chain grounding from the run row (F8)', async () => {
+    const { campaignId, persona } = await seed();
+    // An earlier chain step's produce — the draft prompt grounds on it.
+    const contextArtifact = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Kael',
+      summary: 'The gate warden.',
+      body: 'Kael keeps the gate at dusk.',
+    });
+    // Auto mode: the draft step rejects twice (initial + repair retry) and
+    // fails the run — the resume then re-runs the DRAFT step, so its prompt
+    // proves the context threading.
+    chatMock
+      .mockResolvedValueOnce({ text: 'not a draft at all', modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: 'still not a draft', modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+      // F8: both fields used to be in-memory only — the row never carried
+      // them, so a resume silently dropped the mode and the grounding.
+      unattended: true,
+      contextArtifactIds: [contextArtifact.id],
+    });
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+    });
+    const failed = await getRun(runId);
+    expect(failed?.unattended).toBe(true);
+    expect(failed?.contextArtifactIds).toEqual([contextArtifact.id]);
+
+    chatMock.mockReset();
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_STATBLOCK), modelUsed: 'test-model', fallback: null });
+
+    await runEngine.resumeRun(runId);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('completed');
+    });
+    // The resumed draft prompt carries the chain grounding ("Artifacts
+    // created earlier in this pipeline") from the persisted ids.
+    const resumedDraftCall = chatMock.mock.calls[0];
+    if (resumedDraftCall === undefined) throw new Error('the resumed draft never called chat');
+    const prompt = resumedDraftCall.map((part) => JSON.stringify(part)).join('\n');
+    expect(prompt).toContain('Artifacts created earlier in this pipeline');
+    expect(prompt).toContain('Kael');
+    expect(prompt).toContain('The gate warden.');
+    // The rebuilt input kept the run's mode: the row carries it through.
+    const resumed = await getRun(runId);
+    expect(resumed?.unattended).toBe(true);
+    expect(resumed?.contextArtifactIds).toEqual([contextArtifact.id]);
+  }, 20000);
   it('pilot (strict structured outputs): the encounter draft step sends a strict json_schema responseFormat', async () => {
     const { campaignId } = await seed();
     const encounterPersona = await createPersona({

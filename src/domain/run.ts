@@ -99,6 +99,22 @@ export const personaRunSchema = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * Module post-pass mode ("one candidate, no user checkpoints"). Persisted
+   * so resumeRun reconstructs the mode exactly (F8): a paused unattended
+   * Cartographer run resumed from the Runs tab must re-run WITHOUT user
+   * checkpoints, never as a checkpointed interactive run. Null for runs
+   * started before the field existed and for every interactive run.
+   */
+  unattended: z.boolean().nullable().default(null),
+  /**
+   * Writers'-room chain grounding (06-MILESTONES M2): artifacts from
+   * earlier chain steps, injected into the draft prompt as context.
+   * Persisted so reload + resume keeps the chain grounding (F8) — without
+   * it a resumed chain-step run silently drafted without its siblings.
+   * Null for runs started before the field existed and for non-chain runs.
+   */
+  contextArtifactIds: z.array(z.string()).nullable().default(null),
   errorMessage: z.string(),
 });
 

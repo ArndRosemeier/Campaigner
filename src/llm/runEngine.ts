@@ -835,6 +835,12 @@ export class RunEngine {
         input.persona.mode === 'encounter' ? (input.encounterPreset ?? null) : null,
       placementModuleId: input.placementModuleId ?? null,
       runExtras: input.extras ?? null,
+      // F8: the run context persists with the row so resumeRun reconstructs
+      // the exact mode — an unattended run resumed from the Runs tab stays
+      // checkpoint-free, and a chain-step run keeps its grounding.
+      unattended: input.unattended ?? null,
+      contextArtifactIds:
+        input.contextArtifactIds === undefined ? null : [...input.contextArtifactIds],
     });
     this.draftRetried.delete(run.id);
     this.statblockRetried.delete(run.id);
@@ -988,6 +994,11 @@ export class RunEngine {
         ...(run.encounterPreset !== null ? { encounterPreset: run.encounterPreset } : {}),
         ...(run.placementModuleId !== null ? { placementModuleId: run.placementModuleId } : {}),
         ...(run.runExtras !== null ? { extras: run.runExtras } : {}),
+        // F8: the run's context rides the row — the unattended mode (no user
+        // checkpoints on resume) and the chain grounding (the resumed draft
+        // prompt keeps its earlier-steps context).
+        ...(run.unattended === true ? { unattended: run.unattended } : {}),
+        ...(run.contextArtifactIds !== null ? { contextArtifactIds: run.contextArtifactIds } : {}),
       };
     }
 

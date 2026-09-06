@@ -41,7 +41,7 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import type { Autonomy, Campaign, EncounterLayout, Id, Persona, PersonaRun } from '@/domain';
+import { defaultSettings, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
@@ -298,7 +298,11 @@ export function PersonaPanel({
         autonomy,
         brief,
         pinnedChunkIds: pinned.map((chunk) => chunk.id),
-        encounterMapAspect: settings?.encounterMapAspect ?? '4:3',
+        // The schema-defaulted read (F8 cosmetic alignment): the queue paths
+        // read the aspect through getSettings()' schema default — this
+        // fallback must be the same Settings default, not a hardcoded
+        // literal that can drift from domain/settings.
+        encounterMapAspect: settings?.encounterMapAspect ?? defaultSettings().encounterMapAspect,
         ...(targetArtifactId !== '' && targetPreset !== undefined
           ? { encounterPreset: targetPreset }
           : {}),
