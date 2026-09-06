@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
+import { CANONICAL_ROOM_MARKERS } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import { modulePath } from '@/app/routes';
@@ -139,6 +140,9 @@ export function BattleSurface(): JSX.Element {
   const [selectedTokenId, setSelectedTokenId] = useState<BattleTokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
   const [selectedEffectId, setSelectedEffectId] = useState<BattleEffect['id'] | null>(null);
+  // GM-only room-key marker selection (owner-ratified room-keys/treasure
+  // arc): the layout-room id whose key card shows in the rail.
+  const [selectedKeyRoomId, setSelectedKeyRoomId] = useState<string | null>(null);
   const [playerSafe, setPlayerSafe] = useState(false);
   const [stageArmed, setStageArmed] = useState(false);
   const [reseedArmed, setReseedArmed] = useState(false);
@@ -435,6 +439,7 @@ export function BattleSurface(): JSX.Element {
       setSelectedTokenId(null);
       setSelectedVeilId(null);
       setSelectedEffectId(null);
+      setSelectedKeyRoomId(null);
     }
     pinchRef.current.delete(event.pointerId);
     if (pinchRef.current.size < 2) pinchBaseRef.current = null;
@@ -812,6 +817,25 @@ export function BattleSurface(): JSX.Element {
     setSelectedVeilId(null);
   }
 
+  // Room keys (owner-ratified): derived, never stamped — the seeding
+  // encounter's CURRENT layout is the live source of truth, so re-seeding or
+  // editing keys is reflected without touching the board. Only rooms that
+  // actually carry key content get a marker (an empty key card is noise);
+  // marker letters fall back to the canonical sequence by room index.
+  const keyedRooms = useMemo(() => {
+    if (encounterArtifact === 'loading' || encounterArtifact === null || encounterArtifact === undefined) return [];
+    if (encounterArtifact.kind !== 'encounter') return [];
+    return encounterArtifact.data.layout === null
+      ? []
+      : encounterArtifact.data.layout.rooms
+          .map((room, index) => ({
+            room,
+            letter: room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1),
+          }))
+          .filter((entry) => entry.room.key !== '' || entry.room.keyTreasure !== '');
+  }, [encounterArtifact]);
+  const selectedKeyRoom = keyedRooms.find((entry) => entry.room.id === selectedKeyRoomId) ?? null;
+
   if (battle === undefined) {
     return (
       <div
@@ -842,17 +866,17 @@ export function BattleSurface(): JSX.Element {
   // a set id whose artifact is gone stays loud.
   const provenanceEncounter =
     encounterArtifact === 'loading' || encounterArtifact === null ? null : encounterArtifact;
-  const reseed = battle.reseed ?? null;
-  // Spawn source (M5-C addition): mid-fight spawn draws from the PROVENANCE
-  // encounter's roster — only a real, loaded encounter artifact offers it
-  // ('loading' and a missing artifact spawn nothing; the provenance rail
-  // above stays loud for the missing case).
   const spawnSource =
     provenanceEncounter === null || provenanceEncounter === undefined
       ? null
       : provenanceEncounter.kind === 'encounter'
         ? provenanceEncounter
         : null;
+  const reseed = battle.reseed ?? null;
+  // Spawn source (M5-C addition): mid-fight spawn draws from the PROVENANCE
+  // encounter's roster — only a real, loaded encounter artifact offers it
+  // ('loading' and a missing artifact spawn nothing; the provenance rail
+  // above stays loud for the missing case).
   // The px frame tokens/veils resolve against: the content div, not the
   // container (under letterbox the two differ — the %-denominator must match
   // what the browser resolves the % against).
@@ -1016,6 +1040,9 @@ export function BattleSurface(): JSX.Element {
             setPlayerSafe((value) => !value);
             setDiceIntent(null);
             pendingRollRef.current = null;
+            // A GM-only key card must not survive into player view — and
+            // coming back re-shows a fresh selection, not a stale one.
+            setSelectedKeyRoomId(null);
           }}
         >
           <UsersIcon aria-hidden data-icon="inline-start" />
@@ -1128,6 +1155,35 @@ export function BattleSurface(): JSX.Element {
                   />
                 </div>
               )}
+              {/* Room-key markers (owner-ratified, GM view only): one
+                  tappable badge per keyed room at its staging point. They
+                  render BEFORE the veils so a covered room hides its key
+                  marker exactly like it hides its mobs — key content is
+                  GM-only text and never mounts in player view. */}
+              {!playerSafe &&
+                hasRealSize &&
+                keyedRooms.map(({ room, letter }) => (
+                  <button
+                    key={room.id}
+                    type="button"
+                    aria-label={`Room key ${letter} — ${room.name}`}
+                    data-testid={`room-key-marker-${letter}`}
+                    className="absolute z-10 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-300/70 bg-amber-950/85 text-xs font-bold text-amber-200"
+                    style={{
+                      left: `${String((room.stagingPoint?.x ?? 0.5) * 100)}%`,
+                      top: `${String((room.stagingPoint?.y ?? 0.5) * 100)}%`,
+                    }}
+                    onPointerDown={(event) => {
+                      event.stopPropagation();
+                    }}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setSelectedKeyRoomId(room.id);
+                    }}
+                  >
+                    {letter}
+                  </button>
+                ))}
               {/* Veils — UNDER the tokens: covered mob tokens are removed in
                   player view, and every token that survives (PCs, other
                   tokens, GM-view mobs) must render ABOVE the veil. */}
@@ -1245,6 +1301,31 @@ export function BattleSurface(): JSX.Element {
               stats={stats}
               playerSafe={playerSafe}
             />
+          )}
+          {!playerSafe && selectedKeyRoom !== null && (
+            <div
+              className="flex flex-col gap-1 rounded-md border border-amber-300/30 bg-zinc-900 p-2"
+              data-testid="room-key-card"
+            >
+              <p className="text-sm font-medium text-amber-200">
+                Room {selectedKeyRoom.letter} — {selectedKeyRoom.room.name}
+              </p>
+              {selectedKeyRoom.room.key !== '' ? (
+                <p className="whitespace-pre-line text-xs text-zinc-300" data-testid="room-key-text">
+                  {selectedKeyRoom.room.key}
+                </p>
+              ) : (
+                <p className="text-xs italic text-zinc-500">No key written for this room yet.</p>
+              )}
+              {selectedKeyRoom.room.keyTreasure !== '' && (
+                <div className="mt-1 border-t border-white/10 pt-1">
+                  <p className="text-xs font-medium text-zinc-400">Room treasure</p>
+                  <p className="whitespace-pre-line text-xs text-zinc-300" data-testid="room-key-treasure">
+                    {selectedKeyRoom.room.keyTreasure}
+                  </p>
+                </div>
+              )}
+            </div>
           )}
           {selectedToken !== null && !playerSafe && (
             <TokenControls
@@ -1787,6 +1868,14 @@ function SelectionCard({ token, artifact, stats, playerSafe }: SelectionCardProp
           )}
         </div>
       </div>
+      {/* Mob treasure (owner-ratified): frozen GM-only checklist text from
+          the seeding roster — never mounts in player view. */}
+      {!playerSafe && token.treasure !== '' && (
+        <div className="border-t border-white/10 pt-1" data-testid="token-treasure">
+          <p className="text-xs font-medium text-amber-200">Treasure</p>
+          <p className="whitespace-pre-line text-xs text-zinc-300">{token.treasure}</p>
+        </div>
+      )}
       {!playerSafe && npc !== null && (
         <Dialog open={cardOpen} onOpenChange={setCardOpen}>
           <Button

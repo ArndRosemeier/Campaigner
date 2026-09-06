@@ -17,7 +17,7 @@ import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import type { StatBlock } from '@/domain';
-import { createModule, newId, statBlockSchema } from '@/domain';
+import { createModule, newId, packRooms, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { BattleSurface } from '@/features/play/battle/BattleSurface';
 import { battleGridStyle } from '@/domain/battle/gridSnap';
@@ -1559,5 +1559,131 @@ describe('dice-roller damage/heal (M5-D amendment)', () => {
     expect(screen.queryByTestId('roll-damage')).toBeNull();
     expect(screen.queryByTestId('dice-roller-stub')).toBeNull();
     await flushAsyncUpdates();
+  });
+});
+
+describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
+  const KEY_TEXT = 'Cracked doors hang off one hinge.';
+  const KEY_TREASURE = 'Fallen banner: 15 gp';
+  const MOB_TREASURE = 'Pouch: 5 gp, a bone key';
+
+  /** A battle seeded from an encounter WITH a layout (2 keyed rooms) and a
+   *  treasure-carrying roster row. packRooms keeps attempt-0 order. */
+  async function seedKeyedBattle(): Promise<{ moduleId: string; encounterId: string }> {
+    const pc1 = await addPc('Serren', 20);
+    void pc1;
+    const roomA = newId();
+    const roomB = newId();
+    const layout = packRooms({
+      theme: 'Ash temple',
+      aspect: '4:3',
+      entryRoomId: roomA,
+      rosterCounts: [1],
+      rooms: [
+        {
+          id: roomA,
+          name: 'Entry',
+          description: '',
+          size: 'small',
+          monsterIndexes: [],
+          adjacentRoomIds: [roomB],
+          key: KEY_TEXT,
+          keyTreasure: KEY_TREASURE,
+        },
+        {
+          id: roomB,
+          name: 'Sanctum',
+          description: '',
+          size: 'medium',
+          monsterIndexes: [0],
+          adjacentRoomIds: [roomA],
+          key: '',
+          keyTreasure: '',
+        },
+      ],
+    });
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Temple ambush',
+      data: {
+        difficulty: 'hard',
+        levelHint: '4',
+        monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: MOB_TREASURE, source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout,
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Keyed Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+    );
+    await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+    return { moduleId: module.id, encounterId: encounter.id };
+  }
+
+  it('GM view: key markers render at room staging points and tapping one opens the key card in the rail', async () => {
+    const { moduleId } = await seedKeyedBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    // Only rooms WITH key content get a marker (Sanctum's is empty).
+    expect(screen.getByTestId('room-key-marker-A')).toBeInTheDocument();
+    expect(screen.queryByTestId('room-key-marker-B')).toBeNull();
+    // Marker text carries the key + room treasure; the GM reads it in the rail.
+    fireEvent.click(screen.getByTestId('room-key-marker-A'));
+    await flushAsyncUpdates();
+    const card = screen.getByTestId('room-key-card');
+    expect(within(card).getByText('Room A — Entry')).toBeInTheDocument();
+    expect(screen.getByTestId('room-key-text')).toHaveTextContent(KEY_TEXT);
+    expect(screen.getByTestId('room-key-treasure')).toHaveTextContent(KEY_TREASURE);
+    // Background tap clears the selection (the pan wrapper owns the
+    // down→up threshold logic).
+    // Background tap clears the selection — pointerUp must restate the
+    // down coords, or the down→up delta counts as a pan and keeps it.
+    const board = screen.getByTestId('battle-board');
+    fireEvent.pointerDown(board, { pointerId: 3, clientX: 40, clientY: 550 });
+    fireEvent.pointerUp(board, { pointerId: 3, clientX: 40, clientY: 550 });
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('room-key-card')).toBeNull();
+  });
+
+  it('GM view: tapping a treasure-carrying token shows the frozen treasure on the selection card', async () => {
+    const { moduleId } = await seedKeyedBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === 'Cultist');
+    if (token === undefined) throw new Error('cultist token missing');
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Cultist');
+    if (el === undefined) throw new Error('cultist element missing');
+    fireEvent.pointerDown(el, { pointerId: 2, clientX: token.x * BOARD_W, clientY: CONTENT_TOP + token.y * CONTENT_H });
+    fireEvent.pointerUp(el, { pointerId: 2 });
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('token-treasure')).toHaveTextContent(MOB_TREASURE);
+  });
+
+  it('player-safe view: no key markers and no key/treasure text anywhere in the DOM', async () => {
+    const { moduleId } = await seedKeyedBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    // GM view shows the marker first; then player view removes ALL of it.
+    expect(screen.getByTestId('room-key-marker-A')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('room-key-marker-A'));
+    expect(screen.getByTestId('room-key-card')).toBeInTheDocument();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('room-key-marker-A')).toBeNull();
+    expect(screen.queryByTestId('room-key-card')).toBeNull();
+    // The M5-D player-safe DOM contract, extended to key/treasure text.
+    expect(document.body.textContent).not.toContain(KEY_TEXT);
+    expect(document.body.textContent).not.toContain(KEY_TREASURE);
+    expect(document.body.textContent).not.toContain(MOB_TREASURE);
   });
 });
