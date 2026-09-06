@@ -1,19 +1,5 @@
-import { GlobalWorkerOptions, getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import workerUrl from 'pdfjs-dist/legacy/build/pdf.worker.mjs?url';
-
 import type { ExtractedItem, ExtractedPage } from '@/ingest/types';
-
-// pdfjs needs a worker source. In the browser we point at the emitted worker
-// asset; under vitest there is no Worker implementation, so pdfjs falls back
-// to its main-thread "fake worker" — preloaded here onto `globalThis`
-// (pdfjs checks `pdfjsWorker` before trying to import `workerSrc`, which a
-// test runner cannot resolve at runtime).
-if (import.meta.env.VITEST) {
-  const workerModule: unknown = await import('pdfjs-dist/legacy/build/pdf.worker.mjs');
-  (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker = workerModule;
-} else {
-  GlobalWorkerOptions.workerSrc = workerUrl;
-}
+import { openPdfDocument } from '@/lib/pdfRuntime';
 
 export interface ExtractProgress {
   page: number;
@@ -32,17 +18,16 @@ function toNumber(value: unknown, fallback: number): number {
 /**
  * Step 1 of the pipeline (02-INGESTION.md): per-page text items via pdfjs.
  * Runs inside our worker in the app; direct calls are used in tests.
+ * The pdfjs worker wiring lives in `@/lib/pdfRuntime` (shared with the
+ * viewer); the handed-in buffer is transferred by pdfjs and arrives
+ * detached afterwards — callers must not reuse it (ingest snapshots its
+ * retained copy before calling).
  */
 export async function extractPages(
   data: ArrayBuffer,
   onProgress?: (progress: ExtractProgress) => void,
 ): Promise<ExtractedPage[]> {
-  const loadingTask = getDocument({
-    data: new Uint8Array(data),
-    useWorkerFetch: false,
-    disableFontFace: true,
-  });
-  const pdf = await loadingTask.promise;
+  const { doc: pdf, destroy } = await openPdfDocument(new Uint8Array(data));
 
   const pages: ExtractedPage[] = [];
   for (let pageNo = 1; pageNo <= pdf.numPages; pageNo += 1) {
@@ -70,6 +55,6 @@ export async function extractPages(
     onProgress?.({ page: pageNo, pageCount: pdf.numPages });
   }
 
-  await loadingTask.destroy();
+  await destroy();
   return pages;
 }

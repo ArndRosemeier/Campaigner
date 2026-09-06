@@ -19,6 +19,7 @@ import {
 import { Progress } from '@/components/ui/progress';
 import { BookDialogs } from '@/features/rules/book-dialogs';
 import { PackImportDialog } from '@/features/rules/pack-import-dialog';
+import { PdfBookView } from '@/features/rules/pdf-viewer';
 import { useRulebookSummaries, type RulebookSummary } from '@/features/rules/hooks';
 import { SearchBrowser } from '@/features/rules/search-browser';
 import { ingestPdf, type IngestProgress } from '@/ingest/ingestFiles';
@@ -33,11 +34,20 @@ export type ProgressMap = Record<string, { done: number; total: number }>;
 /** Per-book embedding progress (0–100 while embedding whole book). */
 type EmbedProgressMap = Record<string, { done: number; total: number }>;
 
+/** The right pane's open PDF view: which book, at which page. */
+interface PdfView {
+  bookId: string;
+  page: number;
+}
+
 const DEFAULT_BOOK_SYSTEM: GameSystem = 'generic-d20';
 
 /**
  * Rules library (05-UI.md §Rules): book list with import + embedding, and the
- * hybrid search browser with pin-to-assistant.
+ * hybrid search browser with pin-to-assistant. A "View PDF" affordance on a
+ * PDF-origin book (or "Open at p. N" on a search hit) swaps the right pane to
+ * the retained-bytes PDF viewer; a book without retained bytes shows the
+ * viewer's loud absent state there (owner-ratified: no attach affordance).
  */
 export function RulesPage(): JSX.Element {
   const summaries = useRulebookSummaries();
@@ -45,6 +55,7 @@ export function RulesPage(): JSX.Element {
   const [embedProgress, setEmbedProgress] = useState<EmbedProgressMap>({});
   const [importing, setImporting] = useState(false);
   const [packOpen, setPackOpen] = useState(false);
+  const [pdfView, setPdfView] = useState<PdfView | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   function trackProgress(p: IngestProgress): void {
@@ -194,16 +205,32 @@ export function RulesPage(): JSX.Element {
             onEmbedBook={(book) => {
               void handleEmbedBook(book);
             }}
+            onViewPdf={(bookId, page) => {
+              setPdfView({ bookId, page });
+            }}
           />
         </div>
       </div>
       <div className="h-full min-w-0 flex-1">
-        <SearchBrowser
-          books={(summaries ?? []).map((summary) => ({
-            id: summary.book.id,
-            title: summary.book.title,
-          }))}
-        />
+        {pdfView === null ? (
+          <SearchBrowser
+            books={(summaries ?? []).map((summary) => ({
+              id: summary.book.id,
+              title: summary.book.title,
+            }))}
+            onOpenPdf={(bookId, page) => {
+              setPdfView({ bookId, page });
+            }}
+          />
+        ) : (
+          <PdfBookView
+            bookId={pdfView.bookId}
+            initialPage={pdfView.page}
+            onBack={() => {
+              setPdfView(null);
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -216,6 +243,7 @@ interface BookListProps {
   importing: boolean;
   onRetry: (book: Rulebook, files: FileList | null) => Promise<void>;
   onEmbedBook: (book: Rulebook) => void;
+  onViewPdf: (bookId: string, page: number) => void;
 }
 
 function BookList({
@@ -225,6 +253,7 @@ function BookList({
   importing,
   onRetry,
   onEmbedBook,
+  onViewPdf,
 }: BookListProps) {
   if (summaries === undefined) {
     return <p className="text-sm text-muted-foreground">Loading…</p>;
@@ -251,6 +280,7 @@ function BookList({
             importing={importing}
             onRetry={onRetry}
             onEmbedBook={onEmbedBook}
+            onViewPdf={onViewPdf}
           />
         </li>
       ))}
@@ -265,6 +295,7 @@ interface BookCardProps {
   importing: boolean;
   onRetry: (book: Rulebook, files: FileList | null) => Promise<void>;
   onEmbedBook: (book: Rulebook) => void;
+  onViewPdf: (bookId: string, page: number) => void;
 }
 
 function BookCard({
@@ -274,6 +305,7 @@ function BookCard({
   importing,
   onRetry,
   onEmbedBook,
+  onViewPdf,
 }: BookCardProps) {
   const { book, chunkCount } = summary;
   const [menuAction, setMenuAction] = useState<'rename' | 'system' | 'license' | 'delete' | null>(null);
@@ -288,6 +320,19 @@ function BookCard({
         <CardHeader>
           <CardTitle className="min-w-0 text-sm [overflow-wrap:anywhere]">{book.title}</CardTitle>
           <CardAction className="flex items-center gap-1">
+            {book.origin === 'pdf' && (
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`View PDF of ${book.title}`}
+                data-testid={`view-pdf-${book.id}`}
+                onClick={() => {
+                  onViewPdf(book.id, 1);
+                }}
+              >
+                <BookOpenIcon aria-hidden />
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="icon-sm"

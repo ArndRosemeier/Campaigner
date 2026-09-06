@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { ChevronDownIcon, ChevronRightIcon, PinIcon, PinOffIcon, SearchIcon } from 'lucide-react';
+import { BookOpenIcon, ChevronDownIcon, ChevronRightIcon, PinIcon, PinOffIcon, SearchIcon } from 'lucide-react';
 
 import type { ChunkType, RuleChunk } from '@/domain/rulebook';
 import { Badge } from '@/components/ui/badge';
@@ -26,9 +26,18 @@ const CHUNK_TYPES: { value: ChunkType; label: string }[] = [
 /**
  * Right pane of the Rules screen (05-UI.md §Rules): search box, book/type
  * filters, result list with breadcrumb + snippet highlight + source badge,
- * expandable full chunk and Pin to Assistant.
+ * expandable full chunk and Pin to Assistant. When `onOpenPdf` is provided,
+ * every hit also carries "Open at p. N" — the chunk→page jump into the
+ * retained-bytes PDF viewer (pack chunks are stubbed to page 1 and their
+ * books have no PDF at all, so the jump only ever targets PDF books).
  */
-export function SearchBrowser({ books }: { books: { id: string; title: string }[] }): JSX.Element {
+export function SearchBrowser({
+  books,
+  onOpenPdf,
+}: {
+  books: { id: string; title: string }[];
+  onOpenPdf?: (bookId: string, page: number) => void;
+}): JSX.Element {
   const [query, setQuery] = useState('');
   const [bookIds, setBookIds] = useState<string[]>([]);
   const [chunkTypes, setChunkTypes] = useState<ChunkType[]>([]);
@@ -129,6 +138,7 @@ export function SearchBrowser({ books }: { books: { id: string; title: string }[
               onToggle={() => {
                 setExpandedId((previous) => (previous === hit.chunk.id ? null : hit.chunk.id));
               }}
+              onOpenPdf={onOpenPdf}
             />
           ))}
         </div>
@@ -186,11 +196,13 @@ function ResultCard({
   query,
   expanded,
   onToggle,
+  onOpenPdf,
 }: {
   hit: SearchHit;
   query: string;
   expanded: boolean;
   onToggle: () => void;
+  onOpenPdf?: ((bookId: string, page: number) => void) | undefined;
 }): JSX.Element {
   const { chunk } = hit;
   const pin = usePinnedChunksStore((state) => state.pin);
@@ -223,6 +235,19 @@ function ResultCard({
         </Badge>
         {chunk.chunkType === 'statblock' && <Badge variant="outline">stat block</Badge>}
         <span className="flex-1" />
+        {onOpenPdf !== undefined && (
+          <Button
+            variant="ghost"
+            size="sm"
+            data-testid="open-at-page"
+            onClick={() => {
+              onOpenPdf(chunk.bookId, chunk.pageStart);
+            }}
+          >
+            <BookOpenIcon aria-hidden data-icon="inline-start" />
+            Open at p. {chunk.pageStart}
+          </Button>
+        )}
         <Button
           variant="ghost"
           size="sm"

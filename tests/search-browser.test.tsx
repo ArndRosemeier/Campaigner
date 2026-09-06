@@ -66,4 +66,43 @@ describe('rules search browser', () => {
     });
     expect(within(hit).getByRole('button', { name: 'Unpin' })).toBeInTheDocument();
   }, 30000);
+
+  it('jumps from a search hit into the retained PDF at the chunk page', async () => {
+    const user = userEvent.setup();
+    renderAppAt(ROUTES.rules);
+
+    // PDF-origin books carry a View PDF affordance on the card…
+    const input = screen.getByTestId('import-input');
+    Object.defineProperty(input, 'files', {
+      value: [
+        new File([new Uint8Array(fixtureBytes)], 'sample-rulebook.pdf', {
+          type: 'application/pdf',
+        }),
+      ],
+    });
+    fireEvent.change(input);
+    const title = await screen.findByText('sample-rulebook', {}, { timeout: 15000 });
+    const card = title.closest('li') as HTMLElement;
+    expect(await within(card).findByRole('button', { name: 'View PDF of sample-rulebook' })).toBeEnabled();
+
+    // …and every hit carries the chunk→page jump.
+    const search = screen.getByTestId('rules-search');
+    await user.type(search, 'grapple');
+    fireEvent.keyDown(search, { key: 'Enter' });
+    const hit = await screen.findByTestId('search-hit', {}, { timeout: 5000 });
+    const badge = within(hit).getByText(/^p\. \d+$/).textContent;
+    const expectedPage = badge.replace(/^p\. /, '');
+
+    await user.click(within(hit).getByTestId('open-at-page'));
+
+    // The right pane swaps to the PDF viewer, opened at the chunk's page.
+    expect(await screen.findByTestId('pdf-viewer')).toBeInTheDocument();
+    const pageInput = await screen.findByTestId('pdf-page-input');
+    await waitFor(() => {
+      expect(pageInput).toHaveValue(expectedPage);
+    });
+    // Back returns to the browser (the viewer pane is not a route).
+    await user.click(screen.getByTestId('pdf-back'));
+    expect(await screen.findByTestId('rules-search')).toBeInTheDocument();
+  }, 30000);
 });
