@@ -318,6 +318,17 @@ the player-safe DOM, and the contract test pins the key/treasure strings as
 absent from `document.body`. Background taps and the player-safe toggle clear
 the marker selection.*
 
+Amended 2026-09-07 by cc2ad02 (dungeon preset arc, D10 in
+11-ENCOUNTER-GENERATOR): *token rendering honors `board.tokenSize` —
+`TokenView` renders `board.tokenSize * token.scale` instead of a hardcoded
+64px, so the rendered size always equals the coverage/snapping size. On
+mapless boards (64px default) nothing changes; on layout boards the setting
+finally re-captures as designed, and the dungeon preset's finer grid
+(half-size cells) renders tokens at their layout-cell coverage — the fix
+also gates the auto-fit effect on `battle.board.live` so it can no longer
+overwrite the first-entry reveal write and permanently hide seeded PC
+tokens.*
+
 Amended 2026-09-06 (encounter-resume arc, `everLive`): *entering the table
 reveals every token exactly ONCE per seed — the board carries an additive
 `everLive` flag (default false; legacy rows read `undefined`, which counts as

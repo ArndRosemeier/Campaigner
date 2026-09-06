@@ -186,6 +186,21 @@ battles stamp it from the encounter; table snapping, grid tracks, token sizing
 and veil dimensions derive from normalized layout cells rather than viewport
 pixels. Room placements are recomputed from roster counts when seeding.
 
+### Encounter presets (v15)
+
+`EncounterArtifactData` adds `preset: 'standard' | 'dungeon'` (default
+`'standard'`): the Dungeon preset (doc 11 D10) generates the layout on the
+fixed ×2 grid tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40) and biases
+the brief toward a connected multi-room complex. The choice persists in
+three places so regenerations and resumes reproduce the tier — the artifact
+data (user-facing label + regeneration memory), `PersonaRun.encounterPreset`
+(`'standard' | 'dungeon' | null`, null = not an encounter run; the same
+pause/resume role as `encounterMapAspect`), and `Settings.encounterPreset`
+(default `'standard'`; also the unattended module queue's only source).
+Deriving the preset from layout dimensions would be ambiguous, so it is
+persisted, never inferred. No battle-level field exists: the board is a
+pure function of the layout, and the finer grid rides `cols/rows`.
+
 ### ArtifactRevision
 
 Full snapshot per revision (simple, storage is cheap for text).
@@ -519,6 +534,16 @@ export class CampaignerDB extends Dexie {
     // books have no row (viewer loud absent state).
     this.version(14).stores({
       pdfFiles:  'id, &bookId',
+      // all other stores unchanged
+    });
+
+    // Dungeon preset (11-ENCOUNTER-GENERATOR D10): indexes are unchanged.
+    // The upgrade backfills the additive defaults — encounter.data.preset
+    // 'standard', runs.encounterPreset null, settings.encounterPreset
+    // 'standard' (the M5-C mapImageId pattern).
+    this.version(15).stores({
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      battles:   'id, campaignId, moduleId',
       // all other stores unchanged
     });
   }

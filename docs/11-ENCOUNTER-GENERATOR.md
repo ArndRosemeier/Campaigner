@@ -44,6 +44,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. The vision check only flags drift for human review — it can never repair or invent geometry. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
 | D9 | **Room keys & mob treasure are GM-only text that travels with its structure** (owner-ratified, 2026-09-07): every layout room carries additive `key`/`keyTreasure` (persisted ON the room — `packRooms` rotates brief rooms, so a parallel roomId-keyed array would orphan), every roster entry carries additive `treasure` (persisted ON the entry — the editor removes roster rows, so an index-keyed array would orphan). The encounter editor edits them; battle seed freezes roster `treasure` onto each token (frozen-copy precedent, initiativeBonus); the battle surface renders GM-only key markers at room staging points + a rail key card + a GM-only token-treasure block — none of which mounts in player view (M5-D contract, 09 amendment). Map regeneration replaces room keys with the fresh brief's (accepted, stated in UI copy and the prompt clause). |
+| D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). |
 
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
 
@@ -505,6 +506,52 @@ OUT, detected with the same triangle gate, seeded as a `board.exit` overlay.
 The entrance arc (C1 geometry → C2 prompt/detection → C3 seed) is the
 template to follow when this is ratified.
 
+## Dungeon preset (owner-ratified, 2026-09-07; cc2ad02 → d69455e)
+
+The Dungeon preset (D10) is a **generation-time ×2 grid tier + brief bias**,
+implemented in six bounded commits. It is deliberately NOT a battle-level
+field: the board stays a pure function of the layout, and every D6
+layout-anchored metric (veils, snapping, grid tracks, token size — the
+cc2ad02 fix makes `TokenView` render `board.tokenSize * token.scale` so
+rendered size ≡ coverage size) derives from `mapLayout.cols/rows`, so the
+halved cell renders identically on the schematic, the stylized map, and the
+live table with no new surface code. The schematic cap scales with the tier
+(`schematicCellPx`, 45eed86: `min(96, 4096/gridW, 4096/gridH)` — 48×36
+renders at 85px/cell, inside the 4096px map cap).
+
+- **Grid tier** (`GRID_BY_ASPECT_DUNGEON`, 6302804): 4:3 → 48×36,
+  16:9 → 56×32, 1:1 → 40×40 — exactly twice the base tier per aspect, FIXED
+  (room-count independent; a 1-room dungeon gets the same 48×36 that a
+  10-room complex gets). Room size classes are unchanged: same cells per
+  room, more cells per map. All tiers stay inside the layout schema's 60 max.
+  Deriving the preset from the layout dimensions would be ambiguous (a
+  10-room standard 4:3 pack reaches the same 48×36), so the preset is
+  **persisted**, not inferred.
+- **Persistence** (6302804): `preset: 'standard' | 'dungeon'` on the
+  encounter artifact data, `encounterPreset` on the run row (aspect
+  pattern), `encounterPreset` in Settings. Dexie **v15** backfills the
+  additive defaults (`'standard'` / `null` / `'standard'` — the M5-C
+  `mapImageId` pattern).
+- **Run-engine threading** (4bf06b6): the preset resolves run row →
+  `StartRunInput` → Settings; `startRun` persists it for pauses/resumes;
+  the brief step stamps it next to `aspect` and, for Dungeon, adds a soft
+  contract clause ("connected dungeon complex of 4–8 rooms joined by
+  corridors; the entry room is the party's way in") — the geometry itself
+  stays deterministic packer output. `runEncounterLayout` packs on the
+  preset's tier, the stylize staging rebuild re-tiers identically, and
+  finalize writes the run's preset into the artifact data in BOTH branches
+  (fresh create and regenerate — the run is authoritative for the map it
+  just produced). The unattended module queue passes
+  `settings.encounterPreset`: module generation only produces dungeons when
+  the campaign opted in.
+- **UI** (d69455e): the persona panel gains a Settings-backed Preset select
+  beside Map aspect (one-line hint: connected multi-room complex, finer
+  grid). A **regenerate keeps the target encounter's own preset** — the
+  panel passes the target's preset over the Settings value, so an existing
+  map is never silently re-tiered (stated in the regenerate-target copy:
+  "keeping its map preset"); the images section captions a dungeon map
+  "Dungeon layout on file".
+
 ## Implementation record
 
 Implemented in full on the M6 baseline: deterministic layout and schematic,
@@ -514,7 +561,10 @@ queue. The gate is 90 test files / 576 tests at completion. The room-keys &
 mob-treasure arc (D9, 2026-09-07, e489a65 → 01a0b5e) shipped in five
 bounded commits (generation, editor, seed, surface, docs) on top of the
 room-key persistence; the gate at completion is 140 test files / 1265
-tests.
+tests. The dungeon preset arc (D10, 2026-09-07, cc2ad02 → d69455e)
+shipped in six bounded commits (surface token sizing, schematic cap,
+data model, run-engine threading, UI, docs); the gate at completion is
+140 test files / 1277 tests.
 
 ## Build order (completed)
 
@@ -565,6 +615,12 @@ tests.
 - The dnd5e budget guidance is our own documented approximation and the
   pf2e guidance demands verbatim GM Core grounding — asserted by unit
   tests on `treasureGuidanceFor`.
+- Dungeon preset (D10): a `dungeon` brief packs on the fixed ×2 tier per
+  aspect (48×36 / 56×32 / 40×40) regardless of room count, deterministically;
+  a standard brief stays on the base tier; staging-marker rebuilds honor the
+  preset; the run row, artifact data and Settings round-trip the choice; the
+  v14→v15 migration backfills the defaults. The battle surface needs no
+  preset awareness — the layout's `cols/rows` carry the finer grid.
 - `pnpm lint && pnpm typecheck && pnpm test` passes with the layout engine,
   seed and surface-metric modules covered.
 
