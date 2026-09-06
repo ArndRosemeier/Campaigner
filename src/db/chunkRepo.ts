@@ -2,14 +2,24 @@ import { ruleChunkSchema, type Id, type RuleChunk } from '@/domain';
 import { db } from '@/db/db';
 import { invalidateKeywordIndex } from '@/search/keywordIndex';
 
-/** Bulk-inserts chunks (validated); used by the ingestion pipeline. */
-export async function putChunks(chunks: RuleChunk[]): Promise<void> {
+/**
+ * THE chunk-write door (F10): validates, writes, and invalidates the keyword
+ * index in the same step — the invalidation is coupled to the write HERE,
+ * never left to call sites. `lib/backup`'s whole-DB restore used to rewrite
+ * the chunks table through its generic `db.tables` loop and stale the index
+ * until backup-section's page reload healed it (that reload was load-bearing
+ * for exactly this). Restore paths MUST route through this door.
+ */
+export async function writeChunks(chunks: RuleChunk[]): Promise<void> {
   const valid = chunks.map((chunk) => ruleChunkSchema.parse(chunk));
   await db.transaction('rw', db.chunks, async () => {
     await db.chunks.bulkPut(valid);
   });
   invalidateKeywordIndex();
 }
+
+/** Ingestion-facing name for the chunk-write door (same write+invalidate). */
+export const putChunks = writeChunks;
 
 /** Chunks of one book in reading order (page, then creation). */
 /** Every chunk in the library (embedding management). */

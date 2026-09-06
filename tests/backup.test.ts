@@ -6,13 +6,16 @@ import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
 import { createModule } from '@/db/moduleRepo';
-import { createModule as buildModule } from '@/domain';
+import { createModule as buildModule, ruleChunkSchema, stampNewEntity, type RuleChunk } from '@/domain';
 import { db } from '@/db/db';
+import { putChunks } from '@/db/chunkRepo';
+import { searchKeyword } from '@/search/keywordIndex';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { backupFileName, buildBackup, importBackup } from '@/lib/backup';
 import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
+import { sha256Hex } from '@/lib/hash';
 import { unzipSync, zipSync, strToU8 } from 'fflate';
 import { clearDatabase } from './db/helpers';
 
@@ -247,4 +250,65 @@ describe('app backup', () => {
   it('names the file after the export date', () => {
     expect(backupFileName(Date.UTC(2026, 1, 3))).toBe('campaigner-backup-2026-02-03.zip');
   });
+
+  it('restore routes chunks through the chunkRepo door — the keyword index invalidates with the write (F10)', async () => {
+    // State 1: one grappling chunk; snapshot it as a backup.
+    const book = await createRulebook({ title: 'PHB', system: 'dnd5e', filename: 'phb.pdf' });
+    await putChunks([await makeChunk(book.id, 'Grappling rules: a grappled creature can escape.')]);
+    const { bytes } = await buildBackup();
+
+    // State 2: a chunk the restore will REMOVE. Warm the keyword index so it
+    // caches state 2 (both chunks).
+    await putChunks([
+      await makeChunk(book.id, 'Grappling rules: a grappled creature can escape.'),
+      await makeChunk(book.id, 'Vampire weaknesses: sunlight and running water.'),
+    ]);
+    const warmed = await searchKeyword('vampire');
+    expect(warmed).toHaveLength(1);
+
+    // Restore state 1: the vampire chunk is gone from Dexie — and the index
+    // must reflect that WITHOUT a page reload (the pre-F10 generic bulkPut
+    // left the stale MiniSearch serving deleted chunks until backup-section
+    // reloaded the app).
+    await importBackup(bytes);
+    const stale = await searchKeyword('vampire');
+    expect(stale).toEqual([]);
+    const fresh = await searchKeyword('grappling');
+    expect(fresh).toHaveLength(1);
+    expect(fresh[0]?.chunk.text).toContain('Grappling');
+  });
+
+  it('rejects a corrupt chunk row loudly through the write door (the restore aborts untouched)', async () => {
+    await seedBuiltInPersonas();
+    const { bytes } = await buildBackup();
+    const entries = unzipSync(bytes);
+    const manifest = JSON.parse(
+      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
+    ) as { data?: Record<string, unknown[]> };
+    if (manifest.data === undefined) throw new Error('backup manifest is missing data');
+    manifest.data.chunks = [{ id: 'bogus', text: 42 }];
+    const corruptZip = zipSync({
+      ...entries,
+      'campaigner-backup.json': strToU8(JSON.stringify(manifest)),
+    });
+
+    await expect(importBackup(new Uint8Array(corruptZip))).rejects.toThrow();
+    // The transaction aborted: nothing was written, not even the wipe.
+    expect((await db.campaigns.toArray()).some((row) => row.name === 'Test Campaign')).toBe(false);
+  });
 });
+
+/** A minimal valid rule chunk for the door tests. */
+async function makeChunk(bookId: string, text: string): Promise<RuleChunk> {
+  return ruleChunkSchema.parse({
+    ...stampNewEntity(),
+    bookId,
+    pageStart: 12,
+    pageEnd: 12,
+    chunkType: 'section',
+    headingPath: [text],
+    text,
+    statBlock: null,
+    contentHash: await sha256Hex(text),
+  });
+}

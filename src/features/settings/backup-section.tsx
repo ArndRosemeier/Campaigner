@@ -139,6 +139,14 @@ export function BackupSection(): JSX.Element {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await importBackup(bytes);
       toastSuccess(`Backup restored — ${String(result.totalRows)} rows`);
+      // Load-bearing reload (kept on purpose, F10): the restore REPLACED the
+      // whole database, so every module-scope cache and store must re-derive
+      // from the new rows — the keyword index (backup's chunk restore goes
+      // through the chunkRepo write door and invalidates it itself), the
+      // persisted UI selections (lastModule may point at a module the
+      // restore removed), and every non-live-query store. This is not a
+      // chunk-index-only workaround; removing it needs an app-wide
+      // re-hydration design, not a one-line change.
       window.location.reload();
     } catch (error) {
       toastError('Could not restore the backup', error);
