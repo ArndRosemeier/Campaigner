@@ -56,7 +56,10 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
+import { getAnyArtifact } from '@/db/artifactRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
+import { runBattle } from '@/features/play/run-battle';
+import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { DiceRoller } from '@/features/dice/DiceRoller';
@@ -136,6 +139,7 @@ export function BattleSurface(): JSX.Element {
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
   const [playerSafe, setPlayerSafe] = useState(false);
   const [stageArmed, setStageArmed] = useState(false);
+  const [reseedArmed, setReseedArmed] = useState(false);
   // The dice roller's open state IS the pending roll intent (M5-D amendment);
   // the roll target is captured at open time so a mid-roll deselect cannot
   // misdirect the applied delta.
@@ -165,6 +169,17 @@ export function BattleSurface(): JSX.Element {
     async () => (mapImageId === null ? undefined : artifactImageById(mapImageId)),
     [mapImageId],
     undefined,
+  );
+
+  // The seeding encounter (provenance): 'loading' until the query resolves,
+  // null when the battle has no provenance, undefined when the artifact id
+  // is set but the artifact is gone (deleted encounters scrub their tokens;
+  // the row's provenance stays loud).
+  const encounterArtifactId = battle?.encounterArtifactId ?? null;
+  const encounterArtifact = useLiveQuery(
+    async () => (encounterArtifactId === null ? null : getAnyArtifact(encounterArtifactId)),
+    [encounterArtifactId],
+    'loading' as const,
   );
 
   // The initiative reorder gate publishes an epoch when its last drag ends —
@@ -655,6 +670,27 @@ export function BattleSurface(): JSX.Element {
     navigate(modulePath(campaignId, moduleId));
   }
 
+  /** Destructive re-seed (encounter-resume arc): replaces the running board
+   * from the row's own provenance encounter. The fresh row is prep scratch
+   * again — re-arm the first-entry reveal so the table goes live with the
+   * seeded layout immediately, and drop stale piece selections. */
+  async function reseedFromEncounter(): Promise<void> {
+    if (battle === undefined) return;
+    if (battle.encounterArtifactId === null) return;
+    // `?.kind` absorbs every sentinel — 'loading' (string), null, undefined.
+    if (encounterArtifact === 'loading' || encounterArtifact?.kind !== 'encounter') {
+      return;
+    }
+    const report = await runBattle(campaignId, moduleId, encounterArtifact, {
+      successTitle: `Board re-seeded from “${encounterArtifact.name}”`,
+      failureTitle: 'Could not re-seed the battle',
+    });
+    if (report === null) return;
+    openedLiveRef.current = false;
+    setSelectedTokenId(null);
+    setSelectedVeilId(null);
+  }
+
   if (battle === undefined) {
     return (
       <div
@@ -681,6 +717,11 @@ export function BattleSurface(): JSX.Element {
 
   const board = battle.board;
   const turnTokenId = activeInitiativeTokenId(board);
+  // Provenance narrowing: 'loading' and no-provenance (null) render nothing;
+  // a set id whose artifact is gone stays loud.
+  const provenanceEncounter =
+    encounterArtifact === 'loading' || encounterArtifact === null ? null : encounterArtifact;
+  const reseed = battle.reseed ?? null;
   // The px frame tokens/veils resolve against: the content div, not the
   // container (under letterbox the two differ — the %-denominator must match
   // what the browser resolves the % against).
@@ -788,6 +829,42 @@ export function BattleSurface(): JSX.Element {
           <RotateCcwIcon aria-hidden data-icon="inline-start" />
           Reset
         </Button>
+        {battle.encounterArtifactId !== null ? (
+          reseedArmed ? (
+            <>
+              <Button
+                size="sm"
+                variant="destructive"
+                data-testid="confirm-reseed"
+                onClick={() => {
+                  setReseedArmed(false);
+                  void reseedFromEncounter();
+                }}
+              >
+                <SwordsIcon aria-hidden data-icon="inline-start" />
+                Confirm re-seed
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => {
+                setReseedArmed(false);
+              }}>
+                Cancel
+              </Button>
+            </>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={playerSafe}
+              data-testid="reseed-battle"
+              onClick={() => {
+                setReseedArmed(true);
+              }}
+            >
+              <SwordsIcon aria-hidden data-icon="inline-start" />
+              Re-seed
+            </Button>
+          )
+        ) : null}
         <span className="mx-1 h-5 w-px bg-white/10" />
         <Button
           size="sm"
@@ -957,8 +1034,27 @@ export function BattleSurface(): JSX.Element {
           {!hasRealSize && <div className="absolute inset-0" />}
         </div>
 
-        {/* Right rail: initiative + token controls */}
+        {/* Right rail: provenance + initiative + token controls */}
         <div className="flex w-60 flex-col gap-2 overflow-y-auto border-l border-white/10 bg-black/60 p-2">
+          {/* Who/when/what seeded (and last re-seeded) this board — GM view
+          only; the player-safe DOM contract carries board material only. */}
+          {!playerSafe && battle.encounterArtifactId !== null && (
+            <div
+              className="rounded-md border border-white/10 bg-zinc-900 p-2 text-xs text-zinc-400"
+              data-testid="battle-provenance"
+            >
+              {provenanceEncounter === undefined ? (
+                <p>Seeded encounter no longer exists.</p>
+              ) : provenanceEncounter === null ? null : (
+                <p className="truncate">Seeded from “{provenanceEncounter.name}”</p>
+              )}
+              {reseed !== null && (
+                <p className="mt-1" data-testid="battle-reseed-line">
+                  Re-seeded {formatDateTime(reseed.at)} from “{reseed.encounterName}”
+                </p>
+              )}
+            </div>
+          )}
           <InitiativeSidebar
             battle={battle}
             onReorder={(order) => {

@@ -221,7 +221,13 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    button — it offers **Open battle**, a plain navigation onto the persisted
    board. Re-seeding the same encounter is the explicit **Re-run battle** →
    "Replace running battle?" two-step; a battle from a different encounter
-   keeps the confirm-first replace.*
+   keeps the confirm-first replace.* Amended 2026-09-06 (encounter-resume
+   arc, reseed provenance): *every REPLACE now stamps an additive
+   `battle.reseed` line on the row — `{ at, encounterArtifactId,
+   encounterName }` (`null` for the original seed, epoch-ms `at` matching the
+   entity stamps) — so the row itself answers who/when/what replaced the
+   board, and the battle surface offers a destructive two-step **Re-seed**
+   that re-runs this exact path against the row's own provenance encounter.*
 2. Seed map: the encounter's `mapImageId`, else the linked location's cover
    image if it is map-role, else no map (viewport board — source behavior).
 3. Expand the roster: each `MonsterEntry` with resolved stats
@@ -341,6 +347,15 @@ could see.*
 - Stage: **⚑ Set stage** (confirm) captures the snapshot; **↻ Reset**
   restores geometry, clears initiative, resets NPC instance HP to artifact
   max, re-spawns missing PCs at the staging ground, stays live.
+  Amended 2026-09-06 (encounter-resume arc): *the toolbar gains a destructive
+  two-step **Re-seed** (GM mode, provenance-bearing battles only) that
+  replaces the running board from the row's own provenance encounter —
+  `seedBattleFromEncounter` semantics verbatim: fresh board, discarded stage,
+  `reseed` stamped. After a re-seed the surface re-arms the first-entry
+  reveal, so the fresh board goes live immediately with the seeded layout,
+  and stale piece selections are dropped. The right rail carries a GM-view
+  provenance line ("Seeded from …", plus "Re-seeded …" when a replace
+  happened; a deleted seeding encounter reads loud, never blank).*
 - Initiative: enable → every visible fighter rolls (d20 + frozen bonus; PCs
   and NPCs alike); reconcile-on-change (reveal → auto-roll, cover/hide →
   prune) suppressed during sidebar reorder drags via the gesture gate;

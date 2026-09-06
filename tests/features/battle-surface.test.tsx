@@ -6,7 +6,12 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
-import { getBattleByModule, saveBattleBoard } from '@/db/battleRepo';
+import {
+  ensureBattle,
+  getBattleByModule,
+  saveBattleBoard,
+  saveBattleStage,
+} from '@/db/battleRepo';
 import type * as battleRepoModule from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
@@ -1130,6 +1135,70 @@ describe('resume reveal (everLive — encounter-resume arc)', () => {
     expect(battle.board.live).toBe(true);
     expect(battle.board.everLive).toBe(true);
     expect(battle.board.tokens.find((token) => token.id === troll.id)?.visible).toBe(false);
+  });
+});
+
+describe('re-seed + provenance (encounter-resume arc)', () => {
+  it('shows the seeding provenance, re-seeds destructively after confirm, and stamps the row', async () => {
+    const { moduleId, encounterId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await flushAsyncUpdates();
+    // The rail names the seeding encounter (GM view).
+    expect(screen.getByTestId('battle-provenance').textContent).toContain('Bridge ambush');
+
+    // Drift the running board: a saved stage snapshot that re-seeding must
+    // discard.
+    const battle = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleStage(battle.id, battle.board);
+      await flushAsyncUpdates();
+    });
+    expect((await currentBattle(moduleId)).board.stage).not.toBeNull();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('reseed-battle'));
+    await user.click(screen.getByTestId('confirm-reseed'));
+    await flushAsyncUpdates();
+
+    const reseeded = await currentBattle(moduleId);
+    expect(reseeded.board.stage).toBeNull();
+    expect(reseeded.encounterArtifactId).toBe(encounterId);
+    // Provenance records who/when/what replaced the board.
+    const reseed = reseeded.reseed;
+    expect(reseed).not.toBeNull();
+    if (reseed !== null) {
+      expect(reseed.encounterArtifactId).toBe(encounterId);
+      expect(reseed.encounterName).toBe('Bridge ambush');
+      expect(reseed.at).toBeGreaterThan(0);
+    }
+    // The fresh board went live on the table with the reveal spent.
+    expect(reseeded.board.live).toBe(true);
+    expect(reseeded.board.everLive).toBe(true);
+    // And the rail records the re-seed.
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('battle-reseed-line').textContent).toContain('Bridge ambush');
+  });
+
+  it('hides the re-seed affordance and provenance when the battle has no provenance', async () => {
+    const module = await saveModule(
+      createModule({
+        campaignId,
+        title: 'Bare Module',
+        concept: '',
+        levelMin: 1,
+        levelMax: 4,
+        sizeDial: 'sketch',
+      }),
+    );
+    await ensureBattle(campaignId, module.id);
+    await renderSurface(module.id);
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('reseed-battle')).toBeNull();
+    expect(screen.queryByTestId('battle-provenance')).toBeNull();
+    await flushAsyncUpdates();
   });
 });
 

@@ -11,7 +11,13 @@ import { abilityModifier } from '@/domain/statblock';
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
 import { getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
-import { ensureBattle, getBattle, patchBattle, saveBattleBoard } from '@/db/battleRepo';
+import {
+  ensureBattle,
+  getBattle,
+  getBattleByModule,
+  patchBattle,
+  saveBattleBoard,
+} from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
@@ -242,9 +248,16 @@ export async function seedBattleFromEncounter(
 
   // Seeding REPLACES any running battle for the module (the UI confirms):
   // fresh board, no stage snapshot, provenance + frozen seed stats stamped
-  // BEFORE the normalized save (the stats lookup drives HP clamping).
+  // BEFORE the normalized save (the stats lookup drives HP clamping). When a
+  // battle already ran, the row records the destructive re-seed — who (the
+  // acting seed), when, and what replaced the board (encounter-resume arc).
+  const existing = await getBattleByModule(moduleId);
   const battle = await ensureBattle(campaignId, moduleId);
-  await patchBattle(battle.id, { encounterArtifactId, seedFighters });
+  const reseed =
+    existing === undefined
+      ? null
+      : { at: Date.now(), encounterArtifactId, encounterName: encounter.name };
+  await patchBattle(battle.id, { encounterArtifactId, seedFighters, reseed });
   await saveBattleBoard(battle.id, board);
   const saved = await getBattle(battle.id);
   if (saved === undefined) throw new NotFoundError('Battle', battle.id);

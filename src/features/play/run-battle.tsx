@@ -33,10 +33,20 @@ export async function runBattle(
   campaignId: Id,
   moduleId: Id,
   encounter: AnyArtifact & { kind: 'encounter' },
+  /**
+   * Toast wording override for the battle surface's destructive re-seed
+   * (encounter-resume arc): same REPLACE semantics and the same reseed
+   * provenance stamp, but the GM is already standing on the table, so the
+   * toast names what actually happened.
+   */
+  toasts: { successTitle: string; failureTitle: string } = {
+    successTitle: 'Battle seeded',
+    failureTitle: 'Could not seed the battle',
+  },
 ): Promise<SeedReport | null> {
   try {
     const report = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
-    toastSuccess('Battle seeded');
+    toastSuccess(toasts.successTitle);
     if (report.statless.length > 0) {
       toastError(
         `No combat stats for: ${report.statless.join('; ')} — they will not roll initiative`,
@@ -44,7 +54,7 @@ export async function runBattle(
     }
     return report;
   } catch (error) {
-    toastError('Could not seed the battle', error);
+    toastError(toasts.failureTitle, error);
     return null;
   }
 }

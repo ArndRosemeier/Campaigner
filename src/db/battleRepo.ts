@@ -44,6 +44,7 @@ export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle
     campaignId,
     moduleId,
     encounterArtifactId: null,
+    reseed: null,
     seedFighters: [],
     board: {
       mapImageId: null,

@@ -194,6 +194,20 @@ export const battleSchema = z.object({
   moduleId: z.uuid(),
   /** The encounter artifact that seeded it (provenance), or null. */
   encounterArtifactId: z.uuid().nullable(),
+  /**
+   * The last destructive re-seed — who/when/what replaced the board
+   * (encounter-resume arc). `null` is the original seed: the row's
+   * `createdAt` plus `encounterArtifactId` are the whole provenance. `at` is
+   * epoch ms, matching the entity stamps.
+   */
+  reseed: z
+    .object({
+      at: z.number(),
+      encounterArtifactId: z.uuid(),
+      encounterName: z.string(),
+    })
+    .nullable()
+    .default(null),
   board: battleBoardSchema,
   /**
    * Monster fighters seeded from rulebook/inline roster entries have NO
