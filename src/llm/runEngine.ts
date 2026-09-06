@@ -244,6 +244,14 @@ export interface WaitForRunOptions {
    * misreport it as done.
    */
   includePaused?: boolean;
+  /**
+   * Aborts the WAIT (not the run): the next poll tick throws an AbortError
+   * even when the run is still going. Callers that must also stop the
+   * underlying run do it themselves — the encounter-map queue's withdrawn
+   * jobs call `runEngine.cancel` (the queue cannot leave an unattended run
+   * generating a map nobody asked for anymore).
+   */
+  signal?: AbortSignal;
 }
 
 /**
@@ -259,6 +267,11 @@ export interface WaitForRunOptions {
  */
 export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}): Promise<PersonaRun> {
   for (;;) {
+    // An aborted wait wins even over a just-reached terminal status: the
+    // caller withdrew the job and must not observe it as done.
+    if (opts.signal?.aborted) {
+      throw new DOMException('The wait was aborted', 'AbortError');
+    }
     const run = await getRun(runId);
     if (run === undefined) {
       throw new Error(`Run ${runId} disappeared while waiting for it to finish`);

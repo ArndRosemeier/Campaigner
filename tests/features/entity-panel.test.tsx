@@ -232,7 +232,7 @@ describe('EntityPanel', () => {
   beforeEach(clearDatabase);
   beforeEach(() => {
     useProgressStore.getState().reset();
-    useEntityImageQueue.setState({ queued: [], activeJobs: [] });
+    useEntityImageQueue.getState().reset();
     chatMock.mockReset();
     generateImagesMock.mockReset();
     intakeImageMock.mockReset();

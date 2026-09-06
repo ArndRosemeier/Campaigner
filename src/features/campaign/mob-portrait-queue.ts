@@ -1,5 +1,3 @@
-import { create } from 'zustand';
-
 import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getAnyArtifact, attachImagesToArtifact } from '@/db/artifactRepo';
@@ -10,10 +8,8 @@ import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
+import { createJobQueue } from '@/lib/jobQueue';
 import { intakeImage } from '@/lib/imageIntake';
-import { debugLog } from '@/lib/debug';
-import { useProgressStore } from '@/lib/progress';
-import { toastError } from '@/lib/toast';
 
 /**
  * Mob portrait queue (owner-ratified mob-artifact arc): one click on the
@@ -32,6 +28,11 @@ import { toastError } from '@/lib/toast';
  * source; the artifact's own `appearance` shortcut still wins when the user
  * filled it). Never rides the persona run pipeline (the Illustrator's pick
  * step always pauses; an unattended batch cannot).
+ *
+ * The pump/dedupe/cancellation/failed-retry/dock-counter machinery is the
+ * shared `createJobQueue` factory (F6) — this module is the config plus the
+ * per-job body. Like every queue on the factory, it does NOT survive a
+ * reload (in-memory by design; see createJobQueue's docs).
  */
 
 export interface MobPortraitJob {
@@ -50,58 +51,20 @@ export interface MobPortraitJob {
   chunkId?: Id;
 }
 
-interface MobPortraitQueueState {
-  queued: MobPortraitJob[];
-  /** Jobs whose generation is in flight right now (≤ maxParallelRequests). */
-  activeJobs: MobPortraitJob[];
-  enqueue: (jobs: MobPortraitJob[]) => void;
-  /** Removes a pending (or aborts the in-flight) job for this artifact. */
-  dequeue: (job: MobPortraitJob) => void;
-}
-
-export const useMobPortraitQueue = create<MobPortraitQueueState>((set) => ({
-  queued: [],
-  activeJobs: [],
-  enqueue: (jobs) => {
-    // One portrait per artifact: a creature kind cited by several encounters
-    // (or twice in one roster) must not generate concurrently against
-    // itself — duplicates within the batch and against known jobs are
-    // dropped, the skip-if-imaged guard keeps the survivor honest.
-    let kept: MobPortraitJob[] = [];
-    set((state) => {
-      const known = new Set(
-        [...state.queued, ...state.activeJobs].map((job) => key(job)),
-      );
-      kept = jobs.filter((job) => {
-        const jobKey = key(job);
-        if (known.has(jobKey)) return false;
-        known.add(jobKey);
-        return true;
-      });
-      if (kept.length === 0) return state;
-      return { queued: [...state.queued, ...kept] };
-    });
-    for (const job of kept) bumpTotal(job);
-    void pump();
+export const useMobPortraitQueue = createJobQueue<MobPortraitJob>({
+  name: 'mob-portrait-queue',
+  key: (job) => `${job.campaignId}:${job.artifactId}`,
+  dockGroup: (job) => ({ id: jobIdFor(job), label: 'Generating mob portraits' }),
+  activeDetail: (job) => `Illustrating "${job.name}"…`,
+  settledDetail: (job, outcome) =>
+    outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
+  failureTitle: (job) => `Could not generate a portrait for "${job.name}"`,
+  workerCount: async () => {
+    const settings = await getSettings();
+    return Math.max(1, settings.maxParallelRequests);
   },
-  dequeue: (job) => {
-    set((state) => ({
-      queued: state.queued.filter((candidate) => key(candidate) !== key(job)),
-      activeJobs: state.activeJobs.filter((candidate) => key(candidate) !== key(job)),
-    }));
-    controllers.get(key(job))?.abort();
-    bumpRemoved(job);
-  },
-}));
-
-function key(job: Pick<MobPortraitJob, 'campaignId' | 'artifactId'>): string {
-  return `${job.campaignId}:${job.artifactId}`;
-}
-
-const controllers = new Map<string, AbortController>();
-
-/** Per-encounter dock counters: done/total keep the bar monotonic. */
-const counters = new Map<string, { total: number; done: number }>();
+  process: processJob,
+});
 
 function jobIdFor(job: MobPortraitJob): string {
   return job.encounterId === undefined
@@ -109,192 +72,74 @@ function jobIdFor(job: MobPortraitJob): string {
     : `encounter-mob-portraits-${job.encounterId}`;
 }
 
-function bumpTotal(job: MobPortraitJob): void {
-  const jobId = jobIdFor(job);
-  let counter = counters.get(jobId);
-  if (counter === undefined) {
-    counter = { total: 0, done: 0 };
-    counters.set(jobId, counter);
-    useProgressStore.getState().start(jobId, 'Generating mob portraits');
+async function processJob(
+  job: MobPortraitJob,
+  ctx: { signal: AbortSignal },
+): Promise<'done' | 'skipped'> {
+  const settings = await getSettings();
+  if (!settings.imagesEnabled) {
+    throw new Error('Image generation is disabled — enable it in Settings');
   }
-  counter.total += 1;
-  useProgressStore.getState().update(jobId, {
-    progress: counter.done / counter.total,
-  });
-}
-
-function bumpDone(job: MobPortraitJob, detail: string): void {
-  const jobId = jobIdFor(job);
-  const counter = counters.get(jobId);
-  if (counter === undefined) return;
-  counter.done += 1;
-  useProgressStore.getState().update(jobId, {
-    progress: counter.done / counter.total,
-    detail,
-  });
-  if (counter.done >= counter.total) {
-    useProgressStore.getState().finish(jobId);
-    counters.delete(jobId);
+  const artifact = await getAnyArtifact(job.artifactId);
+  if (artifact === undefined) {
+    throw new Error('the mob artifact no longer exists — regenerate the encounter');
   }
-}
-
-function bumpRemoved(job: MobPortraitJob): void {
-  const jobId = jobIdFor(job);
-  const counter = counters.get(jobId);
-  if (counter === undefined) return;
-  counter.total -= 1;
-  if (counter.done >= counter.total) {
-    useProgressStore.getState().finish(jobId);
-    counters.delete(jobId);
+  // A cover may have appeared while the job sat in the queue (editor
+  // upload, another queue run) — no re-generation of imaged mobs.
+  if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
+    return 'skipped';
+  }
+  const summary = artifact.summary;
+  let body: string;
+  if (job.chunkId !== undefined) {
+    const chunk = (await getChunksByIds([job.chunkId]))[0];
+    if (chunk === undefined) {
+      throw new Error('the creature\u2019s stat-block chunk no longer exists');
+    }
+    if (chunk.text.trim() === '') {
+      throw new Error('the creature\u2019s stat-block chunk has no text to ground the prompt');
+    }
+    // Grounding: the creature chunk's stat-block text — the only
+    // description a fresh mob artifact has.
+    body = chunk.text;
   } else {
-    useProgressStore.getState().update(jobId, { progress: counter.done / counter.total });
+    // Creation-dialog portrait extra: the artifact's own content grounds
+    // the prompt (the appearance shortcut still wins inside the shared
+    // contract). Empty summary AND body throw in buildImagePrompt —
+    // a blank image of nothing is a placeholder, never a fallback.
+    body = artifact.body;
   }
-}
-
-let pumping = false;
-
-/** Atomically moves the queue head into the active set. Returns null when
- * the queue is empty. (zustand's setState is synchronous, so no two workers
- * can take the same job.) */
-function takeNext(): MobPortraitJob | null {
-  let taken: MobPortraitJob | null = null;
-  useMobPortraitQueue.setState((state) => {
-    const job = state.queued[0];
-    if (job === undefined) return state;
-    taken = job;
-    return {
-      queued: state.queued.slice(1),
-      activeJobs: [...state.activeJobs, job],
-    };
+  const prompt = await draftPrompt(artifact, summary, body, job.campaignId);
+  const finalPrompt = assembleImagePrompt(prompt);
+  // n=1 (owner-ratified): one portrait per creature kind — candidate-count
+  // caps (imageGen's n-retry, cappedToOne) cannot trigger on this path.
+  const generated = await generateImages(finalPrompt, 1, {
+    model: settings.imageModel,
+    signal: ctx.signal,
   });
-  return taken;
-}
-
-/** Removes a finished (or dequeued mid-flight) job from the active set. */
-function releaseJob(job: MobPortraitJob): void {
-  useMobPortraitQueue.setState((state) => ({
-    activeJobs: state.activeJobs.filter((candidate) => key(candidate) !== key(job)),
-  }));
-}
-
-async function pump(): Promise<void> {
-  if (pumping) return;
-  pumping = true;
-  try {
-    do {
-      // Portrait generation is independent per mob: run up to
-      // maxParallelRequests at once (the workers share the queue).
-      const settings = await getSettings();
-      const limit = Math.max(1, settings.maxParallelRequests);
-      const workers: Promise<void>[] = [];
-      for (let worker = 0; worker < limit; worker += 1) {
-        workers.push(pumpWorker());
-      }
-      await Promise.all(workers);
-      // A job may have been enqueued while the last workers were exiting —
-      // drain again instead of stranding it until the next enqueue.
-    } while (useMobPortraitQueue.getState().queued.length > 0);
-  } finally {
-    pumping = false;
-  }
-}
-
-async function pumpWorker(): Promise<void> {
-  for (;;) {
-    const job = takeNext();
-    if (job === null) return;
-    useProgressStore.getState().update(jobIdFor(job), {
-      detail: `Illustrating "${job.name}"…`,
-    });
-    const outcome = await processJob(job);
-    debugLog('mob-portrait-queue', `job for "${job.name}" finished`, { outcome });
-    bumpDone(
-      job,
-      outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
-    );
-    releaseJob(job);
-  }
-}
-
-type JobOutcome = 'done' | 'skipped' | 'failed' | 'cancelled';
-
-async function processJob(job: MobPortraitJob): Promise<JobOutcome> {
-  const controller = new AbortController();
-  controllers.set(key(job), controller);
-  try {
-    const settings = await getSettings();
-    if (!settings.imagesEnabled) {
-      throw new Error('Image generation is disabled — enable it in Settings');
-    }
-    const artifact = await getAnyArtifact(job.artifactId);
-    if (artifact === undefined) {
-      throw new Error('the mob artifact no longer exists — regenerate the encounter');
-    }
-    // A cover may have appeared while the job sat in the queue (editor
-    // upload, another queue run) — no re-generation of imaged mobs.
-    if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
-      return 'skipped';
-    }
-    const summary = artifact.summary;
-    let body: string;
-    if (job.chunkId !== undefined) {
-      const chunk = (await getChunksByIds([job.chunkId]))[0];
-      if (chunk === undefined) {
-        throw new Error('the creature\u2019s stat-block chunk no longer exists');
-      }
-      if (chunk.text.trim() === '') {
-        throw new Error('the creature\u2019s stat-block chunk has no text to ground the prompt');
-      }
-      // Grounding: the creature chunk's stat-block text — the only
-      // description a fresh mob artifact has.
-      body = chunk.text;
-    } else {
-      // Creation-dialog portrait extra: the artifact's own content grounds
-      // the prompt (the appearance shortcut still wins inside the shared
-      // contract). Empty summary AND body throw in buildImagePrompt —
-      // a blank image of nothing is a placeholder, never a fallback.
-      body = artifact.body;
-    }
-    const prompt = await draftPrompt(artifact, summary, body, job.campaignId);
-    const finalPrompt = assembleImagePrompt(prompt);
-    // n=1 (owner-ratified): one portrait per creature kind — candidate-count
-    // caps (imageGen's n-retry, cappedToOne) cannot trigger on this path.
-    const generated = await generateImages(finalPrompt, 1, {
-      model: settings.imageModel,
-      signal: controller.signal,
-    });
-    const blob = generated.images[0];
-    if (blob === undefined) throw new Error('the image API returned no image');
-    const intake = await intakeImage(blob);
-    // Store + attach (as cover) is ONE repo transaction — a crash between
-    // the image write and the artifact update must not leak the blob as an
-    // unreferenced orphan or leave the artifact pointing at nothing.
-    await attachImagesToArtifact(artifact.id, {
-      createImages: [
-        {
-          campaignId: job.campaignId,
-          blob: intake.blob,
-          mimeType: intake.mimeType,
-          width: intake.width,
-          height: intake.height,
-          prompt: finalPrompt,
-          model: generated.modelUsed,
-          source: 'generated',
-          // The skip branch above guarantees the artifact had no image yet.
-          asCover: true,
-        },
-      ],
-    });
-    return 'done';
-  } catch (error) {
-    if (controller.signal.aborted) return 'cancelled';
-    // Loud per-mob failure with the creature's name (AGENTS rule 2); the
-    // queue continues with the remaining mobs.
-    toastError(`Could not generate a portrait for "${job.name}"`, error);
-    return 'failed';
-  } finally {
-    controllers.delete(key(job));
-  }
+  const blob = generated.images[0];
+  if (blob === undefined) throw new Error('the image API returned no image');
+  const intake = await intakeImage(blob);
+  // Store + attach (as cover) is ONE repo transaction — a crash between
+  // the image write and the artifact update must not leak the blob as an
+  // unreferenced orphan or leave the artifact pointing at nothing.
+  await attachImagesToArtifact(artifact.id, {
+    createImages: [
+      {
+        campaignId: job.campaignId,
+        blob: intake.blob,
+        mimeType: intake.mimeType,
+        width: intake.width,
+        height: intake.height,
+        prompt: finalPrompt,
+        model: generated.modelUsed,
+        source: 'generated',
+        // The skip branch above guarantees the artifact had no image yet.
+        asCover: true,
+      },
+    ],
+  });
+  return 'done';
 }
 
 /** Prompt-draft for one mob artifact — the shared Illustrator prompt contract

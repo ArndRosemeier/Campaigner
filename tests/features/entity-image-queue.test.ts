@@ -52,7 +52,7 @@ beforeEach(async () => {
   generateImagesMock.mockReset();
   intakeImageMock.mockReset();
   toastErrorMock.mockReset();
-  useEntityImageQueue.setState({ queued: [], activeJobs: [] });
+  useEntityImageQueue.getState().reset();
   useProgressStore.getState().reset();
   generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
   intakeImageMock.mockResolvedValue({
@@ -100,7 +100,7 @@ describe('entity image queue', () => {
     expect(stored?.prompt).toContain('gate warden');
     // …the queue drains, and the dock job finishes.
     expect(useEntityImageQueue.getState().queued).toHaveLength(0);
-    expect(useEntityImageQueue.getState().activeJobs).toEqual([]);
+    expect(useEntityImageQueue.getState().active).toEqual([]);
     expect(
       useProgressStore.getState().jobs.find((job) => job.id === `module-entity-images-${moduleId}`),
     ).toBeUndefined();
@@ -143,7 +143,7 @@ describe('entity image queue', () => {
     expect((call?.[1] as Error).message).toContain('no artifact exists');
     // The queue drains despite the failure.
     expect(useEntityImageQueue.getState().queued).toHaveLength(0);
-    expect(useEntityImageQueue.getState().activeJobs).toEqual([]);
+    expect(useEntityImageQueue.getState().active).toEqual([]);
   });
 
   it('dequeue aborts in-flight jobs silently and drops pending ones', async () => {
@@ -191,7 +191,7 @@ describe('entity image queue', () => {
       { campaignId, moduleId, name: 'Ruth' },
     ]);
     await waitFor(() => {
-      expect(useEntityImageQueue.getState().activeJobs).toHaveLength(2);
+      expect(useEntityImageQueue.getState().active).toHaveLength(2);
     });
     expect(useEntityImageQueue.getState().queued.some((job) => job.name === 'Ruth')).toBe(true);
 
@@ -202,7 +202,7 @@ describe('entity image queue', () => {
     release();
 
     await waitFor(() => {
-      expect(useEntityImageQueue.getState().activeJobs).toEqual([]);
+      expect(useEntityImageQueue.getState().active).toEqual([]);
     });
     expect(useEntityImageQueue.getState().queued).toEqual([]);
     expect(toastErrorMock).not.toHaveBeenCalled();
@@ -243,5 +243,28 @@ describe('entity image queue', () => {
       expect.anything(),
     );
     expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('dedupes concurrent same-name jobs (createJobQueue invariant) — one job, one image', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const campaignId = campaign.id;
+    const moduleId = newId();
+    await createArtifact({ campaignId, kind: 'npc', name: 'Kael', summary: 'Ember\u2019s gate warden.' });
+
+    // The entity panel's checkbox could tick twice in quick succession
+    // (double click, rapid re-render): the pre-factory queue enqueued both,
+    // generated a double image and silently overwrote the cover.
+    useEntityImageQueue.getState().enqueue([{ campaignId, moduleId, name: 'Kael' }]);
+    useEntityImageQueue.getState().enqueue([{ campaignId, moduleId, name: 'Kael' }]);
+    expect(useEntityImageQueue.getState().queued).toHaveLength(1);
+
+    await waitFor(async () => {
+      const kael = (await listArtifactsByCampaign(campaignId)).find((a) => a.name === 'Kael');
+      expect(kael?.imageIds).toHaveLength(1);
+    });
+    expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    expect(useEntityImageQueue.getState().queued).toHaveLength(0);
+    expect(useEntityImageQueue.getState().active).toEqual([]);
+    expect(useEntityImageQueue.getState().failed).toEqual([]);
   });
 });

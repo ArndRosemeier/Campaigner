@@ -148,7 +148,7 @@ export function EntityPanel({
     artifact: AnyArtifact;
   } | null>(null);
   const queuedJobs = useEntityImageQueue((state) => state.queued);
-  const activeJobs = useEntityImageQueue((state) => state.activeJobs);
+  const activeJobs = useEntityImageQueue((state) => state.active);
   const enqueueEncounterMaps = useEncounterMapQueue((state) => state.enqueue);
   const retryFailedEncounterMaps = useEncounterMapQueue((state) => state.retryFailed);
   const allFailedEncounterMaps = useEncounterMapQueue((state) => state.failed);
@@ -471,7 +471,7 @@ export function EntityPanel({
                 size="xs"
                 data-testid="retry-encounter-maps"
                 onClick={() => {
-                  retryFailedEncounterMaps(module.id);
+                  retryFailedEncounterMaps((job) => job.moduleId === module.id);
                 }}
               >
                 Retry {failedEncounterMaps.length} failed map{failedEncounterMaps.length === 1 ? '' : 's'}

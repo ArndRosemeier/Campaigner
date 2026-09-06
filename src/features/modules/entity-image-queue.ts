@@ -1,5 +1,3 @@
-import { create } from 'zustand';
-
 import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { listArtifactsByCampaign, attachImagesToArtifact } from '@/db/artifactRepo';
@@ -8,10 +6,8 @@ import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
+import { createJobQueue } from '@/lib/jobQueue';
 import { intakeImage } from '@/lib/imageIntake';
-import { debugLog } from '@/lib/debug';
-import { useProgressStore } from '@/lib/progress';
-import { toastError } from '@/lib/toast';
 import { resolveWikiLink } from '@/lib/wikilinks';
 
 /**
@@ -28,6 +24,14 @@ import { resolveWikiLink } from '@/lib/wikilinks';
  * which an unattended queue cannot do. The prompt-draft contract (the
  * deterministic `buildImagePrompt`) mirrors runEngine's runPromptDraft
  * one-to-one — no chat call here either.
+ *
+ * The pump/dedupe/cancellation/failed-retry/dock-counter machinery is the
+ * shared `createJobQueue` factory (F6) — this module is the config plus the
+ * per-job body. The inherited enqueue dedupe (keyed campaign:name) fixed the
+ * queue's one real divergence: concurrent same-name checkbox ticks used to
+ * enqueue twice (double image + silent cover overwrite). Like every queue
+ * on the factory, it does NOT survive a reload (in-memory by design; see
+ * createJobQueue's docs).
  */
 
 export interface ImageQueueJob {
@@ -37,213 +41,75 @@ export interface ImageQueueJob {
   name: string;
 }
 
-interface EntityImageQueueState {
-  queued: ImageQueueJob[];
-  /** Jobs whose generation is in flight right now (≤ maxParallelRequests). */
-  activeJobs: ImageQueueJob[];
-  enqueue: (jobs: ImageQueueJob[]) => void;
-  /** Removes a pending (or aborts the in-flight) job for this entity. */
-  dequeue: (job: ImageQueueJob) => void;
-}
-
-export const useEntityImageQueue = create<EntityImageQueueState>((set) => ({
-  queued: [],
-  activeJobs: [],
-  enqueue: (jobs) => {
-    set((state) => ({ queued: [...state.queued, ...jobs] }));
-    for (const job of jobs) bumpTotal(job);
-    void pump();
-  },
-  dequeue: (job) => {
-    set((state) => ({
-      queued: state.queued.filter((candidate) => key(candidate) !== key(job)),
-      activeJobs: state.activeJobs.filter((candidate) => key(candidate) !== key(job)),
-    }));
-    controllers.get(key(job))?.abort();
-    bumpRemoved(job);
-  },
-}));
-
-function key(job: Pick<ImageQueueJob, 'campaignId' | 'name'>): string {
-  return `${job.campaignId}:${job.name}`;
-}
-
-const controllers = new Map<string, AbortController>();
-
-/** Per-module dock counters: done/total keep the bar monotonic. */
-const counters = new Map<string, { total: number; done: number }>();
-
-function jobIdFor(job: ImageQueueJob): string {
-  return `module-entity-images-${job.moduleId}`;
-}
-
-function bumpTotal(job: ImageQueueJob): void {
-  const jobId = jobIdFor(job);
-  let counter = counters.get(jobId);
-  if (counter === undefined) {
-    counter = { total: 0, done: 0 };
-    counters.set(jobId, counter);
-    useProgressStore.getState().start(jobId, 'Generating entity images');
-  }
-  counter.total += 1;
-  useProgressStore.getState().update(jobId, {
-    progress: counter.done / counter.total,
-  });
-}
-
-function bumpDone(job: ImageQueueJob, detail: string): void {
-  const jobId = jobIdFor(job);
-  const counter = counters.get(jobId);
-  if (counter === undefined) return;
-  counter.done += 1;
-  useProgressStore.getState().update(jobId, {
-    progress: counter.done / counter.total,
-    detail,
-  });
-  if (counter.done >= counter.total) {
-    useProgressStore.getState().finish(jobId);
-    counters.delete(jobId);
-  }
-}
-
-function bumpRemoved(job: ImageQueueJob): void {
-  const jobId = jobIdFor(job);
-  const counter = counters.get(jobId);
-  if (counter === undefined) return;
-  counter.total -= 1;
-  if (counter.done >= counter.total) {
-    useProgressStore.getState().finish(jobId);
-    counters.delete(jobId);
-  } else {
-    useProgressStore.getState().update(jobId, { progress: counter.done / counter.total });
-  }
-}
-
-let pumping = false;
-
-/** Atomically moves the queue head into the active set. Returns null when
- * the queue is empty. (zustand's setState is synchronous, so no two workers
- * can take the same job.) */
-function takeNext(): ImageQueueJob | null {
-  let taken: ImageQueueJob | null = null;
-  useEntityImageQueue.setState((state) => {
-    const job = state.queued[0];
-    if (job === undefined) return state;
-    taken = job;
-    return {
-      queued: state.queued.slice(1),
-      activeJobs: [...state.activeJobs, job],
-    };
-  });
-  return taken;
-}
-
-/** Removes a finished (or dequeued mid-flight) job from the active set. */
-function releaseJob(job: ImageQueueJob): void {
-  useEntityImageQueue.setState((state) => ({
-    activeJobs: state.activeJobs.filter((candidate) => key(candidate) !== key(job)),
-  }));
-}
-
-async function pump(): Promise<void> {
-  if (pumping) return;
-  pumping = true;
-  try {
-    do {
-      // Image generation is independent per entity: run up to
-      // maxParallelRequests at once (the workers share the queue).
-      const settings = await getSettings();
-      const limit = Math.max(1, settings.maxParallelRequests);
-      const workers: Promise<void>[] = [];
-      for (let worker = 0; worker < limit; worker += 1) {
-        workers.push(pumpWorker());
-      }
-      await Promise.all(workers);
-      // A job may have been enqueued while the last workers were exiting —
-      // drain again instead of stranding it until the next enqueue.
-    } while (useEntityImageQueue.getState().queued.length > 0);
-  } finally {
-    pumping = false;
-  }
-}
-
-async function pumpWorker(): Promise<void> {
-  for (;;) {
-    const job = takeNext();
-    if (job === null) return;
-    useProgressStore.getState().update(jobIdFor(job), {
-      detail: `Illustrating "${job.name}"…`,
-    });
-    const outcome = await processJob(job);
-    debugLog('image-queue', `job for "${job.name}" finished`, { outcome });
-    bumpDone(
-      job,
-      outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
-    );
-    releaseJob(job);
-  }
-}
-
-type JobOutcome = 'done' | 'skipped' | 'failed' | 'cancelled';
-
-async function processJob(job: ImageQueueJob): Promise<JobOutcome> {
-  const controller = new AbortController();
-  controllers.set(key(job), controller);
-  try {
+export const useEntityImageQueue = createJobQueue<ImageQueueJob>({
+  name: 'image-queue',
+  key: (job) => `${job.campaignId}:${job.name}`,
+  dockGroup: (job) => ({
+    id: `module-entity-images-${job.moduleId}`,
+    label: 'Generating entity images',
+  }),
+  activeDetail: (job) => `Illustrating "${job.name}"…`,
+  settledDetail: (job, outcome) =>
+    outcome === 'done' ? `Illustrated "${job.name}"` : `Skipped "${job.name}"`,
+  failureTitle: (job) => `Could not generate an image for "${job.name}"`,
+  workerCount: async () => {
     const settings = await getSettings();
-    if (!settings.imagesEnabled) {
-      throw new Error('Image generation is disabled — enable it in Settings');
-    }
-    const artifacts = await listArtifactsByCampaign(job.campaignId);
-    const artifact = resolveWikiLink(job.name, artifacts, {
-      moduleId: job.moduleId,
-    }).artifact;
-    if (artifact === undefined) {
-      throw new Error('no artifact exists for this entity yet — detail it first');
-    }
-    // An image may have appeared while the job sat in the queue (added in
-    // the editor, another queue run) — the checkbox is already satisfied.
-    if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
-      return 'skipped';
-    }
-    const prompt = await draftPrompt(artifact, job.campaignId);
-    const finalPrompt = assembleImagePrompt(prompt);
-    // n=1: candidate-count caps (imageGen's n-retry, cappedToOne) cannot
-    // trigger on this path — the queue only ever asks for one image.
-    const generated = await generateImages(finalPrompt, 1, {
-      model: settings.imageModel,
-      signal: controller.signal,
-    });
-    const blob = generated.images[0];
-    if (blob === undefined) throw new Error('the image API returned no image');
-    const intake = await intakeImage(blob);
-    // Store + attach (as cover) is ONE repo transaction — a crash between
-    // the image write and the artifact update must not leak the blob as an
-    // unreferenced orphan or leave the artifact pointing at nothing.
-    await attachImagesToArtifact(artifact.id, {
-      createImages: [
-        {
-          campaignId: job.campaignId,
-          blob: intake.blob,
-          mimeType: intake.mimeType,
-          width: intake.width,
-          height: intake.height,
-          prompt: finalPrompt,
-          model: generated.modelUsed,
-          source: 'generated',
-          // The skip branch above guarantees the artifact had no image yet.
-          asCover: true,
-        },
-      ],
-    });
-    return 'done';
-  } catch (error) {
-    if (controller.signal.aborted) return 'cancelled';
-    toastError(`Could not generate an image for "${job.name}"`, error);
-    return 'failed';
-  } finally {
-    controllers.delete(key(job));
+    return Math.max(1, settings.maxParallelRequests);
+  },
+  process: processJob,
+});
+
+async function processJob(
+  job: ImageQueueJob,
+  ctx: { signal: AbortSignal },
+): Promise<'done' | 'skipped'> {
+  const settings = await getSettings();
+  if (!settings.imagesEnabled) {
+    throw new Error('Image generation is disabled — enable it in Settings');
   }
+  const artifacts = await listArtifactsByCampaign(job.campaignId);
+  const artifact = resolveWikiLink(job.name, artifacts, {
+    moduleId: job.moduleId,
+  }).artifact;
+  if (artifact === undefined) {
+    throw new Error('no artifact exists for this entity yet — detail it first');
+  }
+  // An image may have appeared while the job sat in the queue (added in
+  // the editor, another queue run) — the checkbox is already satisfied.
+  if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
+    return 'skipped';
+  }
+  const prompt = await draftPrompt(artifact, job.campaignId);
+  const finalPrompt = assembleImagePrompt(prompt);
+  // n=1: candidate-count caps (imageGen's n-retry, cappedToOne) cannot
+  // trigger on this path — the queue only ever asks for one image.
+  const generated = await generateImages(finalPrompt, 1, {
+    model: settings.imageModel,
+    signal: ctx.signal,
+  });
+  const blob = generated.images[0];
+  if (blob === undefined) throw new Error('the image API returned no image');
+  const intake = await intakeImage(blob);
+  // Store + attach (as cover) is ONE repo transaction — a crash between
+  // the image write and the artifact update must not leak the blob as an
+  // unreferenced orphan or leave the artifact pointing at nothing.
+  await attachImagesToArtifact(artifact.id, {
+    createImages: [
+      {
+        campaignId: job.campaignId,
+        blob: intake.blob,
+        mimeType: intake.mimeType,
+        width: intake.width,
+        height: intake.height,
+        prompt: finalPrompt,
+        model: generated.modelUsed,
+        source: 'generated',
+        // The skip branch above guarantees the artifact had no image yet.
+        asCover: true,
+      },
+    ],
+  });
+  return 'done';
 }
 
 /** Prompt-draft for one artifact — the shared Illustrator prompt contract

@@ -97,7 +97,7 @@ beforeEach(async () => {
   chatMock.mockReset();
   generateImagesMock.mockReset();
   intakeImageMock.mockReset();
-  useMobPortraitQueue.setState({ queued: [], activeJobs: [] });
+  useMobPortraitQueue.getState().reset();
   useEncounterMapQueue.getState().reset();
   await updateSettings({ imagesEnabled: true });
   // Green-path map runs: the unattended Cartographer's image/verify steps
@@ -214,7 +214,7 @@ describe('post-run extras', () => {
       setTimeout(resolve, 150);
     });
     expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
-    expect(useMobPortraitQueue.getState().activeJobs).toHaveLength(0);
+    expect(useMobPortraitQueue.getState().active).toHaveLength(0);
   }, 20000);
 
   it('a statblock-extra run whose statblock step is skipped persists the loud finalize notice', async () => {
@@ -315,7 +315,7 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     await waitFor(
       () => {
         expect(useEncounterMapQueue.getState().queued).toEqual([]);
-        expect(useEncounterMapQueue.getState().active).toBeNull();
+        expect(useEncounterMapQueue.getState().active).toEqual([]);
       },
       { timeout: 15000 },
     );
@@ -420,7 +420,7 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     });
     await new Promise((resolve) => { setTimeout(resolve, 150); });
     expect(useEncounterMapQueue.getState().queued).toEqual([]);
-    expect(useEncounterMapQueue.getState().active).toBeNull();
+    expect(useEncounterMapQueue.getState().active).toEqual([]);
     expect(useEncounterMapQueue.getState().failed).toEqual([]);
     // Regenerating an existing map stays an EXPLICIT user action.
   }, 30000);
@@ -446,7 +446,7 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     });
     await new Promise((resolve) => { setTimeout(resolve, 150); });
     expect(useEncounterMapQueue.getState().queued).toEqual([]);
-    expect(useEncounterMapQueue.getState().active).toBeNull();
+    expect(useEncounterMapQueue.getState().active).toEqual([]);
     expect(useEncounterMapQueue.getState().failed).toEqual([]);
   }, 30000);
 
@@ -467,7 +467,7 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     });
     await new Promise((resolve) => { setTimeout(resolve, 150); });
     expect(useEncounterMapQueue.getState().queued).toEqual([]);
-    expect(useEncounterMapQueue.getState().active).toBeNull();
+    expect(useEncounterMapQueue.getState().active).toEqual([]);
     expect(useEncounterMapQueue.getState().failed).toEqual([]);
   }, 30000);
 

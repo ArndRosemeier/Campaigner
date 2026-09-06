@@ -7,8 +7,9 @@ import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { createPersona as savePersona } from '@/db/personaRepo';
+import { listRunsByCampaign } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
-import { createModule, defaultSettings } from '@/domain';
+import { createModule, defaultSettings, type Id } from '@/domain';
 import { encounterNeedsMap, isEncounterMapPending, useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useProgressStore } from '@/lib/progress';
 import { coarseStructure } from '@/llm/encounterVision';
@@ -104,7 +105,7 @@ describe('module encounter map queue', () => {
       { campaignId: campaign.id, moduleId: module.id, artifactId: second.id, name: second.name },
     ]);
     await waitFor(() => {
-      expect(useEncounterMapQueue.getState().active).toBeNull();
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
       expect(useEncounterMapQueue.getState().queued).toEqual([]);
       expect(useEncounterMapQueue.getState().failed.map((job) => job.artifactId)).toEqual([second.id]);
     }, { timeout: 15000 });
@@ -117,9 +118,9 @@ describe('module encounter map queue', () => {
     expect(secondAfter.data.layout).toBeNull();
     expect(toastErrorMock).toHaveBeenCalledWith(expect.stringContaining('Second'), expect.any(Error));
 
-    useEncounterMapQueue.getState().retryFailed(module.id);
+    useEncounterMapQueue.getState().retryFailed((job) => job.moduleId === module.id);
     await waitFor(() => {
-      expect(useEncounterMapQueue.getState().active).toBeNull();
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
       expect(useEncounterMapQueue.getState().queued).toEqual([]);
       expect(useEncounterMapQueue.getState().failed).toEqual([]);
     }, { timeout: 15000 });
@@ -161,7 +162,7 @@ describe('module encounter map queue', () => {
       { campaignId: campaign.id, moduleId: hall.moduleId, artifactId: hall.id, name: hall.name },
     ]);
     await waitFor(() => {
-      expect(useEncounterMapQueue.getState().active).toBeNull();
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
       expect(useEncounterMapQueue.getState().queued).toEqual([]);
       expect(useEncounterMapQueue.getState().failed).toEqual([]);
     }, { timeout: 15000 });
@@ -204,5 +205,57 @@ describe('module encounter map queue', () => {
     expect(isEncounterMapPending('some-module', encounter.id)).toBe(false);
     useEncounterMapQueue.getState().reset();
     expect(isEncounterMapPending(null, encounter.id)).toBe(false);
+  }, 30000);
+
+  it('dequeue cancels the in-flight unattended run and drops the job silently (createJobQueue invariant)', async () => {
+    const campaign = await createCampaign({ name: 'Cancelled map', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    const encounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Withdrawn',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
+    });
+    // Hold the Cartographer's brief call until the abort — the job's abort
+    // signal is the cancellation seam (runEngine.cancel aborts it).
+    chatMock.mockImplementation((_messages, opts) => {
+      const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+      if (signal === undefined) return Promise.reject(new Error('no abort signal passed'));
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    });
+    const job = { campaignId: campaign.id, moduleId: null as Id | null, artifactId: encounter.id, name: encounter.name };
+    useEncounterMapQueue.getState().enqueue([job]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toHaveLength(1);
+    });
+
+    useEncounterMapQueue.getState().dequeue(job);
+    // The withdrawn job must not leave an unattended run generating a map
+    // nobody asked for: the queue cancels the underlying run row.
+    await waitFor(async () => {
+      const mapRun = (await listRunsByCampaign(campaign.id)).find(
+        (run) => run.targetArtifactId === encounter.id,
+      );
+      expect(mapRun?.status).toBe('cancelled');
+    }, { timeout: 10000 });
+    expect(useEncounterMapQueue.getState().active).toEqual([]);
+    expect(useEncounterMapQueue.getState().queued).toEqual([]);
+    expect(useEncounterMapQueue.getState().failed).toEqual([]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(isEncounterMapPending(null, encounter.id)).toBe(false);
+    const after = await getArtifact(encounter.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.data.layout).toBeNull();
   }, 30000);
 });

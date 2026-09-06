@@ -128,7 +128,7 @@ beforeEach(async () => {
   generateImagesMock.mockReset();
   intakeImageMock.mockReset();
   toastErrorMock.mockReset();
-  useMobPortraitQueue.setState({ queued: [], activeJobs: [] });
+  useMobPortraitQueue.getState().reset();
   useProgressStore.getState().reset();
   generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
   intakeImageMock.mockResolvedValue({
@@ -169,7 +169,7 @@ describe('mob portrait queue', () => {
     expect(stored?.source).toBe('generated');
     expect(stored?.prompt).toContain(GOBLIN_TEXT);
     expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
-    expect(useMobPortraitQueue.getState().activeJobs).toEqual([]);
+    expect(useMobPortraitQueue.getState().active).toEqual([]);
     expect(
       useProgressStore.getState().jobs.find((job) => job.id === `encounter-mob-portraits-${encounterId}`),
     ).toBeUndefined();
@@ -192,7 +192,7 @@ describe('mob portrait queue', () => {
       { campaignId, encounterId, artifactId, name: 'Goblin Boss', chunkId },
     ]);
     await waitFor(() => {
-      expect(useMobPortraitQueue.getState().activeJobs).toEqual([]);
+      expect(useMobPortraitQueue.getState().active).toEqual([]);
       expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
     });
     expect(generateImagesMock).not.toHaveBeenCalled();
@@ -223,7 +223,7 @@ describe('mob portrait queue', () => {
     expect(call?.[0]).toBe('Could not generate a portrait for "Ghost Boss"');
     expect((call?.[1] as Error).message).toContain('stat-block chunk no longer exists');
     expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
-    expect(useMobPortraitQueue.getState().activeJobs).toEqual([]);
+    expect(useMobPortraitQueue.getState().active).toEqual([]);
   });
 
   it('drops duplicate jobs for the same artifact instead of generating concurrently', async () => {
@@ -232,6 +232,34 @@ describe('mob portrait queue', () => {
     const job = { campaignId, encounterId, artifactId, name: 'Goblin Boss', chunkId };
     useMobPortraitQueue.getState().enqueue([job, { ...job }]);
     expect(useMobPortraitQueue.getState().queued).toHaveLength(1);
+    await waitFor(async () => {
+      const mob = await getAnyArtifact(artifactId);
+      expect(mob?.coverImageId).not.toBeNull();
+    });
+    expect(generateImagesMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('records failures on the retry list and retryFailed re-enqueues them (createJobQueue invariant)', async () => {
+    const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+    const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
+    // Generation disabled: the job fails loud per mob AND lands on the
+    // retry list (the pre-factory queue only toasted and dropped it).
+    await updateSettings({ imagesEnabled: false });
+    useMobPortraitQueue.getState().enqueue([
+      { campaignId, encounterId, artifactId, name: 'Goblin Boss', chunkId },
+    ]);
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalled();
+      expect(useMobPortraitQueue.getState().failed).toHaveLength(1);
+    });
+    expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
+    expect(useMobPortraitQueue.getState().active).toEqual([]);
+
+    // The explicit retry re-runs the same job once the setting heals.
+    await updateSettings({ imagesEnabled: true });
+    useMobPortraitQueue.getState().retryFailed();
+    expect(useMobPortraitQueue.getState().queued).toHaveLength(1);
+    expect(useMobPortraitQueue.getState().failed).toHaveLength(0);
     await waitFor(async () => {
       const mob = await getAnyArtifact(artifactId);
       expect(mob?.coverImageId).not.toBeNull();
