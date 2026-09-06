@@ -1,0 +1,78 @@
+# 17 — Decision ledger (the owner's one-pass veto review)
+
+Campaigner is built autonomously: across the pipeline the dispatcher made
+default calls on the owner's behalf — everything reversible, everything
+recorded here, everything reviewable in one pass. Every decision below is
+**Status: active** in the shipped code (main @ `fe1d365`; gate baseline
+1316 tests / 143 files, lint 0 errors / 4 pre-existing warnings, typecheck
+clean). The enumeration is complete: no standing default lives outside this
+list. The binding spec text stays in the referenced doc/section — where a
+row and its reference disagree, the reference wins.
+
+## Battle & encounter
+
+| # | Decision | Where it lives | Rationale | Status |
+|---|---|---|---|---|
+| 1 | **Encounter resume-by-default.** "Open battle" is a plain navigation that reattaches the live board; re-seeding is an explicit two-step destructive act (arm → confirm), and the replace is stamped on the row (`battle.reseed` — who/when/what). Lifecycle arc: open resumes, replace is deliberate and provenance-bearing. | `src/features/play/run-battle.tsx:20`; `src/features/play/battle/BattleSurface.tsx:1008` (`confirm-reseed`); `src/domain/battle.ts:235`; 09-MILESTONE-5 §M5-D amendments (6f33582, 1bc6884) | A long fight must survive navigation; destroying a live board must never be one click. | active |
+| 2 | **First-entry reveal is spent once per seed** (`board.everLive`): the first live entry flips the seeded tokens visible and stamps the flag; a Lift → re-enter cycle resumes the board verbatim instead of re-revealing. | `src/domain/battle.ts:201`; `src/features/play/battle/BattleSurface.tsx:254` (6d87a1a) | Reveal is the GM's act, not a mount side effect. | active |
+| 3 | **Effect markers are geometric showpieces** (D8): disc/square stamps only — geometry from data, never pixels (D6/D7 apply verbatim); ~70% transparent fill (alpha 0x4d) + border (0xcc), static, never animated; rendered in GM AND player views; never initiative members, never coverage-hidden. | docs/11 D8; `src/domain/battle.ts:34,105`; `src/features/play/battle/BattleSurface.tsx:1773` (ae590eb) | Board decoration must obey the layout-anchored geometry contract. | active |
+| 4 | **Mid-fight spawn comes from the provenance roster**: one instance per activation through the SAME `expandRosterEntries` path seeding uses — one identity rule (one mob artifact per cited chunk, no stat duplication); labels continue the on-board count ("Goblin 4"); latecomers auto-roll when initiative is on. | `src/db/battleSeed.ts:114,340`; 21b9fe0 | Reinforcements must not reseed the board or fork the roster→board identity rules. | active |
+| 5 | **Room keys + mob treasure travel with their structure** (D9): `key`/`keyTreasure` on layout rooms, `treasure` on roster entries; GM-only key markers, rail key card and token-treasure block; player-safe DOM contract pinned by test; map regeneration REPLACES room keys (stated in the visible copy); outdoor encounters key their staging areas too. | docs/11 §Room keys; `src/llm/treasureGuidance.ts:58`; e489a65 → 01a0b5e; `tests/features/battle-surface.test.tsx:1805` | GM checklist text must never reach players and must survive packing rotation and roster edits. | active |
+| 6 | **Treasure budgets are per-system and licensing-shaped**: dnd5e uses Campaigner's own documented SRD-derived approximation (the DMG treasure chapters are NOT licensable — nothing quoted, paraphrased or restated); pf2e follows the retrieved GM Core excerpts VERBATIM under Paizo's Community Use Policy, and gives unquantified treasure when no excerpt surfaced. | docs/12 §14; `src/llm/treasureGuidance.ts:47` | Reproducing DMG text is a license violation; inventing amounts is a silent fabrication. | active |
+| 7 | **Token render size ≡ coverage size**: tokens render at `board.tokenSize × token.scale`; the schematic renderer caps itself inside the 4096px map cap (`schematicCellPx`). | `src/features/play/battle/BattleSurface.tsx:1601` (cc2ad02); `src/domain/encounterMap/schematic.ts:30` (45eed86) | D10 halved the dungeon cell — rendered size must follow coverage, and big grids must stay inside the map cap. | active |
+| 8 | **Battle rows parse-normalize at every read boundary**: legacy boards materialize zod defaults instead of crashing the table (module UX arc). | `src/db/battleRepo.ts:33` (`parseBattleRow`); 4dfbb9e | Old rows are data to upgrade at the boundary, not errors to surface mid-fight. | active |
+
+## Generation & personas
+
+| # | Decision | Where it lives | Rationale | Status |
+|---|---|---|---|---|
+| 9 | **Image prompts are deterministic** (owner-directed): no LLM call anywhere in the prompt path — appearance verbatim, else body/summary/name; nothing to ground on → loud throw; the prompt-draft step stays in the run record as a RECORDED deterministic step. | `src/llm/imagePromptDraft.ts:10,78`; c3c021f, ad580b8 | One fewer LLM call per image; one prompt contract shared by all three call sites. | active |
+| 10 | **The Location generator (Worldbuilder) never invents monsters** — prompt clause only ("Hazards, traps and environmental complications are welcome. Monsters are NOT…"); no verification call anywhere; encounters and dungeons own creatures. | `src/llm/personas/builtins.ts:23`; fe1d365 | Creature placement belongs to the encounter personas; a verification call would buy nothing the clause lacks. | active |
+| 11 | **Post-create extras execute AFTER run completion**, in the queue layer (image → mobPortraits → battlemap); completed runs are never reopened or failed; per-artifact failures toast loudly; the statblock extra is VERIFICATION-ONLY (a loud finalize notice — never a fabricated block). | `src/features/campaign/post-run-extras.ts`; `src/llm/personas/extras.ts:52`; `src/llm/runEngine.ts:3149`; 29fa0a4 | Extras are post-create work; failing a finished run would corrupt its record for nothing. | active |
+| 12 | **Module placement applies to FRESH creates only**: the creation-dialog choice rides `StartRunInput.placementModuleId` and both finalize branches throw loudly when it rides a targeted fill; one-off per creation; remembered extras persist in Settings (`runExtras`), and the battlemap extra is excluded from remembered defaults. | `src/llm/runEngine.ts:2705`; `src/domain/settings.ts:219`; `src/features/campaign/components/persona-panel.tsx:173`; 2c84b6c, bba1c3b | An existing artifact's scope changes only via explicit scope moves, never as a side effect. | active |
+| 13 | **Encounter preset (D10)**: Standard vs Dungeon — Dungeon packs on a FIXED ×2 grid tier per aspect (48×36 / 56×32 / 40×40) and biases the brief toward a connected 4–8 room complex; the choice is persisted (artifact / run row / Settings) and a regenerate keeps the TARGET encounter's own preset. | docs/11 D10; `src/domain/encounterMap/layout.ts:42`; cc2ad02 → d69455e | Same cells per room, more cells per map — never a board-level scale field. | active |
+| 14 | **Item pool**: `ITEM_POOL_LIMIT = 120`, target-level distance ordering, counted truncation — grounds the brief's free-text `treasure` field by exact item names; item ingest can never feed the creature roster (mandatory skip-guard). | `src/llm/encounterItems.ts:18`; docs/12 §13.1/§13.6; `src/llm/encounterRoster.ts:216` | The pool grounds rewards, the roster grounds threats — one lane each, no cross-feeding. | active |
+| 15 | **Encounter retrieval is frozen at 3 searches per run** (general context → citable stat-blocks → treasure budget), pinned by contract test. | `src/llm/runEngine.ts:1300,1333,1351`; `tests/llm/runEngine-grounding-expansion.test.ts:480` | Cost and prompt shape stay predictable run to run. | active |
+
+## Content & data
+
+| # | Decision | Where it lives | Rationale | Status |
+|---|---|---|---|---|
+| 16 | **PDF retention (owner simplification)**: original bytes are stored at ingest (`pdfFiles`, unique `&bookId`, 250MB guard) so the in-app viewer renders without the file; the re-attach UI does NOT exist (re-import instead); backups EXCLUDE retained PDFs ALWAYS with a loud re-import note — no toggle. | `src/db/db.ts:434`; `src/domain/pdf.ts:46`; `src/lib/backup.ts:76`; `src/features/rules/pdf-viewer.tsx:220`; 78270ee, 9217c72, f8d587a | Backups stay lean; re-import is the one honest path for bytes that never travel. | active |
+| 17 | **Pack fetch is curated sources at pinned repos**: pf2e equipment and dnd5e equipment24/items/tradegoods with `packDirs` scoping; licenses rendered on every fetch row (Paizo CUP-OGL / CC-BY-4.0); refetch = press again (a new book). | docs/16 §4.1/§5; `src/features/settings/bestiary-fetch-section.tsx:145` | Pinned provenance plus visible licenses keep the never-redistribute model intact. | active |
+| 18 | **Map entrance pipeline**: schematic paints the wall gap + landing + one neon triangle; seeding anchors a staging block at the entrance and exempts the spawn room from fog (D4 amendment); entrance-carrying layouts KEEP the packed geometry in every candidate (only `observed` is absorbed); the exit marker is RESERVED, not built (v1 out). | docs/11 §Entrance/exit spawn zones; 4b6db55, 97f8252, aea57a5 | The party's way in is modeled end-to-end; the way out stays a named non-goal. | active |
+| 19 | **3D dice via `@3d-dice/dice-box`**: lazy-imported on first use (~280K gzip, zero main-bundle cost); engine failure = loud inline status + toast + Retry with rolls blocked — NO silent 2D fallback; `dice.lastTray` localStorage preference remembers the last tray; quick steppers ±1/±5/±10 at ≥44px targets. | `src/features/dice/useDiceEngine.ts:93`; `src/features/dice/types.ts:55`; `src/features/dice/DiceRoller.tsx:364`; 09-MILESTONE-5 §M5-D dice-roller amendment (12be04d → 5162187) | Dice are table infrastructure; a degraded roll surface would be a silent fallback. | active |
+| 20 | **Bestiary spawn-into-module stamps a module-owned mob artifact**: `stampModuleOwnership` puts it in the picked module — spawning into another module MOVES it (single placement, old tag kept as history); same-module spawn is an idempotent no-op with no revision churn. | docs/12 §12; `src/db/mobArtifacts.ts:98`, `src/db/artifactRepo.ts:155`; d5d4108 | One mob artifact per chunk: placement is ownership, never a copy. | active |
+
+## App & IA
+
+| # | Decision | Where it lives | Rationale | Status |
+|---|---|---|---|---|
+| 21 | **Modules-first IA**: Modules is the first campaign rider (`campaignTabs` order Modules / Workspace / Deliverables / Graph); campaign clicks (picker card + switcher) land on the Modules list; import landing stays on the Workspace; `settings.lastModule` powers the TopBar arrow+name shortcut, visible on all routes while set. | `src/app/layout/nav.ts:43`; `src/app/layout/CampaignBar.tsx:92`; `src/app/layout/CampaignSwitcher.tsx:57`; `src/app/layout/TopBar.tsx:64`; `src/domain/settings.ts:139`; 094fcf3 | The module is the unit of play; the workspace is for authoring. | active |
+| 22 | **Reader prose uses the full middle-pane width** — the 70ch cap and centering are gone (type scale unchanged). | `src/features/modules/ModuleReaderPage.tsx`; e10348b | The pane is wide; empty margins served nothing. | active |
+| 23 | **Onboarding opens once, only on a truly fresh browser** (status `fresh` AND zero campaigns); dismissed stays dismissed; steps link out and auto-tick on arrival, the pack step is manual-complete only; copy is factual (OpenRouter costs stated); no spotlight tours, no bundled sample rulebooks, no UI localization; step state is a LIST of `{id, state}` entries (zod enum), not a record; auto-open persists `active` on open (StrictMode-idempotent). | `src/features/onboarding/onboardingState.ts:87`; `src/domain/settings.ts:124`; `src/features/onboarding/onboardingContent.ts:75`; 3a47614, df6ff5d, 6ff7089 | An upgraded install must never be hijacked; a dismissed wizard must never return. | active |
+| 24 | **Guide is an in-app `/guide` route** (not external docs): 9 chapters, route links guard-tested, campaign-scoped CTAs resolve against the most-recent campaign (disabled hint when none exists). | `src/app/routes.ts:32`; `src/features/guide/guideContent.ts:45`; `tests/features/guide.test.tsx:44,120`; adbfe6b | Help must work offline, inside the app, with CTAs that actually resolve. | active |
+| 25 | **Test infra**: vitest `maxWorkers: 6`; a node-environment project runs the 77 DOM-free files via a precise shared glob array (each file runs in exactly one project); `pnpm test:fast` is a dev-loop filter, NOT a gate replacement; per-file isolation KEPT (`isolate: false` rejected); `ALLOWED_NOISE` documents known act-timing flakes (rerun, never chase). | `vite.config.ts:24,80`; `package.json:15` (`test:fast`); `tests/setup.ts:90`; b84d074, 3d07989, 7ee114e | Measured speedups (85s→58s wall; ~0.75s/file jsdom cost) without weakening the console-hygiene guard. | active |
+
+## Owner-removed
+
+| # | Decision | Where it lives | Rationale | Status |
+|---|---|---|---|---|
+| 26 | **Player portraits feature removed entirely** (owner): personas work without them — no persona offers a portrait extra (the surface is image / statBlock / mobPortraits / battlemap only), nothing generates portraits for players or PCs, and seedFighter tokens keep the deterministic initials fallback. The image pipeline serves artifact covers and mob portraits only. | `src/llm/personas/extras.ts:24`; docs/11 D5 (initials fallback) | Owner call: mobs needed identity art; players never did. | active |
+| 27 | **Persona-panel module select + extras**: one-off module choice, extras remembered — the same machinery as 12 (vetoing 12 covers this row). | `src/features/campaign/components/persona-panel.tsx:66`; bba1c3b | See 12. | active |
+
+## How to veto
+
+Each item above is independently reversible — this ledger records standing
+defaults, not load-bearing foundations. To veto, say the id ("veto 17") and
+the behavior changes in the next slice; the row's status is then updated
+here. Notes:
+
+- Vetoing is per item; nothing else moves. Where two rows share machinery,
+  the row says so (27 → 12).
+- A veto that touches stored shapes (e.g. 16's `pdfFiles`, 13's `preset`,
+  2's `everLive`) gets its migration cost named in the follow-up — reversal
+  is a designed change, never a silent drop of data already on disk.
+- This doc is a review surface, not the binding spec: the referenced
+  doc/section remains the source of truth. If a row and its reference
+  disagree, the reference wins and the row is rot — fix the row.

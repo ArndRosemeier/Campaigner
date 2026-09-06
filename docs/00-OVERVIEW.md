@@ -80,6 +80,10 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 - `13-WIKI-GRAPH.md` — the Graph page draws the derived wiki-link graph: module-prose mentions resolved with the reader's pool + module-context conventions, phantom nodes for unresolved names, module/kind filters, mention-count edge weights; derivation in the pure `src/domain/wikiGraph.ts`
 - `14-BACKLINKS-ORPHANS.md` — the Mentions panel on the entity editor (every wiki-link mention of the entity across all modules, deep-linked to the reader) and the Graph page's collapsible link-health report (unresolved phantom names + never-mentioned artifacts, filter-aware, visibly capped) — both consuming `buildWikiGraph` uncapped; no persistence, no derivation changes
 - `15-GRAPH-RETRIEVAL.md` — graph-aware retrieval (ratified, implemented): the retrieve step detects entities in the run brief via wiki-link tokens/names/aliases against the reader pool, expands them through the derived wiki graph (co-mention only), and persists a bounded campaign-grounding section with the stored retrieve output that the draft (and the encounter brief) render byte-identically — global `wikiGroundingEnabled` toggle (default ON), detection spans exclusive to the longest match, no new searches/embeddings/LLM calls; statblock citable pool, roster, quickfind and the relations editor untouched
+- `17-DECISION-LEDGER.md` — the owner's one-pass veto review: every standing
+  default the autonomous dispatcher made on the owner's behalf, numbered and
+  grouped by area with its living location and rationale; each item is
+  independently reversible (say the id, the behavior changes)
 - `fix-*.md` — fix specs: one focused defect each (problem, root causes, binding
   design decision, acceptance criteria). `fix-01-entity-name-normalization.md`
   — no duplicate entities from name variants (`[[Halmunds]]`, `[[Guard

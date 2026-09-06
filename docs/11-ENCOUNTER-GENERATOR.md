@@ -630,7 +630,9 @@ data model, run-engine threading, UI, docs); the gate at completion is
 - Hand-editing room rectangles (regenerate instead); free-form/organic rooms.
 - Multiple maps or multiple "floors" per encounter.
 - Token art generation (D5 — amended 2026-09-05 for rulebook-cited creatures
-  only: the "Generate mob portraits" batch above), token `tracks`, 3D dice.
+  only: the "Generate mob portraits" batch above), token `tracks`. (3D dice
+  left this list 2026-09-06: the M5-D dice-roller amendment — 09-MILESTONE-5
+  §M5-D, 4e3de75 — ships `@3d-dice/dice-box` in the battle surface's roller.)
 - Player-facing second render surface / sync (M5 non-goal stands).
 - Reading geometry back from stylized images beyond the verify flag.
 - PDF export of layouts.

@@ -470,9 +470,10 @@ nearly as-is (engine + types), ~1k re-binds to Dexie/repos, ~4k UI re-plug.
 - Token `tracks`/counters, line-of-sight, token collision rules, lighting.
 - Multiplayer, player devices, any sync — single screen, second render
   surface only (as in the source).
-- 3D dice (`@3d-dice/dice-box`), AI battlemap sketching (the existing image
-  pipeline covers map creation), cross-module battle persistence beyond the
-  session row.
+- 3D dice (`@3d-dice/dice-box`) — SUPERSEDED 2026-09-06 by the M5-D
+  dice-roller amendment (4e3de75, Damage/heal above): the reusable DiceRoller
+  ships it. AI battlemap sketching (the existing image pipeline covers map
+  creation), cross-module battle persistence beyond the session row.
 - Importing GM Cockpit archives.
 
 ## Onboarding addendum — setup wizard + first-module guide (post-M5)
