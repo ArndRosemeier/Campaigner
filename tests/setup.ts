@@ -137,7 +137,9 @@ beforeEach(() => {
 
 afterEach((ctx) => {
   cleanup();
-  localStorage.clear();
+  // `localStorage` exists only under jsdom; the node-environment project
+  // (DOM-free test dirs) must not hit a ReferenceError in this shared hook.
+  if (typeof localStorage !== 'undefined') localStorage.clear();
   if (noise.length === 0) return;
   const file = ctx.task.file.name.replace(/^.*[\\/]/, '');
   const unexpected = noise.filter((entry) => !isAllowed(entry, file));
