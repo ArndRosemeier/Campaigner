@@ -39,6 +39,27 @@ describe('built-in persona seeding', () => {
     expect(smith?.systemPrompt).toContain('Never include commentary');
   });
 
+  /**
+   * Owner-ratified prompt contract (no verification step, no output
+   * stripping — the clause IS the mechanism): the Location generator
+   * (Worldbuilder) must never invent monsters. Hazards and complications
+   * are explicitly welcome; creatures live in encounters and dungeons, and
+   * the draft references where a creature will be encountered instead of
+   * statting it.
+   */
+  it('pins the location no-monsters contract in the Worldbuilder prompt', async () => {
+    await seedBuiltInPersonas();
+
+    const worldbuilder = await findPersonaBySlug('worldbuilder');
+    expect(worldbuilder?.producesKind).toBe('location');
+    const prompt = worldbuilder?.systemPrompt ?? '';
+    expect(prompt).toContain('Monsters are NOT');
+    expect(prompt).toContain('a location never invents creatures');
+    expect(prompt).toContain('monsters live in encounters and dungeons');
+    expect(prompt).toContain('reference where it will be encountered');
+    expect(prompt).toContain('Hazards, traps and environmental complications are welcome');
+  });
+
   it('never overwrites user edits on re-seed', async () => {
     await seedBuiltInPersonas();
 

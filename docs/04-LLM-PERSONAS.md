@@ -73,7 +73,7 @@ are not chainable (chainRunner/moduleForge reject them).
 | slug             | name              | producesKind | mode     | one-line purpose                       |
 |------------------|-------------------|--------------|----------|----------------------------------------|
 | npc-smith        | NPC Smith         | npc          | generate | Memorable NPCs with stat blocks         |
-| worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons               |
+| worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons; never invents monsters (owner-ratified prompt contract: hazards welcome, creatures live in encounters/dungeons — reference where a creature will be encountered instead of statting it) |
 | faction-designer | Faction Designer  | faction      | generate | Factions with goals, methods, ranks     |
 | plot-architect   | Plot Architect    | note         | generate | Adventure/campaign arcs and hooks       |
 | arc-weaver       | Arc Weaver        | plotarc      | generate | Plot arcs with beats, stakes, climax    |
