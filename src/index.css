@@ -180,3 +180,14 @@
   border-radius: 3px;
   background-color: rgb(245 158 11 / 0.12);
 }
+
+/* 3D dice stage (09-MILESTONE-5 M5-D amendment): the dice-box engine injects
+   its own canvas; it must fill the fixed stage and stay click-transparent —
+   dice animate over the board, users never touch the physics layer. */
+.dice-stage .dice-box-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100% !important;
+  height: 100% !important;
+  pointer-events: none;
+}
