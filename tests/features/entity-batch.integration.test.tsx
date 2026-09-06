@@ -236,7 +236,14 @@ describe('entity batch — real chain persistence and live resolution', () => {
     expect(new Set(draftStarts.slice(0, 2)).size).toBe(2);
     expect(result.generated.sort()).toEqual(['Bree', 'Kael', 'Ruth']);
     expect(result.failed).toEqual([]);
+    // Name-matched artifact ids (F7): the stub popover's 1-target delegation
+    // returns the produced artifact through this field.
+    expect(result.produced.map((entry) => entry.name).sort()).toEqual(['Bree', 'Kael', 'Ruth']);
+    expect(result.produced.every((entry) => typeof entry.artifactId === 'string' && entry.artifactId !== '')).toBe(true);
     const artifacts = await listArtifactsByCampaign(campaign.id);
     expect(artifacts.map((artifact) => artifact.name).sort()).toEqual(['Bree', 'Kael', 'Ruth']);
+    for (const entry of result.produced) {
+      expect(artifacts.find((artifact) => artifact.id === entry.artifactId)?.name).toBe(entry.name);
+    }
   }, 30_000);
 });

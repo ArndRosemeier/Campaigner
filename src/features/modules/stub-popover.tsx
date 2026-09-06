@@ -202,9 +202,6 @@ export function StubPopover({
         campaign,
         kind,
         name: name.trim(),
-        contextParagraphs,
-        premise,
-        moduleTag,
         moduleId,
       });
       if (!result.ok) {

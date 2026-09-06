@@ -5,7 +5,6 @@ import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 import { errorMessage } from '@/lib/errors';
-import { alignEntityName, RUN_STEP_LABELS } from '@/features/modules/entity-detail';
 import {
   buildEntityBrief,
   STUB_PERSONA_SLUGS,
@@ -19,9 +18,11 @@ import { useProgressStore } from '@/lib/progress';
 /**
  * Headless entity batch (08-MODULE-DESIGNER M4-C): details a list of entity
  * names with one persona in `auto` autonomy — the engine behind the
- * entity panel's "Generate all unresolved of kind…" AND the module
+ * entity panel's "Generate all unresolved of kind…", the module
  * post-generation automation (which runs the same path unattended after the
- * parts land).
+ * parts land), AND the stub popover's single "Generate" (F7: one live
+ * "detail one entity" implementation instead of two — the popover delegates
+ * a 1-target batch through `generateSingleEntity`).
  *
  * Parallelization (optimization feature): entities are independent — each
  * brief is grounded in the module text alone, not in the other entities —
@@ -35,6 +36,34 @@ import { useProgressStore } from '@/lib/progress';
  * artifact is reported loudly (toast + the failed runs in the Runs tab).
  * Progress rides the shared dock (`module-entities-<moduleId>-<kind>`).
  */
+
+/** Humanized run-step names for the progress detail line. */
+export const RUN_STEP_LABELS: Record<string, string> = {
+  retrieve: 'gathering context',
+  draft: 'drafting',
+  statblock: 'building the statblock',
+  finalize: 'writing the artifact',
+  gather: 'gathering sources',
+  check: 'checking',
+};
+
+/**
+ * Renames the produced artifact to the EXACT entity name (wiki-links resolve
+ * by name/alias), keeping the model's invented name as an alias so nothing
+ * authored is lost.
+ */
+export async function alignEntityName(artifactId: Id, entityName: string): Promise<void> {
+  const artifact = await artifactRepo.getArtifact(artifactId);
+  if (artifact === undefined) return;
+  if (artifact.name.trim().toLowerCase() === entityName.trim().toLowerCase()) return;
+  const modelName = artifact.name;
+  const aliases = artifact.aliases.some(
+    (alias) => alias.trim().toLowerCase() === modelName.trim().toLowerCase(),
+  )
+    ? artifact.aliases
+    : [...artifact.aliases, modelName];
+  await artifactRepo.updateArtifact(artifactId, { name: entityName, aliases });
+}
 
 /** Plural bucket label for the progress bar ("Generating 3 npcs"). */
 export const KIND_PLURALS: Record<StubKind, string> = {
@@ -66,9 +95,20 @@ export interface EntityBatchFailure {
   message: string;
 }
 
+export interface EntityBatchProduced {
+  /** The entity (wiki-link target) the run belonged to. */
+  name: string;
+  /** The produced artifact's id (name-aligned, module-owned + tagged). */
+  artifactId: Id;
+}
+
 export interface EntityBatchResult {
   /** Names whose chain step completed (artifact produced + aligned). */
   generated: string[];
+  /** The produced artifacts, name-matched — callers that need the artifact
+   * itself (the stub popover returns the artifactId) without re-resolving
+   * the wiki link. */
+  produced: EntityBatchProduced[];
   /** Entities that produced no artifact, with the reason — loud in the
    * toast and the Runs tab (AGENTS rule 2). */
   failed: EntityBatchFailure[];
@@ -101,6 +141,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   const progressFinish = useProgressStore.getState().finish;
   progressStart(jobId, `Generating ${String(total)} ${KIND_PLURALS[kind]}`);
   const generated: string[] = [];
+  const produced: EntityBatchProduced[] = [];
   const failed: EntityBatchFailure[] = [];
   // In-flight entities for the dock detail: name → current run step label.
   const inFlight = new Map<string, string | null>();
@@ -168,6 +209,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         if (outcome.status === 'completed' && outcome.resultArtifactId !== null) {
           producedIds.push(outcome.resultArtifactId);
           generated.push(target.name);
+          produced.push({ name: target.name, artifactId: outcome.resultArtifactId });
           try {
             // The wiki-link resolves by EXACT name, so an artifact the model
             // named "Kael Ashbound…" would never link back to [[Kael]] —
@@ -216,8 +258,13 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     }
     // Stable order: the input target order, not completion order.
     const failureByName = new Map(failed.map((failure) => [failure.name, failure]));
+    const producedByName = new Map(produced.map((entry) => [entry.name, entry]));
     return {
       generated,
+      produced: targets.flatMap((target) => {
+        const entry = producedByName.get(target.name);
+        return entry === undefined ? [] : [entry];
+      }),
       failed: targets.flatMap((target) => {
         const failure = failureByName.get(target.name);
         return failure === undefined ? [] : [failure];
