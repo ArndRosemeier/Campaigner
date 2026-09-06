@@ -28,6 +28,10 @@ export const ROUTES = {
   rules: '/rules',
   /** Settings page. */
   settings: '/settings',
+  /** First-module guide (opened in another tab from the wizard/help/empty states). */
+  guide: '/guide',
+  /** One guide chapter by id. */
+  guideChapter: '/guide/:chapterId',
 } as const satisfies Record<string, `/${string}`>;
 
 /** Route parameters per route pattern, for typed `useParams` calls. */
@@ -76,6 +80,16 @@ export function modulePath(
 /** Path of the workspace screen for a given campaign. */
 export function workspacePath(campaignId: string): `/c/${string}` {
   return `/c/${encodeURIComponent(campaignId)}`;
+}
+
+/**
+ * Path of the first-module guide (M-onboarding). Without a chapter id the
+ * page renders the first chapter.
+ */
+export function guidePath(chapterId?: string): '/guide' | `/guide/${string}` {
+  return chapterId === undefined
+    ? ROUTES.guide
+    : `${ROUTES.guide}/${encodeURIComponent(chapterId)}`;
 }
 
 /** Path of the workspace screen with a given artifact open. */

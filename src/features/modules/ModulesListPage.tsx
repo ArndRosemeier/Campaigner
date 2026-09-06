@@ -4,7 +4,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpenIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 
-import { modulePath } from '@/app/routes';
+import { guidePath, modulePath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -106,7 +106,17 @@ export function ModulesListPage(): JSX.Element {
       {modules.length === 0 ? (
         <p className="rounded-lg border border-dashed p-6 text-sm text-muted-foreground">
           No modules yet — a Module is a markdown adventure document with wiki-linked entities;
-          generate it spine-first, part by part.
+          generate it spine-first, part by part. New to authoring?{' '}
+          <a
+            href={guidePath()}
+            target="_blank"
+            rel="noreferrer"
+            className="underline underline-offset-2 hover:text-foreground"
+            data-testid="modules-empty-guide"
+          >
+            Open the first-module guide
+          </a>{' '}
+          — it walks the whole path in another tab.
         </p>
       ) : (
         <ul className="flex flex-col gap-2">

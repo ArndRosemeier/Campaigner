@@ -1,4 +1,4 @@
-import { ROUTES } from '@/app/routes';
+import { ROUTES, guidePath } from '@/app/routes';
 
 import type { OnboardingStepId } from '@/domain';
 
@@ -147,7 +147,10 @@ export const WIZARD_STEPS: readonly WizardStep[] = [
       },
     ],
     bullets: ['New to module authoring? Open the guide — it walks the whole path, end to end.'],
-    links: [{ label: 'New campaign', route: ROUTES.campaignPicker, testid: 'wizard-link-campaigns' }],
+    links: [
+      { label: 'New campaign', route: ROUTES.campaignPicker, testid: 'wizard-link-campaigns' },
+      { label: 'First-module guide', href: guidePath(), testid: 'wizard-link-guide' },
+    ],
     optional: false,
     detection: 'author',
   },
