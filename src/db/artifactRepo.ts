@@ -19,7 +19,7 @@ import {
 } from '@/domain';
 import { db } from '@/db/db';
 import { scrubArtifactFromBattles } from '@/db/battleRepo';
-import { deleteImageIfUnreferenced, pruneUnreferencedImages } from '@/db/imageRepo';
+import { deleteImageIfUnreferenced, pruneUnreferencedImages, reanchorImages } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
 /** Who is saving, and (for persona saves) which run produced the content. */
@@ -169,10 +169,25 @@ async function moveScope(
   id: Id,
   changes: { campaignId?: Id | null; moduleId?: Id | null },
   meta: RevisionMeta = USER_SAVE,
+  images?: { anchor: Id | null },
 ): Promise<AnyArtifact> {
-  return db.transaction('rw', db.artifacts, db.revisions, async () => {
+  // `db.images` joins the transaction when the move re-anchors its images
+  // (adopt/publish): a crash between the row move and the image re-anchor
+  // would desynchronize scopes — a library image stranded in a campaign's
+  // prune scope (permanent blob loss via pruneUnreferencedImages) or a
+  // campaign image the old campaign's prune can no longer see.
+  return db.transaction('rw', [db.artifacts, db.revisions, db.images], async () => {
     const current = await db.artifacts.get(id);
     if (!current) throw new NotFoundError('Artifact', id);
+    if (images !== undefined) {
+      // The re-anchor set comes from the row as read INSIDE the transaction
+      // (fresher than the caller's pre-read snapshot), cover included (D2).
+      const imageIds =
+        current.coverImageId !== null
+          ? [...current.imageIds, current.coverImageId]
+          : current.imageIds;
+      await reanchorImages(imageIds, images.anchor);
+    }
     const next = anyArtifactSchema.parse({
       ...current,
       ...changes,
@@ -366,13 +381,8 @@ export async function adoptIntoCampaign(id: Id, campaignId?: Id): Promise<AnyArt
     }
     // Images follow the artifact out of the library (D2) — they re-anchor
     // into the adopting campaign and its prune takes them back under its
-    // wing.
-    const imageIds =
-      artifact.coverImageId !== null ? [...artifact.imageIds, artifact.coverImageId] : artifact.imageIds;
-    if (imageIds.length > 0) {
-      await db.images.where('id').anyOf(imageIds).modify({ campaignId });
-    }
-    return moveScope(id, { campaignId, moduleId: null });
+    // wing. The re-anchor happens INSIDE moveScope's transaction.
+    return moveScope(id, { campaignId, moduleId: null }, USER_SAVE, { anchor: campaignId });
   }
   if (campaignId !== undefined && campaignId !== artifact.campaignId) {
     throw new Error(
@@ -401,14 +411,13 @@ export async function publishToLibrary(id: Id): Promise<GlobalArtifact> {
       `"${row.name}" is a ${row.kind} — only npcs, locations, factions and encounters can be published to the library.`,
     );
   }
-  // Images travel (D2): re-anchored to the library BEFORE the row moves, so
-  // the campaign's prune (e.g. from a concurrent delete) can never see them
-  // as orphans.
-  const imageIds = row.coverImageId !== null ? [...row.imageIds, row.coverImageId] : row.imageIds;
-  if (imageIds.length > 0) {
-    await db.images.where('id').anyOf(imageIds).modify({ campaignId: null });
-  }
-  const published = await moveScope(id, { campaignId: null, moduleId: null });
+  // Images travel (D2): re-anchored to the library inside the same
+  // transaction that moves the row, so the campaign's prune (e.g. from a
+  // concurrent delete) can never see them as orphans — and a crash can
+  // never leave the row and its images scope-desynchronized.
+  const published = await moveScope(id, { campaignId: null, moduleId: null }, USER_SAVE, {
+    anchor: null,
+  });
   return globalArtifactSchema.parse(published);
 }
 

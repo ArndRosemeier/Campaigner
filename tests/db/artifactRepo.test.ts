@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { artifactScope, newId, type AnyArtifact, type ArtifactRevision } from '@/domain';
 import {
@@ -722,5 +722,105 @@ describe('legacy rows (parse-on-read materializes defaults)', () => {
     if (revision?.snapshot.kind !== 'npc') throw new Error('wrong snapshot kind');
     expect(revision.snapshot.imageIds).toEqual([]);
     expect(revision.snapshot.aliases).toEqual([]);
+  });
+});
+
+/**
+ * Scope-move atomicity (F3): adopt/publish re-anchor their images INSIDE
+ * moveScope's transaction (db.images is part of its table list). A crash
+ * between the row move and the image re-anchor must be impossible to
+ * observe — a library image stranded in a campaign's prune scope is a
+ * permanent blob leak (pruneUnreferencedImages deletes it), and the reverse
+ * desync hides campaign images from their prune forever.
+ */
+describe('moveScope owns its image re-anchor (single transaction)', () => {
+  beforeEach(clearDatabase);
+
+  const campaignId = '00000000-0000-4000-8000-000000000c01';
+  it('rolls the image re-anchor back when the move fails mid-transaction (publish)', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Atomic Grix' });
+    const imageId = newId();
+    await db.images.put({
+      id: imageId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      bytes: new Uint8Array([1]),
+      mimeType: 'image/png',
+      width: 1,
+      height: 1,
+      prompt: '',
+      model: '',
+      source: 'uploaded',
+      role: 'artwork',
+    });
+    await updateArtifact(npc.id, { imageIds: [imageId], coverImageId: imageId });
+
+    // The revision write explodes AFTER the image re-anchor — the whole
+    // transaction (image anchor included) must roll back.
+    const putSpy = vi.spyOn(db.revisions, 'put').mockRejectedValueOnce(new Error('injected failure'));
+    await expect(publishToLibrary(npc.id)).rejects.toThrow('injected failure');
+    putSpy.mockRestore();
+
+    // No scope desync: the row stayed campaign-scoped AND the image stayed
+    // campaign-anchored.
+    expect((await getAnyArtifact(npc.id))?.campaignId).toBe(campaignId);
+    expect((await db.images.get(imageId))?.campaignId).toBe(campaignId);
+
+    // After the injection is gone the same call succeeds end to end.
+    const published = await publishToLibrary(npc.id);
+    expect(published.campaignId).toBeNull();
+    expect((await db.images.get(imageId))?.campaignId).toBeNull();
+  });
+
+  it('rolls the image re-anchor back when the move fails mid-transaction (adopt)', async () => {
+    const globalId = '00000000-0000-4000-8000-00000000c003';
+    await db.artifacts.put({
+      id: globalId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: null,
+      moduleId: null,
+      kind: 'npc',
+      name: 'Library adoptee',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: { appearance: '', personality: '', statBlock: null },
+    });
+    const imageId = newId();
+    await db.images.put({
+      id: imageId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: null,
+      bytes: new Uint8Array([2]),
+      mimeType: 'image/png',
+      width: 1,
+      height: 1,
+      prompt: '',
+      model: '',
+      source: 'uploaded',
+      role: 'artwork',
+    });
+    await db.artifacts.update(globalId, { imageIds: [imageId], coverImageId: imageId });
+
+    const putSpy = vi.spyOn(db.revisions, 'put').mockRejectedValueOnce(new Error('injected failure'));
+    await expect(adoptIntoCampaign(globalId, campaignId)).rejects.toThrow('injected failure');
+    putSpy.mockRestore();
+
+    // The library image was NOT re-anchored into the campaign — the aborted
+    // transaction took the image write back with it.
+    expect((await db.images.get(imageId))?.campaignId).toBeNull();
+    expect((await getAnyArtifact(globalId))?.campaignId).toBeNull();
+
+    const adopted = await adoptIntoCampaign(globalId, campaignId);
+    expect(adopted.campaignId).toBe(campaignId);
+    expect((await db.images.get(imageId))?.campaignId).toBe(campaignId);
   });
 });
