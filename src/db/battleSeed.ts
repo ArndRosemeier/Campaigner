@@ -149,6 +149,7 @@ export async function expandRosterEntries(
           currentHp: null,
           initiativeRoll: null,
           initiativeBonus: null,
+          treasure: entry.treasure,
           conditions: [],
         };
         tokens.push(statlessToken);
@@ -190,8 +191,10 @@ export async function expandRosterEntries(
         seedFighters.push({ id: artifactId, name: label, maxHp, initiativeBonus: bonus });
       }
       // tokenFromFighter gives a fresh NPC instance max HP and empty
-      // initiative — exactly the seeding rule.
-      tokens.push(tokenFromFighter(artifactId, { kind: 'npc', name: label, maxHp }, tokens.length, options.visible, at));
+      // initiative — exactly the seeding rule. The roster entry's treasure
+      // is frozen onto the token (GM-only checklist; the entry can vanish
+      // from the artifact later, the seeded token keeps its copy).
+      tokens.push(tokenFromFighter(artifactId, { kind: 'npc', name: label, maxHp }, tokens.length, options.visible, at, entry.treasure));
     }
   }
   return { tokens, seedFighters, statless };

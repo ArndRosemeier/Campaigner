@@ -203,6 +203,8 @@ export function tokenFromFighter(
   index: number,
   visible: boolean,
   at: { x: number; y: number } | null,
+  /** Mob treasure frozen from the roster entry (GM-only); PCs carry none. */
+  treasure = '',
 ): BattleToken {
   return {
     id: newId(),
@@ -218,6 +220,7 @@ export function tokenFromFighter(
     currentHp: instanceCurrentHpFor(fighter, null),
     initiativeRoll: null,
     initiativeBonus: null,
+    treasure,
     conditions: [],
   };
 }

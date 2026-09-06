@@ -80,6 +80,7 @@ const pcStats = {
   name: 'Serren',
   maxHp: 22,
   initiativeBonus: 3,
+  treasure: '',
   currentHp: 17,
 };
 const npcStats = {
@@ -87,6 +88,7 @@ const npcStats = {
   name: 'Goblin',
   maxHp: 7,
   initiativeBonus: 2,
+  treasure: '',
   currentHp: null,
 };
 
@@ -112,6 +114,7 @@ function pcToken(overrides: Partial<BattleToken> = {}): BattleToken {
     currentHp: null,
     initiativeRoll: null,
     initiativeBonus: null,
+    treasure: '',
     conditions: [],
     ...overrides,
   };
@@ -131,6 +134,7 @@ function npcToken(overrides: Partial<BattleToken> = {}): BattleToken {
     currentHp: 7,
     initiativeRoll: null,
     initiativeBonus: null,
+    treasure: '',
     conditions: [],
     ...overrides,
   };

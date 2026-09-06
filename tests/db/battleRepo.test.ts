@@ -168,6 +168,7 @@ describe('normalize-on-write', () => {
       currentHp: null,
       initiativeRoll: null,
       initiativeBonus: null,
+      treasure: '',
       conditions: [],
     };
     const saved = await saveBattleBoard(battle.id, {
@@ -222,6 +223,7 @@ describe('scrub on artifact delete', () => {
       currentHp: 4,
       initiativeRoll: 12,
       initiativeBonus: 2,
+      treasure: '',
       conditions: [],
     };
     await saveBattleBoard(battle.id, { ...battle.board, tokens: [...battle.board.tokens, npcToken] });

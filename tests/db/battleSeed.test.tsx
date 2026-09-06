@@ -89,7 +89,7 @@ async function addNpc(name: string, withStats: boolean): Promise<Artifact> {
 
 interface SeedOptions {
   mapImageId?: Id | null;
-  monsters?: { name: string; count: number; source: Record<string, unknown> }[];
+  monsters?: { name: string; count: number; treasure?: string; source: Record<string, unknown> }[];
   linkLocationId?: Id;
   layout?: EncounterLayout | null;
 }
@@ -106,6 +106,7 @@ async function addEncounter(over: SeedOptions = {}): Promise<Artifact> {
         name: monster.name,
         count: monster.count,
         notes: '',
+        treasure: monster.treasure ?? '',
         source: monster.source,
       })) as never,
       terrain: '',
@@ -187,6 +188,27 @@ describe('roster expansion', () => {
     if (firstSeed === undefined) throw new Error('no seed fighters');
     expect(stats(firstSeed.id)?.maxHp).toBe(7);
     expect(stats(npc.id)?.maxHp).toBe(84);
+  });
+
+  it('freezes the roster entry treasure onto every instance token, statless included (GM-only)', async () => {
+    const chunkId = await seedGoblinChunk();
+    const encounter = await addEncounter({
+      monsters: [
+        { name: 'Goblin Boss', count: 2, treasure: 'Pouch: 5 gp, a bone key', source: { type: 'rulebook', chunkId } },
+        { name: 'Mystery beast', count: 1, treasure: 'Slime-coated ring', source: { type: 'none' } },
+        { name: 'Plain', count: 1, source: { type: 'none' } },
+      ],
+    });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    const fighters = fighterTokens(battle.board);
+    expect(fighters.map((token) => token.treasure)).toEqual([
+      'Pouch: 5 gp, a bone key',
+      'Pouch: 5 gp, a bone key',
+    ]);
+    // Statless tokens carry the frozen treasure too, HP-less or not.
+    const byLabel = new Map(battle.board.tokens.map((token) => [token.label, token.treasure]));
+    expect(byLabel.get('Mystery beast')).toBe('Slime-coated ring');
+    expect(byLabel.get('Plain')).toBe('');
   });
 
   it('seeds statless entries as HP-less tokens excluded from initiative, reported loudly', async () => {
@@ -623,7 +645,7 @@ describe('in-battle spawn (encounter-resume arc)', () => {
   it('appends one rulebook instance through the shared path — same mob artifact, label numbering continues, ONE seed row', async () => {
     const chunkId = await seedGoblinChunk();
     const encounter = await addEncounter({
-      monsters: [{ name: 'Goblin Boss', count: 3, source: { type: 'rulebook', chunkId } }],
+      monsters: [{ name: 'Goblin Boss', count: 3, treasure: 'Pouch: 5 gp', source: { type: 'rulebook', chunkId } }],
     });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     expect(fighterTokens(battle.board).map((token) => token.label)).toEqual([
@@ -631,6 +653,7 @@ describe('in-battle spawn (encounter-resume arc)', () => {
       'Goblin Boss 2',
       'Goblin Boss 3',
     ]);
+    expect(fighterTokens(battle.board).every((token) => token.treasure === 'Pouch: 5 gp')).toBe(true);
     const beforeSeedRows = battle.seedFighters.length;
     const report = await spawnRosterInstance(battle.id, 0);
     expect(report.statless).toEqual([]);
@@ -645,6 +668,9 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     // Visible on the live board, fresh max HP, SAME shared mob artifact.
     expect(spawned.visible).toBe(true);
     expect(spawned.currentHp).toBe(21);
+    // The spawned instance inherits the roster entry's treasure (shared
+    // expansion path).
+    expect(spawned.treasure).toBe('Pouch: 5 gp');
     expect(spawned.artifactId).toBe(fighters[0]?.artifactId);
     expect(spawned.initiativeRoll).toBeNull();
     // NO stat duplication: the shared seed row is deduped, not duplicated.

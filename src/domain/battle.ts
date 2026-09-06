@@ -131,6 +131,10 @@ export const battleTokenSchema = z.object({
   initiativeRoll: z.number().int().min(1).max(20).nullable(),
   /** Frozen copy of the artifact's bonus at roll time. */
   initiativeBonus: z.number().int().nullable(),
+  /** Frozen copy of the roster entry's mob treasure at seed time (GM-only;
+   *  roster rows can vanish, so the token keeps its own copy — same
+   *  frozen-copy precedent as initiativeBonus). */
+  treasure: z.string().default(''),
   conditions: z.array(z.string()),
 });
 
