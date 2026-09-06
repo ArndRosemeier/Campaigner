@@ -482,3 +482,33 @@ document.
 - **M-C — dnd5e SRD**: `js-yaml` dependency, `foundry-dnd5e-srd` adapter +
   fixtures. Cosmere is deferred until a source exists (§2); `generic-d20` has
   no structured source by definition and keeps the LLM-inline path.
+
+## 12. Bestiary roster tab (source-viewers arc, player-safe)
+
+The Rules screen's right pane gains a **Bestiary tab** beside Search
+(05-UI.md §Rules): a browser over every ready book's stat-block chunks —
+packs AND PDFs — so the GM can browse the imported bestiary without running
+an encounter.
+
+- **Rows.** `buildBestiaryRows` (the viewer variant of §7's
+  `collectPackRoster`) maps each `statblock` chunk to a creature row: name
+  from `headingPath[0]`, level, ordering key `parseLevelSort` (level
+  ascending, ties by name; `"—"` last), and the §8 origin label
+  (`"<book>: <creature>"` for packs, `"<book> p.<page>"` for PDFs).
+- **Loud data errors stay per-row.** The pack pipeline's exactness invariant
+  (§1) makes a pack chunk with `statBlock: null`, no creature name, or an
+  unparseable level ILLEGITIMATE — those render as loud data-error rows
+  pinned to the top of the list (and are counted in the toolbar), mirroring
+  `collectPackRoster`'s throw but scoped to the offending chunk so one bad
+  chunk does not blank the viewer. PDF chunks are different by design: their
+  stat-block detection is best-effort (02-INGESTION §Step 3), so a PDF chunk
+  with `statBlock: null` is simply not a creature entry (no error row), and
+  a PDF level `parseLevelSort` cannot read keeps the row but sorts last —
+  the documented best-effort reality, not a hidden failure.
+- **Scale.** The list is virtualized (`@tanstack/react-virtual`): ~50k
+  creatures must scroll smoothly.
+- **Detail.** Selecting a row shows the full `StatBlockCard` with the origin
+  label above it. The tab is player-safe: it only renders book content that
+  is printed in the source material — nothing campaign-hidden.
+- **Filters.** Name substring (case-insensitive) and game system; data-error
+  rows are never filtered out.

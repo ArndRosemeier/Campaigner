@@ -17,6 +17,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Progress } from '@/components/ui/progress';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { BestiaryRoster } from '@/features/bestiary/bestiary-roster';
 import { BookDialogs } from '@/features/rules/book-dialogs';
 import { PackImportDialog } from '@/features/rules/pack-import-dialog';
 import { PdfBookView } from '@/features/rules/pdf-viewer';
@@ -211,17 +213,28 @@ export function RulesPage(): JSX.Element {
           />
         </div>
       </div>
-      <div className="h-full min-w-0 flex-1">
+      <div className="flex h-full min-w-0 flex-1 flex-col">
         {pdfView === null ? (
-          <SearchBrowser
-            books={(summaries ?? []).map((summary) => ({
-              id: summary.book.id,
-              title: summary.book.title,
-            }))}
-            onOpenPdf={(bookId, page) => {
-              setPdfView({ bookId, page });
-            }}
-          />
+          <Tabs defaultValue="search" className="min-h-0 flex-1">
+            <TabsList className="mx-2 mt-2">
+              <TabsTrigger value="search">Search</TabsTrigger>
+              <TabsTrigger value="bestiary">Bestiary</TabsTrigger>
+            </TabsList>
+            <TabsContent value="search" className="min-h-0">
+              <SearchBrowser
+                books={(summaries ?? []).map((summary) => ({
+                  id: summary.book.id,
+                  title: summary.book.title,
+                }))}
+                onOpenPdf={(bookId, page) => {
+                  setPdfView({ bookId, page });
+                }}
+              />
+            </TabsContent>
+            <TabsContent value="bestiary" className="min-h-0">
+              <BestiaryRoster />
+            </TabsContent>
+          </Tabs>
         ) : (
           <PdfBookView
             bookId={pdfView.bookId}
