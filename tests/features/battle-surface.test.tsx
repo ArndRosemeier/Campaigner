@@ -1089,6 +1089,50 @@ describe('initiative', () => {
   });
 });
 
+describe('resume reveal (everLive — encounter-resume arc)', () => {
+  it('reveals every token on the first entry, then a Lift → re-enter keeps hidden tokens hidden', async () => {
+    const { moduleId } = await seedStandardBattle();
+    // First entry after a seed: the prep board goes live and reveals all.
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await flushAsyncUpdates();
+    let battle = await currentBattle(moduleId);
+    expect(battle.board.live).toBe(true);
+    expect(battle.board.everLive).toBe(true);
+    expect(battle.board.tokens.every((token) => token.visible)).toBe(true);
+
+    // The GM hides a fighter and lifts the battle off the table.
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll token missing');
+    await act(async () => {
+      await saveBattleBoard(battle.id, {
+        ...battle.board,
+        tokens: battle.board.tokens.map((token) =>
+          token.id === troll.id ? { ...token, visible: false } : token,
+        ),
+        live: false,
+      });
+      await flushAsyncUpdates();
+    });
+    cleanup();
+
+    // Re-entry resumes: live returns, the reveal does NOT re-run — the
+    // deliberately hidden troll stays off the board.
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    const labels = screen
+      .getAllByTestId('battle-token')
+      .map((el) => el.getAttribute('data-token-label'));
+    expect(labels).not.toContain('Troll');
+    battle = await currentBattle(moduleId);
+    expect(battle.board.live).toBe(true);
+    expect(battle.board.everLive).toBe(true);
+    expect(battle.board.tokens.find((token) => token.id === troll.id)?.visible).toBe(false);
+  });
+});
+
 describe('stage snapshot', () => {
   it('resets to the saved opening layout through the toolbar', async () => {
     const { moduleId } = await seedStandardBattle();

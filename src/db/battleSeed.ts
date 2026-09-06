@@ -222,6 +222,9 @@ export async function seedBattleFromEncounter(
       mapImageId,
       mapLayout: layout === null ? null : { cols: layout.gridW, rows: layout.gridH },
       live: false,
+      // A fresh seed has not spent its first-entry reveal yet — entering the
+      // table reveals every token exactly once (encounter-resume arc).
+      everLive: false,
       tokens: rosterTokens,
       veils,
       gridSize: GRID_SIZE_DEFAULT,

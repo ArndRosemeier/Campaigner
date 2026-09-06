@@ -49,6 +49,7 @@ export async function ensureBattle(campaignId: Id, moduleId: Id): Promise<Battle
       mapImageId: null,
       mapLayout: null,
       live: false,
+      everLive: false,
       tokens: [],
       veils: [],
       gridSize: null,

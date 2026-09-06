@@ -160,6 +160,15 @@ export const battleBoardSchema = z.object({
   mapLayout: battleMapLayoutSchema.nullable().default(null),
   /** false = prep scratch, true = on the table. */
   live: z.boolean(),
+  /**
+   * The first-entry reveal (the source's `liveBoard` rule) is spent exactly
+   * once per seed: entering the table reveals every token only while this is
+   * false. A Lift → re-enter cycle resumes the board verbatim instead of
+   * re-revealing hidden tokens (encounter-resume arc). Legacy rows read
+   * `undefined`, which counts as unspent — the reveal runs once, then the
+   * flag is written canonically.
+   */
+  everLive: z.boolean().default(false),
   tokens: z.array(battleTokenSchema),
   veils: z.array(battleVeilSchema),
   /** Cell size in CSS px; null hides the grid. */

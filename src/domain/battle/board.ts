@@ -22,6 +22,7 @@ export function emptyBoard(): BattleBoard {
     mapImageId: null,
     mapLayout: null,
     live: false,
+    everLive: false,
     tokens: [],
     veils: [],
     gridSize: GRID_SIZE_DEFAULT,

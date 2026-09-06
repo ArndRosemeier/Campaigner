@@ -282,6 +282,16 @@ frame). The initiative prune stays mode-independent and mob-scoped: a
 veiled mob is not yet in play and re-enters with an auto-roll on reveal;
 fogged PCs now roll and stay in the order.*
 
+Amended 2026-09-06 (encounter-resume arc, `everLive`): *entering the table
+reveals every token exactly ONCE per seed — the board carries an additive
+`everLive` flag (default false; legacy rows read `undefined`, which counts as
+unspent) and the surface stamps it `true` on the first entry. A Lift →
+re-enter cycle resumes the board verbatim: `live` returns, the reveal does
+not re-run, and tokens the GM deliberately hid stay hidden. Before this, the
+`liveBoard` rule re-fired on every entry after a Lift and wiped the GM's
+per-token visibility — reopening a battle silently changed what the players
+could see.*
+
 **Interaction:**
 
 - Drag (≥8px threshold): live local position with grid snapping, single repo

@@ -222,16 +222,23 @@ export function BattleSurface(): JSX.Element {
   }, [boardMounted]);
 
   // Entering the surface puts the battle on the table (once per mount):
-  // live: true AND every token revealed — the source's `liveBoard` rule
+  // live: true, and the first-entry reveal — the source's `liveBoard` rule
   // (artifact-backed tokens and stamps become visible on the table; prep
-  // scratch keeps them hidden).
+  // scratch keeps them hidden). The reveal is spent exactly once per seed
+  // (`everLive`): a Lift → re-enter cycle resumes the board verbatim instead
+  // of re-revealing tokens the GM deliberately hid (encounter-resume arc).
   useEffect(() => {
     if (battle === undefined || openedLiveRef.current || battle.board.live) return;
     openedLiveRef.current = true;
-    const tokens = battle.board.tokens.map((token) => ({ ...token, visible: true }));
-    void saveBattleBoard(battle.id, { ...battle.board, live: true, tokens }).catch((error: unknown) => {
-      toastError('Could not show the battle', error);
-    });
+    const firstEntry = !battle.board.everLive;
+    const tokens = firstEntry
+      ? battle.board.tokens.map((token) => ({ ...token, visible: true }))
+      : battle.board.tokens;
+    void saveBattleBoard(battle.id, { ...battle.board, live: true, everLive: true, tokens }).catch(
+      (error: unknown) => {
+        toastError('Could not show the battle', error);
+      },
+    );
   }, [battle]);
 
   const commit = useCallback(
