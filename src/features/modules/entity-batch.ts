@@ -155,6 +155,12 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           autonomy: 'auto' as const,
           brief,
           pinnedChunkIds: [],
+          // The batch's artifacts are module-owned FROM BIRTH (not stamped
+          // after the run): the post-run automatic battlemap reads the
+          // encounter's own moduleId to apply the module's master switch,
+          // and wiki-links resolve against the module during the run. The
+          // tag stamp below stays for the module:tag compatibility marker.
+          placementModuleId: module.id,
         };
         const runId = await runEngine.startRun(runInput);
         runNames.set(runId, target.name);
@@ -196,8 +202,8 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       }
     });
 
-    // Stamp the produced artifacts with their owning module (M6-B) and
-    // the compatibility tag.
+    // Stamp the compatibility tag (the artifacts are already module-owned
+    // from birth via placementModuleId — this is idempotent for both).
     for (const artifactId of producedIds) {
       try {
         const artifact = await artifactRepo.getArtifact(artifactId);

@@ -13,11 +13,42 @@ import { toastError } from '@/lib/toast';
 export interface EncounterMapJob {
   campaignId: Id;
   /** The owning module — groups the dock job and pins the ownership check.
-   * Null for the creation-dialog battlemap extra (a campaign-level encounter
-   * generated via the same unattended Cartographer path). */
+   * Null for campaign-level encounters (a campaign-level encounter generated
+   * via the same unattended Cartographer path). */
   moduleId: Id | null;
   artifactId: Id;
   name: string;
+}
+
+/**
+ * No-double-work guard for the AUTOMATION paths (owner-ratified): an
+ * encounter that already carries its battlemap — layout AND map image — is
+ * never re-enqueued by automatic flows. Regenerating an existing map stays
+ * an EXPLICIT user action (the entity panel's "Generate encounter maps" or
+ * the encounter editor's Cartographer run; regeneration replaces room keys —
+ * the ratified consequence). The queue's own processJob re-checks the same
+ * condition as a second belt (state can change while a job waits).
+ */
+export function encounterNeedsMap(artifact: {
+  data: { layout: unknown; mapImageId: unknown };
+}): boolean {
+  return artifact.data.layout === null || artifact.data.mapImageId === null;
+}
+
+/**
+ * The other half of the automation guard: true while the queue holds this
+ * artifact's map job (queued or actively running — a FAILED job is not
+ * pending; the failure already toasted loudly and `retryFailed` is the
+ * explicit re-entry). Automation callers check this before enqueueing so a
+ * run/post-pass never double-books the same encounter.
+ */
+export function isEncounterMapPending(moduleId: Id | null, artifactId: Id): boolean {
+  const state = useEncounterMapQueue.getState();
+  const key = `${moduleId ?? ''}:${artifactId}`;
+  return (
+    (state.active !== null && jobKey(state.active) === key) ||
+    state.queued.some((job) => jobKey(job) === key)
+  );
 }
 
 interface EncounterMapQueueState {
@@ -142,7 +173,10 @@ async function processJob(job: EncounterMapJob): Promise<Error | null> {
     if (job.moduleId !== null && artifact.moduleId !== job.moduleId) {
       throw new Error('encounter is no longer owned by this module');
     }
-    if (artifact.data.layout !== null && artifact.data.mapImageId !== null) return null;
+    // The skip-guard half of the no-double-work contract (see
+    // encounterNeedsMap): the encounter may have gained its map while the
+    // job sat queued — a completed map is never regenerated here.
+    if (!encounterNeedsMap(artifact)) return null;
     const cartographer = personas.find((persona) => persona.slug === 'encounter-cartographer');
     if (cartographer === undefined) throw new Error('Encounter Cartographer persona is missing');
     const runId = await runEngine.startRun({

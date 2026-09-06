@@ -9,7 +9,7 @@ import { createModule as saveModule } from '@/db/moduleRepo';
 import { createPersona as savePersona } from '@/db/personaRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { createModule, defaultSettings } from '@/domain';
-import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
+import { encounterNeedsMap, isEncounterMapPending, useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useProgressStore } from '@/lib/progress';
 import { coarseStructure } from '@/llm/encounterVision';
 import { chat } from '@/llm/openrouter';
@@ -178,5 +178,31 @@ describe('module encounter map queue', () => {
     expect(hallAfter.data.preset).toBe('standard');
     expect(hallAfter.data.layout?.gridW).toBe(24);
     expect(hallAfter.data.layout?.gridH).toBe(18);
+  }, 30000);
+
+  it('exposes the no-double-work guards: pending job and already-mapped checks', async () => {
+    const campaign = await createCampaign({ name: 'Guards', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Guarded',
+      data: { difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
+    });
+    // encounterNeedsMap is the automation-path guard: layout + map present
+    // means the encounter never gets re-enqueued automatically.
+    if (encounter.kind !== 'encounter') throw new Error('encounter missing');
+    expect(encounterNeedsMap(encounter)).toBe(true);
+    expect(encounterNeedsMap({ data: { layout: { a: 1 }, mapImageId: 'img' } })).toBe(false);
+    expect(encounterNeedsMap({ data: { layout: { a: 1 }, mapImageId: null } })).toBe(true);
+
+    // A queued/active job counts as pending; nothing pending after settle.
+    chatMock.mockReturnValue(new Promise(() => undefined)); // hold the job active
+    useEncounterMapQueue.getState().enqueue([
+      { campaignId: campaign.id, moduleId: null, artifactId: encounter.id, name: encounter.name },
+    ]);
+    await waitFor(() => {
+      expect(isEncounterMapPending(null, encounter.id)).toBe(true);
+    });
+    expect(isEncounterMapPending('some-module', encounter.id)).toBe(false);
+    useEncounterMapQueue.getState().reset();
+    expect(isEncounterMapPending(null, encounter.id)).toBe(false);
   }, 30000);
 });

@@ -171,6 +171,10 @@ describe('entity batch — real chain persistence and live resolution', () => {
     expect(artifact?.name).toBe('Kael');
     expect(artifact?.aliases).toContain('Kael Ashbound, Warden of the Gate');
     expect(artifact?.kind).toBe('npc');
+    // Batch artifacts are module-owned FROM BIRTH (placementModuleId on the
+    // run), not stamped afterwards — the post-run automatic battlemap reads
+    // the encounter's own moduleId to apply the module's master switch.
+    expect(artifact?.moduleId).toBe(module.id);
     if (artifact?.kind === 'npc') {
       expect(artifact.data.statBlock?.ac).toBe(15);
     }

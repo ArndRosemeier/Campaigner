@@ -23,15 +23,14 @@ describe('post-create extras derivation', () => {
     expect(extrasForPersona(personaBySlug('faction-designer'))).toEqual(['image']);
     expect(extrasForPersona(personaBySlug('plot-architect'))).toEqual(['image']);
     expect(extrasForPersona(personaBySlug('arc-weaver'))).toEqual(['image']);
-    // Content-only variant: map generation rides the unattended queue, so
-    // the battlemap extra is offered here — the ONLY persona that offers it.
+    // Content-only variant: the battlemap extra is GONE (D10 amendment arc)
+    // — every freshly created encounter maps automatically via the
+    // unattended queue, so the Smith offers image + mobPortraits only.
     expect(extrasForPersona(personaBySlug('encounter-smith'))).toEqual([
       'image',
       'mobPortraits',
-      'battlemap',
     ]);
-    // The Cartographer produces the map in-run — offering a battlemap extra
-    // would duplicate the run's own work.
+    // The Cartographer produces the map in-run — an extra would duplicate it.
     expect(extrasForPersona(personaBySlug('encounter-cartographer'))).toEqual([
       'image',
       'mobPortraits',

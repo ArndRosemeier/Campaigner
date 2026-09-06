@@ -64,7 +64,12 @@ export function NewModuleDialog({
   const [autoApproveSpine, setAutoApproveSpine] = useState(false);
   const [autoGenerateKinds, setAutoGenerateKinds] = useState<EntityKind[]>([]);
   const [autoImageKinds, setAutoImageKinds] = useState<EntityKind[]>([]);
-  const [autoGenerateBattlemaps, setAutoGenerateBattlemaps] = useState(false);
+  // Master switch for this module's automatic battlemaps (owner request:
+  // "when automating encounters, battlemap creation should run automatically
+  // with defaults") — ON by default; unticking keeps maps manual for this
+  // module. It gates BOTH the post-run automation for every encounter this
+  // module creates and the post-parts sweep (post-generation.ts).
+  const [autoGenerateBattlemaps, setAutoGenerateBattlemaps] = useState(true);
   const [starting, setStarting] = useState(false);
 
   // The opt-in continuity checkbox is only meaningful when some other module
@@ -287,7 +292,10 @@ export function NewModuleDialog({
               <div className="flex flex-col gap-0.5">
                 <Label htmlFor="module-auto-battlemaps">Generate encounter battlemaps</Label>
                 <p className="text-xs text-muted-foreground">
-                  Unattended map runs for every module encounter without a battlemap (needs image
+                  Automatic and on by default: every encounter this module creates (or
+                  already has without a battlemap) gets an unattended map run with the
+                  campaign's defaults — aspect from Settings, the dungeon tier only for
+                  dungeon encounters. Untick to keep battlemaps manual (needs image
                   generation in Settings).
                 </p>
               </div>

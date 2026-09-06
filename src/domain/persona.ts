@@ -11,6 +11,13 @@ import { reasoningEffortSchema } from '@/domain/settings';
  * personas without one fall back to `derivePostCreateExtras`
  * (src/llm/personas/extras.ts) computed from `mode`/`producesKind`.
  */
+/**
+ * The extras a persona may declare. `'battlemap'` remains in the enum ONLY
+ * for old-row parsing (pre-amendment personas may still declare it) — it is
+ * no longer offered or derived anywhere: battlemaps for freshly created
+ * encounters run automatically via the unattended map queue (D10 amendment
+ * arc, src/llm/personas/extras.ts).
+ */
 export const POST_CREATE_EXTRAS = ['image', 'statBlock', 'mobPortraits', 'battlemap'] as const;
 
 export const postCreateExtraSchema = z.enum(POST_CREATE_EXTRAS);

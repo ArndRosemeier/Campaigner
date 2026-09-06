@@ -271,14 +271,15 @@ describe('ModulesListPage', () => {
     await user.click(screen.getByTestId('new-module'));
     const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
 
-    // Default: everything off.
+    // Default: the pass automations off, battlemaps ON (owner request:
+    // automated encounters map automatically with the campaign's defaults).
     expect(within(dialog).getByTestId('auto-generate-npc')).not.toBeChecked();
     expect(within(dialog).getByTestId('auto-image-npc')).not.toBeChecked();
     expect(within(dialog).getByTestId('auto-spine')).not.toBeChecked();
-    expect(within(dialog).getByTestId('auto-battlemaps')).not.toBeChecked();
+    expect(within(dialog).getByTestId('auto-battlemaps')).toBeChecked();
 
-    // Tick: unattended spine, auto-generate npcs + locations, auto-image npcs,
-    // battlemaps on.
+    // Tick: unattended spine, auto-generate npcs + locations, auto-image npcs;
+    // untick battlemaps to keep this module's maps manual.
     await user.click(within(dialog).getByTestId('auto-spine'));
     await user.click(within(dialog).getByTestId('auto-generate-npc'));
     await user.click(within(dialog).getByTestId('auto-generate-location'));
@@ -297,7 +298,7 @@ describe('ModulesListPage', () => {
         autoApproveSpine: true,
         autoGenerateKinds: ['npc', 'location'],
         autoImageKinds: ['npc'],
-        autoGenerateBattlemaps: true,
+        autoGenerateBattlemaps: false,
       }),
     );
     await flushAsyncUpdates();

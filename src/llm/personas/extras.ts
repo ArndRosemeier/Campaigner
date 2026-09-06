@@ -14,10 +14,10 @@ import type { ArtifactData, ArtifactKind, Persona, PostCreateExtra, RunExtras } 
  *   already runs the statblock step for npc personas — the extra controls
  *   the loud "no stat block" notice, never a fabricated one);
  * - encounter personas always offer mob portraits for the fresh roster;
- * - ONLY the content-only encounter variant (mode 'generate' +
- *   producesKind 'encounter', i.e. Encounter Smith) offers "generate a
- *   battlemap" — encounter-mode personas (Cartographer) already produce the
- *   map in-run, so offering it would duplicate the run's own work;
+ * - the battlemap extra is GONE (D10 amendment arc): every freshly created
+ *   encounter gets its battlemap automatically via the unattended map queue
+ *   (post-run-extras) — an opt-in extra was exactly the manual trigger the
+ *   owner asked to remove;
  * - review and image personas create artifacts too (continuity report
  *   notes) but are never targeted by the creation dialog — derive nothing.
  */
@@ -29,10 +29,7 @@ export function derivePostCreateExtras(persona: Persona): PostCreateExtra[] {
   // mode 'generate' from here.
   const extras: PostCreateExtra[] = ['image'];
   if (persona.producesKind === 'npc') extras.push('statBlock');
-  if (persona.producesKind === 'encounter') {
-    extras.push('mobPortraits');
-    extras.push('battlemap');
-  }
+  if (persona.producesKind === 'encounter') extras.push('mobPortraits');
   return extras;
 }
 

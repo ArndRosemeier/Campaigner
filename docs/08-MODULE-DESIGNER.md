@@ -339,16 +339,24 @@ sequential.
 ### Post-generation automation (module row flags)
 
 The New Module dialog's "After the parts are written" grid persists three
-opt-in flags on the module row (zod defaults keep old rows off):
+flags on the module row (zod defaults keep old pass flags off):
 
 - `autoGenerateKinds: EntityKind[]` — per artifact type (npc, location,
   faction, note, encounter): batch-detail its UNRESOLVED wiki-link entities
-  after a full parts pass.
+  after a full parts pass. Opt-in.
 - `autoImageKinds: EntityKind[]` — per artifact type: enqueue a background
   image (cover) for every RESOLVED entity of that kind without an image.
-  Runs after the batches so newly generated artifacts are covered.
-- `autoGenerateBattlemaps: boolean` — enqueue every module-owned encounter
-  without layout/map into the unattended encounter-map queue (docs/11).
+  Runs after the batches so newly generated artifacts are covered. Opt-in.
+- `autoGenerateBattlemaps: boolean` — the module's MASTER SWITCH for
+  automatic battlemaps. **The dialog defaults it ON** (owner request:
+  "when automating encounters, battlemap creation should run automatically
+  with defaults"): it gates BOTH the post-run automation (every encounter
+  the module CREATES — batch or otherwise — is auto-enqueued on the
+  unattended encounter-map queue via post-run-extras) and the post-parts
+  sweep below. Unticking keeps this module's battlemaps manual; the entity
+  panel's "Generate encounter maps" button is unaffected either way. Batch
+  artifacts are module-owned FROM BIRTH (the batch run carries
+  `placementModuleId`), so the master switch applies to them too.
 
 Trigger: the ENGINE fires `runModulePostGeneration`
 (features/modules/post-generation.ts) — inside `approveSpineAndRun`

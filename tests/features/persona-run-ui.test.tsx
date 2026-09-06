@@ -1060,6 +1060,32 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     expect(screen.queryByTestId('extra-battlemap')).not.toBeInTheDocument();
   }, 30000);
 
+  it('offers no battlemap extra for the content-only Encounter Smith (battlemaps are automatic)', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const smith = await createPersona({
+      slug: 'encounter-smith-extras-ui',
+      name: 'Encounter Smith',
+      description: '',
+      systemPrompt: 'Reply with JSON.',
+      mode: 'generate',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: smith.name }));
+    // The former one-off "Generate a battlemap" checkbox is gone: every
+    // freshly created encounter maps automatically via the unattended queue.
+    expect(screen.getByTestId('extra-image')).toBeInTheDocument();
+    expect(screen.getByTestId('extra-mob-portraits')).toBeInTheDocument();
+    expect(screen.queryByTestId('extra-battlemap')).not.toBeInTheDocument();
+  }, 30000);
+
   it('starts a run into the chosen module and ticks extras through to the run row', async () => {
     const user = userEvent.setup();
     const { campaign, persona } = await seed();
@@ -1103,7 +1129,9 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     const runs = await listRunsByCampaign(campaign.id);
     const run = await getRun(runs[0]?.id ?? '');
     expect(run?.placementModuleId).toBe(module.id);
-    expect(run?.runExtras).toEqual({ image: false, statBlock: true, mobPortraits: false, battlemap: false });
+    // The battlemap extra is gone (battlemaps run automatically for freshly
+    // created encounters) — the remembered set no longer carries the key.
+    expect(run?.runExtras).toEqual({ image: false, statBlock: true, mobPortraits: false });
     // Drain the run pipeline fully — a still-running ActiveRun leaks state
     // updates (and its updateRun rejects once the next test clears the DB).
     await waitFor(async () => {

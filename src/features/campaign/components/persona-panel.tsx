@@ -170,8 +170,10 @@ export function PersonaPanel({
   // deliberately NOT remembered — a stale remembered module would silently
   // scope new artifacts (ratified owner default 3).
   const [placementModuleId, setPlacementModuleId] = useState<string>('');
-  // The battlemap extra is a one-off offer (ratified): never remembered.
-  const [battlemapExtra, setBattlemapExtra] = useState(false);
+  // NOTE: the old one-off "Generate a battlemap" extra is gone — every
+  // freshly created encounter gets its battlemap automatically via the
+  // unattended map queue (post-run-extras; the module dialog's battlemaps
+  // toggle is the module-scoped master switch).
 
   // Deep link (dock "Open" → workspace `?run=<id>`): focus the run. ActiveRun
   // renders inside the Assistant tab, so the tab follows the selection.
@@ -252,8 +254,7 @@ export function PersonaPanel({
   }, [encounterRequestId, encounterRequestRegenerate, encounterRequestVariant, encounterRequestedAt, personas, clearEncounterRequest]);
 
   // Remembered extras defaults (aspect pattern): the dialog pre-ticks from
-  // Settings.runExtras and persists toggles; the battlemap extra stays a
-  // one-off offer and never rides Settings.
+  // Settings.runExtras and persists toggles.
   const rememberedExtras = settings?.runExtras ?? { image: false, statBlock: false, mobPortraits: false };
   const modules = useModules(campaign.id);
 
@@ -261,13 +262,11 @@ export function PersonaPanel({
     image: boolean;
     statBlock: boolean;
     mobPortraits: boolean;
-    battlemap: boolean;
   } {
     return {
       image: offers('image') && rememberedExtras.image,
       statBlock: offers('statBlock') && rememberedExtras.statBlock,
       mobPortraits: offers('mobPortraits') && rememberedExtras.mobPortraits,
-      battlemap: offers('battlemap') && battlemapExtra,
     };
   }
 
@@ -540,14 +539,6 @@ export function PersonaPanel({
                         onChecked={(value) => {
                           void setRememberedExtra('mobPortraits', value);
                         }}
-                      />
-                    )}
-                    {offers('battlemap') && (
-                      <ExtraCheckbox
-                        label="Generate a battlemap"
-                        testId="extra-battlemap"
-                        checked={battlemapExtra}
-                        onChecked={setBattlemapExtra}
                       />
                     )}
                   </div>

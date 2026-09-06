@@ -88,7 +88,14 @@ export const personaRunSchema = z.object({
       image: z.boolean(),
       statBlock: z.boolean(),
       mobPortraits: z.boolean(),
-      battlemap: z.boolean(),
+      /**
+       * REMOVED as an offer (D10 amendment arc): battlemaps for freshly
+       * created encounters run automatically via the unattended map queue
+       * (post-run-extras). The flag stays OPTIONAL purely for old-row
+       * parsing — pre-amendment run rows carry `battlemap: false/true`;
+       * new runs never set it.
+       */
+      battlemap: z.boolean().optional(),
     })
     .nullable()
     .default(null),

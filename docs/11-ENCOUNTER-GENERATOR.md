@@ -415,11 +415,18 @@ room like everyone else. `layout === null` encounters seed exactly as today.
 - A batch queue (the `entity-image-queue` pattern: shared progress dock, one
   job per encounter, failures loud per job, queue continues) runs the
   generator in **auto** for every module-owned encounter lacking a layout —
-  triggered from the module view ("Generate encounter maps") and available to
-  the forge's post-pass. This is the D2 unattended contract; no pick pause.
-  The persona panel's "Generate a battlemap" creation extra rides this same
-  queue (05-UI §Assistant tab); campaign-level encounters enqueue with a null
-  `moduleId` and keep the D2 unattended semantics unchanged.
+  triggered from the module view ("Generate encounter maps" — UNCHANGED, the
+  explicit manual batch), the forge's post-pass, and now AUTOMATICALLY for
+  every freshly created encounter (post-run-extras: persona panel, entity
+  batch, module post-generation). This is the D2 unattended contract; no
+  pick pause. Campaign-level encounters enqueue with a null `moduleId` and
+  keep the D2 unattended semantics unchanged.
+- **No-double-work guard** (owner-ratified): an encounter that already
+  carries its map (layout + map image) or has a queued/active map job is
+  NEVER re-enqueued by the automation path (`encounterNeedsMap` /
+  `isEncounterMapPending` — the queue's processJob re-checks as a second
+  belt). Regenerating an existing map stays an EXPLICIT user action
+  (regeneration replaces room keys — the ratified consequence).
 - Encounters produced here are module-owned (`moduleId`, M6-B semantics) and
   battle-ready via the module view's Run battle.
 
@@ -572,6 +579,10 @@ crossing) played no role. The amendment lets encounters classify themselves:
   with the `'other'` zod default — legacy rows parse without a Dexie bump
   (the M5-C `mapImageId` pattern). The encounter editor shows a small
   owner-correctable selector beside the map fields.
+- **No-double-work guard**: the automatic battlemap path never re-enqueues
+  a mapped encounter or an already-queued/active map job; regenerating an
+  existing map stays explicit (and replaces room keys — the ratified
+  consequence).
 - **Resolution order** (`resolveEncounterPreset`): explicit per-run choice
   (the run row's persisted preset; Auto writes null) → the encounter's own
   `locationKind` ('dungeon' → Dungeon tier; 'building'/'wilderness' →

@@ -118,7 +118,7 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     ].join('\n'),
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'encounter',
-    postCreateExtras: ['image', 'mobPortraits', 'battlemap'],
+    postCreateExtras: ['image', 'mobPortraits'],
     builtIn: true,
   }),
   createPersona({

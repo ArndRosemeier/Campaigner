@@ -215,8 +215,10 @@ export const settingsSchema = z.object({
   /**
    * Remembered defaults for the creation dialog's "After creation" extras
    * checkboxes (aspect pattern): the dialog pre-ticks these per persona.
-   * The battlemap extra is deliberately NOT remembered — it is a one-off
-   * offer for the content-only encounter persona, never a standing default.
+   * The former one-off "Generate a battlemap" extra is gone — battlemaps
+   * for freshly created encounters run automatically via the unattended
+   * map queue (post-run-extras; the module dialog's battlemaps toggle is
+   * the module-scoped master switch).
    */
   runExtras: z
     .object({

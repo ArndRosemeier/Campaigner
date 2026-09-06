@@ -123,9 +123,9 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
           'Press "Module" in the top bar (or "New Module" on the Modules page). Fields:\n- **Concept** — one vivid sentence: "smugglers\' cove gone eldritch — the party raids a smuggling den that has dug into something older."\n- **Level from/to** — the band the parts are written for.\n- **Tone** (optional) — "grim", "folk-horror", "swashbuckling" steer the prose.\n- **Size** — sketch ≈ 400–700 words per part, standard ≈ 800–1500, detailed ≈ 1500–2500.',
       },
       {
-        heading: 'Leave the automation off — the first time',
+        heading: 'Leave the pass automation off — the first time',
         markdown:
-          'The "After the parts are written" grid (auto-generate/auto-image per kind, auto battlemaps) runs unattended passes once the parts finish. For your first module leave it off: you will run each pass manually, learn what it does, and automate later. "Generate parts without review" (skip the spine checkpoint) should also stay off.',
+          'The "After the parts are written" grid (auto-generate/auto-image per kind) runs unattended passes once the parts finish. For your first module leave it off: you will run each pass manually, learn what it does, and automate later. Battlemaps are the exception — every encounter a module creates is mapped automatically with the campaign\'s defaults (untick "Generate encounter battlemaps" to keep maps manual for that module). "Generate parts without review" (skip the spine checkpoint) should also stay off.',
       },
     ],
     appLink: openModules,
@@ -219,7 +219,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Generate encounter maps',
         markdown:
-          '"Generate encounter maps" on the entity panel runs the Cartographer for every module encounter without a layout. You can also generate (or regenerate) one encounter\'s map from the encounter editor — regenerating preserves the authored prose, tactics and roster.',
+          'Encounters created by automation — an encounter persona run, a module batch, or the post-parts pass — are mapped automatically: an unattended Cartographer run with the campaign\'s defaults, the Dungeon tier only for dungeon encounters. An encounter that already has a map (or a map in the queue) is never re-mapped automatically; regenerating stays your explicit call from the entity panel or the encounter editor — regenerating preserves the authored prose, tactics and roster.',
       },
       {
         heading: 'Verify, aspect, failure',
