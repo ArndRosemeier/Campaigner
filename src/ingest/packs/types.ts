@@ -1,11 +1,13 @@
+import type { ItemData } from '@/domain/itemData';
 import type { GameSystem } from '@/domain/gameSystem';
 import type { StatBlock } from '@/domain/statblock';
 
 /**
- * Pack adapter contracts (12-BESTIARY-PACKS §5). An adapter turns one
- * machine-readable source format into validated creature entries; the import
- * runner (`/src/ingest/packImport.ts`) owns persistence, progress and the
- * report. Adapters parse only the bytes they are handed — they never fetch.
+ * Pack adapter contracts (12-BESTIARY-PACKS §5/§12). An adapter turns one
+ * machine-readable source format into validated creature and/or item
+ * entries; the import runner (`/src/ingest/packImport.ts`) owns persistence,
+ * progress and the report. Adapters parse only the bytes they are handed —
+ * they never fetch.
  */
 
 /** One creature entry ready to become a `statblock` RuleChunk. */
@@ -18,17 +20,37 @@ export interface PackEntry {
   text: string;
 }
 
-/** One entry that failed creature mapping or validation. Always surfaced. */
+/**
+ * One equipment/item entry ready to become an `item` RuleChunk (12-BESTIARY-
+ * PACKS §12). A PARALLEL lane to `PackEntry` — `PackEntry.statBlock` stays
+ * required, so the creature adapters and their tests are untouched; item
+ * adapters return `items` and no `statBlock`.
+ */
+export interface PackItemEntry {
+  /** Item name — becomes `headingPath[0]` and the item-pool name-index key. */
+  name: string;
+  /** Normalized item payload — validated with `itemDataSchema` by the runner. */
+  item: ItemData;
+  /** Rendered plain-text item block (search text, display, contentHash). */
+  text: string;
+}
+
+/** One entry that failed creature/item mapping or validation. Always surfaced. */
 export interface PackEntryFailure {
   file: string;
-  /** Creature name when known, else ''. */
+  /** Creature/item name when known, else ''. */
   name: string;
   message: string;
 }
 
 export interface PackFileParse {
   entries: PackEntry[];
-  /** Documents that are not creature entries by design (folders, non-NPC). */
+  /**
+   * Equipment/item entries (12-BESTIARY-PACKS §12). Optional — creature
+   * adapters never set it; the runner treats a missing list as empty.
+   */
+  items?: PackItemEntry[];
+  /** Documents that are not entries by design (folders, non-NPC/non-item). */
   skipped: number;
   failures: PackEntryFailure[];
 }
@@ -42,8 +64,14 @@ export interface PackAdapter {
   /** Lowercase file extensions (with dot) this adapter parses. */
   extensions: readonly string[];
   /**
+   * The entry noun for the zero-valid-entries error message ('creature'
+   * default; item adapters declare 'item') — the message stays accurate
+   * without changing the creature-path text byte-identically.
+   */
+  entryNoun?: string;
+  /**
    * Parses one file's bytes. Throws only for file-level failures (empty,
-   * unparseable); per-creature problems are collected in `failures`.
+   * unparseable); per-entry problems are collected in `failures`.
    */
   parseFile(fileName: string, bytes: Uint8Array): Promise<PackFileParse>;
 }

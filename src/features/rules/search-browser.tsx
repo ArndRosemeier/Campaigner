@@ -21,6 +21,9 @@ const CHUNK_TYPES: { value: ChunkType; label: string }[] = [
   { value: 'section', label: 'Sections' },
   { value: 'statblock', label: 'Stat blocks' },
   { value: 'table', label: 'Tables' },
+  // Item-corpus arc (12-BESTIARY-PACKS §12): imported equipment packs are
+  // searchable like any other chunk type.
+  { value: 'item', label: 'Items' },
 ];
 
 /**
@@ -234,6 +237,7 @@ function ResultCard({
           {hit.source === 'both' ? 'kw+sem' : hit.source === 'keyword' ? 'kw' : 'sem'}
         </Badge>
         {chunk.chunkType === 'statblock' && <Badge variant="outline">stat block</Badge>}
+        {chunk.chunkType === 'item' && <Badge variant="outline">item</Badge>}
         <span className="flex-1" />
         {onOpenPdf !== undefined && (
           <Button

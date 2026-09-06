@@ -48,6 +48,33 @@ function chunk(overrides: {
   });
 }
 
+/** An `item` chunk fixture (12-BESTIARY-PACKS §12) for the roster guard. */
+function itemChunk(name: string): RuleChunk {
+  return ruleChunkSchema.parse({
+    id: crypto.randomUUID(),
+    createdAt: 1,
+    updatedAt: 1,
+    bookId: crypto.randomUUID(),
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'item',
+    headingPath: [name],
+    text: `${name} — treasure · Level 0 · 10 gp · common`,
+    statBlock: null,
+    itemData: {
+      system: 'pathfinder2e',
+      category: 'treasure',
+      level: 0,
+      priceDisplay: '10 gp',
+      priceCp: 1000,
+      rarity: 'common',
+      traits: [],
+      rulesEdition: null,
+    },
+    contentHash: crypto.randomUUID().replaceAll('-', '0').padEnd(64, '0'),
+  });
+}
+
 function book(overrides: Partial<Rulebook> = {}): Rulebook {
   return {
     id: 'book-1',
@@ -298,6 +325,34 @@ describe('collectPackRoster', () => {
     await expect(collectPackRoster('pathfinder2e', deps)).rejects.toThrow(
       'has no validated stat block',
     );
+  });
+
+  it('skips item chunks (12-BESTIARY-PACKS §12) — an equipment pack never poisons the roster', async () => {
+    // Item books are `origin: 'pack'` books of the same system; without the
+    // skip guard, collectPackRoster would throw on every encounter run once
+    // an equipment pack is imported.
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([book()]),
+      listChunks: () =>
+        Promise.resolve([
+          chunk({ name: 'Goblin Warrior', level: '-1' }),
+          itemChunk('Alabaster idol'),
+        ]),
+    };
+    const roster = await collectPackRoster('pathfinder2e', deps);
+    expect(roster.entries.map((entry) => entry.name)).toEqual(['Goblin Warrior']);
+    expect(roster.lines).toEqual(['Goblin Warrior (-1)']);
+  });
+
+  it('builds an empty roster — not an error — from an item-only pack book', async () => {
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([book()]),
+      listChunks: () => Promise.resolve([itemChunk('Alabaster idol'), itemChunk('Bronze chalice')]),
+    };
+    const roster = await collectPackRoster('pathfinder2e', deps);
+    expect(roster.lines).toEqual([]);
+    expect(roster.total).toBe(0);
+    expect(roster.chunkByName.size).toBe(0);
   });
 
   it('skips books that are not ready packs (§7: origin, system, status)', async () => {

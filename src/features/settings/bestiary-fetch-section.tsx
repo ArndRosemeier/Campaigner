@@ -79,8 +79,10 @@ export function BestiaryFetchSection(): JSX.Element {
       setState(adapterId, { kind: 'done', result });
       // Loud on fallback (16 §1.1 amendment): when the ref chain fired, the
       // toast names BOTH attempts via `fetchNote` — no silent degradation.
+      // Item packs (12-BESTIARY-PACKS §12) are named "items", not "creatures".
       toastSuccess(
-        `Fetched & imported “${result.book.title}” (${String(result.imported)} creatures, ` +
+        `Fetched & imported “${result.book.title}” (${String(result.imported)} ` +
+          `${result.itemsImported === result.imported ? 'items' : 'creatures'}, ` +
           `${String(result.skipped)} skipped, ${String(result.failed.length)} failed) — it is in Rules` +
           (result.fetchNote === undefined ? '' : ` — ${result.fetchNote}`),
       );

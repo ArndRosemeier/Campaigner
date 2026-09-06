@@ -208,6 +208,11 @@ export async function collectPackRoster(
   const chunks = await deps.listChunks(books.map((book) => book.id));
   const entries: PackRosterEntry[] = [];
   for (const chunk of chunks) {
+    // Item chunks (12-BESTIARY-PACKS §12) live in pack books of the same
+    // system but are equipment, not creatures — they are the item pool's
+    // input, never the roster's. Only a NON-item chunk without a validated
+    // stat block is the data error below.
+    if (chunk.chunkType === 'item') continue;
     if (chunk.chunkType !== 'statblock' || chunk.statBlock === null) {
       throw new Error(`pack chunk ${chunk.id} has no validated stat block — re-import the pack`);
     }

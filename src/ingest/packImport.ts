@@ -2,6 +2,7 @@ import { unzipSync } from 'fflate';
 
 import { stampNewEntity, type Id } from '@/domain/entity';
 import type { GameSystem } from '@/domain/gameSystem';
+import { itemDataSchema, type ItemData } from '@/domain/itemData';
 import type { PackMeta, PackProvenance, Rulebook } from '@/domain/rulebook';
 import { ruleChunkSchema, type RuleChunk } from '@/domain/rulebook';
 import type { StatBlock } from '@/domain/statblock';
@@ -12,12 +13,13 @@ import { sha256Hex } from '@/lib/hash';
 import { errorMessage } from '@/lib/errors';
 
 import { getPackAdapter } from './packs/registry';
-import type { PackAdapter, PackEntry, PackEntryFailure, PackInputFile } from './packs/types';
+import type { PackAdapter, PackEntry, PackEntryFailure, PackInputFile, PackItemEntry } from './packs/types';
 
 /**
- * Bestiary pack import runner (12-BESTIARY-PACKS §6): expands zip inputs,
- * hands files to the selected adapter, validates every entry at the
- * `statBlockSchema` boundary, persists `statblock` RuleChunks in batches, and
+ * Bestiary pack import runner (12-BESTIARY-PACKS §6/§12): expands zip inputs,
+ * hands files to the selected adapter, validates creature entries at the
+ * `statBlockSchema` boundary and item entries at the `itemDataSchema`
+ * boundary, persists `statblock` and `item` RuleChunks in batches, and
  * finalizes the pack book with its import report. Failure policy is loud:
  * per-entry problems are collected into the report, and a selection with zero
  * valid entries fails the book (`status: 'error'`) and throws — an empty
@@ -40,7 +42,10 @@ export interface PackImportProgress {
 export interface PackImportResult {
   book: Rulebook;
   chunkCount: number;
+  /** Valid entries the import produced — creature AND item lanes combined. */
   imported: number;
+  /** Valid item entries (the `item` chunk lane, 12-BESTIARY-PACKS §12). */
+  itemsImported: number;
   skipped: number;
   failed: PackEntryFailure[];
 }
@@ -155,6 +160,7 @@ export async function importPack(
   const deps = options.deps ?? dexiePackImportDeps;
 
   const entries: PackEntry[] = [];
+  const items: PackItemEntry[] = [];
   const failures: PackEntryFailure[] = [...(options.extraFailures ?? [])];
   let skipped = 0;
   for (const expanded of expandFiles(inputs, adapter)) {
@@ -173,6 +179,7 @@ export async function importPack(
     try {
       const parsed = await adapter.parseFile(expanded.file.name, expanded.file.bytes);
       entries.push(...parsed.entries);
+      items.push(...(parsed.items ?? []));
       skipped += parsed.skipped;
       failures.push(...parsed.failures);
     } catch (error) {
@@ -199,6 +206,14 @@ export async function importPack(
       await ruleChunk(entry, statBlock, book.id, base + index),
     );
   }
+  // The item lane (12-BESTIARY-PACKS §12): stamps continue after the creature
+  // lane so `createdAt` ordering stays unique across the combined chunk list.
+  for (const [index, entry] of items.entries()) {
+    const item = itemDataSchema.parse(entry.item);
+    chunks.push(
+      await itemChunk(entry, item, book.id, base + entries.length + index),
+    );
+  }
 
   let done = 0;
   for (const batch of batches(chunks, CHUNK_BATCH)) {
@@ -210,22 +225,25 @@ export async function importPack(
   const packMeta: PackMeta = {
     sourceId: adapter.id,
     license: adapter.license,
-    entriesImported: entries.length,
+    entriesImported: entries.length + items.length,
     entriesSkipped: skipped,
     entriesFailed: failures.length,
+    itemsImported: items.length,
     ...options.provenance,
   };
 
-  if (entries.length === 0) {
+  if (entries.length === 0 && items.length === 0) {
     const fetchedCount =
       inputs.length + (options.extraFailures?.length ?? 0);
     // 16-BESTIARY-FETCH §6: when the selection validates nothing, the error
     // leads with a representative failure (the first entry's issue) so the
-    // toast and the error-state book show the reason, not just a count.
+    // toast and the error-state book show the reason, not just a count. The
+    // noun comes from the adapter so an item pack's error says "item".
+    const noun = adapter.entryNoun ?? 'creature';
     const representative = leadFailure(failures);
     const message =
       (representative === null ? '' : `${representative} — `) +
-      `no valid creature entries in the pack selection ` +
+      `no valid ${noun} entries in the pack selection ` +
       `(${String(skipped)} skipped, ${String(failures.length)} failed` +
       (options.extraFailures === undefined ? '' : ` of ${String(fetchedCount)} fetched files`) +
       `)`;
@@ -237,7 +255,8 @@ export async function importPack(
   return {
     book: ready,
     chunkCount: chunks.length,
-    imported: entries.length,
+    imported: entries.length + items.length,
+    itemsImported: items.length,
     skipped,
     failed: failures,
   };
@@ -277,6 +296,33 @@ async function ruleChunk(
     headingPath: [entry.name],
     text,
     statBlock,
+    contentHash: await sha256Hex(text),
+  });
+}
+
+/**
+ * Validates + stamps one item entry as an `item` RuleChunk (12-BESTIARY-PACKS
+ * §12): same conventions as the creature lane — page numbers are meaningless
+ * for packs, the item name is the heading, `statBlock` stays null, and the
+ * rendered text drives search, display and the `contentHash` cache key.
+ */
+async function itemChunk(
+  entry: PackItemEntry,
+  item: ItemData,
+  bookId: Id,
+  stampBase: number,
+): Promise<RuleChunk> {
+  const text = entry.text;
+  return ruleChunkSchema.parse({
+    ...stampNewEntity(stampBase),
+    bookId,
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'item',
+    headingPath: [entry.name],
+    text,
+    statBlock: null,
+    itemData: item,
     contentHash: await sha256Hex(text),
   });
 }

@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { strToU8, zipSync } from 'fflate';
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import type { ItemData } from '@/domain/itemData';
 import type { PackMeta } from '@/domain/rulebook';
+import { statBlockSchema } from '@/domain/statblock';
 import type { RuleChunk } from '@/domain';
 import {
   derivePackTitle,
@@ -12,6 +14,8 @@ import {
   type PackImportDeps,
   type PackImportProgress,
 } from '@/ingest/packImport';
+import { PACK_ADAPTERS } from '@/ingest/packs/registry';
+import type { PackAdapter, PackFileParse } from '@/ingest/packs/types';
 import { sha256Hex } from '@/lib/hash';
 
 import { baseNpc, encodeJson, folderDoc } from './fixtures';
@@ -308,5 +312,160 @@ describe('importPack (foundry-dnd5e-srd, M-C)', () => {
     expect(result.failed).toEqual([
       { file: 'goblin.json', name: '', message: 'adapter "foundry-dnd5e-srd" cannot parse .json' },
     ]);
+  });
+});
+
+// --- Item lane (12-BESTIARY-PACKS §12) ----------------------------------------
+// A test adapter registered for the runner tests only: the real item adapters
+// (foundry-pf2e-equipment / foundry-dnd5e-equipment) live in their own suites;
+// this one exercises the LANE — accumulation, item chunks, packMeta counts,
+// stamps and the zero-valid error noun — without depending on either corpus.
+
+const TEST_ITEM_ADAPTER: PackAdapter = {
+  id: 'test-item-adapter',
+  label: 'Test item adapter',
+  system: 'pathfinder2e',
+  license: 'Test item license',
+  extensions: ['.json'],
+  entryNoun: 'item',
+  parseFile: (fileName, bytes): Promise<PackFileParse> => {
+    const doc = JSON.parse(new TextDecoder().decode(bytes)) as { name?: string; kind?: string };
+    const name = doc.name;
+    if (name === undefined) return Promise.reject(new Error(`${fileName}: no name`));
+    if (name === 'crash') return Promise.reject(new Error('file-level parse failure'));
+    if (name === 'broken') {
+      return Promise.resolve({
+        entries: [],
+        items: [],
+        skipped: 0,
+        failures: [{ file: fileName, name, message: 'bad item shape' }],
+      });
+    }
+    const item: ItemData = {
+      system: 'pathfinder2e',
+      category: 'treasure',
+      level: 0,
+      priceDisplay: '10 gp',
+      priceCp: 1000,
+      rarity: 'common',
+      traits: [],
+      rulesEdition: null,
+    };
+    if (doc.kind === 'npc') {
+      return Promise.resolve({
+        entries: [
+          {
+            name,
+            statBlock: statBlockSchema.parse({
+              system: 'pathfinder2e',
+              level: '1',
+              size: 'Small',
+              creatureType: 'humanoid',
+              ac: 15,
+              hp: 10,
+              speed: '25 feet',
+              abilities: { str: 10, dex: 10, con: 10, int: 10, wis: 10, cha: 10 },
+              saves: '',
+              skills: '',
+              senses: '',
+              languages: '',
+            }),
+            text: `${name} stat text`,
+          },
+        ],
+        skipped: 0,
+        failures: [],
+      });
+    }
+    return Promise.resolve({
+      entries: [],
+      items: [{ name, item, text: `${name} item text` }],
+      skipped: 0,
+      failures: [],
+    });
+  },
+};
+
+describe('importPack item lane (12-BESTIARY-PACKS §12)', () => {
+  beforeEach(() => {
+    // Registration seam for the lane tests only — removed after every test.
+    (PACK_ADAPTERS as PackAdapter[]).push(TEST_ITEM_ADAPTER);
+  });
+  afterEach(() => {
+    const index = PACK_ADAPTERS.indexOf(TEST_ITEM_ADAPTER);
+    if (index >= 0) (PACK_ADAPTERS as PackAdapter[]).splice(index, 1);
+  });
+
+  it('imports an item-only book into `item` chunks with item payloads', async () => {
+    const deps = memoryDeps();
+    const progress: PackImportProgress[] = [];
+    const result = await importPack(
+      'test-item-adapter',
+      [
+        { name: 'alabaster-idol.json', bytes: encodeJson({ name: 'Alabaster idol' }) },
+        { name: 'bronze-chalice.json', bytes: encodeJson({ name: 'Bronze chalice' }) },
+      ],
+      { title: 'Treasure Pack', deps, onProgress: (p) => progress.push(p) },
+    );
+    expect(result.imported).toBe(2);
+    expect(result.itemsImported).toBe(2);
+    expect(result.failed).toHaveLength(0);
+    expect(result.book.packMeta).toMatchObject({
+      sourceId: 'test-item-adapter',
+      entriesImported: 2,
+      itemsImported: 2,
+    });
+    const chunks = deps.persisted.flat();
+    expect(chunks).toHaveLength(2);
+    const first = chunks[0];
+    expect(first?.chunkType).toBe('item');
+    expect(first?.statBlock).toBeNull();
+    expect(first?.headingPath).toEqual(['Alabaster idol']);
+    expect(first?.itemData).toMatchObject({ category: 'treasure', priceCp: 1000 });
+    expect(first?.contentHash).toBe(await sha256Hex(first?.text ?? ''));
+    expect(progress).toEqual([{ bookId: result.book.id, done: 2, total: 2 }]);
+  });
+
+  it('keeps both lanes in one book with continuing, unique stamps', async () => {
+    const deps = memoryDeps();
+    const result = await importPack(
+      'test-item-adapter',
+      [
+        { name: 'guard.json', bytes: encodeJson({ name: 'Guard', kind: 'npc' }) },
+        { name: 'idol.json', bytes: encodeJson({ name: 'Alabaster idol' }) },
+      ],
+      { title: 'Mixed Pack', deps },
+    );
+    expect(result.imported).toBe(2);
+    expect(result.itemsImported).toBe(1);
+    const chunks = deps.persisted.flat();
+    expect(chunks.map((entry) => entry.chunkType)).toEqual(['statblock', 'item']);
+    expect(new Set(chunks.map((entry) => entry.createdAt)).size).toBe(2);
+    expect(chunks[1]?.createdAt).toBeGreaterThan(chunks[0]?.createdAt ?? 0);
+    expect(deps.finalized[0]?.packMeta?.entriesImported).toBe(2);
+    expect(deps.finalized[0]?.packMeta?.itemsImported).toBe(1);
+  });
+
+  it('fails an item-only selection with the adapter noun, loudly', async () => {
+    const deps = memoryDeps();
+    await expect(
+      importPack('test-item-adapter', [{ name: 'broken.json', bytes: encodeJson({ name: 'broken' }) }], {
+        title: 'Empty Items',
+        deps,
+      }),
+    ).rejects.toThrow('no valid item entries in the pack selection (0 skipped, 1 failed)');
+    expect(deps.failed[0]?.message).toContain('broken.json (broken): bad item shape — no valid item entries');
+    expect(deps.finalized).toHaveLength(0);
+  });
+
+  it('collects a file-level item parse failure and still fails the empty book', async () => {
+    const deps = memoryDeps();
+    await expect(
+      importPack('test-item-adapter', [{ name: 'crash.json', bytes: encodeJson({ name: 'crash' }) }], {
+        title: 'Crash Pack',
+        deps,
+      }),
+    ).rejects.toThrow('no valid item entries');
+    expect(deps.failed[0]?.message).toContain('crash.json: file-level parse failure');
   });
 });

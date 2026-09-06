@@ -69,7 +69,8 @@ export function PackImportDialog({ open, onOpenChange, onProgress }: PackImportD
       setResult(imported);
       onProgress(null);
       toastSuccess(
-        `Imported “${imported.book.title}” (${String(imported.imported)} creatures, ` +
+        `Imported “${imported.book.title}” (${String(imported.imported)} ` +
+          `${imported.itemsImported === imported.imported ? 'items' : 'creatures'}, ` +
           `${String(imported.skipped)} skipped, ${String(imported.failed.length)} failed)`,
       );
     } catch (error) {
@@ -195,6 +196,13 @@ export function PackImportReport({
       )}
       <p className="flex items-center gap-2">
         <Badge className="bg-emerald-600/15 text-emerald-500">{String(imported)} imported</Badge>
+        {/* Item-corpus arc (12-BESTIARY-PACKS §12): an item pack's imported
+            count IS its item count — named explicitly, never lumped in. */}
+        {result.itemsImported > 0 && (
+          <Badge className="bg-sky-600/15 text-sky-500" data-testid="pack-import-items">
+            {String(result.itemsImported)} items
+          </Badge>
+        )}
         <Badge variant="secondary">{String(skipped)} skipped</Badge>
         <Badge variant={failed.length === 0 ? 'outline' : 'destructive'}>
           {String(failed.length)} failed
