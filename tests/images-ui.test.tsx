@@ -164,7 +164,7 @@ describe('images ui', () => {
     expect(screen.getByTestId('encounter-regenerate-target')).toBeInTheDocument();
     // No map on file yet — the pre-filled brief must not claim "regenerate".
     expect(screen.getByLabelText('Brief')).toHaveValue(
-      'Generate a battlemap and room layout for this encounter.',
+      'Generate a battlemap and room layout for this encounter, with a GM-only key and treasure checklist per room.',
     );
     expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
     expect(screen.getByTestId('start-run')).toBeEnabled();
@@ -235,7 +235,7 @@ describe('images ui', () => {
       expect(personaSelect.textContent).toContain('Encounter Cartographer');
     });
     expect(screen.getByLabelText('Brief')).toHaveValue(
-      'Regenerate this encounter map while preserving its authored roster and prose.',
+      'Regenerate this encounter map while preserving its authored roster and prose. Room keys regenerate with the map — edit them again afterwards if needed.',
     );
     // The editor shows the map on file instead of the "no battlemap" note.
     expect(screen.getByRole('button', { name: 'Open battlemap' })).toBeInTheDocument();

@@ -243,8 +243,8 @@ export function PersonaPanel({
           ? 'Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.'
           : 'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.'
         : encounterRequestRegenerate
-          ? 'Regenerate this encounter map while preserving its authored roster and prose.'
-          : 'Generate a battlemap and room layout for this encounter.',
+          ? 'Regenerate this encounter map while preserving its authored roster and prose. Room keys regenerate with the map — edit them again afterwards if needed.'
+          : 'Generate a battlemap and room layout for this encounter, with a GM-only key and treasure checklist per room.',
     );
     setAutonomy('auto');
     setTab('assistant');

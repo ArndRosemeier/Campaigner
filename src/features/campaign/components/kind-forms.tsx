@@ -13,7 +13,7 @@ import type { AnyArtifact,
   PlotArcArtifactData,
   StatBlock,
 } from '@/domain';
-import { blankStatBlock } from '@/domain';
+import { blankStatBlock, CANONICAL_ROOM_MARKERS } from '@/domain';
 import { MonsterSourceControls, MonsterStatblocksPanel } from '@/features/campaign/components/monster-source';
 import { PairListEditor, StringListEditor } from '@/features/campaign/components/list-editors';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
@@ -427,6 +427,19 @@ function MonsterListEditor({
               onChange(monsters.map((m, i) => (i === index ? next : m)));
             }}
           />
+          {/* Mob treasure (owner-ratified): what ONE instance carries — GM
+              checklist text, frozen onto each seeded token at seed time. */}
+          <Textarea
+            value={monster.treasure}
+            placeholder="Treasure carried by one of these (one item per line)"
+            className="min-h-[44px] text-sm"
+            aria-label={`Treasure carried by one ${monster.name || 'of these'}`}
+            onChange={(event) => {
+              onChange(
+                monsters.map((m, i) => (i === index ? { ...m, treasure: event.target.value } : m)),
+              );
+            }}
+          />
         </div>
       ))}
       <Button
@@ -489,6 +502,14 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
         }}
       />
       <MonsterStatblocksPanel monsters={data.monsters} />
+      {data.layout !== null && (
+        <RoomKeysEditor
+          layout={data.layout}
+          onChange={(layout) => {
+            patch({ layout });
+          }}
+        />
+      )}
       <Field label="Terrain">
         <Input
           value={data.terrain}
@@ -512,6 +533,66 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
           patch({ treasure });
         }}
       />
+    </div>
+  );
+}
+
+/**
+ * Per-room GM keys (owner-ratified): one key textarea + room-treasure
+ * checklist per layout room. Edits touch ONLY the key fields — room
+ * rectangles stay regenerate-only (docs/11 non-goals). Regenerating the
+ * battlemap replaces keys with the fresh brief's (accepted consequence,
+ * stated here and in the map-regeneration copy).
+ */
+function RoomKeysEditor({
+  layout,
+  onChange,
+}: {
+  layout: NonNullable<EncounterArtifactData['layout']>;
+  onChange: (layout: NonNullable<EncounterArtifactData['layout']>) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2 border-t pt-3" data-testid="room-keys-editor">
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-sm font-medium">Room keys</h2>
+        <span className="text-[11px] text-muted-foreground">
+          GM-only; shown at each room's staging marker. Regenerating the battlemap rewrites them.
+        </span>
+      </div>
+      {layout.rooms.map((room, index) => {
+        const marker = room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1);
+        return (
+          <div key={room.id} className="flex flex-col gap-1 rounded-md border p-1.5">
+            <span className="text-xs font-medium text-muted-foreground" data-testid={`room-key-label-${index}`}>
+              Room {marker} — {room.name}
+            </span>
+            <Textarea
+              value={room.key}
+              placeholder="What the GM reads when the party first enters…"
+              className="min-h-[44px] text-sm"
+              aria-label={`Room ${marker} key`}
+              onChange={(event) => {
+                onChange({
+                  ...layout,
+                  rooms: layout.rooms.map((r, i) => (i === index ? { ...r, key: event.target.value } : r)),
+                });
+              }}
+            />
+            <Textarea
+              value={room.keyTreasure}
+              placeholder="Treasure hidden in this room (one item per line)"
+              className="min-h-[44px] text-sm"
+              aria-label={`Room ${marker} treasure`}
+              onChange={(event) => {
+                onChange({
+                  ...layout,
+                  rooms: layout.rooms.map((r, i) => (i === index ? { ...r, keyTreasure: event.target.value } : r)),
+                });
+              }}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

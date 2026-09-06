@@ -269,7 +269,13 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
               No battlemap — the battle runs on a viewport board until one is set.
             </p>
           ) : (
-            <div className="flex items-center gap-2">
+            <>
+              {/* Owner-ratified room-keys consequence, stated where the
+                  regeneration button lives: a fresh map brings fresh keys. */}
+              <p className="text-xs text-muted-foreground" data-testid="regenerate-keys-note">
+                Regenerating the layout &amp; map writes fresh room keys — edit them again in the encounter form afterwards.
+              </p>
+              <div className="flex items-center gap-2">
               <button
                 type="button"
                 className="overflow-hidden rounded-md border"
@@ -289,7 +295,8 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
                     }, one veil each).`
                   : '.'}
               </p>
-            </div>
+              </div>
+            </>
           )}
           <input
             ref={mapUploadRef}

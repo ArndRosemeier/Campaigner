@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 
+import { useState } from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -275,3 +276,112 @@ async function makeChunk(
 function vi_noop(): (data: EncounterArtifactData) => void {
   return () => undefined;
 }
+
+describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
+  beforeEach(clearDatabase);
+
+  /** Controlled harness: EncounterForm is a controlled component — the
+   *  parent owns the data, so keystrokes must feed back through state. */
+  function StatefulEncounterForm({ initial }: { initial: EncounterArtifactData }) {
+    const [data, setData] = useState(initial);
+    return <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={setData} />;
+  }
+
+  function layoutData(): EncounterArtifactData {
+    return {
+      difficulty: 'hard',
+      levelHint: '4',
+      monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' } }],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: {
+        gridW: 24,
+        gridH: 18,
+        theme: 'ash temple',
+        rooms: [
+          {
+            id: '00000000-0000-4000-8000-0000000000a1',
+            name: 'Entry',
+            rects: [{ x: 1, y: 1, w: 8, h: 6 }],
+            mobsRect: { x: 2, y: 2, w: 5, h: 4 },
+            description: '',
+            monsterIndexes: [],
+            spawn: true,
+            key: '',
+            keyTreasure: '',
+          },
+          {
+            id: '00000000-0000-4000-8000-0000000000a2',
+            name: 'Sanctum',
+            rects: [{ x: 10, y: 1, w: 10, h: 8 }],
+            mobsRect: { x: 12, y: 3, w: 6, h: 4 },
+            description: '',
+            monsterIndexes: [0],
+            spawn: true,
+            key: '',
+            keyTreasure: '',
+          },
+        ],
+        corridors: [],
+      },
+    };
+  }
+
+  it('edits mob treasure per roster row', async () => {
+    const user = userEvent.setup();
+    render(
+      <StatefulEncounterForm
+        initial={{
+          difficulty: '',
+          levelHint: '',
+          monsters: [{ name: 'Bandit', count: 4, notes: '', treasure: '', source: { type: 'none' } }],
+          terrain: '',
+          tactics: '',
+          treasure: '',
+          mapImageId: null,
+          layout: null,
+        }}
+      />,
+    );
+    await user.type(screen.getByLabelText('Treasure carried by one Bandit'), 'Pouch: 5 gp');
+    expect(screen.getByLabelText('Treasure carried by one Bandit')).toHaveValue('Pouch: 5 gp');
+  });
+
+  it('edits per-room key and room treasure when a layout exists', async () => {
+    const user = userEvent.setup();
+    render(<StatefulEncounterForm initial={layoutData()} />);
+    expect(screen.getByTestId('room-keys-editor')).toBeInTheDocument();
+    expect(screen.getByTestId('room-key-label-0')).toHaveTextContent('Room A — Entry');
+    expect(screen.getByTestId('room-key-label-1')).toHaveTextContent('Room B — Sanctum');
+
+    await user.type(screen.getByLabelText('Room A key'), 'Cracked doors hang off one hinge.');
+    await user.type(screen.getByLabelText('Room A treasure'), 'Fallen banner: 15 gp');
+    expect(screen.getByLabelText('Room A key')).toHaveValue('Cracked doors hang off one hinge.');
+    expect(screen.getByLabelText('Room A treasure')).toHaveValue('Fallen banner: 15 gp');
+    // The sibling room is untouched by the Room A edits.
+    expect(screen.getByLabelText('Room B key')).toHaveValue('');
+  });
+
+  it('offers no room-keys editor without a layout', () => {
+    render(
+      <EncounterForm
+        data={{
+          difficulty: '',
+          levelHint: '',
+          monsters: [{ name: 'Bandit', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+          terrain: '',
+          tactics: '',
+          treasure: '',
+          mapImageId: null,
+          layout: null,
+        }}
+        campaignArtifacts={[]}
+        campaignSystem="dnd5e"
+        onChange={vi_noop()}
+      />,
+    );
+    expect(screen.queryByTestId('room-keys-editor')).not.toBeInTheDocument();
+  });
+});
