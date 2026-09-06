@@ -222,7 +222,8 @@ interface Rulebook extends BaseEntity {
   errorMessage: string;
   origin: 'pdf' | 'pack';       // default 'pdf' — legacy rows need no migration
   packMeta: PackMeta | null;    // default null; import report of a pack book (doc 12 §4)
-  // The original PDF bytes are NOT stored (size); only extracted content.
+  // Original PDF bytes ARE retained at ingest (source-viewers arc, 2026-09-05
+  // owner ratification) — in the separate `pdfFiles` table below, never here.
 }
 
 interface RuleChunk extends BaseEntity {
@@ -360,6 +361,31 @@ interface StoredImage extends BaseEntity {
 }
 ```
 
+### StoredPdf (source-viewers arc, 2026-09-05)
+
+The ORIGINAL bytes of a PDF-origin book, retained at ingest so the in-app
+viewer renders them — delete + reimport never needs the original file. One
+row per book (`&bookId` unique); written once by `ingestPdf` on success (a
+failed ingest retains nothing); deleted with the book (`deleteRulebook`
+cascade). **Backups exclude the bytes ALWAYS (owner-ratified)** — the PDF is
+a convenience copy of a file the user owns on disk; chunks/embeddings carry
+the functional data. Books ingested before retention have no row — the
+viewer shows that loudly and there is NO attach/re-attach affordance
+(owner-ratified cut): retention happens at ingest or not at all.
+
+```ts
+interface StoredPdf extends BaseEntity {
+  bookId: Id;                   // unique — one retained PDF per book
+  bytes: Uint8Array;            // the original file, exactly as ingested
+  filename: string;             // ingested file name (the title is editable)
+  mimeType: string;             // 'application/pdf'
+  sizeBytes: number;            // bytes.byteLength; the backup note reads this
+}
+```
+
+Ingest cap: `PDF_MAX_BYTES = 250 MB` per file — rejected loudly before any
+row exists (the codebase's first byte cap; image caps are pixel caps).
+
 ### Settings (single row, id = 'settings')
 
 ```ts
@@ -403,6 +429,7 @@ export class CampaignerDB extends Dexie {
   runs!: Table<PersonaRun, Id>;
   modules!: Table<Module, Id>;
   battles!: Table<Battle, Id>;
+  pdfFiles!: Table<StoredPdf, Id>;      // source-viewers: retained PDF bytes
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -484,6 +511,14 @@ export class CampaignerDB extends Dexie {
     // Opt-in cross-module continuity: modules gain includePriorModules:false.
     this.version(13).stores({
       modules:   'id, campaignId, updatedAt',
+      // all other stores unchanged
+    });
+
+    // Source-viewers: retain the ORIGINAL PDF bytes at ingest (one row per
+    // book via the unique `&bookId`). Empty start — no upgrade; pre-retention
+    // books have no row (viewer loud absent state).
+    this.version(14).stores({
+      pdfFiles:  'id, &bookId',
       // all other stores unchanged
     });
   }

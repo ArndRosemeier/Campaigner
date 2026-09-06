@@ -112,6 +112,11 @@ const ALLOWED_NOISE: readonly {
     message: /An update to %s inside a test was not wrapped in act/,
     why: 'The panel\u2019s run views (ActiveRun/RunActions) re-render from Dexie live queries and the engine token stream, which land on fake-indexeddb\u2019s timed queue in the microtask gap after the last act-wrapped step (same known act-leak class as battle-surface\u2019s TokenView). Timing-dependent, never an assertion failure; the affected tests assert run state at the DB level.',
   },
+  {
+    file: /ingestFiles\.test\./,
+    message: /Indexing all PDF objects/,
+    why: 'the ingest-failure test deliberately feeds pdfjs a truncated PDF ("%PDF" header, no body); pdfjs warns while scanning for a recoverable xref and the ingest then fails loudly \u2014 the warning is the expected trace of the loud failure under test.',
+  },
 ];
 
 function isAllowed(entry: NoiseEntry, file: string): boolean {

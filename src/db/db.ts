@@ -14,6 +14,7 @@ import type {
   Rulebook,
   Settings,
   StoredImage,
+  StoredPdf,
 } from '@/domain';
 import type { Id } from '@/domain';
 
@@ -40,6 +41,12 @@ import type { Id } from '@/domain';
  *
  * Version 13 (08-MODULE-DESIGNER M4-B): modules gain the opt-in
  * `includePriorModules: false` continuity flag.
+ *
+ * Version 14 (source-viewers): new `pdfFiles` table — the ORIGINAL PDF
+ * bytes of a PDF-origin book are retained at ingest (one row per book,
+ * `&bookId` unique) so the in-app viewer renders them without the file;
+ * no migration (the table starts empty; pre-retention books simply have
+ * no row — the viewer's loud absent state).
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -54,6 +61,7 @@ export class CampaignerDB extends Dexie {
   deliverables!: Table<Deliverable, Id>;
   modules!: Table<Module, Id>;
   battles!: Table<Battle, Id>;
+  pdfFiles!: Table<StoredPdf, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -402,6 +410,26 @@ export class CampaignerDB extends Dexie {
           if (module.includePriorModules === undefined) module.includePriorModules = false;
         });
       });
+
+    // Source-viewers arc: retain the ORIGINAL PDF bytes at ingest (one row
+    // per book via the unique `&bookId` index). Empty start — no upgrade;
+    // pre-retention books have no row (the viewer's loud absent state).
+    this.version(14).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, moduleId',
+      pdfFiles: 'id, &bookId',
+      settings: 'id',
+    });
   }
 }
 

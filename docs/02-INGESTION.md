@@ -29,6 +29,18 @@ worker (`GlobalWorkerOptions.workerSrc` — use the `pdfjs-dist/build/pdf.worker
 Vite import in the main-thread fallback; inside our own worker call
 `getDocument({ data, useWorkerFetch: false, isEvalSupported: false, disableFontFace: true })`).
 
+## Byte retention (source-viewers arc, 2026-09-05, owner-ratified)
+
+On success the main thread ALSO writes the original bytes to the `pdfFiles`
+table (`&bookId` unique — one row per book; see 01-DATA-MODEL "StoredPdf"),
+after the chunks persist so a failed ingest retains nothing. This replaces
+any attach/re-attach affordance: there is NO path that hands a file to an
+existing book — retention happens at ingest or not at all; pre-retention
+books show the viewer's loud absent state until re-imported. Per-PDF cap
+`PDF_MAX_BYTES = 250 MB` rejects oversized files loudly before any row
+exists. Backups exclude the bytes ALWAYS with a loud re-import note in the
+backup UI (lib/backup special-cases the table both ways).
+
 ## Step 1 — Text extraction
 
 For each page, `page.getTextContent()` returns positioned items. Map each item

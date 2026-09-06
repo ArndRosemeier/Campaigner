@@ -22,6 +22,7 @@ import {
   putChunks,
 } from '@/db/chunkRepo';
 import { deleteEmbedding, getEmbedding, putEmbedding } from '@/db/embeddingRepo';
+import { getBookPdf, putBookPdf } from '@/db/pdfRepo';
 import { clearDatabase, expectNotFound } from './helpers';
 
 async function makeChunk(bookId: string, page: number, text: string): Promise<RuleChunk> {
@@ -62,7 +63,7 @@ describe('rulebookRepo', () => {
     await expectNotFound(updateRulebook('missing', { status: 'ready' }));
   });
 
-  it('deletes a book and its chunks, but keeps content-addressed embeddings', async () => {
+  it('deletes a book, its chunks and its retained PDF bytes, but keeps content-addressed embeddings', async () => {
     const book = await createRulebook({
       title: 'Bestiary',
       system: 'pathfinder2e',
@@ -75,11 +76,14 @@ describe('rulebookRepo', () => {
       model: 'test-model',
       vector: [0.1, 0.2],
     });
+    await putBookPdf({ bookId: book.id, bytes: new Uint8Array([1, 2, 3]), filename: 'bestiary.pdf', mimeType: 'application/pdf' });
 
     await deleteRulebook(book.id);
 
     expect(await getRulebook(book.id)).toBeUndefined();
     expect(await countChunksByBook(book.id)).toBe(0);
+    // Retained PDF bytes cascade with the book (source-viewers arc).
+    expect(await getBookPdf(book.id)).toBeUndefined();
     // Embeddings are a shared cache keyed by text hash — not cascade-deleted.
     expect(await getEmbedding(await sha256Hex('Grappling rules text.'))).toBeDefined();
   });

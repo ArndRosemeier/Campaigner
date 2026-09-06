@@ -1,7 +1,9 @@
 import { stampNewEntity, type Id } from '@/domain/entity';
 import type { GameSystem } from '@/domain/gameSystem';
+import { PDF_MAX_BYTES } from '@/domain/pdf';
 import { ruleChunkSchema, type Rulebook } from '@/domain/rulebook';
 import { putChunks } from '@/db/chunkRepo';
+import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { runIngestPipeline } from '@/ingest/pipeline';
 import type { IngestRequest, IngestResponse } from '@/workers/ingest.worker';
@@ -10,8 +12,11 @@ import { errorMessage } from '@/lib/errors';
 /**
  * Main-thread orchestration (02-INGESTION.md flow): creates the Rulebook row,
  * runs the pipeline in a worker, forwards progress, persists chunks on
- * success, and marks the book 'error' on failure. Original bytes are never
- * stored. Environments without Worker (tests) run the same pipeline inline.
+ * success, and marks the book 'error' on failure. The original PDF bytes are
+ * RETAINED in the `pdfFiles` table on success (source-viewers arc — the
+ * in-app viewer renders them; retention happens here, never via a later
+ * attach: there is no path that hands a file to an existing book).
+ * Environments without Worker (tests) run the same pipeline inline.
  */
 
 export interface IngestProgress {
@@ -37,7 +42,18 @@ export async function ingestPdf(
   system: GameSystem,
   onProgress?: (progress: IngestProgress) => void,
 ): Promise<IngestResult> {
+  // Per-PDF cap (source-viewers arc): fail loudly BEFORE any row exists and
+  // before the multi-minute extraction runs on a pathological file.
+  if (file.size > PDF_MAX_BYTES) {
+    const mb = Math.round(file.size / (1024 * 1024));
+    const capMb = Math.round(PDF_MAX_BYTES / (1024 * 1024));
+    throw new Error(`"${file.name}" is ${String(mb)} MB — the per-PDF import limit is ${String(capMb)} MB`);
+  }
   const arrayBuffer = await file.arrayBuffer();
+  // pdfjs TRANSFERS the buffer to its worker during extraction (the original
+  // arrives detached — "Cannot perform Construct on a detached ArrayBuffer"),
+  // so the retained copy is taken BEFORE the pipeline runs.
+  const retainedBytes = new Uint8Array(arrayBuffer.slice(0));
   const book = await createRulebook({
     title: titleFromFilename(file.name),
     system,
@@ -64,6 +80,16 @@ export async function ingestPdf(
       }),
     );
     await putChunks(chunks);
+    // Retain the original bytes (source-viewers arc): the copy taken before
+    // the pipeline, written after the chunks persist so a failed run leaves
+    // no bytes behind. Re-ingest replaces via the `&bookId` unique index —
+    // one row per book, always.
+    await putBookPdf({
+      bookId: book.id,
+      bytes: retainedBytes,
+      filename: file.name,
+      mimeType: file.type === '' ? 'application/pdf' : file.type,
+    });
     const ready = await updateRulebook(book.id, {
       status: 'ready',
       pageCount: result.pageCount,

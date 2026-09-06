@@ -64,7 +64,10 @@ export const rulebookSchema = z.object({
   origin: rulebookOriginSchema.default('pdf'),
   /** Pack import report — null for PDF books (defaults keep old rows valid). */
   packMeta: packMetaSchema.nullable().default(null),
-  // The original PDF bytes are NOT stored (size); only extracted content.
+  // The original PDF bytes ARE retained at ingest (source-viewers arc) — in
+  // the separate `pdfFiles` table (`&bookId` unique), never on this row, so
+  // book-list reads stay light. Backups exclude the bytes (owner-ratified);
+  // books ingested before retention have no row (viewer absent state).
 });
 
 export type Rulebook = z.infer<typeof rulebookSchema>;

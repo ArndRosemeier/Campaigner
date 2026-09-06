@@ -11,6 +11,7 @@ import {
 } from '@/domain';
 import { db } from '@/db/db';
 import { deleteChunksByBook } from '@/db/chunkRepo';
+import { deleteBookPdf } from '@/db/pdfRepo';
 import { NotFoundError } from '@/lib/errors';
 
 export type RulebookPatch = EntityPatch<Rulebook>;
@@ -98,13 +99,15 @@ export async function updateRulebook(id: string, patch: RulebookPatch): Promise<
 }
 
 /**
- * Deletes a book and its chunks. Embeddings are kept: they are
- * content-addressed by chunk-text hash and may be shared across books
- * (pruning is a library-management concern, not a delete concern).
+ * Deletes a book, its chunks and its retained PDF bytes. Embeddings are
+ * kept: they are content-addressed by chunk-text hash and may be shared
+ * across books (pruning is a library-management concern, not a delete
+ * concern).
  */
 export async function deleteRulebook(id: string): Promise<void> {
-  await db.transaction('rw', db.rulebooks, db.chunks, async () => {
+  await db.transaction('rw', db.rulebooks, db.chunks, db.pdfFiles, async () => {
     await deleteChunksByBook(id);
+    await deleteBookPdf(id);
     await db.rulebooks.delete(id);
   });
 }

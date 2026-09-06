@@ -30,8 +30,12 @@ Rules:
   concrete `why`. Adding an entry requires the same discipline as a fallback
   in app code: name the source, show it is intentional and bounded. Current
   entries: react-router v6 future-flag notices, pdfjs `standardFontDataUrl`
-  (unfetchable under vitest; text extraction does not use it), and the
-  deliberate render-crash noise of `global-errors.test`.
+  (unfetchable under vitest; text extraction does not use it), the
+  deliberate render-crash noise of `global-errors.test`, the persona-run-ui
+  act-timing leak (documented in the entry), and pdfjs `Indexing all PDF
+  objects` in `ingestFiles.test` (the ingest-failure test deliberately feeds
+  a truncated PDF; pdfjs's xref-recovery warning is the trace of the loud
+  failure under test).
 - React `act(...)` warnings are *not* allowlisted. They mean a state update
   fired outside act — fix the test, don't silence it:
   - end flows with `findBy*`/`waitFor` (both act-wrapped),
