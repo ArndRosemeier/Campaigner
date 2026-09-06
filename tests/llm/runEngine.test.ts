@@ -72,6 +72,29 @@ const VALID_STATBLOCK = {
   extras: { CR: '1' },
 };
 
+
+const VALID_ENCOUNTER_DRAFT = {
+  name: 'Goblin Ambush at the Ford',
+  summary: 'A goblin war band contests a river crossing.',
+  suggestedTags: ['goblins', 'ambush'],
+  body: '# Ambush at the ford',
+  difficulty: 'easy',
+  levelHint: '1-2',
+  monsters: [
+    {
+      name: 'Goblin bully',
+      count: 2,
+      notes: 'lunges from the reeds',
+      treasure: 'a pouch of teeth',
+      statBlock: VALID_STATBLOCK,
+    },
+  ],
+  terrain: 'shallow river ford',
+  tactics: 'ambush from the reeds',
+  treasure: 'none',
+  locationKind: 'wilderness',
+};
+
 async function seed(): Promise<{ campaignId: Id; persona: Persona }> {
   const campaign = await createCampaign({ name: 'Test Campaign', system: 'dnd5e' });
   const persona = await createPersona({
@@ -591,4 +614,54 @@ describe('runEngine', () => {
     const artifact = await getArtifact(resumedId);
     expect(artifact?.moduleId).toBe(moduleId);
   }, 20000);
+  it('pilot (strict structured outputs): the encounter draft step sends a strict json_schema responseFormat', async () => {
+    const { campaignId } = await seed();
+    const encounterPersona = await createPersona({
+      slug: 'encounter-smith-test',
+      name: 'Encounter Smith',
+      description: 'test',
+      systemPrompt: 'You are a test persona. Reply with JSON only.',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify(VALID_ENCOUNTER_DRAFT),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun(INPUT(campaignId, encounterPersona));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+
+    const run = await getRun(runId);
+    expect(run?.steps.map((step) => step.name)).toEqual(['retrieve', 'draft']);
+    expect(run?.steps[1]?.status).toBe('done');
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    const opts = chatMock.mock.calls[0]?.[1] as {
+      responseFormat?: { kind?: string; name?: string; jsonSchema?: Record<string, unknown> };
+    };
+    expect(opts.responseFormat).toMatchObject({ kind: 'schema', name: 'encounter-draft' });
+    expect(opts.responseFormat?.jsonSchema?.additionalProperties).toBe(false);
+    const required = opts.responseFormat?.jsonSchema?.required as string[] | undefined;
+    expect(required).toContain('monsters');
+    expect(required).toContain('locationKind');
+  }, 20000);
+
+  it('pilot scope: non-encounter draft kinds keep the old json_object mode until the rollout', async () => {
+    const { campaignId, persona } = await seed();
+    chatMock.mockResolvedValue({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun(INPUT(campaignId, persona));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+
+    const opts = chatMock.mock.calls[0]?.[1] as { responseFormat?: unknown };
+    expect(opts.responseFormat).toBe('json');
+  }, 20000);
+
 });

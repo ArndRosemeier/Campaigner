@@ -78,4 +78,12 @@ describe('fallbackReasonFor', () => {
     // The empty-result image failure is delivery congestion.
     expect(fallbackReasonFor(new OpenRouterError('no-images', 200, 'no images'))).toBe('congestion');
   });
+  it('classifies a model refusal as filter (censorship routes to the fallback tier)', () => {
+    expect(fallbackReasonFor(new OpenRouterError('refusal', 200, 'the model refused the task: no'))).toBe('filter');
+  });
+
+  it('never escalates a rejected strict response_format (loud, explicit toggle is the escape hatch)', () => {
+    expect(fallbackReasonFor(new OpenRouterError('schema-rejected', 400, 'model "m" rejected the strict JSON-schema response format'))).toBeNull();
+    expect(fallbackReasonFor(new OpenRouterError('schema-rejected', 422, 'invalid schema'))).toBeNull();
+  });
 });

@@ -23,6 +23,18 @@ export type OpenRouterErrorKind =
   | 'headers-timeout'
   /** finish_reason "length" — the answer was truncated mid-way. */
   | 'length'
+  /**
+   * The model declined the task itself (OpenAI-style `delta.refusal`).
+   * Censorship class — escalates to the configured fallback model (owner:
+   * "we still need repair models, for censorship and congestion").
+   */
+  | 'refusal'
+  /**
+   * The provider rejected the strict JSON-schema response_format (HTTP
+   * 400/422). Never escalates: loud failure naming the model; the Settings
+   * "Strict structured outputs" toggle is the explicit escape hatch.
+   */
+  | 'schema-rejected'
   /** The image API answered 200 but with zero images. */
   | 'no-images';
 
@@ -70,6 +82,15 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
   if (error instanceof DOMException && error.name === 'TimeoutError') return 'congestion';
   if (!(error instanceof OpenRouterError)) return null;
   switch (error.kind) {
+    case 'refusal':
+      // The model refused the task: censorship, the class the fallback tier
+      // exists for. Without a configured fallback this still fails loudly.
+      return 'filter';
+    case 'schema-rejected':
+      // The provider cannot enforce strict JSON schemas. Another model in
+      // the chain is NOT tried automatically — the failure must be visible
+      // and the user opts out via the Settings toggle (no silent downgrade).
+      return null;
     case 'stall':
     case 'content-stall':
     case 'max-duration':

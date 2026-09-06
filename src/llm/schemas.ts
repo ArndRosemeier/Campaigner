@@ -21,6 +21,21 @@ const draftBase = {
   body: z.string(),
 };
 
+/**
+ * "Absentable" optional field (strict structured outputs convention): the
+ * strict JSON schema must carry EVERY key, so a formerly `.optional()` field
+ * is emitted required + nullable and the model expresses "absent" as `null`.
+ * The preprocessor maps `null` back to `undefined` at the boundary so the
+ * parsed output — and every consumer reading it — keeps the old
+ * `T | undefined` shape.
+ */
+function absentable<T extends z.ZodType>(inner: T) {
+  return z.preprocess((value) => (value === null ? undefined : value), inner.optional());
+}
+
+/** Models often send indexes/counts as "2"; accept numeric strings. */
+const rosterIndex = z.coerce.number().int().nonnegative();
+
 /** z.boolean() that tolerates the quoted "true"/"false" models sometimes send. */
 function booleanish() {
   return z.preprocess((value) => {
@@ -166,13 +181,14 @@ export const encounterDraftSchema = z.object({
        * rejection (the guidance-fields convention). */
       treasure: z.string().default(''),
       /** M3-B: index into the numbered stat-block excerpts of the retrieve
-       * step — mapped back to { type: 'rulebook', chunkId } on finalize. */
-      sourceChunkIndex: z.number().int().nonnegative().optional(),
+       * step — mapped back to { type: 'rulebook', chunkId } on finalize.
+       * Absentable: strict mode forces the key; `null` parses to undefined. */
+      sourceChunkIndex: absentable(rosterIndex),
       /** M-B (12-BESTIARY-PACKS §7): exact roster name of an imported pack
        * creature — resolved against the same roster the prompt listed. */
-      sourceName: z.string().optional(),
+      sourceName: absentable(z.string()),
       /** M3-B: a full inline stat block when no rulebook excerpt matched. */
-      statBlock: statBlockSchema.optional(),
+      statBlock: absentable(statBlockSchema),
     }),
   ),
   terrain: z.string(),
@@ -189,9 +205,6 @@ export const encounterDraftSchema = z.object({
 });
 
 export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
-
-/** Models often send indexes/counts as "2"; accept numeric strings. */
-const rosterIndex = z.coerce.number().int().nonnegative();
 
 /**
  * Encounter Cartographer's coordinate-free design brief. Formatting
@@ -222,9 +235,9 @@ export const encounterGeneratorBriefSchema = z
         /** Mob treasure (owner-ratified): what ONE instance carries — GM
          * checklist text, '' when nothing. Optional enrichment. */
         treasure: z.string().default(''),
-        sourceChunkIndex: rosterIndex.optional(),
-        sourceName: z.string().optional(),
-        statBlock: statBlockSchema.optional(),
+        sourceChunkIndex: absentable(rosterIndex),
+        sourceName: absentable(z.string()),
+        statBlock: absentable(statBlockSchema),
       }),
     ).min(1),
     rooms: z.array(

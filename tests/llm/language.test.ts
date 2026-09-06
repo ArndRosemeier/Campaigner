@@ -36,6 +36,7 @@ const SETTINGS_BASE = {
   embeddingModel: 'e',
   embeddingsEnabled: false,
   wikiGroundingEnabled: true,
+  strictOutputs: true,
   imageModel: 'img',
   imagesEnabled: false,
   fallbackChatModel: '',

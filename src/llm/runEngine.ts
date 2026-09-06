@@ -69,6 +69,7 @@ import { getCachedModels } from '@/llm/modelCache';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, visionRepairModel } from '@/llm/modelFallback';
+import { schemaResponseFormat } from '@/llm/strictSchema';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 import {
@@ -369,24 +370,26 @@ function pauses(autonomy: Autonomy, stepNeedsReview: boolean): boolean {
 interface DraftContract {
   schema: z.ZodType;
   keys: string[];
+  /** OpenRouter strict-schema name (strict structured outputs). */
+  name: string;
 }
 
 function draftContractFor(kind: ArtifactKind): DraftContract {
   switch (kind) {
     case 'pc':
-      return { schema: pcDraftSchema, keys: Object.keys(pcDraftSchema.shape) };
+      return { schema: pcDraftSchema, keys: Object.keys(pcDraftSchema.shape), name: 'pc-draft' };
     case 'npc':
-      return { schema: npcDraftSchema, keys: Object.keys(npcDraftSchema.shape) };
+      return { schema: npcDraftSchema, keys: Object.keys(npcDraftSchema.shape), name: 'npc-draft' };
     case 'location':
-      return { schema: locationDraftSchema, keys: Object.keys(locationDraftSchema.shape) };
+      return { schema: locationDraftSchema, keys: Object.keys(locationDraftSchema.shape), name: 'location-draft' };
     case 'faction':
-      return { schema: factionDraftSchema, keys: Object.keys(factionDraftSchema.shape) };
+      return { schema: factionDraftSchema, keys: Object.keys(factionDraftSchema.shape), name: 'faction-draft' };
     case 'note':
-      return { schema: noteDraftSchema, keys: Object.keys(noteDraftSchema.shape) };
+      return { schema: noteDraftSchema, keys: Object.keys(noteDraftSchema.shape), name: 'note-draft' };
     case 'encounter':
-      return { schema: encounterDraftSchema, keys: Object.keys(encounterDraftSchema.shape) };
+      return { schema: encounterDraftSchema, keys: Object.keys(encounterDraftSchema.shape), name: 'encounter-draft' };
     case 'plotarc':
-      return { schema: plotArcDraftSchema, keys: Object.keys(plotArcDraftSchema.shape) };
+      return { schema: plotArcDraftSchema, keys: Object.keys(plotArcDraftSchema.shape), name: 'plotarc-draft' };
   }
 }
 
@@ -1724,7 +1727,15 @@ export class RunEngine {
         model: repairTarget,
         temperature: input.persona.temperature,
         reasoningEffort: effectiveReasoningEffort(input.persona, settings),
-        responseFormat: 'json',
+        // PILOT (strict structured outputs): the encounter personas' draft
+        // step runs with a token-enforced JSON schema; every other kind
+        // keeps the old json_object mode until the rollout commit. The
+        // Settings strictOutputs toggle downgrades this to json_object ONLY
+        // when the user flips it — never automatically.
+        responseFormat:
+          kind === 'encounter'
+            ? schemaResponseFormat(contract.name, contract.schema)
+            : 'json',
         signal,
       }),
     );

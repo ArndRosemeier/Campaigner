@@ -205,6 +205,27 @@ export function SettingsSection(): JSX.Element {
 
         <div className="flex items-center justify-between rounded-md border p-3">
           <div>
+            <Label htmlFor="strict-outputs">Strict structured outputs</Label>
+            <p className="text-xs text-muted-foreground">
+              Sends every JSON contract as a token-enforced JSON schema
+              (response_format json_schema, strict) so the model cannot
+              violate the format. Turn off only if your model's provider
+              rejects schemas — those calls then use the old best-effort JSON
+              mode. Rejected schemas fail the step loudly either way.
+            </p>
+          </div>
+          <Switch
+            id="strict-outputs"
+            data-testid="strict-outputs"
+            checked={current.strictOutputs}
+            onCheckedChange={(checked) => {
+              void updateSettings({ strictOutputs: checked });
+            }}
+          />
+        </div>
+
+        <div className="flex items-center justify-between rounded-md border p-3">
+          <div>
             <Label htmlFor="embeddings-enabled">Semantic search (embeddings)</Label>
             <p className="text-xs text-muted-foreground">
               Embeds chunks on demand via OpenRouter; keyword search works without it.

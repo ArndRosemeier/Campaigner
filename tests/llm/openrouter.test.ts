@@ -6,6 +6,8 @@ import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
 import { chat, fetchWithRetries, listModels, listVisionChatModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
+import { schemaResponseFormat } from '@/llm/strictSchema';
+import { z } from 'zod';
 
 /**
  * OpenRouter client (04-LLM-PERSONAS.md): SSE streaming, retries, typed
@@ -13,7 +15,10 @@ import { chat, fetchWithRetries, listModels, listVisionChatModels, modelSupports
  */
 
 interface SseEvent {
-  choices?: { delta?: { content?: string; reasoning?: string }; finish_reason?: string }[];
+  choices?: {
+    delta?: { content?: string; reasoning?: string; refusal?: string };
+    finish_reason?: string;
+  }[];
 }
 
 function sseResponse(events: SseEvent[]): Response {
@@ -63,6 +68,7 @@ const SETTINGS = {
   embeddingModel: 'openai/text-embedding-3-small',
   embeddingsEnabled: false,
   wikiGroundingEnabled: true,
+  strictOutputs: true,
   imageModel: 'google/gemini-2.5-flash-image',
   imagesEnabled: false,
   fallbackChatModel: '',
@@ -642,3 +648,146 @@ describe('model fallback chain', () => {
     expect(chatCallsOf(fetchMock)).toHaveLength(1);
   });
 });
+
+describe('strict structured outputs (json_schema response_format)', () => {
+  const callsOf = (fetchMock: { mock: { calls: unknown[][] } }): unknown[][] =>
+    fetchMock.mock.calls.filter(([url]) => String(url).includes('/chat/completions'));
+  const bodyOf = (call: unknown[]): { model?: string; response_format?: Record<string, unknown> } =>
+    JSON.parse((call[1] as { body: string }).body) as { model?: string; response_format?: Record<string, unknown> };
+  const contract = schemaResponseFormat(
+    'test-contract',
+    z.object({ name: z.string(), count: z.coerce.number().int() }),
+  );
+  const okStream = () =>
+    Promise.resolve(sseResponse([{ choices: [{ delta: { content: '{}' } }] }]));
+
+  it('sends response_format json_schema with name, strict:true and the converted schema', async () => {
+    const fetchMock = vi.fn(okStream);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await chat([{ role: 'user', content: 'hi' }], {
+      model: 'm',
+      temperature: 0,
+      responseFormat: contract,
+    }, [1, 1]);
+
+    expect(callsOf(fetchMock)).toHaveLength(1);
+    const body = bodyOf(callsOf(fetchMock)[0] ?? []);
+    expect(body.response_format).toEqual({
+      type: 'json_schema',
+      json_schema: {
+        name: 'test-contract',
+        strict: true,
+        schema: contract.jsonSchema,
+      },
+    });
+    // The converted schema is the strict subset: no extra keys, all keys required.
+    const schema = (body.response_format?.json_schema as { schema?: JsonSchemaShape }).schema;
+    expect(schema?.additionalProperties).toBe(false);
+    expect(schema?.required).toEqual(['name', 'count']);
+    expect(schema?.properties?.count).toMatchObject({ type: 'integer' });
+  });
+
+  it('downgrades to json_object ONLY via the explicit strictOutputs=false setting', async () => {
+    await saveSettings({ ...SETTINGS, strictOutputs: false });
+    const fetchMock = vi.fn(okStream);
+    vi.stubGlobal('fetch', fetchMock);
+
+    await chat([{ role: 'user', content: 'hi' }], {
+      model: 'm',
+      temperature: 0,
+      responseFormat: contract,
+    }, [1, 1]);
+
+    const body = bodyOf(callsOf(fetchMock)[0] ?? []);
+    expect(body.response_format).toEqual({ type: 'json_object' });
+  });
+
+  it('fails LOUDLY, naming the model, when the provider rejects the schema with 400', async () => {
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('json_schema not supported', { status: 400 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 0, responseFormat: contract }, [1, 1]),
+    ).rejects.toMatchObject({
+      name: 'OpenRouterError',
+      kind: 'schema-rejected',
+      status: 400,
+    });
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 0, responseFormat: contract }, [1, 1]),
+    ).rejects.toThrow(/model "cheap\/primary" rejected the strict JSON-schema response format/);
+    // No retry, no fallback — one loud failure.
+    expect(callsOf(fetchMock)).toHaveLength(2);
+  });
+
+  it('never auto-downgrades nor escalates a schema rejection, even with a fallback configured', async () => {
+    await saveSettings({ ...SETTINGS, fallbackChatModel: 'potent/fallback' });
+    const fetchMock = vi.fn(() => Promise.resolve(new Response('json_schema not supported', { status: 400 })));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 0, responseFormat: contract }, [1, 1]),
+    ).rejects.toMatchObject({ kind: 'schema-rejected' });
+    expect(callsOf(fetchMock)).toHaveLength(1);
+  });
+
+  it('treats a strict-mode refusal (delta.refusal) as a loud refusal error', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        sseResponse([
+          { choices: [{ delta: { refusal: 'I cannot help with that request' } }] },
+          { choices: [{ delta: { content: 'sorry' } }] },
+        ]),
+      ),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0, responseFormat: contract }, [1, 1]),
+    ).rejects.toMatchObject({ name: 'OpenRouterError', kind: 'refusal' });
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0, responseFormat: contract }, [1, 1]),
+    ).rejects.toThrow(/the model refused the task: I cannot help with that request/);
+    expect(callsOf(fetchMock)).toHaveLength(2);
+  });
+
+  it('routes a refusal to the fallback model when one is configured (censorship class)', async () => {
+    await saveSettings({ ...SETTINGS, fallbackChatModel: 'potent/fallback' });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        sseResponse([{ choices: [{ delta: { refusal: 'I cannot help with that' } }] }]),
+      )
+      .mockResolvedValueOnce(sseResponse([{ choices: [{ delta: { content: '{"ok":true}' } }] }]));
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await chat([{ role: 'user', content: 'hi' }], {
+      model: 'cheap/primary',
+      temperature: 0,
+      responseFormat: contract,
+    }, [1, 1]);
+
+    expect(result.text).toBe('{"ok":true}');
+    expect(result.fallback).toEqual({ from: 'cheap/primary', to: 'potent/fallback', reason: 'filter' });
+    expect(bodyOf(callsOf(fetchMock)[1] ?? []).model).toBe('potent/fallback');
+  });
+
+  it('fails loudly on a refusal when no fallback is configured', async () => {
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(sseResponse([{ choices: [{ delta: { refusal: 'nope' } }] }])),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      chat([{ role: 'user', content: 'hi' }], { model: 'm', temperature: 0 }, [1, 1]),
+    ).rejects.toMatchObject({ kind: 'refusal' });
+    expect(callsOf(fetchMock)).toHaveLength(1);
+  });
+});
+
+interface JsonSchemaShape {
+  additionalProperties?: boolean;
+  required?: string[];
+  properties?: Record<string, { type?: string | string[] }>;
+}

@@ -9,6 +9,7 @@ import { MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
 import type { FallbackReason } from '@/llm/openrouterErrors';
 import type { ReasoningEffort } from '@/domain/settings';
 import type { Settings } from '@/domain';
+import type { SchemaResponseFormat } from '@/llm/strictSchema';
 
 // Error types live in the leaf module /src/llm/openrouterErrors.ts (shared
 // with the model-fallback helpers); re-exported for API compatibility.
@@ -47,8 +48,19 @@ export interface ChatStreamActivity {
 export interface ChatOptions {
   model: string;
   temperature: number;
-  /** Sets response_format: { type: 'json_object' }. */
-  responseFormat?: 'json' | undefined;
+  /**
+   * JSON reply modes:
+   * - `'json'` — best-effort: `response_format: { type: 'json_object' }`
+   *   (valid JSON, NO schema adherence).
+   * - `{ kind: 'schema', name, jsonSchema }` (build with
+   *   `schemaResponseFormat()` in /src/llm/strictSchema.ts) — strict
+   *   structured outputs: `response_format: { type: 'json_schema',
+   *   json_schema: { name, strict: true, schema } }`. OpenRouter enforces
+   *   the schema token-level for supporting models, so a shape failure
+   *   cannot occur. The Settings `strictOutputs` toggle (default ON) is the
+   *   ONLY way this downgrades to `'json'` behavior — never automatic.
+   */
+  responseFormat?: 'json' | SchemaResponseFormat | undefined;
   signal?: AbortSignal | undefined;
   /** Reasoning effort for reasoning-capable models ('none' | 'minimal' | 'low' | 'medium' | 'high' | 'max'). */
   reasoningEffort?: ReasoningEffort | undefined;
@@ -159,7 +171,24 @@ async function chatOnce(
     stream: true,
     messages: effectiveMessages,
   };
+  const schemaFormat =
+    typeof opts.responseFormat === 'object' ? opts.responseFormat : null;
   if (opts.responseFormat === 'json') body.response_format = { type: 'json_object' };
+  if (schemaFormat !== null) {
+    // Strict structured outputs (owner decision). The settings toggle is the
+    // ONLY downgrade path: a user whose model genuinely cannot enforce
+    // schemas opts out explicitly — there is no automatic fallback anywhere.
+    body.response_format = settings.strictOutputs
+      ? {
+          type: 'json_schema',
+          json_schema: {
+            name: schemaFormat.name,
+            strict: true,
+            schema: schemaFormat.jsonSchema,
+          },
+        }
+      : { type: 'json_object' };
+  }
   if (
     opts.reasoningEffort !== undefined &&
     opts.reasoningEffort !== 'default' &&
@@ -174,11 +203,32 @@ async function chatOnce(
     body: JSON.stringify(body),
   };
   if (opts.signal !== undefined) init.signal = opts.signal;
-  const response = await fetchWithRetries(
-    `${OPENROUTER_BASE}/chat/completions`,
-    init,
-    retryBackoffs,
-  );
+  let response: Response;
+  try {
+    response = await fetchWithRetries(
+      `${OPENROUTER_BASE}/chat/completions`,
+      init,
+      retryBackoffs,
+    );
+  } catch (error) {
+    // A provider that rejects the strict response_format (HTTP 400/422)
+    // fails the step LOUDLY, naming the model — never an automatic downgrade
+    // to the weaker json_object mode (owner: loud > silent). The Settings
+    // toggle is the user's explicit escape hatch.
+    if (
+      schemaFormat !== null &&
+      settings.strictOutputs &&
+      error instanceof OpenRouterError &&
+      (error.status === 400 || error.status === 422)
+    ) {
+      throw new OpenRouterError(
+        'schema-rejected',
+        error.status,
+        `model "${model}" rejected the strict JSON-schema response format — ${error.bodyText}`,
+      );
+    }
+    throw error;
+  }
   return readStream(response, opts.onToken, {
     stallTimeoutMs,
     contentStallMs,
@@ -459,6 +509,7 @@ async function readStream(
     let delta: string | undefined;
     let errorText: string | undefined;
     let errorCode: number | string | undefined;
+    let refusalText: string | undefined;
     let finishReason: string | null | undefined;
     try {
       const parsed = JSON.parse(payload) as {
@@ -467,6 +518,7 @@ async function readStream(
             content?: string;
             reasoning?: string;
             reasoning_content?: string;
+            refusal?: string;
           };
           finish_reason?: string | null;
         }[];
@@ -487,6 +539,12 @@ async function readStream(
         onReasoning?.(reasoning);
       }
       finishReason = parsed.choices?.[0]?.finish_reason;
+      // OpenAI-style refusal (streamed via delta.refusal): the model declined
+      // the task itself. Censorship class — fails the stream loudly so the
+      // escalation chain can route it to the fallback model (owner: "we
+      // still need repair models, for censorship and congestion"); without a
+      // configured fallback the step fails visibly with the refusal text.
+      refusalText = parsed.choices?.[0]?.delta?.refusal;
       if (parsed.error !== undefined) {
         if (typeof parsed.error === 'string') {
           errorText = parsed.error;
@@ -500,6 +558,9 @@ async function readStream(
     }
     if (errorText !== undefined) {
       throw new OpenRouterError('stream-error', response.status, `stream error: ${errorText}`, errorCode);
+    }
+    if (typeof refusalText === 'string' && refusalText !== '') {
+      throw new OpenRouterError('refusal', response.status, `the model refused the task: ${refusalText}`);
     }
     if (delta !== undefined && delta !== '') {
       full += delta;

@@ -185,6 +185,16 @@ export const settingsSchema = z.object({
    */
   fallbackImageModel: z.string().default(''),
   /**
+   * Strict structured outputs (owner decision, default ON): JSON-contract
+   * calls send `response_format: { type: 'json_schema', strict: true }` so
+   * OpenRouter enforces the schema token-level during decoding. Turning this
+   * OFF is the explicit escape hatch for models whose provider rejects the
+   * schema (loud `schema-rejected` 400) — those calls then use the old
+   * best-effort `json_object` mode. There is NO automatic downgrade either
+   * way; failures stay loud (AGENTS rule 1).
+   */
+  strictOutputs: z.boolean().default(true),
+  /**
    * Language every generation prompt is required to produce (default
    * English). Enforced client-side by injecting a directive into each chat
    * completion (see /src/llm/language.ts).
@@ -267,6 +277,7 @@ export function defaultSettings(): Settings {
     imagesEnabled: false,
     fallbackChatModel: '',
     fallbackImageModel: '',
+    strictOutputs: true,
     language: 'en',
     artifactScopes: {
       workspace: defaultScopeToggles('workspace'),
