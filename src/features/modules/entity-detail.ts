@@ -115,6 +115,10 @@ export async function generateSingleEntity(
         title: `Detail: ${name}`,
         brief: buildEntityBrief(name, contextParagraphs, premise),
         autonomy: 'auto',
+        // The produced artifact is module-owned FROM BIRTH (the placement
+        // rides the run row, so even an interrupted chain keeps ownership);
+        // the stamp below stays as the tag/history idempotent write only.
+        placementModuleId: moduleId,
       },
     ];
     const result = await chainRunner.run(campaign, personas, steps, 'auto', []);
@@ -131,6 +135,10 @@ export async function generateSingleEntity(
       };
     }
     await alignEntityName(artifactId, name);
+    // Idempotent tag/history write only: the artifact is already module-owned
+    // from birth (the chain step carried placementModuleId), so this aligns
+    // the `module:<title>` compatibility tag — it can no longer rescue a
+    // campaign-level artifact into the module after the fact.
     const artifact = await artifactRepo.getArtifact(artifactId);
     if (artifact !== undefined && (artifact.moduleId !== moduleId || !artifact.tags.includes(moduleTag))) {
       await artifactRepo.stampModuleOwnership(artifactId, moduleId, moduleTag);

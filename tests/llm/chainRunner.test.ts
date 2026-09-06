@@ -5,10 +5,17 @@ import { waitFor } from '@testing-library/react';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createModule as createModuleRow } from '@/db/moduleRepo';
 import { getRun } from '@/db/runRepo';
 import { chainRunner, type ChainStepInput } from '@/llm/chainRunner';
 import { runEngine } from '@/llm/runEngine';
-import { createPersona, type ArtifactKind, type Id, type Persona } from '@/domain';
+import {
+  createPersona,
+  createModule as createModuleSchema,
+  type ArtifactKind,
+  type Id,
+  type Persona,
+} from '@/domain';
 import { buildEntityBrief } from '@/features/modules/persona-request';
 import { resolveWikiLink } from '@/lib/wikilinks';
 import { clearDatabase } from '../db/helpers';
@@ -356,6 +363,100 @@ describe('continuity editor persona', () => {
     expect(existing).toBeDefined();
     const run = await getRun(runId);
     expect(run?.steps.map((step) => step.name)).toEqual(['gather', 'check', 'finalize']);
+  }, 20000);
+});
+
+describe('module placement threading', () => {
+  it('a chain step with placementModuleId produces a module-owned artifact FROM BIRTH and persists the placement on the run row', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    // A REAL module row — finalize re-checks existence loudly (AGENTS rule 1).
+    const module = await createModuleRow(
+      createModuleSchema({
+        campaignId: campaign.id,
+        title: 'Ember Crypt',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const persona = personaOf('worldbuilder', 'Worldbuilder', 'location');
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        name: 'Emberfall Docks',
+        summary: 'Smuggling hub.',
+        suggestedTags: [],
+        body: '# Emberfall Docks',
+        locationType: 'district',
+        inhabitants: 'Dockworkers',
+        pointsOfInterest: [],
+        hooks: [],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const state = await chainRunner.run(
+      campaign,
+      [persona],
+      [
+        {
+          personaId: persona.id,
+          title: 'Detail: Emberfall Docks',
+          brief: 'Build a docks district.',
+          autonomy: 'auto',
+          placementModuleId: module.id,
+        },
+      ],
+      'auto',
+      [],
+    );
+    expect(state.status).toBe('completed');
+    const artifactId = state.steps[0]?.artifactId;
+    if (artifactId === null || artifactId === undefined) throw new Error('no artifact produced');
+    // Module-owned from birth — no post-run stamp needed for ownership.
+    const artifact = await getArtifact(artifactId);
+    expect(artifact?.moduleId).toBe(module.id);
+
+    // The placement is persisted on the run row (resume keeps it, like
+    // encounterPreset) — an interrupted chain can no longer lose ownership.
+    const runId = state.steps[0]?.runId;
+    if (runId === null || runId === undefined) throw new Error('no run id');
+    expect((await getRun(runId))?.placementModuleId).toBe(module.id);
+  }, 20000);
+
+  it('a chain step without placementModuleId stays campaign-level', async () => {
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    const persona = personaOf('worldbuilder', 'Worldbuilder', 'location');
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        name: 'Emberfall Docks',
+        summary: 'Smuggling hub.',
+        suggestedTags: [],
+        body: '# Emberfall Docks',
+        locationType: 'district',
+        inhabitants: '',
+        pointsOfInterest: [],
+        hooks: [],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const state = await chainRunner.run(
+      campaign,
+      [persona],
+      [{ personaId: persona.id, brief: 'Build a docks district.', autonomy: 'auto' }],
+      'auto',
+      [],
+    );
+    expect(state.status).toBe('completed');
+    const artifactId = state.steps[0]?.artifactId;
+    if (artifactId === null || artifactId === undefined) throw new Error('no artifact produced');
+    expect((await getArtifact(artifactId))?.moduleId).toBeNull();
+    const runId = state.steps[0]?.runId;
+    if (runId === null || runId === undefined) throw new Error('no run id');
+    expect((await getRun(runId))?.placementModuleId).toBeNull();
   }, 20000);
 });
 

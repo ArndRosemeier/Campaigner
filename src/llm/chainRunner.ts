@@ -20,6 +20,15 @@ export interface ChainStepInput {
   /** Per-step autonomy override (falls back to the chain-wide autonomy). */
   autonomy?: Autonomy;
   /**
+   * Module placement for the step's NEWLY created artifact (null/omitted =
+   * campaign level). Persisted on the run row like `encounterPreset`, so a
+   * paused/failed step's resume keeps the placement — an interrupted chain
+   * can no longer lose module ownership between run and post-run stamp.
+   * Fresh-create only: a step that targets an existing artifact must not
+   * carry it (finalize throws).
+   */
+  placementModuleId?: Id;
+  /**
    * Review steps only: which produced artifact to review. 'first' targets
    * the first artifact of the chain (the module's plot arc), 'last' the most
    * recent one. Ignored for generate personas.
@@ -280,6 +289,9 @@ export class ChainRunner {
         brief: step.brief,
         pinnedChunkIds,
         contextArtifactIds: producedArtifactIds,
+        // Module placement rides the step input onto the run row (resume
+        // keeps it there — runEngine re-derives it like `encounterPreset`).
+        ...(step.placementModuleId === undefined ? {} : { placementModuleId: step.placementModuleId }),
       };
       if (persona.mode === 'review') {
         const targetId = reviewTargetId(step, producedArtifactIds);

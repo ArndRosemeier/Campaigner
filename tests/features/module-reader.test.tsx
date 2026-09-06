@@ -571,13 +571,16 @@ describe('ModuleReaderPage', () => {
     await user.click(within(popover).getByTestId('stub-generate'));
 
     // The chain → runEngine → database path produces the artifact with the
-    // module tag (same machinery as the batch).
+    // module tag (same machinery as the batch) — and module-owned FROM BIRTH:
+    // the chain step carried placementModuleId, so ownership never depended
+    // on the post-run stamp surviving an interruption.
     await waitFor(
       async () => {
         const rows = await listArtifactsByCampaign(campaignId);
         const produced = rows.find((row) => row.name === 'Missing Person');
         expect(produced?.kind).toBe('note');
         expect(produced?.tags).toContain(`module:${MODULE_TITLE}`);
+        expect(produced?.moduleId).toBe(moduleId);
       },
       { timeout: 10_000 },
     );
