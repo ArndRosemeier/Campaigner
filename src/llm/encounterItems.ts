@@ -5,7 +5,7 @@ import { listRulebooks } from '@/db/rulebookRepo';
 import { errorMessage } from '@/lib/errors';
 
 /**
- * Encounter item pool (12-BESTIARY-PACKS §12): a compact "name (category,
+ * Encounter item pool (12-BESTIARY-PACKS §13): a compact "name (category,
  * level, price)" listing of every imported pack item for the campaign's
  * system, injected into the Encounter Smith's prompt so it can reward the
  * party with real equipment (cited by exact item name) instead of inventing
@@ -80,7 +80,7 @@ export function itemPoolNameIndex(
   return index;
 }
 
-/** Prompt section (§12): the pool listing plus the item-grounding instruction. */
+/** Prompt section (§13): the pool listing plus the item-grounding instruction. */
 export function formatItemPoolSection(lines: readonly string[], truncated: number): string | null {
   if (lines.length === 0) return null;
   return [
@@ -145,7 +145,7 @@ function duplicatedAcrossBooks(entries: readonly ItemPoolEntry[]): Set<string> {
 }
 
 /**
- * Builds the prompt pool (§12). The optional filter narrows BEFORE ordering
+ * Builds the prompt pool (§13). The optional filter narrows BEFORE ordering
  * and the cap — a filtered-out item is outside the encounter's context, not
  * a truncated tail. Without a `targetLevel` the window keeps the
  * level/price/name-ascending order. With one, the window orders by
@@ -197,7 +197,7 @@ const defaultDeps: ItemPoolDeps = {
 
 /**
  * Collects the item pool for a campaign system over every ready pack book
- * that actually imported items (§12: origin 'pack', matching system, status
+ * that actually imported items (§13: origin 'pack', matching system, status
  * 'ready', packMeta.itemsImported > 0 — books arrive most recently updated
  * first). Only item chunks are considered; a chunk typed `item` without
  * validated item data must not exist (the importer enforces it), so

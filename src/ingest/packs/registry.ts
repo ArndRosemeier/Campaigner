@@ -5,7 +5,7 @@ import { foundryPf2eEquipmentAdapter } from './pf2e-equipment';
 import type { PackAdapter } from './types';
 
 /**
- * Registered pack adapters (12-BESTIARY-PACKS §5/§12). Adding a source is one
+ * Registered pack adapters (12-BESTIARY-PACKS §5/§13). Adding a source is one
  * adapter file plus one entry here. Creature and equipment adapters are
  * parallel per-system parsers — the pf2e pair shares a repo but different
  * document types (npc vs item), each with its own fetch source.

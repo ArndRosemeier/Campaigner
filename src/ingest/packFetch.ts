@@ -63,7 +63,7 @@ export interface PackFetchSource {
   packRoot: string;
   /**
    * When set, the "list everything" listing only offers packs directly under
-   * these packRoot children (12-BESTIARY-PACKS §12): an item source sharing a
+   * these packRoot children (12-BESTIARY-PACKS §13): an item source sharing a
    * packRoot with a creature source (pf2e: `packs/pf2e`) — or sitting under a
    * broad source root (dnd5e: `packs/_source`) — must not list the dozens of
    * folders its adapter cannot parse. Curated mode is unaffected.
@@ -107,7 +107,7 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
     ],
   },
   {
-    // Item-corpus arc (12-BESTIARY-PACKS §12): pf2e equipment shares the repo
+    // Item-corpus arc (12-BESTIARY-PACKS §13): pf2e equipment shares the repo
     // and packRoot with the creature source; packDirs keeps the advanced
     // listing scoped to the one folder this adapter parses.
     adapterId: 'foundry-pf2e-equipment',
@@ -128,7 +128,7 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
     ],
   },
   {
-    // Item-corpus arc (12-BESTIARY-PACKS §12): the dnd5e item folders sit
+    // Item-corpus arc (12-BESTIARY-PACKS §13): the dnd5e item folders sit
     // OUTSIDE the monsters packRoot, under the broad `packs/_source` root —
     // packDirs scopes the advanced listing to exactly the three folders this
     // adapter parses (the sweep-verified counts are below).
@@ -303,7 +303,7 @@ async function loadTreeListing(
  * curated mode is a constant and touches no network. Sources with `packDirs`
  * list only those packRoot children — an item source sharing a packRoot with
  * a creature source (or under a broad root like `packs/_source`) must not
- * offer folders its adapter cannot parse (12-BESTIARY-PACKS §12).
+ * offer folders its adapter cannot parse (12-BESTIARY-PACKS §13).
  */
 export async function listPackRecipes(
   adapterId: string,

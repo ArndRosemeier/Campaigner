@@ -392,7 +392,7 @@ describe('foundry-dnd5e-srd adapter', () => {
   });
 
   it('is registered and resolves through the registry', () => {
-    // The item-corpus arc (12-BESTIARY-PACKS §12) registered the parallel
+    // The item-corpus arc (12-BESTIARY-PACKS §13) registered the parallel
     // pf2e equipment adapter after the two creature adapters.
     expect(PACK_ADAPTERS.map((adapter) => adapter.id)).toEqual([
       'foundry-pf2e',

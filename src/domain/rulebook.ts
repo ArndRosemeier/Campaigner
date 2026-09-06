@@ -29,7 +29,7 @@ export const packMetaSchema = z.object({
   /** Entries that failed creature mapping/validation (reported, never silent). */
   entriesFailed: z.number().int().nonnegative(),
   /**
-   * Valid item entries in this book (12-BESTIARY-PACKS §12, the item-corpus
+   * Valid item entries in this book (12-BESTIARY-PACKS §13, the item-corpus
    * arc) — absent on pack books imported before the arc; new imports always
    * write it. Optional, so old rows parse unchanged. `entriesImported`
    * counts both lanes.
@@ -101,7 +101,7 @@ export const ruleChunkSchema = z.object({
   statBlock: statBlockSchema.nullable(),
   /**
    * Parsed equipment/item payload, when chunkType === 'item' (12-BESTIARY-PACKS
-   * §12) — absent/null on every other chunk. `.nullish()` (not a default) is
+   * §13) — absent/null on every other chunk. `.nullish()` (not a default) is
    * deliberate: chunks are read raw from Dexie in several repos, and rows
    * written before this arc genuinely lack the key — the type must say so.
    * No migration, no Dexie index change (`chunkType` is already indexed).

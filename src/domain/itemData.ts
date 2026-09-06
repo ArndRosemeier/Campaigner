@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { gameSystemSchema } from '@/domain/gameSystem';
 
 /**
- * Normalized equipment/item payload (12-BESTIARY-PACKS §12, the item-corpus
+ * Normalized equipment/item payload (12-BESTIARY-PACKS §13, the item-corpus
  * arc): the exact, validated data carried by `chunkType: 'item'` RuleChunks,
  * mirroring the `statBlock` precedent — `null` on every non-item chunk. The
  * two source corpora map onto ONE shape so the retrieval pool and prompt

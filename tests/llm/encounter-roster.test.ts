@@ -48,7 +48,7 @@ function chunk(overrides: {
   });
 }
 
-/** An `item` chunk fixture (12-BESTIARY-PACKS §12) for the roster guard. */
+/** An `item` chunk fixture (12-BESTIARY-PACKS §13) for the roster guard. */
 function itemChunk(name: string): RuleChunk {
   return ruleChunkSchema.parse({
     id: crypto.randomUUID(),
@@ -327,7 +327,7 @@ describe('collectPackRoster', () => {
     );
   });
 
-  it('skips item chunks (12-BESTIARY-PACKS §12) — an equipment pack never poisons the roster', async () => {
+  it('skips item chunks (12-BESTIARY-PACKS §13) — an equipment pack never poisons the roster', async () => {
     // Item books are `origin: 'pack'` books of the same system; without the
     // skip guard, collectPackRoster would throw on every encounter run once
     // an equipment pack is imported.

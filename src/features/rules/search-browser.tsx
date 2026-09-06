@@ -21,7 +21,7 @@ const CHUNK_TYPES: { value: ChunkType; label: string }[] = [
   { value: 'section', label: 'Sections' },
   { value: 'statblock', label: 'Stat blocks' },
   { value: 'table', label: 'Tables' },
-  // Item-corpus arc (12-BESTIARY-PACKS §12): imported equipment packs are
+  // Item-corpus arc (12-BESTIARY-PACKS §13): imported equipment packs are
   // searchable like any other chunk type.
   { value: 'item', label: 'Items' },
 ];

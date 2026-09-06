@@ -135,7 +135,7 @@ async function seedPackBook(): Promise<string> {
 }
 
 /**
- * Seeds a ready pack book that imported ITEMS (12-BESTIARY-PACKS §12):
+ * Seeds a ready pack book that imported ITEMS (12-BESTIARY-PACKS §13):
  * one validated item chunk (a dnd5e Bag of Beans) with itemsImported > 0 —
  * the collectItemPool book filter's positive case.
  */
@@ -286,7 +286,7 @@ describe('Encounter Cartographer run', () => {
       chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
     expect(briefContent).toContain('Bestiary roster');
     expect(briefContent).toContain('Goblin Boss (1, humanoid, goblinoid)');
-    // §12: the item pool grounds the brief's treasure field too (the item
+    // §13: the item pool grounds the brief's treasure field too (the item
     // pack book was seeded alongside the bestiary pack).
     expect(briefContent).toContain('Item pool — equipment available in the imported pack books:');
     expect(briefContent).toContain('Bag of Beans (equipment, 2000 gp, rare)');

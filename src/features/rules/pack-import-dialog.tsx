@@ -196,7 +196,7 @@ export function PackImportReport({
       )}
       <p className="flex items-center gap-2">
         <Badge className="bg-emerald-600/15 text-emerald-500">{String(imported)} imported</Badge>
-        {/* Item-corpus arc (12-BESTIARY-PACKS §12): an item pack's imported
+        {/* Item-corpus arc (12-BESTIARY-PACKS §13): an item pack's imported
             count IS its item count — named explicitly, never lumped in. */}
         {result.itemsImported > 0 && (
           <Badge className="bg-sky-600/15 text-sky-500" data-testid="pack-import-items">

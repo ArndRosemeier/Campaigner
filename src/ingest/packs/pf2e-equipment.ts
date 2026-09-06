@@ -6,7 +6,7 @@ import { errorMessage } from '@/lib/errors';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
- * `foundry-pf2e-equipment` pack adapter (12-BESTIARY-PACKS §12): equipment/
+ * `foundry-pf2e-equipment` pack adapter (12-BESTIARY-PACKS §13): equipment/
  * item entries from the Foundry VTT PF2e system content ([foundryvtt/pf2e]
  * (https://github.com/foundryvtt/pf2e) `packs/pf2e/equipment/` @ `v14-dev` —
  * 5707 per-item JSON documents at the time of the corpus sweep). A PARALLEL

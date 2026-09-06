@@ -16,7 +16,7 @@ import { getPackAdapter } from './packs/registry';
 import type { PackAdapter, PackEntry, PackEntryFailure, PackInputFile, PackItemEntry } from './packs/types';
 
 /**
- * Bestiary pack import runner (12-BESTIARY-PACKS §6/§12): expands zip inputs,
+ * Bestiary pack import runner (12-BESTIARY-PACKS §6/§13): expands zip inputs,
  * hands files to the selected adapter, validates creature entries at the
  * `statBlockSchema` boundary and item entries at the `itemDataSchema`
  * boundary, persists `statblock` and `item` RuleChunks in batches, and
@@ -44,7 +44,7 @@ export interface PackImportResult {
   chunkCount: number;
   /** Valid entries the import produced — creature AND item lanes combined. */
   imported: number;
-  /** Valid item entries (the `item` chunk lane, 12-BESTIARY-PACKS §12). */
+  /** Valid item entries (the `item` chunk lane, 12-BESTIARY-PACKS §13). */
   itemsImported: number;
   skipped: number;
   failed: PackEntryFailure[];
@@ -206,7 +206,7 @@ export async function importPack(
       await ruleChunk(entry, statBlock, book.id, base + index),
     );
   }
-  // The item lane (12-BESTIARY-PACKS §12): stamps continue after the creature
+  // The item lane (12-BESTIARY-PACKS §13): stamps continue after the creature
   // lane so `createdAt` ordering stays unique across the combined chunk list.
   for (const [index, entry] of items.entries()) {
     const item = itemDataSchema.parse(entry.item);
@@ -302,7 +302,7 @@ async function ruleChunk(
 
 /**
  * Validates + stamps one item entry as an `item` RuleChunk (12-BESTIARY-PACKS
- * §12): same conventions as the creature lane — page numbers are meaningless
+ * §13): same conventions as the creature lane — page numbers are meaningless
  * for packs, the item name is the heading, `statBlock` stays null, and the
  * rendered text drives search, display and the `contentHash` cache key.
  */

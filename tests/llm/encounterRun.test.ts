@@ -212,7 +212,7 @@ async function seedPackBook(title: string): Promise<Id> {
 }
 
 /**
- * Seeds a ready pack book that imported ITEMS (12-BESTIARY-PACKS §12):
+ * Seeds a ready pack book that imported ITEMS (12-BESTIARY-PACKS §13):
  * one validated item chunk (a dnd5e Bag of Beans) with itemsImported > 0 —
  * the collectItemPool book filter's positive case.
  */
@@ -667,7 +667,7 @@ describe('encounter runs (M3-B)', () => {
     });
   }, 20000);
 
-  it('grounds the draft in the item pool from an item pack book (12-BESTIARY-PACKS §12)', async () => {
+  it('grounds the draft in the item pool from an item pack book (12-BESTIARY-PACKS §13)', async () => {
     const { campaign, persona } = await seed();
     await seedPackBook('Dnd5e Bestiary Pack');
     await seedItemPackBook();

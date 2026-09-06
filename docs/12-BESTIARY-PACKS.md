@@ -522,3 +522,155 @@ an encounter.
   too (one campaign preselects; zero campaigns/modules are named empty
   states). Success toasts `"<creature> spawned into '<module>'"` with an
   "Open module" action that navigates to the module reader.
+
+## 13. Equipment/item packs (item-corpus arc, 2026-09-07)
+
+The pack pipeline gains a second, PARALLEL lane: equipment and treasure. The
+same fetch → parse → import machinery gains item adapters, a new additive
+`'item'` chunk type, and an encounter-side **item pool** — the roster's
+equipment counterpart — so the Encounter Smith rewards the party with real,
+cited equipment instead of inventing magic items.
+
+### 13.1 Binding decisions
+
+- **Parallel lanes, not a merged parser.** Each system gets a dedicated item
+  adapter (`foundry-pf2e-equipment`, `foundry-dnd5e-equipment`) next to its
+  creature adapter. `PackEntry.statBlock` stays REQUIRED and
+  `PackFileParse` gains an optional `items: PackItemEntry[]`
+  (`{ name, item: ItemData, text }`) — the creature adapters, their tests and
+  their zero-valid semantics are untouched.
+- **Additive zod discipline.** `ruleChunkSchema.itemData` is
+  `itemDataSchema.nullish()` and `packMeta.itemsImported` is
+  `.optional()` — NOT defaults: chunks and packMeta are read raw from Dexie,
+  pre-arc rows genuinely lack the keys, and `z.infer` OUTPUT types must stay
+  optional so no creature/PDF construction site changes.
+- **Verbatim storage, loud errors.** Category (document `type`), rarity and
+  rules edition are stored VERBATIM (the corpus's own spellings, e.g. dnd5e
+  camelCase `veryRare`, the empty-string mundane rarity). Unsupported coins,
+  negative amounts and bad bundle counts throw per-entry (collected as
+  failures, never silently zeroed); unknown pf2e types are counted SKIPS;
+  only document types verified in the corpus are accepted.
+- **Prices are canonical per-unit cp** plus a deterministic display string.
+  pf2e coin maps are zero-filled across all coins and may carry a `per`
+  BUNDLE COUNT (Arrows: `{sp: 1}` with `per: 10` → 1 cp each, display
+  "1 sp (per 10)"); an all-zero map means "no price stated" (null). dnd5e
+  `{value, denomination}` stores a stated 0 as a REAL 0 (`priceCp: 0`,
+  display "0 cp") — a mundane-but-free item is data, not an absence.
+- **Item packs say "items".** The import toasts, the report badge and the
+  fetch-card counts use "items" for item packs (`entryNoun`, `PackRecipe.unit`),
+  while creature messages stay byte-identical (`entryNoun ?? 'creature'`).
+- **The roster must skip item chunks.** Item books are `origin: 'pack'`
+  books of the same system; without the mandatory skip in
+  `collectPackRoster`, every encounter run after an equipment import would
+  throw "no validated stat block".
+- **The item pool mirrors the roster's conventions**: deterministic
+  ordering, a hard prompt-window cap (120), a case-insensitive name index
+  over ALL entries, counted truncation, cross-book duplicate suffixes, and
+  retry-then-loud collection. It grounds the brief's free-text `treasure`
+  field by exact item names — deliberately NO new structured output field
+  in this arc.
+
+### 13.2 Licensing
+
+- **pf2e equipment** — Paizo Inc. content via the Foundry Gaming LLC
+  partnership, mechanics OGL; user-imported for personal use under Paizo's
+  Community Use Policy, not for redistribution.
+- **dnd5e equipment** — SRD content, in-document `system.source.license:
+  CC-BY-4.0`; the in-document `source.rules` field records the rules edition
+  ('2014' | '2024') and becomes the item's `rulesEdition`.
+
+### 13.3 Verified source formats (full live corpus sweeps 2026-09-07; fixture tests pin them)
+
+**pf2e** — [foundryvtt/pf2e](https://github.com/foundryvtt/pf2e) `v14-dev`,
+`packs/pf2e/equipment/` (flat, one JSON per item): **5707 documents**
+(trees API; incl. one `_folders.json`, a counted skip). Accepted item types
+are the swept inventory: `weapon`, `armor`, `shield`, `equipment`,
+`consumable`, `treasure`, `ammo`, `backpack`, `kit`. Verified field shapes:
+
+- `system.price.value` is a zero-filled MULTI-COIN MAP
+  (`{cp:0, gp:45, pp:0, sp:0}`); optional `system.price.per` is the bundle
+  count; `system.traits.rarity` is always present ('common'…'unique').
+- `system.level.value` is `null` on kit documents (Adventurer's Pack) —
+  a null level, not a skip.
+- No rules-edition marker → `rulesEdition: null`. Legacy NDJSON `.db`
+  releases accepted.
+
+**dnd5e** — [foundryvtt/dnd5e](https://github.com/foundryvtt/dnd5e) `6.0.x`,
+`packs/_source/` YAML: `equipment24/` (**679** documents, 2024 rules),
+`items/` (**889**, 2014 rules), `tradegoods/` (**23**) — **all 1454 swept,
+zero parse errors**. Accepted item types: `weapon`, `equipment`,
+`consumable`, `tool`, `loot` (the complete inventory). Verified field
+shapes:
+
+- `system.price = {value, denomination}` with denominations cp/sp/gp only
+  (the ladder accepts all five coins; others fail loudly).
+- `system.rarity`: `''` (mundane), common, uncommon, rare, `veryRare`
+  (camelCase, stored verbatim), legendary, artifact.
+- Top-level `type` exists on every swept document and is the category;
+  NO level exists anywhere — `itemData.level` is always null.
+- `system.properties` (slugs like `ver`) map through the shared
+  `DND5E_PROPERTY_LABELS` table; unknown slugs are KEPT RAW — never dropped.
+
+### 13.4 Data model (delta to 01-DATA-MODEL and §4)
+
+- `chunkTypeSchema` gains `'item'`; `ruleChunkSchema` gains `itemData`
+  (nullish). An item chunk has `statBlock: null`, its name in
+  `headingPath[0]`, and its stamps CONTINUE after the creature lane's
+  (unique per book).
+- `ItemData` (new domain schema): `system`, `category`, `level`
+  (int, nullable), `priceDisplay`, `priceCp` (nonneg, nullable),
+  `rarity` (default ''), `traits` (default []), `rulesEdition`
+  (nullable).
+- `packMeta.itemsImported` (optional int, nonneg): valid item entries in
+  the book; `entriesImported` counts BOTH lanes. `PackImportResult`
+  gains `itemsImported`.
+
+### 13.5 Adapter, fetch and pipeline delta (delta to §5–§7 and 16)
+
+- Adapters accept `.json`/`.db` (pf2e) and `.yml`/`.yaml` (dnd5e), are
+  self-contained (shared text-stripping rules copied per §5's precedent;
+  the dnd5e property-label table is exported and reused verbatim), and are
+  registered after the creature adapters.
+- `PackAdapter.entryNoun?` names the zero-valid error's noun; the pf2e item
+  source shares the pf2e repo/packRoot and `PackFetchSource.packDirs`
+  scopes its advanced "list everything" listing to `packs/pf2e/equipment`
+  (the dnd5e item source scopes `packs/_source` to `equipment24`, `items`,
+  `tradegoods`); `PackRecipe.unit?: 'items'` labels the curated counts.
+- The rules browser's type filter gains "Items"; item chunks render their
+  `formatItemText` summary (category · Level N · price · rarity · rules)
+  in the search browser.
+- `collectItemPool`/`collectItemPoolWithRetry` (new `src/llm/
+  encounterItems.ts`): reads ready pack books with
+  `packMeta.itemsImported > 0`, item chunks only (a typed chunk without
+  validated item data is a loud data error), optional
+  `ItemPoolFilter {level?, priceCp?, rarities?, categories?}` narrowing
+  BEFORE ordering and the cap, target-level distance ordering (ties by
+  level, price, name), `ITEM_POOL_LIMIT = 120`.
+- The retrieve step collects the pool alongside the roster (same resolved
+  target level), persists `itemLines/itemTruncated/itemChunkByName`
+  (additive zod defaults — old runs read back empty), and the draft and
+  encounter-brief prompts render `formatItemPoolSection` after the roster
+  section: null without item books, so those prompts are byte-identical
+  to the pre-arc shape.
+
+### 13.6 Non-goals
+
+- No PDF item extraction, no Cosmere/4e/generic-d20 item sources, no price
+  conversion between systems, no inventory/shopkeeping feature, no
+  structured item output field on the encounter brief (the pool grounds the
+  free-text `treasure` field), and no item citation ENFORCEMENT yet — an
+  invented item name in the treasure text is a quality issue, not a run
+  failure, until a follow-up arc adds validation.
+
+### 13.7 Acceptance criteria (additive to §10)
+
+- A pf2e item import produces an item-only book: `itemsImported` in the
+  badge and toast, chunks of type `item` with validated `itemData`, and
+  encounter runs in that system still work (roster skip-guard).
+- The dnd5e item chain imports 2024 equipment, 2014 items and trade goods
+  with the verbatim rarity/edition rules above; fixtures pin one real
+  document per accepted type.
+- The encounter prompt renders the item pool section (after the roster)
+  only when an item pack book exists, and stays byte-identical otherwise;
+  the stored retrieve output round-trips across pause/resume.
+- Every gate passes against exactly the committed slice, per commit.

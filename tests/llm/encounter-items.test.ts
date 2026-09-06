@@ -111,7 +111,7 @@ describe('itemLevelSort', () => {
   });
 });
 
-describe('buildItemPool (12-BESTIARY-PACKS §12)', () => {
+describe('buildItemPool (12-BESTIARY-PACKS §13)', () => {
   it('caps the window at the pool limit and counts truncation', () => {
     const entries = Array.from({ length: ITEM_POOL_LIMIT + 7 }, (_unused, index) =>
       entry({ name: `Item ${String(index)}`, levelSort: index, level: String(index) }),
@@ -200,7 +200,7 @@ describe('formatItemPoolSection', () => {
   });
 });
 
-describe('collectItemPool (12-BESTIARY-PACKS §12)', () => {
+describe('collectItemPool (12-BESTIARY-PACKS §13)', () => {
   it('collects item chunks from ready pack books with itemsImported > 0', async () => {
     const itemsBookId = crypto.randomUUID();
     const creaturesBookId = crypto.randomUUID();

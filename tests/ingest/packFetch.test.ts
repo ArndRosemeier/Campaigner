@@ -178,7 +178,7 @@ describe('pack fetch sources (ratified pins)', () => {
     expect(PACK_FETCH_FALLBACK_VALID_RATIO).toBe(0.5);
     // Every source's chain: newest (HEAD) first, then its pinned verified ref.
     // The pf2e pair shares v14-dev and the dnd5e pair shares 6.0.x; the item
-    // sources joined with the item-corpus arc (12-BESTIARY-PACKS §12).
+    // sources joined with the item-corpus arc (12-BESTIARY-PACKS §13).
     expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
@@ -871,9 +871,9 @@ describe('throttleProgress (~10 Hz progress, F7)', () => {
   });
 });
 
-// --- Item source (12-BESTIARY-PACKS §12): foundry-pf2e-equipment ---------------
+// --- Item source (12-BESTIARY-PACKS §13): foundry-pf2e-equipment ---------------
 
-describe('item fetch source foundry-pf2e-equipment (12-BESTIARY-PACKS §12)', () => {
+describe('item fetch source foundry-pf2e-equipment (12-BESTIARY-PACKS §13)', () => {
   /** A minimal real-shaped pf2e equipment document (Torch / Arrows class). */
   function itemDoc(name: string, coin: Record<string, number>, per?: number): Record<string, unknown> {
     return {
@@ -976,7 +976,7 @@ describe('item fetch source foundry-pf2e-equipment (12-BESTIARY-PACKS §12)', ()
   });
 });
 
-describe('item fetch source foundry-dnd5e-equipment (12-BESTIARY-PACKS §12)', () => {
+describe('item fetch source foundry-dnd5e-equipment (12-BESTIARY-PACKS §13)', () => {
   /** A minimal real-shaped dnd5e item document (Candle / Chicken class). */
   function itemDoc(name: string, value: number, denomination: string): Record<string, unknown> {
     return {

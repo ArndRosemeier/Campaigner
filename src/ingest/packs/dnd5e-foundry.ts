@@ -112,7 +112,7 @@ const SKILL_LABELS: Readonly<Record<string, string>> = {
 };
 
 /** Weapon/equipment property slugs → printed labels. Shared with the item
- *  adapter (12-BESTIARY-PACKS §12), which keeps unknown slugs raw. */
+ *  adapter (12-BESTIARY-PACKS §13), which keeps unknown slugs raw. */
 export const DND5E_PROPERTY_LABELS: Readonly<Record<string, string>> = {
   amm: 'ammunition', fin: 'finesse', hvy: 'heavy', lgt: 'light', ldd: 'lodged',
   rch: 'reach', rel: 'reload', ret: 'returning', spc: 'special', th: 'thrown',

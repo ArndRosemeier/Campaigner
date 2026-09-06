@@ -8,7 +8,7 @@ import { errorMessage } from '@/lib/errors';
 import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
 
 /**
- * `foundry-dnd5e-equipment` pack adapter (12-BESTIARY-PACKS §12): equipment/
+ * `foundry-dnd5e-equipment` pack adapter (12-BESTIARY-PACKS §13): equipment/
  * item entries from the Foundry VTT dnd5e system content ([foundryvtt/dnd5e]
  * (https://github.com/foundryvtt/dnd5e) branch `6.0.x`, `packs/_source/`
  * folders `equipment24/` (2024 rules), `items/` (2014 rules) and

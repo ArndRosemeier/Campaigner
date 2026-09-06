@@ -130,7 +130,7 @@ const storedRetrieveOutputSchema = z.object({
   rosterChunkByName: z.record(z.string(), z.string()).default({}),
   rosterLines: z.array(z.string()).default([]),
   rosterTruncated: z.number().default(0),
-  // 12-BESTIARY-PACKS §12: the item pool (the roster's equipment
+  // 12-BESTIARY-PACKS §13: the item pool (the roster's equipment
   // counterpart), persisted so the encounter prompts render it
   // byte-identically without re-collection (additive fields; older runs
   // read back as empty).
@@ -156,7 +156,7 @@ interface RetrieveContext {
   rosterLines: string[];
   rosterTruncated: number;
   rosterChunkByName: Record<string, Id>;
-  /** §12 (item-corpus arc): the item pool + name→chunkId map. */
+  /** §13 (item-corpus arc): the item pool + name→chunkId map. */
   itemLines: string[];
   itemTruncated: number;
   itemChunkByName: Record<string, Id>;
@@ -1338,7 +1338,7 @@ export class RunEngine {
         rosterLines = roster.lines;
         rosterTruncated = roster.truncated;
         rosterChunkByName = Object.fromEntries(roster.chunkByName);
-        // §12 (item-corpus arc): the item pool — the roster's equipment
+        // §13 (item-corpus arc): the item pool — the roster's equipment
         // counterpart — over every ready pack book that imported items,
         // ordered by the same resolved target level. Retry + loud failure
         // match the roster; a corrupt item chunk never degrades the run.
@@ -1442,7 +1442,7 @@ export class RunEngine {
       // second roster collection.
       rosterLines: context.rosterLines,
       rosterTruncated: context.rosterTruncated,
-      // §12: the item pool persists with the same contract as the roster.
+      // §13: the item pool persists with the same contract as the roster.
       itemChunkByName: context.itemChunkByName,
       itemLines: context.itemLines,
       itemTruncated: context.itemTruncated,
@@ -1608,7 +1608,7 @@ export class RunEngine {
         : `Rule excerpts:\n${context.excerpts}`,
       buildStatblockCitationSection(context.statblockTitles),
       formatRosterSection(context.rosterLines, context.rosterTruncated),
-      // §12: the item pool renders after the roster — null (nothing rendered)
+      // §13: the item pool renders after the roster — null (nothing rendered)
       // without item books, so prompts stay byte-identical to the pre-arc shape.
       formatItemPoolSection(context.itemLines, context.itemTruncated),
       // fix-02 (decision 1): with neither excerpts nor a roster there is
@@ -2102,7 +2102,7 @@ export class RunEngine {
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
       buildStatblockCitationSection(retrieval.statblockTitles),
       formatRosterSection(retrieval.rosterLines, retrieval.rosterTruncated),
-      // §12: the item pool grounds the treasure field here too.
+      // §13: the item pool grounds the treasure field here too.
       formatItemPoolSection(retrieval.itemLines, retrieval.itemTruncated),
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
       inlineStatHint,

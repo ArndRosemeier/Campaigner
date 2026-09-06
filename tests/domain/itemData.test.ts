@@ -12,7 +12,7 @@ import {
 } from '@/domain/itemData';
 import { ruleChunkSchema } from '@/domain/rulebook';
 
-describe('coin ladders (12-BESTIARY-PACKS §12, binding)', () => {
+describe('coin ladders (12-BESTIARY-PACKS §13, binding)', () => {
   it('pin the printed 10:1 staircase with cp as the base coin', () => {
     expect(PF2E_COIN_LADDER).toEqual({ cp: 1, sp: 10, gp: 100, pp: 1000 });
     // dnd5e adds electrum: 1 ep = 5 sp.

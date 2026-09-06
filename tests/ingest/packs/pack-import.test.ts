@@ -315,7 +315,7 @@ describe('importPack (foundry-dnd5e-srd, M-C)', () => {
   });
 });
 
-// --- Item lane (12-BESTIARY-PACKS §12) ----------------------------------------
+// --- Item lane (12-BESTIARY-PACKS §13) ----------------------------------------
 // A test adapter registered for the runner tests only: the real item adapters
 // (foundry-pf2e-equipment / foundry-dnd5e-equipment) live in their own suites;
 // this one exercises the LANE — accumulation, item chunks, packMeta counts,
@@ -386,7 +386,7 @@ const TEST_ITEM_ADAPTER: PackAdapter = {
   },
 };
 
-describe('importPack item lane (12-BESTIARY-PACKS §12)', () => {
+describe('importPack item lane (12-BESTIARY-PACKS §13)', () => {
   beforeEach(() => {
     // Registration seam for the lane tests only — removed after every test.
     (PACK_ADAPTERS as PackAdapter[]).push(TEST_ITEM_ADAPTER);

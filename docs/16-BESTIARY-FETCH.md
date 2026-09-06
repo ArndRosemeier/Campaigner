@@ -182,6 +182,34 @@ bounds every possible dnd5e request count at ~337 files, bounded by
 ("D&D 5e SRD Monsters — 337 creatures"); per-type splits add clicks, not
 value. (Spec-12's "337 SRD monsters" re-verified exactly.)
 
+### 4.1 Amendment (2026-09-07, item-corpus arc, verified live): the item sources
+
+The item adapters (12-BESTIARY-PACKS §13) add two fetch sources with their own
+curated recipes — counts verified by full live sweeps at the pinned refs
+(trees API + per-document fetch of every item document; the zero-network
+directory-scan test in `tests/ingest/packFetch.test.ts` auto-covers the new
+adapter files, and adapters never fetch):
+
+| Source (adapter) | Repo / ref | Pack path | Documents (verified) | Unit |
+|---|---|---|---|---|
+| Pathfinder 2e Equipment (`foundry-pf2e-equipment`) | foundryvtt/pf2e @ `v14-dev` | `packs/pf2e/equipment` | 5707 (incl. one `_folders.json`, a counted skip) | items |
+| D&D 5e Equipment, 2024 rules (`foundry-dnd5e-equipment`) | foundryvtt/dnd5e @ `6.0.x` | `packs/_source/equipment24` | 679 | items |
+| D&D 5e Items, 2014 rules (`foundry-dnd5e-equipment`) | foundryvtt/dnd5e @ `6.0.x` | `packs/_source/items` | 889 | items |
+| D&D 5e Trade Goods (`foundry-dnd5e-equipment`) | foundryvtt/dnd5e @ `6.0.x` | `packs/_source/tradegoods` | 23 | items |
+
+**`packDirs` scoping (additive, byte-identical when absent).** The pf2e item
+source shares the pf2e repo AND packRoot with the creature source, and the
+dnd5e item folders sit under the broad `packs/_source` root — without
+scoping, the advanced "list everything" toggle would offer dozens of folders
+the item adapters cannot parse. `PackFetchSource.packDirs` lists the
+packRoot children a source may offer; `listPackRecipes` filters groups by
+that set. Sources without the field behave byte-identically (the creature
+sources' full listings are unchanged — pinned by test).
+
+**Probe hygiene.** The counts above were gathered with side-effect-free
+GETs only (git/trees + raw document fetches); no repo state was modified and
+no authenticated endpoint was touched.
+
 ## 5. UX (Settings → "Bestiary packs" card)
 
 Per registered adapter with fetch recipes (pf2e + dnd5e; Cosmere has none),
@@ -289,6 +317,11 @@ migration, no schema bump.
   `PACK_FETCH_FALLBACK_VALID_RATIO` pinned at 0.5 by test; exactly one
   listing call per attempt (cached, no hidden extras); the Settings card
   shows the two-ref badge.
+- Item sources (12-BESTIARY-PACKS §13): the ref-chain pin covers FOUR
+  sources (`[['HEAD','v14-dev'],['HEAD','6.0.x'],['HEAD','v14-dev'],
+  ['HEAD','6.0.x']]`); the item fetch end-to-end imports an item book with
+  provenance and `unit: 'items'` counts; `packDirs` restricts the item
+  sources' full listings (creature sources unrestricted — both pinned).
 - Gates: `pnpm lint && pnpm typecheck && pnpm test` green; lint stays at the
   4 pre-existing warnings.
 

@@ -3,7 +3,7 @@ import type { GameSystem } from '@/domain/gameSystem';
 import type { StatBlock } from '@/domain/statblock';
 
 /**
- * Pack adapter contracts (12-BESTIARY-PACKS §5/§12). An adapter turns one
+ * Pack adapter contracts (12-BESTIARY-PACKS §5/§13). An adapter turns one
  * machine-readable source format into validated creature and/or item
  * entries; the import runner (`/src/ingest/packImport.ts`) owns persistence,
  * progress and the report. Adapters parse only the bytes they are handed —
@@ -22,7 +22,7 @@ export interface PackEntry {
 
 /**
  * One equipment/item entry ready to become an `item` RuleChunk (12-BESTIARY-
- * PACKS §12). A PARALLEL lane to `PackEntry` — `PackEntry.statBlock` stays
+ * PACKS §13). A PARALLEL lane to `PackEntry` — `PackEntry.statBlock` stays
  * required, so the creature adapters and their tests are untouched; item
  * adapters return `items` and no `statBlock`.
  */
@@ -46,7 +46,7 @@ export interface PackEntryFailure {
 export interface PackFileParse {
   entries: PackEntry[];
   /**
-   * Equipment/item entries (12-BESTIARY-PACKS §12). Optional — creature
+   * Equipment/item entries (12-BESTIARY-PACKS §13). Optional — creature
    * adapters never set it; the runner treats a missing list as empty.
    */
   items?: PackItemEntry[];
