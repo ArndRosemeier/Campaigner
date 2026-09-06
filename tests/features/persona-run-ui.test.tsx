@@ -501,6 +501,71 @@ describe('PersonaPanel run lifecycle', () => {
     await flushAsyncUpdates();
   }, 30000);
 
+  it('encounter Preset select persists to Settings and starts dungeon runs (docs/11 D10)', async () => {
+    const user = userEvent.setup();
+    const { campaign } = await seed();
+    const { saveSettings } = await import('@/db/settingsRepo');
+    const { defaultSettings } = await import('@/domain');
+    await saveSettings({
+      ...defaultSettings(),
+      openRouterApiKey: 'test-key',
+      imagesEnabled: true,
+    });
+    const cartographer = await createPersona({
+      slug: 'encounter-preset-ui',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: 'Return encounter JSON.',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        name: 'Deep Halls',
+        summary: '',
+        body: '',
+        difficulty: 'deadly',
+        levelHint: '5',
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        theme: 'drowned dungeon',
+        styleNotes: '',
+        negative: '',
+        monsters: [{ name: 'Drow', count: 2, notes: '', statBlock: VALID_STATBLOCK }],
+        rooms: [
+          { name: 'Entry', description: '', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1] },
+          { name: 'Cell', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [0] },
+        ],
+        entryRoomIndex: 0,
+      }), modelUsed: 'test-model', fallback: null });
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await setAutonomy(user, 'Manual');
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: cartographer.name }));
+    // The Dungeon preset rides Settings (genuine preference) like the aspect.
+    await user.click(screen.getByRole('combobox', { name: 'Preset' }));
+    await user.click(await screen.findByRole('option', { name: 'Dungeon' }));
+    const { readSettings } = await import('@/db/settingsRepo');
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: 'Preset' })).toHaveTextContent('Dungeon');
+    });
+    expect((await readSettings()).encounterPreset).toBe('dungeon');
+
+    await user.type(screen.getByLabelText('Brief'), 'a dungeon crawl beneath the keep');
+    await user.click(screen.getByTestId('start-run'));
+    const run = await getRun(await onlyRunId());
+    expect(run?.encounterPreset).toBe('dungeon');
+    await flushAsyncUpdates();
+    await runEngine.cancel(await onlyRunId());
+    await flushAsyncUpdates();
+  }, 30000);
+
   it('Encounter Cartographer runs to completion in default auto mode with no prompts', async () => {
     const user = userEvent.setup();
     const { campaign } = await seed();

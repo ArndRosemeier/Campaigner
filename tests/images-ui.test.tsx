@@ -244,6 +244,54 @@ describe('images ui', () => {
     await flushAsyncUpdates();
   }, 20000);
 
+  it('a dungeon-preset encounter captions the map as a Dungeon layout and regenerates keeping its preset (docs/11 D10)', async () => {
+    const user = userEvent.setup();
+    await seedBuiltInPersonas();
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
+    const campaign = await createCampaign({ name: 'Dungeons', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Drowned Halls',
+    });
+    const image = await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['map-bytes'], { type: 'image/webp' }),
+      mimeType: 'image/webp',
+      width: 2304,
+      height: 1728,
+      source: 'generated',
+      role: 'map',
+    });
+    await updateArtifact(encounter.id, {
+      imageIds: [image.id],
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: image.id,
+        layout: null,
+        preset: 'dungeon',
+      },
+    });
+    renderAppAt(artifactPath(campaign.id, encounter.id));
+
+    // The map caption names the preset (the layout is the encounter's identity).
+    expect(await screen.findByText(/Dungeon layout on file/)).toBeInTheDocument();
+
+    // Regeneration keeps the encounter's own preset (panel-side override).
+    await user.click(await screen.findByTestId('generate-encounter-map'));
+    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
+    await waitFor(() => {
+      expect(personaSelect.textContent).toContain('Encounter Cartographer');
+    });
+    expect(screen.getByTestId('encounter-regenerate-target').textContent).toContain('keeping its map preset');
+    await flushAsyncUpdates();
+  }, 20000);
+
   it('settings expose the image generation toggle and model', async () => {
     renderAppAt('/settings');
     const toggle = await screen.findByTestId('images-enabled');

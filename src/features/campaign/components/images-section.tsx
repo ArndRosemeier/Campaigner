@@ -287,7 +287,8 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
                 <GalleryThumb imageId={mapImageId} />
               </button>
               <p className="text-xs text-muted-foreground">
-                Battlemap on file — click to view. It seeds the table surface
+                {artifact.data.preset === 'dungeon' ? 'Dungeon layout' : 'Battlemap'} on file —
+                click to view. It seeds the table surface
                 (map-role images keep up to 4096px)
                 {artifact.data.layout !== null
                   ? ` together with the room layout (${artifact.data.layout.rooms.length} ${

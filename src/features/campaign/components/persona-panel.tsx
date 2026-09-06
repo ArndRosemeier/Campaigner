@@ -286,6 +286,11 @@ export function PersonaPanel({
   async function start(): Promise<void> {
     if (selectedPersona === undefined) return;
     if (selectedPersona.mode === 'encounter') {
+      // Regenerate keeps the target encounter's own preset (docs/11 D10): an
+      // existing map is never silently re-tiered; the Settings select below
+      // governs fresh generation and the queue's default.
+      const targetArtifact = targetArtifacts.find((artifact) => artifact.id === targetArtifactId);
+      const targetPreset = targetArtifact?.kind === 'encounter' ? targetArtifact.data.preset : undefined;
       const runId = await runEngine.startRun({
         campaign,
         persona: selectedPersona,
@@ -293,6 +298,7 @@ export function PersonaPanel({
         brief,
         pinnedChunkIds: pinned.map((chunk) => chunk.id),
         encounterMapAspect: settings?.encounterMapAspect ?? '4:3',
+        encounterPreset: targetPreset ?? settings?.encounterPreset ?? 'standard',
         ...(targetArtifactId === '' ? {} : { targetArtifactId }),
         // Fresh encounter creates carry the dialog's placement + extras;
         // targeted fills get neither (placement is fresh-create only).
@@ -568,14 +574,38 @@ export function PersonaPanel({
                     <SelectItem value="1:1">1:1</SelectItem>
                   </SelectContent>
                 </Select>
+                <Label htmlFor="encounter-preset">Preset</Label>
+                <Select
+                  value={settings?.encounterPreset ?? 'standard'}
+                  items={{ standard: 'Standard', dungeon: 'Dungeon' }}
+                  onValueChange={(value) => {
+                    if (value === 'standard' || value === 'dungeon') {
+                      void updateSettings({ encounterPreset: value }).catch((error: unknown) => {
+                        toastError('Could not save map preset', error);
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger aria-label="Preset">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="standard">Standard</SelectItem>
+                    <SelectItem value="dungeon">Dungeon</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Dungeon generates a connected multi-room complex on a finer grid
+                  (each cell is half the size).
+                </p>
                 {/* fix-02 (decision 6): one lightweight, non-blocking notice
                 when this campaign's system has no ready bestiary pack. */}
                 <NoPackNotice system={campaign.system} />
                 {targetArtifactId !== '' && (
                   <p className="text-xs text-amber-600" data-testid="encounter-regenerate-target">
                     Runs against the selected encounter; name, prose, relations and roster are
-                    preserved, layout and map are replaced. Placement and new-artifact options do
-                    not apply.
+                    preserved, layout and map are replaced (keeping its map preset). Placement and
+                    new-artifact options do not apply.
                   </p>
                 )}
               </div>
@@ -1103,6 +1133,7 @@ function EncounterRunActions({
     pinnedChunkIds: run.pinnedChunkIds,
     ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
     ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+    ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
     ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
     ...(run.runExtras === null ? {} : { extras: run.runExtras }),
   };
@@ -1301,6 +1332,7 @@ function RunActions({
           pinnedChunkIds: run.pinnedChunkIds,
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+    ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),
         };
@@ -1312,6 +1344,7 @@ function RunActions({
     run.pinnedChunkIds,
     run.targetArtifactId,
     run.encounterMapAspect,
+    run.encounterPreset,
     run.placementModuleId,
     run.runExtras,
   ]);
@@ -1493,6 +1526,7 @@ function FailedRunActions({
           pinnedChunkIds: run.pinnedChunkIds,
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
+    ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),
         };
