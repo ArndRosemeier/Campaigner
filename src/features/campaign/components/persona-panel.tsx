@@ -1541,7 +1541,10 @@ function FailedRunDetails({ run }: { run: PersonaRun }): JSX.Element {
 
   async function handleCopy(): Promise<void> {
     try {
-      const clipboard: Clipboard | undefined = navigator.clipboard;
+      // The DOM lib types `navigator.clipboard` as always present, but at
+      // runtime it is missing in insecure contexts and test environments —
+      // the widening cast states the truth the type cannot.
+      const clipboard = navigator.clipboard as Clipboard | undefined;
       if (clipboard === undefined) throw new Error('Clipboard API is unavailable here');
       await clipboard.writeText(run.errorMessage);
       setCopied(true);
