@@ -1519,4 +1519,112 @@ describe('encounter runs (M3-B)', () => {
       expect(artifact.data.layout?.rooms[0]?.keyTreasure).toBe('Hoard: 250 gp');
     });
   });
+
+  describe('in-place fill room reconciliation (docs/11 D12)', () => {
+    it('re-partitions the preserved layout over the NEW roster and runs the budget loop', async () => {
+      const { campaign, persona, trollChunkId } = await seed();
+      const { db } = await import('@/db/db');
+      const chunk = await db.chunks.get(trollChunkId);
+      searchRulesMock.mockResolvedValue(
+        chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+      );
+      const roomIdA = '00000000-0000-4000-8000-0000000000b1';
+      const roomIdB = '00000000-0000-4000-8000-0000000000b2';
+      // Old roster: Troll (room A, level 5) + Cultist (room B). The fresh
+      // content drops the Cultist and adds a level-10 Ogre.
+      const stub = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Ford Ambush',
+        tags: [],
+        summary: '',
+        body: '',
+        data: {
+          difficulty: 'deadly',
+          levelHint: '5',
+          monsters: [
+            { name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId: trollChunkId } },
+            { name: 'Cultist', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+          ],
+          terrain: '',
+          tactics: '',
+          treasure: '',
+          mapImageId: null,
+          preset: 'standard',
+          locationKind: 'other',
+          siteShape: 'complex',
+          budgetAdvisory: '',
+          layout: {
+            gridW: 24,
+            gridH: 18,
+            theme: 'Ford',
+            path: [roomIdA, roomIdB],
+            rooms: [
+              {
+                id: roomIdA,
+                name: 'Gatehouse',
+                rects: [{ x: 0, y: 0, w: 8, h: 6 }],
+                mobsRect: { x: 1, y: 1, w: 6, h: 4 },
+                description: '',
+                monsterIndexes: [0],
+                spawn: true,
+                key: '',
+                keyTreasure: '',
+              },
+              {
+                id: roomIdB,
+                name: 'Yard',
+                rects: [{ x: 10, y: 0, w: 8, h: 6 }],
+                mobsRect: { x: 11, y: 1, w: 6, h: 4 },
+                description: '',
+                monsterIndexes: [1],
+                spawn: false,
+                key: '',
+                keyTreasure: '',
+              },
+            ],
+            corridors: [],
+          },
+        },
+      });
+      chatMock.mockResolvedValue({
+        text: JSON.stringify({
+          ...DRAFT,
+          monsters: [
+            { name: 'Troll', count: 1, notes: '', sourceChunkIndex: 0 },
+            { name: 'Ogre', count: 1, notes: '', statBlock: monsterBlock({ level: '10' }) },
+          ],
+        }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+      const runId = await runEngine.startRun({
+        campaign,
+        persona,
+        brief: 'Regenerate the ford ambush',
+        autonomy: 'auto',
+        pinnedChunkIds: [],
+        targetArtifactId: stub.id,
+      });
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact(stub.id);
+      if (artifact?.kind !== 'encounter') return;
+      // Reconciliation: Troll is preserved by name on its room (remapped to
+      // the new index 0), the new Ogre is appended round-robin to the FIRST
+      // room, and the gone Cultist's assignment is dropped.
+      const rooms = artifact.data.layout?.rooms ?? [];
+      expect(rooms[0]?.monsterIndexes).toEqual([0, 1]);
+      expect(rooms[1]?.monsterIndexes).toEqual([]);
+      // The budget loop covers in-place fills: the Gatehouse (Troll 5 + Ogre
+      // 10 = 15) overruns the level-5 band of 7, so its target steps down
+      // (5 → 4) and the LOUD advisory persists on the artifact.
+      expect(rooms[0]?.targetLevel).toBe(4);
+      expect(rooms[1]?.targetLevel).toBe(5);
+      expect(artifact.data.budgetAdvisory).toContain('ships over its challenge budget');
+      expect(artifact.data.budgetAdvisory).toContain('Gatehouse');
+    });
+  });
 });

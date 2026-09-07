@@ -251,6 +251,13 @@ export const encounterGeneratorBriefSchema = z
          * line). Optional enrichment — '' when the brief gave none. */
         key: z.string().default(''),
         keyTreasure: z.string().default(''),
+        /**
+         * This room's own challenge target (docs/11 D12): the party level
+         * this room ALONE should challenge. Absentable: strict mode forces
+         * the key; `null` parses to undefined and the run stamps the
+         * encounter's parsed levelHint instead.
+         */
+        targetLevel: absentable(rosterIndex),
       }),
     ).min(1).max(10),
     entryRoomIndex: rosterIndex,
@@ -260,6 +267,9 @@ export const encounterGeneratorBriefSchema = z
       context.addIssue({ code: 'custom', path: ['entryRoomIndex'], message: 'entry room index is outside rooms' });
     }
     for (const [roomIndex, room] of brief.rooms.entries()) {
+      if (room.targetLevel !== undefined && room.targetLevel < 1) {
+        context.addIssue({ code: 'custom', path: ['rooms', roomIndex, 'targetLevel'], message: 'target level must be at least 1' });
+      }
       for (const monsterIndex of room.monsterIndexes) {
         if (monsterIndex >= brief.monsters.length) {
           context.addIssue({ code: 'custom', path: ['rooms', roomIndex, 'monsterIndexes'], message: 'monster index is outside roster' });

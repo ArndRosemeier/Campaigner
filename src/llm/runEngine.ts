@@ -35,6 +35,7 @@ import {
 import {
   attachImagesToArtifact,
   createArtifact,
+  getArtifact,
   getAnyArtifact,
   listArtifactsByCampaign,
   listArtifactsByIds,
@@ -60,6 +61,15 @@ import { statblockExtraNotice } from '@/llm/personas/extras';
 import { collectPackRosterWithRetry, formatRosterSection, parseRosterTargetLevel } from '@/llm/encounterRoster';
 import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounterItems';
 import { roomKeyGuidanceFor, treasureGuidanceFor } from '@/llm/treasureGuidance';
+import {
+  PF2E_BUDGET_ADVISORY,
+  checkRoomBudget,
+  reconcileRoomAssignments,
+  resolveBriefMonsterLevels,
+  resolveEntryLevels,
+  roomBudgetGuidanceFor,
+  roomBudgetMode,
+} from '@/llm/roomBudget';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
@@ -2079,14 +2089,26 @@ export class RunEngine {
     return result.success ? result.data : null;
   }
 
+  /**
+   * The budget loop's loud advisory from the brief step output (docs/11
+   * D12) — '' when the brief shipped clean. Step outputs are plain JSON, so
+   * the field is re-checked instead of trusted.
+   */
+  private encounterBudgetAdvisory(steps: readonly RunStep[]): string {
+    const brief = steps.find((candidate) => candidate.name === 'brief')?.output as
+      | { budgetAdvisory?: unknown }
+      | undefined;
+    const value = brief?.budgetAdvisory;
+    return typeof value === 'string' ? value : '';
+  }
+
   private effectiveEncounterBrief(steps: readonly RunStep[]): {
     parsed: EncounterGeneratorBrief;
     aspect: EncounterMapAspect;
     preset: EncounterPreset;
     statblockChunkIds: Id[];
     rosterChunkByName: Record<string, Id>;
-  } {
-    const step = steps.find((candidate) => candidate.name === 'brief');
+  } {    const step = steps.find((candidate) => candidate.name === 'brief');
     const effective = step?.userEdit ?? step?.output;
     if (effective === null || effective === undefined || typeof effective !== 'object') {
       throw new Error('Encounter run has no approved brief');
@@ -2211,12 +2233,14 @@ export class RunEngine {
       groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
       `Map aspect: ${aspect}`,
-      // Dungeon preset (docs/11 D10): bias the brief toward a connected
-      // multi-room complex. Soft clause — the layout engine validates the
-      // result loudly either way; the fixed ×2 grid tier is applied by code.
+      // Site-shape branch (docs/11 D11): the brief must commit to ONE arena
+      // (exactly 1 room, no corridors) or a real dungeon complex (4–10
+      // rooms) — 2–3-room briefs are repair-rejected at this boundary. The
+      // Dungeon preset clause extends the D10 bias with the per-room
+      // challenge contract.
       preset === 'dungeon'
-        ? 'Preset: Dungeon — design a connected dungeon complex of 4–8 rooms (not a single battlefield): distinct chambers joined by corridors, dressing rooms between fights, with the entry room as the party\'s way in.'
-        : null,
+        ? 'Preset: Dungeon — design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel).'
+        : 'Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party\'s way in.',
       rosterContract,
       context.length === 0 ? null : `Context: ${JSON.stringify(context)}`,
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
@@ -2232,7 +2256,10 @@ export class RunEngine {
       // the rooms).
       roomKeyGuidanceFor(),
       treasureGuidanceFor(input.campaign.system),
-      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string}] (1–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
+      // Asymmetric per-room budget loop (docs/11 D12): the targetLevel
+      // contract + the documented per-system band.
+      roomBudgetGuidanceFor(input.campaign.system),
+      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
     ].filter((part) => part !== null).join('\n\n');
     const messages: ChatMessage[] = [
       { role: 'system', content: input.persona.systemPrompt },
@@ -2256,29 +2283,180 @@ export class RunEngine {
     };
     // Roster sources are only checked for fresh encounters: a regenerate run
     // replaces the roster with the target's verbatim entries below.
-    const evaluate = (reply: string): { brief: EncounterGeneratorBrief | null; issues: string[] } => {
+    // Asymmetric per-room budget loop (docs/11 D12): the lookups the level
+    // resolution needs — every chunk the brief could cite (stat-block pool +
+    // roster name index) plus, for regenerate runs, the target's own roster
+    // sources. pf2e runs replace the numeric check with the loud verbatim
+    // advisory (no Paizo numbers ship — roomBudget.ts).
+    const budgetMode = roomBudgetMode(input.campaign.system);
+    const budgetChunkIds = [
+      ...new Set([...retrieval.statblockChunkIds, ...Object.values(retrieval.rosterChunkByName)]),
+    ];
+    const budgetChunks = budgetChunkIds.length === 0 ? [] : await getChunksByIds(budgetChunkIds);
+    const chunkById = new Map(budgetChunks.map((chunk) => [chunk.id, chunk]));
+    /** Stamps the encounter's parsed levelHint onto rooms with no target. */
+    const stampTargetLevels = (brief: EncounterGeneratorBrief): EncounterGeneratorBrief => {
+      const hintLevel = parseRosterTargetLevel(brief.levelHint);
+      return {
+        ...brief,
+        rooms: brief.rooms.map((room) => ({
+          ...room,
+          ...(room.targetLevel === undefined && hintLevel !== undefined
+            ? { targetLevel: hintLevel }
+            : {}),
+        })),
+      };
+    };
+    /**
+     * Budget verdicts for a stamped brief. Fresh runs resolve each monster's
+     * level through its citation/inline source; regenerate runs resolve
+     * through the TARGET roster's persisted sources (the brief's roster is
+     * verbatim-target and carries no sources of its own).
+     */
+    const budgetVerdicts = async (
+      brief: EncounterGeneratorBrief,
+    ): Promise<ReturnType<typeof checkRoomBudget>[]> => {
+      const freshLevels =
+        targetRoster === undefined
+          ? resolveBriefMonsterLevels(brief.monsters, {
+              chunkById,
+              rosterChunkByName: retrieval.rosterChunkByName,
+              statblockChunkIds: retrieval.statblockChunkIds,
+            })
+          : undefined;
+      const entryLevels =
+        targetRoster === undefined
+          ? undefined
+          : await resolveEntryLevels(targetRoster, {
+              chunkById,
+              getArtifactStatBlock: async (artifactId) => {
+                const artifact = await getAnyArtifact(artifactId);
+                if (artifact?.kind !== 'npc') return null;
+                return artifact.data.statBlock;
+              },
+            });
+      const creatures = brief.rooms.map((room) =>
+        room.monsterIndexes.map((monsterIndex) => {
+          const monster = brief.monsters[monsterIndex];
+          return {
+            name: monster?.name ?? `roster entry ${String(monsterIndex)}`,
+            count: monster?.count ?? 0,
+            level: targetRoster === undefined ? freshLevels?.[monsterIndex] : entryLevels?.[monsterIndex],
+          };
+        }),
+      );
+      return brief.rooms.map((room, roomIndex) =>
+        checkRoomBudget({
+          roomIndex,
+          roomName: room.name,
+          targetLevel: room.targetLevel,
+          creatures: creatures[roomIndex] ?? [],
+        }),
+      );
+    };
+    /**
+     * Shape + budget evaluation. `final` marks the post-repair pass: the
+     * bounded retry has been spent, so an over-budget room ships with its
+     * target lowered one step (floor 1) and the LOUD advisory instead of
+     * re-triggering repair — never a failed run.
+     */
+    const evaluate = async (
+      reply: string,
+      final: boolean,
+    ): Promise<{
+      brief: EncounterGeneratorBrief | null;
+      issues: string[];
+      advisory: string | null;
+    }> => {
       const result = parseEncounterBrief(reply, { dropInlineStats: targetRoster !== undefined });
-      if (result.brief === null) return result;
+      if (result.brief === null) return { ...result, advisory: null };
+      const brief = result.brief;
       if (targetRoster !== undefined) {
-        if (result.brief.monsters.length !== targetRoster.length) {
+        if (brief.monsters.length !== targetRoster.length) {
           return {
             brief: null,
+            advisory: null,
             issues: [
-              `monsters: the target roster has exactly ${String(targetRoster.length)} entries — copy it verbatim in the same order (your reply listed ${String(result.brief.monsters.length)})`,
+              `monsters: the target roster has exactly ${String(targetRoster.length)} entries — copy it verbatim in the same order (your reply listed ${String(brief.monsters.length)})`,
             ],
           };
         }
-        const coverage = encounterCoverageIssues(result.brief, targetRoster.length);
-        return coverage.length === 0 ? result : { brief: null, issues: coverage };
+        const coverage = encounterCoverageIssues(brief, targetRoster.length);
+        if (coverage.length > 0) return { brief: null, issues: coverage, advisory: null };
+      } else {
+        const sourceIssues = encounterSourceIssues(
+          brief.monsters,
+          retrieval.statblockChunkIds,
+          retrieval.rosterChunkByName,
+        );
+        if (sourceIssues.length > 0) return { brief: null, issues: sourceIssues, advisory: null };
+        const coverage = encounterCoverageIssues(brief, brief.monsters.length);
+        if (coverage.length > 0) return { brief: null, issues: coverage, advisory: null };
       }
-      const sourceIssues = encounterSourceIssues(
-        result.brief.monsters,
-        retrieval.statblockChunkIds,
-        retrieval.rosterChunkByName,
+      // Site-shape dichotomy (docs/11 D11): 1 room (single arena) or 4–10
+      // rooms (complex). 2–3 rooms are a repairable issue — the prompt
+      // states the exact shape contract.
+      if (brief.rooms.length !== 1 && brief.rooms.length < 4) {
+        return {
+          brief: null,
+          advisory: null,
+          issues: [
+            `rooms: an encounter is either a single arena (exactly 1 room) or a dungeon complex (4–10 rooms) — your reply listed ${String(brief.rooms.length)} rooms`,
+          ],
+        };
+      }
+      const stamped = stampTargetLevels(brief);
+      if (budgetMode === 'verbatim') {
+        // pf2e: no numeric budget ships (Paizo licensing) — the advisory is
+        // the deterministic, always-loud replacement.
+        return { brief: stamped, issues: [], advisory: PF2E_BUDGET_ADVISORY };
+      }
+      const verdicts = await budgetVerdicts(stamped);
+      const unverified = verdicts.filter((verdict) => verdict.status === 'unverified');
+      const over = verdicts.filter((verdict) => verdict.status === 'over');
+      if (over.length === 0) {
+        const advisories = unverified
+          .map((verdict) => verdict.advisory)
+          .filter((advisory): advisory is string => advisory !== null);
+        return {
+          brief: stamped,
+          issues: [],
+          advisory: advisories.length === 0 ? null : advisories.join(' '),
+        };
+      }
+      if (!final) {
+        return {
+          brief: null,
+          advisory: null,
+          issues: over.map((verdict) => verdict.issue ?? '').filter((issue) => issue !== ''),
+        };
+      }
+      // Final pass: lower each over-budget room a step (floor 1) — the
+      // documented loop's deterministic tail — and ship the loud advisory.
+      const loweredTargets = new Map<number, number>(
+        over.flatMap((verdict) =>
+          verdict.loweredTargetLevel === null
+            ? []
+            : [[verdict.roomIndex, verdict.loweredTargetLevel]],
+        ),
       );
-      if (sourceIssues.length > 0) return { brief: null, issues: sourceIssues };
-      const coverage = encounterCoverageIssues(result.brief, result.brief.monsters.length);
-      return coverage.length === 0 ? result : { brief: null, issues: coverage };
+      const finalBrief: EncounterGeneratorBrief = {
+        ...stamped,
+        rooms: stamped.rooms.map((room, roomIndex) => {
+          const lowered = loweredTargets.get(roomIndex);
+          return lowered === undefined ? room : { ...room, targetLevel: lowered };
+        }),
+      };
+      const loweredVerdicts = await budgetVerdicts(finalBrief);
+      const advisories = loweredVerdicts
+        .filter((verdict) => verdict.status !== 'ok')
+        .map((verdict) => verdict.advisory ?? '')
+        .filter((advisory) => advisory !== '');
+      return {
+        brief: finalBrief,
+        issues: [],
+        advisory: advisories.length === 0 ? null : advisories.join(' '),
+      };
     };
     const first = await chat(messages, chatOptions);
     let raw = first.text;
@@ -2286,7 +2464,7 @@ export class RunEngine {
     // The contract-repair model: the escalation tier when configured (the
     // step notice records the escalation only when it actually differed).
     let briefRepairTarget = chatOptions.model;
-    let evaluated = evaluate(raw);
+    let evaluated = await evaluate(raw, false);
     if (evaluated.brief === null) {
       // One repair turn that names every problem — a bare "the schema failed"
       // made the model repeat the same mistake three runs in a row.
@@ -2308,7 +2486,7 @@ export class RunEngine {
       );
       raw = retry.text;
       fallback = retry.fallback ?? fallback;
-      evaluated = evaluate(raw);
+      evaluated = await evaluate(raw, true);
     }
     if (evaluated.brief === null) {
       const step = this.finishStep(steps[stepIndex], { raw, issues: evaluated.issues }, 'rejected');
@@ -2334,6 +2512,9 @@ export class RunEngine {
         })),
       };
     }
+    // The budget loop's advisory (docs/11 D12): persisted on the step output
+    // (finalize copies it onto the artifact) and surfaced on the notice.
+    const budgetAdvisory = evaluated.advisory;
     return {
       step: this.finishStep(
         steps[stepIndex],
@@ -2344,9 +2525,13 @@ export class RunEngine {
             preset,
             statblockChunkIds: retrieval.statblockChunkIds,
             rosterChunkByName: retrieval.rosterChunkByName,
+            ...(budgetAdvisory === null ? {} : { budgetAdvisory }),
           },
           fallback,
-          contractRepairNotice(chatOptions.model, briefRepairTarget),
+          [
+            contractRepairNotice(chatOptions.model, briefRepairTarget),
+            budgetAdvisory,
+          ].filter((part): part is string => part !== null).join(' ') || null,
         ),
       ),
       ...(input.autonomy === 'auto' ? {} : { runStatus: 'awaiting_user' as const }),
@@ -2389,6 +2574,9 @@ export class RunEngine {
           // may rotate the room order — a parallel list would desync).
           key: room.key,
           keyTreasure: room.keyTreasure,
+          // The room's own challenge target travels with it for the same
+          // reason (the budget loop may have stamped/lowered it).
+          ...(room.targetLevel === undefined ? {} : { targetLevel: room.targetLevel }),
         };
       }),
     }, this.encounterLayoutVariants.get(runId) ?? 0);
@@ -2797,6 +2985,9 @@ export class RunEngine {
           // So is the shape it just produced (docs/11 D11): the target's old
           // shape may not match the fresh layout's room count.
           siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
+          // And the run's own budget verdict (docs/11 D12) replaces the
+          // target's stale advisory — the fresh layout was just checked.
+          budgetAdvisory: this.encounterBudgetAdvisory(steps),
         },
       }, { source: 'persona', runId });
       artifactId = target.id;
@@ -2869,7 +3060,7 @@ export class RunEngine {
           // single, anything multi-room = complex. The brief boundary
           // enforces 1-or-4–10; the persisted field records the outcome.
           siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
-          budgetAdvisory: '',
+          budgetAdvisory: this.encounterBudgetAdvisory(steps),
         },
       }, { source: 'persona', runId });
       artifactId = artifact.id;
@@ -3205,12 +3396,106 @@ export class RunEngine {
       if (target.kind !== 'encounter') {
         throw new Error(`"${target.name}" is not an encounter and cannot be filled in place`);
       }
+      if (!('monsters' in data)) {
+        throw new Error('In-place generation produced no monster roster to fill the encounter with');
+      }
       const modelAlias = draftName.trim();
       const aliases =
         modelAlias.toLowerCase() === target.name.trim().toLowerCase() ||
         target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
           ? target.aliases
           : [...target.aliases, modelAlias];
+      // In-place fill reconciliation (docs/11 D12): `data.monsters` is the
+      // NEW roster while the target's layout stays byte-identical — without
+      // re-partitioning, `room.monsterIndexes` dangle/shift/skip against the
+      // new roster (loud seed failure or silent wrong-room seeding). The
+      // exact rules live in roomBudget.reconcileRoomAssignments: preserve by
+      // name-match, append new entries round-robin, drop gone ones.
+      const targetLayout = target.data.layout;
+      let reconciledLayout = targetLayout;
+      let budgetAdvisory = '';
+      if (targetLayout !== null) {
+        const assignments = reconcileRoomAssignments(
+          targetLayout.rooms,
+          target.data.monsters,
+          data.monsters,
+        );
+        reconciledLayout = {
+          ...targetLayout,
+          rooms: targetLayout.rooms.map((room, roomIndex) => ({
+            ...room,
+            monsterIndexes: assignments[roomIndex]?.monsterIndexes ?? [],
+          })),
+        };
+        // The same asymmetric budget check covers in-place fills. There is
+        // no repair turn at finalize (the draft is not re-rolled here), so
+        // over-budget rooms get the loop's deterministic tail only: the
+        // target lowered a step (floor 1) and the LOUD advisory persisted —
+        // never silent, never a failed run.
+        const hintLevel = parseRosterTargetLevel(asString(draft.levelHint));
+        const stampedRooms = reconciledLayout.rooms.map((room) => ({
+          ...room,
+          ...(room.targetLevel === undefined && hintLevel !== undefined
+            ? { targetLevel: hintLevel }
+            : {}),
+        }));
+        reconciledLayout = { ...reconciledLayout, rooms: stampedRooms };
+        const chunkIds = [
+          ...new Set(
+            data.monsters.flatMap((monster) =>
+              monster.source.type === 'rulebook' ? [monster.source.chunkId] : [],
+            ),
+          ),
+        ];
+        const chunks = chunkIds.length === 0 ? [] : await getChunksByIds(chunkIds);
+        const chunkById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+        const levels = await resolveEntryLevels(data.monsters, {
+          chunkById,
+          getArtifactStatBlock: async (artifactId) => {
+            const artifact = await getArtifact(artifactId);
+            if (artifact?.kind !== 'npc') return null;
+            return artifact.data.statBlock;
+          },
+        });
+        const verdicts = stampedRooms.map((room, roomIndex) =>
+          checkRoomBudget({
+            roomIndex,
+            roomName: room.name,
+            targetLevel: room.targetLevel,
+            creatures: room.monsterIndexes.map((monsterIndex) => {
+              const monster = data.monsters[monsterIndex];
+              return {
+                name: monster?.name ?? `roster entry ${String(monsterIndex)}`,
+                count: monster?.count ?? 0,
+                level: levels[monsterIndex],
+              };
+            }),
+          }),
+        );
+        const lowered = new Map<number, number>(
+          verdicts.flatMap((verdict) =>
+            verdict.loweredTargetLevel === null
+              ? []
+              : [[verdict.roomIndex, verdict.loweredTargetLevel]],
+          ),
+        );
+        if (lowered.size > 0) {
+          reconciledLayout = {
+            ...reconciledLayout,
+            rooms: reconciledLayout.rooms.map((room, roomIndex) => {
+              const next = lowered.get(roomIndex);
+              return next === undefined ? room : { ...room, targetLevel: next };
+            }),
+          };
+        }
+        const advisories = verdicts
+          .map((verdict) => (verdict.status === 'ok' ? '' : verdict.advisory ?? ''))
+          .filter((advisory) => advisory !== '');
+        if (roomBudgetMode(input.campaign.system) === 'verbatim') {
+          advisories.push(PF2E_BUDGET_ADVISORY);
+        }
+        budgetAdvisory = advisories.join(' ');
+      }
       await updateArtifact(
         target.id,
         {
@@ -3227,13 +3512,24 @@ export class RunEngine {
             // Cartographer run re-tiers the map). The draft's locationKind
             // DOES re-classify: the fresh content describes the encounter.
             mapImageId: target.data.mapImageId,
-            layout: target.data.layout,
+            layout: reconciledLayout,
             preset: target.data.preset,
+            // The layout's structure is untouched, so the target's shape
+            // still holds (docs/11 D11).
+            siteShape: target.data.siteShape,
+            budgetAdvisory,
           }),
         },
         { source: 'persona', runId },
       );
-      const step = this.finishStep(steps[stepIndex], { artifactId: target.id });
+      const step = this.finishStep(
+        steps[stepIndex],
+        withNotice(
+          { artifactId: target.id },
+          null,
+          budgetAdvisory === '' ? null : budgetAdvisory,
+        ),
+      );
       await updateRun(runId, { resultArtifactId: target.id });
       return { step, artifactId: target.id };
     }

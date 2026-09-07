@@ -127,8 +127,7 @@ const ENCOUNTER_BRIEF = {
     },
   ],
   rooms: [
-    { name: 'Entry', description: 'Broken doors', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1] },
-    { name: 'Sanctum', description: 'Ash altar', size: 'large', monsterIndexes: [0], adjacentRoomIndexes: [0] },
+    { name: 'Entry', description: 'Broken doors', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [] },
   ],
   entryRoomIndex: 0,
 };

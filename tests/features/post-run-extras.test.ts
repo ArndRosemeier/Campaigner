@@ -86,8 +86,7 @@ const CARTOGRAPHER_BRIEF = {
   terrain: 'flooded cellars', tactics: '', treasure: '', theme: 'drowned cellars', styleNotes: '', negative: '',
   monsters: [{ name: 'Kuo-toa', count: 3, notes: '', statBlock: ENCOUNTER_STATBLOCK }],
   rooms: [
-    { name: 'Entry', description: '', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1] },
-    { name: 'Cistern', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [0] },
+    { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [] },
   ],
   entryRoomIndex: 0,
 };

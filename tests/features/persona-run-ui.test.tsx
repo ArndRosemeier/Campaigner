@@ -464,16 +464,9 @@ describe('PersonaPanel run lifecycle', () => {
           {
             name: 'Entry',
             description: '',
-            size: 'small',
-            monsterIndexes: [],
-            adjacentRoomIndexes: [1],
-          },
-          {
-            name: 'Shrine',
-            description: '',
             size: 'medium',
             monsterIndexes: [0],
-            adjacentRoomIndexes: [0],
+            adjacentRoomIndexes: [],
           },
         ],
         entryRoomIndex: 0,
@@ -534,8 +527,7 @@ describe('PersonaPanel run lifecycle', () => {
         negative: '',
         monsters: [{ name: 'Drow', count: 2, notes: '', statBlock: VALID_STATBLOCK }],
         rooms: [
-          { name: 'Entry', description: '', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1] },
-          { name: 'Cell', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [0] },
+          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [] },
         ],
         entryRoomIndex: 0,
       }), modelUsed: 'test-model', fallback: null });
@@ -609,16 +601,9 @@ describe('PersonaPanel run lifecycle', () => {
           {
             name: 'Entry',
             description: '',
-            size: 'small',
-            monsterIndexes: [],
-            adjacentRoomIndexes: [1],
-          },
-          {
-            name: 'Shrine',
-            description: '',
             size: 'medium',
             monsterIndexes: [0],
-            adjacentRoomIndexes: [0],
+            adjacentRoomIndexes: [],
           },
         ],
         entryRoomIndex: 0,

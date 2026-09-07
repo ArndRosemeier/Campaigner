@@ -38,8 +38,7 @@ const BRIEF = {
   terrain: '', tactics: '', treasure: '', theme: 'crypt', styleNotes: '', negative: '',
   monsters: [{ name: 'Skeleton', count: 1, notes: '', statBlock: STATBLOCK }],
   rooms: [
-    { name: 'Entry', description: '', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1] },
-    { name: 'Crypt', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [0] },
+    { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [] },
   ],
   entryRoomIndex: 0,
 };

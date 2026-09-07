@@ -58,8 +58,7 @@ const BRIEF = {
   negative: 'text, labels, tokens',
   monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: 'Robes: 2 gp, an ash charm', statBlock: INLINE_STATBLOCK }],
   rooms: [
-    { name: 'Entry', description: 'Broken doors', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1], key: 'Cracked doors hang off one hinge.', keyTreasure: 'Fallen banner: 15 gp' },
-    { name: 'Sanctum', description: 'Ash altar', size: 'large', monsterIndexes: [0], adjacentRoomIndexes: [0], key: 'The altar still smolders.', keyTreasure: '' },
+    { name: 'Entry', description: 'Broken doors', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [], key: 'Cracked doors hang off one hinge.', keyTreasure: 'Fallen banner: 15 gp' },
   ],
   entryRoomIndex: 0,
 };
@@ -76,8 +75,8 @@ function persona(): Persona {
   });
 }
 
-async function setup() {
-  const campaign = await createCampaign({ name: 'Map Campaign', system: 'dnd5e' });
+async function setup(system: 'dnd5e' | 'pathfinder2e' = 'dnd5e') {
+  const campaign = await createCampaign({ name: 'Map Campaign', system });
   const cartographer = persona();
   const { db } = await import('@/db');
   await db.personas.put(cartographer);
@@ -257,7 +256,10 @@ describe('Encounter Cartographer run', () => {
     const run = await getRun(runId);
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-    expect(artifact.data.layout?.rooms).toHaveLength(2);
+    expect(artifact.data.layout?.rooms).toHaveLength(1);
+    // The budget loop stamped the encounter's parsed levelHint onto the room.
+    expect(artifact.data.layout?.rooms[0]?.targetLevel).toBe(4);
+    expect(artifact.data.budgetAdvisory).toBe('');
     expect(artifact.data.mapImageId).toBe(candidates[0]);
     expect(artifact.data.monsters[0]?.source.type).toBe('inline');
     expect(artifact.imageIds).toContain(candidates[0]);
@@ -367,9 +369,10 @@ describe('Encounter Cartographer run', () => {
     const broken = {
       ...BRIEF,
       monsters: [{ name: 'Ash Cultist', count: 2, notes: '' }],
+      // Two rooms so the out-of-roster index at rooms[1] is what fails.
       rooms: [
         { ...BRIEF.rooms[0], monsterIndexes: [] },
-        { ...BRIEF.rooms[1], monsterIndexes: [3] },
+        { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [3], adjacentRoomIndexes: [0], key: '', keyTreasure: '' },
       ],
     };
     chatMock.mockResolvedValue({ text: JSON.stringify(broken), modelUsed: 'test-model', fallback: null });
@@ -529,8 +532,7 @@ describe('Encounter Cartographer run', () => {
     // an accepted consequence, stated in the UI regeneration copy and the
     // prompt clause (owner-ratified).
     const freshKeys = updated.data.layout?.rooms.map((room) => room.key) ?? [];
-    expect(freshKeys).toContain('Cracked doors hang off one hinge.');
-    expect(freshKeys).toContain('The altar still smolders.');
+    expect(freshKeys).toEqual(['Cracked doors hang off one hinge.']);
     // The encounter-scoped roster treasure survives the map run verbatim.
     expect(updated.data.monsters[0]?.treasure).toBe('Ogre pocket: 4 gp');
   });
@@ -867,8 +869,11 @@ describe('Encounter Cartographer run', () => {
         }
       };
       disc(50, 50, 8, 255, 0, 255);
+      // One room ⇒ the entrance hue is the palette entry ONE PAST the room
+      // count: cyan (hue 180). The triangle's circularity (~0.6) keeps the
+      // cyan disc below from ever satisfying the triangle-shaped target.
       disc(150, 50, 8, 0, 255, 255);
-      if (withEntrance) triangle(100, 110, 180, 35, 255, 255, 0);
+      if (withEntrance) triangle(100, 110, 180, 35, 0, 255, 255);
       return { width, height, data };
     }
 
@@ -892,12 +897,12 @@ describe('Encounter Cartographer run', () => {
       await approveUntilPick(runId, runInput);
 
       const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
-      // Two rooms → the entrance reuses the third canonical hue (yellow).
+      // One room → the entrance reuses the second canonical hue (cyan).
       expect(prompt).toContain(
         "Entrance marker: The party enters the map through a single open gap in the entry room's outer wall",
       );
-      expect(prompt).toContain('solid neon yellow triangle, about the size of a room disc');
-      expect(prompt).toContain('Entrance ("Entry"): solid neon yellow triangle');
+      expect(prompt).toContain('solid neon cyan triangle, about the size of a room disc');
+      expect(prompt).toContain('Entrance ("Entry"): solid neon cyan triangle');
       expect(prompt).toContain('Keep walls, openings, the entrance gap and overall structure aligned');
     });
 
@@ -1050,7 +1055,7 @@ describe('Encounter Cartographer run', () => {
       const briefContent =
         chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
       expect(briefContent).toContain('Preset: Dungeon');
-      expect(briefContent).toContain('connected dungeon complex of 4\u20138 rooms');
+      expect(briefContent).toContain('connected dungeon complex of 4\u201310 rooms');
 
       const candidates = await approveUntilPick(runId, runInput);
       await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
@@ -1094,6 +1099,98 @@ describe('Encounter Cartographer run', () => {
       expect(artifact.data.layout?.gridW).toBe(24);
       expect(artifact.data.layout?.gridH).toBe(18);
       expect(artifact.data.preset).toBe('standard');
+    });
+  });
+
+  describe('asymmetric per-room budget loop (docs/11 D12)', () => {
+    /** A single-arena brief whose arena badly overruns its band. */
+    function overBrief(level: string, levelHint: string): typeof BRIEF {
+      return {
+        ...BRIEF,
+        levelHint,
+        monsters: [{ name: 'Ash Cultist', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level } }],
+      };
+    }
+
+    it('runs the too-hard repair through the EXISTING single repair turn', async () => {
+      const { campaign, cartographer } = await setup();
+      // First reply: one level-10 creature against a level-1 band of 3.
+      // Repair reply: the same arena with a level-1 creature — fits.
+      chatMock
+        .mockResolvedValueOnce({ text: JSON.stringify(overBrief('10', '1')), modelUsed: 'test-model', fallback: null })
+        .mockResolvedValueOnce({ text: JSON.stringify(overBrief('1', '1')), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer);
+      const runId = await runEngine.startRun(runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      const repairTurn = (chatMock.mock.calls[1]?.[0] ?? []).at(-1);
+      expect(repairTurn?.role).toBe('user');
+      expect(repairTurn?.content).toContain('sum to 10 creature-levels');
+      expect(repairTurn?.content).toContain('"targetLevel": 1');
+
+      const step = (await getRun(runId))?.steps[0];
+      const parsed = (step?.output as { parsed: { rooms: { targetLevel?: number }[] } }).parsed;
+      expect(parsed.rooms[0]?.targetLevel).toBe(1);
+    });
+
+    it('lowers the target a step and ships the LOUD advisory after the bounded retry', async () => {
+      const { campaign, cartographer } = await setup();
+      // The model never fixes the overrun: the bounded retry is spent, the
+      // room ships with its target lowered (2 → 1) and the advisory.
+      chatMock.mockResolvedValue({ text: JSON.stringify(overBrief('10', '2')), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer), autonomy: 'auto' as const };
+      const runId = await runEngine.startRun(runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const run = await getRun(runId);
+      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(artifact.data.layout?.rooms[0]?.targetLevel).toBe(1);
+      expect(artifact.data.budgetAdvisory).toContain('ships over its challenge budget');
+      const brief = run?.steps.find((step) => step.name === 'brief');
+      expect((brief?.output as { budgetAdvisory?: string }).budgetAdvisory).toContain('challenge budget');
+    });
+
+    it('rejects a 2–3-room brief at the site-shape boundary (docs/11 D11)', async () => {
+      const { campaign, cartographer } = await setup();
+      const twoRooms = {
+        ...BRIEF,
+        rooms: [
+          { name: 'Entry', description: '', size: 'small', monsterIndexes: [], adjacentRoomIndexes: [1], key: '', keyTreasure: '' },
+          { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [0], adjacentRoomIndexes: [0], key: '', keyTreasure: '' },
+        ],
+        entryRoomIndex: 0,
+      };
+      chatMock.mockResolvedValue({ text: JSON.stringify(twoRooms), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer);
+      const runId = await runEngine.startRun(runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      const step = (await getRun(runId))?.steps[0];
+      expect(step?.status).toBe('rejected');
+      expect(rejectionIssues(step ?? { output: null })).toEqual([
+        'rooms: an encounter is either a single arena (exactly 1 room) or a dungeon complex (4–10 rooms) — your reply listed 2 rooms',
+      ]);
+    });
+
+    it('replaces the numeric band with the loud advisory for pf2e', async () => {
+      const { campaign, cartographer } = await setup('pathfinder2e');
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer), autonomy: 'auto' as const };
+      const runId = await runEngine.startRun(runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const run = await getRun(runId);
+      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(artifact.data.budgetAdvisory).toContain('not deterministically budget-checked');
+      expect(artifact.data.layout?.rooms[0]?.targetLevel).toBe(4);
     });
   });
 });
