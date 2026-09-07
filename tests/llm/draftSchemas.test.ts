@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   encounterDraftSchema,
   encounterGeneratorBriefSchema,
+  eventDraftSchema,
   factionDraftSchema,
   locationDraftSchema,
   npcDraftSchema,
@@ -35,6 +36,19 @@ describe('draft schema coercions', () => {
       { name: 'Market', description: 'Stalls.' },
     ]);
     expect(draft.hooks).toEqual(['Missing diver', 'A light at midnight.']);
+  });
+
+  it('parses event drafts with the location contract (code-identical shape)', () => {
+    const draft = eventDraftSchema.parse({
+      ...BASE,
+      locationType: 'feast',
+      inhabitants: 'Villagers',
+      pointsOfInterest: ['High table'],
+      hooks: ['A toast goes wrong.'],
+    });
+    expect(draft.locationType).toBe('feast');
+    expect(draft.pointsOfInterest).toEqual([{ name: 'High table', description: '' }]);
+    expect(draft.hooks).toEqual(['A toast goes wrong.']);
   });
 
   it('accepts bare strings for faction ranks and plot-arc beats', () => {
@@ -129,6 +143,7 @@ describe('draft schema minimum content', () => {
     },
     pc: { ...BASE, concept: 'c', notes: 'n', needsStatBlock: false },
     location: { ...BASE, locationType: 't', inhabitants: 'i', pointsOfInterest: [], hooks: [] },
+    event: { ...BASE, locationType: 't', inhabitants: 'i', pointsOfInterest: [], hooks: [] },
     faction: { ...BASE, goals: 'g', methods: 'm', resources: 'r', ranks: [] },
     note: { ...BASE },
     plotarc: { ...BASE, arcType: 'a', premise: 'p', stakes: 's', beats: [], hooks: [], climax: 'c' },
@@ -139,6 +154,7 @@ describe('draft schema minimum content', () => {
       ['npc', npcDraftSchema],
       ['pc', pcDraftSchema],
       ['location', locationDraftSchema],
+      ['event', eventDraftSchema],
       ['faction', factionDraftSchema],
       ['note', noteDraftSchema],
       ['plotarc', plotArcDraftSchema],

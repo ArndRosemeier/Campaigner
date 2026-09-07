@@ -18,6 +18,7 @@ import {
   type ArtifactLink,
   type ArtifactRevision,
   type EncounterArtifactData,
+  type EventArtifactData,
   type FactionArtifactData,
   type GameSystem,
   type Id,
@@ -82,6 +83,8 @@ interface CommonDraft {
 type PcDraft = CommonDraft & { kind: 'pc'; data: PcArtifactData };
 type NpcDraft = CommonDraft & { kind: 'npc'; data: NpcArtifactData };
 type LocationDraft = CommonDraft & { kind: 'location'; data: LocationArtifactData };
+/** Event drafts share the location shape exactly (EventArtifactData is the location alias). */
+type EventDraft = CommonDraft & { kind: 'event'; data: EventArtifactData };
 type FactionDraft = CommonDraft & { kind: 'faction'; data: FactionArtifactData };
 type NoteDraft = CommonDraft & { kind: 'note'; data: Record<string, never> };
 type EncounterDraft = CommonDraft & { kind: 'encounter'; data: EncounterArtifactData };
@@ -90,6 +93,7 @@ export type ArtifactDraft =
   | PcDraft
   | NpcDraft
   | LocationDraft
+  | EventDraft
   | FactionDraft
   | NoteDraft
   | EncounterDraft
@@ -111,6 +115,8 @@ function draftFrom(artifact: AnyArtifact): ArtifactDraft {
       return { ...common, kind: 'npc', data: structuredClone(artifact.data) };
     case 'location':
       return { ...common, kind: 'location', data: structuredClone(artifact.data) };
+    case 'event':
+      return { ...common, kind: 'event', data: structuredClone(artifact.data) };
     case 'faction':
       return { ...common, kind: 'faction', data: structuredClone(artifact.data) };
     case 'note':
@@ -352,6 +358,14 @@ export function ArtifactEditor({
                 data={draft.data}
                 onChange={(data) => {
                   setDraft((previous) => ({ ...previous, kind: 'location', data }));
+                }}
+              />
+            )}
+            {draft.kind === 'event' && (
+              <LocationForm
+                data={draft.data}
+                onChange={(data) => {
+                  setDraft((previous) => ({ ...previous, kind: 'event', data }));
                 }}
               />
             )}

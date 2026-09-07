@@ -69,6 +69,7 @@ export async function alignEntityName(artifactId: Id, entityName: string): Promi
 export const KIND_PLURALS: Record<StubKind, string> = {
   npc: 'npcs',
   location: 'locations',
+  event: 'events',
   faction: 'factions',
   note: 'notes',
   encounter: 'encounters',

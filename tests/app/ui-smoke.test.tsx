@@ -42,6 +42,7 @@ const KIND_NAMES: Record<ArtifactKind, string> = {
   pc: 'Serren',
   npc: 'Gorim',
   location: 'Old Docks',
+  event: 'Harvest Feast',
   faction: 'Harbor Guild',
   note: 'Rumors',
   encounter: 'Dock Ambush',

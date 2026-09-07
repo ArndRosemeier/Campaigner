@@ -80,7 +80,7 @@ world (a campaign with an artifact of every kind, built-in personas with a
 completed run, a ready rulebook with a chunk) and mount every route. Where no
 dedicated test exists, the sweep opens the interaction: tree filter, section
 collapse, row tooltip, context menu → rename dialog, quick-find on the
-workspace, the create-campaign dialog, and the editor for all seven kinds.
+workspace, the create-campaign dialog, and the editor for all eight kinds.
 
 It doubles as the regression net for the Base UI composition fixes:
 

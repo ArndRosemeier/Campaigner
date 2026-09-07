@@ -17,6 +17,7 @@ export const ARTIFACT_KINDS = [
   'pc',
   'npc',
   'location',
+  'event',
   'faction',
   'note',
   'encounter',
@@ -32,6 +33,7 @@ export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
   pc: 'Party',
   npc: 'NPCs',
   location: 'Locations',
+  event: 'Events',
   faction: 'Factions',
   note: 'Notes',
   encounter: 'Encounters',
@@ -43,6 +45,7 @@ export const ARTIFACT_KIND_SINGULAR: Readonly<Record<ArtifactKind, string>> = {
   pc: 'PC',
   npc: 'NPC',
   location: 'Location',
+  event: 'Event',
   faction: 'Faction',
   note: 'Note',
   encounter: 'Encounter',
@@ -153,6 +156,16 @@ export const locationDataSchema = z.object({
 });
 
 export type LocationArtifactData = z.infer<typeof locationDataSchema>;
+
+/**
+ * Event (social/non-combat content): CODE-IDENTICAL to location — GM-readable
+ * text + a showable image, a place for the model to put social content and
+ * for the user to illustrate. Alias, not a copy, so the two shapes can never
+ * drift; no event-specific fields exist.
+ */
+export const eventDataSchema = locationDataSchema;
+
+export type EventArtifactData = LocationArtifactData;
 
 export const factionDataSchema = z.object({
   goals: z.string(),
@@ -375,6 +388,9 @@ export type PlotArcArtifactData = z.infer<typeof plotArcDataSchema>;
 export type ArtifactData =
   | PcArtifactData
   | NpcArtifactData
+  // Event data IS the location shape (`eventDataSchema` is the location
+  // alias, so `EventArtifactData` is not a separate union member — listing it
+  // would be a duplicate constituent, not a wider type).
   | LocationArtifactData
   | FactionArtifactData
   | NoteArtifactData
@@ -399,6 +415,12 @@ export const locationArtifactSchema = z.object({
   ...artifactBaseShape,
   kind: z.literal('location'),
   data: locationDataSchema,
+});
+
+export const eventArtifactSchema = z.object({
+  ...artifactBaseShape,
+  kind: z.literal('event'),
+  data: eventDataSchema,
 });
 
 export const factionArtifactSchema = z.object({
@@ -429,6 +451,7 @@ export const artifactSchema = z.discriminatedUnion('kind', [
   pcArtifactSchema,
   npcArtifactSchema,
   locationArtifactSchema,
+  eventArtifactSchema,
   factionArtifactSchema,
   noteArtifactSchema,
   encounterArtifactSchema,
@@ -438,6 +461,7 @@ export const artifactSchema = z.discriminatedUnion('kind', [
 export type PcArtifact = z.infer<typeof pcArtifactSchema>;
 export type NpcArtifact = z.infer<typeof npcArtifactSchema>;
 export type LocationArtifact = z.infer<typeof locationArtifactSchema>;
+export type EventArtifact = z.infer<typeof eventArtifactSchema>;
 export type FactionArtifact = z.infer<typeof factionArtifactSchema>;
 export type NoteArtifact = z.infer<typeof noteArtifactSchema>;
 export type EncounterArtifact = z.infer<typeof encounterArtifactSchema>;
@@ -451,7 +475,7 @@ export type Artifact = z.infer<typeof artifactSchema>;
  * design — its current HP lives ON the artifact and would be shared across
  * campaigns; `session`/`plotarc` are per-campaign by nature; `note` stays
  * campaign-bound in v1. */
-export const GLOBAL_ARTIFACT_KINDS = ['npc', 'location', 'faction', 'encounter'] as const;
+export const GLOBAL_ARTIFACT_KINDS = ['npc', 'location', 'event', 'faction', 'encounter'] as const;
 
 export type GlobalArtifactKind = (typeof GLOBAL_ARTIFACT_KINDS)[number];
 
@@ -472,6 +496,11 @@ const globalLocationArtifactSchema = z.object({
   kind: z.literal('location'),
   data: locationDataSchema,
 });
+const globalEventArtifactSchema = z.object({
+  ...globalBaseShape,
+  kind: z.literal('event'),
+  data: eventDataSchema,
+});
 const globalFactionArtifactSchema = z.object({
   ...globalBaseShape,
   kind: z.literal('faction'),
@@ -486,6 +515,7 @@ const globalEncounterArtifactSchema = z.object({
 export const globalArtifactSchema = z.discriminatedUnion('kind', [
   globalNpcArtifactSchema,
   globalLocationArtifactSchema,
+  globalEventArtifactSchema,
   globalFactionArtifactSchema,
   globalEncounterArtifactSchema,
 ]);

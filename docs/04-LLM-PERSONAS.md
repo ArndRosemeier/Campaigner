@@ -152,6 +152,7 @@ are not chainable (chainRunner/moduleForge reject them).
 |------------------|-------------------|--------------|----------|----------------------------------------|
 | npc-smith        | NPC Smith         | npc          | generate | Memorable NPCs with stat blocks         |
 | worldbuilder     | Worldbuilder      | location     | generate | Regions, cities, dungeons; never invents monsters (owner-ratified prompt contract: hazards welcome, creatures live in encounters/dungeons — reference where a creature will be encountered instead of statting it) |
+| event-weaver     | Event Weaver      | event        | generate | Social/non-combat occasions; same location-shaped contract, never invents monsters |
 | faction-designer | Faction Designer  | faction      | generate | Factions with goals, methods, ranks     |
 | plot-architect   | Plot Architect    | note         | generate | Adventure/campaign arcs and hooks       |
 | arc-weaver       | Arc Weaver        | plotarc      | generate | Plot arcs with beats, stakes, climax    |
@@ -243,7 +244,9 @@ prose fields made every NPC same-shaped); whatever else a character needs
 goes into the free-form `body`. `needsStatBlock` lets the draft skip the
 statblock step entirely for characters whose stats don't matter at the table
 (contacts, merchants, innkeepers). (Location/Faction draft schemas mirror
-their `data` fields; define them in M1 too, they're cheap.)
+their `data` fields; define them in M1 too, they're cheap. Event reuses the
+Location contract verbatim — `eventDraftSchema` is an alias, registered under
+its own `event-draft` strict-schema name.)
 
 **Minimum content (owner-ratified empty-text rejection).** `name`, `summary`
 and `body` are substance fields: each must carry at least one non-whitespace

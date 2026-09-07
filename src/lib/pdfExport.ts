@@ -122,8 +122,9 @@ function dataSections(artifact: Artifact): object[] {
       }
       break;
     }
-    case 'location': {
-      add('Location details', [
+    case 'location':
+    case 'event': {
+      add(artifact.kind === 'event' ? 'Event details' : 'Location details', [
         labelValue('Type', artifact.data.locationType),
         labelValue('Inhabitants', artifact.data.inhabitants),
         ...(artifact.data.pointsOfInterest.length > 0
@@ -236,6 +237,7 @@ const ARTIFACT_KIND_LABELS: Readonly<Record<Artifact['kind'], string>> = {
   pc: 'PC',
   npc: 'NPC',
   location: 'Location',
+  event: 'Event',
   faction: 'Faction',
   note: 'Note',
   encounter: 'Encounter',

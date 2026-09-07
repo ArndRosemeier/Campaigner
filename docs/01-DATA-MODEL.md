@@ -30,14 +30,14 @@ type GameSystem = 'dnd5e' | 'pathfinder2e' | 'cosmere' | 'generic-d20' | 'other'
 ### Artifact (the central content unit)
 
 One table, discriminated by `kind`. Current kinds are `pc | npc | location |
-faction | note | encounter | plotarc`; the retired `session` kind is removed in
+event | faction | note | encounter | plotarc`; the retired `session` kind is removed in
 v11. Ownership scope is **derived**, never stored separately:
 
 - `campaignId === null && moduleId === null` → Global library,
 - `campaignId !== null && moduleId === null` → Campaign,
 - `campaignId !== null && moduleId !== null` → Module.
 
-Only `npc | location | faction | encounter` may be global. A global PC is
+Only `npc | location | event | faction | encounter` may be global. A global PC is
 invalid because its persistent HP belongs to one campaign.
 
 ```ts
@@ -55,8 +55,8 @@ interface ArtifactBase extends BaseEntity {
   imageIds: Id[];
   coverImageId: Id | null;
 }
-type ArtifactKind = 'pc' | 'npc' | 'location' | 'faction' | 'note' |
-  'encounter' | 'plotarc';
+type ArtifactKind = 'pc' | 'npc' | 'location' | 'event' | 'faction' |
+  'note' | 'encounter' | 'plotarc';
 type ArtifactScope = 'global' | 'campaign' | 'module';
 
 interface ArtifactLink {
@@ -85,6 +85,12 @@ interface LocationArtifact extends ArtifactBase {
     hooks: string[];            // adventure hooks anchored here
   };
 }
+// `event` is CODE-IDENTICAL to `location` (social/non-combat content: GM text
+// + showable image) — same `data` shape, own `kind`, no event-specific fields.
+interface EventArtifact extends ArtifactBase {
+  kind: 'event';
+  data: LocationArtifact['data'];
+}
 interface FactionArtifact extends ArtifactBase {
   kind: 'faction';
   data: {
@@ -99,9 +105,9 @@ interface NoteArtifact extends ArtifactBase {
   data: Record<string, never>;  // body/tags only
 }
 // The runtime zod discriminated union also includes PC, Encounter and PlotArc.
-type Artifact = PcArtifact | NpcArtifact | LocationArtifact | FactionArtifact |
-  NoteArtifact | EncounterArtifact | PlotArcArtifact;
-type GlobalArtifact = Extract<Artifact, { kind: 'npc' | 'location' | 'faction' | 'encounter' }> & {
+type Artifact = PcArtifact | NpcArtifact | LocationArtifact | EventArtifact |
+  FactionArtifact | NoteArtifact | EncounterArtifact | PlotArcArtifact;
+type GlobalArtifact = Extract<Artifact, { kind: 'npc' | 'location' | 'event' | 'faction' | 'encounter' }> & {
   campaignId: null;
   moduleId: null;
 };

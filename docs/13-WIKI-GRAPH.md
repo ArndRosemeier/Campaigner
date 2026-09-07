@@ -176,7 +176,7 @@ Rules pinned by tests:
   alphabetical within a row; deterministic.
 - Header count line: `N entities · M phantoms · K mentions`.
 - Filters (top bar): module select ("All modules" + every module that
-  contributes prose) and kind select ("All kinds", the seven artifact kinds,
+  contributes prose) and kind select ("All kinds", the eight artifact kinds,
   "Unresolved (phantoms)").
 - Edge weight visualized as thickness (`1 + min(weight − 1, 4)`) plus a
   `×N` label when `weight > 1`.

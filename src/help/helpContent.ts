@@ -80,7 +80,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'Wiki-link graph: the button under the filter opens a visual map of the [[wiki-links]] in your modules\u2019 prose — which modules mention which entities.',
     ],
     keywords:
-      'artifacts npc location faction note encounter plot arc library scope delete rename',
+      'artifacts npc location event faction note encounter plot arc library scope delete rename',
   },
   editor: {
     title: 'Artifact editor (middle pane)',
@@ -91,7 +91,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'History (clock icon): every save snapshots a revision — open the dialog to inspect or restore any older snapshot.',
       'Tags group artifacts and feed the tree filter. Aliases ("also known as") are alternate names module wiki-links also resolve against — a title, a nickname, or the old name kept by a rename.',
       'Relations connect artifacts (e.g. NPC "lives in" location). Relations created here appear in the relations graph and can be exported.',
-      'Kind-specific sections: NPCs can carry a full stat block; encounters have monsters and tactics; plot arcs have beats and hooks.',
+      'Kind-specific sections: NPCs can carry a full stat block; locations and events hold GM text plus an illustratable cover; encounters have monsters and tactics; plot arcs have beats and hooks.',
       'When a persona run finishes, its draft lands in the editor — accept, edit further, or discard it.',
     ],
     keywords: 'autosave revisions restore tags aliases relations links statblock draft',
@@ -99,7 +99,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
   assistant: {
     title: 'Assistant (personas)',
     summary:
-      'Personas are writing specialists (NPC Smith, Location Architect, Faction Designer, Plot Architect, Encounter Smith, Encounter Cartographer, Continuity Editor) that draft or review artifacts using pinned rule text.',
+      'Personas are writing specialists (NPC Smith, Location Architect, Event Weaver, Faction Designer, Plot Architect, Encounter Smith, Encounter Cartographer, Continuity Editor) that draft or review artifacts using pinned rule text.',
     tips: [
       'Pick a persona, an autonomy mode, and write a brief: Manual pauses for your approval on every step, Review runs through but pauses on problems, Auto runs to completion.',
       'Encounter Cartographer turns a brief into a sourced roster, deterministic room layout and battlemap — if a map looks off, use Regenerate candidates to roll a fresh batch from the same brief and layout; regenerating an encounter preserves its authored prose and roster.',

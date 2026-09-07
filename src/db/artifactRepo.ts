@@ -516,7 +516,7 @@ export async function publishToLibrary(id: Id): Promise<GlobalArtifact> {
   }
   if (!globalArtifactKindSchema.safeParse(row.kind).success) {
     throw new Error(
-      `"${row.name}" is a ${row.kind} — only npcs, locations, factions and encounters can be published to the library.`,
+      `"${row.name}" is a ${row.kind} — only npcs, locations, events, factions and encounters can be published to the library.`,
     );
   }
   // Images travel (D2): re-anchored to the library inside the same

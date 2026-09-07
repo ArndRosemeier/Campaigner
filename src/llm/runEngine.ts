@@ -83,6 +83,7 @@ import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
   encounterGeneratorBriefSchema,
+  eventDraftSchema,
   factionDraftSchema,
   imagePromptDraftSchema,
   locationDraftSchema,
@@ -539,6 +540,8 @@ function draftContractFor(kind: ArtifactKind): DraftContract {
       return { schema: npcDraftSchema, keys: Object.keys(npcDraftSchema.shape), name: 'npc-draft' };
     case 'location':
       return { schema: locationDraftSchema, keys: Object.keys(locationDraftSchema.shape), name: 'location-draft' };
+    case 'event':
+      return { schema: eventDraftSchema, keys: Object.keys(eventDraftSchema.shape), name: 'event-draft' };
     case 'faction':
       return { schema: factionDraftSchema, keys: Object.keys(factionDraftSchema.shape), name: 'faction-draft' };
     case 'note':
@@ -602,6 +605,7 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         statBlock: null,
       };
     case 'location':
+    case 'event':
       return {
         locationType: asString(draft.locationType),
         inhabitants: asString(draft.inhabitants),

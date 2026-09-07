@@ -511,7 +511,7 @@ describe('ownership queries (M6-A)', () => {
     expect((await db.images.get(imageId))?.campaignId).toBe(campaignId);
 
     const note = await createArtifact({ campaignId, kind: 'note', name: 'Private note' });
-    await expect(publishToLibrary(note.id)).rejects.toThrow(/only npcs, locations, factions and encounters/);
+    await expect(publishToLibrary(note.id)).rejects.toThrow(/only npcs, locations, events, factions and encounters/);
   });
 
   it('keeps global images out of campaign prune and removes them with the library row', async () => {

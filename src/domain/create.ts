@@ -4,6 +4,7 @@ import {
   type ArtifactData,
   type ArtifactKind,
   type ArtifactLink,
+  type EventArtifact,
   type FactionArtifact,
   type LocationArtifact,
   type NpcArtifact,
@@ -30,6 +31,7 @@ export const DEFAULT_ARTIFACT_NAMES: Readonly<Record<ArtifactKind, string>> = {
   pc: 'New PC',
   npc: 'New NPC',
   location: 'New Location',
+  event: 'New Event',
   faction: 'New Faction',
   note: 'New Note',
   encounter: 'New Encounter',
@@ -83,6 +85,7 @@ export function blankArtifactData(kind: ArtifactKind): ArtifactData {
         statBlock: null,
       };
     case 'location':
+    case 'event':
       return { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] };
     case 'faction':
       return { goals: '', methods: '', resources: '', ranks: [] };
@@ -130,6 +133,7 @@ export interface CreateArtifactInput<K extends ArtifactKind = ArtifactKind> {
 export function createArtifact(input: CreateArtifactInput<'pc'>): PcArtifact;
 export function createArtifact(input: CreateArtifactInput<'npc'>): NpcArtifact;
 export function createArtifact(input: CreateArtifactInput<'location'>): LocationArtifact;
+export function createArtifact(input: CreateArtifactInput<'event'>): EventArtifact;
 export function createArtifact(input: CreateArtifactInput<'faction'>): FactionArtifact;
 export function createArtifact(input: CreateArtifactInput<'note'>): NoteArtifact;
 export function createArtifact(input: CreateArtifactInput): Artifact;

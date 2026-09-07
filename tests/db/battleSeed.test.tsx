@@ -558,6 +558,33 @@ describe('map resolution', () => {
     const byModule = await getBattleByModule(moduleId);
     expect(byModule?.id).toBe(battle.id);
   });
+
+  it('ignores a linked event’s map-role cover — only locations lend battlemaps', async () => {
+    const mapImage = await createImage({
+      campaignId,
+      blob: new Blob([new Uint8Array([7])], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 100,
+      height: 80,
+      source: 'uploaded',
+      role: 'map',
+    });
+    const event = await createArtifact({
+      campaignId,
+      kind: 'event',
+      name: 'Harvest Feast',
+      data: { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] },
+    });
+    await updateArtifact(event.id, { imageIds: [mapImage.id], coverImageId: mapImage.id });
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Feast ambush',
+      links: [{ targetId: event.id, relation: 'at' }],
+    });
+    const seeded = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    expect(seeded.battle.board.mapImageId).toBeNull();
+  });
 });
 
 describe('pc stats resolution', () => {

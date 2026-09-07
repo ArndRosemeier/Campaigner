@@ -15,6 +15,7 @@ export type StubKind = EntityKind;
 export const STUB_PERSONA_SLUGS: Readonly<Record<StubKind, string>> = {
   npc: 'npc-smith',
   location: 'worldbuilder',
+  event: 'event-weaver',
   faction: 'faction-designer',
   note: 'plot-architect',
   encounter: 'encounter-smith',

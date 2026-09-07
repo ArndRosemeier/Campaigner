@@ -30,6 +30,7 @@ const KIND_COLORS: Readonly<Record<ArtifactKind, string>> = {
   pc: '#fda4af',
   npc: '#7dd3fc',
   location: '#86efac',
+  event: '#5eead4',
   faction: '#fca5a5',
   note: '#d8b4fe',
   encounter: '#fdba74',

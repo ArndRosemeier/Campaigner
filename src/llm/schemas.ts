@@ -159,6 +159,15 @@ export const locationDraftSchema = z.object({
 
 export type LocationDraft = z.infer<typeof locationDraftSchema>;
 
+/**
+ * Event draft: CODE-IDENTICAL to the location draft (same GM-text + image
+ * shape, same coercions). Alias, not a copy, so the two contracts can never
+ * drift; the run engine registers it under its own `event-draft` name.
+ */
+export const eventDraftSchema = locationDraftSchema;
+
+export type EventDraft = LocationDraft;
+
 export const factionDraftSchema = z.object({
   ...draftBase,
   goals: z.string(),

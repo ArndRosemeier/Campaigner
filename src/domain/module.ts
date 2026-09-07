@@ -86,7 +86,7 @@ export type ModulePart = z.infer<typeof modulePartSchema>;
  * the model decides the type when it invents the name — never a client-side
  * heuristic). These are the stub-able artifact kinds.
  */
-export const ENTITY_KINDS = ['npc', 'location', 'faction', 'note', 'encounter'] as const;
+export const ENTITY_KINDS = ['npc', 'location', 'event', 'faction', 'note', 'encounter'] as const;
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 

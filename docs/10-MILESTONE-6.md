@@ -19,7 +19,7 @@ failures loud; gate + one logical task per commit).
 | D3 | Visibility is a **user-controlled scope filter** (three toggles: Global / Campaign / Module), remembered as a UI preference — not a hardcoded default. |
 | D4 | The **module view is the play view**; its scope control defaults to **all scopes visible**. There is no separate Play page (retired in M6-E). |
 | D5 | Deleting a module **asks**: delete its artifacts (cascade, counts shown) or keep them (they become campaign-owned). "Adopt into campaign" is available per artifact at any time. |
-| D6 | Global kinds: `npc`, `location`, `faction`, `encounter`. **Never** `pc` (its HP lives on the artifact — a global PC would share wounds across campaigns; pregens ship via a later import/export feature), never `plotarc`, and `session` ceases to exist (D8). |
+| D6 | Global kinds: `npc`, `location`, `event`, `faction`, `encounter`. **Never** `pc` (its HP lives on the artifact — a global PC would share wounds across campaigns; pregens ship via a later import/export feature), never `plotarc`, and `session` ceases to exist (D8). |
 | D7 | Campaigns **always reference** global artifacts in place — links, battles, persona reads, images all point at the one global row. **Duplication is not a feature**: no copy-on-use, no "duplicate" button. Editing a global artifact is instantly visible to every campaign that references it; the Global badge is the warning surface. |
 | D8 | Bare-name wiki-link resolution across scopes, fixed precedence **module-owned → campaign → global**; no cross-scope ambiguity warnings (fix-01 keeps working within each scope). |
 | D9 | Persona runs may **target global artifacts** (`runs.campaignId` stays NOT NULL — the run is anchored where it started; the write lands on the global row). |

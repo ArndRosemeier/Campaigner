@@ -243,8 +243,8 @@ function artifactBody(artifact: AnyArtifact, ctx: RenderContext, include: { body
   if (include.images && artifact.coverImageId !== null) {
     const dataUrl = ctx.images[artifact.coverImageId];
     if (dataUrl !== undefined) {
-      // Locations may span full width; everything else ≤45% via columns.
-      if (artifact.kind === 'location') {
+      // Locations and events may span full width; everything else ≤45% via columns.
+      if (artifact.kind === 'location' || artifact.kind === 'event') {
         out.push({ image: dataUrl, fit: [450, 320], margin: [0, 0, 0, 6] });
       } else {
         // pdfmake has no float: thumbnails sit in a ≤45% column.

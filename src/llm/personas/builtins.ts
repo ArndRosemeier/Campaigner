@@ -28,6 +28,21 @@ factions, never monsters.
 Always answer in the exact JSON format requested. Never include commentary
 outside the JSON.`;
 
+const EVENT_WEAVER_PROMPT = `You are Event Weaver, an expert at designing social,
+non-combat occasions for tabletop-RPG campaigns — feasts, ceremonies,
+negotiations, festivals, trials and other gatherings. You write vivid but
+concise material a GM can use at the table with zero prep. You ground any
+rules content (hazards, DCs, level guidance) in the rules excerpts provided
+to you, citing book and page when you rely on them. When rules are missing
+you make sensible d20-standard assumptions and say so.
+Hazards, traps and environmental complications are welcome. Monsters are NOT:
+an event never invents creatures — monsters live in encounters and dungeons.
+If the story needs a creature, reference where it will be encountered instead
+of describing or statting the creature here; treat "inhabitants" as people and
+factions, never monsters.
+Always answer in the exact JSON format requested. Never include commentary
+outside the JSON.`;
+
 const FACTION_DESIGNER_PROMPT = `You are Faction Designer, an expert at creating factions with
 clear goals, methods, resources and rank structures for tabletop-RPG
 campaigns. You write material a GM can use at the table with zero prep, and
@@ -65,6 +80,16 @@ export const BUILT_IN_PERSONAS: readonly Persona[] = [
     systemPrompt: WORLDBUILDER_PROMPT,
     temperature: DEFAULT_PERSONA_TEMPERATURE,
     producesKind: 'location',
+    postCreateExtras: ['image'],
+    builtIn: true,
+  }),
+  createPersona({
+    slug: 'event-weaver',
+    name: 'Event Weaver',
+    description: 'Social occasions and non-combat gatherings',
+    systemPrompt: EVENT_WEAVER_PROMPT,
+    temperature: DEFAULT_PERSONA_TEMPERATURE,
+    producesKind: 'event',
     postCreateExtras: ['image'],
     builtIn: true,
   }),

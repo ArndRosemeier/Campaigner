@@ -38,6 +38,7 @@ const SIZES: readonly ModuleSizeDial[] = ['sketch', 'standard', 'detailed'];
 const KIND_LABELS: Readonly<Record<EntityKind, string>> = {
   npc: 'NPC',
   location: 'Location',
+  event: 'Event',
   faction: 'Faction',
   note: 'Note',
   encounter: 'Encounter',

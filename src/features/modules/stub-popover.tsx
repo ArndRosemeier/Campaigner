@@ -27,6 +27,7 @@ import { toastError, toastSuccess } from '@/lib/toast';
 const STUB_KIND_LABELS: Readonly<Record<StubKind, string>> = {
   npc: 'NPC',
   location: 'Location',
+  event: 'Event',
   faction: 'Faction',
   note: 'Note',
   encounter: 'Encounter',

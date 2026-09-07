@@ -75,6 +75,7 @@ const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
 const REFILL_PERSONA_SLUGS: Readonly<Partial<Record<ArtifactKind, string>>> = {
   npc: 'npc-smith',
   location: 'worldbuilder',
+  event: 'event-weaver',
   faction: 'faction-designer',
   note: 'plot-architect',
   plotarc: 'arc-weaver',

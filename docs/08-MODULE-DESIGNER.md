@@ -163,7 +163,7 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
 
 Output zod `ModuleSpineSchema` (premise, themes, partPlan with all four
 fields; partPlan length 1..20) **plus `entities: [{ name, kind }]`** — the
-model declares each entity's kind (npc/location/faction/note) when it
+model declares each entity's kind (npc/location/event/faction/note) when it
 invents the name; the record is stored as `module.entityKinds` and drives
 chip preselects and batch buckets (a missing/incomplete list fails the
 spine loudly — no client-side heuristic ever decides a type).
@@ -285,7 +285,7 @@ revision snapshots + delete the blob when nothing else references it).
 
 ### Stub popover (click on an unresolved chip)
 
-- **Create stub**: kind picker (npc/location/faction/note/encounter;
+- **Create stub**: kind picker (npc/location/event/faction/note/encounter;
   preselected from
   `module.entityKinds` — the type the generator declared when it invented
   the name — or, for hand-typed names, a one-shot model classification;
@@ -349,7 +349,7 @@ The New Module dialog's "After the parts are written" grid persists three
 flags on the module row (zod defaults keep old pass flags off):
 
 - `autoGenerateKinds: EntityKind[]` — per artifact type (npc, location,
-  faction, note, encounter): batch-detail its UNRESOLVED wiki-link entities
+  event, faction, note, encounter): batch-detail its UNRESOLVED wiki-link entities
   after a full parts pass. Opt-in.
 - `autoImageKinds: EntityKind[]` — per artifact type: enqueue a background
   image (cover) for every RESOLVED entity of that kind without an image.

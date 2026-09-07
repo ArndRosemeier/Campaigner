@@ -20,6 +20,7 @@ describe('post-create extras derivation', () => {
   it('derives the ratified extras per builtin persona', () => {
     expect(extrasForPersona(personaBySlug('npc-smith'))).toEqual(['image', 'statBlock']);
     expect(extrasForPersona(personaBySlug('worldbuilder'))).toEqual(['image']);
+    expect(extrasForPersona(personaBySlug('event-weaver'))).toEqual(['image']);
     expect(extrasForPersona(personaBySlug('faction-designer'))).toEqual(['image']);
     expect(extrasForPersona(personaBySlug('plot-architect'))).toEqual(['image']);
     expect(extrasForPersona(personaBySlug('arc-weaver'))).toEqual(['image']);
@@ -100,6 +101,7 @@ describe('post-create extras derivation', () => {
     expect(statblockExtraNotice('npc', extrasOn, statted)).toBeNull();
     // Non-npc kinds and unticked extras never notice.
     expect(statblockExtraNotice('location', extrasOn, { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] })).toBeNull();
+    expect(statblockExtraNotice('event', extrasOn, { locationType: '', inhabitants: '', pointsOfInterest: [], hooks: [] })).toBeNull();
     expect(statblockExtraNotice('npc', { ...extrasOn, statBlock: false }, statless)).toBeNull();
   });
 
