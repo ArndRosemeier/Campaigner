@@ -13,7 +13,7 @@ import { saveSettings } from '@/db/settingsRepo';
 import { coarseStructure } from '@/llm/encounterVision';
 import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
-import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type EncounterLayout, type Id, type Persona, type RgbImageLike } from '@/domain';
+import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Id, type Persona } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
@@ -831,65 +831,8 @@ describe('Encounter Cartographer run', () => {
     expect(chatMock).toHaveBeenCalledTimes(1);
   });
 
-  describe('entrance marker pipeline (adjudicated)', () => {
-    /** 200×200 stone image with the two room discs (magenta 300, cyan 180)
-     * and optionally the yellow entrance triangle — hue 60 is the canonical
-     * palette entry one past a 2-room layout, shape-drawn like the schematic
-     * marker (apex up, base down). */
-    function markerImage(withEntrance: boolean): RgbImageLike {
-      const width = 200;
-      const height = 200;
-      const data = new Uint8ClampedArray(width * height * 4);
-      for (let i = 0; i < width * height; i += 1) {
-        data[i * 4] = 100;
-        data[i * 4 + 1] = 100;
-        data[i * 4 + 2] = 100;
-        data[i * 4 + 3] = 255;
-      }
-      const paint = (x: number, y: number, r: number, g: number, b: number) => {
-        const idx = (y * width + x) * 4;
-        data[idx] = r;
-        data[idx + 1] = g;
-        data[idx + 2] = b;
-        data[idx + 3] = 255;
-      };
-      const disc = (cx: number, cy: number, radius: number, r: number, g: number, b: number) => {
-        for (let y = cy - radius; y <= cy + radius; y += 1) {
-          for (let x = cx - radius; x <= cx + radius; x += 1) {
-            if ((x - cx) ** 2 + (y - cy) ** 2 <= radius * radius) paint(x, y, r, g, b);
-          }
-        }
-      };
-      const triangle = (apexX: number, apexY: number, baseY: number, baseHalf: number, r: number, g: number, b: number) => {
-        for (let y = apexY; y <= baseY; y += 1) {
-          const half = baseHalf * ((y - apexY) / (baseY - apexY));
-          for (let x = Math.round(apexX - half); x <= Math.round(apexX + half); x += 1) {
-            paint(x, y, r, g, b);
-          }
-        }
-      };
-      disc(50, 50, 8, 255, 0, 255);
-      // One room ⇒ the entrance hue is the palette entry ONE PAST the room
-      // count: cyan (hue 180). The triangle's circularity (~0.6) keeps the
-      // cyan disc below from ever satisfying the triangle-shaped target.
-      disc(150, 50, 8, 0, 255, 255);
-      if (withEntrance) triangle(100, 110, 180, 35, 0, 255, 255);
-      return { width, height, data };
-    }
-
-    async function runFailedAtStylize(campaign: Awaited<ReturnType<typeof createCampaign>>, cartographer: Persona): Promise<string> {
-      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
-      vi.mocked(encounterRunAdapters.generateImages).mockRejectedValueOnce(new Error('stylize boom'));
-      const runInput = { ...input(campaign, cartographer), autonomy: 'auto' as const };
-      const runId = await runEngine.startRun(runInput);
-      await waitForRun(async () => {
-        const run = await getRun(runId);
-        expect(run?.status).toBe('failed');
-      });
-      return runId;
-    }
-
-    it('declares the entrance clauses in the stylize prompt', async () => {
+  describe('stylize prompt contract (marker path deleted, docs/11 D7)', () => {
+    it('keeps the entrance preserve-clause and drops every disc-painting clause', async () => {
       const { campaign, cartographer } = await setup();
       chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
       const runInput = input(campaign, cartographer);
@@ -897,144 +840,16 @@ describe('Encounter Cartographer run', () => {
       await approveUntilPick(runId, runInput);
 
       const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
-      // One room → the entrance reuses the second canonical hue (cyan).
+      // The painted schematic triangle keeps its preserve-clause...
       expect(prompt).toContain(
         "Entrance marker: The party enters the map through a single open gap in the entry room's outer wall",
       );
-      expect(prompt).toContain('solid neon cyan triangle, about the size of a room disc');
-      expect(prompt).toContain('Entrance ("Entry"): solid neon cyan triangle');
-      expect(prompt).toContain('Keep walls, openings, the entrance gap and overall structure aligned');
-    });
-
-    it('keeps packed geometry and absorbs only the observed entrance position', async () => {
-      const { campaign, cartographer } = await setup();
-      const runId = await runFailedAtStylize(campaign, cartographer);
-      vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
-        images: [new Blob(['one'])],
-        costUsd: 0.02,
-        cappedToOne: false,
-        modelUsed: 'test-image-model',
-      });
-      vi.spyOn(encounterRunAdapters, 'extractImageData').mockResolvedValue(markerImage(true));
-
-      await runEngine.resumeRun(runId);
-      await waitForRun(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-
-      const run = await getRun(runId);
-      const layoutStep = run?.steps.find((step) => step.name === 'layout')?.output as { layout: EncounterLayout };
-      const packed = layoutStep.layout;
-      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
-      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-      const layout = artifact.data.layout;
-      if (layout === null) throw new Error('layout missing');
-
-      // Packed geometry survives: corridors AND room rects are byte-identical.
-      expect(layout.corridors).toEqual(packed.corridors);
-      const spawn = layout.rooms.find((room) => room.spawn);
-      const packedSpawn = packed.rooms.find((room) => room.spawn);
-      expect(spawn?.rects).toEqual(packedSpawn?.rects);
-      // The detected triangle lands on the candidate as the observed position.
-      expect(spawn?.entrance?.observed?.x).toBeCloseTo(0.504, 2);
-      expect(spawn?.entrance?.observed?.y).toBeCloseTo(0.786, 2);
-      expect(spawn?.entrance?.side).toBe(packedSpawn?.entrance?.side);
-      expect(spawn?.stagingPoint).toBeUndefined();
-    });
-
-    it('stores no candidate when rooms are detected but the triangle is not', async () => {
-      const { campaign, cartographer } = await setup();
-      const runId = await runFailedAtStylize(campaign, cartographer);
-      vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
-        images: [new Blob(['one'])],
-        costUsd: 0.02,
-        cappedToOne: false,
-        modelUsed: 'test-image-model',
-      });
-      vi.spyOn(encounterRunAdapters, 'extractImageData').mockResolvedValue(markerImage(false));
-
-      await runEngine.resumeRun(runId);
-      await waitForRun(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-
-      const run = await getRun(runId);
-      const stylize = run?.steps.find((step) => step.name === 'stylize')?.output as { candidateLayouts: Record<string, EncounterLayout> };
-      expect(stylize.candidateLayouts).toEqual({});
-      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
-      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-      const layoutStep = run?.steps.find((step) => step.name === 'layout')?.output as { layout: EncounterLayout };
-      expect(artifact.data.layout).toEqual(layoutStep.layout);
-      const spawn = artifact.data.layout?.rooms.find((room) => room.spawn);
-      expect(spawn?.entrance).toBeDefined();
-      expect(spawn?.entrance?.observed).toBeUndefined();
-    });
-
-    it('preserves the marker-staging candidate path for layouts without an entrance', async () => {
-      const { campaign, cartographer } = await setup();
-      const runId = await runFailedAtStylize(campaign, cartographer);
-
-      // Strip the entrance from the packed layout while the run is failed —
-      // the legacy layouts (pre-feature rows) carry none.
-      const failed = await getRun(runId);
-      if (failed === undefined) throw new Error('run missing');
-      await updateRun(runId, {
-        steps: failed.steps.map((step) => {
-          if (step.name !== 'layout') return step;
-          const output = step.output as { layout: EncounterLayout };
-          return {
-            ...step,
-            output: {
-              layout: {
-                ...output.layout,
-                rooms: output.layout.rooms.map((room) => ({ ...room, entrance: undefined })),
-              },
-            },
-          };
-        }),
-      });
-
-      vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
-        images: [new Blob(['one'])],
-        costUsd: 0.02,
-        cappedToOne: false,
-        modelUsed: 'test-image-model',
-      });
-      vi.spyOn(encounterRunAdapters, 'extractImageData').mockResolvedValue({
-        width: 4,
-        height: 4,
-        data: new Uint8ClampedArray(64),
-      });
-      vi.spyOn(encounterRunAdapters, 'detectNeonMarkers').mockImplementation((_image, targets) => ({
-        detected: targets.map((target, index) => ({
-          id: target.id,
-          letter: target.letter,
-          expectedHue: target.hue,
-          observedHue: target.hue,
-          hueDistance: 0,
-          circularity: 0.95,
-          areaPixels: 500,
-          x: 0.2 + index * 0.2,
-          y: 0.4,
-        })),
-        missingRoomIds: [],
-        allBlobs: [],
-      }));
-
-      await runEngine.resumeRun(runId);
-      await waitForRun(async () => {
-        expect((await getRun(runId))?.status).toBe('completed');
-      });
-
-      const run = await getRun(runId);
-      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
-      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-      const layout = artifact.data.layout;
-      if (layout === null) throw new Error('layout missing');
-      // Today's behavior: the staging candidate replaces the packed geometry.
-      expect(layout.corridors).toEqual([]);
-      expect(layout.rooms.every((room) => room.stagingPoint !== undefined)).toBe(true);
-      expect(layout.rooms[0]?.stagingPoint).toEqual({ x: 0.2, y: 0.4 });
+      expect(prompt).toContain('solid neon cyan triangle');
+      expect(prompt).toContain('exactly as in the reference image');
+      // ...and no room-disc / plaque painting is requested anywhere.
+      expect(prompt).not.toContain('staging markers');
+      expect(prompt).not.toContain('disc on open floor');
+      expect(prompt).not.toContain('plaque labeled');
     });
   });
 

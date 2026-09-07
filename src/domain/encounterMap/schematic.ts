@@ -1,10 +1,48 @@
-import { entranceMarkerConfig } from '@/domain/encounterMap/neonDetector';
 import {
   cellKeyOf,
   entranceSideDelta,
   type EncounterLayout,
   type LayoutRect,
 } from '@/domain/encounterMap/schema';
+
+export interface RoomMarkerConfig {
+  letter: string;
+  hue: number;
+  colorName: string;
+  label: string;
+}
+
+/**
+ * Canonical 10-hue palette (docs/11): rooms consume the entries strictly in
+ * order for their LETTER labels, and the entrance marker reuses the entry
+ * ONE PAST the room count for its painted schematic triangle, so the two
+ * can never collide. Since the marker-path deletion (docs/11 deletion
+ * record) these are paint/label vocabulary only — no pixel is ever read
+ * back (D7).
+ */
+export const CANONICAL_ROOM_MARKERS: readonly RoomMarkerConfig[] = [
+  { letter: 'A', hue: 300, colorName: 'magenta', label: 'Room A (Magenta disc, plaque A)' },
+  { letter: 'B', hue: 180, colorName: 'cyan', label: 'Room B (Cyan disc, plaque B)' },
+  { letter: 'C', hue: 60, colorName: 'yellow', label: 'Room C (Yellow disc, plaque C)' },
+  { letter: 'D', hue: 120, colorName: 'green', label: 'Room D (Green disc, plaque D)' },
+  { letter: 'E', hue: 225, colorName: 'blue', label: 'Room E (Electric-blue disc, plaque E)' },
+  { letter: 'F', hue: 30, colorName: 'orange', label: 'Room F (Neon-orange disc, plaque F)' },
+  { letter: 'G', hue: 270, colorName: 'purple', label: 'Room G (Neon-purple disc, plaque G)' },
+  { letter: 'H', hue: 350, colorName: 'rose', label: 'Room H (Neon-rose disc, plaque H)' },
+  { letter: 'I', hue: 90, colorName: 'lime', label: 'Room I (Neon-lime disc, plaque I)' },
+  { letter: 'J', hue: 205, colorName: 'teal', label: 'Room J (Neon-teal disc, plaque J)' },
+];
+
+/**
+ * The entrance marker's canonical hue: rooms consume the palette strictly
+ * in order, so the entry ONE PAST the room count can never collide with a
+ * room label. With all ten hues taken (10-room layouts) there is no free
+ * hue and the schematic paints no triangle (the geometry stays
+ * authoritative).
+ */
+export function entranceMarkerConfig(roomCount: number): RoomMarkerConfig | null {
+  return CANONICAL_ROOM_MARKERS[roomCount] ?? null;
+}
 
 export interface SchematicResult {
   dataUrl: string;

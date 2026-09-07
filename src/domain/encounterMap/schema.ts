@@ -133,17 +133,6 @@ export const layoutEntranceSchema = z.object({
   x: z.number().int().min(0),
   y: z.number().int().min(0),
   side: layoutEntranceSideSchema,
-  /**
-   * Detected marker position (normalized) from the stylized map — the
-   * stagingPoint-style refinement. Positions only, never structure: the
-   * cell/side stay layout-authoritative (doc 11 D7).
-   */
-  observed: z
-    .object({
-      x: z.number().min(0).max(1),
-      y: z.number().min(0).max(1),
-    })
-    .optional(),
 });
 export type LayoutEntrance = z.infer<typeof layoutEntranceSchema>;
 
@@ -183,9 +172,8 @@ export const layoutRoomSchema = z.object({
   description: z.string(),
   monsterIndexes: z.array(z.number().int().nonnegative()),
   spawn: z.boolean(),
+  /** Canonical marker letter (room labels; optional, never load-bearing). */
   letter: z.string().optional(),
-  markerHue: z.number().optional(),
-  markerColorName: z.string().optional(),
   /**
    * GM-only room key (owner-ratified room-keys/treasure arc): the room
    * information the GM reads at the room's staging-point key marker, and the
@@ -211,12 +199,6 @@ export const layoutRoomSchema = z.object({
    * back to the mobsRect-center staging ground.
    */
   entrance: layoutEntranceSchema.optional(),
-  stagingPoint: z
-    .object({
-      x: z.number().min(0).max(1),
-      y: z.number().min(0).max(1),
-    })
-    .optional(),
 });
 export type LayoutRoom = z.infer<typeof layoutRoomSchema>;
 
@@ -261,7 +243,6 @@ export const encounterLayoutSchema = z
     if (layout.rooms.filter((room) => room.spawn).length !== 1) {
       context.addIssue({ code: 'custom', message: 'layout must contain exactly one spawn room' });
     }
-    const isStaging = layout.rooms.some((room) => room.stagingPoint !== undefined);
     const owners = new Map<string, string>();
     const corridorCellKeys = new Set<string>();
     for (const corridor of layout.corridors) {
@@ -305,13 +286,11 @@ export const encounterLayoutSchema = z
           context.addIssue({ code: 'custom', message: `${room.name}: rectangle outside grid` });
         }
       }
-      if (!isStaging) {
-        for (const key of roomCells) {
-          if (owners.has(key) && owners.get(key) !== room.id) {
-            context.addIssue({ code: 'custom', message: `${room.name}: overlaps another room` });
-          }
-          owners.set(key, room.id);
+      for (const key of roomCells) {
+        if (owners.has(key) && owners.get(key) !== room.id) {
+          context.addIssue({ code: 'custom', message: `${room.name}: overlaps another room` });
         }
+        owners.set(key, room.id);
       }
       for (const key of layoutCells([room.mobsRect])) {
         if (!roomCells.has(key)) {

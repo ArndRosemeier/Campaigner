@@ -1,9 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  adaptiveGridDimensions,
   EncounterLayoutError,
-  layoutFromStagingMarkers,
   packRooms,
   placeEntrance,
   placeMonsters,
@@ -125,29 +123,6 @@ describe('encounter map layout engine', () => {
       expect(room.keyTreasure).toBe(room.id === ROOM_A ? 'Loose coins behind the gate: 25 gp' : '');
     }
 
-    // The staging rebuild (marker-detected candidates) keeps keys per room too.
-    const staging = layoutFromStagingMarkers({
-      theme: 'Cistern of Echoes',
-      aspect: '4:3',
-      rosterCounts: [1],
-      rooms: [
-        {
-          id: ROOM_A,
-          name: 'Flooded Stair',
-          description: '',
-          monsterIndexes: [0],
-          spawn: true,
-          letter: 'A',
-          markerHue: 300,
-          markerColorName: 'magenta',
-          stagingPoint: { x: 0.47, y: 0.84 },
-          key: 'Staging key',
-          keyTreasure: 'Stash: 10 gp',
-        },
-      ],
-    });
-    expect(staging.rooms[0]?.key).toBe('Staging key');
-    expect(staging.rooms[0]?.keyTreasure).toBe('Stash: 10 gp');
   });
 
   it('reports structural violations instead of repairing geometry', () => {
@@ -291,62 +266,6 @@ describe('encounter map layout engine', () => {
       const closet = roomWith([{ x: 5, y: 5, w: 1, h: 1 }], { x: 5, y: 5, w: 1, h: 1 });
       const around = new Set(['4,5', '6,5', '5,4', '5,6']);
       expect(placeEntrance(closet, new Set(), around, 24, 18)).toBeUndefined();
-    });
-
-    it('emits the staging entrance on the map-edge side of the spawn area', () => {
-      const stagingLayout = layoutFromStagingMarkers({
-        theme: 'Cistern of Echoes',
-        aspect: '4:3',
-        rosterCounts: [3, 1, 2],
-        rooms: [
-          {
-            id: ROOM_A,
-            name: 'Flooded Stair',
-            description: '',
-            monsterIndexes: [0],
-            spawn: true,
-            letter: 'A',
-            markerHue: 300,
-            markerColorName: 'magenta',
-            stagingPoint: { x: 0.47, y: 0.84 },
-            key: '',
-            keyTreasure: '',
-          },
-          {
-            id: ROOM_B,
-            name: 'Settling Basin',
-            description: '',
-            monsterIndexes: [1],
-            spawn: false,
-            letter: 'B',
-            markerHue: 180,
-            markerColorName: 'cyan',
-            stagingPoint: { x: 0.15, y: 0.5 },
-            key: '',
-            keyTreasure: '',
-          },
-          {
-            id: ROOM_C,
-            name: 'Filter Gallery',
-            description: '',
-            monsterIndexes: [2],
-            spawn: false,
-            letter: 'C',
-            markerHue: 60,
-            markerColorName: 'yellow',
-            stagingPoint: { x: 0.75, y: 0.54 },
-            key: '',
-            keyTreasure: '',
-          },
-        ],
-      });
-      const spawn = stagingLayout.rooms.find((room) => room.spawn);
-      if (spawn === undefined) throw new Error('spawn room missing');
-      // Veil rect is {12,19,10,8} on the 36×27 grid — its south edge lies on
-      // the grid boundary, so the entrance faces south at the lexicographically
-      // first bottom-row cell.
-      expect(spawn.rects[0]).toEqual({ x: 12, y: 19, w: 10, h: 8 });
-      expect(spawn.entrance).toEqual({ x: 12, y: 26, side: 'south' });
     });
 
     it('reports entrance violations as named issues and rejects them at the schema boundary', () => {
@@ -497,114 +416,25 @@ describe('encounter map layout engine', () => {
     });
   });
 
-  describe('staging layout and adaptive grid', () => {
-    it('scales grid dimensions adaptively based on room count and aspect', () => {
-      // 4:3
-      expect(adaptiveGridDimensions('4:3', 1)).toEqual({ gridW: 24, gridH: 18 });
-      expect(adaptiveGridDimensions('4:3', 2)).toEqual({ gridW: 24, gridH: 18 });
-      expect(adaptiveGridDimensions('4:3', 5)).toEqual({ gridW: 36, gridH: 27 });
-      expect(adaptiveGridDimensions('4:3', 10)).toEqual({ gridW: 48, gridH: 36 });
-
-      // 16:9
-      expect(adaptiveGridDimensions('16:9', 2)).toEqual({ gridW: 28, gridH: 16 });
-      expect(adaptiveGridDimensions('16:9', 4)).toEqual({ gridW: 42, gridH: 24 });
-      expect(adaptiveGridDimensions('16:9', 8)).toEqual({ gridW: 56, gridH: 32 });
-
-      // 1:1
-      expect(adaptiveGridDimensions('1:1', 1)).toEqual({ gridW: 20, gridH: 20 });
-      expect(adaptiveGridDimensions('1:1', 5)).toEqual({ gridW: 30, gridH: 30 });
-      expect(adaptiveGridDimensions('1:1', 10)).toEqual({ gridW: 40, gridH: 40 });
-    });
-
-    it('builds a valid staging layout from detected marker points with generous veils', () => {
-      const stagingLayout = layoutFromStagingMarkers({
-        theme: 'Cistern of Echoes',
-        aspect: '4:3',
-        rosterCounts: [3, 1, 2],
-        rooms: [
-          {
-            id: ROOM_A,
-            name: 'Flooded Stair',
-            description: 'Steps into water',
-            monsterIndexes: [0],
-            spawn: true,
-            letter: 'A',
-            markerHue: 300,
-            markerColorName: 'magenta',
-            stagingPoint: { x: 0.47, y: 0.84 },
-            key: 'Steps descend into black water.',
-            keyTreasure: 'Flooded offering bowl: 15 gp',
-          },
-          {
-            id: ROOM_B,
-            name: 'Settling Basin',
-            description: 'Deep reservoir',
-            monsterIndexes: [1],
-            spawn: false,
-            letter: 'B',
-            markerHue: 180,
-            markerColorName: 'cyan',
-            stagingPoint: { x: 0.15, y: 0.50 },
-            key: 'The basin churns.',
-            keyTreasure: '',
-          },
-          {
-            id: ROOM_C,
-            name: 'Filter Gallery',
-            description: 'Muck pits',
-            monsterIndexes: [2],
-            spawn: false,
-            letter: 'C',
-            markerHue: 60,
-            markerColorName: 'yellow',
-            stagingPoint: { x: 0.75, y: 0.54 },
-            key: '',
-            keyTreasure: '',
-          },
-        ],
-      });
-
-      expect(stagingLayout.gridW).toBe(36);
-      expect(stagingLayout.gridH).toBe(27);
-      expect(stagingLayout.rooms).toHaveLength(3);
-      expect(validateEncounterLayout(stagingLayout, [3, 1, 2])).toEqual([]);
-
-      // Test generous veils
-      const veils = veilsFromRooms(stagingLayout);
-      expect(veils).toHaveLength(3);
-      for (const veil of veils) {
-        expect(veil.kind).toBe('fog');
-        expect(veil.widthCells).toBeGreaterThanOrEqual(10);
-        expect(veil.heightCells).toBeGreaterThanOrEqual(8);
-      }
-
-      // Test placements
-      const placements = placeMonsters(stagingLayout, [{ count: 3 }, { count: 1 }, { count: 2 }]);
-      expect(placements).toHaveLength(6);
-      expect(placements.every((p) => p.x > 0 && p.x < 1 && p.y > 0 && p.y < 1)).toBe(true);
-    });
-
+  describe('capacity (10 rooms)', () => {
     it('supports 10-room dungeon layouts', () => {
-      const roomIds = Array.from({ length: 10 }, (_, i) => `00000000-0000-4000-8000-0000000000${i < 10 ? String(i) : 'a'}${String(i)}`);
-      const stagingRooms = roomIds.map((id, index) => ({
-        id,
-        name: `Dungeon Chamber ${String(index + 1)}`,
-        description: `Room details ${String(index + 1)}`,
-        monsterIndexes: [index],
-        spawn: index === 0,
-        letter: String.fromCharCode(65 + index),
-        markerHue: (index * 36) % 360,
-        markerColorName: 'marker-color',
-        stagingPoint: { x: (index % 4) * 0.25 + 0.1, y: Math.floor(index / 4) * 0.3 + 0.15 },
-        key: `Key ${String(index + 1)}`,
-        keyTreasure: '',
-      }));
-
-      const layout = layoutFromStagingMarkers({
+      const roomIds = Array.from({ length: 10 }, (_, i) => `00000000-0000-4000-8000-00000000000${String(i)}`);
+      const layout = packRooms({
         theme: 'Massive Crypt',
         aspect: '4:3',
+        preset: 'dungeon',
+        entryRoomId: roomIds[0] ?? ROOM_A,
         rosterCounts: Array(10).fill(1) as number[],
-        rooms: stagingRooms,
+        rooms: roomIds.map((id, index) => ({
+          id,
+          name: `Dungeon Chamber ${String(index + 1)}`,
+          description: `Room details ${String(index + 1)}`,
+          size: 'small' as const,
+          monsterIndexes: [index],
+          adjacentRoomIds: index === 0 ? [roomIds[1] ?? ROOM_A] : [roomIds[0] ?? ROOM_A],
+          key: `Key ${String(index + 1)}`,
+          keyTreasure: '',
+        })),
       });
 
       expect(layout.gridW).toBe(48);
@@ -670,21 +500,5 @@ describe('encounter map layout engine', () => {
       expect(veils.every((veil) => veil.kind === 'fog')).toBe(true);
     });
 
-    it('uses the fixed \u00d72 tier for staging-marker dungeon layouts (not the adaptive ladder)', () => {
-      const stagingLayout = layoutFromStagingMarkers({
-        theme: 'Cistern of Echoes',
-        aspect: '4:3',
-        preset: 'dungeon',
-        rosterCounts: [3, 1, 2],
-        rooms: [
-          { id: ROOM_A, name: 'Flooded Stair', description: '', monsterIndexes: [0], spawn: true, letter: 'A', markerHue: 300, markerColorName: 'magenta', stagingPoint: { x: 0.47, y: 0.84 }, key: '', keyTreasure: '' },
-          { id: ROOM_B, name: 'Settling Basin', description: '', monsterIndexes: [1], spawn: false, letter: 'B', markerHue: 180, markerColorName: 'cyan', stagingPoint: { x: 0.15, y: 0.5 }, key: '', keyTreasure: '' },
-        ],
-      });
-      // 2 rooms would adaptively get 24x18; the dungeon preset pins 48x36.
-      expect(stagingLayout.gridW).toBe(48);
-      expect(stagingLayout.gridH).toBe(36);
-      expect(validateEncounterLayout(stagingLayout, [3, 1])).toEqual([]);
-    });
   });
 });

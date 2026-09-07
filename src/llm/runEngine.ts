@@ -17,20 +17,15 @@ import type {
   StatBlock,
 } from '@/domain';
 import {
-  CANONICAL_ROOM_MARKERS,
-  detectNeonMarkers,
   encounterDataSchema,
   encounterLayoutSchema,
   encounterLocationKindSchema,
   entranceMarkerConfig,
-  extractImageData,
-  layoutFromStagingMarkers,
   newId,
   packRooms,
   renderSchematic,
   resolveEncounterPreset,
   schematicCellPx,
-  type StagingRoomInput,
 } from '@/domain';
 import {
   attachImagesToArtifact,
@@ -116,9 +111,6 @@ export const encounterRunAdapters = {
   intakeImage,
   verifyEncounterMap,
   blobToDataUrl,
-  detectNeonMarkers,
-  extractImageData,
-  layoutFromStagingMarkers,
 };
 
 /**
@@ -2611,50 +2603,33 @@ export class RunEngine {
     const settings = await getSettings();
     if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
     const layout = this.effectiveEncounterLayout(steps);
-    const { parsed, aspect, preset } = this.effectiveEncounterBrief(steps);
+    const { parsed } = this.effectiveEncounterBrief(steps);
     const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
     this.encounterSchematics.set(runId, schematic);
 
-    const defaultMarker = CANONICAL_ROOM_MARKERS[0] ?? {
-      letter: 'A',
-      hue: 300,
-      colorName: 'magenta',
-      label: 'Room A',
-    };
-    const markerInstructions = parsed.rooms
-      .map((room, idx) => {
-        const marker = CANONICAL_ROOM_MARKERS[idx] ?? defaultMarker;
-        return `Room ${marker.letter} ("${room.name}"): solid neon ${marker.colorName} disc on open floor with small black plaque labeled "${marker.letter}" beside it.`;
-      })
-      .join(' ');
-
-    // Entrance marker (entrance/exit spawn zones, doc 11): declared only when
-    // the layout carries an entrance AND a free canonical hue exists. Rooms
-    // consume the palette strictly in order, so palette[roomCount] cannot
-    // collide with a room marker.
+    // Entrance marker (entrance/exit spawn zones, doc 11): the SCHEMATIC
+    // paints the wall gap, landing pad and one neon triangle (drawEntrance),
+    // and the stylize prompt asks the image model to keep them — decoration
+    // only, nothing is ever detected or read back (D7; marker-path deletion
+    // record in docs/11). Declared only when the layout carries an entrance
+    // AND a free canonical hue exists (rooms consume the palette in order).
     const spawnLayoutRoom = layout.rooms.find((room) => room.spawn);
     const entranceConfig =
       spawnLayoutRoom?.entrance !== undefined
-        ? entranceMarkerConfig(parsed.rooms.length)
+        ? entranceMarkerConfig(layout.rooms.length)
         : null;
     const entranceClause =
       spawnLayoutRoom === undefined || entranceConfig === null
         ? null
-        : `Entrance marker: The party enters the map through a single open gap in the entry room's outer wall. On the floor just inside that gap sits exactly one solid neon ${entranceConfig.colorName} triangle, about the size of a room disc, with a thick black outline, pointing into the room. The entrance triangle never has a disc or a plaque.`;
-    const entranceRoomClause =
-      spawnLayoutRoom === undefined || entranceConfig === null
-        ? ''
-        : ` Entrance ("${spawnLayoutRoom.name}"): solid neon ${entranceConfig.colorName} triangle just inside the entrance gap in the outer wall, pointing into the room.`;
+        : `Entrance marker: The party enters the map through a single open gap in the entry room's outer wall. On the floor just inside that gap the reference image shows exactly one solid neon ${entranceConfig.colorName} triangle with a thick black outline, pointing into the room — keep it. The entrance triangle never has a disc or a plaque.`;
 
     const prompt = [
       `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
       parsed.styleNotes,
       'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
-      'Room staging markers: Each room has exactly one solid circular neon disc on the open floor (approx 1/10th room diameter) with thick black outline, plus a small black plaque with white capital letter immediately to the right.',
       entranceClause,
-      markerInstructions + entranceRoomClause,
-      'Keep walls, openings, the entrance gap and overall structure aligned with the staging markers.',
-      'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels other than the room plaques, no characters, no monsters, no tokens, no miniatures.',
+      'Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.',
+      'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures.',
       parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
     ].filter((part) => part !== null && part !== '').join(' ');
     const generated = await encounterRunAdapters.generateImages(prompt, input.unattended === true ? 1 : 2, {
@@ -2662,10 +2637,13 @@ export class RunEngine {
       signal,
       inputReferences: [{ dataUrl: schematic.dataUrl }],
     });
+    // Marker-path deletion (docs/11): the candidates ARE the packed
+    // geometry — no room-disc detection, no staging rebuild, no pixel
+    // read-back (the two AGENTS-rule-1 violations — the silent packed-center
+    // fallback and the swallowed detection errors — die with their host).
+    // Every candidate verifies and finalizes against the same layout.
     const imageIds: Id[] = [];
     const aspectActions: ('none' | 'letterboxed')[] = [];
-    const candidateLayouts: Record<Id, EncounterLayout> = {};
-
     for (const blob of generated.images) {
       const normalized = await encounterRunAdapters.normalizeImageAspect(blob, layout.gridW, layout.gridH);
       const intake = await encounterRunAdapters.intakeImage(normalized.blob, { role: 'map' });
@@ -2682,112 +2660,11 @@ export class RunEngine {
       });
       imageIds.push(stored.id);
       aspectActions.push(normalized.action);
-
-      // Attempt procedural neon detection from research
-      try {
-        const imgData = await encounterRunAdapters.extractImageData(normalized.blob);
-        if (imgData !== null) {
-          const targets = parsed.rooms.map((room, idx) => {
-            const marker = CANONICAL_ROOM_MARKERS[idx] ?? defaultMarker;
-            return {
-              id: layout.rooms[idx]?.id ?? newId(),
-              letter: marker.letter,
-              hue: marker.hue,
-              name: room.name,
-            };
-          });
-          // Entrance target: triangle-shaped blob on a hue no room can hold.
-          // Without a layout entrance (or with all ten hues taken) there is no
-          // target and detection behaves exactly as before this feature.
-          const entranceTarget =
-            spawnLayoutRoom?.entrance !== undefined && entranceConfig !== null
-              ? {
-                  id: `${spawnLayoutRoom.id}:entrance`,
-                  letter: '',
-                  hue: entranceConfig.hue,
-                  name: 'entrance',
-                  shape: 'triangle' as const,
-                }
-              : null;
-          const allTargets =
-            entranceTarget === null ? targets : [...targets, entranceTarget];
-          const detection = encounterRunAdapters.detectNeonMarkers(imgData, allTargets);
-          const entranceDetection =
-            entranceTarget === null
-              ? undefined
-              : detection.detected.find((d) => d.id === entranceTarget.id);
-          if (spawnLayoutRoom?.entrance !== undefined) {
-            // Adjudicated: entrance-carrying layouts KEEP the packed geometry
-            // (corridors + entrance) in every candidate — marker detections
-            // refine only the entrance's observed position, never structure.
-            // Without a detected triangle no candidate is stored and finalize
-            // falls back to the packed layout verbatim.
-            if (entranceDetection !== undefined) {
-              const packedEntrance = spawnLayoutRoom.entrance;
-              const spawnRoomId = spawnLayoutRoom.id;
-              candidateLayouts[stored.id] = {
-                ...layout,
-                rooms: layout.rooms.map((room) =>
-                  room.id === spawnRoomId
-                    ? {
-                        ...room,
-                        entrance: {
-                          x: packedEntrance.x,
-                          y: packedEntrance.y,
-                          side: packedEntrance.side,
-                          observed: { x: entranceDetection.x, y: entranceDetection.y },
-                        },
-                      }
-                    : room,
-                ),
-              };
-            }
-          } else if (detection.detected.length > 0) {
-            const stagingRooms: StagingRoomInput[] = parsed.rooms.map((room, idx) => {
-              const target = targets[idx] ?? {
-                id: layout.rooms[idx]?.id ?? newId(),
-                letter: 'A',
-                hue: 300,
-                name: room.name,
-              };
-              const found = detection.detected.find((d) => d.id === target.id);
-              const fallbackRoom = layout.rooms[idx];
-              const fallbackX = fallbackRoom ? (fallbackRoom.mobsRect.x + fallbackRoom.mobsRect.w / 2) / layout.gridW : 0.5;
-              const fallbackY = fallbackRoom ? (fallbackRoom.mobsRect.y + fallbackRoom.mobsRect.h / 2) / layout.gridH : 0.5;
-              return {
-                id: target.id,
-                name: room.name,
-                description: room.description,
-                monsterIndexes: room.monsterIndexes,
-                spawn: idx === parsed.entryRoomIndex,
-                letter: target.letter,
-                markerHue: target.hue,
-                markerColorName: CANONICAL_ROOM_MARKERS[idx]?.colorName ?? 'magenta',
-                stagingPoint: found ? { x: found.x, y: found.y } : { x: fallbackX, y: fallbackY },
-                // Room keys thread through the staging rebuild so the
-                // candidate layouts keep the brief's key text per room.
-                key: room.key,
-                keyTreasure: room.keyTreasure,
-              };
-            });
-            candidateLayouts[stored.id] = encounterRunAdapters.layoutFromStagingMarkers({
-              aspect,
-              preset,
-              theme: parsed.theme,
-              rooms: stagingRooms,
-              rosterCounts: parsed.monsters.map((m) => m.count),
-            });
-          }
-        }
-      } catch (err) {
-        debugLog('encounter', 'Neon detection candidate processing error', err);
-      }
     }
     return {
       step: this.finishStep(steps[stepIndex], {
         imageIds,
         aspectActions,
-        candidateLayouts,
         costUsd: generated.costUsd,
         cappedToOne: generated.cappedToOne,
       }),
@@ -2805,7 +2682,7 @@ export class RunEngine {
     const layout = this.effectiveEncounterLayout(steps);
     const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
     const stylize = steps.find((step) => step.name === 'stylize')?.output as
-      | { imageIds?: Id[]; candidateLayouts?: Record<Id, EncounterLayout> }
+      | { imageIds?: Id[] }
       | undefined;
     const imageIds = stylize?.imageIds ?? [];
     if (imageIds.length === 0) throw new Error('Encounter stylize step produced no map candidates');
@@ -2827,13 +2704,12 @@ export class RunEngine {
       async (imageId) => {
         const image = await getImage(imageId);
         if (image === undefined) throw new Error(`Generated map ${imageId} no longer exists`);
-        const candidateLayout = stylize?.candidateLayouts?.[imageId] ?? layout;
         const stylizedDataUrl = await encounterRunAdapters.blobToDataUrl(
           new Blob([image.bytes], { type: image.mimeType }),
         );
         try {
           return await encounterRunAdapters.verifyEncounterMap({
-            layout: candidateLayout,
+            layout,
             schematicDataUrl: schematic.dataUrl,
             stylizedDataUrl,
             model: verifyModel,
@@ -2940,10 +2816,7 @@ export class RunEngine {
     const pick = steps.find((step) => step.name === 'pick');
     const selected = (pick?.userEdit as { keep?: Id[] } | null | undefined)?.keep?.[0];
     if (selected === undefined) throw new Error('Encounter finalize has no selected battlemap');
-    const stylize = steps.find((step) => step.name === 'stylize')?.output as {
-      candidateLayouts?: Record<Id, EncounterLayout>;
-    } | undefined;
-    const layout = stylize?.candidateLayouts?.[selected] ?? this.effectiveEncounterLayout(steps);
+    const layout = this.effectiveEncounterLayout(steps);
     const target = input.targetArtifactId === undefined
       ? undefined
       : await getAnyArtifact(input.targetArtifactId);

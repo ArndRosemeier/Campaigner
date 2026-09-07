@@ -55,65 +55,31 @@ export function EncounterLayoutPreview({
         />
       ))}
       {layout.rooms.map((room) => {
-        if (room.stagingPoint === undefined) return null;
-        return (
-          <div
-            key={`${room.id}-marker`}
-            className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 flex items-center justify-center rounded-full border-2 border-black font-bold text-[10px] shadow-sm select-none"
-            style={{
-              left: `${String(room.stagingPoint.x * 100)}%`,
-              top: `${String(room.stagingPoint.y * 100)}%`,
-              width: '20px',
-              height: '20px',
-              backgroundColor: room.letter ? `hsl(${String(room.markerHue ?? 300)}, 100%, 50%)` : '#ec4899',
-              color: '#000',
-            }}
-            title={`${room.name} staging marker ${room.letter ?? ''}`}
-          >
-            {room.letter ?? '•'}
-          </div>
-        );
-      })}
-      {layout.rooms.map((room) => {
         const entrance = room.entrance;
         if (entrance === undefined) return null;
         const marker = entranceMarkerConfig(layout.rooms.length);
         const hue = marker?.hue ?? 300;
         return (
-          <div key={`${room.id}-entrance-observed`}>
-            {entrance.observed !== undefined && (
-              <div
-                className="pointer-events-none absolute -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-dashed border-amber-400"
-                style={{
-                  left: `${String(entrance.observed.x * 100)}%`,
-                  top: `${String(entrance.observed.y * 100)}%`,
-                  width: '14px',
-                  height: '14px',
-                }}
-                title={`${room.name} detected entrance`}
-                data-testid="encounter-entrance-observed"
-              />
-            )}
+          <div
+            key={`${room.id}-entrance`}
+            className="pointer-events-none absolute"
+            style={{
+              left: `${String(((entrance.x + 0.5) / layout.gridW) * 100)}%`,
+              top: `${String(((entrance.y + 0.5) / layout.gridH) * 100)}%`,
+              transform: `translate(-50%, -50%) rotate(${String(ENTRANCE_ROTATION[entrance.side])}deg)`,
+            }}
+            title={`${room.name} entrance`}
+            data-testid="encounter-entrance-marker"
+          >
             <div
-              className="pointer-events-none absolute"
               style={{
-                left: `${String(((entrance.x + 0.5) / layout.gridW) * 100)}%`,
-                top: `${String(((entrance.y + 0.5) / layout.gridH) * 100)}%`,
-                transform: `translate(-50%, -50%) rotate(${String(ENTRANCE_ROTATION[entrance.side])}deg)`,
+                width: 0,
+                height: 0,
+                borderLeft: '7px solid transparent',
+                borderRight: '7px solid transparent',
+                borderTop: `12px solid hsl(${String(hue)}, 100%, 50%)`,
               }}
-              title={`${room.name} entrance`}
-              data-testid="encounter-entrance-marker"
-            >
-              <div
-                style={{
-                  width: 0,
-                  height: 0,
-                  borderLeft: '7px solid transparent',
-                  borderRight: '7px solid transparent',
-                  borderTop: `12px solid hsl(${String(hue)}, 100%, 50%)`,
-                }}
-              />
-            </div>
+            />
           </div>
         );
       })}

@@ -26,8 +26,6 @@ const SAMPLE_LAYOUT: EncounterLayout = {
       spawn: true,
       key: '',
       keyTreasure: '',
-      stagingPoint: { x: 0.25, y: 0.3 },
-      markerHue: 120,
       letter: 'A',
     },
   ],
