@@ -4,12 +4,18 @@ import { getAnyArtifact, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
+import {
+  canonicalCreatureName,
+  cloneCachedPortraitToArtifact,
+  isCanonicalCitation,
+} from '@/db/mobPortraitCache';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
 import { intakeImage } from '@/lib/imageIntake';
+import { ensureCanonicalMobPortrait } from '@/features/campaign/mob-portrait-cache-queue';
 
 /**
  * Mob portrait queue (owner-ratified mob-artifact arc): one click on the
@@ -33,6 +39,13 @@ import { intakeImage } from '@/lib/imageIntake';
  * shared `createJobQueue` factory (F6) — this module is the config plus the
  * per-job body. Like every queue on the factory, it does NOT survive a
  * reload (in-memory by design; see createJobQueue's docs).
+ *
+ * Global portrait cache (docs/11 D5 amendment, slice A): canonical citations
+ * (the citing entry used the chunk's canonical name) generate ONCE through
+ * the cache worker (`mob-portrait-cache-queue`, cross-campaign single-flight)
+ * and publish into the global slot; every later campaign clones the bytes
+ * instead of generating. Flavored citations generate locally and never touch
+ * the cache — neither read nor write.
  */
 
 export interface MobPortraitJob {
@@ -98,6 +111,27 @@ async function processJob(
     }
     if (chunk.text.trim() === '') {
       throw new Error('the creature\u2019s stat-block chunk has no text to ground the prompt');
+    }
+    // Canonical citation (docs/11 D5 amendment, slice A): the citing entry
+    // used the chunk's canonical name, so the single normal generation
+    // serves BOTH the cover and the global cache slot — generate once via
+    // the cache worker (cross-campaign single-flight), then clone the bytes
+    // into this artifact's cover. A flavored citation falls through to the
+    // local-only path below: its flavored cover and NOTHING ELSE (no cache
+    // write, no overwrite, no behind-the-back canonical generation).
+    const canonical = canonicalCreatureName(chunk);
+    if (canonical !== null && isCanonicalCitation(canonical, job.name)) {
+      const ensured = await ensureCanonicalMobPortrait({
+        chunkId: job.chunkId,
+        campaignId: job.campaignId,
+        signal: ctx.signal,
+      });
+      const outcome = await cloneCachedPortraitToArtifact({
+        artifactId: artifact.id,
+        campaignId: job.campaignId,
+        imageId: ensured.imageId,
+      });
+      return outcome === 'cloned' ? 'done' : 'skipped';
     }
     // Grounding: the creature chunk's stat-block text — the only
     // description a fresh mob artifact has.
@@ -185,6 +219,12 @@ export interface MobPortraitBatchResult {
  * finalize and seed paths use), dedupes by artifact, skips imaged mobs and
  * enqueues the rest. A dangling stamped `mobArtifactId` (its artifact was
  * deleted) fails loudly instead of silently diverging identities.
+ *
+ * Cache-first (docs/11 D5 amendment, slice A): the get-or-create carries the
+ * portrait read-through, so a canonical citation whose slot is already
+ * populated arrives WITH its cloned cover and is enumerated away as
+ * already-imaged — no job, no second generation. A cache miss enqueues
+ * normally; the worker's canonical branch generates once and publishes.
  */
 export async function enqueueMobPortraits(
   encounter: AnyArtifact & { kind: 'encounter' },
@@ -200,7 +240,9 @@ export async function enqueueMobPortraits(
     const artifactId =
       known ??
       entry.source.mobArtifactId ??
-      (await getOrCreateMobArtifact(campaignId, entry.source.chunkId, entry.name));
+      (await getOrCreateMobArtifact(campaignId, entry.source.chunkId, entry.name, undefined, undefined, {
+        fillCoverFromCache: true,
+      }));
     artifactIdByChunk.set(entry.source.chunkId, artifactId);
     // One portrait per creature kind, not per roster entry.
     if (seenArtifacts.has(artifactId)) continue;

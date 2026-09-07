@@ -16,6 +16,7 @@ export * from '@/domain/gameSystem';
 export * from '@/domain/image';
 export * from '@/domain/itemData';
 export * from '@/domain/module';
+export * from '@/domain/mobPortrait';
 export * from '@/domain/pdf';
 export * from '@/domain/persona';
 export * from '@/domain/rulebook';

@@ -1,4 +1,4 @@
-import type { Id, NpcArtifact } from '@/domain';
+import type { Id, MonsterSource, NpcArtifact } from '@/domain';
 import { moduleTagFor } from '@/domain/module';
 import {
   createArtifact,
@@ -8,6 +8,7 @@ import {
   type RevisionMeta,
 } from '@/db/artifactRepo';
 import { db } from '@/db/db';
+import { fillCoverFromCache } from '@/db/mobPortraitCache';
 
 /**
  * Mob artifacts (owner-ratified mob-artifact arc): a creature the encounter
@@ -59,6 +60,14 @@ export async function findMobArtifactByChunk(
  * two unrelated transactions could materialize TWO mob artifacts for one
  * cited chunk, splitting token identity and portraits (the ratified
  * ONE-artifact-per-chunk rule, docs/11 D5 amendment).
+ *
+ * Global portrait read-through (docs/11 D5 amendment, slice A): pass
+ * `options.fillCoverFromCache` to clone the cached canonical cover into a
+ * still cover-less artifact AFTER the transaction commits (the clone is the
+ * attach seam's own transaction — it cannot nest inside this one). Default
+ * callers (runEngine finalize, battleSeed retro-fill, bestiary spawn) pass
+ * nothing and behave byte-identically: the read-through is opt-in for the
+ * portrait batch only, so generation stays manual-only everywhere else.
  */
 export async function getOrCreateMobArtifact(
   campaignId: Id,
@@ -66,6 +75,7 @@ export async function getOrCreateMobArtifact(
   name: string,
   meta: RevisionMeta = { source: 'user' },
   cache?: Map<Id, Id>,
+  options?: { fillCoverFromCache?: boolean | undefined },
 ): Promise<Id> {
   const trimmedName = name.trim();
   if (trimmedName === '') {
@@ -74,7 +84,7 @@ export async function getOrCreateMobArtifact(
   const cached = cache?.get(chunkId);
   if (cached !== undefined) return cached;
 
-  return db.transaction('rw', [db.artifacts, db.revisions], async () => {
+  const artifactId = await db.transaction('rw', [db.artifacts, db.revisions], async () => {
     const existing = await findMobArtifactByChunk(campaignId, chunkId);
     if (existing !== undefined) {
       cache?.set(chunkId, existing.id);
@@ -95,6 +105,17 @@ export async function getOrCreateMobArtifact(
     cache?.set(chunkId, created.id);
     return created.id;
   });
+
+  if (options?.fillCoverFromCache === true) {
+    const source: MonsterSource = { type: 'rulebook', chunkId };
+    await fillCoverFromCache({
+      artifactId,
+      campaignId,
+      source,
+      citingName: trimmedName,
+    });
+  }
+  return artifactId;
 }
 
 export interface SpawnResult {

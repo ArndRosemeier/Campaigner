@@ -5,6 +5,7 @@ import {
   type StoredImage,
 } from '@/domain';
 import { db } from '@/db/db';
+import { isMobPortraitCachedImage } from '@/db/mobPortraitCache';
 
 /**
  * Image blob storage (07-MILESTONE-3 M3-A): CRUD for the `images` table plus
@@ -112,6 +113,10 @@ export async function deleteImage(id: Id): Promise<void> {
 export async function deleteImageIfUnreferenced(imageId: Id): Promise<boolean> {
   const image = await db.images.get(imageId);
   if (image === undefined) return false;
+  // NEVER-DELETE while a cache record exists (docs/11 D5 amendment, slice
+  // A): the global mob-portrait slot's shared blob survives even when no
+  // artifact references it — clones, not the cached row, hang off covers.
+  if (await isMobPortraitCachedImage(imageId)) return false;
   const referenced =
     image.campaignId === null
       ? await referencedImageIdsGlobal()
@@ -192,6 +197,12 @@ export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
  */
 export async function pruneUnreferencedImages(campaignId: Id): Promise<number> {
   const referenced = await referencedImageIds(campaignId);
+  // Cache immunity (D2) is STRUCTURAL here, deliberately read-free: cached
+  // shared blobs live at global scope (`campaignId: null`) and this prune
+  // only ever scans `where('campaignId').equals(campaignId)` — a campaign
+  // prune cannot see a global row, inside ANY caller transaction scope.
+  // (An explicit cache-table read here would join the caller's scope and
+  // throw inside cascades whose scope cannot include it — deleteModule's.)
   const images = await db.images.where('campaignId').equals(campaignId).toArray();
   const orphans = images.filter((image) => !referenced.has(image.id));
   if (orphans.length === 0) return 0;

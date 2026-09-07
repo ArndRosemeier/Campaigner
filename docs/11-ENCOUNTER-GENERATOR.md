@@ -107,6 +107,50 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   style, `entity-batch.ts` pattern); skip-if-imaged guard (existing queue
   behavior) — no re-generation of mobs that have covers.
 
+### Global portrait cache (slice A — owner-ratified)
+
+Core/external bestiary creatures only (NEVER module-generated NPCs):
+a portrait is generated ONCE per rulebook chunk and reused across all
+campaigns/modules. Dexie v18 `mobPortraits` table (`id, &chunkId`,
+additive, no upgrade — starts empty) mapping chunkId → one global-scope
+shared-blob image row.
+
+- **Canonical-only (binding).** Encounter rosters flavor core creatures
+  ("slimey giant rat" citing the giant-rat chunk) while mechanics spread
+  the flavor (first-citer-wins artifact naming). A flavored generation
+  entering a chunk-keyed cache would make every giant rat everywhere
+  slimey — so the cache holds CANONICAL portraits only: prompt grounded on
+  the chunk's text plus the chunk's canonical creature name (last
+  `headingPath` element), never roster/artifact flavor. The cache is
+  written ONLY by canonical generations (the citing entry used the
+  canonical name, trimmed case-insensitive), so the single normal
+  generation serves both cover and cache. A flavored citation gets its
+  local flavored cover and NOTHING ELSE: no write, no overwrite, no
+  behind-the-back canonical generation (never spend image budget for
+  global benefit unsolicited). A chunk cited only ever flavored keeps an
+  empty slot and per-campaign behavior is unchanged.
+- **Generate-once.** `enqueueMobPortraits` checks the cache first
+  (skip-if-cached: the get-or-create read-through clones an already
+  populated slot into the cover-less artifact, so no job is enqueued) and
+  the queue's canonical branch generates through the dedicated cache
+  worker (`ensureCanonicalMobPortrait` — in-memory single-flight per
+  chunkId, put-if-absent publish converging on the unique `&chunkId`
+  winner). Progress keys stay artifactId-based; generation stays
+  manual-only (seed/finalize callers pass no read-through flag).
+- **Render = clone.** The shared global row is never attached; each mob
+  artifact gets its own campaign-scoped copy of the bytes as
+  `coverImageId` through the attach seam — zero BattleSurface changes.
+- **NEVER-DELETE.** The cached blob is explicitly immune to campaign
+  `pruneUnreferencedImages` (structural: global-scope rows are outside
+  every campaign prune's scan) and the global
+  `deleteImageIfUnreferenced` path (explicit cache-record check) while
+  the cache record exists.
+- **Grandfathering.** Existing per-campaign covers are kept; no backfill.
+- **Firewall.** Every cache entry point gates on
+  `cacheKeyForMonsterSource`: `source.type === 'rulebook'` with a defined
+  `chunkId`. npc-ref / inline / none rows and marker-less module NPCs
+  (entity queue) never touch the seam — pinned by tests.
+
 ## Pipeline (run-engine steps)
 
 A new run-engine mode with fixed named steps (same architecture as the image

@@ -552,6 +552,12 @@ export async function listRevisions(artifactId: Id): Promise<ArtifactRevision[]>
 
 /** Deletes an artifact and its revision history. Idempotent. */
 export async function deleteArtifact(id: Id): Promise<void> {
+  // Global-scope images collected for the post-commit unreferenced check
+  // below (never read inside the transaction: the check's cache-immunity
+  // read joins the caller's scope, and this delete nests inside
+  // deleteModule's cascade whose scope is fixed — a cache-table read in
+  // there throws "not included in parent transaction").
+  let globalImagesToRecheck: Id[] = [];
   await db.transaction('rw', db.artifacts, db.revisions, db.images, db.battles, async () => {
     const artifact = await db.artifacts.get(id);
     await db.revisions.where('artifactId').equals(id).delete();
@@ -575,21 +581,25 @@ export async function deleteArtifact(id: Id): Promise<void> {
       // scrubs its tokens; empty battles delete themselves.
       if (artifact.campaignId === null) {
         // Global artifact (M6): no campaign prune reaches its library images,
-        // so check each now that the row and revisions are gone. Shared image
-        // ids survive until their last global referencer is deleted.
-        const imageIds =
+        // so each is checked after commit, now that the row and revisions are
+        // gone. Shared image ids survive until their last global referencer
+        // is deleted — and cached portrait blobs survive regardless (the
+        // check's NEVER-DELETE immunity, D2).
+        globalImagesToRecheck =
           artifact.coverImageId !== null
             ? [...artifact.imageIds, artifact.coverImageId]
             : artifact.imageIds;
-        for (const imageId of imageIds) {
-          await deleteImageIfUnreferenced(imageId);
-        }
       } else {
         await scrubArtifactFromBattles(artifact.campaignId, id);
+        // Campaign prune: cached blobs are global-scope rows this scan
+        // cannot see (structural immunity — see pruneUnreferencedImages).
         await pruneUnreferencedImages(artifact.campaignId);
       }
     }
   });
+  for (const imageId of globalImagesToRecheck) {
+    await deleteImageIfUnreferenced(imageId);
+  }
 }
 
 /**

@@ -134,8 +134,11 @@ export interface BackupImportResult {
  * as EMPTY instead of failing the missing-table check. `pdfFiles` (retained
  * PDF bytes, source-viewers arc) landed after backup v1 — its absence in an
  * old zip is the truth (those books have no retained bytes), not corruption.
+ * `mobPortraits` (global mob-portrait cache, docs/11 D5 amendment slice A)
+ * is likewise derived, rebuildable state — a pre-v18 backup restores with an
+ * empty cache and the next canonical generation repopulates it.
  */
-const OPTIONAL_TABLES: ReadonlySet<string> = new Set(['pdfFiles']);
+const OPTIONAL_TABLES: ReadonlySet<string> = new Set(['pdfFiles', 'mobPortraits']);
 
 /**
  * Restores a backup zip, REPLACING every table's contents. The locally

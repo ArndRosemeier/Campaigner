@@ -8,6 +8,7 @@ import type {
   ChunkEmbedding,
   Deliverable,
   Module,
+  MobPortraitCacheEntry,
   Persona,
   PersonaRun,
   RuleChunk,
@@ -72,6 +73,7 @@ export class CampaignerDB extends Dexie {
   modules!: Table<Module, Id>;
   battles!: Table<Battle, Id>;
   pdfFiles!: Table<StoredPdf, Id>;
+  mobPortraits!: Table<MobPortraitCacheEntry, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -552,6 +554,29 @@ export class CampaignerDB extends Dexie {
           },
         );
       });
+
+    // Global mob portrait cache (docs/11 D5 amendment, slice A): new
+    // `mobPortraits` table (`id, &chunkId`) mapping a cited stat-block
+    // chunkId to its ONE canonical shared-blob portrait imageId. Additive
+    // store, NO upgrade function — the table starts empty and existing
+    // per-campaign covers are grandfathered (no backfill).
+    this.version(18).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &chunkId',
+      settings: 'id',
+    });
   }
 }
 
