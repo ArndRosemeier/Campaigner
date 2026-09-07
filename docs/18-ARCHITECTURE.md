@@ -103,6 +103,7 @@ column.
 | Model escalation / refusals | `modelFallback.walkModelChain` + `openrouterErrors.fallbackReasonFor` (refusal → `'filter'` fallback; schema-rejected → `null`, loud) | ad-hoc retry loops; silent model swaps |
 | Classify a failed run for the owner | `failureKind.failureKindOf(error)` (`llm/failureKind.ts` — structural over the typed error classes) + the `domain/run` `FAILURE_KIND_LABELS`/`FAILURE_KIND_GUIDANCE` maps; every fail site writes the kind next to the verbatim `errorMessage` (docs/05, ledger 35) | prose-matching the raw message; replacing or truncating the message with the kind |
 | Wait for a run | `runEngine.waitForRunStatus` (one primitive; `includePaused` for chain steps) | private poll loops; `TERMINAL_RUN_STATUSES` is the only terminal-status list |
+| Cancel all in-flight runs | `runEngine.cancelAllActive()` — the engine's controller registry is the authoritative in-flight set (rows → resumable 'cancelled'; paused runs are not stoppable work) | querying `db.runs` for 'running' rows; ad-hoc cancel sweeps |
 | Persona run pipelines | `runEngine` step plans per mode (`domain/persona.mode` = generate/review/image/encounter): `retrieve→draft→statblock→finalize`, `gather→check→finalize`, `prompt-draft→generate→pick` (pick ALWAYS pauses), `brief→layout→schematic→stylize→pick→finalize` (pick ALWAYS pauses; NO verify step — D14, the user is the judge and Regenerate candidates is the correction) | a bespoke pipeline for a shape that fits an existing plan |
 | Image generation | `imageGen.generateImages` (n-retry, `cappedToOne` → user-visible notice) | raw image API calls elsewhere |
 | Monster stat lookups | `monsterResolve.resolveMonsterEntryWithRepos`; fighter shapes via `db/fighterStats.ts` (`fighterStatsFromArtifact`, `buildFighterStatsLookup`) | re-parsing `statBlock` ad hoc |
@@ -135,6 +136,7 @@ column.
 | Encounter map automation | `useEncounterMapQueue` + the guards `encounterNeedsMap` / `isEncounterMapPending` (serial by contract) | re-enqueueing an already-mapped encounter; a second queue implementation |
 | Post-run automation | `features/campaign/post-run-extras.ts` — rides the queues AFTER a completed run | reopening/failing a finished run row |
 | Dev logging | `lib/debug.debugLog` | bare `console.log` (lint) or `console.error` as an error surface |
+| Stop every running generation | `features/progress/stopAllGenerations` + the dock's Stop all button (queues' `cancelAll`, `runEngine.cancelAllActive`, `cancelModuleGen`, `chainRunner.cancel` composed there — the ONE sweep; non-destructive, rows stay resumable) | a second stop path or per-surface ad-hoc cancel wiring |
 | Persisted UI state | zustand store + `lib/persisted.zodPersistStorage(schema)` | localStorage by hand |
 
 ## 3. Cross-cutting conventions (pointers, not restatements)
