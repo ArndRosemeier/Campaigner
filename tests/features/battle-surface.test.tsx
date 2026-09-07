@@ -1877,8 +1877,8 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
   });
 });
 
-describe('in-battle spawn (encounter-resume arc)', () => {
-  it('offers the provenance roster in the GM rail and appends a spawned fighter to the live board', async () => {
+describe('in-battle spawn picker (spawn-picker arc)', () => {
+  it('shows the roster readout with one Spawn button and appends a roster fighter via the picker', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -1887,8 +1887,15 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     const panel = screen.getByTestId('spawn-panel');
     expect(panel).toHaveTextContent('Spawn — “Bridge ambush”');
     expect(panel).toHaveTextContent('Troll ×1');
+    // No per-entry buttons — one Spawn button opens the picker.
+    expect(screen.queryByTestId('spawn-monster-0')).toBeNull();
     const user = userEvent.setup();
-    await user.click(screen.getByTestId('spawn-monster-0'));
+    await user.click(screen.getByTestId('open-spawn-picker'));
+    await waitFor(() => {
+      expect(screen.getByTestId('spawn-picker')).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('spawn-picker-group-roster')).toHaveTextContent('Troll ×1');
+    await user.click(screen.getByTestId('spawn-pick-roster-0'));
     await flushAsyncUpdates();
     const row = await currentBattle(moduleId);
     const fighters = row.board.tokens.filter((token) => token.visible);
@@ -1908,7 +1915,7 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     });
   });
 
-  it('auto-rolls a spawned fighter into initiative (late-arrival rule)', async () => {
+  it('auto-rolls a picker-spawned fighter into initiative (late-arrival rule)', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -1919,7 +1926,11 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     await flushAsyncUpdates();
     let battle = await currentBattle(moduleId);
     expect(battle.board.initiativeOrder).toHaveLength(3);
-    await user.click(screen.getByTestId('spawn-monster-0'));
+    await user.click(screen.getByTestId('open-spawn-picker'));
+    await waitFor(() => {
+      expect(screen.getByTestId('spawn-picker')).toBeInTheDocument();
+    });
+    await user.click(screen.getByTestId('spawn-pick-roster-0'));
     await flushAsyncUpdates();
     battle = await currentBattle(moduleId);
     expect(battle.board.initiativeOrder).toHaveLength(4);
@@ -1927,17 +1938,19 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     expect(rolled?.initiativeRoll).not.toBeNull();
   });
 
-  it('hides the spawn panel in player view', async () => {
+  it('hides the spawn panel and its Spawn button in player view', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
       expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
     });
     expect(screen.getByTestId('spawn-panel')).toBeInTheDocument();
+    expect(screen.getByTestId('open-spawn-picker')).toBeInTheDocument();
     const user = userEvent.setup();
     await user.click(screen.getByTestId('player-safe-toggle'));
     await flushAsyncUpdates();
     expect(screen.queryByTestId('spawn-panel')).toBeNull();
+    expect(screen.queryByTestId('open-spawn-picker')).toBeNull();
   });
 });
 

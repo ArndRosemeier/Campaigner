@@ -60,7 +60,6 @@ import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
-import { spawnRosterInstance } from '@/db/battleSeed';
 import { runBattle } from '@/features/play/run-battle';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
@@ -70,6 +69,7 @@ import { DiceRoller } from '@/features/dice/DiceRoller';
 import type { DiceRollResult, RollIntent } from '@/features/dice/types';
 import { useBattleState } from './use-battle';
 import { InitiativeSidebar } from './initiative-sidebar';
+import { SpawnPicker } from './SpawnPicker';
 import { Button } from '@/components/ui/button';
 import { toastError } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -154,6 +154,9 @@ export function BattleSurface(): JSX.Element {
   const [playerSafe, setPlayerSafe] = useState(false);
   const [stageArmed, setStageArmed] = useState(false);
   const [reseedArmed, setReseedArmed] = useState(false);
+  // Mid-fight spawn picker (spawn-picker arc): ONE Spawn button opens the
+  // dialog — the per-roster-entry buttons are gone, the roster readout stays.
+  const [spawnPickerOpen, setSpawnPickerOpen] = useState(false);
   // The dice roller's open state IS the pending roll intent (M5-D amendment);
   // the roll target is captured at open time so a mid-roll deselect cannot
   // misdirect the applied delta.
@@ -846,23 +849,6 @@ export function BattleSurface(): JSX.Element {
           : effect,
       ),
     }));
-  }
-
-  /** Mid-fight spawn (M5-C addition): appends one instance of the provenance
-   * roster entry through the shared seed path; statless instances toast
-   * loudly (AGENTS rule 1 — no placeholder numbers). */
-  async function spawnMonster(entryIndex: number): Promise<void> {
-    if (battle === undefined) return;
-    try {
-      const result = await spawnRosterInstance(battle.id, entryIndex);
-      if (result.statless.length > 0) {
-        toastError(
-          `No combat stats for: ${result.statless.join('; ')} — they will not roll initiative`,
-        );
-      }
-    } catch (error) {
-      toastError('Could not spawn from the roster', error);
-    }
   }
 
   async function applyHp(token: BattleToken, delta: number): Promise<boolean> {
@@ -1689,29 +1675,37 @@ export function BattleSurface(): JSX.Element {
               {spawnSource.data.monsters.length === 0 ? (
                 <p className="text-xs text-zinc-500">The seeding encounter has no roster.</p>
               ) : (
-                <ul className="space-y-1">
+                <ul className="mb-2 space-y-0.5">
                   {spawnSource.data.monsters.map((entry, index) => (
                     <li
                       key={`${entry.name}:${String(index)}`}
-                      className="flex items-center justify-between gap-2"
+                      className="truncate text-xs text-zinc-400"
                     >
-                      <span className="min-w-0 truncate text-xs">
-                        {entry.name} ×{String(entry.count)}
-                      </span>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        data-testid={`spawn-monster-${String(index)}`}
-                        onClick={() => {
-                          void spawnMonster(index);
-                        }}
-                      >
-                        Spawn
-                      </Button>
+                      {entry.name} ×{String(entry.count)}
                     </li>
                   ))}
                 </ul>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="w-full"
+                data-testid="open-spawn-picker"
+                onClick={() => {
+                  setSpawnPickerOpen(true);
+                }}
+              >
+                Spawn
+              </Button>
+              <SpawnPicker
+                open={spawnPickerOpen}
+                onOpenChange={setSpawnPickerOpen}
+                battleId={battle.id}
+                campaignId={campaignId}
+                roster={spawnSource.data.monsters}
+                encounterName={spawnSource.name}
+                artifacts={artifacts}
+              />
             </div>
           )}
           {!board.initiativeEnabled && !playerSafe && (
