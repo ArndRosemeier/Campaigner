@@ -44,12 +44,13 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import { defaultSettings, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
+import { defaultSettings, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
 import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
+import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { extrasForPersona } from '@/llm/personas/extras';
 import type { PostCreateExtra } from '@/domain';
@@ -64,6 +65,40 @@ const AUTONOMY_OPTIONS: { value: Autonomy; label: string }[] = [
   { value: 'review', label: 'Review' },
   { value: 'auto', label: 'Auto' },
 ];
+
+/**
+ * Canonical smith persona per refillable kind (the STUB_PERSONA_SLUGS
+ * convention, 08 §M4-C, extended with the Arc Weaver for plotarcs): the
+ * slug match wins over a producesKind scan so a user-created persona with
+ * the same kind never outranks the built-in smith.
+ */
+const REFILL_PERSONA_SLUGS: Readonly<Partial<Record<ArtifactKind, string>>> = {
+  npc: 'npc-smith',
+  location: 'worldbuilder',
+  faction: 'faction-designer',
+  note: 'plot-architect',
+  plotarc: 'arc-weaver',
+};
+
+/** The generate-mode persona that refills artifacts of `kind` (undefined =
+ * none exists — the panel leaves the request unclaimed and says nothing). */
+function resolveRefillPersona(personas: readonly Persona[], kind: ArtifactKind): Persona | undefined {
+  const slug = REFILL_PERSONA_SLUGS[kind];
+  if (slug !== undefined) {
+    const bySlug = personas.find((persona) => persona.slug === slug && persona.mode === 'generate');
+    if (bySlug !== undefined) return bySlug;
+  }
+  return personas.find((persona) => persona.mode === 'generate' && persona.producesKind === kind);
+}
+
+/** The pre-filled brief for a refill request (truthfully worded: an empty
+ * artifact is a first generation, not a regeneration). */
+function refillBrief(kind: ArtifactKind, regenerate: boolean): string {
+  const noun = ARTIFACT_KIND_SINGULAR[kind].toLowerCase();
+  return regenerate
+    ? `Regenerate the full content of this ${noun} — summary, body and details. Its name, relations and images are preserved.`
+    : `Generate the full content of this ${noun}: summary, body and details. Its name, relations and images are preserved.`;
+}
 
 /** One "After creation" extra: the offered set derives from the CHOSEN
  * persona (extrasForPersona) — the checkbox writes a remembered preference
@@ -202,7 +237,16 @@ export function PersonaPanel({
   const isReview = selectedPersona?.mode === 'review';
   const isImage = selectedPersona?.mode === 'image';
   const isEncounter = selectedPersona?.mode === 'encounter';
-  const needsTarget = isReview || isImage;
+  // A generate persona with an explicit target refills that artifact in
+  // place (the artifact-editor's "Generate/Regenerate with AI" hand-off):
+  // the run writes into it instead of creating a new one. Encounter-kind
+  // personas are excluded — the Encounter Smith's content hand-off has its
+  // own targeted branch in start() below (docs/11 semantics, no refill UI).
+  const isTargetedRefill =
+    selectedPersona?.mode === 'generate' &&
+    selectedPersona.producesKind !== 'encounter' &&
+    targetArtifactId !== '';
+  const needsTarget = isReview || isImage || isTargetedRefill;
   // The creation-dialog controls (module placement + post-create extras)
   // apply to NEW artifacts only: a targeted run fills an existing one and
   // its placement is immutable outside the editor's explicit scope moves.
@@ -255,6 +299,29 @@ export function PersonaPanel({
     setTab('assistant');
     clearEncounterRequest();
   }, [encounterRequestId, encounterRequestRegenerate, encounterRequestVariant, encounterRequestedAt, personas, clearEncounterRequest]);
+
+  // "Generate/Regenerate with AI" from the artifact editor (smith kinds):
+  // select the kind's smith persona, target the requesting artifact, word
+  // the brief truthfully and focus the Assistant tab — the mirror of the
+  // encounter hand-off above. The run stays a normal generate run; the
+  // target makes finalize write INTO the artifact.
+  const refillRequestId = useContentRefillRequest((state) => state.artifactId);
+  const refillKind = useContentRefillRequest((state) => state.kind);
+  const refillRegenerate = useContentRefillRequest((state) => state.regenerate);
+  const refillRequestedAt = useContentRefillRequest((state) => state.requestedAt);
+  const clearRefillRequest = useContentRefillRequest((state) => state.clear);
+  useEffect(() => {
+    if (refillRequestId === null || refillKind === null) return;
+    const persona =
+      personas === undefined ? undefined : resolveRefillPersona(personas, refillKind);
+    if (persona === undefined) return; // personas not loaded yet
+    setPersonaId(persona.id);
+    setTargetArtifactId(refillRequestId);
+    setBrief(refillBrief(refillKind, refillRegenerate));
+    setAutonomy('auto');
+    setTab('assistant');
+    clearRefillRequest();
+  }, [refillRequestId, refillKind, refillRegenerate, refillRequestedAt, personas, clearRefillRequest]);
 
   // Remembered extras defaults (aspect pattern): the dialog pre-ticks from
   // Settings.runExtras and persists toggles.
@@ -316,6 +383,23 @@ export function PersonaPanel({
           ? { placementModuleId }
           : {}),
         ...(targetArtifactId === '' ? { extras: tickedExtras() } : {}),
+      });
+      setActiveRunId(runId);
+      return;
+    }
+    // Encounter Smith targeted content fill (mode generate, docs/11): the
+    // artifact-editor's content hand-off targets an existing encounter and
+    // the run writes INTO it — name, links, images and battlemap preserved.
+    // start() used to fall through to the fresh-create branch here, DROPPING
+    // the target (the run duplicated the artifact instead of refilling it).
+    if (selectedPersona.producesKind === 'encounter' && targetArtifactId !== '') {
+      const runId = await runEngine.startRun({
+        campaign,
+        persona: selectedPersona,
+        autonomy,
+        brief,
+        pinnedChunkIds: pinned.map((chunk) => chunk.id),
+        targetArtifactId,
       });
       setActiveRunId(runId);
       return;
@@ -424,7 +508,7 @@ export function PersonaPanel({
             {needsTarget && (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="target-select">
-                  {isImage ? 'Artifact to illustrate' : 'Artifact to check'}
+                  {isImage ? 'Artifact to illustrate' : isTargetedRefill ? 'Artifact to refill' : 'Artifact to check'}
                 </Label>
                 <Select
                   value={targetArtifactId}
@@ -440,7 +524,7 @@ export function PersonaPanel({
                 >
                   <SelectTrigger
                     className="w-full"
-                    aria-label={isImage ? 'Artifact to illustrate' : 'Artifact to check'}
+                    aria-label={isImage ? 'Artifact to illustrate' : isTargetedRefill ? 'Artifact to refill' : 'Artifact to check'}
                   >
                     <SelectValue placeholder="Choose an artifact" />
                   </SelectTrigger>
@@ -457,7 +541,11 @@ export function PersonaPanel({
                   id="brief"
                   rows={2}
                   placeholder={
-                    isImage ? 'Optional image focus, e.g. night scene' : 'Optional focus, e.g. timeline consistency'
+                    isImage
+                      ? 'Optional image focus, e.g. night scene'
+                      : isTargetedRefill
+                        ? 'Focus for the refill, e.g. emphasize her role in the finale'
+                        : 'Optional focus, e.g. timeline consistency'
                   }
                   value={brief}
                   onChange={(event) => {
@@ -465,6 +553,15 @@ export function PersonaPanel({
                   }}
                 />
               </div>
+            )}
+
+            {isTargetedRefill && (
+              <p className="text-xs text-amber-600" data-testid="refill-target-notice">
+                Runs against the selected artifact; its name, relations and images are
+                preserved, and when it is module-owned the run is grounded in that module
+                exactly like automatic module generation. Placement and new-artifact
+                options do not apply.
+              </p>
             )}
 
             {!needsTarget && (

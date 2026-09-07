@@ -28,7 +28,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import type { AnyArtifact, Campaign, Id, Module, ModulePart } from '@/domain';
-import { MODULE_SIZE_LABELS, entityKindFor, moduleTagFor } from '@/domain';
+import { MODULE_SIZE_LABELS, entityKindFor, moduleDocumentText, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
@@ -985,16 +985,6 @@ function moduleSentenceFor(name: string, module: Module): string {
 /** Surrounding paragraphs for persona briefs (premise + parts). */
 function moduleContextFor(name: string, module: Module): string {
   return surroundingParagraphs(moduleDocumentText(module), name);
-}
-
-function moduleDocumentText(module: Module): string {
-  return [
-    module.spine?.premise ?? '',
-    ...module.parts
-      .slice()
-      .sort((a, b) => a.planIndex - b.planIndex)
-      .map((part) => part.markdown),
-  ].join('\n\n');
 }
 
 /**

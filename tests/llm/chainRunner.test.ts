@@ -518,9 +518,11 @@ describe('writers\u2019 room chain', () => {
     const persona = personaOf('worldbuilder', 'Worldbuilder', 'location');
     chatMock.mockResolvedValue({ text: JSON.stringify({
         name: 'Emberfall Docks',
-        summary: '',
+        // Minimum-content contract: summary/body carry substance (an empty
+        // draft is rejected and could not finalize after approval).
+        summary: 'A crumbling dock district.',
         suggestedTags: [],
-        body: '',
+        body: '# Emberfall Docks\nSalt-bleached pilings and quieter crimes.',
         locationType: '',
         inhabitants: '',
         pointsOfInterest: [],

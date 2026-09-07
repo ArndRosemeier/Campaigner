@@ -1,10 +1,10 @@
 import type { Campaign, EntityKind, Id, Module } from '@/domain';
-import { ENTITY_KINDS, entityKindFor } from '@/domain';
+import { ENTITY_KINDS, entityKindFor, moduleDocumentText } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
-import { moduleDocumentText, runEntityBatch } from '@/features/modules/entity-batch';
+import { runEntityBatch } from '@/features/modules/entity-batch';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { toastError, toastSuccess } from '@/lib/toast';

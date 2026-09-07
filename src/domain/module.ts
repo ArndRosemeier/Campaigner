@@ -234,6 +234,22 @@ export function moduleTagFor(title: string): string {
   return `module:${title}`;
 }
 
+/**
+ * The full module text (premise + parts, plan order) — the ONE assembled form
+ * of a module's document for grounding (08 §M4-C): the entity batch's briefs,
+ * the reader's stub summaries and the run engine's in-place refill grounding
+ * all excerpt THIS text, so every consumer sees the same document.
+ */
+export function moduleDocumentText(module: Module): string {
+  return [
+    module.spine?.premise ?? '',
+    ...module.parts
+      .slice()
+      .sort((a, b) => a.planIndex - b.planIndex)
+      .map((part) => part.markdown),
+  ].join('\n\n');
+}
+
 /** Placeholder title used until the spine suggests nothing better. */
 export function defaultModuleTitle(): string {
   return 'New Module';

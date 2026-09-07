@@ -1,4 +1,5 @@
 import type {
+  AnyArtifact,
   ArtifactData,
   ArtifactKind,
   Autonomy,
@@ -21,6 +22,7 @@ import {
   encounterLayoutSchema,
   encounterLocationKindSchema,
   entranceMarkerConfig,
+  moduleDocumentText,
   newId,
   packRooms,
   renderSchematic,
@@ -92,6 +94,7 @@ import {
 } from '@/llm/schemas';
 import type { EncounterDraft, EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
 import { normalizeImageAspect } from '@/lib/imageAspect';
+import { surroundingParagraphs } from '@/lib/wikilinks';
 
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
@@ -127,6 +130,16 @@ export interface StepRetrieveOutput {
   titles: string[];
 }
 
+/** Persistence shape of TargetModuleGrounding (AGENTS rule 3: data at rest
+ * is zod-parsed, never cast). */
+const storedModuleGroundingSchema = z.object({
+  status: z.enum(['ok', 'not-module-owned', 'module-missing']),
+  moduleId: z.string().optional(),
+  moduleTitle: z.string().optional(),
+  contextParagraphs: z.string().optional(),
+  premise: z.string().optional(),
+});
+
 /** The persisted retrieve-step output the draft/statblock steps re-consume
  * (see contextFromRetrieveStep) — zod-validated when read back. */
 const storedRetrieveOutputSchema = z.object({
@@ -146,7 +159,35 @@ const storedRetrieveOutputSchema = z.object({
   // the draft renders them byte-identically without re-derivation (additive
   // field; older runs read back as []).
   expansionExcerpts: z.array(expansionExcerptSchema).default([]),
+  // In-place refill parity: what the target artifact's owning module
+  // contributes, persisted with the selection so pause/resume renders it
+  // byte-identically (additive field; older runs read back as absent).
+  moduleGrounding: storedModuleGroundingSchema.optional(),
 });
+
+/**
+ * In-place refill grounding: what the target artifact's OWNING MODULE
+ * contributes to a targeted generate run — the same sources the automatic
+ * module generation (`runEntityBatch`) grounds its briefs in (08 §M4-C):
+ * the module document text around the artifact's name + the spine premise.
+ * Every non-`ok` state is an EXPLICIT degrade (the prompt and run say so —
+ * AGENTS rule 1), never a silent drop of the module context.
+ */
+export interface TargetModuleGrounding {
+  /** `ok` — the module row exists; `not-module-owned` — the artifact is
+   * campaign/global-scoped; `module-missing` — the artifact claims a module
+   * whose row is gone (kept artifact of a deleted module). */
+  status: 'ok' | 'not-module-owned' | 'module-missing';
+  /** The owning module's id (module-owned targets only). */
+  moduleId?: Id | undefined;
+  /** The owning module's title (`ok` only). */
+  moduleTitle?: string | undefined;
+  /** The module document's paragraphs around the artifact's name ('' when
+   * the text never mentions it). */
+  contextParagraphs?: string | undefined;
+  /** The module's spine premise ('' when the module has none). */
+  premise?: string | undefined;
+}
 
 /** The grounding context one retrieve pass computes (and the retrieve step
  * persists the stable parts of). */
@@ -169,6 +210,10 @@ interface RetrieveContext {
    * budget-truncated by the derivation). The draft renders them verbatim;
    * the statblock step never does. */
   expansionExcerpts: ExpansionExcerpt[];
+  /** In-place refill parity (undefined when the run is not a targeted
+   * generate run). The draft renders the module section from the STORED
+   * value — pause/resume cannot drift the prompt. */
+  moduleGrounding?: TargetModuleGrounding | undefined;
 }
 
 export interface StepStatblockOutput {
@@ -320,6 +365,50 @@ function contractRepairNotice(firstTryModel: string, repairTarget: string): stri
   return repairTarget === firstTryModel
     ? null
     : `The reply contract failed on “${firstTryModel}” — the repair attempt ran on “${repairTarget}”.`;
+}
+
+/**
+ * The draft-prompt section that grounds an in-place refill in its owning
+ * module (parity with automatic module generation, 08 §M4-C). Pure over the
+ * STORED grounding, so pause/resume and the repair turn render it
+ * byte-identically. Every degrade names itself in the prompt (AGENTS rule 1)
+ * — the section is null only when the run is not a refill at all.
+ */
+export function moduleGroundingSection(
+  grounding: TargetModuleGrounding | undefined,
+): string | null {
+  if (grounding === undefined) return null;
+  switch (grounding.status) {
+    case 'not-module-owned':
+      return 'In-place regeneration of an existing artifact: it is not owned by a module, so there is no module document to ground it in — regenerate from the brief and the campaign grounding alone.';
+    case 'module-missing':
+      return `In-place regeneration of an existing artifact: the module that owned it (${grounding.moduleId ?? 'unknown'}) no longer exists, so its document cannot ground this regeneration — say so in the reply when the missing module context matters.`;
+    case 'ok': {
+      const context = grounding.contextParagraphs ?? '';
+      const premise = grounding.premise ?? '';
+      const title = grounding.moduleTitle ?? 'the owning module';
+      const header = `In-place regeneration of an existing artifact. It is owned by the module "${title}", which grounds it exactly as automatic module generation would.`;
+      const mentionNote =
+        context === ''
+          ? `The module text never mentions this artifact's name — there are no surrounding paragraphs to ground it in.`
+          : `Where it is mentioned in the module:\n\n${context}`;
+      const premiseNote =
+        premise === ''
+          ? 'The module carries no spine premise.'
+          : `Module premise for context:\n\n${premise}`;
+      return [header, mentionNote, premiseNote].join('\n\n');
+    }
+  }
+}
+
+/** The run-level notice for a refill grounding anomaly (the 'notice'
+ * convention the persona panel renders): a degrade must be visible, never
+ * silent (AGENTS rule 1). */
+function moduleGroundingNotice(grounding: TargetModuleGrounding | undefined): string | null {
+  if (grounding?.status === 'module-missing') {
+    return `The module that owned the refilled artifact (${grounding.moduleId ?? 'unknown'}) no longer exists — the regeneration ran without its module context.`;
+  }
+  return null;
 }
 
 export interface StartRunInput {
@@ -600,6 +689,48 @@ function encounterSourceIssues(
     }
   }
   return issues;
+}
+
+/**
+ * Merges a refill draft's data over the target artifact's existing data,
+ * preserving what the draft pipeline cannot re-produce: a PC's human-owned
+ * fields (playerName/currentHp/initiativeOverride are NEVER drafted —
+ * 09-MILESTONE-5 M5-A), a PC's stat block the refill produced none for, an
+ * NPC's existing stat block when the refill declined stats (a skipped
+ * statblock step must not clobber curated stats), and an NPC's mob-artifact
+ * marker. Every other field is the draft's — the refill regenerates the
+ * artifact's substance, that is its point.
+ */
+function mergeRefillData(
+  kind: ArtifactKind,
+  draftData: ArtifactData,
+  target: AnyArtifact,
+): ArtifactData {
+  if (target.kind !== kind) return draftData;
+  if (kind === 'npc' && target.kind === 'npc' && 'appearance' in draftData) {
+    const previous = target.data;
+    return {
+      appearance: draftData.appearance,
+      personality: draftData.personality,
+      // A refill that skipped its statblock step (needsStatBlock=false) or
+      // produced none keeps the target's curated block.
+      statBlock: draftData.statBlock ?? previous.statBlock,
+      // Mob-artifact marker survives the refill (identity, not content).
+      ...(previous.monsterChunkId === undefined ? {} : { monsterChunkId: previous.monsterChunkId }),
+    };
+  }
+  if (kind === 'pc' && target.kind === 'pc' && 'notes' in draftData) {
+    const previous = target.data;
+    return {
+      // Human-owned fields are never drafted — the player owns them.
+      playerName: previous.playerName,
+      currentHp: previous.currentHp,
+      initiativeOverride: previous.initiativeOverride,
+      statBlock: draftData.statBlock ?? previous.statBlock,
+      notes: draftData.notes,
+    };
+  }
+  return draftData;
 }
 
 /**
@@ -1534,7 +1665,21 @@ export class RunEngine {
       // inside the retrieve step from campaign sources only — zero new
       // searchRules calls, zero query embeddings, zero LLM calls. An OFF
       // toggle, an empty module set or zero detections yield no section.
-      const expansionExcerpts = await this.campaignGroundingFor(input);
+      // In-place refill parity: the module context is computed FIRST and
+      // appended to the detection text, so the grounding detects on the
+      // same module prose the automatic generation's brief carries.
+      const moduleGrounding = await this.targetModuleGrounding(input);
+      const detectionText =
+        moduleGrounding?.status === 'ok'
+          ? [
+              input.brief,
+              moduleGrounding.contextParagraphs ?? '',
+              moduleGrounding.premise ?? '',
+            ]
+              .filter((part) => part !== '')
+              .join('\n\n')
+          : input.brief;
+      const expansionExcerpts = await this.campaignGroundingFor(input, detectionText);
       return {
         chunkIds: merged,
         titles,
@@ -1548,6 +1693,7 @@ export class RunEngine {
         itemTruncated,
         itemChunkByName,
         expansionExcerpts,
+        moduleGrounding: moduleGrounding ?? undefined,
       };
     } finally {
       useProgressStore.getState().finish(contextJobId);
@@ -1561,8 +1707,16 @@ export class RunEngine {
    * pool (campaign artifacts + global library, the buildWikiGraph contract);
    * repo failures propagate and fail the run loudly — never a silent empty
    * section.
+   *
+   * `detectionText` overrides the brief for DETECTION only: an in-place
+   * refill appends the target's module context so the grounding sees the
+   * same text the automatic module generation would have detected on (the
+   * refill's own brief stays untouched on the run row).
    */
-  private async campaignGroundingFor(input: StartRunInput): Promise<ExpansionExcerpt[]> {
+  private async campaignGroundingFor(
+    input: StartRunInput,
+    detectionText?: string,
+  ): Promise<ExpansionExcerpt[]> {
     const settings = await getSettings();
     if (!settings.wikiGroundingEnabled) return [];
     const [modules, campaignArtifacts, globalArtifacts] = await Promise.all([
@@ -1571,10 +1725,43 @@ export class RunEngine {
       listGlobalArtifacts(),
     ]);
     return computeCampaignGrounding({
-      brief: input.brief,
+      brief: detectionText ?? input.brief,
       modules,
       pool: [...campaignArtifacts, ...globalArtifacts],
     });
+  }
+
+  /**
+   * The in-place refill's module grounding (parity with automatic module
+   * generation, 08 §M4-C): a targeted GENERATE run grounds its draft in the
+   * target artifact's owning module exactly as `runEntityBatch` would —
+   * `surroundingParagraphs(moduleDocumentText(module), name)` + the spine
+   * premise. Every inapplicable state comes back NAMED (not-module-owned /
+   * module-missing) so the prompt degrades explicitly (AGENTS rule 1); a
+   * vanished target artifact fails the run loudly. Encounter-mode runs are
+   * out of scope: their brief pipeline owns its own context contract
+   * (docs/11) and is untouched here.
+   */
+  private async targetModuleGrounding(input: StartRunInput): Promise<TargetModuleGrounding | null> {
+    if (input.targetArtifactId === undefined || input.persona.mode !== 'generate') return null;
+    const target = await getAnyArtifact(input.targetArtifactId);
+    if (target === undefined) {
+      throw new Error(`The artifact to refill (${input.targetArtifactId}) no longer exists`);
+    }
+    if (target.moduleId === null) {
+      return { status: 'not-module-owned' };
+    }
+    const module = await getModule(target.moduleId);
+    if (module === undefined) {
+      return { status: 'module-missing', moduleId: target.moduleId };
+    }
+    return {
+      status: 'ok',
+      moduleId: module.id,
+      moduleTitle: module.title,
+      contextParagraphs: surroundingParagraphs(moduleDocumentText(module), target.name),
+      premise: module.spine?.premise ?? '',
+    };
   }
 
   private async runRetrieve(
@@ -1603,6 +1790,9 @@ export class RunEngine {
       // selection so the draft renders the stored ones byte-identically —
       // nothing re-derives the graph at draft time.
       expansionExcerpts: context.expansionExcerpts,
+      // In-place refill parity: the module grounding persists with the
+      // selection the same way (absent for runs without a refill target).
+      ...(context.moduleGrounding === undefined ? {} : { moduleGrounding: context.moduleGrounding }),
     });
     return { step };
   }
@@ -1688,6 +1878,9 @@ export class RunEngine {
       itemTruncated: output.itemTruncated,
       itemChunkByName: output.itemChunkByName,
       expansionExcerpts: output.expansionExcerpts,
+      // In-place refill parity: the stored module grounding rides along so
+      // the draft renders it byte-identically across pause/resume.
+      moduleGrounding: output.moduleGrounding,
     };
   }
 
@@ -1751,9 +1944,15 @@ export class RunEngine {
       context.expansionExcerpts.length > 0
         ? renderCampaignGroundingSection(context.expansionExcerpts)
         : null;
+    // In-place refill parity: the owning module's document + premise render
+    // from the STORED grounding, right after the Task line — the same
+    // sources the automatic module generation grounds its briefs in. Every
+    // inapplicable state names itself (moduleGroundingSection).
+    const moduleSection = moduleGroundingSection(context.moduleGrounding);
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
+      moduleSection,
       groundingSection,
       contextSection,
       context.excerpts === ''
@@ -1914,7 +2113,13 @@ export class RunEngine {
 
     const step = this.finishStep(
       steps[stepIndex],
-      withNotice({ parsed }, fallback, contractRepairNotice(firstTryModel, repairTarget)),
+      withNotice(
+        { parsed },
+        fallback,
+        [contractRepairNotice(firstTryModel, repairTarget), moduleGroundingNotice(context.moduleGrounding)]
+          .filter((note): note is string => note !== null)
+          .join(' ') || null,
+      ),
     );
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
@@ -3241,30 +3446,34 @@ export class RunEngine {
     // pipeline skipped validation — refuse instead of naming the artifact
     // after the persona (the "Worldbuilder"-class bug).
     const draftName = asString(draft.name);
-    if (draftName === '') {
+    if (draftName.trim() === '') {
       throw new Error(
         `finalize: the ${kind} draft has no name — refusing to create an unnamed artifact`,
       );
     }
+    // Minimum content at the finalize boundary (AGENTS 1): a completed draft
+    // with an empty body never materializes — neither as a new artifact nor
+    // as a refill overwrite. The schema already rejects empty bodies, so
+    // this guards the holes it cannot see (user-edited drafts, older runs
+    // resumed after the contract tightened). Loud run failure; an in-place
+    // refill leaves the existing content untouched.
+    if (asString(draft.body).trim() === '') {
+      throw new Error(
+        `finalize: the ${kind} draft has an empty body — refusing to create or overwrite an artifact with empty content`,
+      );
+    }
     // Generate personas create new artifacts — except an explicitly targeted
-    // encounter run (module stubs): the content is written INTO the existing
-    // artifact, preserving its identity, links, images and battlemap.
+    // run (module stubs): the content is written INTO the existing artifact,
+    // preserving its identity, links, images and (encounters) battlemap.
     if (input.targetArtifactId !== undefined) {
       if (input.placementModuleId !== undefined) {
         throw new Error(
           'Module placement applies only to a newly created artifact — clear the module choice or drop the target',
         );
       }
-      if (kind !== 'encounter') {
-        throw new Error(
-          `In-place generation targets encounters only — a "${kind}" run cannot fill an existing artifact`,
-        );
-      }
       const target = await getAnyArtifact(input.targetArtifactId);
-      if (target === undefined) throw new Error('The encounter to fill no longer exists');
-      if (target.kind !== 'encounter') {
-        throw new Error(`"${target.name}" is not an encounter and cannot be filled in place`);
-      }
+      if (target === undefined) throw new Error('The artifact to fill no longer exists');
+      if (kind === 'encounter' && target.kind === 'encounter') {
       if (!('monsters' in data)) {
         throw new Error('In-place generation produced no monster roster to fill the encounter with');
       }
@@ -3401,6 +3610,41 @@ export class RunEngine {
       );
       await updateRun(runId, { resultArtifactId: target.id });
       return { step, artifactId: target.id };
+      }
+      // In-place refill of an existing artifact by a generate persona (the
+      // "use the NPC smith to correct this" flow): summary, body and the
+      // draft's data are written INTO the artifact, preserving its identity —
+      // name, scope, tags, links, images. The model's invented name becomes
+      // an alias (nothing authored is lost), exactly like the encounter fill
+      // above. The module grounding that levels this with automatic module
+      // generation rides the retrieve step (targetModuleGrounding).
+      if (input.persona.mode === 'generate' && target.kind === kind) {
+        const modelAlias = draftName.trim();
+        const aliases =
+          modelAlias.toLowerCase() === target.name.trim().toLowerCase() ||
+          target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
+            ? target.aliases
+            : [...target.aliases, modelAlias];
+        await updateArtifact(
+          target.id,
+          {
+            summary: asString(draft.summary),
+            body: asString(draft.body),
+            aliases,
+            // Fields the draft pipeline cannot re-produce survive the refill
+            // (mergeRefillData): a player's human-owned PC fields, and an
+            // existing stat block the refill declined to regenerate.
+            data: mergeRefillData(kind, data, target),
+          },
+          { source: 'persona', runId },
+        );
+        const step = this.finishStep(steps[stepIndex], { artifactId: target.id });
+        await updateRun(runId, { resultArtifactId: target.id });
+        return { step, artifactId: target.id };
+      }
+      throw new Error(
+        `In-place generation cannot fill "${target.name}" (${target.kind}) from a "${kind}" run`,
+      );
     }
     const artifact = await createArtifact(
       {

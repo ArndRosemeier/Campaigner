@@ -247,4 +247,48 @@ describe('editor surfaces', () => {
     expect(revisions[0]?.source).toBe('user');
     await flushAsyncUpdates();
   }, 20000);
+
+  it('content AI section hands off a refill request with two-step overwrite confirm', async () => {
+    const user = userEvent.setup();
+    const { npc } = await seedNpc();
+    const { useContentRefillRequest } = await import('@/features/campaign/contentRefillRequest');
+    const first = render(<ArtifactEditor artifact={npc} campaignId={npc.campaignId} campaignArtifacts={[npc]} campaignSystem="dnd5e" />);
+
+    // The artifact has content → the first press only ARMS the overwrite.
+    const button = screen.getByTestId('generate-artifact-content');
+    expect(button).toHaveTextContent('Regenerate with AI');
+    await user.click(button);
+    expect(button).toHaveTextContent('Overwrite content — confirm?');
+    expect(useContentRefillRequest.getState().artifactId).toBeNull();
+
+    // The second press fires the request: artifact + kind + regenerate.
+    await user.click(button);
+    const state = useContentRefillRequest.getState();
+    expect(state.artifactId).toBe(npc.id);
+    expect(state.kind).toBe('npc');
+    expect(state.regenerate).toBe(true);
+    act(() => {
+      useContentRefillRequest.getState().clear();
+    });
+    first.unmount();
+
+    // An empty artifact is a first generation: no arm, direct request.
+    const empty = await createArtifact({
+      campaignId: npc.campaignId,
+      kind: 'npc',
+      name: 'Empty Ernie',
+      summary: '',
+      body: '',
+      data: { ...NPC_DATA },
+    });
+    render(<ArtifactEditor artifact={empty} campaignId={empty.campaignId} campaignArtifacts={[empty]} campaignSystem="dnd5e" />);
+    const fresh = screen.getByTestId('generate-artifact-content');
+    expect(fresh).toHaveTextContent('Generate with AI');
+    await user.click(fresh);
+    expect(useContentRefillRequest.getState().regenerate).toBe(false);
+    act(() => {
+      useContentRefillRequest.getState().clear();
+    });
+    await flushAsyncUpdates();
+  }, 20000);
 });

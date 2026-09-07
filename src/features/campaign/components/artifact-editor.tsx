@@ -11,6 +11,7 @@ import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
 import { modulePath } from '@/app/routes';
 import { getModule } from '@/db/moduleRepo';
 import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
+import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
 import {
   ARTIFACT_KIND_SINGULAR,
   type AnyArtifact,
@@ -363,6 +364,7 @@ export function ArtifactEditor({
               />
             )}
             {draft.kind === 'note' && <NoteForm />}
+            {draft.kind !== 'encounter' && <ContentAiSection artifact={artifact} />}
             {draft.kind === 'encounter' && (
               <EncounterAiSection artifact={artifact} />
             )}
@@ -436,6 +438,47 @@ export function ArtifactEditor({
 interface RevisionDropdownProps {
   artifactId: Id;
   onOpen: (revision: ArtifactRevision) => void;
+}
+
+/**
+ * In-place refill hand-off for the smith kinds (npc/location/faction/note/
+ * plotarc/pc — encounters have their own roster-aware section below): a
+ * targeted generate run writes summary, body and details INTO this artifact,
+ * preserving its name, relations, tags and images (docs/08 §M4-C). The run is
+ * grounded in the owning module exactly like automatic module generation
+ * (runEngine's targetModuleGrounding). Overwriting authored content is a
+ * two-step act, mirroring the encounter section.
+ */
+function ContentAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element {
+  const requestRefill = useContentRefillRequest((state) => state.request);
+  const [armed, setArmed] = useState(false);
+  const hasContent = artifact.body.trim() !== '';
+
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-md border p-3" data-testid="content-ai-section">
+      <p className="text-xs text-muted-foreground">
+        {hasContent
+          ? 'Regenerate summary, body and details with a smith persona. Name, relations and images are preserved; when the artifact is module-owned, the run is grounded in its module like automatic generation.'
+          : 'This artifact has no content yet — generate summary, body and details with a smith persona, grounded in its owning module when it has one.'}
+      </p>
+      <Button
+        variant={hasContent && !armed ? 'outline' : 'default'}
+        size="sm"
+        data-testid="generate-artifact-content"
+        onClick={() => {
+          if (hasContent && !armed) {
+            setArmed(true);
+            return;
+          }
+          requestRefill(artifact.id, artifact.kind, hasContent);
+          setArmed(false);
+        }}
+      >
+        <SparklesIcon aria-hidden data-icon="inline-start" />
+        {!hasContent ? 'Generate with AI' : armed ? 'Overwrite content — confirm?' : 'Regenerate with AI'}
+      </Button>
+    </div>
+  );
 }
 
 /**

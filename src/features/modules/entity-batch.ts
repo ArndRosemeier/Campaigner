@@ -1,5 +1,5 @@
 import type { Campaign, Id, Module } from '@/domain';
-import { moduleTagFor } from '@/domain';
+import { moduleDocumentText, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -112,17 +112,6 @@ export interface EntityBatchResult {
   /** Entities that produced no artifact, with the reason — loud in the
    * toast and the Runs tab (AGENTS rule 2). */
   failed: EntityBatchFailure[];
-}
-
-/** The full module text (premise + parts, plan order) for brief context. */
-export function moduleDocumentText(module: Module): string {
-  return [
-    module.spine?.premise ?? '',
-    ...module.parts
-      .slice()
-      .sort((a, b) => a.planIndex - b.planIndex)
-      .map((part) => part.markdown),
-  ].join('\n\n');
 }
 
 /**
