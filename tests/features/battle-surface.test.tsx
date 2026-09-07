@@ -917,6 +917,274 @@ describe('selection card', () => {
   });
 });
 
+describe('token HP edge strip', () => {
+  it('renders the HP meter as a thin bottom strip whose fill width is the HP ratio — never a full-area wash', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    const meter = within(trollEl).getByTestId('hp-meter');
+    // Edge bar: thin, bottom-anchored, rounded — the portrait stays uncovered.
+    expect(meter.className).toContain('h-1.5');
+    expect(meter.className).toContain('bottom-1');
+    expect(meter.className).toContain('rounded-full');
+    expect(meter.className).not.toContain('bg-emerald-500/45');
+    expect(meter.getAttribute('aria-hidden')).toBe('true');
+    expect(meter.style.height).toBe('');
+    // Full HP (84/84): the inner fill spans the whole track via WIDTH.
+    const fill = meter.firstElementChild as HTMLElement | null;
+    if (fill === null) throw new Error('hp fill missing');
+    expect(fill.style.width).toBe('100%');
+  });
+
+  it('keeps the downed overlay and grayscale exactly as-is at 0 HP', async () => {
+    const { moduleId } = await seedStandardBattle();
+    const battle = await currentBattle(moduleId);
+    await saveBattleBoard(battle.id, {
+      ...battle.board,
+      tokens: battle.board.tokens.map((token) => (token.label === 'Troll' ? { ...token, currentHp: 0 } : token)),
+    });
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    expect(within(trollEl).getByTestId('downed-overlay')).toBeInTheDocument();
+    expect(trollEl.querySelector('.grayscale')).not.toBeNull();
+    // The strip survives at 0 HP with an empty fill.
+    const meter = within(trollEl).getByTestId('hp-meter');
+    expect((meter.firstElementChild as HTMLElement | null)?.style.width).toBe('0%');
+  });
+});
+
+describe('token portrait lightbox', () => {
+  async function tapTokenEl(label: string, moduleId: string): Promise<HTMLElement> {
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === label);
+    if (token === undefined) throw new Error(`${label} missing`);
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === label);
+    if (el === undefined) throw new Error(`${label} element missing`);
+    fireEvent.pointerDown(el, { pointerId: 2, clientX: token.x * BOARD_W, clientY: CONTENT_TOP + token.y * CONTENT_H });
+    fireEvent.pointerUp(el, { pointerId: 2 });
+    await flushAsyncUpdates();
+    return el;
+  }
+
+  async function seedTrollPortrait(npcId: string): Promise<void> {
+    const image = await createImage({
+      campaignId,
+      blob: new Blob(['fake-png-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 64,
+      height: 64,
+      prompt: 'troll portrait',
+      model: 'google/gemini-2.5-flash-image',
+      source: 'generated',
+    });
+    await updateArtifact(npcId, { coverImageId: image.id });
+  }
+
+  it('GM taps stay select-only: no portrait, and the rail stays usable', async () => {
+    const { moduleId, npcId } = await seedStandardBattle();
+    await seedTrollPortrait(npcId);
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await tapTokenEl('Troll', moduleId);
+    // Select-only: the card + controls mount, but no modal buries the rail
+    // (a modal marks the background inert, which would hide the HP steppers
+    // from both the GM and the accessibility tree until dismissed).
+    expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    expect(screen.getByTestId('token-controls')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Damage 10' })).toBeInTheDocument();
+    await flushAsyncUpdates();
+  });
+
+  it('opens with large initials for imageless tokens — no dead taps', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    // Serren (PC) carries no cover art, so the token falls back to initials.
+    await tapTokenEl('Serren', moduleId);
+    const lightbox = screen.getByTestId('token-lightbox');
+    expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Serren');
+    expect(within(lightbox).getByTestId('token-lightbox-initials')).toHaveTextContent('S');
+    expect(within(lightbox).queryByTestId('token-lightbox-portrait')).toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('never opens on a drag at/above the 8px threshold — the move still commits', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const pcToken = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (pcToken === undefined) throw new Error('pc token missing');
+    const tokenEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Serren');
+    if (tokenEl === undefined) throw new Error('serren element missing');
+    fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
+    fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    fireEvent.pointerUp(tokenEl, { pointerId: 1 });
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    const after = await currentBattle(moduleId);
+    expect(after.board.tokens.find((token) => token.label === 'Serren')?.x).not.toBe(pcToken.x);
+  });
+
+  it('board-level release fallback still tap-selects in GM mode without opening the portrait', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    const board = screen.getByTestId('battle-board');
+    const x = troll.x * BOARD_W;
+    const y = CONTENT_TOP + troll.y * CONTENT_H;
+    fireEvent.pointerDown(trollEl, { pointerId: 3, clientX: x, clientY: y });
+    fireEvent.pointerUp(board, { pointerId: 3, clientX: x, clientY: y });
+    await flushAsyncUpdates();
+    // The off-piece release finishes with tap-select semantics (no leaked
+    // lift), and GM mode opens no portrait.
+    expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+  });
+
+  it('player-safe tap that lifts off the token node still opens the portrait', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    const battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    const board = screen.getByTestId('battle-board');
+    const x = troll.x * BOARD_W;
+    const y = CONTENT_TOP + troll.y * CONTENT_H;
+    fireEvent.pointerDown(trollEl, { pointerId: 5, clientX: x, clientY: y });
+    fireEvent.pointerUp(board, { pointerId: 5, clientX: x, clientY: y });
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('token-lightbox')).toBeInTheDocument();
+  });
+
+  it('opens the portrait in player-safe mode with name + image only', async () => {
+    const { moduleId, npcId } = await seedStandardBattle();
+    await seedTrollPortrait(npcId);
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await tapTokenEl('Troll', moduleId);
+    const lightbox = screen.getByTestId('token-lightbox');
+    expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Troll');
+    expect(within(lightbox).getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+    // Player-safe DOM contract holds with the lightbox mounted.
+    const surface = screen.getByTestId('battle-surface');
+    expect(surface.textContent).not.toContain('AC');
+    expect(surface.textContent).not.toContain('Hit Dice');
+    expect(surface.textContent).not.toContain('Regenerates');
+    await flushAsyncUpdates();
+  });
+
+  it('player-safe drag past the threshold never opens the portrait and never moves the token', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    const battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    const x = troll.x * BOARD_W;
+    const y = CONTENT_TOP + troll.y * CONTENT_H;
+    fireEvent.pointerDown(trollEl, { pointerId: 4, clientX: x, clientY: y });
+    fireEvent.pointerMove(trollEl, { pointerId: 4, clientX: x + 60, clientY: y });
+    fireEvent.pointerUp(trollEl, { pointerId: 4 });
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    const after = await currentBattle(moduleId);
+    expect(after.board.tokens.find((token) => token.label === 'Troll')?.x).toBe(troll.x);
+  });
+
+  it('closes on Escape and returns focus to the previously focused control', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    const toggle = screen.getByTestId('player-safe-toggle');
+    toggle.focus();
+    await tapTokenEl('Troll', moduleId);
+    expect(screen.getByTestId('token-lightbox')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    });
+    expect(document.activeElement).toBe(toggle);
+  });
+
+  it('closes on tap-outside (backdrop)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await tapTokenEl('Troll', moduleId);
+    expect(screen.getByTestId('token-lightbox')).toBeInTheDocument();
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    if (overlay === null) throw new Error('dialog overlay missing');
+    await user.click(overlay);
+    await waitFor(() => {
+      expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    });
+  });
+});
+
 describe('pan from the map', () => {
   /** The transformed background wrapper (pan/zoom transform lives here). */
   function panWrapper(): HTMLElement {

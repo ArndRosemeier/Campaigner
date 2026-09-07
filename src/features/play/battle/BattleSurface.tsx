@@ -88,7 +88,9 @@ import { cn } from '@/lib/utils';
  *   `visible: false` tokens are removed in both views. The GM view sees
  *   everything under its own veils.
  * - Token tap shows name + image + HP only (full inspection happens back on
- *   the GM view, never here).
+ *   the GM view, never here); in player-safe (mob) view the tap also opens
+ *   the fullscreen portrait lightbox (image + name only, Esc/tap-outside
+ *   to close). GM taps stay select-only so the rail stays usable.
  *
  * Interactions: drag with a local live position + a single repo commit on
  * release (8px SCREEN-space tap threshold — client px, so the tap window does
@@ -142,6 +144,10 @@ export function BattleSurface(): JSX.Element {
   const [selectedTokenId, setSelectedTokenId] = useState<BattleTokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
   const [selectedEffectId, setSelectedEffectId] = useState<BattleEffect['id'] | null>(null);
+  // Fullscreen token portrait (image + name only): opened by a player-safe
+  // token tap, closed by Esc/tap-outside/the close button. GM taps stay
+  // select-only so the rail stays usable.
+  const [lightboxTokenId, setLightboxTokenId] = useState<BattleTokenId | null>(null);
   // GM-only room-key marker selection (owner-ratified room-keys/treasure
   // arc): the layout-room id whose key card shows in the rail.
   const [selectedKeyRoomId, setSelectedKeyRoomId] = useState<string | null>(null);
@@ -164,6 +170,16 @@ export function BattleSurface(): JSX.Element {
   const panRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
   const pinchRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchBaseRef = useRef<{ distance: number; zoom: number } | null>(null);
+  // Player-safe tap tracker: player-safe mode builds no live drag (moving
+  // pieces stays GM-only), so the tap-vs-drag threshold for opening the
+  // fullscreen portrait is tracked here instead — down origin + the max
+  // screen-space distance seen on the token's own move stream.
+  const playerTapRef = useRef<{
+    tokenId: BattleTokenId;
+    movedPx: number;
+    startClientX: number;
+    startClientY: number;
+  } | null>(null);
 
   const { battle, stats, coveredTokenIds, artifacts } = useBattleState(
     campaignId,
@@ -347,6 +363,10 @@ export function BattleSurface(): JSX.Element {
   }, [battle, liveDrag]);
 
   const artifactById = useMemo(() => new Map(artifacts.map((entry) => [entry.id, entry])), [artifacts]);
+  const lightboxToken = displayedTokens.find((token) => token.id === lightboxTokenId) ?? null;
+  const lightboxArtifact = lightboxToken?.artifactId === null || lightboxToken === null
+    ? undefined
+    : artifactById.get(lightboxToken.artifactId);
   const selectedToken = displayedTokens.find((token) => token.id === selectedTokenId) ?? null;
   const selectedArtifact = selectedToken?.artifactId === null || selectedToken === null
     ? undefined
@@ -488,6 +508,19 @@ export function BattleSurface(): JSX.Element {
       else if (liveDrag.tokenId.startsWith('effect:')) finishEffectDrag();
       else finishTokenDrag();
     }
+    // Player-safe off-piece release (pairs with the fallback above): a tap
+    // that started on a token but lifted off its node still opens the
+    // portrait when below the threshold — and the tracker is always
+    // consumed here so a stray release never leaks into the next gesture.
+    // Releases ON a piece bubble through the token's own pointerup first,
+    // which already consumed the tracker, so this only fires off-piece.
+    const playerTap = playerTapRef.current;
+    playerTapRef.current = null;
+    if (playerTap !== null && !releasedOnPiece && playerTap.movedPx < DRAG_THRESHOLD_PX) {
+      setSelectedTokenId(playerTap.tokenId);
+      setSelectedVeilId(null);
+      setLightboxTokenId(playerTap.tokenId);
+    }
     // Background tap (down→up within the screen-space threshold) clears the
     // selection — tapping empty board is a deselect, not just a no-op pan.
     // Pan gestures (≥ threshold) keep it. Token/veil pointerdowns stop
@@ -513,9 +546,17 @@ export function BattleSurface(): JSX.Element {
     if (playerSafe) {
       // Player-safe tap: selection ONLY — the name+image+HP card (the M5-D
       // token-tap contract). No capture, no live drag, no commit: moving
-      // pieces stays GM-only.
+      // pieces stays GM-only. The tap-vs-drag threshold for the fullscreen
+      // portrait is tracked in playerTapRef and decided on release — a drag
+      // must never open it.
       setSelectedTokenId(token.id);
       setSelectedVeilId(null);
+      playerTapRef.current = {
+        tokenId: token.id,
+        movedPx: 0,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+      };
       return;
     }
     // Pointer capture keeps the move/up stream on THIS token even when the
@@ -549,7 +590,19 @@ export function BattleSurface(): JSX.Element {
 
   function moveTokenDrag(event: React.PointerEvent<HTMLDivElement>): void {
     const drag = liveDrag;
-    if (drag === null) return;
+    if (drag === null) {
+      // Player-safe tap tracking (no live drag exists in that mode): fold
+      // the move into the tap's screen-space distance so a drag fails the
+      // tap threshold on release and never opens the portrait.
+      const tap = playerTapRef.current;
+      if (tap !== null) {
+        tap.movedPx = Math.max(
+          tap.movedPx,
+          Math.hypot(event.clientX - tap.startClientX, event.clientY - tap.startClientY),
+        );
+      }
+      return;
+    }
     const at = boardPointFromEvent(event);
     // Screen-space threshold: client px from the down origin, so the 8px tap
     // window is zoom-invariant (a board-frame distance would shrink/grow it
@@ -563,13 +616,29 @@ export function BattleSurface(): JSX.Element {
 
   function finishTokenDrag(): void {
     const drag = liveDrag;
+    if (drag === null) {
+      // Player-safe release (no gesture was begun, so none ends here): a
+      // release below the tap threshold opens the fullscreen portrait
+      // (image + name only); a drag never does.
+      const tap = playerTapRef.current;
+      playerTapRef.current = null;
+      if (tap !== null && tap.movedPx < DRAG_THRESHOLD_PX) {
+        setSelectedTokenId(tap.tokenId);
+        setSelectedVeilId(null);
+        setLightboxTokenId(tap.tokenId);
+      }
+      return;
+    }
     setLiveDrag(null);
-    if (drag === null) return;
     // Paired with the begin in startTokenDrag — a pointerup without a begun
-    // gesture (player-safe tap, stray release) must not end one.
+    // gesture (player-safe tap, stray release) must not end one (that path
+    // returns above, before any gesture begins).
     endBoardGesture();
     if (drag.movedPx < DRAG_THRESHOLD_PX) {
-      // Tap: select (player-safe tap shows name/image/HP only).
+      // Tap: select (player-safe tap shows name/image/HP only). GM taps
+      // stay select-only — the fullscreen portrait is a player-safe (mob
+      // view) surface; a modal here would bury the GM rail (HP steppers,
+      // visibility, scale) behind inert until dismissed.
       setSelectedTokenId(drag.tokenId);
       setSelectedVeilId(null);
       return;
@@ -1666,6 +1735,19 @@ export function BattleSurface(): JSX.Element {
             }}
           />
         )}
+        {/* Fullscreen token portrait (mob token view): image + name only — a
+        subset of the player-safe contract, so it mounts in both modes. At
+        the surface root (never inside the board div) so its pointer stream
+        stays out of the board's drag/pan gesture handling. */}
+        {lightboxToken !== null && (
+          <TokenLightbox
+            token={lightboxToken}
+            artifact={lightboxArtifact}
+            onClose={() => {
+              setLightboxTokenId(null);
+            }}
+          />
+        )}
       </div>
     </div>
   );
@@ -1745,7 +1827,10 @@ interface TokenViewProps {
 }
 
 /** One token: portrait art or deterministic initials, HP meter, downed
- * overlay, turn marker. NAME + IMAGE + HP ONLY — never stats. */
+ * overlay, turn marker. NAME + IMAGE + HP ONLY — never stats. The HP meter
+ * is a bottom-edge strip inside the circle (never a full-area wash); a
+ * player-safe tap opens the fullscreen portrait lightbox (image + name
+ * only), GM taps stay select-only. */
 function TokenView({
   token,
   content,
@@ -1809,14 +1894,20 @@ function TokenView({
             {initials}
           </span>
         )}
-        {/* Vertical HP fill meter */}
+        {/* Bottom-edge HP strip: a thin bar inside the token circle whose
+            fill width is the HP ratio — the old full-area fill washed the
+            whole portrait green at high HP. */}
         {hpRatio !== null && (
           <div
             aria-hidden
-            className="absolute inset-x-0 bottom-0 bg-emerald-500/45"
-            style={{ height: `${String(Math.min(hpRatio, 1) * 100)}%` }}
+            className="absolute inset-x-1 bottom-1 h-1.5 overflow-hidden rounded-full bg-black/60"
             data-testid="hp-meter"
-          />
+          >
+            <div
+              className="h-full rounded-full bg-emerald-500"
+              style={{ width: `${String(Math.min(Math.max(hpRatio, 0), 1) * 100)}%` }}
+            />
+          </div>
         )}
         {downed && (
           <div
@@ -2106,6 +2197,74 @@ function SelectionCard({ token, artifact, stats, statBlock, playerSafe }: Select
         </Dialog>
       )}
     </div>
+  );
+}
+
+interface TokenLightboxProps {
+  token: BattleToken;
+  artifact: AnyArtifact | undefined;
+  onClose: () => void;
+}
+
+/**
+ * Fullscreen token portrait (mob token view): image + name ONLY — never
+ * stats, so the player-safe DOM contract holds in both modes. Opens on a
+ * player-safe token tap (pointer-up below DRAG_THRESHOLD_PX); a drag never
+ * opens it, and GM taps stay select-only (the rail must stay usable).
+ * Imageless tokens render their deterministic initials large, so no tap is
+ * dead. Esc / tap-outside / the close button dismiss via the dialog
+ * defaults; focus returns to the element that held it when the lightbox
+ * opened.
+ */
+function TokenLightbox({ token, artifact, onClose }: TokenLightboxProps): JSX.Element {
+  // Same art path as TokenView/the selection card: useImageUrl over the
+  // artifact's coverImageId — no new image plumbing.
+  const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
+  const url = useImageUrl(coverImageId);
+  const restoreFocusRef = useRef<Element | null>(null);
+  useEffect(() => {
+    restoreFocusRef.current = document.activeElement;
+    return () => {
+      const prev = restoreFocusRef.current;
+      if (prev instanceof HTMLElement) prev.focus();
+    };
+  }, []);
+  const initials = token.label
+    .split(/\s+/u)
+    .slice(0, 2)
+    .map((word) => word.charAt(0).toUpperCase())
+    .join('');
+  return (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+    >
+      <DialogContent
+        data-testid="token-lightbox"
+        className="flex max-h-[92dvh] w-auto max-w-[92dvw] flex-col items-center gap-3 sm:max-w-[92dvw]"
+      >
+        <DialogTitle data-testid="token-lightbox-name">{token.label}</DialogTitle>
+        <DialogDescription className="sr-only">Fullscreen token portrait — image and name only</DialogDescription>
+        {url !== null ? (
+          <img
+            src={url}
+            alt=""
+            className="max-h-[70dvh] w-auto max-w-full rounded-lg object-contain"
+            data-testid="token-lightbox-portrait"
+            draggable={false}
+          />
+        ) : (
+          <span
+            className="flex size-48 items-center justify-center rounded-full bg-zinc-700 text-5xl font-bold text-white"
+            data-testid="token-lightbox-initials"
+          >
+            {initials}
+          </span>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }
 
