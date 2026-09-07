@@ -421,7 +421,7 @@ describe('PersonaPanel run lifecycle', () => {
     );
     // Capture the final live-query emission inside act before raw DB reads.
     await flushAsyncUpdates();
-    const run = await getRun(await onlyRunId());
+    const run = await actDrained(async () => getRun(await onlyRunId()));
     const resultId = run?.resultArtifactId;
     if (resultId === null || resultId === undefined) throw new Error('no result artifact');
     // Badge + link lag the DB write by one live-query tick — find, don't get.
@@ -493,7 +493,11 @@ describe('PersonaPanel run lifecycle', () => {
       await screen.findByTestId('encounter-map-pick', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
     await flushAsyncUpdates();
-    await runEngine.cancel(await onlyRunId());
+    // The cancel is a DB write while the run views are mounted — actDrained
+    // keeps its liveQuery cascade inside act (docs/08 §Console guard).
+    await actDrained(async () => {
+      await runEngine.cancel(await onlyRunId());
+    });
     await flushAsyncUpdates();
   }, 30000);
 
@@ -554,17 +558,28 @@ describe('PersonaPanel run lifecycle', () => {
     await waitFor(() => {
       expect(screen.getByRole('combobox', { name: 'Preset' })).toHaveTextContent('Dungeon');
     });
-    expect((await readSettings()).encounterPreset).toBe('dungeon');
+    // Raw awaited read while the panel is mounted — actDrained closes the
+    // leak window opened by the preset's Settings write (docs/08).
+    expect((await actDrained(() => readSettings())).encounterPreset).toBe('dungeon');
 
     await user.type(screen.getByLabelText('Brief'), 'a dungeon crawl beneath the keep');
     await user.click(screen.getByTestId('start-run'));
-    const run = await getRun(await onlyRunId());
+    // The read runs inside ONE act with a drain (actDrained, docs/08): the
+    // bare awaits hand fake-indexeddb's timed queue an outside-act window
+    // while the engine is still writing the run row — the brief step's
+    // updateRun re-fires ActiveRun/RunActions' live queries there (the
+    // act-leak the console guard caught in this test).
+    const run = await actDrained(async () => getRun(await onlyRunId()));
     // The run row persists the EXPLICIT choice only — a fresh panel run is
     // Auto (null) even when Settings says Dungeon; the brief step stamps the
     // resolved tier (settings fallback for an unclassified fresh encounter).
     expect(run?.encounterPreset).toBeNull();
     await flushAsyncUpdates();
-    await runEngine.cancel(await onlyRunId());
+    // The cancel is a DB write while the run views are mounted — same
+    // actDrained discipline so its liveQuery cascade stays inside act.
+    await actDrained(async () => {
+      await runEngine.cancel(await onlyRunId());
+    });
     await flushAsyncUpdates();
   }, 30000);
 
@@ -645,7 +660,9 @@ describe('PersonaPanel run lifecycle', () => {
     // Clicking navigates to the encounter's artifact page — the button then
     // swaps to an "already open" statement instead of staying a dead link
     // (clicking a link to the URL the browser already shows does nothing).
-    const completedRun = await getRun(await onlyRunId());
+    // Raw awaited read while the panel is mounted — actDrained closes the
+    // leak window (the run's map/extras queue may still be writing).
+    const completedRun = await actDrained(async () => getRun(await onlyRunId()));
     expect(completedRun?.resultArtifactId).not.toBeNull();
     await user.click(screen.getByRole('button', { name: 'Open encounter' }));
     expect(await screen.findByTestId('run-result-open', {}, { timeout: 5_000 })).toBeInTheDocument();
@@ -717,7 +734,9 @@ describe('PersonaPanel run lifecycle', () => {
     await flushAsyncUpdates(); // settle the candidates' async ImageThumb loads
     expect(screen.getByTestId('image-cap-notice').textContent).toContain('single candidate');
     expect(within(pick).getAllByRole('button', { name: /Candidate / })).toHaveLength(1);
-    const run = await getRun(await onlyRunId());
+    // Raw awaited read while the pick view is mounted — actDrained closes the
+    // leak window (docs/08 §Console guard).
+    const run = await actDrained(async () => getRun(await onlyRunId()));
     expect((run?.steps[1]?.output as { notice: string | null }).notice).toContain('single candidate');
 
     // Inspect button opens the large candidate preview dialog
@@ -785,19 +804,24 @@ describe('PersonaPanel run lifecycle', () => {
       'No bestiary pack for D&D 5e installed',
     );
 
-    // A processing pack book is not ready — the notice stays.
-    const processing = await createPackBook({ title: 'WIP Pack', system: 'dnd5e', filename: 'wip.zip' });
+    // A processing pack book is not ready — the notice stays. The write is
+    // actDrained so its liveQuery cascade stays inside act (docs/08).
+    const processing = await actDrained(() =>
+      createPackBook({ title: 'WIP Pack', system: 'dnd5e', filename: 'wip.zip' }),
+    );
     await flushAsyncUpdates();
     expect(screen.getByTestId('no-pack-notice')).toBeInTheDocument();
 
     // Finalizing it makes the book ready — the notice disappears.
-    await finalizePackBook(processing.id, {
-      sourceId: 'foundry-dnd5e-srd',
-      license: 'CC-BY-4.0',
-      entriesImported: 1,
-      entriesSkipped: 0,
-      entriesFailed: 0,
-    });
+    await actDrained(() =>
+      finalizePackBook(processing.id, {
+        sourceId: 'foundry-dnd5e-srd',
+        license: 'CC-BY-4.0',
+        entriesImported: 1,
+        entriesSkipped: 0,
+        entriesFailed: 0,
+      }),
+    );
     await waitFor(
       () => {
         expect(screen.queryByTestId('no-pack-notice')).not.toBeInTheDocument();
@@ -1245,6 +1269,69 @@ describe('PersonaPanel failed-run details', () => {
     expect(within(report).getByTestId('copy-error-details')).toBeInTheDocument();
     await flushAsyncUpdates(60);
   }, 20000);
+
+  it('a failed Runs-tab row shows the failure-kind badge inline and a Details affordance that opens the report', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const failedRunId = await seedFailedRun(campaign, persona, 'congestion');
+    // A completed sibling row: the badge is a FAILED-row affordance and must
+    // not appear on it.
+    const completed = await createRun({
+      campaignId: campaign.id,
+      personaId: persona.id,
+      autonomy: 'manual',
+      userBrief: 'A completed run',
+      pinnedChunkIds: [],
+      targetArtifactId: null,
+      encounterMapAspect: null,
+    });
+    await updateRun(completed.id, {
+      status: 'completed',
+      resultArtifactId: null,
+      steps: [
+        {
+          index: 0,
+          name: 'retrieve',
+          status: 'done',
+          input: {},
+          output: { chunkIds: [], titles: [] },
+          userEdit: null,
+        },
+      ],
+    });
+
+    render(
+      <MemoryRouter>
+        <Toaster />
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Runs' }));
+    // The rows lag the runs-list container by one live-query tick — find,
+    // don't get.
+    expect(
+      await screen.findByTestId(`failure-kind-${failedRunId}`, {}, { timeout: 5_000 }),
+    ).toHaveTextContent('Provider congestion or timeout');
+    // Completed rows carry no failure-kind badge.
+    expect(
+      within(screen.getByTestId('runs-list')).queryByTestId(`failure-kind-${completed.id}`),
+    ).not.toBeInTheDocument();
+
+    // The explicit Details affordance opens the report panel (same toggle
+    // the row's text button drives)…
+    const detailsBtn = screen.getByTestId(`details-run-${failedRunId}`);
+    expect(detailsBtn).toHaveAttribute('aria-label', expect.stringContaining('Run details'));
+    await user.click(detailsBtn);
+    const report = await screen.findByTestId('open-run-report');
+    expect(within(report).getByTestId('failure-kind-badge')).toHaveTextContent(
+      'Provider congestion or timeout',
+    );
+    // …and toggling it again closes the report.
+    await user.click(screen.getByTestId(`details-run-${failedRunId}`));
+    expect(screen.queryByTestId('open-run-report')).not.toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20000);
 });
 
 describe('PersonaPanel creation dialog (module placement + extras)', () => {
@@ -1334,8 +1421,13 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
       const runs = await listRunsByCampaign(campaign.id);
       expect(runs).toHaveLength(1);
     });
-    const runs = await listRunsByCampaign(campaign.id);
-    const run = await getRun(runs[0]?.id ?? '');
+    // Raw awaited reads between act-wrapped steps — wrapped in actDrained
+    // (docs/08 §Console guard): the engine is still writing the run row
+    // during these awaits, and each updateRun re-fires ActiveRun's live
+    // query on fake-indexeddb's timed queue (the act-leak the console guard
+    // caught in this test).
+    const runs = await actDrained(() => listRunsByCampaign(campaign.id));
+    const run = await actDrained(() => getRun(runs[0]?.id ?? ''));
     expect(run?.placementModuleId).toBe(module.id);
     // The battlemap extra is gone (battlemaps run automatically for freshly
     // created encounters) — the remembered set no longer carries the key.

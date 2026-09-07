@@ -1842,6 +1842,11 @@ function RunsList({
               <span className="flex items-center gap-2">
                 <span className="font-medium">{persona?.name ?? 'Persona'}</span>
                 <Badge variant="outline">{STATUS_LABELS[run.status]}</Badge>
+                {run.status === 'failed' && run.failureKind !== null && (
+                  <Badge variant="outline" data-testid={`failure-kind-${run.id}`}>
+                    {FAILURE_KIND_LABELS[run.failureKind]}
+                  </Badge>
+                )}
                 {run.targetArtifactId !== null && globalIds?.has(run.targetArtifactId) === true && (
                   <Badge variant="outline">Global</Badge>
                 )}
@@ -1850,20 +1855,36 @@ function RunsList({
               <span className="text-muted-foreground">{stamp}</span>
             </button>
             {run.status === 'failed' && (
-              <Button
-                variant="outline"
-                size="xs"
-                aria-label={`Resume run ${stamp}`}
-                className="shrink-0 h-6 px-2 text-[11px] gap-1 text-primary hover:text-primary"
-                data-testid={`resume-run-${run.id}`}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  void handleResumeRun(run.id);
-                }}
-              >
-                <RotateCcwIcon className="size-3" aria-hidden />
-                <span>Resume</span>
-              </Button>
+              <>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  aria-label={`Resume run ${stamp}`}
+                  className="shrink-0 h-6 px-2 text-[11px] gap-1 text-primary hover:text-primary"
+                  data-testid={`resume-run-${run.id}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    void handleResumeRun(run.id);
+                  }}
+                >
+                  <RotateCcwIcon className="size-3" aria-hidden />
+                  <span>Resume</span>
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  aria-label={`Run details ${stamp}`}
+                  className="shrink-0 h-6 px-2 text-[11px] gap-1 text-muted-foreground hover:text-foreground"
+                  data-testid={`details-run-${run.id}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setOpenRunId((previous) => (previous === run.id ? null : run.id));
+                  }}
+                >
+                  <ChevronDownIcon className="size-3" aria-hidden />
+                  <span>Details</span>
+                </Button>
+              </>
             )}
             <Button
               variant="ghost"
