@@ -14,6 +14,8 @@
  * (failureKind.ts) and words the escalation notice honestly.
  */
 
+import { z } from 'zod';
+
 import { errorMessage } from '@/lib/errors';
 
 export type OpenRouterErrorKind =
@@ -82,6 +84,91 @@ export class MissingApiKeyError extends Error {
 }
 
 /**
+ * OpenRouter's non-streaming error envelope (documented shape):
+ * `{ error: { code, message, metadata: { error_type, provider_code } } }`.
+ * Tolerant on purpose (unknown fields pass) — the envelope rides bodies this
+ * app never interprets; only the three consumed fields are declared.
+ */
+const openRouterErrorEnvelopeSchema = z.looseObject({
+  error: z
+    .looseObject({
+      code: z.union([z.number(), z.string()]).optional(),
+      message: z.string().optional(),
+      metadata: z
+        .looseObject({
+          error_type: z.string().optional(),
+          provider_code: z.string().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
+});
+
+/** The consumed fields of a parsed error envelope (null when the body is
+ * not envelope-shaped). */
+export interface OpenRouterErrorEnvelopeInfo {
+  /** Raw envelope `error.code` (numeric provider code or error_type string). */
+  code: number | string | undefined;
+  /** The provider's real diagnosis — the message user surfaces must keep. */
+  message: string | undefined;
+  /** OpenRouter's machine-readable failure class (`metadata.error_type`). */
+  errorType: string | undefined;
+}
+
+/** Parses an already-decoded JSON body into the error envelope's fields;
+ * null when the body is not envelope-shaped (plain text, other JSON, no
+ * `error` key). */
+export function parseOpenRouterErrorEnvelope(value: unknown): OpenRouterErrorEnvelopeInfo | null {
+  const parsed = openRouterErrorEnvelopeSchema.safeParse(value);
+  const error = parsed.success ? parsed.data.error : undefined;
+  if (error === undefined) return null;
+  return { code: error.code, message: error.message, errorType: error.metadata?.error_type };
+}
+
+/** Extracts `metadata.error_type` from a raw response body (the text form
+ * fetchWithRetries holds); undefined for non-JSON/opaque bodies. */
+export function errorTypeFromBody(bodyText: string): string | undefined {
+  let json: unknown;
+  try {
+    json = JSON.parse(bodyText);
+  } catch {
+    return undefined;
+  }
+  return parseOpenRouterErrorEnvelope(json)?.errorType;
+}
+
+/**
+ * OpenRouter `metadata.error_type` classes. The image and chat transports
+ * attach the string to the typed error as `code`; classification reads it
+ * STRUCTURALLY before any status check or prose pattern:
+ * - filter classes: the model/provider refused or moderated the content
+ *   (`refusal` is the canonical image-generation refusal — the shape the
+ *   slime-monster bug shipped with);
+ * - congestion classes: provider availability (rate limits, overload,
+ *   upstream outages, timeouts).
+ */
+const FILTER_ERROR_TYPES = new Set([
+  'content_policy_violation',
+  'refusal',
+  'image_content_policy_violation',
+]);
+const CONGESTION_ERROR_TYPES = new Set([
+  'rate_limit_exceeded',
+  'provider_overloaded',
+  'provider_unavailable',
+  'timeout',
+]);
+
+/** Maps a typed error's `code` to its class when the code is an error_type
+ * string; null leaves the classification to the status/prose heuristics. */
+function reasonForErrorType(code: unknown): FallbackReason | null {
+  if (typeof code !== 'string' || code === '') return null;
+  if (FILTER_ERROR_TYPES.has(code)) return 'filter';
+  if (CONGESTION_ERROR_TYPES.has(code)) return 'congestion';
+  return null;
+}
+
+/**
  * Why an escalation-triggering error reads the way it does in user-facing
  * surfaces: 'congestion' (provider availability), 'filter' (moderation /
  * refusal), 'other' (everything the classifier cannot name — truncation,
@@ -125,6 +212,11 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
       // larger-context model may fit the answer).
       return null;
     case 'stream-error': {
+      // A string code is an error_type class (the HTTP envelope's vocabulary
+      // also reaches stream payloads) — it classifies before the numeric
+      // provider codes.
+      const byType = reasonForErrorType(error.code);
+      if (byType !== null) return byType;
       const code = Number(error.code);
       if (error.code !== undefined && error.code !== '' && Number.isFinite(code)) {
         if (code === 403) return 'filter';
@@ -134,6 +226,10 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
     }
     case 'http':
     default: {
+      // The typed error_type class (openrouterErrors envelope) classifies
+      // FIRST — structurally, before any status check or prose heuristic.
+      const byType = reasonForErrorType(error.code);
+      if (byType !== null) return byType;
       // Same retryable family as fetchWithRetries (429 / >= 500) plus 408,
       // and OpenRouter's documented 403 "input was flagged" moderation.
       if (error.status === 403) return 'filter';
@@ -142,6 +238,7 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
       // body (e.g. Meta's "content management policy" phrasing, which this
       // pattern deliberately does not need to catch for escalation's sake —
       // the chain escalates on it regardless; this only names the class).
+      // LAST resort: opaque/legacy bodies that carry no error_type.
       if (FILTER_PATTERN.test(error.bodyText)) return 'filter';
       return null;
     }
@@ -179,6 +276,9 @@ export function chainError(
       last.error.kind,
       last.error.status,
       `every ${what} model in the escalation chain failed — ${detail}`,
+      // The last error's error_type survives exhaustion so the Details
+      // classification (failureKindOf) still reads the structural class.
+      last.error.code,
     );
   }
   return new Error(`every ${what} model in the escalation chain failed — ${detail}`, {

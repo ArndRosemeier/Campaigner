@@ -1,4 +1,5 @@
 import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OPENROUTER_BASE, OpenRouterError, fetchWithRetries, openRouterHeaders } from '@/llm/openrouter';
+import { parseOpenRouterErrorEnvelope } from '@/llm/openrouterErrors';
 import { getSettings } from '@/db/settingsRepo';
 import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
 import { bytesFromBase64 } from '@/lib/base64';
@@ -68,9 +69,12 @@ const imageApiResponseSchema = z.object({
  */
 export const IMAGE_HEADERS_TIMEOUT_MS = 5 * 60 * 1000;
 
-/** Matches 400 bodies like `... supports the requested parameter(s): n "2"` —
- * i.e. the rejection is about the candidate count, not the prompt or model. */
-const N_UNSUPPORTED_PATTERN = /parameter\(s\):?[^]*\bn\b/i;
+/** Matches 400 bodies that name `n` as a rejected parameter WITH its value —
+ * e.g. `… supports the requested parameter(s): output_format "webp", n "2"`
+ * — i.e. the rejection is about the candidate count. Requiring the quoted
+ * value keeps a moderation 400 that merely mentions "parameter(s)" and an
+ * unrelated "n" from being misread as a cap. */
+const N_UNSUPPORTED_PATTERN = /\bparameter\(s\):?[^]*\bn\b\s*\\?["']\s*\d/i;
 
 /**
  * Models observed to cap `n` at 1. After the first rejection the request is
@@ -151,12 +155,17 @@ async function generateImagesWithModel(
 
       // The provider caps n at 1: retry once with a single candidate, mark
       // the model, and report the cap (never a silent degrade).
-      if (
-        !(error instanceof OpenRouterError) ||
-        error.status !== 400 ||
-        n <= 1 ||
-        !N_UNSUPPORTED_PATTERN.test(error.bodyText)
-      ) {
+      if (!(error instanceof OpenRouterError) || error.status !== 400 || n <= 1) {
+        throw error;
+      }
+      // A typed error class (metadata.error_type, carried on `code`) is
+      // NEVER a candidate-count cap — a typed moderation/refusal rejection
+      // escalates (or fails loudly); the prose pattern below is only for
+      // opaque legacy bodies, and is checked AFTER the structural class.
+      if (typeof error.code === 'string') {
+        throw error;
+      }
+      if (!N_UNSUPPORTED_PATTERN.test(error.bodyText)) {
         throw error;
       }
       cappedToOne = true;
@@ -176,6 +185,24 @@ async function generateImagesWithModel(
   } catch {
     throw new OpenRouterError('http', response.status, 'image API returned no JSON body');
   }
+
+  // A 200 response can still carry the OpenRouter error envelope (documented
+  // for non-streaming endpoints): `{ error: { code, message, metadata } }`.
+  // Throw the SAME typed error the HTTP path would — `metadata.error_type`
+  // as the code, the envelope message as the diagnosis — instead of
+  // collapsing the body to "no images": that collapse mislabeled a content
+  // filter/refusal as congestion and discarded the real diagnosis. A body
+  // with NO error field falls through to the contract parse below.
+  const envelope = parseOpenRouterErrorEnvelope(body);
+  if (envelope !== null) {
+    throw new OpenRouterError(
+      'http',
+      response.status,
+      envelope.message ?? 'image API returned an error body',
+      envelope.errorType ?? 200,
+    );
+  }
+
   let json: z.infer<typeof imageApiResponseSchema>;
   try {
     json = imageApiResponseSchema.parse(body);

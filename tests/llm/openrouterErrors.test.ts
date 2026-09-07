@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  chainError,
   OpenRouterError,
   fallbackReasonFor,
   FILTER_PATTERN,
 } from '@/llm/openrouterErrors';
+import { failureKindOf } from '@/llm/failureKind';
 
 /**
  * `fallbackReasonFor` is the pure failure CLASSIFIER: it names the
@@ -96,5 +98,57 @@ describe('fallbackReasonFor (classification only — escalation is unconditional
   it('classifies a rejected strict response_format as null (its own Details kind; the chain still escalates)', () => {
     expect(fallbackReasonFor(new OpenRouterError('schema-rejected', 400, 'model "m" rejected the strict JSON-schema response format'))).toBeNull();
     expect(fallbackReasonFor(new OpenRouterError('schema-rejected', 422, 'invalid schema'))).toBeNull();
+  });
+});
+
+describe('fallbackReasonFor: typed error_type classes (structural, read FIRST)', () => {
+  it('classifies filter error_types on http errors — no prose needed', () => {
+    // The canonical image-refusal shape: a 400 whose body carries
+    // metadata.error_type — classified structurally even with an opaque body.
+    for (const errorType of ['content_policy_violation', 'refusal', 'image_content_policy_violation']) {
+      expect(fallbackReasonFor(new OpenRouterError('http', 400, '{"opaque":true}', errorType))).toBe(
+        'filter',
+      );
+    }
+  });
+
+  it('classifies congestion error_types on http errors', () => {
+    for (const errorType of ['rate_limit_exceeded', 'provider_overloaded', 'provider_unavailable', 'timeout']) {
+      expect(fallbackReasonFor(new OpenRouterError('http', 400, '{"opaque":true}', errorType))).toBe(
+        'congestion',
+      );
+    }
+  });
+
+  it('reads the string error_type BEFORE the status check and the body prose', () => {
+    // A refusal class beats a 5xx status; a congestion class beats a plain 400.
+    expect(fallbackReasonFor(new OpenRouterError('http', 500, 'content policy said no', 'refusal'))).toBe('filter');
+    expect(fallbackReasonFor(new OpenRouterError('http', 400, 'plain body', 'timeout'))).toBe('congestion');
+  });
+
+  it('falls back to the status/prose classification for unknown or absent codes', () => {
+    expect(fallbackReasonFor(new OpenRouterError('http', 429, 'x', 'unknown_error_type'))).toBe('congestion');
+    expect(fallbackReasonFor(new OpenRouterError('http', 400, 'x', 'unknown_error_type'))).toBeNull();
+    // Legacy prose bodies (no error_type) keep the FILTER_PATTERN last resort.
+    expect(fallbackReasonFor(new OpenRouterError('http', 400, 'content_policy_violation: disallowed'))).toBe('filter');
+  });
+
+  it('classifies stream errors carrying a string error_type, numeric codes unchanged', () => {
+    expect(fallbackReasonFor(new OpenRouterError('stream-error', 200, 'stream error: e', 'refusal'))).toBe('filter');
+    expect(fallbackReasonFor(new OpenRouterError('stream-error', 200, 'stream error: e', 'provider_overloaded'))).toBe('congestion');
+    expect(fallbackReasonFor(new OpenRouterError('stream-error', 200, 'stream error: e', 429))).toBe('congestion');
+    expect(fallbackReasonFor(new OpenRouterError('stream-error', 200, 'stream error: e', 403))).toBe('filter');
+  });
+
+  it('keeps the error_type class through chain exhaustion (chainError code passthrough)', () => {
+    const combined = chainError(
+      [{ model: 'a', error: new OpenRouterError('http', 400, 'refused', 'refusal') }],
+      'image',
+    );
+    expect(combined).toBeInstanceOf(OpenRouterError);
+    expect(fallbackReasonFor(combined)).toBe('filter');
+    // The Details view classifies the exhausted image run as a filter, not
+    // an unclassified failure.
+    expect(failureKindOf(combined)).toBe('filter');
   });
 });

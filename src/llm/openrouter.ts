@@ -3,7 +3,7 @@ import { getCachedModels, modelsResponseSchema, setCachedModels, type CachedMode
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
 import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
-import { MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
+import { MissingApiKeyError, OpenRouterError, errorTypeFromBody } from '@/llm/openrouterErrors';
 import type { FallbackReason } from '@/llm/openrouterErrors';
 import type { ReasoningEffort } from '@/domain/settings';
 import type { Settings } from '@/domain';
@@ -308,7 +308,11 @@ export async function fetchWithRetries(
     const retryable = response.status === 429 || response.status >= 500;
     const backoff = backoffs[attempt];
     if (!retryable || backoff === undefined) {
-      throw new OpenRouterError('http', response.status, await response.text());
+      // The thrown error carries the body's `metadata.error_type` as its
+      // code (additive for the 'http' kind) — the structural class the
+      // classifier reads FIRST, before status checks and prose patterns.
+      const bodyText = await response.text();
+      throw new OpenRouterError('http', response.status, bodyText, errorTypeFromBody(bodyText));
     }
     // Parallelization: several workers can hit the same provider limit at
     // once — Retry-After (OpenRouter sends it when every attempted provider
