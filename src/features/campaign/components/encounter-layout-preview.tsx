@@ -34,6 +34,8 @@ export function EncounterLayoutPreview({
               height: `${String((rect.h / layout.gridH) * 100)}%`,
             }}
             title={room.name}
+            role="img"
+            aria-label={room.name}
           >
             {index === 0 && (
               <span className="block truncate bg-background/70 px-0.5 text-[9px]">{room.name}</span>
@@ -52,6 +54,8 @@ export function EncounterLayoutPreview({
             height: `${String((room.mobsRect.h / layout.gridH) * 100)}%`,
           }}
           title={`${room.name} mob area`}
+          role="img"
+          aria-label={`${room.name} mob area`}
         />
       ))}
       {layout.rooms.map((room) => {
@@ -69,6 +73,8 @@ export function EncounterLayoutPreview({
               transform: `translate(-50%, -50%) rotate(${String(ENTRANCE_ROTATION[entrance.side])}deg)`,
             }}
             title={`${room.name} entrance`}
+            role="img"
+            aria-label={`${room.name} entrance`}
             data-testid="encounter-entrance-marker"
           >
             <div

@@ -488,7 +488,9 @@ describe('EntityPanel', () => {
     });
     expect(undercroftCheck).not.toBeDisabled();
     expect(
-      screen.getByRole('checkbox', { name: 'Generate an image for Kael' }),
+      screen.getByRole('checkbox', {
+        name: 'Detail Kael first — images attach to its artifact',
+      }),
     ).toHaveAttribute('aria-disabled', 'true');
 
     // Checking Undercroft enqueues it; the queue generates and attaches.

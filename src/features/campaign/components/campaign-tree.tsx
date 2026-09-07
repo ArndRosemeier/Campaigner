@@ -702,7 +702,7 @@ function TreeRow({
           render={
             <ContextMenuTrigger
               className={cn(
-                'group/row flex w-full cursor-default items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm outline-none hover:bg-accent',
+                'group/row flex w-full cursor-default items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm outline-none hover:bg-accent pointer-coarse:min-h-11',
                 selected && 'bg-accent font-medium text-accent-foreground',
               )}
               onClick={onSelect}

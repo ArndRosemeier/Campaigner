@@ -76,10 +76,14 @@ describe('app shell', () => {
     renderAppAt(ROUTES.campaignPicker);
 
     // The app map stays visible on every route; without a campaign the
-    // campaign-level tabs are disabled instead of hidden.
+    // campaign-level tabs are disabled instead of hidden, and each names
+    // its reason (iPad batch E: the hover-only title is mirrored into the
+    // accessible name so touch + screen-reader users get it too).
     expect(screen.getByTestId('campaign-bar')).toBeInTheDocument();
     for (const label of ['Workspace', 'Modules', 'Deliverables', 'Graph']) {
-      expect(screen.getByRole('button', { name: label })).toBeDisabled();
+      expect(
+        screen.getByRole('button', { name: `${label} — open a campaign first` }),
+      ).toBeDisabled();
     }
   });
 

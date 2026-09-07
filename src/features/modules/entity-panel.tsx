@@ -746,9 +746,13 @@ function EntityRow({
       >
         <span className="min-w-0 flex-1 truncate">{entry.name}</span>
         {entry.ambiguous && (
-          <span title="Multiple artifacts match this name" aria-hidden>
-            ⚠
-          </span>
+          <>
+            <span title="Multiple artifacts match this name" aria-hidden>
+              ⚠
+            </span>
+            {/* Touch + screen-reader mirror of the hover-only title above. */}
+            <span className="sr-only">Multiple artifacts match this name</span>
+          </>
         )}
         {entry.resolved ? (
           <Badge variant="secondary" className="shrink-0 text-[10px]">
@@ -773,7 +777,7 @@ function EntityRow({
           variant="ghost"
           size="icon-sm"
           className="shrink-0 text-muted-foreground/40 hover:text-foreground"
-          aria-label={`Adopt ${entry.name} into the campaign`}
+          aria-label={`Adopt ${entry.name} into the campaign — moves it out of this module's ownership`}
           title="Adopt into campaign — moves the artifact out of this module's ownership (its relations here stay)"
           data-testid="entity-adopt"
           data-name={entry.name}
@@ -804,11 +808,13 @@ function EntityRow({
               : undefined
           }
           aria-label={
-            imageState === 'has'
-              ? `${entry.name} has an image — uncheck to delete it`
-              : imageState === 'queued'
-                ? `${entry.name} is queued for an image — uncheck to cancel`
-                : `Generate an image for ${entry.name}`
+            entry.artifact === undefined
+              ? `Detail ${entry.name} first — images attach to its artifact`
+              : imageState === 'has'
+                ? `${entry.name} has an image — uncheck to delete it`
+                : imageState === 'queued'
+                  ? `${entry.name} is queued for an image — uncheck to cancel`
+                  : `Generate an image for ${entry.name}`
           }
           data-testid="entity-image-check"
           data-name={entry.name}

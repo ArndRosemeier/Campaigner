@@ -269,6 +269,7 @@ function RulebookStatblockDialog({
           <CommandInput
             placeholder="Search stat blocks…"
             value={query}
+            className="pointer-coarse:text-base"
             onValueChange={(value) => {
               void runSearch(value);
             }}

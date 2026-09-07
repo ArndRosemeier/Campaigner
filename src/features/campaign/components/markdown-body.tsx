@@ -67,7 +67,7 @@ export function MarkdownBody({
           }}
           onBlur={onTextareaBlur}
           placeholder="Free-text content, written in Markdown…"
-          className="min-h-[240px] font-mono text-sm"
+          className="min-h-[240px] font-mono text-sm pointer-coarse:text-base"
         />
       )}
     </section>

@@ -49,7 +49,7 @@ export function TagEditor({ tags, onChange, placeholder = 'Add tag…' }: TagEdi
       <Input
         value={draft}
         placeholder={placeholder}
-        className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none dark:bg-transparent"
+        className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none pointer-coarse:text-base dark:bg-transparent"
         onChange={(event) => {
           setDraft(event.target.value);
         }}

@@ -48,7 +48,7 @@ function TextField({
     <Field label={label}>
       <Input
         value={value}
-        className="h-7 text-sm"
+        className="h-7 text-sm pointer-coarse:text-base"
         onChange={(event) => {
           onChange(event.target.value);
         }}
@@ -71,7 +71,7 @@ function NumberField({
       <Input
         type="number"
         value={Number.isFinite(value) ? value : ''}
-        className="h-7 text-sm"
+        className="h-7 text-sm pointer-coarse:text-base"
         onChange={(event) => {
           const parsed = Number.parseInt(event.target.value, 10);
           onChange(Number.isNaN(parsed) ? 0 : parsed);

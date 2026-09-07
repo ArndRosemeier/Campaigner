@@ -37,6 +37,7 @@ export function CampaignBar(): JSX.Element {
               type="button"
               disabled
               title="Open a campaign first"
+              aria-label={`${tab.label} — open a campaign first`}
               className={cn(buttonVariants({ variant: 'ghost', size: 'sm' }), 'opacity-50')}
             >
               {tab.label}

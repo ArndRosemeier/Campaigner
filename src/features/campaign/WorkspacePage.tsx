@@ -19,8 +19,12 @@ const PANEL_IDS = ['tree', 'editor', 'persona'] as const;
 
 /**
  * Three-pane workspace (05-UI §Workspace): campaign tree · artifact editor ·
- * persona panel, as resizable panes with the spec's pixel minimums
- * (220/400/320 px). The layout persists across reloads via localStorage.
+ * persona panel, as resizable panes. The pixel minimums (200/360/280 px, 840
+ * total) fit the narrowest allowed viewport (a 1024px iPad landscape with the
+ * default 22/48/30 layout clears every floor; the orientation gate blocks
+ * anything under ~960px). The persona pane is collapsible so cramped screens
+ * can reclaim it by dragging; the tree and editor never collapse — losing the
+ * tree strands touch users without row actions.
  *
  * Rendered for both `/c/:campaignId` and `/c/:campaignId/a/:artifactId`; the
  * open artifact lives in the URL (deep-linkable, back-button friendly).
@@ -64,7 +68,7 @@ export function WorkspacePage(): JSX.Element {
       onLayoutChanged={layout.onLayoutChanged}
       className="h-full"
     >
-      <ResizablePanel id="tree" defaultSize="22%" minSize={220}>
+      <ResizablePanel id="tree" defaultSize="22%" minSize={200}>
         <CampaignTree
           campaignId={campaignId}
           artifacts={artifacts}
@@ -76,7 +80,7 @@ export function WorkspacePage(): JSX.Element {
         />
       </ResizablePanel>
       <ResizableHandle />
-      <ResizablePanel id="editor" defaultSize="48%" minSize={400}>
+      <ResizablePanel id="editor" defaultSize="48%" minSize={360}>
         {selected !== undefined ? (
           <ArtifactEditor
             key={selected.id}
@@ -90,7 +94,7 @@ export function WorkspacePage(): JSX.Element {
         )}
       </ResizablePanel>
       <ResizableHandle />
-      <ResizablePanel id="persona" defaultSize="30%" minSize={320}>
+      <ResizablePanel id="persona" defaultSize="30%" minSize={280} collapsible>
         <PersonaPanelWithKey campaign={campaign} />
       </ResizablePanel>
     </ResizablePanelGroup>
