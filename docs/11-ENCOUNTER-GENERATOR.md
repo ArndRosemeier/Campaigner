@@ -415,7 +415,12 @@ room like everyone else. `layout === null` encounters seed exactly as today.
   The battlemap section previews the map on file (click → lightbox) with the
   stored layout's room count; the pre-filled brief words the run as
   "Generate…" for a mapless encounter and "Regenerate…" only when a map
-  exists.
+  exists. The hand-off rides the persona panel's `start()` ENCOUNTER-TARGET
+  branch: the Encounter Smith seeds as a mode-`generate` persona, and the
+  panel used to fall through to the fresh-create branch for it — dropping the
+  target and DUPLICATING the artifact instead of filling it. Fixed: a
+  generate persona with `producesKind: 'encounter'` and a target set starts
+  the targeted run (pinned in persona-run-ui).
 
 ## Module generation integration (the unattended path)
 

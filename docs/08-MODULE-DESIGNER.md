@@ -292,9 +292,16 @@ revision snapshots + delete the blob when nothing else references it).
   always user-confirmable), creates a minimal artifact (name = link
   name, summary = the sentence containing the first occurrence, tag
   `module:<title>`). Chip turns resolved immediately. A stub is not a
-  dead end: the artifact editor fills it with AI later (for encounters:
-  the content section's targeted Encounter-Smith run, docs/11 §entry
-  points).
+  dead end: the artifact editor fills it with AI later — every kind has a
+  **content AI section** (`ContentAiSection` → the `useContentRefillRequest`
+  channel → the persona panel's targeted generate run; encounters keep the
+  roster-aware section, docs/11 §entry points). The refill is grounded in
+  the owning module exactly like automatic generation: the run engine's
+  `targetModuleGrounding` renders `surroundingParagraphs(
+  moduleDocumentText(module), name)` + the spine premise into the draft
+  prompt, feeds the same text to the campaign-grounding detection, and
+  names every inapplicable state in the prompt/run (module row gone,
+  campaign-scoped target, no mention of the name) — never a silent drop.
 - **Generate**: runs the persona chain IN PLACE (one step, auto autonomy —
   the same machinery as the batch) with the shared progress bar
   (00-OVERVIEW §binding progress). Brief = link name + the paragraphs

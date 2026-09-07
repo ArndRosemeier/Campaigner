@@ -119,6 +119,8 @@ column.
 | Legacy persona values (removed kinds) | `domain/persona.normalizeLegacyProducesKind` (ONE `z.preprocess`: parse boundary + `updatePersona` + backup restore heal the stored row — git-proven mapping table, unknown values still fail loudly) | a catch-all kind fallback; hand-editing or deleting the poisoned row |
 | Legacy run rows carrying a REMOVED step | `domain/run.normalizeLegacyRunSteps` (ONE `z.preprocess` inside `personaRunSchema`: drops the deleted encounter `verify` step and re-indexes, so reads/updates heal the row and every engine continuation stays index-coherent) | executing the engine plan positionally over a shifted steps array |
 | Campaign grounding for runs | `campaignGrounding.computeCampaignGrounding` + renderer (docs/15) | a second wiki-expansion implementation |
+| Refill an existing artifact in place (smith kinds: pc/npc/location/faction/note/plotarc) | the editor's `ContentAiSection` → `contentRefillRequest` store → the persona panel's targeted generate run; grounding parity via `runEngine.targetModuleGrounding` (module document + premise rendered from the STORED retrieve output; every inapplicable state names itself) + `mergeRefillData` (preserves PC human-owned fields, curated stat blocks, the mob marker; model name → alias) | a second "detail one entity" implementation; a patch touching `moduleId`; a silent degrade |
+| Reject empty generation output | `substanceText` in `llm/schemas.ts` (name/summary/body ≥ 1 non-whitespace char on every draft contract; the strict schema can't express it — the zod parse rides the ONE repair turn, then loud) + the finalize re-guard (`runFinalize`: empty body refuses to create or overwrite — a refill keeps the existing content) | a prose-length floor (over-rejects short notes); a silent placeholder |
 
 ### 2.3 App & UI
 
@@ -249,6 +251,19 @@ column.
 - **Fresh-encounter finalize embeds `imageIds` at birth** via `createArtifact`
   instead of the attach seam — single-row create, no desync window. Listed
   so nobody "fixes" it without reading why.
+- **The CARTOGRAPHER's in-place map run has no module-context parity**:
+  smith-kind targeted runs AND the mode-generate Encounter Smith's content
+  fill ground in the owning module (`targetModuleGrounding` — the draft step
+  renders the stored section), but the mode-encounter Cartographer's BRIEF
+  step keeps its docs/11 context contract — roster verbatim + general
+  grounding, NO module-document/premise section and no detection
+  enrichment. Deliberate: the encounter brief prompt is a frozen contract
+  (fix-02/D2) with heavy pins; extending parity there needs an
+  owner-ratified amendment of docs/11, not a quiet prompt change.
+- ~~The panel's encounter content hand-off dropped the target~~ — fixed in
+  the parity arc: `start()` gained the producesKind-'encounter' targeted
+  branch (the mode-generate Encounter Smith used to fall through to
+  fresh-create and DUPLICATE the stub; probe-pinned in persona-run-ui).
 - ~~Encounter site-shape work landing concurrently with this doc~~ — landed
   (c0bf5cf → 32db5bb): the shape/preset/budget seams are in §2.2 above and
   the decision rows live in docs/11 D11–D13 + docs/17 rows 31–33.

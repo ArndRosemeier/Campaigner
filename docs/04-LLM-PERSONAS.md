@@ -229,6 +229,19 @@ statblock step entirely for characters whose stats don't matter at the table
 (contacts, merchants, innkeepers). (Location/Faction draft schemas mirror
 their `data` fields; define them in M1 too, they're cheap.)
 
+**Minimum content (owner-ratified empty-text rejection).** `name`, `summary`
+and `body` are substance fields: each must carry at least one non-whitespace
+character (`substanceText` in schemas.ts — the floor is deliberately one
+char, not a prose minimum, so short notes and hooks never over-reject). The
+strict JSON schema cannot express this (constraint keywords are stripped),
+so the zod parse enforces it at the boundary: a violation is a NAMED issue
+riding the existing one-repair turn ("body is empty — …"), then the loud
+rejected path (review pause under manual/review, run failure under `auto`).
+Finalize re-guards the same invariant — a user-edited draft is not
+schema-validated — so an empty body refuses to create or overwrite: an
+in-place refill that comes back empty keeps the existing content and fails
+the run loudly. Never materialize empty text.
+
 ### Autonomy semantics
 
 After each step completes:
