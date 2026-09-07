@@ -1,5 +1,5 @@
 import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OPENROUTER_BASE, OpenRouterError, fetchWithRetries, openRouterHeaders } from '@/llm/openrouter';
-import { parseOpenRouterErrorEnvelope } from '@/llm/openrouterErrors';
+import { errorTypeFromBody, parseOpenRouterErrorEnvelope } from '@/llm/openrouterErrors';
 import { getSettings } from '@/db/settingsRepo';
 import { buildModelChain, walkModelChain, isModelIndependentFailure, type ChainFallback } from '@/llm/modelFallback';
 import { bytesFromBase64 } from '@/lib/base64';
@@ -190,7 +190,9 @@ async function generateImagesWithModel(
   if (!response.ok) {
     // Re-read the body of a non-JSON/failed retry — fetchWithRetries already
     // threw for the first attempt, so this is the retried request's error.
-    throw new OpenRouterError('http', response.status, await response.text());
+    // Same envelope handling as fetchWithRetries (error_type as the code).
+    const retryBodyText = await response.text();
+    throw new OpenRouterError('http', response.status, retryBodyText, errorTypeFromBody(retryBodyText));
   }
 
   let body: unknown;
