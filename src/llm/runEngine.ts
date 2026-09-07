@@ -41,7 +41,7 @@ import {
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
-import { createImage, deleteUnreferencedImages, getImage, reanchorImages } from '@/db/imageRepo';
+import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
@@ -3099,10 +3099,18 @@ export class RunEngine {
     let artifactId: Id;
     if (target !== undefined) {
       if (target.kind !== 'encounter') throw new Error('Encounter regeneration target changed kind');
-      if (target.campaignId === null) await reanchorImages([selected], null);
-      const imageIds = target.imageIds.includes(selected) ? target.imageIds : [...target.imageIds, selected];
-      await updateArtifact(target.id, {
-        imageIds,
+      // The re-anchor + content write commit as ONE attach-seam
+      // transaction: a crash between the two used to strand a
+      // library-scoped unreferenced image while the artifact kept the old
+      // map (docs/18 known debt, now closed).
+      await attachImagesToArtifact(target.id, {
+        appendImageIds: [selected],
+        // Only a global target re-anchors its kept image (D2/D9): omitting
+        // the key leaves campaign anchors untouched.
+        ...(target.campaignId === null ? { anchorImagesTo: null } : {}),
+        // Regenerate never touches the cover: keep the existing value, or
+        // omit the key when there is none (never an explicit null clear).
+        ...(target.coverImageId == null ? {} : { coverImageId: target.coverImageId }),
         data: {
           ...target.data,
           layout,
@@ -3118,7 +3126,8 @@ export class RunEngine {
           // target's stale advisory — the fresh layout was just checked.
           budgetAdvisory: this.encounterBudgetAdvisory(steps),
         },
-      }, { source: 'persona', runId });
+        meta: { source: 'persona', runId },
+      });
       artifactId = target.id;
     } else {
       // Mob artifacts (owner-ratified): a rulebook citation gets ONE

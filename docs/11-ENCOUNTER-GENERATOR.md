@@ -172,7 +172,12 @@ mode: run row per state change, event emitter for streaming, autonomy via
   rects + mobs rect) so the user judges alignment, not just looks.
 - `finalize` stores the kept image (`role: 'map'`), writes
   `encounterData.layout` + `mapImageId`, and (regenerate mode) keeps
-  `name/body/links/monsters` untouched.
+  `name/body/links/monsters` untouched. Regenerate mode routes the
+  re-anchor + content write through `attachImagesToArtifact` (one
+  images+artifacts+revisions tx, cover explicitly kept) — a crash between
+  them can no longer strand a library-scoped image while the artifact keeps
+  the old map; the fresh-create birth path stays a single-row
+  `createArtifact` (no desync window, intentionally off-seam).
 
 ## Layout engine (`src/domain/encounterMap/`, pure TS, vitest-covered)
 

@@ -81,7 +81,7 @@ column.
 | Read/write artifacts | `artifactRepo` — every read zod-parses the row | importing `db` and querying `db.artifacts` raw |
 | Change an artifact's scope (move / adopt / publish) | `moveToModule` / `adoptIntoCampaign` / `publishToLibrary` — all funnel through the private `moveScope`, one tx incl. image re-anchor | a patch carrying `campaignId`/`moduleId` — `updateArtifact` pins scope fields |
 | Give a generated artifact module ownership | `artifactRepo.stampModuleOwnership` (loud existence check inside the tx) | `updateArtifact` with `moduleId` |
-| Attach images (store + reference + re-anchor + prune) | `artifactRepo.attachImagesToArtifact` — one rw tx over images+artifacts+revisions; blobs are byte-prepared (`buildStoredImage`) BEFORE it opens | `createImage` then `updateArtifact` as separate writes |
+| Attach images (store + reference + re-anchor + prune + optional content patch) | `artifactRepo.attachImagesToArtifact` — one rw tx over images+artifacts+revisions; blobs are byte-prepared (`buildStoredImage`) BEFORE it opens; the optional `data` + `meta` patch lets a content write that must land with the attach (map-regenerate's layout/mapImageId/preset/siteShape/budgetAdvisory) commit atomically instead of a second `updateArtifact` write | `createImage` then `updateArtifact` as separate writes |
 | Create / edit / restore content | `createArtifact` / `updateArtifact` / `restoreRevision` (restore is content-only, scope pinned) | hand-writing revision rows (`writeRevision` is private) |
 | Write rule chunks | `chunkRepo.writeChunks` (`putChunks` alias) — invalidates the keyword index with the write | `db.chunks.bulkPut` anywhere else; backup restore MUST route through this door |
 | Get/create the live battle for a module | `battleRepo.ensureBattle` — the v16 unique `&moduleId` index is the arbiter | get-then-create across two transactions |
@@ -248,13 +248,7 @@ column.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 
-- **Map-regenerate attach bypasses the image seam**: in
-  `runEngine.runEncounterFinalize`'s regenerate branch, `reanchorImages([selected],
-  null)` + `updateArtifact` are two separate writes instead of one
-  `attachImagesToArtifact` call — a crash between them can strand a library
-  image's scope. Every other attach path (image pick, mob/entity queues)
-  uses the seam. Fix toward the seam, or scope the fix with the encounter
-  arc that owns this pipeline.
+- ~~Map-regenerate attach bypasses the image seam~~ — closed: `runEngine.runEncounterFinalize`'s regenerate branch rides `attachImagesToArtifact` (new optional `data` + `meta` patch fields) — re-anchor + content write commit in the one attach tx, and the cover is explicitly kept (never cleared). The fresh-encounter `createArtifact` birth path stays intentionally off-seam (single-row create, no desync window — see below).
 - **Queue reload survival is deferred BY OWNER DECISION** (`lib/jobQueue`
   header): the in-memory queues lose queued/failed jobs on reload; run rows
   reconcile via `runRepo.failRunningRuns`. Do not invent persistence.

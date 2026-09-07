@@ -1073,4 +1073,158 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
     target.transaction = originalTransaction;
     expect(arrayBufferInsideTx).toBe(false);
   });
+
+  /**
+   * Map-regenerate content (F4 extension): the layout/mapImageId/preset/
+   * siteShape/budgetAdvisory patch rides the attach's own rw transaction, so
+   * a crash between the re-anchor and the content write cannot strand a
+   * library-scoped unreferenced image while the artifact keeps the old map.
+   */
+  it('applies a content data patch in the same transaction (map-regenerate onto a global target)', async () => {
+    const globalId = '00000000-0000-4000-8000-00000000c005';
+    const oldMapId = newId();
+    const freshId = newId();
+    const runId = newId();
+    await db.artifacts.put({
+      id: globalId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: null,
+      moduleId: null,
+      kind: 'encounter',
+      name: 'Global encounter target',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [oldMapId],
+      coverImageId: oldMapId,
+      data: {
+        difficulty: 'old', levelHint: '2',
+        monsters: [],
+        terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
+        mapImageId: oldMapId, layout: null, preset: 'standard',
+        locationKind: 'other', siteShape: 'single', budgetAdvisory: 'stale',
+      },
+    });
+    for (const [imageId, anchor] of [[oldMapId, null], [freshId, campaignId]] as const) {
+      await db.images.put({
+        id: imageId,
+        createdAt: 1,
+        updatedAt: 1,
+        campaignId: anchor,
+        bytes: new Uint8Array([1]),
+        mimeType: 'image/png',
+        width: 1,
+        height: 1,
+        prompt: '',
+        model: '',
+        source: 'generated',
+        role: 'map',
+      });
+    }
+    const next = await attachImagesToArtifact(globalId, {
+      appendImageIds: [freshId],
+      anchorImagesTo: null,
+      // Regenerate never touches the cover: the existing value is kept.
+      coverImageId: oldMapId,
+      data: {
+        difficulty: 'old', levelHint: '2',
+        monsters: [],
+        terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
+        mapImageId: freshId, layout: null, preset: 'standard',
+        locationKind: 'other', siteShape: 'single', budgetAdvisory: 'fresh verdict',
+      },
+      meta: { source: 'persona', runId },
+    });
+    if (next.kind !== 'encounter') throw new Error('wrong kind');
+    // Content patch landed with the attach: new map, fresh advisory, both
+    // images referenced, cover untouched.
+    expect(next.data.mapImageId).toBe(freshId);
+    expect(next.data.budgetAdvisory).toBe('fresh verdict');
+    expect(next.imageIds).toEqual([oldMapId, freshId]);
+    expect(next.coverImageId).toBe(oldMapId);
+    expect(next.currentRevision).toBe(2);
+    // The kept image followed the global target into the library.
+    expect((await db.images.get(freshId))?.campaignId).toBeNull();
+    // The attach carries the run's revision attribution (not a user save).
+    const [latest] = await listRevisions(globalId);
+    expect(latest?.source).toBe('persona');
+    expect(latest?.runId).toBe(runId);
+  });
+
+  it('rolls the re-anchor AND the data patch back when the content write fails', async () => {
+    const globalId = '00000000-0000-4000-8000-00000000c006';
+    const oldMapId = newId();
+    const freshId = newId();
+    await db.artifacts.put({
+      id: globalId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: null,
+      moduleId: null,
+      kind: 'encounter',
+      name: 'Global rollback target',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [oldMapId],
+      coverImageId: oldMapId,
+      data: {
+        difficulty: 'old', levelHint: '2',
+        monsters: [],
+        terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
+        mapImageId: oldMapId, layout: null, preset: 'standard',
+        locationKind: 'other', siteShape: 'single', budgetAdvisory: 'stale',
+      },
+    });
+    await db.images.put({
+      id: freshId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      bytes: new Uint8Array([1]),
+      mimeType: 'image/png',
+      width: 1,
+      height: 1,
+      prompt: '',
+      model: '',
+      source: 'generated',
+      role: 'map',
+    });
+    // The content write explodes AFTER the re-anchor — the whole attach
+    // transaction (image anchor AND data patch) must roll back.
+    const putSpy = vi.spyOn(db.artifacts, 'put').mockRejectedValueOnce(new Error('injected failure'));
+    await expect(
+      attachImagesToArtifact(globalId, {
+        appendImageIds: [freshId],
+        anchorImagesTo: null,
+        coverImageId: oldMapId,
+        data: {
+          difficulty: 'old', levelHint: '2',
+          monsters: [],
+          terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
+          mapImageId: freshId, layout: null, preset: 'standard',
+          locationKind: 'other', siteShape: 'single', budgetAdvisory: 'fresh verdict',
+        },
+        meta: { source: 'persona', runId: newId() },
+      }),
+    ).rejects.toThrow('injected failure');
+    putSpy.mockRestore();
+    // No scope desync: the fresh image stayed campaign-anchored (no
+    // stranded library orphan) and the artifact keeps the old map.
+    expect((await db.images.get(freshId))?.campaignId).toBe(campaignId);
+    const unchanged = await getAnyArtifact(globalId);
+    if (unchanged?.kind !== 'encounter') throw new Error('wrong kind');
+    expect(unchanged.imageIds).toEqual([oldMapId]);
+    expect(unchanged.coverImageId).toBe(oldMapId);
+    expect(unchanged.data.mapImageId).toBe(oldMapId);
+    expect(unchanged.data.budgetAdvisory).toBe('stale');
+    expect(unchanged.currentRevision).toBe(1);
+  });
 });

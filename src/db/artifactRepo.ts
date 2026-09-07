@@ -7,6 +7,7 @@ import {
   stampNewEntity,
   type AnyArtifact,
   type Artifact,
+  type ArtifactData,
   type ArtifactPatch,
   type ArtifactRevision,
   type CreateArtifactInput,
@@ -190,6 +191,12 @@ export interface AttachableImage extends NewStoredImage {
  * nested transaction; the prune runs last, so kept images are already
  * referenced when the candidate scan runs.
  *
+ * The optional `data` patch rides the SAME transaction: content writes that
+ * must land with the attach (map-regenerate's layout/mapImageId/preset/
+ * siteShape/budgetAdvisory) commit atomically with the re-anchor instead of
+ * a second `updateArtifact` write — a crash between the two used to strand
+ * a library-scoped unreferenced image while the artifact kept the old map.
+ *
  * The blob→bytes conversion is NOT Dexie work: `Blob.prototype.arrayBuffer()`
  * resolves on a native promise whose await would commit this transaction
  * early (the Dexie async-transaction trap, http://bit.ly/2kdckMn). Every
@@ -210,6 +217,12 @@ export async function attachImagesToArtifact(
     anchorImagesTo?: Id | null;
     /** The cover after the attach: explicit id, `null` clears, undefined keeps. */
     coverImageId?: Id | null;
+    /** Content patch applied to the artifact in the SAME transaction (see
+     * above): the whole `data` object, replacing it wholesale like an
+     * `updateArtifact` patch. */
+    data?: ArtifactData;
+    /** Revision attribution for the attach save; defaults to a user save. */
+    meta?: RevisionMeta;
     /** Post-attach prune: discards among these candidates that nothing
      * references anymore are deleted from `campaignId`'s images. */
     pruneCandidates?: { campaignId: Id; candidateIds: readonly Id[] };
@@ -244,8 +257,9 @@ export async function attachImagesToArtifact(
     ];
     const next = await updateArtifact(id, {
       imageIds: mergedImages,
+      ...(input.data !== undefined ? { data: input.data } : {}),
       coverImageId: input.coverImageId !== undefined ? input.coverImageId : createdCover,
-    });
+    }, input.meta ?? USER_SAVE);
     if (input.pruneCandidates !== undefined) {
       await deleteUnreferencedImages(
         input.pruneCandidates.campaignId,

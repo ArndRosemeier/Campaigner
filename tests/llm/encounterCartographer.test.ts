@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { getImage } from '@/db/imageRepo';
 import { putChunks } from '@/db/chunkRepo';
@@ -570,6 +570,79 @@ describe('Encounter Cartographer run', () => {
     expect(freshKeys).toEqual(['Cracked doors hang off one hinge.']);
     // The encounter-scoped roster treasure survives the map run verbatim.
     expect(updated.data.monsters[0]?.treasure).toBe('Ogre pocket: 4 gp');
+  });
+
+  it('regenerate onto a global target is atomic: a post-reanchor failure rolls everything back', async () => {
+    const { campaign, cartographer } = await setup();
+    const { db } = await import('@/db');
+    // Library-scoped encounter target with no map yet.
+    const globalId = newId();
+    await db.artifacts.put({
+      id: globalId,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: null,
+      moduleId: null,
+      kind: 'encounter',
+      name: 'Library Encounter',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: 'Keep this prose.',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      data: {
+        difficulty: 'old', levelHint: '2',
+        monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
+        terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
+      },
+    });
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify({ ...BRIEF, monsters: [{ name: 'Wrong Rename', count: 9, notes: '' }] }), modelUsed: 'test-model', fallback: null });
+    const runInput = input(campaign, cartographer, globalId);
+    const runId = await runEngine.startRun(runInput);
+    const candidates = await approveUntilPick(runId, runInput);
+
+    // Structural pin (the attach-seam tx-wrapper pattern — NOT
+    // vi.spyOn(db, 'transaction'), which breaks Dexie's PSD zone): the
+    // regenerate finalize must ride exactly one array-form
+    // images+artifacts+revisions transaction.
+    let seamTxCount = 0;
+    const originalTransaction = db.transaction.bind(db) as (...args: unknown[]) => unknown;
+    const txTarget = db as unknown as { transaction: (...args: unknown[]) => unknown };
+    txTarget.transaction = (...args: unknown[]) => {
+      if (args[0] === 'rw' && Array.isArray(args[1]) && (args[1] as unknown[]).includes(db.images)) {
+        seamTxCount += 1;
+      }
+      return originalTransaction(...args);
+    };
+    // The content write explodes AFTER the re-anchor — before the seam this
+    // stranded the kept image in the library while the artifact kept the
+    // old map.
+    const putSpy = vi.spyOn(db.artifacts, 'put').mockRejectedValueOnce(new Error('injected post-reanchor failure'));
+    try {
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('failed');
+      });
+    } finally {
+      putSpy.mockRestore();
+      txTarget.transaction = originalTransaction;
+    }
+
+    expect((await getRun(runId))?.errorMessage).toContain('injected post-reanchor failure');
+    // The finalize rode the seam exactly once.
+    expect(seamTxCount).toBe(1);
+    // Atomic rollback: the artifact keeps the old (empty) map AND the fresh
+    // image stayed campaign-anchored — no stranded library orphan.
+    const unchanged = await getAnyArtifact(globalId);
+    if (unchanged?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(unchanged.imageIds).toEqual([]);
+    expect(unchanged.data.mapImageId).toBeNull();
+    expect(unchanged.data.layout).toBeNull();
+    expect((await getImage(candidates[0] ?? ''))?.campaignId).toBe(campaign.id);
   });
 
   it('persists brief room keys and monster treasure onto the finalized artifact', async () => {
