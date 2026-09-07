@@ -32,9 +32,13 @@ import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
  * marked failed (04-LLM-PERSONAS "Interrupted by reload").
  *
  * Tablet/PWA frame (05-UI.md §Tablet): the shell pads itself with the
- * platform safe-area insets (landscape iPad notches sit on the left/right
- * edges), the OrientationGate hard-blocks portrait/narrow viewports, and the
- * one-time install hint explains home-screen installation.
+ * platform safe-area insets on all four sides (landscape iPad notches sit
+ * on the left/right edges; the bottom inset keeps content clear of the home
+ * indicator when the ProgressDock is empty). The dock and the Toaster carry
+ * their own bottom offsets — they apply exactly once (fixed layers ignore
+ * this frame padding), so this must stay a plain frame pad, never a
+ * dock-sized spacer. The OrientationGate hard-blocks portrait/narrow
+ * viewports, and the one-time install hint explains home-screen installation.
  */
 export function AppShell(): JSX.Element {
   useThemeSync();
@@ -107,7 +111,10 @@ export function AppShell(): JSX.Element {
 
   return (
     <TooltipProvider>
-      <div className="flex h-dvh flex-col pt-[env(safe-area-inset-top)] pl-[env(safe-area-inset-left)] pr-[env(safe-area-inset-right)]">
+      <div
+        className="flex h-dvh flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
+        data-testid="app-shell"
+      >
         <OrientationGate />
         <InstallHint />
         <TopBar />

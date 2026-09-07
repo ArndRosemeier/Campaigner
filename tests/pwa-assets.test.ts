@@ -53,7 +53,13 @@ describe('pwa assets', () => {
     expect(indexHtml).toContain('name="theme-color"');
     // Installed-app compat on pre-manifest iPadOS and full-bleed status bar.
     expect(indexHtml).toContain('name="apple-mobile-web-app-capable"');
+    expect(indexHtml).toContain('name="mobile-web-app-capable"');
+    expect(indexHtml).toContain('name="apple-mobile-web-app-title"');
     expect(indexHtml).toContain('name="apple-mobile-web-app-status-bar-style"');
+    // The viewport stays zoomable (no maximum-scale / user-scalable=no):
+    // PWA fullscreen must not cost accessibility zoom.
+    expect(indexHtml).not.toContain('maximum-scale');
+    expect(indexHtml).not.toContain('user-scalable=no');
   });
 
   it('startup image links reference real PNGs sized to their media query', () => {
