@@ -21,7 +21,7 @@ import {
   XIcon,
 } from 'lucide-react';
 
-import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id } from '@/domain';
+import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id, StatBlock } from '@/domain';
 import { CANONICAL_ROOM_MARKERS } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
@@ -58,11 +58,13 @@ import {
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact } from '@/db/artifactRepo';
+import { getChunksByIds } from '@/db/chunkRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { spawnRosterInstance } from '@/db/battleSeed';
 import { runBattle } from '@/features/play/run-battle';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
+import { StatBlockCard } from '@/features/campaign/components/stat-block';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { DiceRoller } from '@/features/dice/DiceRoller';
 import type { DiceRollResult, RollIntent } from '@/features/dice/types';
@@ -346,6 +348,27 @@ export function BattleSurface(): JSX.Element {
 
   const artifactById = useMemo(() => new Map(artifacts.map((entry) => [entry.id, entry])), [artifacts]);
   const selectedToken = displayedTokens.find((token) => token.id === selectedTokenId) ?? null;
+  const selectedArtifact = selectedToken?.artifactId === null || selectedToken === null
+    ? undefined
+    : artifactById.get(selectedToken.artifactId);
+  const selectedMobChunkId = selectedArtifact?.kind === 'npc'
+    ? selectedArtifact.data.monsterChunkId ?? null
+    : null;
+  const selectedMobChunk = useLiveQuery(
+    async () => {
+      if (selectedMobChunkId === null) return undefined;
+      return (await getChunksByIds([selectedMobChunkId]))[0];
+    },
+    [selectedMobChunkId],
+    undefined,
+  );
+  const selectedStatBlock: StatBlock | null = !playerSafe && selectedToken !== null
+    ? selectedArtifact?.kind === 'npc' && selectedArtifact.data.statBlock !== null
+      ? selectedArtifact.data.statBlock
+      : selectedMobChunk?.chunkType === 'statblock'
+        ? selectedMobChunk.statBlock
+        : null
+    : null;
   const selectedEffect = battle?.board.effects.find((effect) => effect.id === selectedEffectId) ?? null;
 
   function boardPointFromEvent(event: { clientX: number; clientY: number }): { x: number; y: number } {
@@ -1307,7 +1330,13 @@ export function BattleSurface(): JSX.Element {
         </div>
 
         {/* Right rail: provenance + initiative + token controls */}
-        <div className="flex w-60 flex-col gap-2 overflow-y-auto border-l border-white/10 bg-black/60 p-2">
+        <div
+          className={cn(
+            'flex flex-col gap-2 overflow-y-auto border-l border-white/10 bg-black/60 p-2 transition-[width]',
+            selectedStatBlock !== null ? 'w-96' : 'w-60',
+          )}
+          data-testid="battle-right-rail"
+        >
           {/* Who/when/what seeded (and last re-seeded) this board — GM view
           only; the player-safe DOM contract carries board material only. */}
           {!playerSafe && battle.encounterArtifactId !== null && (
@@ -1355,6 +1384,7 @@ export function BattleSurface(): JSX.Element {
                   : artifactById.get(selectedToken.artifactId)
               }
               stats={stats}
+              statBlock={selectedStatBlock}
               playerSafe={playerSafe}
             />
           )}
@@ -1926,6 +1956,7 @@ interface SelectionCardProps {
   token: BattleToken;
   artifact: AnyArtifact | undefined;
   stats: FighterStatsLookup;
+  statBlock: StatBlock | null;
   playerSafe: boolean;
 }
 
@@ -1936,7 +1967,7 @@ interface SelectionCardProps {
  * full artifact card (statblock) is GM-only behind an explicit button and
  * never mounts in player-safe mode.
  */
-function SelectionCard({ token, artifact, stats, playerSafe }: SelectionCardProps): JSX.Element {
+function SelectionCard({ token, artifact, stats, statBlock, playerSafe }: SelectionCardProps): JSX.Element {
   const [cardOpen, setCardOpen] = useState(false);
   // Same art path as TokenView/the artifact cards: useImageUrl over the
   // artifact's coverImageId — no new image plumbing.
@@ -1990,6 +2021,11 @@ function SelectionCard({ token, artifact, stats, playerSafe }: SelectionCardProp
         <div className="border-t border-white/10 pt-1" data-testid="token-treasure">
           <p className="text-xs font-medium text-amber-200">Treasure</p>
           <p className="whitespace-pre-line text-xs text-zinc-300">{token.treasure}</p>
+        </div>
+      )}
+      {!playerSafe && statBlock !== null && (
+        <div className="max-h-[min(60vh,42rem)] overflow-y-auto border-t border-white/10 pt-1" data-testid="selection-card-statblock">
+          <StatBlockCard statBlock={statBlock} name={token.label} />
         </div>
       )}
       {!playerSafe && npc !== null && (

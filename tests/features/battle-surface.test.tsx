@@ -770,11 +770,12 @@ describe('selection card', () => {
     });
     await tapToken('Troll', moduleId);
     const card = screen.getByTestId('selection-card');
-    expect(within(card).getByText('Troll')).toBeInTheDocument();
+    expect(within(card).getAllByText('Troll').length).toBeGreaterThanOrEqual(2);
     expect(screen.getByTestId('selection-card-portrait')).toBeInTheDocument();
     expect(screen.getByTestId('selection-card-hp')).toBeInTheDocument();
-    // GM-only full card: the button mounts the existing NpcCard in a dialog —
-    // statblock text appears there (it must NEVER appear on the board).
+    // GM-only sidebar stat block is visible immediately after selecting the mob.
+    expect(screen.getByTestId('selection-card-statblock')).toHaveTextContent('AC');
+    // The existing full-card button remains available for the richer artifact card.
     const user = userEvent.setup();
     await user.click(screen.getByTestId('open-token-card'));
     const dialogCard = await screen.findByTestId('play-npc-card');
