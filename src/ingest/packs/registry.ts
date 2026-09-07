@@ -4,6 +4,7 @@ import { foundryPf2eAdapter } from './pf2e-foundry';
 import { foundryPf2eConditionsAdapter } from './pf2e-conditions';
 import { foundryPf2eEquipmentAdapter } from './pf2e-equipment';
 import { foundryPf2eJournalAdapter } from './pf2e-journal';
+import { foundryPf2eRulesAdapter } from './pf2e-rules';
 import type { PackAdapter } from './types';
 
 /**
@@ -11,7 +12,7 @@ import type { PackAdapter } from './types';
  * source is one adapter file plus one entry here. Creature, equipment and
  * rules-text adapters are parallel per-system parsers — the pf2e family
  * shares a repo but different document types (npc vs item vs journal vs
- * condition), each with its own fetch source.
+ * condition vs corpus entity), each with its own fetch source.
  */
 export const PACK_ADAPTERS: readonly PackAdapter[] = [
   foundryPf2eAdapter,
@@ -20,6 +21,7 @@ export const PACK_ADAPTERS: readonly PackAdapter[] = [
   foundryDnd5eEquipmentAdapter,
   foundryPf2eJournalAdapter,
   foundryPf2eConditionsAdapter,
+  foundryPf2eRulesAdapter,
 ];
 
 export function getPackAdapter(id: string): PackAdapter {

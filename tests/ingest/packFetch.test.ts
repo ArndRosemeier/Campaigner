@@ -179,12 +179,14 @@ describe('pack fetch sources (ratified pins)', () => {
     // Every source's chain: newest (HEAD) first, then its pinned verified ref.
     // The pf2e family shares v14-dev and the dnd5e pair shares 6.0.x; the item
     // sources joined with the item-corpus arc (12-BESTIARY-PACKS §13), the
-    // journal + conditions sources with the rules-text arc (docs/12 §15).
+    // journal + conditions + rules-text sources with the rules-text arc
+    // (docs/12 §15).
     expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
+      ['HEAD', 'v14-dev'],
       ['HEAD', 'v14-dev'],
       ['HEAD', 'v14-dev'],
     ]);
@@ -411,6 +413,109 @@ describe('conditions fetch source foundry-pf2e-conditions (docs/12 §15)', () =>
     const recipes = await listPackRecipes('foundry-pf2e-conditions', { full: true, fetchDeps: { fetchFn } });
     expect(recipes).toEqual([
       { id: 'packs/pf2e/conditions', label: 'conditions', creatures: 2 },
+    ]);
+  });
+});
+
+describe('rules-corpus fetch source foundry-pf2e-rules (docs/12 §15)', () => {
+  const catFallDoc = {
+    _id: 'feat-id',
+    name: 'Cat Fall',
+    type: 'feat',
+    system: {
+      actionType: { value: 'passive' },
+      actions: { value: null },
+      category: 'skill',
+      description: { value: '<p>Treat falls as 10 feet shorter.</p>' },
+      level: { value: 1 },
+      prerequisites: { value: [{ value: 'trained in Acrobatics' }] },
+      traits: { rarity: 'common', value: ['general', 'skill'] },
+      publication: { license: 'ORC', remaster: true, title: 'Pathfinder Player Core' },
+    },
+  };
+
+  const RULES_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/feats/skill/level-1/cat-fall.json', type: 'blob' },
+      { path: 'packs/pf2e/feats/skill/level-1/_folders.json', type: 'blob' },
+      { path: 'packs/pf2e/conditions/blinded.json', type: 'blob' },
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const rulesRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(RULES_TREE),
+    [PINNED_LIST_URL]: listingResponse(RULES_TREE),
+    [RAW('packs/pf2e/feats/skill/level-1/cat-fall.json')]: creatureResponse(catFallDoc),
+    [RAW_PINNED('packs/pf2e/feats/skill/level-1/cat-fall.json')]: creatureResponse(catFallDoc),
+  });
+
+  it('pins the rules source: shared repo ref, four packDirs, volume-labelled curated recipes', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-rules');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    expect(source?.packDirs).toEqual(['feats', 'spells', 'actions', 'class-features']);
+    // Verified 2026-09-07 via a sparse clone at v14-dev (docs/12 §15).
+    expect(source?.curated).toEqual([
+      {
+        id: 'packs/pf2e/feats',
+        label: 'Feats — ancestry, archetype, class, skill, general, …',
+        creatures: 6284,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/spells',
+        label: 'Spells — ranks, cantrips, focus, rituals',
+        creatures: 1994,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/actions',
+        label: 'Actions — basic, skill, ancestry, class, …',
+        creatures: 574,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/class-features',
+        label: 'Class Features',
+        creatures: 874,
+        unit: 'sections',
+      },
+    ]);
+  });
+
+  it('fetches a nested corpus pack and lands heading paths from the folder walk', async () => {
+    const fetchFn = mockFetch(rulesRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e-rules', 'packs/pf2e/feats', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.sectionsImported).toBe(1);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/feats',
+    );
+    const chunk = deps.persisted.flat()[0];
+    expect(chunk?.chunkType).toBe('section');
+    // Nested layout: the fetch recurses, the adapter walks the folders.
+    expect(chunk?.headingPath).toEqual(['Feats — Skill', 'Level 1', 'Cat Fall']);
+    expect(chunk?.text).toContain('Source: Pathfinder Player Core (ORC)');
+  });
+
+  it('restricts the full listing to the four corpus folders of the shared packRoot', async () => {
+    const fetchFn = mockFetch(rulesRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-rules', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      { id: 'packs/pf2e/feats', label: 'feats', creatures: 1 },
     ]);
   });
 });

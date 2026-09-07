@@ -187,6 +187,47 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
       { id: 'packs/pf2e/conditions', label: 'Conditions', creatures: 43, unit: 'sections' },
     ],
   },
+  {
+    // Rules-text packs arc (docs/12 §15): the opt-in curated corpus — feats,
+    // spells, actions and class features (counts verified 2026-09-07 via a
+    // sparse clone at v14-dev: 6284 / 1994 / 574 / 874). ONE source labelled
+    // with the volumes so the user opts in DELIBERATELY: ~9.7k documents is
+    // real bulk and the keyword index grows accordingly (retrieval-weight
+    // tradeoff named in docs/12 §15). All four packs share the entity shape;
+    // packDirs scopes the shared-packRoot listing to exactly these folders.
+    adapterId: 'foundry-pf2e-rules',
+    owner: 'foundryvtt',
+    repo: 'pf2e',
+    ref: 'v14-dev',
+    packRoot: 'packs/pf2e',
+    packDirs: ['feats', 'spells', 'actions', 'class-features'],
+    curated: [
+      {
+        id: 'packs/pf2e/feats',
+        label: 'Feats — ancestry, archetype, class, skill, general, …',
+        creatures: 6284,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/spells',
+        label: 'Spells — ranks, cantrips, focus, rituals',
+        creatures: 1994,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/actions',
+        label: 'Actions — basic, skill, ancestry, class, …',
+        creatures: 574,
+        unit: 'sections',
+      },
+      {
+        id: 'packs/pf2e/class-features',
+        label: 'Class Features',
+        creatures: 874,
+        unit: 'sections',
+      },
+    ],
+  },
 ];
 
 export function getPackFetchSource(adapterId: string): PackFetchSource {
