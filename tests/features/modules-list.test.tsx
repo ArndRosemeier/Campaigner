@@ -14,7 +14,7 @@ import { seedBuiltInPersonas } from '@/db/seed';
 import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Module list (08-MODULE-DESIGNER M4-B): the campaign's modules with
@@ -447,7 +447,11 @@ describe('ModulesListPage', () => {
     await waitFor(() => {
       expect(screen.getByTestId('campaign-landing-context').textContent).toBe('Ember');
     });
-    expect(await getCampaign(campaign.id)).toMatchObject({ description: '' });
-    await flushAsyncUpdates();
+    // Raw awaited read while the page + closing dialog are mounted —
+    // actDrained closes the window the save write's liveQuery cascade and
+    // the dialog exit chain used to leak through (docs/08 §Console guard);
+    // the long trailing drain absorbs the exit transition's timed updates.
+    expect(await actDrained(() => getCampaign(campaign.id))).toMatchObject({ description: '' });
+    await flushAsyncUpdates(60);
   }, 20_000);
 });

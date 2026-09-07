@@ -325,7 +325,10 @@ describe('encounter form site shape, path reorder and target levels (docs/11 D11
     const trigger = screen.getByRole('combobox', { name: 'Site shape' });
     expect(trigger).toHaveTextContent('Encounter');
     await user.click(trigger);
-    await user.click(screen.getByRole('option', { name: 'Dungeon (complex)' }));
+    // findBy, not get: the select popup mounts through a positioned portal
+    // on a timed update, so a sync query can outrun it under load (the
+    // transient full-suite flake in this test).
+    await user.click(await screen.findByRole('option', { name: 'Dungeon (complex)' }));
     expect(screen.getByRole('combobox', { name: 'Site shape' })).toHaveTextContent('Dungeon');
   });
 
@@ -354,9 +357,12 @@ describe('encounter form site shape, path reorder and target levels (docs/11 D11
     };
     render(<StatefulEncounterForm initial={twoRooms} />);
     await user.click(screen.getByRole('combobox', { name: 'Site shape' }));
-    const single = screen.getByRole('option', { name: 'Encounter (single)' });
+    // findBy, not get — the popup's portal mount is timed (see above).
+    const single = await screen.findByRole('option', { name: 'Encounter (single)' });
     expect(single).toHaveAttribute('data-disabled');
-    expect(screen.getByRole('option', { name: 'Dungeon (complex)' })).not.toHaveAttribute('data-disabled');
+    expect(await screen.findByRole('option', { name: 'Dungeon (complex)' })).not.toHaveAttribute(
+      'data-disabled',
+    );
   });
 
   it('shows the budget advisory from the generation loop', () => {

@@ -1146,7 +1146,9 @@ describe('HP ownership split writes', () => {
     });
     let battle = await currentBattle(moduleId);
     expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(74);
-    const artifacts = await listArtifactsByCampaign(campaignId);
+    // HP writes re-fire the artifacts live query on the timed queue — the
+    // raw read is actDrained so the emission stays inside act (docs/08).
+    const artifacts = await actDrained(() => listArtifactsByCampaign(campaignId));
     const trollArtifact = artifacts.find((artifact) => artifact.id === npcId);
     expect(trollArtifact?.kind === 'npc' && 'currentHp' in trollArtifact.data).toBe(false);
 
@@ -1156,7 +1158,7 @@ describe('HP ownership split writes', () => {
     await waitFor(() => {
       expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 15 / 20 (persists)');
     });
-    const refreshed = await listArtifactsByCampaign(campaignId);
+    const refreshed = await actDrained(() => listArtifactsByCampaign(campaignId));
     const serren = refreshed.find((artifact) => artifact.kind === 'pc' && artifact.name === 'Serren');
     if (serren?.kind !== 'pc') throw new Error('serren missing');
     expect(serren.data.currentHp).toBe(15);
@@ -1699,10 +1701,14 @@ describe('dice-roller damage/heal (M5-D amendment)', () => {
     await waitFor(() => {
       expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 20 / 20 (persists)');
     });
-    const refreshed = await listArtifactsByCampaign(campaignId);
+    // The heal's artifact write re-fires the artifacts live query on the
+    // timed queue — the raw read is actDrained so the emission stays inside
+    // act (the act-leak the console guard caught in this test under load).
+    const refreshed = await actDrained(() => listArtifactsByCampaign(campaignId));
     const serren = refreshed.find((artifact) => artifact.kind === 'pc' && artifact.name === 'Serren');
     if (serren?.kind !== 'pc') throw new Error('serren missing');
     expect(serren.data.currentHp).toBe(20);
+    await flushAsyncUpdates();
   });
 
   it('never renders the roll controls or the roller in player view', async () => {
