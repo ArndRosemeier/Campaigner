@@ -44,6 +44,9 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. The vision check only flags drift for human review — it can never repair or invent geometry. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
 | D9 | **Room keys & mob treasure are GM-only text that travels with its structure** (owner-ratified, 2026-09-07): every layout room carries additive `key`/`keyTreasure` (persisted ON the room — `packRooms` rotates brief rooms, so a parallel roomId-keyed array would orphan), every roster entry carries additive `treasure` (persisted ON the entry — the editor removes roster rows, so an index-keyed array would orphan). The encounter editor edits them; battle seed freezes roster `treasure` onto each token (frozen-copy precedent, initiativeBonus); the battle surface renders GM-only key markers at room staging points + a rail key card + a GM-only token-treasure block — none of which mounts in player view (M5-D contract, 09 amendment). Map regeneration replaces room keys with the fresh brief's (accepted, stated in UI copy and the prompt clause). |
+| D11 | **Encounters have a SHAPE — `siteShape: 'single' \| 'complex'` on the encounter data, additive default `'single'`** (owner-ratified, 2026-09-08): editor labels **"Encounter" (single)** and **"Dungeon" (complex)**. A single site is one arena — `rooms.length === 1`, `corridors: []`, NO veils at seed, start position = the entrance cell when present else the room's mobsRect center, no room discovery. A complex is a dungeon — multi-room, one board, sequential play along the path, GM-only Path rail + "Reveal next room" as an ADVISORY aid (no locks, no initiative resets; the latecomer auto-roll stays an editable aid). The derived default: `locationKind === 'dungeon'` ⇒ complex, else single — materialized for legacy rows by `normalizeEncounterShapeData` (parse-on-read) AND the v17 backfill. Hard invariants refine on the ARTIFACT data (single ⇒ 1 room & no corridors; complex ⇒ >1 room); the stricter generation dichotomy — a brief commits to 1 room or 4–10, never 2–3 — is a repairable brief-boundary issue. See "Site shape, per-room challenge and the path" below. |
+| D12 | **Asymmetric per-room budget loop (owner-specified)**: each complex room carries `targetLevel` (additive, optional; defaults to the encounter's parsed levelHint) and the assigned creatures' levels are summed against a documented band — **too easy ⇒ ship silently (owner: fine)**; **too hard ⇒ lower that room's targetLevel a step (floor 1) and retry through the encounter brief's EXISTING single repair turn** (budget issues join the issue list like coverage/source issues); **after the bounded retry still over ⇒ LOUD advisory** persisted on the step output AND `data.budgetAdvisory` on the artifact — never silent, never a failed run. The final (possibly lowered) targetLevel persists on the room, visible and owner-editable. dnd5e band = our own documented approximation (verbatim rationale below, mirroring the treasure-ladder licensing stance, docs/12 §13.2/§14); pf2e ships NO numbers — GM Core verbatim from retrieved excerpts when present, else the always-on loud advisory. The in-place Smith content fill runs the same loop over a RECONCILED partition (see below). |
+| D13 | **The play path is stored on the layout** — `encounterLayoutSchema.path: z.array(z.uuid()).optional()`, a permutation of the room ids refined by the shared layout schema. The Cartographer brief's room order IS the path (stored explicitly — `packAttempt` ROTATES `brief.rooms`, so the array order cannot be trusted), rotated so the entry room is first: **first path room = spawn room**. Legacy complexes get `path` backfilled as their room-array order (spawn first if derivable) by the v17 migration; the surface falls back to array order when absent. |
 | D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). **D10 amendment (locationKind, owner-ratified)**: encounters classify themselves — the encounter persona's EXISTING draft call gains a bounded `locationKind` (`'dungeon' | 'building' | 'wilderness' | 'other'`, persisted additively on the encounter artifact, owner-correctable in the editor, no extra LLM call), and the preset resolves per encounter: **explicit per-run choice > the encounter's own `locationKind` (`'dungeon'` → Dungeon tier, `'building'`/`'wilderness'` → Standard) > the Settings fallback** for unclassified (`'other'`) rows. The persona-panel Preset select gains **Auto** as its default (self-classification is the norm; Standard/Dungeon remain explicit overrides). See "D10 amendment — per-encounter locationKind" below. |
 
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
@@ -591,12 +594,165 @@ crossing) played no role. The amendment lets encounters classify themselves:
   Auto, the default); a fresh panel run passes NO preset so the chain — not
   a coerced Settings value — decides; a regenerate keeps the target's own
   persisted preset (D10's "never silently re-tiered" rule, unchanged).
+## Site shape, per-room challenge and the path (owner-ratified, 2026-09-08)
+
+The arc ratified in this section makes the encounter's SHAPE a first-class,
+owner-visible choice, gives every dungeon room its own challenge target with
+an asymmetric budget loop, stores the play path explicitly, and deletes the
+marker path entirely. Commits: schema+migration → generation → surface →
+editor → deletion → docs.
+
+### D11 — siteShape (single / complex)
+
+- **Data**: `encounterDataSchema.siteShape = z.enum(['single','complex']).default('single')`
+  — additive, no Dexie bump for the field itself (parse-on-read materializes
+  the default). One derivation, `normalizeEncounterShapeData` (`src/domain/
+  artifact.ts`), is shared by parse-on-read, the v17 backfill and backup/
+  revision validation: layout null ⇒ 'single' (uploaded maps stay
+  byte-identical in behavior); `rooms.length <= 1` ⇒ 'single' (stray
+  corridors cleared — a one-room arena has none); `rooms.length > 1` ⇒
+  'complex' with `path` backfilled. A persisted value always wins.
+- **Editor labels**: **"Encounter" (single)** / **"Dungeon" (complex)**.
+  The selector sits beside Location kind; the option the battlemap on file
+  cannot hold is DISABLED with the reason in the hint — the owner is never
+  silently re-shaped.
+- **Generation dichotomy**: the brief must commit — single = exactly ONE
+  room (no corridors), complex = 4–10 rooms. A 2–3-room reply is a
+  repairable brief-boundary issue (`rooms: an encounter is either a single
+  arena (exactly 1 room) or a dungeon complex (4–10 rooms) — …`). Finalize
+  stamps `siteShape` from the produced layout in BOTH branches (fresh
+  create and map regenerate): the target's old shape may not match the
+  fresh layout's room count.
+- **Seeding**: the spawn room's veil is NEVER seeded — the party starts in
+  it. This supersedes the D4 entrance-only exemption above (which opened
+  the spawn room only when an entrance existed): a SINGLE site seeds ZERO
+  veils (straight to melee, no room discovery); a COMPLEX opens at path
+  room 1 for sequential play. Start position on a single site is the
+  entrance CELL when the layout carries one, else the room's mobsRect
+  center; complexes keep the entrance-hugging staging block.
+
+### D12 — the asymmetric per-room budget loop (`src/llm/roomBudget.ts`)
+
+- **Contract**: every room may carry `targetLevel` (absentable in the LLM
+  brief, persisted on the packed room; omitted rooms default to the
+  encounter's parsed levelHint via `parseRosterTargetLevel`). The prompt
+  clause (`roomBudgetGuidanceFor`) teaches: "every room must ALONE challenge
+  the party — a complex is a sequence of fights, not one fight spread thin."
+- **Check** (`checkRoomBudget`): sum the assigned creatures' levels × count
+  (the SAME parser that orders the bestiary roster, `parseLevelSort` — the
+  one level parser in the codebase; fractional levels count fractionally;
+  `'—'` CR-less summons count 0; a missing/unreadable level makes the room
+  **loud-unverified**, naming the creatures — never silently skipped).
+- **The band — dnd5e (our own documented approximation, verbatim rationale):
+  the DMG encounter-building tables are not licensable, so Campaigner ships
+  its OWN coarse ladder in our own words — nothing is quoted, paraphrased or
+  restated numerically from it. A room tuned for target level T is over
+  budget when its assigned creatures' levels (CR) sum to MORE than T + 2
+  (`ROOM_BUDGET_OVER_MARGIN`) — roughly a hard single fight's worth of
+  creature levels; there is NO lower bound (a quiet room ships silently, per
+  the owner's asymmetric call). This mirrors the treasure-ladder licensing
+  stance (docs/12 §13.2/§14), and this document IS the shipped
+  approximation.**
+- **pf2e — verbatim from retrieved chunks when present, else loud advisory**:
+  creature budgets are Paizo's (GM Core). Campaigner ships NO numeric pf2e
+  budget; the prompt directs the model to the retrieved GM Core excerpts
+  VERBATIM when they are present. Whether an excerpt actually surfaced is
+  not deterministically decidable from the retrieval output, so the
+  deterministic check is replaced by an ALWAYS-ON advisory
+  (`PF2E_BUDGET_ADVISORY`) persisted on the run and the artifact —
+  over-loud by design, never a fabricated paraphrase (AGENTS rule 1).
+- **The loop**: first parse over-budget ⇒ each over room's target is lowered
+  a step (floor 1) in the ISSUE TEXT and the brief's EXISTING single repair
+  turn fires quoting it (`"targetLevel": N and field weaker or fewer
+  creatures so it fits its band`). The post-repair pass is FINAL: still over
+  ⇒ the target is lowered a step again deterministically (floor 1), the
+  final value persists on the room, and the LOUD advisory joins the step
+  output (`budgetAdvisory`) and the artifact (`data.budgetAdvisory`). Never
+  a failed run; the editor shows the advisory and the owner can correct any
+  target.
+- **In-place Smith content fill — reconciliation** (`reconcileRoomAssignments`,
+  exact rules): the fill rewrites `data.monsters` while the layout stays
+  byte-identical, so `room.monsterIndexes` would dangle/shift/skip against
+  the new roster. Deterministic re-partition: (1) **preserve by name-match**
+  — every existing assignment whose creature name (trim/case-insensitive)
+  still exists is kept on its room, remapped to the new index, first room to
+  claim a name wins; (2) **append round-robin** — unclaimed new entries, in
+  roster order, cycle rooms[0..n-1] (a single-site layout therefore places
+  everything in its one room); (3) **drop the gone**. The same budget check
+  then runs — no repair turn exists at finalize, so over rooms get the
+  deterministic tail only (step-down + advisory). Room CAPACITY is not
+  re-derived; an overfull room still fails loudly at seed (layout
+  validation).
+
+### D13 — the stored path
+
+`encounterLayoutSchema.path: z.array(z.uuid()).optional()` + superRefine: a
+permutation of the room ids. `packAttempt` captures the BRIEF's room order
+before its packing rotation and stores it entry-room-first (`spawnFirstPath`),
+so **first path room = spawn room** and the play order survives repacking.
+The Path rail on the battle surface (GM view, complex sites) lists rooms in
+path order with the revealed frontier highlighted and a **"Reveal next
+room"** button that lifts the next veiled path room's veil — a plain veil
+removal, exactly a manual GM lift. It is an ADVISORY AID: no locks, no
+initiative resets, and key markers/badges now sit at each room's mobsRect
+CENTER (derived from the live layout — the old `stagingPoint ?? (0.5, 0.5)`
+fallback stamped dead-center-of-board badges on every non-staging layout).
+
+### Deletion record — the marker path dies entirely (owner: all pixel
+read-back is unnecessary)
+
+With D11's shape contract the marker machinery has no job left. Deleted in
+full (each symbol verified consumer-free before deletion):
+
+- The stylize prompt's disc-painting clauses (per-room "solid neon … disc +
+  plaque" instructions) and the per-room marker instruction list.
+- Room-disc detection + the staging-rebuild candidate branch in the run
+  engine — with them, the two AGENTS-rule-1 violations that lived there:
+  the SILENT packed-center fallback for undetected rooms and the SWALLOWED
+  detection errors (`catch` + debugLog with no user surface).
+- `layoutFromStagingMarkers` / `StagingRoomInput` / `StagingLayoutInput` /
+  `adaptiveGridDimensions` (the room-count grid ladder — superseded by the
+  fixed D10 tiers).
+- `markerHue` / `markerColorName` / `stagingPoint` schema fields, and every
+  `isStaging` validation escape (schema superRefine, `validateEncounterLayout`
+  — overlap/border/connectivity checks are now UNCONDITIONAL — and the
+  vision verify's fake 0.5-threshold staging branch).
+- The editor marker overlay and the `entrance.observed` write-only field +
+  triangle pixel detection. The schematic's PAINTED entrance triangle stays
+  as decoration via `drawEntrance`, and the stylize prompt keeps only the
+  preserve-clause for it ("keep … exactly as in the reference image").
+- `candidateLayouts` plumbing: stylize output, verify and finalize all use
+  THE packed layout — a map candidate is now purely a rendering.
+- `src/domain/encounterMap/neonDetector.ts` — the whole module — and its
+  test. `CANONICAL_ROOM_MARKERS` / `entranceMarkerConfig` / `RoomMarkerConfig`
+  MOVE to `schematic.ts`: they are paint/label vocabulary only (room letters
+  on the surface and editor, the schematic triangle's hue), and no pixel is
+  ever read back (D7 holds unconditionally now).
+
+### Migration v17 (justified backfill)
+
+The v16→v17 upgrade backfills the additive fields on stored encounter rows:
+`siteShape` (derived exactly as parse-on-read derives it — layout null ⇒
+single; ≤1 room ⇒ single; >1 ⇒ complex with `path` = room-array order,
+spawn room first when derivable) and `budgetAdvisory: ''`. It exists so the
+STORED rows agree with what every parse materializes — the battle surface
+and editor read `layout.path` / `siteShape` / `budgetAdvisory` directly. It
+complements, never duplicates, the parse boundary. Legacy multi-room
+complexes also gain the under-budget migration note on `budgetAdvisory`
+(shown verbatim in the editor): their rooms carry no per-room targets until
+the battlemap is regenerated — each room is roughly 1/N of the whole and
+under-budget until then.
+
 ## Implementation record
 
 Implemented in full on the M6 baseline: deterministic layout and schematic,
 Dexie v12, room-aware seeding, reference-image/vision clients, interactive
 Cartographer runs, layout-anchored battle metrics, and the unattended module
-queue. The gate is 90 test files / 576 tests at completion. The room-keys &
+queue. The gate is 90 test files / 576 tests at completion. The site-shape
+arc (D11–D13, 2026-09-08, c0bf5cf → 32db5bb) shipped in six bounded commits
+(schema+v17, generation, surface, editor, deletion, docs); the gate at
+completion is 149 test files / 1443 tests, and the marker path is fully
+deleted (record above). The room-keys &
 mob-treasure arc (D9, 2026-09-07, e489a65 → 01a0b5e) shipped in five
 bounded commits (generation, editor, seed, surface, docs) on top of the
 room-key persistence; the gate at completion is 140 test files / 1265
@@ -660,6 +816,28 @@ data model, run-engine threading, UI, docs); the gate at completion is
   preset; the run row, artifact data and Settings round-trip the choice; the
   v14→v15 migration backfills the defaults. The battle surface needs no
   preset awareness — the layout's `cols/rows` carry the finer grid.
+- Site shape (D11): a single encounter seeds with ZERO veils and starts at
+  the entrance cell (else mobsRect center); a complex opens with the spawn
+  room revealed and the rest veiled; the editor selector disables the shape
+  the map on file cannot hold; the artifact refine rejects single-with-
+  corridors and complex-with-one-room rows; legacy rows parse with the
+  derived shape (multi-room ⇒ complex with a spawn-first path).
+- Budget loop (D12): a too-hard room triggers exactly one repair turn whose
+  issue names the room, the sum and the lowered target; after the bounded
+  retry the run still COMPLETES with the lowered targetLevel persisted on
+  the room and the loud advisory on the step output and artifact; a room
+  with unresolvable creature levels is loud-unverified; pf2e runs persist
+  the verbatim-advisory instead of any numeric check; the in-place Smith
+  fill re-partitions rooms by name-match / round-robin / drop and runs the
+  same loop (pin tests in `tests/llm/roomBudget.test.ts`,
+  `encounterCartographer.test.ts`, `encounterRun.test.ts`).
+- Path (D13): packRooms stores the brief's room order entry-room-first;
+  the layout schema rejects a non-permutation path; the surface rail
+  follows the stored path and "Reveal next room" lifts the next veiled
+  room's veil (advisory only — no locks, no initiative changes).
+- Marker-path deletion: no module under src/ reads map pixels for
+  geometry; the detector module, staging builders and isStaging escapes
+  are gone, and validation is unconditional.
 - `pnpm lint && pnpm typecheck && pnpm test` passes with the layout engine,
   seed and surface-metric modules covered.
 

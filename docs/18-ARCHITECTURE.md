@@ -111,6 +111,8 @@ column.
 | Entity generation (batch AND single stub) | `features/modules/entity-batch.runEntityBatch` (the stub popover delegates a 1-target batch via `entity-detail.generateSingleEntity`) | a second "detail one entity" implementation (`chainRunner` is for Writers'-Room chains, not this) |
 | Module generation | `moduleGen.runSpine` / `runParts` / `approveSpineAndRun`; entity name normalization via `normalizeModuleEntityNames` (one LLM call, never heuristics — fix-01) | heuristic name rewriting |
 | Treasure clauses in prompts | `treasureGuidanceFor` / `roomKeyGuidanceFor` (`treasureGuidance.ts`) | quoting DMG tables or paraphrasing Paizo numbers (licensing — docs/12 §13.2/§14) |
+| Per-room challenge budgets | `roomBudget.ts` (`checkRoomBudget`, `reconcileRoomAssignments`, `roomBudgetGuidanceFor`, `parseBudgetLevel` over `encounterRoster.parseLevelSort`) — the asymmetric loop: too easy ships, too hard lowers a step through the brief's single repair turn, then LOUD advisory on step output + `data.budgetAdvisory` | a second level parser; numeric pf2e budgets (Paizo licensing — docs/11 D12) |
+| Encounter site shape / play path | `domain/artifact.normalizeEncounterShapeData` (ONE derivation: parse-on-read + v17 backfill + backup validation) + `domain/encounterMap/schema` (`encounterSiteShapeSchema`, `spawnFirstPath`, layout `path` refine) | deriving siteShape from room count at read sites; trusting the rooms-array order as play order (packAttempt rotates it) |
 | Campaign grounding for runs | `campaignGrounding.computeCampaignGrounding` + renderer (docs/15) | a second wiki-expansion implementation |
 
 ### 2.3 App & UI
@@ -229,7 +231,6 @@ column.
 - **Fresh-encounter finalize embeds `imageIds` at birth** via `createArtifact`
   instead of the attach seam — single-row create, no desync window. Listed
   so nobody "fixes" it without reading why.
-- **Encounter site-shape work (docs/11 D11) was landing concurrently with
-  this doc** — at the verified HEAD the preset chain ends at
-  `resolveEncounterPreset` + `locationKind`; the arc's docs commit amends
-  §2.3 and this list (standing order).
+- ~~Encounter site-shape work landing concurrently with this doc~~ — landed
+  (c0bf5cf → 32db5bb): the shape/preset/budget seams are in §2.2 above and
+  the decision rows live in docs/11 D11–D13 + docs/17 rows 31–33.
