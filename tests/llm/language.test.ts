@@ -70,6 +70,15 @@ describe('languageDirective', () => {
   it('falls back to English for unknown codes', () => {
     expect(languageDirective('xx')).toContain('in English');
   });
+
+  it('carries the UTF-8 contract: non-ASCII written directly, never \\u-escaped', () => {
+    for (const language of ['en', 'de']) {
+      const directive = languageDirective(language);
+      expect(directive).toContain('UTF-8');
+      expect(directive).toContain('never use \\u escapes');
+      expect(directive).toContain('non-ASCII');
+    }
+  });
 });
 
 describe('applyLanguageDirective', () => {
@@ -126,6 +135,7 @@ describe('chat language enforcement', () => {
     const system = body.messages?.find((message) => message.role === 'system');
     expect(system?.content).toContain('You are the Cartographer.');
     expect(system?.content).toContain('in Deutsch (German)');
+    expect(system?.content).toContain('UTF-8');
   });
 
   it('uses English when the setting is at its default', async () => {

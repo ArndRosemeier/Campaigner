@@ -6,7 +6,10 @@ import { generationLanguageLabel } from '@/domain/settings';
  * OpenRouter client carries a system-level directive requiring all generated
  * content in the language chosen in settings (default English). Injected at
  * the single `chat()` choke point so run engine, module generator, image
- * prompt drafting, and rule Q&A are all covered.
+ * prompt drafting, and rule Q&A are all covered. The directive also carries
+ * the UTF-8 contract (non-ASCII characters written directly, never
+ * \u-escaped), since model prose inside JSON strings otherwise arrives with
+ * mangled umlauts.
  */
 
 /** The message shape the directive is applied to — the real chat message. */
@@ -19,6 +22,8 @@ export function languageDirective(language: string): string {
     'Language requirement: Write ALL generated content (prose, descriptions,',
     `names, notes, and every free-text field) in ${label}. This overrides any`,
     'conflicting language hints elsewhere in this conversation.',
+    'Write all non-ASCII characters directly as UTF-8; never use \\u escapes',
+    'in prose or any free-text field.',
   ].join(' ');
 }
 
