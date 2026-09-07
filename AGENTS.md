@@ -26,6 +26,12 @@ conventions` are binding.
 
 ## Workflow
 
+- Start every task at `docs/18-ARCHITECTURE.md` (the seam index: layer map,
+  "the one way to do X", gotchas, known debt), then read the feature spec for
+  the area you are touching.
+- Any arc that adds or changes a seam, convention, gotcha or known-debt entry
+  amends `docs/18-ARCHITECTURE.md` in the same docs commit as its feature
+  spec — an unamended seam is treated as missing.
 - Gate before every commit: `pnpm lint && pnpm typecheck && pnpm test`.
 - Commit style: subject + root-cause body + test count. Author identity is
   set per-commit via

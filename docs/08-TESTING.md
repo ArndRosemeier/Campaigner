@@ -180,5 +180,7 @@ exactly the class the review was after:
 
 `pnpm lint && pnpm typecheck && pnpm test` — the test step fails on console
 noise, routes that stop mounting, and Base UI composition regressions. Vitest
-uses at most four workers and a 20-second default test timeout: jsdom plus
-PDF/image workers otherwise starve event loops on constrained CI/agent VMs.
+uses at most six workers and a 20-second default test timeout (raised from
+four in `b84d074` — the suite is file-parallel and was leaving half the
+machine idle; jsdom plus PDF/image workers otherwise starve event loops on
+constrained CI/agent VMs).

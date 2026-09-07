@@ -63,6 +63,12 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
 
 ## Document map (read in order when implementing)
 
+- `18-ARCHITECTURE.md` — **read first**: the code map — layer
+  responsibilities and dependency direction, THE seam table ("to do X → use
+  Y, not Z"), cross-cutting conventions with pointers, Dexie/zod/test
+  gotchas, and the known-debt list (live divergences, so nobody
+  re-discovers them as new). Every arc that adds or changes a seam amends
+  it in its docs commit (AGENTS.md §Workflow).
 - `01-DATA-MODEL.md` — all entity types, zod schemas, Dexie schema
 - `02-INGESTION.md`  — PDF → chunks pipeline, stat-block detection
 - `03-RETRIEVAL.md`  — keyword + embedding hybrid search
