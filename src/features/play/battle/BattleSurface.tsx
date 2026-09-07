@@ -435,6 +435,14 @@ export function BattleSurface(): JSX.Element {
     pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pinchRef.current.size === 2) {
       panRef.current = null;
+      if (liveDrag !== null) {
+        // Second finger mid-drag → pinch/rotation takes over the gesture: the
+        // piece's pointer stream is dead and its release will never arrive.
+        // Abandon the drag with NO commit (no drop point was chosen) and close
+        // the gesture so reconcile resumes — otherwise liveDrag strands.
+        setLiveDrag(null);
+        endBoardGesture();
+      }
       return;
     }
     const target = event.target as HTMLElement;
@@ -544,6 +552,31 @@ export function BattleSurface(): JSX.Element {
     panRef.current = null;
   }
 
+  function onBoardPointerCancel(event: React.PointerEvent<HTMLDivElement>): void {
+    // Cancellation is NOT a release: the pointer stream died (the OS stole
+    // it, a rotation gesture took over) — there is no drop point and no tap,
+    // so the live drag is abandoned with NO commit. Piece nodes keep their
+    // own onPointerCancel → finish* handlers (intact by contract); a cancel
+    // that lands ON a piece bubbles through the piece's finish first, so this
+    // only steps in off-piece — otherwise the gesture would end twice, and
+    // the gate throws on unbalanced ends. Pinch/pan/tap trackers are always
+    // consumed so a dead pointer never leaks into the next gesture.
+    const cancelTarget = event.target as Element | null;
+    const cancelledOnPiece =
+      cancelTarget !== null &&
+      cancelTarget.closest(
+        '[data-token-label],[data-testid="battle-veil"],[data-testid="battle-effect"]',
+      ) !== null;
+    if (liveDrag !== null && !cancelledOnPiece) {
+      setLiveDrag(null);
+      endBoardGesture();
+    }
+    playerTapRef.current = null;
+    pinchRef.current.delete(event.pointerId);
+    if (pinchRef.current.size < 2) pinchBaseRef.current = null;
+    panRef.current = null;
+  }
+
   function startTokenDrag(event: React.PointerEvent<HTMLDivElement>, token: BattleToken): void {
     event.stopPropagation();
     if (playerSafe) {
@@ -566,7 +599,10 @@ export function BattleSurface(): JSX.Element {
     // DOM under the cursor changes mid-drag (a live Dexie emission replacing
     // the token node, or the cursor crossing an overlay edge) — without it a
     // re-rendered node swallows the stream and the mob "snaps back". jsdom
-    // (tests) lacks the API; the gesture is unsafe without it.
+    // (tests) lacks the API; the board-level move/up fallback owns release
+    // there. The gesture opens BEFORE the capture attempt so a failed capture
+    // can unwind it below (the gate throws on unbalanced ends).
+    beginBoardGesture();
     const downTarget = event.target as Element | null;
     const pieceNode = downTarget?.closest('[data-token-label]');
     const element =
@@ -576,11 +612,14 @@ export function BattleSurface(): JSX.Element {
         element.setPointerCapture(event.pointerId);
       } catch {
         // Pointer capture can fail (already released, gesture stolen): the
-        // drag still works while the pointer stays over the node, and release
-        // is handled at the board with the same semantics.
+        // pointer stream is gone, so dragging on would strand liveDrag with a
+        // release that never arrives. Abort instead — no live drag, gesture
+        // closed — rather than dragging without capture.
+        setLiveDrag(null);
+        endBoardGesture();
+        return;
       }
     }
-    beginBoardGesture();
     setLiveDrag({
       tokenId: token.id,
       x: token.x,
@@ -1255,7 +1294,7 @@ export function BattleSurface(): JSX.Element {
           onPointerDown={onBoardPointerDown}
           onPointerMove={onBoardPointerMove}
           onPointerUp={onBoardPointerUp}
-          onPointerCancel={onBoardPointerUp}
+          onPointerCancel={onBoardPointerCancel}
           onWheel={(event) => {
             if (!event.ctrlKey && Math.abs(event.deltaY) < 2) return;
             setZoom((current) => clampZoom(current * (event.deltaY > 0 ? 0.9 : 1.1)));
@@ -1347,7 +1386,11 @@ export function BattleSurface(): JSX.Element {
                     type="button"
                     aria-label={`Room key ${letter} — ${room.name}`}
                     data-testid={`room-key-marker-${letter}`}
-                    className="absolute z-10 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-300/70 bg-amber-950/85 text-xs font-bold text-amber-200"
+                    // The visible badge stays size-6, but the hit target is a
+                    // 44px (size-11) transparent pad around it — the sanctioned
+                    // veil-handle pattern: coarse pointers get a finger-size
+                    // target with no visual change.
+                    className="absolute z-10 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
                     style={{
                       left: `${String(marker.x * 100)}%`,
                       top: `${String(marker.y * 100)}%`,
@@ -1360,7 +1403,12 @@ export function BattleSurface(): JSX.Element {
                       setSelectedKeyRoomId(room.id);
                     }}
                   >
-                    {letter}
+                    <span
+                      aria-hidden
+                      className="flex size-6 items-center justify-center rounded-full border border-amber-300/70 bg-amber-950/85 text-xs font-bold text-amber-200"
+                    >
+                      {letter}
+                    </span>
                   </button>
                 ))}
               {/* Veils — UNDER the tokens: covered mob tokens are removed in
@@ -1478,6 +1526,7 @@ export function BattleSurface(): JSX.Element {
           )}
           <InitiativeSidebar
             battle={battle}
+            canReorder={!playerSafe}
             onReorder={(order) => {
               void commit((current) => ({
                 ...current,

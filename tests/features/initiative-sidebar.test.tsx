@@ -131,6 +131,43 @@ describe('InitiativeSidebar move buttons', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('shows the reorder buttons by default (pre-gate behavior)', () => {
+    // No canReorder prop: the GM surface path keeps working unchanged.
+    const { battle } = seedBattle();
+    renderSidebar(battle);
+    expect(screen.getAllByTestId('initiative-move-up')).toHaveLength(3);
+    expect(screen.getAllByTestId('initiative-move-down')).toHaveLength(3);
+  });
+
+  it('shows the reorder buttons when canReorder is explicitly true (GM view)', async () => {
+    const { battle } = seedBattle();
+    const { onReorder } = renderSidebar(battle, { canReorder: true });
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText('Move Troll up in initiative'));
+    expect(onReorder).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides every reorder button when canReorder is false (player view) but keeps order, totals, and turn controls', async () => {
+    const { battle } = seedBattle();
+    const { onReorder, onNextTurn, onClose } = renderSidebar(battle, { canReorder: false });
+    // Order, frozen totals, and the turn arrow still render…
+    expect(screen.getAllByTestId('initiative-entry')).toHaveLength(3);
+    expect(screen.getAllByTestId('initiative-total').map((el) => el.textContent)).toEqual(['17', '15', '13']);
+    expect(screen.getByLabelText('Active turn')).toBeInTheDocument();
+    // …but no row offers a move: players can never reorder.
+    expect(screen.queryByTestId('initiative-move-up')).toBeNull();
+    expect(screen.queryByTestId('initiative-move-down')).toBeNull();
+    expect(screen.queryByLabelText('Move Troll up in initiative')).toBeNull();
+    expect(screen.queryByLabelText('Move Troll down in initiative')).toBeNull();
+    // Next-turn and close keep working (ungated controls).
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('next-turn'));
+    await user.click(screen.getByLabelText('Close initiative'));
+    expect(onNextTurn).toHaveBeenCalledTimes(1);
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onReorder).not.toHaveBeenCalled();
+  });
+
   it('returns null when initiative is off or the order is empty', () => {
     const { battle } = seedBattle();
     const { container } = render(

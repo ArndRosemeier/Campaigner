@@ -20,6 +20,13 @@ export interface InitiativeSidebarProps {
   onReorder: (order: BattleTokenId[]) => void;
   onNextTurn: () => void;
   onClose: () => void;
+  /**
+   * Whether the up/down reorder buttons render. GM-only: the surface passes
+   * `!playerSafe` — players see the order and the turn arrow but never move
+   * rows. Defaults to true (the pre-gate behavior) so existing callers keep
+   * working.
+   */
+  canReorder?: boolean;
 }
 
 /**
@@ -47,6 +54,7 @@ export function InitiativeSidebar({
   onReorder,
   onNextTurn,
   onClose,
+  canReorder = true,
 }: InitiativeSidebarProps): JSX.Element | null {
   const board = battle.board;
   if (!board.initiativeEnabled || board.initiativeOrder.length === 0) {
@@ -109,34 +117,36 @@ export function InitiativeSidebar({
               <span className="font-mono text-xs text-white/80" data-testid="initiative-total">
                 {total === null ? '—' : String(total)}
               </span>
-              <span className="flex shrink-0 flex-col" role="group" aria-label={`Reorder ${token.label}`}>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  className="min-h-[44px] min-w-[44px] px-1"
-                  aria-label={`Move ${token.label} up in initiative`}
-                  data-testid="initiative-move-up"
-                  disabled={index === 0}
-                  onClick={() => {
-                    move(tokenId, -1);
-                  }}
-                >
-                  <ChevronUpIcon aria-hidden className="size-4" />
-                </Button>
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  className="min-h-[44px] min-w-[44px] px-1"
-                  aria-label={`Move ${token.label} down in initiative`}
-                  data-testid="initiative-move-down"
-                  disabled={index === board.initiativeOrder.length - 1}
-                  onClick={() => {
-                    move(tokenId, 1);
-                  }}
-                >
-                  <ChevronDownIcon aria-hidden className="size-4" />
-                </Button>
-              </span>
+              {canReorder && (
+                <span className="flex shrink-0 flex-col" role="group" aria-label={`Reorder ${token.label}`}>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    className="min-h-[44px] min-w-[44px] px-1"
+                    aria-label={`Move ${token.label} up in initiative`}
+                    data-testid="initiative-move-up"
+                    disabled={index === 0}
+                    onClick={() => {
+                      move(tokenId, -1);
+                    }}
+                  >
+                    <ChevronUpIcon aria-hidden className="size-4" />
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    className="min-h-[44px] min-w-[44px] px-1"
+                    aria-label={`Move ${token.label} down in initiative`}
+                    data-testid="initiative-move-down"
+                    disabled={index === board.initiativeOrder.length - 1}
+                    onClick={() => {
+                      move(tokenId, 1);
+                    }}
+                  >
+                    <ChevronDownIcon aria-hidden className="size-4" />
+                  </Button>
+                </span>
+              )}
             </li>
           );
         })}
