@@ -144,15 +144,21 @@
   button,
   a,
   [role='button'],
-  summary {
+  summary,
+  [data-slot='select-trigger'],
+  [data-slot='tabs-trigger'],
+  [data-slot='context-menu-trigger'] {
     touch-action: manipulation;
   }
 
-  /* Tablet (05-UI.md §Tablet): the dense 24–32px controls a desktop pointer
-     handles fine are under finger size. Grow the hit box without moving the
-     layout — an absolutely-positioned pseudo-element is part of the button's
-     hit-test area, so ±4px turns a 24px icon into a ~32px target and a 32px
-     button into ~40px, with no visual change. */
+  /* Tablet (05-UI.md §Tablet): the dense controls a desktop pointer handles
+     fine are under finger size. Grow the hit box without moving the layout —
+     an absolutely-positioned pseudo-element is part of the button's hit-test
+     area, so ±6px turns a 32px button into a 44px target with no visual
+     change. Sub-32px button sizes (xs/sm/icon-xs/icon-sm) carry a 44px
+     coarse-pointer minimum in buttonVariants, so the pad only tops them up.
+     Checkbox, resizable-handle and tabs-trigger hit areas are widened at the
+     component level (see those files) for the same 44px coarse target. */
   @media (pointer: coarse) {
     [data-slot='button'] {
       position: relative;
@@ -160,7 +166,7 @@
     [data-slot='button']::after {
       content: '';
       position: absolute;
-      inset: -4px;
+      inset: -6px;
       border-radius: inherit;
     }
   }
