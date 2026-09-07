@@ -179,12 +179,13 @@ describe('pack fetch sources (ratified pins)', () => {
     // Every source's chain: newest (HEAD) first, then its pinned verified ref.
     // The pf2e family shares v14-dev and the dnd5e pair shares 6.0.x; the item
     // sources joined with the item-corpus arc (12-BESTIARY-PACKS §13), the
-    // journal source with the rules-text arc (docs/12 §15).
+    // journal + conditions sources with the rules-text arc (docs/12 §15).
     expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
+      ['HEAD', 'v14-dev'],
       ['HEAD', 'v14-dev'],
     ]);
   });
@@ -334,6 +335,82 @@ describe('journal fetch source foundry-pf2e-journal (docs/12 §15)', () => {
       // The full listing groups by folder and counts FILES (one per journal) —
       // curated recipes are the ones that carry the page-count volume.
       { id: 'packs/pf2e/journals', label: 'journals', creatures: 2 },
+    ]);
+  });
+});
+
+describe('conditions fetch source foundry-pf2e-conditions (docs/12 §15)', () => {
+  const blindedDoc = {
+    _id: 'XgEqL1kFApUbl5Z2',
+    name: 'Blinded',
+    type: 'condition',
+    system: {
+      description: { value: "<p>You can't see. All normal terrain is difficult terrain to you.</p>" },
+      traits: { value: [] },
+      publication: { license: 'ORC', remaster: true, title: 'Pathfinder Player Core' },
+    },
+  };
+
+  const CONDITIONS_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/conditions/blinded.json', type: 'blob' },
+      { path: 'packs/pf2e/conditions/frightened.json', type: 'blob' },
+      { path: 'packs/pf2e/conditions/_folders.json', type: 'blob' },
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const conditionRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(CONDITIONS_TREE),
+    [PINNED_LIST_URL]: listingResponse(CONDITIONS_TREE),
+    [RAW('packs/pf2e/conditions/blinded.json')]: creatureResponse(blindedDoc),
+    [RAW_PINNED('packs/pf2e/conditions/blinded.json')]: creatureResponse(blindedDoc),
+  });
+
+  it('pins the conditions source: shared repo ref, packDirs restriction, verified count', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-conditions');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    expect(source?.packDirs).toEqual(['conditions']);
+    // Verified 2026-09-07 at v14-dev: 43 flat per-condition documents.
+    expect(source?.curated).toEqual([
+      { id: 'packs/pf2e/conditions', label: 'Conditions', creatures: 43, unit: 'sections' },
+    ]);
+  });
+
+  it('fetches & imports the conditions pack into a section book with provenance', async () => {
+    const fetchFn = mockFetch(conditionRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack('foundry-pf2e-conditions', 'packs/pf2e/conditions', {
+      deps,
+      fetchDeps: { fetchFn },
+    });
+
+    expect(result.imported).toBe(1);
+    expect(result.sectionsImported).toBe(1);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceId).toBe('foundry-pf2e-conditions');
+    expect(result.book.packMeta?.sourceRef).toBe('HEAD');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/conditions',
+    );
+    const chunk = deps.persisted.flat()[0];
+    expect(chunk?.chunkType).toBe('section');
+    expect(chunk?.headingPath).toEqual(['Blinded']);
+    expect(chunk?.text).toContain('Source: Pathfinder Player Core (ORC)');
+  });
+
+  it('restricts the full listing to the conditions folder, `_` metadata docs excluded', async () => {
+    const fetchFn = mockFetch(conditionRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-conditions', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      { id: 'packs/pf2e/conditions', label: 'conditions', creatures: 2 },
     ]);
   });
 });

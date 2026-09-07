@@ -48,8 +48,8 @@ export interface PackRecipe {
    * document, the volume the user opts into is its pages (docs/12 §15).
    */
   creatures: number;
-  /** Entry noun for the count label ('creatures' default; item packs: 'items'; journal packs: 'pages'). */
-  unit?: 'creatures' | 'items' | 'pages';
+  /** Entry noun for the count label ('creatures' default; item packs: 'items'; journal packs: 'pages'; rules-text packs: 'sections'). */
+  unit?: 'creatures' | 'items' | 'pages' | 'sections';
 }
 
 export interface PackFetchSource {
@@ -170,6 +170,21 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
         creatures: 61,
         unit: 'pages',
       },
+    ],
+  },
+  {
+    // Rules-text packs arc (docs/12 §15): the pf2e conditions pack — 43
+    // per-condition JSON documents, flat, verified live at v14-dev
+    // (2026-09-07). Conditions are the cheapest rules-text opt-in: one
+    // modest book, every entry carrying its own ORC/OGL Source line.
+    adapterId: 'foundry-pf2e-conditions',
+    owner: 'foundryvtt',
+    repo: 'pf2e',
+    ref: 'v14-dev',
+    packRoot: 'packs/pf2e',
+    packDirs: ['conditions'],
+    curated: [
+      { id: 'packs/pf2e/conditions', label: 'Conditions', creatures: 43, unit: 'sections' },
     ],
   },
 ];

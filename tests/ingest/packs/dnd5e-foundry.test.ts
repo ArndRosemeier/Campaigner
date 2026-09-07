@@ -394,13 +394,15 @@ describe('foundry-dnd5e-srd adapter', () => {
   it('is registered and resolves through the registry', () => {
     // The item-corpus arc (12-BESTIARY-PACKS §13) registered the parallel
     // pf2e equipment adapters after the two creature adapters; the
-    // rules-text arc (docs/12 §15) appends the journal adapter.
+    // rules-text arc (docs/12 §15) appends the journal and conditions
+    // adapters.
     expect(PACK_ADAPTERS.map((adapter) => adapter.id)).toEqual([
       'foundry-pf2e',
       FOUNDRY_DND5E_SRD_ADAPTER_ID,
       'foundry-pf2e-equipment',
       'foundry-dnd5e-equipment',
       'foundry-pf2e-journal',
+      'foundry-pf2e-conditions',
     ]);
     const adapter = getPackAdapter('foundry-dnd5e-srd');
     expect(adapter.system).toBe('dnd5e');
@@ -411,7 +413,7 @@ describe('foundry-dnd5e-srd adapter', () => {
     expect(adapter.license).toContain('SRD');
     expect(adapter.license).toContain('not for redistribution');
     expect(() => getPackAdapter('foundry-4e')).toThrow(
-      'unknown pack adapter "foundry-4e" (available: foundry-pf2e, foundry-dnd5e-srd, foundry-pf2e-equipment, foundry-dnd5e-equipment, foundry-pf2e-journal)',
+      'unknown pack adapter "foundry-4e" (available: foundry-pf2e, foundry-dnd5e-srd, foundry-pf2e-equipment, foundry-dnd5e-equipment, foundry-pf2e-journal, foundry-pf2e-conditions)',
     );
   });
 });

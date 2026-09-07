@@ -158,8 +158,9 @@ export function BestiaryFetchSection(): JSX.Element {
                       <span className="text-xs text-muted-foreground">
                         {/* Item packs (12-BESTIARY-PACKS §13) count documents
                             in "items", journal packs (docs/12 §15) count
-                            pages; the listing counts adapter-parseable files
-                            either way. */}
+                            pages, condition/corpus packs count sections; the
+                            listing counts adapter-parseable files either
+                            way. */}
                         ({String(recipe.creatures)}{' '}
                         {recipe.unit === 'items'
                           ? recipe.creatures === 1
@@ -169,9 +170,13 @@ export function BestiaryFetchSection(): JSX.Element {
                             ? recipe.creatures === 1
                               ? 'page'
                               : 'pages'
-                            : recipe.creatures === 1
-                              ? 'creature'
-                              : 'creatures'})
+                            : recipe.unit === 'sections'
+                              ? recipe.creatures === 1
+                                ? 'section'
+                                : 'sections'
+                              : recipe.creatures === 1
+                                ? 'creature'
+                                : 'creatures'})
                       </span>
                     </span>
                     <Button
