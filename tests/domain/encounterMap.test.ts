@@ -416,6 +416,58 @@ describe('encounter map layout engine', () => {
     });
   });
 
+  describe('topology', () => {
+    it('keeps a hub-and-branch adjacency graph compact instead of forming a serial chain', () => {
+      const roomIds = Array.from({ length: 6 }, (_, i) => `00000000-0000-4000-8000-0000abcdef0${String(i)}`);
+      const adjacency: Record<number, number[]> = {
+        0: [1, 2, 3],
+        1: [0],
+        2: [0, 4],
+        3: [0],
+        4: [2, 5],
+        5: [4],
+      };
+      const layout = packRooms({
+        theme: 'Branching vaults',
+        aspect: '4:3',
+        preset: 'dungeon',
+        entryRoomId: roomIds[0] ?? ROOM_A,
+        rosterCounts: [1],
+        rooms: roomIds.map((id, index) => ({
+          id,
+          name: `Vault ${String(index + 1)}`,
+          description: '',
+          size: 'small' as const,
+          monsterIndexes: index === 0 ? [0] : [],
+          adjacentRoomIds: (adjacency[index] ?? []).map((adjacent) => roomIds[adjacent] ?? ROOM_A),
+          key: '',
+          keyTreasure: '',
+        })),
+      });
+      expect(validateEncounterLayout(layout, [1])).toEqual([]);
+      const centers = new Map(
+        layout.rooms.map((room) => [
+          room.id,
+          room.rects.reduce((sum, rect) => sum + rect.x + rect.w / 2, 0) / room.rects.length,
+        ]),
+      );
+      // The hub room should sit between its linked leaves instead of lining
+      // them up across the map: the joined adjacent rooms must remain within
+      // a compact neighborhood, not stretch one cell deep across the grid.
+      const hub = centers.get(roomIds[0] ?? ROOM_A) ?? 0;
+      expect(Math.abs((centers.get(roomIds[1] ?? ROOM_A) ?? 0) - hub)).toBeLessThanOrEqual(20);
+      expect(Math.abs((centers.get(roomIds[3] ?? ROOM_A) ?? 0) - hub)).toBeLessThanOrEqual(20);
+      // Corridors only connect graph neighbors; the union footprint must stay
+      // far smaller than a serial route across the whole dungeon tier.
+      const corridorCells = layout.corridors.reduce(
+        (sum, corridor) => sum + corridor.rects.reduce((inner, rect) => inner + rect.w * rect.h, 0),
+        0,
+      );
+      expect(corridorCells).toBeLessThan(110);
+      expect(layout.corridors).toHaveLength(5);
+    });
+  });
+
   describe('capacity (10 rooms)', () => {
     it('supports 10-room dungeon layouts', () => {
       const roomIds = Array.from({ length: 10 }, (_, i) => `00000000-0000-4000-8000-00000000000${String(i)}`);

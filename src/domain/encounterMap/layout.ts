@@ -74,20 +74,31 @@ export function packRooms(
   variant = 0,
 ): EncounterLayout {
   const brief = encounterMapBriefSchema.parse(input);
-  const attempts: string[] = [];
-  for (let attempt = 0; attempt < 3; attempt += 1) {
+  const failures: string[] = [];
+  const candidates: EncounterLayout[] = [];
+  // A single valid packing is not enough: different slot assignments can turn
+  // the same adjacency graph into a long U or a compact branching dungeon.
+  // Keep this deterministic and bounded; there is no model call or randomness
+  // in geometry selection.
+  for (let attempt = 0; attempt < 12; attempt += 1) {
     try {
       const layout = packAttempt(brief, attempt + variant);
       const issues = validateEncounterLayout(layout, brief.rosterCounts);
-      if (issues.length === 0) return encounterLayoutSchema.parse(layout);
-      attempts.push(`attempt ${String(attempt + 1)}: ${issues.join(', ')}`);
+      if (issues.length === 0) {
+        candidates.push(encounterLayoutSchema.parse(layout));
+      } else {
+        failures.push(`attempt ${String(attempt + 1)}: ${issues.join(', ')}`);
+      }
     } catch (error) {
-      attempts.push(
-        `attempt ${String(attempt + 1)}: ${errorMessage(error)}`,
-      );
+      failures.push(`attempt ${String(attempt + 1)}: ${errorMessage(error)}`);
     }
   }
-  throw new EncounterLayoutError(attempts);
+  if (candidates.length > 0) {
+    return candidates.reduce((best, candidate) =>
+      topologyScore(candidate, brief) < topologyScore(best, brief) ? candidate : best,
+    );
+  }
+  throw new EncounterLayoutError(failures);
 }
 
 function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout {
@@ -97,14 +108,13 @@ function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout
   const rows = Math.ceil(count / columns);
   const slotW = Math.floor(gridW / columns);
   const slotH = Math.floor(gridH / rows);
-  // The path is the BRIEF's room order (docs/11 D13) — captured before the
-  // rotation below reorders the rooms array, entry room first. First path
-  // room = spawn room = where the party starts.
+  // The path is the BRIEF's room order (docs/11 D13), independent of the
+  // geometric slot assignment below. First path room = spawn room.
   const path = spawnFirstPath(
     brief.rooms.map((room) => room.id),
     brief.entryRoomId,
   );
-  const ordered = rotate(brief.rooms, attempt % count);
+  const ordered = topologyOrderedRooms(brief, columns, rows, attempt);
   const rooms = ordered.map((room, index): LayoutRoom => {
     const column = index % columns;
     const row = Math.floor(index / columns);
@@ -449,6 +459,107 @@ export function spawnRoom(layout: EncounterLayout): LayoutRoom {
   return room;
 }
 
+function topologyOrderedRooms(
+  brief: EncounterMapBrief,
+  columns: number,
+  rows: number,
+  attempt: number,
+): EncounterMapBrief['rooms'] {
+  const slots = Array.from({ length: columns * rows }, (_, index) => ({
+    column: index % columns,
+    row: Math.floor(index / columns),
+  })).sort((left, right) => {
+    const leftDistance = Math.abs(left.column - (columns - 1) / 2) + Math.abs(left.row - (rows - 1) / 2);
+    const rightDistance = Math.abs(right.column - (columns - 1) / 2) + Math.abs(right.row - (rows - 1) / 2);
+    return leftDistance - rightDistance ||
+      ((left.column + left.row * columns + attempt) % (columns * rows)) -
+        ((right.column + right.row * columns + attempt) % (columns * rows));
+  });
+  const byId = new Map(brief.rooms.map((room) => [room.id, room]));
+  const neighborsById = new Map<string, Set<string>>(
+    brief.rooms.map((room) => [room.id, new Set(room.adjacentRoomIds)]),
+  );
+  const remaining = new Set(brief.rooms.map((room) => room.id));
+  const assigned = new Map<string, { column: number; row: number }>();
+  const entry = byId.get(brief.entryRoomId) ?? brief.rooms[0];
+  const firstSlot = slots[0];
+  if (entry === undefined || firstSlot === undefined) return [...brief.rooms];
+  assigned.set(entry.id, firstSlot);
+  remaining.delete(entry.id);
+
+  while (remaining.size > 0) {
+    const nextId = [...remaining].sort((left, right) => {
+      const leftLinks = [...(neighborsById.get(left) ?? [])].filter((id) => assigned.has(id)).length;
+      const rightLinks = [...(neighborsById.get(right) ?? [])].filter((id) => assigned.has(id)).length;
+      const leftDegree = neighborsById.get(left)?.size ?? 0;
+      const rightDegree = neighborsById.get(right)?.size ?? 0;
+      return rightLinks - leftLinks || rightDegree - leftDegree || left.localeCompare(right);
+    })[0];
+    if (nextId === undefined) break;
+    const linkedSlots = [...(neighborsById.get(nextId) ?? [])]
+      .map((id) => assigned.get(id))
+      .filter((slot): slot is { column: number; row: number } => slot !== undefined);
+    const freeSlots = slots.filter((slot) => ![...assigned.values()].some(
+      (used) => used.column === slot.column && used.row === slot.row,
+    ));
+    const chosen = freeSlots.sort((left, right) => {
+      const distance = (slot: { column: number; row: number }): number => linkedSlots.length === 0
+        ? 0
+        : Math.min(...linkedSlots.map((parent) => Math.abs(slot.column - parent.column) + Math.abs(slot.row - parent.row)));
+      return distance(left) - distance(right) || left.row - right.row || left.column - right.column;
+    })[0];
+    if (chosen === undefined) break;
+    assigned.set(nextId, chosen);
+    remaining.delete(nextId);
+  }
+
+  // Disconnected inputs are rejected later by adjacencyPairs/validation, but
+  // keep the ordering total so errors remain loud rather than dropping rooms.
+  for (const room of brief.rooms) {
+    if (assigned.has(room.id)) continue;
+    const slot = slots.find((candidate) => ![...assigned.values()].some(
+      (used) => used.column === candidate.column && used.row === candidate.row,
+    ));
+    if (slot !== undefined) assigned.set(room.id, slot);
+  }
+  return [...assigned.entries()]
+    .sort((left, right) => left[1].row - right[1].row || left[1].column - right[1].column)
+    .map(([id]) => byId.get(id))
+    .filter((room): room is EncounterMapBrief['rooms'][number] => room !== undefined);
+}
+
+function topologyScore(layout: EncounterLayout, brief: EncounterMapBrief): number {
+  const centers = new Map(layout.rooms.map((room) => [
+    room.id,
+    {
+      x: room.rects.reduce((sum, rect) => sum + rect.x + rect.w / 2, 0) / room.rects.length,
+      y: room.rects.reduce((sum, rect) => sum + rect.y + rect.h / 2, 0) / room.rects.length,
+    },
+  ]));
+  const pairs = adjacencyPairs(brief);
+  const edgeDistance = pairs.reduce((sum, [left, right]) => {
+    const a = centers.get(left);
+    const b = centers.get(right);
+    return a === undefined || b === undefined ? sum : sum + Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+  }, 0);
+  const corridorLength = layout.corridors.reduce(
+    (sum, corridor) => sum + corridor.rects.reduce((inner, rect) => inner + rect.w * rect.h, 0),
+    0,
+  );
+  const linePenalty = layout.rooms.reduce((sum, room) => {
+    const linked = pairs
+      .filter(([left, right]) => left === room.id || right === room.id)
+      .map(([left, right]) => centers.get(left === room.id ? right : left))
+      .filter((center): center is { x: number; y: number } => center !== undefined);
+    if (linked.length < 3) return sum;
+    const anchor = linked[0];
+    const sameColumn = anchor !== undefined && linked.every((center) => center.x === anchor.x);
+    const sameRow = anchor !== undefined && linked.every((center) => center.y === anchor.y);
+    return sum + (sameColumn || sameRow ? 24 : 0);
+  }, 0);
+  return corridorLength * 2 + edgeDistance + linePenalty;
+}
+
 function adjacencyPairs(brief: EncounterMapBrief): [string, string][] {
   const roomIds = new Set(brief.rooms.map((room) => room.id));
   const pairs = new Map<string, [string, string]>();
@@ -645,9 +756,6 @@ function translate(rect: LayoutRect, x: number, y: number): LayoutRect {
   return { ...rect, x: rect.x + x, y: rect.y + y };
 }
 
-function rotate<T>(items: readonly T[], amount: number): T[] {
-  return [...items.slice(amount), ...items.slice(0, amount)];
-}
 
 function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;

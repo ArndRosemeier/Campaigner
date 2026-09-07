@@ -178,9 +178,13 @@ mode: run row per state change, event emitter for streaming, autonomy via
 
 - `packRooms(brief)`: adjacency graph + per-room size classes → rectangles on
   a fixed grid (`gridW × gridH` chosen from the aspect option, see below),
-  1-cell corridors between connected rooms, doors on shared edges. Rooms may
-  be unions of 2–3 rects; `mobsRect` is the largest inscribed rectangle minus
-  a 1-cell border.
+  1-cell corridors between connected rooms, doors on shared edges. Adjacent
+  rooms are placed in neighboring grid slots so the connection graph stays
+  compact and branching (a central room can fan out instead of forming one
+  serial U); twelve deterministic packing candidates are scored for corridor
+  length, connected-room distance and one-dimensional chains, and the best
+  valid candidate wins. Rooms may be unions of 2–3 rects; `mobsRect` is the
+  largest inscribed rectangle minus a 1-cell border.
 - Validation (all loud): rooms disjoint, corridors 1 cell wide and connected
   door-to-door, exactly one `spawn` room, `mobsRect` area ≥ the room's monster
   count, everything inside the grid. Invalid ⇒ retry, then fail.
