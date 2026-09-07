@@ -98,7 +98,7 @@ export function PeekModal({
           </DialogTitle>
         </div>
         <Separator />
-        <div className="min-h-0 flex-1 overflow-y-auto py-1">
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain py-1">
           {current === undefined ? (
             <p className="text-sm text-muted-foreground">
               This artifact no longer exists (it may have been deleted).

@@ -330,7 +330,7 @@ export function CampaignTree({
           <HelpButton topic="tree" label="artifact library" />
         </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-2">
+      <div className="flex-1 overflow-y-auto overscroll-contain p-2">
         {libraryRows.length > 0 && (
           <TreeGroup
             label="Library"

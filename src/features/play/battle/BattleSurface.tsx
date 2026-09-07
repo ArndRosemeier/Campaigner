@@ -1289,7 +1289,7 @@ export function BattleSurface(): JSX.Element {
       <div className="flex min-h-0 flex-1">
         <div
           ref={boardRef}
-          className="relative min-h-0 flex-1 touch-none overflow-hidden bg-zinc-900"
+          className="relative min-h-0 flex-1 touch-none overflow-hidden overscroll-none bg-zinc-900"
           data-testid="battle-board"
           onPointerDown={onBoardPointerDown}
           onPointerMove={onBoardPointerMove}

@@ -298,7 +298,7 @@ export function ZoomableImage({
     <div
       ref={containerRef}
       className={cn(
-        'flex touch-none select-none items-center justify-center overflow-hidden',
+        'flex touch-none overscroll-none select-none items-center justify-center overflow-hidden',
         zoomed ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-out',
       )}
       data-testid="zoomable-image"

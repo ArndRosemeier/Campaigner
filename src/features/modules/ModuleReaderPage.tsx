@@ -272,7 +272,7 @@ export function ModuleReaderPage(): JSX.Element {
       {tocOpen ? (
         <nav
           aria-label="Table of contents"
-          className="w-56 shrink-0 overflow-y-auto border-r bg-card px-3 py-4 text-sm"
+          className="w-56 shrink-0 overflow-y-auto overscroll-contain border-r bg-card px-3 py-4 text-sm"
           data-testid="module-toc"
         >
           <ReaderSearch containerRef={documentRef} />
@@ -354,7 +354,7 @@ export function ModuleReaderPage(): JSX.Element {
       )}
 
       {/* Document */}
-      <div ref={documentRef} className="min-h-0 flex-1 overflow-y-auto">
+      <div ref={documentRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <article className="px-8 py-10 text-[15px] leading-relaxed">
           <header className="mb-8 border-b pb-4">
             <ModuleTitleInput module={module} />

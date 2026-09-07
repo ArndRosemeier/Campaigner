@@ -539,7 +539,7 @@ export function EntityPanel({
             </p>
           )}
 
-          <div className="min-h-0 flex-1 overflow-y-auto px-2 py-2 text-sm">
+          <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-2 py-2 text-sm">
             {entries.length === 0 && (
               <p className="px-1 text-xs text-muted-foreground">
                 No wiki-links yet. Write [[Names]] in the premise or parts.
@@ -662,7 +662,7 @@ export function EntityPanel({
               removed meanwhile are skipped.
             </DialogDescription>
           </DialogHeader>
-          <ul className="max-h-48 space-y-1 overflow-y-auto text-xs" data-testid="entity-proposals-list">
+          <ul className="max-h-48 space-y-1 overflow-y-auto overscroll-contain text-xs" data-testid="entity-proposals-list">
             {(module.entityRewriteProposals ?? []).map((proposal) => (
               <li key={String(proposal.planIndex)} className="rounded bg-muted px-2 py-1">
                 <span className="font-medium">
