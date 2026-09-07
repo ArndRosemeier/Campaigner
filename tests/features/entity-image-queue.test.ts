@@ -267,4 +267,43 @@ describe('entity image queue', () => {
     expect(useEntityImageQueue.getState().active).toEqual([]);
     expect(useEntityImageQueue.getState().failed).toEqual([]);
   });
+
+  it('cancelAll aborts the in-flight image job and withdraws the queued one silently (stop-all seam)', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const campaignId = campaign.id;
+    const moduleId = newId();
+    await createArtifact({ campaignId, kind: 'npc', name: 'Kael', summary: 'Ember\u2019s gate warden.' });
+    await createArtifact({ campaignId, kind: 'npc', name: 'Bram', summary: 'A quiet farrier.' });
+    // Serial pump: Kael in flight (held on the image call's abort signal),
+    // Bram still queued.
+    await updateSettings({ maxParallelRequests: 1 });
+    generateImagesMock.mockImplementation((_prompt, _count, opts) => {
+      const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+      if (signal === undefined) return Promise.reject(new Error('no abort signal passed'));
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    });
+    useEntityImageQueue.getState().enqueue([
+      { campaignId, moduleId, name: 'Kael' },
+      { campaignId, moduleId, name: 'Bram' },
+    ]);
+    await waitFor(() => {
+      expect(useEntityImageQueue.getState().active).toHaveLength(1);
+      expect(useEntityImageQueue.getState().queued).toHaveLength(1);
+    });
+
+    const withdrawn = await useEntityImageQueue.getState().cancelAll();
+    expect(withdrawn).toBe(2);
+    expect(useEntityImageQueue.getState().active).toEqual([]);
+    expect(useEntityImageQueue.getState().queued).toEqual([]);
+    expect(useEntityImageQueue.getState().failed).toEqual([]);
+    expect(useProgressStore.getState().jobs).toEqual([]);
+    // Silent + non-destructive: no failure toast, no image attached.
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    const kael = (await listArtifactsByCampaign(campaignId)).find((a) => a.name === 'Kael');
+    expect(kael?.coverImageId).toBeNull();
+  });
 });

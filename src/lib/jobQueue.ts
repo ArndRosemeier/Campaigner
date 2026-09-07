@@ -19,7 +19,9 @@ import { toastError } from '@/lib/toast';
  *   stable `key` — a job can never run concurrently against itself.
  * - **Cancellation**: `dequeue` drops a pending job and aborts the
  *   in-flight one through its AbortController; an aborted job settles
- *   silently (no toast, no failed-list entry).
+ *   silently (no toast, no failed-list entry). `cancelAll` withdraws
+ *   EVERY queued + in-flight job through that same per-job path — the
+ *   stop-all generations seam (features/progress/stop-all-generations).
  * - **Failed list + retry**: failures toast loud per artifact (AGENTS rule
  *   2) and land on `failed`; `retryFailed(filter?)` re-enqueues them, and
  *   re-enqueueing a failed job directly clears its failed entry.
@@ -90,6 +92,17 @@ export interface JobQueueState<T> {
   enqueue: (jobs: T[]) => void;
   /** Removes a pending (or aborts the in-flight) job for this key. */
   dequeue: (job: T) => void;
+  /**
+   * Stop-all seam: withdraws every queued job and aborts every in-flight one
+   * through the SAME per-job `dequeue` path (silent settlement, dock counter
+   * decrement, body abort reaction — e.g. the encounter-map queue's
+   * `runEngine.cancel`). Resolves once the aborted in-flight jobs have
+   * settled, so a caller composing this with the run-engine sweep observes
+   * the queue fully drained (no double count, no stranded abort reaction).
+   * FAILED jobs are not touched: they are not running, and their retry list
+   * stays available. Resolves with the withdrawn job count.
+   */
+  cancelAll: () => Promise<number>;
   /** Re-enqueues failed jobs (all, or those matching the filter). */
   retryFailed: (filter?: (job: T) => boolean) => void;
   /** Test/recovery seam: clears all state, aborts in-flight jobs, drops
@@ -101,6 +114,11 @@ export type JobQueueStore<T> = UseBoundStore<StoreApi<JobQueueState<T>>>;
 
 export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
   const controllers = new Map<string, AbortController>();
+  /** Per-job settlement waiters registered by `cancelAll` (resolved in
+   * processJob's finally) — a withdrawn in-flight job's abort reaction (the
+   * body's own cleanup, e.g. the map queue's runEngine.cancel) has run by
+   * the time its waiter resolves. */
+  const settleWaiters = new Map<string, () => void>();
   /** Per-dock-group counters: done/total keep the bar monotonic. */
   const counters = new Map<string, { total: number; done: number }>();
   let pumping = false;
@@ -185,6 +203,8 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
       return 'failed';
     } finally {
       controllers.delete(config.key(job));
+      settleWaiters.get(config.key(job))?.();
+      settleWaiters.delete(config.key(job));
     }
   }
 
@@ -273,6 +293,22 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
       }));
       controllers.get(config.key(job))?.abort();
       bumpRemoved(job);
+    },
+    cancelAll: async () => {
+      const jobs = [...get().queued, ...get().active];
+      if (jobs.length === 0) return 0;
+      // Register the settlement waiters BEFORE the abort so the bodies'
+      // abort reactions are awaited, not raced: by the time this resolves,
+      // every withdrawn in-flight job has settled and run its own cleanup.
+      const settled: Promise<void>[] = [];
+      for (const job of jobs) {
+        const key = config.key(job);
+        if (!controllers.has(key)) continue;
+        settled.push(new Promise<void>((resolve) => settleWaiters.set(key, resolve)));
+      }
+      for (const job of jobs) get().dequeue(job);
+      await Promise.all(settled);
+      return jobs.length;
     },
     retryFailed: (filter) => {
       const jobs = get().failed.filter(filter ?? (() => true));

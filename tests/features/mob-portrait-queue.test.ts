@@ -268,6 +268,43 @@ describe('mob portrait queue', () => {
     });
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
   });
+
+  it('cancelAll aborts the in-flight image job and withdraws the queued one silently (stop-all seam)', async () => {
+    const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+    const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
+    const otherId = await getOrCreateMobArtifact(campaignId, await seedCreatureChunk('Ogre', 'Ogre, big and rude.'), 'Ogre');
+    // Serial pump: job 1 in flight (held on the image call's abort signal),
+    // job 2 still queued.
+    await updateSettings({ maxParallelRequests: 1 });
+    generateImagesMock.mockImplementation((_prompt, _count, opts) => {
+      const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+      if (signal === undefined) return Promise.reject(new Error('no abort signal passed'));
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    });
+    useMobPortraitQueue.getState().enqueue([
+      { campaignId, encounterId, artifactId, name: 'Goblin Boss', chunkId },
+      { campaignId, encounterId, artifactId: otherId, name: 'Ogre' },
+    ]);
+    await waitFor(() => {
+      expect(useMobPortraitQueue.getState().active).toHaveLength(1);
+      expect(useMobPortraitQueue.getState().queued).toHaveLength(1);
+    });
+
+    const withdrawn = await useMobPortraitQueue.getState().cancelAll();
+    expect(withdrawn).toBe(2);
+    expect(useMobPortraitQueue.getState().active).toEqual([]);
+    expect(useMobPortraitQueue.getState().queued).toEqual([]);
+    expect(useMobPortraitQueue.getState().failed).toEqual([]);
+    expect(useProgressStore.getState().jobs).toEqual([]);
+    // Silent + non-destructive: no failure toast, no image attached.
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    const mob = await getAnyArtifact(artifactId);
+    expect(mob?.coverImageId).toBeNull();
+  });
 });
 
 describe('enqueueMobPortraits (the batch action)', () => {

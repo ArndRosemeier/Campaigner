@@ -1071,6 +1071,32 @@ export class RunEngine {
     useProgressStore.getState().finish(encounterProgressId(runId));
   }
 
+  /**
+   * Stop-all seam (features/progress/stop-all-generations): cancels every
+   * IN-FLIGHT run — the engine's own controller registry is the in-flight
+   * set; a paused run (awaiting_user / needs_review) is NOT generating and
+   * is left alone. Cancelled runs keep the existing semantics: resumable,
+   * row marked 'cancelled' (never destructive). Returns the cancelled run
+   * ids. A run whose row vanished mid-cancel is a loud aggregate failure
+   * AFTER the others were still cancelled — a partial stop is never silent.
+   */
+  async cancelAllActive(): Promise<Id[]> {
+    // Snapshot first: cancel() mutates the registry (and new runs may start
+    // mid-sweep — they belong to the next stop, not this one).
+    const ids = [...this.controllers.keys()];
+    const results = await Promise.allSettled(ids.map((id) => this.cancel(id)));
+    const failures = results.filter(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected',
+    );
+    if (failures.length > 0) {
+      throw new Error(
+        `Could not cancel ${String(failures.length)} of ${String(ids.length)} running generations: ` +
+          failures.map((outcome) => errorMessage(outcome.reason)).join('; '),
+      );
+    }
+    return ids;
+  }
+
   private async executeFrom(
     runId: Id,
     startIndex: number,

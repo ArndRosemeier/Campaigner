@@ -257,4 +257,62 @@ describe('module encounter map queue', () => {
     if (after?.kind !== 'encounter') throw new Error('encounter missing');
     expect(after.data.layout).toBeNull();
   }, 30000);
+
+  it('cancelAll withdraws queued jobs, cancels the in-flight run and settles silently (stop-all seam)', async () => {
+    const campaign = await createCampaign({ name: 'Stop all maps', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    const activeEncounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Mapping now',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+    });
+    const queuedEncounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Still queued',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+    });
+    // Hold the Cartographer's brief call until the abort — the job's abort
+    // signal is the cancellation seam (runEngine.cancel aborts it).
+    chatMock.mockImplementation((_messages, opts) => {
+      const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+      if (signal === undefined) return Promise.reject(new Error('no abort signal passed'));
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
+    });
+    useEncounterMapQueue.getState().enqueue([
+      { campaignId: campaign.id, moduleId: null as Id | null, artifactId: activeEncounter.id, name: activeEncounter.name },
+      { campaignId: campaign.id, moduleId: null as Id | null, artifactId: queuedEncounter.id, name: queuedEncounter.name },
+    ]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toHaveLength(1);
+      expect(useEncounterMapQueue.getState().queued).toHaveLength(1);
+    });
+
+    const withdrawn = await useEncounterMapQueue.getState().cancelAll();
+    expect(withdrawn).toBe(2);
+    expect(useEncounterMapQueue.getState().active).toEqual([]);
+    expect(useEncounterMapQueue.getState().queued).toEqual([]);
+    expect(useEncounterMapQueue.getState().failed).toEqual([]);
+    // The dock counters drain with the withdrawn jobs (per-job dequeue path).
+    expect(useProgressStore.getState().jobs).toEqual([]);
+    // The in-flight unattended run row is cancelled — no map materializes.
+    await waitFor(async () => {
+      const mapRun = (await listRunsByCampaign(campaign.id)).find(
+        (run) => run.targetArtifactId === activeEncounter.id,
+      );
+      expect(mapRun?.status).toBe('cancelled');
+    }, { timeout: 10000 });
+    // Silent: a job the user just stopped never toasts or lands on the retry list.
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30000);
 });
