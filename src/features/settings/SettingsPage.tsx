@@ -6,6 +6,7 @@ import { listPersonas } from '@/db/personaRepo';
 import { HelpButton } from '@/help/HelpButton';
 import { BackupSection } from '@/features/settings/backup-section';
 import { BestiaryFetchSection } from '@/features/settings/bestiary-fetch-section';
+import { AppearanceSection } from '@/features/settings/appearance-section';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { PersonaSection } from '@/features/settings/persona-section';
 import { DangerZone } from '@/features/settings/danger-zone';
@@ -13,7 +14,8 @@ import { SettingsSection } from '@/features/settings/settings-section';
 
 /**
  * Settings screen (05-UI.md §Settings): OpenRouter credentials and models,
- * embeddings toggle, personas, backup & restore, danger zone.
+ * embeddings toggle, appearance (UI scale), personas, backup & restore,
+ * danger zone.
  */
 export function SettingsPage(): JSX.Element {
   const personas = useLiveQuery(() => listPersonas(), []);
@@ -44,6 +46,7 @@ export function SettingsPage(): JSX.Element {
           <LanguageSelect ariaLabel="Generation language" />
         </CardContent>
       </Card>
+      <AppearanceSection />
       <PersonaSection personas={personas ?? []} />
       <BackupSection />
       <DangerZone />

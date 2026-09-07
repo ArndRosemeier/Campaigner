@@ -10,6 +10,10 @@ import {
   graphPath,
   workspacePath,
 } from '@/app/routes';
+import {
+  DEFAULT_UI_SCALE,
+  useUiScaleStore,
+} from '@/app/theme/uiScale';
 import { ARTIFACT_KINDS, type ArtifactKind, ruleChunkSchema, stampNewEntity } from '@/domain';
 import { artifactRepo } from '@/db';
 import { createCampaign } from '@/db/campaignRepo';
@@ -100,6 +104,7 @@ function renderAppAt(path: string): void {
 
 beforeEach(async () => {
   await clearDatabase();
+  useUiScaleStore.setState({ uiScale: DEFAULT_UI_SCALE });
   world = await seedSmokeWorld();
 });
 
@@ -277,10 +282,25 @@ describe('route smoke sweep', () => {
     expect(screen.getByRole('button', { name: 'Import PDFs' })).toBeInTheDocument();
   });
 
-  it('settings page mounts', () => {
+  it('settings page mounts with the Appearance card and applies the UI scale', async () => {
+    const user = userEvent.setup();
     renderAppAt(ROUTES.settings);
 
     expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument();
+
+    // The sync hook applied the default (100% → root var '1') on mount.
+    expect(screen.getByTestId('ui-scale')).toHaveTextContent('100%');
+    expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1');
+
+    // Exactly the four spec steps, in order.
+    await user.click(screen.getByTestId('ui-scale'));
+    const options = await screen.findAllByRole('option');
+    expect(options.map((option) => option.textContent)).toEqual(['90%', '100%', '110%', '125%']);
+
+    // Selecting 125% applies the factor to the document root (useUiScaleSync).
+    await user.click(screen.getByRole('option', { name: '125%' }));
+    expect(useUiScaleStore.getState().uiScale).toBe(1.25);
+    expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.25');
   });
 
   it('unknown routes render the not-found page', () => {

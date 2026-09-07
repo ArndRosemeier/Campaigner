@@ -49,6 +49,9 @@
 }
 
 :root {
+  /* UI scale (05-UI.md §Settings Appearance card): default keeps the browser's
+     16px root until the store rehydrates and applyUiScale writes the var. */
+  --ui-scale: 1;
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
   --card: oklch(1 0 0);
@@ -126,6 +129,12 @@
   }
   html {
     @apply font-sans;
+    /* UI scale (05-UI.md §Settings Appearance card): the app is rem-based
+       (Tailwind v4 default scale, shadcn on rem), so one root font-size var
+       scales spacing, text and radii app-wide. px-measured surfaces — the
+       battle board, dice stage, PDF canvas — are deliberately unaffected.
+       NOT CSS zoom: it breaks board/pointer px math (docs/18 §2.3). */
+    font-size: calc(16px * var(--ui-scale));
   }
 
   /* Tablet (05-UI.md §Tablet): the double-tap-to-zoom viewport gesture steals

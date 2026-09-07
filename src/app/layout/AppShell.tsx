@@ -5,6 +5,7 @@ import { Outlet } from 'react-router-dom';
 import { TopBar } from '@/app/layout/TopBar';
 import { CampaignBar } from '@/app/layout/CampaignBar';
 import { useThemeSync } from '@/app/theme/theme';
+import { useUiScaleSync } from '@/app/theme/uiScale';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { InstallHint } from '@/app/layout/install-hint';
@@ -37,6 +38,7 @@ import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
  */
 export function AppShell(): JSX.Element {
   useThemeSync();
+  useUiScaleSync();
   const openHelp = useHelpStore((state) => state.openHelp);
   const wizardOpen = useOnboardingStore((state) => state.open);
 

@@ -66,8 +66,8 @@ sanctioned only because a static import would be a cycle).
   (`pdfExport`, `mdToPdfmake`, `modulePdf`), `persisted`, `parallel`,
   `errors`, `debug`, `globalErrors`.
 - **`src/app`** — shell: `router.tsx`, `routes.ts` (single route source),
-  layout, `GlobalErrorBoundary`, theme. `src/help` is the help dialog content
-  store.
+  layout, `GlobalErrorBoundary`, theme, uiScale. `src/help` is the help
+  dialog content store.
 
 ## 2. The seam index
 
@@ -140,6 +140,7 @@ column.
 | Dev logging | `lib/debug.debugLog` | bare `console.log` (lint) or `console.error` as an error surface |
 | Stop every running generation | `features/progress/stopAllGenerations` + the dock's Stop all button (queues' `cancelAll`, `runEngine.cancelAllActive`, `cancelModuleGen`, `chainRunner.cancel` composed there — the ONE sweep; non-destructive, rows stay resumable) | a second stop path or per-surface ad-hoc cancel wiring |
 | Persisted UI state | zustand store + `lib/persisted.zodPersistStorage(schema)` | localStorage by hand |
+| Scale the UI app-wide | `app/theme/uiScale.useUiScaleSync` (mounted once in AppShell next to `useThemeSync`) + the uiScale store — `--ui-scale` var × root font-size (index.css); persisted via `zodPersistStorage` (the Persisted UI state seam) and kept through Delete-all-data in `db/maintenance.PRESERVED_KEYS` like the theme | CSS zoom (breaks the px-measured board/pointer/dice/PDF math); a settings-row field (device display preference — theme precedent, stays out of the data DB and backups) |
 
 ## 3. Cross-cutting conventions (pointers, not restatements)
 
@@ -237,6 +238,13 @@ column.
 - **pdfjs under vitest** warns about `standardFontDataUrl` (allowlisted; text
   extraction does not use fonts). jsdom lacks ResizeObserver /
   `scrollIntoView` / Web Animations — stubbed in `tests/setup.ts`.
+- **UI scale never touches px-measured surfaces**: `--ui-scale` (uiScale
+  store) multiplies the root font-size, so only the rem-based Tailwind/shadcn
+  scale grows. The battle board (DOM + transforms over world units, measured
+  px), the dice stage (fixed canvas), the PDF viewer canvas
+  (fit-to-measured-width), `ResizablePanel` px minSizes and px micro-labels
+  are intentionally fixed — do not "fix" them to rem, and do not replace the
+  mechanism with CSS zoom (board/pointer px math, Firefox breakage).
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 

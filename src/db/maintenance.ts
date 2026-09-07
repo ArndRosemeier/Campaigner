@@ -2,9 +2,9 @@ import Dexie from 'dexie';
 
 import { db } from '@/db/db';
 
-/** localStorage keys owned by the app; the theme preference survives wipes. */
+/** localStorage keys owned by the app; the theme + UI scale survive wipes. */
 const APP_STORAGE_PREFIX = 'campaigner.';
-const PRESERVED_KEYS = new Set(['campaigner.theme']);
+const PRESERVED_KEYS = new Set(['campaigner.theme', 'campaigner.uiScale']);
 
 /**
  * "Delete all data" (05-UI.md §Settings danger zone): closes and deletes the
