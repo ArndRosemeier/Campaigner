@@ -139,7 +139,7 @@ export function PdfViewer({ pdf, initialPage = 1 }: { pdf: StoredPdf; initialPag
           <ChevronLeftIcon aria-hidden />
         </Button>
         <Input
-          className="h-7 w-14 text-sm"
+          className="h-7 w-14 text-sm pointer-coarse:text-base"
           aria-label="Page number"
           value={String(page)}
           data-testid="pdf-page-input"

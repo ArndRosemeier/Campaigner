@@ -46,6 +46,8 @@ describe('PdfBookView', () => {
       expect(pageInput).toHaveValue('2');
     });
     expect(screen.getByText(`of ${String(numPages)}`)).toBeInTheDocument();
+    // Anti-Safari-zoom floor (iPad batch D): desktop size unchanged.
+    expect(pageInput).toHaveClass('pointer-coarse:text-base');
     expect(onBack).not.toHaveBeenCalled();
   }, 30000);
 

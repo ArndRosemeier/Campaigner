@@ -110,7 +110,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
               }}
             >
               <SelectTrigger
-                className="h-7 flex-1 text-xs"
+                className="h-7 flex-1 text-xs pointer-coarse:text-base"
                 aria-label={`Step ${index + 1} persona`}
               >
                 <SelectValue />
@@ -160,7 +160,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
           <Input
             value={step.brief}
             placeholder="Brief for this step…"
-            className="h-7 text-xs"
+            className="h-7 text-xs pointer-coarse:text-base"
             aria-label={`Step ${index + 1} brief`}
             disabled={busy}
             onChange={(event) => {
@@ -189,7 +189,7 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
             if (value !== null) setAutonomy(value);
           }}
         >
-          <SelectTrigger className="w-full" aria-label="Chain autonomy">
+          <SelectTrigger className="w-full pointer-coarse:text-base" aria-label="Chain autonomy">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

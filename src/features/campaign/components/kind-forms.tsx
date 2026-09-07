@@ -41,7 +41,7 @@ function TextAreaField({
     <Field label={label}>
       <Textarea
         value={value}
-        className="min-h-[64px] text-sm"
+        className="min-h-[64px] text-sm pointer-coarse:text-base"
         onChange={(event) => {
           onChange(event.target.value);
         }}
@@ -166,7 +166,10 @@ export function PcForm({ data, campaignSystem, onChange }: PcFormProps) {
           <Input
             value={data.playerName}
             placeholder="'' for GM-run PCs"
-            className="h-7 text-sm"
+            className="h-7 text-sm pointer-coarse:text-base"
+            autoCapitalize="words"
+            autoCorrect="off"
+            enterKeyHint="next"
             onChange={(event) => {
               patch({ playerName: event.target.value });
             }}
@@ -178,7 +181,7 @@ export function PcForm({ data, campaignSystem, onChange }: PcFormProps) {
             value={String(data.currentHp)}
             min={0}
             step={1}
-            className="h-7 text-sm"
+            className="h-7 text-sm pointer-coarse:text-base"
             onChange={(event) => {
               const parsed = Number.parseInt(event.target.value, 10);
               patch({ currentHp: Number.isNaN(parsed) ? 0 : Math.max(0, parsed) });
@@ -191,7 +194,7 @@ export function PcForm({ data, campaignSystem, onChange }: PcFormProps) {
           type="number"
           value={data.initiativeOverride === null ? '' : String(data.initiativeOverride)}
           step={1}
-          className="h-7 text-sm"
+          className="h-7 text-sm pointer-coarse:text-base"
           onChange={(event) => {
             const raw = event.target.value.trim();
             const parsed = raw === '' ? Number.NaN : Number.parseInt(raw, 10);
@@ -270,7 +273,7 @@ export function LocationForm({ data, onChange }: LocationFormProps) {
       <Field label="Location type">
         <Input
           value={data.locationType}
-          className="h-7 text-sm"
+          className="h-7 text-sm pointer-coarse:text-base"
           placeholder="e.g. tavern, ruin, city quarter"
           onChange={(event) => {
             patch({ locationType: event.target.value });
@@ -373,8 +376,11 @@ function MonsterListEditor({
             <Input
               value={monster.name}
               placeholder="Name"
-              className="h-7 flex-1 text-sm"
+              className="h-7 flex-1 text-sm pointer-coarse:text-base"
               aria-label="Monster name"
+              autoCapitalize="words"
+              autoCorrect="off"
+              enterKeyHint="next"
               onChange={(event) => {
                 onChange(
                   monsters.map((m, i) => (i === index ? { ...m, name: event.target.value } : m)),
@@ -386,7 +392,7 @@ function MonsterListEditor({
               min={1}
               value={monster.count}
               aria-label="Monster count"
-              className="h-7 w-16 text-sm"
+              className="h-7 w-16 text-sm pointer-coarse:text-base"
               onChange={(event) => {
                 const count = Number.parseInt(event.target.value, 10);
                 onChange(
@@ -401,7 +407,7 @@ function MonsterListEditor({
             <Input
               value={monster.notes}
               placeholder="Notes"
-              className="h-7 flex-1 text-sm"
+              className="h-7 flex-1 text-sm pointer-coarse:text-base"
               aria-label="Monster notes"
               onChange={(event) => {
                 onChange(
@@ -433,7 +439,7 @@ function MonsterListEditor({
           <Textarea
             value={monster.treasure}
             placeholder="Treasure carried by one of these (one item per line)"
-            className="min-h-[44px] text-sm"
+            className="min-h-[44px] text-sm pointer-coarse:text-base"
             aria-label={`Treasure carried by one ${monster.name || 'of these'}`}
             onChange={(event) => {
               onChange(
@@ -493,7 +499,7 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
           <Input
             value={data.difficulty}
             placeholder="medium / deadly / …"
-            className="h-7 text-sm"
+            className="h-7 text-sm pointer-coarse:text-base"
             onChange={(event) => {
               patch({ difficulty: event.target.value });
             }}
@@ -503,7 +509,7 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
           <Input
             value={data.levelHint}
             placeholder="e.g. 3"
-            className="h-7 text-sm"
+            className="h-7 text-sm pointer-coarse:text-base"
             onChange={(event) => {
               patch({ levelHint: event.target.value });
             }}
@@ -540,7 +546,7 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
               }
             }}
           >
-            <SelectTrigger aria-label="Location kind" className="h-7 text-sm">
+            <SelectTrigger aria-label="Location kind" className="h-7 text-sm pointer-coarse:text-base">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -566,7 +572,7 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
               }
             }}
           >
-            <SelectTrigger aria-label="Site shape" className="h-7 text-sm">
+            <SelectTrigger aria-label="Site shape" className="h-7 text-sm pointer-coarse:text-base">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -596,7 +602,7 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
       <Field label="Terrain">
         <Input
           value={data.terrain}
-          className="h-7 text-sm"
+          className="h-7 text-sm pointer-coarse:text-base"
           onChange={(event) => {
             patch({ terrain: event.target.value });
           }}
@@ -706,7 +712,7 @@ function RoomKeysEditor({
             <Textarea
               value={room.key}
               placeholder="What the GM reads when the party first enters…"
-              className="min-h-[44px] text-sm"
+              className="min-h-[44px] text-sm pointer-coarse:text-base"
               aria-label={`Room ${marker} key`}
               onChange={(event) => {
                 onChange({
@@ -718,7 +724,7 @@ function RoomKeysEditor({
             <Textarea
               value={room.keyTreasure}
               placeholder="Treasure hidden in this room (one item per line)"
-              className="min-h-[44px] text-sm"
+              className="min-h-[44px] text-sm pointer-coarse:text-base"
               aria-label={`Room ${marker} treasure`}
               onChange={(event) => {
                 onChange({
@@ -732,7 +738,7 @@ function RoomKeysEditor({
               min={1}
               value={room.targetLevel === undefined ? '' : String(room.targetLevel)}
               placeholder="Target level"
-              className="h-7 text-sm"
+              className="h-7 text-sm pointer-coarse:text-base"
               aria-label={`Room ${marker} target level`}
               data-testid={`room-target-level-${position}`}
               onChange={(event) => {
@@ -771,7 +777,7 @@ export function PlotArcForm({ data, onChange }: PlotArcFormProps) {
         <Input
           value={data.arcType}
           placeholder="adventure / campaign / …"
-          className="h-7 text-sm"
+          className="h-7 text-sm pointer-coarse:text-base"
           onChange={(event) => {
             patch({ arcType: event.target.value });
           }}

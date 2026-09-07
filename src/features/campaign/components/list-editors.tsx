@@ -30,7 +30,7 @@ export function StringListEditor({
           <Input
             value={item}
             placeholder={itemPlaceholder}
-            className="h-7 text-sm"
+            className="h-7 text-sm pointer-coarse:text-base"
             onChange={(event) => {
               update(index, event.target.value);
             }}
@@ -89,7 +89,10 @@ export function PairListEditor({ label, labelA, labelB, rows, onChange }: PairLi
             value={row.a}
             placeholder={labelA}
             aria-label={`${labelA} ${index + 1}`}
-            className="h-7 w-40 shrink-0 text-sm"
+            className="h-7 w-40 shrink-0 text-sm pointer-coarse:text-base"
+            autoCapitalize="words"
+            autoCorrect="off"
+            enterKeyHint="next"
             onChange={(event) => {
               update(index, { a: event.target.value });
             }}
@@ -98,7 +101,7 @@ export function PairListEditor({ label, labelA, labelB, rows, onChange }: PairLi
             value={row.b}
             placeholder={labelB}
             aria-label={`${labelB} ${index + 1}`}
-            className="h-7 flex-1 text-sm"
+            className="h-7 flex-1 text-sm pointer-coarse:text-base"
             onChange={(event) => {
               update(index, { b: event.target.value });
             }}
@@ -155,7 +158,7 @@ export function ExtrasEditor({ extras, onChange }: ExtrasEditorProps) {
             value={key}
             aria-label={`Extra ${index + 1} label`}
             placeholder="Label"
-            className="h-7 w-40 shrink-0 text-sm"
+            className="h-7 w-40 shrink-0 text-sm pointer-coarse:text-base"
             onChange={(event) => {
               renameKey(index, event.target.value);
             }}
@@ -164,7 +167,7 @@ export function ExtrasEditor({ extras, onChange }: ExtrasEditorProps) {
             value={extras[key] ?? ''}
             aria-label={`Extra ${index + 1} value`}
             placeholder="Value"
-            className="h-7 flex-1 text-sm"
+            className="h-7 flex-1 text-sm pointer-coarse:text-base"
             onChange={(event) => {
               onChange({ ...extras, [key]: event.target.value });
             }}

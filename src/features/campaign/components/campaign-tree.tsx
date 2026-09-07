@@ -310,7 +310,7 @@ export function CampaignTree({
           value={filter}
           placeholder="Filter by name or tag…"
           aria-label="Filter artifacts"
-          className="h-7 bg-transparent text-sm"
+          className="h-7 bg-transparent text-sm pointer-coarse:text-base"
           onChange={(event) => {
             setFilter(event.target.value);
           }}
@@ -586,7 +586,10 @@ export function CampaignTree({
                 value={renameValue}
                 autoFocus
                 aria-label="Artifact name"
-                className="my-2"
+                className="my-2 pointer-coarse:text-base"
+                autoCapitalize="words"
+                autoCorrect="off"
+                enterKeyHint="done"
                 onChange={(event) => {
                   setRenameValue(event.target.value);
                 }}

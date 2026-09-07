@@ -80,6 +80,24 @@ describe('CampaignTree rename dialog', () => {
     });
   }, 20000);
 
+  it('rename input hints the iOS keyboard and hits 16px on coarse pointers', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'location', name: 'Old Tower' });
+
+    renderWorkspace(workspacePath(campaign.id));
+    expect(await screen.findByText('Old Tower')).toBeInTheDocument();
+
+    await openRenameDialog(user, 'Old Tower');
+    const nameInput = within(screen.getByRole('dialog')).getByLabelText('Artifact name');
+    // Proper-name hints: capitalize words, no autocorrect, Done return key.
+    expect(nameInput).toHaveAttribute('autocapitalize', 'words');
+    expect(nameInput).toHaveAttribute('autocorrect', 'off');
+    expect(nameInput).toHaveAttribute('enterkeyhint', 'done');
+    // Anti-Safari-zoom floor (batch D): desktop visuals unchanged.
+    expect(nameInput).toHaveClass('pointer-coarse:text-base');
+  }, 20000);
+
   it("renames with the alias checkbox off: aliases are left unchanged", async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });

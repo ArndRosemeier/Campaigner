@@ -268,7 +268,10 @@ export function StubPopover({
             <Input
               id="stub-name"
               value={name}
-              className="h-7 text-xs"
+              className="h-7 text-xs pointer-coarse:text-base"
+              autoCapitalize="words"
+              autoCorrect="off"
+              enterKeyHint="done"
               onChange={(event) => {
                 setName(event.target.value);
                 setArmedCreate(false);
@@ -289,7 +292,7 @@ export function StubPopover({
                 }
               }}
             >
-              <SelectTrigger id="stub-kind" size="sm" className="flex-1">
+              <SelectTrigger id="stub-kind" size="sm" className="flex-1 pointer-coarse:text-base">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>

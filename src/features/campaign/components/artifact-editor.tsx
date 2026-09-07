@@ -311,7 +311,7 @@ export function ArtifactEditor({
           value={draft.summary}
           placeholder="Summary (one line, shown in the tree tooltip)…"
           aria-label="Summary"
-          className="h-7 border-none bg-transparent px-1 text-xs shadow-none dark:bg-transparent"
+          className="h-7 border-none bg-transparent px-1 text-xs shadow-none pointer-coarse:text-base dark:bg-transparent"
           onChange={(event) => {
             patchDraft({ summary: event.target.value });
           }}

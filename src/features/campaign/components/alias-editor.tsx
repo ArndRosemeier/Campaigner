@@ -68,7 +68,7 @@ export function AliasEditor({
         value={draft}
         placeholder={placeholder}
         aria-label="Add alias"
-        className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none dark:bg-transparent"
+        className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none pointer-coarse:text-base dark:bg-transparent"
         onChange={(event) => {
           setDraft(event.target.value);
         }}
