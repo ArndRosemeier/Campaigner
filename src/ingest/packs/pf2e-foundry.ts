@@ -75,6 +75,14 @@ const pf2eNpcSchema = z.object({
     details: z.object({
       level: z.object({ value: z.number() }),
       languages: z.object({ value: z.array(z.string()) }).optional(),
+      // Per-entry source publication (hygiene rider, docs/12 §15) — carried
+      // into the stat block's extras verbatim instead of being dropped.
+      publication: z
+        .object({
+          title: z.string().default(''),
+          license: z.string().default(''),
+        })
+        .nullish(),
     }),
     traits: z.object({
       value: z.array(z.string()).default([]),
@@ -321,6 +329,16 @@ function mapNpc(doc: ParsedNpc): PackEntry {
   };
   if (traitsSection.rarity !== 'common') extras.Rarity = traitsSection.rarity;
   if (attributes.hp.details.trim() !== '') extras['HP details'] = attributes.hp.details.trim();
+  // Per-entry source publication (hygiene rider, docs/12 §15): the corpus
+  // carries it at system.details.publication ({license, remaster, title}, full
+  // coverage on sampled documents) — preserved as the stat block's Source
+  // extra (rendered by the stat-block UI), never silently dropped.
+  const publication = details.publication;
+  const pubTitle = publication?.title.trim() ?? '';
+  const pubLicense = publication?.license.trim() ?? '';
+  if (pubTitle !== '' || pubLicense !== '') {
+    extras.Source = pubTitle === '' ? pubLicense : `${pubTitle}${pubLicense === '' ? '' : ` (${pubLicense})`}`;
+  }
 
   const statBlock: StatBlock = {
     system: 'pathfinder2e',

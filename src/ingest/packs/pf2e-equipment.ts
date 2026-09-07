@@ -29,6 +29,10 @@ import type { PackAdapter, PackFileParse, PackItemEntry } from './types';
  *   'unique') → verbatim `itemData.rarity`; `.value` traits → the trait line.
  * - HTML `system.description.value` → stripped plain text (the creature
  *   adapter's exact stripHtml rules, incl. @-notation resolution).
+ * - `system.publication` `{license, remaster, title}` → carried VERBATIM into
+ *   `itemData.publication` (hygiene rider, docs/12 §15) and rendered as the
+ *   text's trailing `Source:` line — per-entry licensing is preserved, never
+ *   dropped (fixtures: Player Core ORC, Battlecry! ORC).
  * - Document `type` → verbatim `itemData.category`.
  *
  * Legacy releases ship the same documents as NDJSON `.db` files — accepted
@@ -69,6 +73,14 @@ const pf2eEquipmentSchema = z.object({
       })
       .nullish(),
     description: z.object({ value: z.string().default('') }).nullish(),
+    // Per-entry source publication (hygiene rider, docs/12 §15) — carried
+    // into the item payload verbatim instead of being dropped.
+    publication: z
+      .object({
+        title: z.string().default(''),
+        license: z.string().default(''),
+      })
+      .nullish(),
   }),
 });
 
@@ -142,6 +154,7 @@ function mapEquipment(doc: ParsedEquipment): PackItemEntry {
     rarity: traits.rarity,
     traits: traits.value,
     rulesEdition: null,
+    publication: doc.system.publication ?? null,
   };
   const description = stripHtml(doc.system.description?.value ?? '');
   return { name: doc.name, item, text: formatItemText(item, description) };

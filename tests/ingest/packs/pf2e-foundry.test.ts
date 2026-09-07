@@ -88,6 +88,31 @@ describe('foundry-pf2e adapter', () => {
     expect(block?.extras['Ability modifiers']).toBe('Str +3, Dex +3, Con +2, Int -1, Wis +1, Cha +0');
     expect(block?.extras.Traits).toBe('chaotic, charau-ka, evil, humanoid');
     expect(block?.extras.Rarity).toBeUndefined();
+    // The shared baseNpc fixture carries no publication — no invented Source.
+    expect(block?.extras.Source).toBeUndefined();
+  });
+
+  it('carries the per-entry publication into extras.Source (hygiene rider, docs/12 §15)', async () => {
+    // Live shape verified at v14-dev (goblin-commando.json, Monster Core):
+    // system.details.publication = {license, remaster, title}.
+    const withSource = baseNpc('Goblin Commando');
+    const details = (withSource.system as Record<string, unknown>).details as Record<string, unknown>;
+    (withSource.system as Record<string, unknown>).details = {
+      ...details,
+      publication: { license: 'ORC', remaster: true, title: 'Pathfinder Monster Core' },
+    };
+    const parsed = await foundryPf2eAdapter.parseFile('goblin-commando.json', encodeJson(withSource));
+    const block = parsed.entries[0]?.statBlock;
+    expect(block?.extras.Source).toBe('Pathfinder Monster Core (ORC)');
+    // Title-only shape still surfaces (license omitted from the render).
+    const titleOnly = baseNpc('Half-Title');
+    const titleDetails = (titleOnly.system as Record<string, unknown>).details as Record<string, unknown>;
+    (titleOnly.system as Record<string, unknown>).details = {
+      ...titleDetails,
+      publication: { license: '', remaster: true, title: 'NPC Gallery' },
+    };
+    const parsedTitle = await foundryPf2eAdapter.parseFile('x.json', encodeJson(titleOnly));
+    expect(parsedTitle.entries[0]?.statBlock.extras.Source).toBe('NPC Gallery');
   });
 
   it('splits items into attacks, actions, reactions and passive traits', async () => {

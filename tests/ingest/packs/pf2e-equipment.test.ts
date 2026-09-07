@@ -88,9 +88,13 @@ describe('foundry-pf2e-equipment adapter', () => {
       rarity: 'common',
       traits: ['versatile-p'],
       rulesEdition: null,
+      // Hygiene rider (docs/12 §15): the per-entry publication is carried
+      // verbatim instead of dropped, and renders as the trailing Source line.
+      publication: { title: 'Pathfinder Player Core', license: 'ORC' },
     });
     expect(entry.text).toContain('weapon · Level 0 · 1 gp · common');
     expect(entry.text).toContain('Traits: versatile-p');
+    expect(entry.text).toContain('Source: Pathfinder Player Core (ORC)');
     // The known unknown keys of the source doc are consumed but not re-serialized.
     expect('publication' in (entry as unknown as Record<string, unknown>)).toBe(false);
   });

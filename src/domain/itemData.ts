@@ -50,6 +50,19 @@ export const itemDataSchema = z.object({
   traits: z.array(z.string()).default([]),
   /** Verbatim in-doc `system.source.rules` ('2014'|'2024'); pf2e → null. */
   rulesEdition: z.string().nullable(),
+  /**
+   * Per-entry source publication (hygiene rider, docs/12 §15): pf2e corpus
+   * documents carry `system.publication {license, remaster, title}` at full
+   * coverage — stored verbatim (title + license) and rendered as the text's
+   * trailing `Source:` line. Nullish on pre-arc rows and dnd5e items (whose
+   * license is book-level CC-BY-4.0, stored on the book).
+   */
+  publication: z
+    .object({
+      title: z.string().default(''),
+      license: z.string().default(''),
+    })
+    .nullish(),
 });
 
 export type ItemData = z.infer<typeof itemDataSchema>;
@@ -136,9 +149,10 @@ export function normalizeDnd5ePrice(
 /**
  * Deterministic chunk text for an item chunk (search text, display,
  * contentHash): one summary line of the normalized fields, then the stripped
- * description, then the trait line. Absent parts render no line — never an
- * empty placeholder. A stated '—' price is kept (it is the source's "no
- * price"), an unstated rarity/level/rules edition render nothing.
+ * description, then the trait line and the per-entry source line. Absent
+ * parts render no line — never an empty placeholder. A stated '—' price is
+ * kept (it is the source's "no price"), an unstated rarity/level/rules
+ * edition render nothing.
  */
 export function formatItemText(item: ItemData, description: string): string {
   const summary = [
@@ -151,5 +165,17 @@ export function formatItemText(item: ItemData, description: string): string {
     .filter((part) => part !== null)
     .join(' · ');
   const traitLine = item.traits.length === 0 ? null : `Traits: ${item.traits.join(', ')}`;
-  return [summary, description.trim(), traitLine].filter((part) => part !== null && part !== '').join('\n');
+  // Per-entry licensing preserved, never dropped (hygiene rider, docs/12 §15).
+  const publication = item.publication;
+  const title = publication?.title.trim() ?? '';
+  const license = publication?.license.trim() ?? '';
+  const sourceLine =
+    title === '' && license === ''
+      ? null
+      : title === ''
+        ? `Source: ${license}`
+        : `Source: ${title}${license === '' ? '' : ` (${license})`}`;
+  return [summary, description.trim(), traitLine, sourceLine]
+    .filter((part) => part !== null && part !== '')
+    .join('\n');
 }

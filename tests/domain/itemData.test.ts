@@ -138,6 +138,21 @@ describe('formatItemText', () => {
     expect(formatItemText(priceless, '  ')).toBe('weapon · Level 0 · — · common');
   });
 
+  it('appends the per-entry publication as a trailing Source line (hygiene rider, docs/12 §15)', () => {
+    const sourced: ItemData = {
+      ...pf2eItem,
+      publication: { title: 'Pathfinder Player Core', license: 'ORC' },
+    };
+    expect(formatItemText(sourced, 'One-edged or two-edged swords.')).toBe(
+      'weapon · Level 0 · 1 gp · common\nOne-edged or two-edged swords.\nTraits: versatile-p\nSource: Pathfinder Player Core (ORC)',
+    );
+    // License-only shape still surfaces; an empty publication renders nothing.
+    expect(formatItemText({ ...pf2eItem, publication: { title: '', license: 'OGL' } }, '')).toBe(
+      'weapon · Level 0 · 1 gp · common\nTraits: versatile-p\nSource: OGL',
+    );
+    expect(formatItemText({ ...pf2eItem, publication: { title: '', license: '' } }, '')).not.toContain('Source:');
+  });
+
   it('round-trips through itemDataSchema', () => {
     expect(itemDataSchema.parse(pf2eItem)).toEqual(pf2eItem);
   });
