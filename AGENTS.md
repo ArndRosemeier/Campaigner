@@ -57,3 +57,21 @@ used:
    report instead of resolving.
 4. Re-verify duty: whichever brief was written against an older HEAD
    re-verifies its findings at landing time.
+
+## Subagent hygiene
+
+The session list holds in-flight work only — a short list is a correct
+list (stale sessions caused real confusion before: a finished pack agent
+was mistaken for pending work, a stopped agent lingered for days).
+
+- Delete a probe session as soon as its report is consumed.
+- Delete a writer session only after its landing is verified on
+  `origin/main` (by commit SHA), then retire its worktree (`git worktree
+  remove --force` + `prune`). Never delete a running writer.
+- A silent writer (no report, session gone quiet): salvage-check BEFORE
+  deleting — `git log` on its branch for unpushed commits, worktree
+  status for uncommitted work. Verify against `origin/main`; never assume
+  the work landed OR that it is lost. If the branch is empty, re-dispatch
+  from a clean tree.
+- Prune stale worktree metadata whenever worktrees go missing (temp-dir
+  cleanup orphans them: `git worktree prune`).
