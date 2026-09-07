@@ -58,7 +58,7 @@ export function treasureGuidanceFor(system: GameSystem): string {
 export function roomKeyGuidanceFor(): string {
   return [
     'Room keys: every room carries a "key" — 1–3 sentences of GM-only room information the GM reads when the party first enters (what the room looks like, who or what is here, anything interactable) — and a "keyTreasure" checklist of the treasure hidden in THAT room (one item per line; "" when none). Hoards live in "keyTreasure"; monsters only carry pocket-level "treasure".',
-    'Outdoor encounters get room keys too: each staging area carries "key"/"keyTreasure" exactly like dungeon rooms (the key marker renders at its staging point).',
+    'Outdoor encounters get room keys too: each staging area carries "key"/"keyTreasure" exactly like dungeon rooms (the key marker renders at the room\'s mob area).',
     'Room keys regenerate together with the map: rewriting them on a regeneration is expected, not a loss to avoid.',
   ].join('\n');
 }

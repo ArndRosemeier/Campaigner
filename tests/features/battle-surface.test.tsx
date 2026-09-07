@@ -5,7 +5,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
-import { createArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import {
   ensureBattle,
@@ -14,7 +14,7 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import type * as battleRepoModule from '@/db/battleRepo';
-import type { Battle, StatBlock } from '@/domain';
+import type { Battle, EncounterLayout, StatBlock } from '@/domain';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
@@ -1778,13 +1778,28 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     return { moduleId: module.id, encounterId: encounter.id };
   }
 
-  it('GM view: key markers render at room staging points and tapping one opens the key card in the rail', async () => {
-    const { moduleId } = await seedKeyedBattle();
+  it('GM view: key markers render at the room mobsRect CENTER (D11 fix) and tapping one opens the key card in the rail', async () => {
+    const { moduleId, encounterId } = await seedKeyedBattle();
     await renderSurface(moduleId);
     await flushAsyncUpdates();
     // Only rooms WITH key content get a marker (Sanctum's is empty).
     expect(screen.getByTestId('room-key-marker-A')).toBeInTheDocument();
     expect(screen.queryByTestId('room-key-marker-B')).toBeNull();
+    // The badge sits at the room's mobsRect center — never the board center
+    // (the stagingPoint fallback stamped 0.5/0.5 before D11).
+    const encounter = await getAnyArtifact(encounterId);
+    if (encounter?.kind != 'encounter' || encounter.data.layout == null) {
+      throw new Error('layout missing');
+    }
+    const roomA = encounter.data.layout.rooms.find((room) => room.name === 'Entry');
+    if (roomA == undefined) throw new Error('room A missing');
+    const marker = screen.getByTestId('room-key-marker-A');
+    expect(marker.style.left).toBe(
+      `${String(((roomA.mobsRect.x + roomA.mobsRect.w / 2) / encounter.data.layout.gridW) * 100)}%`,
+    );
+    expect(marker.style.top).toBe(
+      `${String(((roomA.mobsRect.y + roomA.mobsRect.h / 2) / encounter.data.layout.gridH) * 100)}%`,
+    );
     // Marker text carries the key + room treasure; the GM reads it in the rail.
     fireEvent.click(screen.getByTestId('room-key-marker-A'));
     await flushAsyncUpdates();
@@ -1840,4 +1855,88 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     expect(document.body.textContent).not.toContain(KEY_TREASURE);
     expect(document.body.textContent).not.toContain(MOB_TREASURE);
   });
-});
+
+  it('a complex site shows the GM Path rail in path order and Reveal next room lifts the next veil', async () => {
+    const { moduleId } = await seedKeyedBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    const rail = screen.getByTestId('path-rail');
+    expect(within(rail).getByTestId('path-room-1')).toHaveTextContent('A');
+    expect(within(rail).getByTestId('path-room-2')).toHaveTextContent('B');
+    // Seed opens the spawn room (path room 1) — its veil is never seeded;
+    // only room B stays veiled until the GM reveals it.
+    const before = await currentBattle(moduleId);
+    expect(before.board.veils).toHaveLength(1);
+    // Reveal next room lifts room B's veil — a plain veil removal.
+    await userEvent.setup().click(screen.getByTestId('reveal-next-room'));
+    await flushAsyncUpdates();
+    const after = await currentBattle(moduleId);
+    expect(after.board.veils).toHaveLength(0);
+  });
+})
+
+describe('site shape on the surface (docs/11 D11)', () => {
+  /** Seeds a single-arena encounter (one room, optional entrance) and its
+   *  battle; returns the board + the spawn room for position assertions. */
+  async function seedSingleSite(withEntrance: boolean) {
+    const pc1 = await addPc('Serren', 20);
+    void pc1;
+    const roomId = newId();
+    const packed = packRooms({
+      theme: 'Single arena',
+      aspect: '4:3',
+      entryRoomId: roomId,
+      rosterCounts: [1],
+      rooms: [
+        { id: roomId, name: 'Arena', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIds: [], key: '', keyTreasure: '' },
+      ],
+    });
+    const layout: EncounterLayout = withEntrance
+      ? packed
+      : { ...packed, rooms: packed.rooms.map((room) => ({ ...room, entrance: undefined })) };
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'One arena',
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [{ name: 'Orc', count: 1, notes: '', treasure: '', source: { type: 'inline', statBlock: statBlock({ hp: 15 }) } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout,
+        preset: 'standard',
+        locationKind: 'wilderness',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Arena Module', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const { battle } = await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+    const spawn = layout.rooms.find((room) => room.spawn);
+    if (spawn == undefined) throw new Error('spawn room missing');
+    return { battle, layout, spawn };
+  }
+
+  it('a single site seeds ZERO veils (straight to melee) and starts at the entrance cell', async () => {
+    const { battle, layout, spawn } = await seedSingleSite(true);
+    // One room ⇒ no veils at all: no room discovery on a single site.
+    expect(battle.board.veils).toEqual([]);
+    // The party starts AT the entrance cell when the layout carries one.
+    if (spawn.entrance == undefined) throw new Error('packed arena has no entrance');
+    expect(battle.board.stagingGround?.x).toBeCloseTo((spawn.entrance.x + 0.5) / layout.gridW, 9);
+    expect(battle.board.stagingGround?.y).toBeCloseTo((spawn.entrance.y + 0.5) / layout.gridH, 9);
+  });
+
+  it('a single site without an entrance starts at the room mobsRect center', async () => {
+    const { battle, spawn, layout } = await seedSingleSite(false);
+    expect(battle.board.veils).toEqual([]);
+    expect(battle.board.stagingGround?.x).toBeCloseTo((spawn.mobsRect.x + spawn.mobsRect.w / 2) / layout.gridW, 9);
+    expect(battle.board.stagingGround?.y).toBeCloseTo((spawn.mobsRect.y + spawn.mobsRect.h / 2) / layout.gridH, 9);
+  });
+
+});;

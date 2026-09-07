@@ -824,26 +824,69 @@ export function BattleSurface(): JSX.Element {
     setSelectedVeilId(null);
   }
 
-  // Room keys (owner-ratified): derived, never stamped — the seeding
-  // encounter's CURRENT layout is the live source of truth, so re-seeding or
-  // editing keys is reflected without touching the board. Only rooms that
-  // actually carry key content get a marker (an empty key card is noise);
-  // marker letters fall back to the canonical sequence by room index.
-  const keyedRooms = useMemo(() => {
-    if (encounterArtifact === 'loading' || encounterArtifact === null || encounterArtifact === undefined) return [];
-    if (encounterArtifact.kind !== 'encounter') return [];
+  // Room keys + dungeon path (owner-ratified; docs/11 D11/D13): derived,
+  // never stamped — the seeding encounter's CURRENT layout is the live
+  // source of truth, so re-seeding or editing keys is reflected without
+  // touching the board. Key markers sit at each room's mobsRect CENTER (the
+  // room's own floor, never the board center). Only rooms that actually
+  // carry key content get a marker; letters fall back to the canonical
+  // sequence by room index.
+  const provenanceLayout = useMemo(() => {
+    if (encounterArtifact === 'loading' || encounterArtifact === null || encounterArtifact === undefined) return null;
+    if (encounterArtifact.kind !== 'encounter') return null;
     // Legacy encounter rows (written before layouts existed and never
     // rewritten) read `layout` as undefined despite the `| null` type —
     // the schema's `.default(null)` only materializes on parse. Treat the
     // absent key exactly like the declared null: a layoutless encounter.
-    if (encounterArtifact.data.layout == null) return [];
-    return encounterArtifact.data.layout.rooms
-      .map((room, index) => ({
-        room,
-        letter: room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1),
-      }))
-      .filter((entry) => entry.room.key !== '' || entry.room.keyTreasure !== '');
+    if (encounterArtifact.data.layout == null) return null;
+    return encounterArtifact.data.layout;
   }, [encounterArtifact]);
+  // `?.kind` absorbs every sentinel ('loading' string, null, undefined).
+  const siteShape =
+    encounterArtifact !== 'loading' && encounterArtifact?.kind === 'encounter'
+      ? encounterArtifact.data.siteShape
+      : 'single';
+  const layoutRooms = useMemo(() => {
+    if (provenanceLayout === null) return [];
+    return provenanceLayout.rooms.map((room, index) => ({
+      room,
+      letter: room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1),
+      marker: {
+        x: (room.mobsRect.x + room.mobsRect.w / 2) / provenanceLayout.gridW,
+        y: (room.mobsRect.y + room.mobsRect.h / 2) / provenanceLayout.gridH,
+      },
+    }));
+  }, [provenanceLayout]);
+  const keyedRooms = useMemo(
+    () => layoutRooms.filter((entry) => entry.room.key !== '' || entry.room.keyTreasure !== ''),
+    [layoutRooms],
+  );
+  // The Path rail (complex sites, GM-only advisory aid): rooms in the
+  // layout's stored path order (the room-array order is the fallback —
+  // packAttempt rotates rooms, so the array cannot be trusted). The CURRENT
+  // room is the revealed frontier: the last path room whose veil is lifted.
+  const pathRooms = useMemo(() => {
+    if (provenanceLayout === null) return [];
+    const ids = provenanceLayout.path ?? provenanceLayout.rooms.map((room) => room.id);
+    const byId = new Map(layoutRooms.map((entry) => [entry.room.id, entry]));
+    return ids.flatMap((id) => {
+      const entry = byId.get(id);
+      return entry === undefined ? [] : [entry];
+    });
+  }, [provenanceLayout, layoutRooms]);
+  const veiledRoomIds = useMemo(
+    () => new Set((battle?.board.veils ?? []).map((veil) => veil.id)),
+    [battle],
+  );
+  const currentPathIndex = useMemo(() => {
+    let current = 0;
+    pathRooms.forEach((entry, index) => {
+      if (!veiledRoomIds.has(entry.room.id)) current = index;
+    });
+    return current;
+  }, [pathRooms, veiledRoomIds]);
+  const nextVeiledRoom =
+    pathRooms.find((entry) => veiledRoomIds.has(entry.room.id)) ?? null;
   const selectedKeyRoom = keyedRooms.find((entry) => entry.room.id === selectedKeyRoomId) ?? null;
 
   if (battle === undefined) {
@@ -1166,13 +1209,15 @@ export function BattleSurface(): JSX.Element {
                 </div>
               )}
               {/* Room-key markers (owner-ratified, GM view only): one
-                  tappable badge per keyed room at its staging point. They
-                  render BEFORE the veils so a covered room hides its key
-                  marker exactly like it hides its mobs — key content is
-                  GM-only text and never mounts in player view. */}
+                  tappable badge per keyed room at its mobsRect CENTER (D11
+                  fix — the marker sits on the room's own floor, not the
+                  board center). They render BEFORE the veils so a covered
+                  room hides its key marker exactly like it hides its mobs —
+                  key content is GM-only text and never mounts in player
+                  view. */}
               {!playerSafe &&
                 hasRealSize &&
-                keyedRooms.map(({ room, letter }) => (
+                keyedRooms.map(({ room, letter, marker }) => (
                   <button
                     key={room.id}
                     type="button"
@@ -1180,8 +1225,8 @@ export function BattleSurface(): JSX.Element {
                     data-testid={`room-key-marker-${letter}`}
                     className="absolute z-10 flex size-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border border-amber-300/70 bg-amber-950/85 text-xs font-bold text-amber-200"
                     style={{
-                      left: `${String((room.stagingPoint?.x ?? 0.5) * 100)}%`,
-                      top: `${String((room.stagingPoint?.y ?? 0.5) * 100)}%`,
+                      left: `${String(marker.x * 100)}%`,
+                      top: `${String(marker.y * 100)}%`,
                     }}
                     onPointerDown={(event) => {
                       event.stopPropagation();
@@ -1312,6 +1357,58 @@ export function BattleSurface(): JSX.Element {
               stats={stats}
               playerSafe={playerSafe}
             />
+          )}
+          {/* Dungeon Path rail (docs/11 D11, complex sites, GM-only): an
+              ADVISORY aid for sequential play — rooms in path order with the
+              revealed frontier highlighted. No locks, no initiative resets:
+              "Reveal next room" just lifts the next veiled path room's veil
+              exactly like a manual GM lift would; the latecomer auto-roll
+              stays an editable aid. */}
+          {!playerSafe && siteShape === 'complex' && pathRooms.length > 0 && (
+            <div
+              className="flex flex-col gap-1 rounded-md border border-sky-300/30 bg-zinc-900 p-2"
+              data-testid="path-rail"
+            >
+              <p className="text-sm font-medium text-sky-200">Dungeon path</p>
+              <div className="flex flex-wrap gap-1">
+                {pathRooms.map(({ room, letter }, index) => (
+                  <button
+                    key={room.id}
+                    type="button"
+                    aria-label={`Path room ${String(index + 1)} — ${room.name}${veiledRoomIds.has(room.id) ? ' (veiled)' : ''}`}
+                    data-testid={`path-room-${String(index + 1)}`}
+                    className={
+                      veiledRoomIds.has(room.id)
+                        ? 'rounded border border-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400'
+                        : 'rounded border border-sky-400/60 px-1.5 py-0.5 text-xs text-sky-100'
+                    }
+                    onClick={() => {
+                      setSelectedKeyRoomId(room.id);
+                    }}
+                  >
+                    {String(index + 1)}. {letter} · {room.name}
+                    {index === currentPathIndex ? ' ◂' : ''}
+                  </button>
+                ))}
+              </div>
+              <Button
+                size="xs"
+                variant="outline"
+                className="self-start"
+                disabled={nextVeiledRoom === null}
+                data-testid="reveal-next-room"
+                onClick={() => {
+                  if (nextVeiledRoom === null) return;
+                  const roomId = nextVeiledRoom.room.id;
+                  void commit((current) => ({
+                    ...current,
+                    veils: current.veils.filter((veil) => veil.id !== roomId),
+                  }));
+                }}
+              >
+                Reveal next room
+              </Button>
+            </div>
           )}
           {!playerSafe && selectedKeyRoom !== null && (
             <div

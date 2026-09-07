@@ -212,6 +212,10 @@ export async function seedBattleFromEncounter(
 
   const mapImageId = await resolveMapImageId(encounter);
   const layout = encounter.data.layout;
+  // The encounter's shape (docs/11 D11): parsed rows always carry it
+  // ('single' default; normalizeEncounterShapeData derives complex for
+  // multi-room layouts at the read boundary).
+  const siteShape = encounter.data.siteShape;
   const placements = layout === null ? [] : placeMonsters(layout, encounter.data.monsters);
   const placementByInstance = new Map(
     placements.map((placement) => [
@@ -254,12 +258,26 @@ export async function seedBattleFromEncounter(
   // entrance (legacy layouts) this is exactly the mobsRect — byte-identical
   // to the pre-entrance behavior.
   const stagingRect = layout === null || entryRoom === undefined ? null : stagingBlockRect(entryRoom);
+  // Start position (docs/11 D11): a SINGLE site starts AT the entrance cell
+  // when the layout carries one (the party walks in), else at the room's
+  // mobsRect center. Complex sites keep the entrance-hugging staging block.
+  const stagingCenter =
+    layout === null || stagingRect === null
+      ? null
+      : siteShape === 'single' && entryRoom?.entrance !== undefined
+        ? {
+            x: (entryRoom.entrance.x + 0.5) / layout.gridW,
+            y: (entryRoom.entrance.y + 0.5) / layout.gridH,
+          }
+        : {
+            x: (stagingRect.x + stagingRect.w / 2) / layout.gridW,
+            y: (stagingRect.y + stagingRect.h / 2) / layout.gridH,
+          };
   const stagingGround =
-    stagingRect === null || layout === null
+    stagingCenter === null || stagingRect === null || layout === null
       ? defaultStagingGround()
       : {
-          x: (stagingRect.x + stagingRect.w / 2) / layout.gridW,
-          y: (stagingRect.y + stagingRect.h / 2) / layout.gridH,
+          ...stagingCenter,
           // ensurePcTokens fills a 3×3 staging block; scale that block to the
           // staging rect even when it is only two cells wide.
           cellWidth: stagingRect.w / 3 / layout.gridW,
@@ -273,11 +291,14 @@ export async function seedBattleFromEncounter(
           y: (entryRoom.entrance.y + 0.5) / layout.gridH,
           side: entryRoom.entrance.side,
         };
-  // Adjudicated fog exception: with an entrance the party STARTS in the spawn
-  // room, so seeding skips that room's fog veil (the GM reveals the rest).
-  let veils: BattleVeil[] = layout === null ? [] : veilsFromRooms(layout);
-  if (layout !== null && entryRoom?.entrance !== undefined) {
-    veils = veils.filter((veil) => veil.id !== entryRoom.id);
+  // Room veils (docs/11 D11): the party STARTS in the spawn room, so its
+  // veil is never seeded — a SINGLE site (one room) therefore seeds zero
+  // veils (straight to melee, no room discovery), and a COMPLEX opens at
+  // path room 1 for sequential play; the GM reveals the rest (the Path
+  // rail's "Reveal next room" is an advisory aid, never a lock).
+  let veils: BattleVeil[] = [];
+  if (layout !== null) {
+    veils = veilsFromRooms(layout).filter((veil) => veil.id !== entryRoom?.id);
   }
   const board = ensurePcTokens(
     {

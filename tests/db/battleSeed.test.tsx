@@ -643,7 +643,11 @@ describe('entrance-anchored staging (adjudicated)', () => {
       cellHeight: spawn.mobsRect.h / 3 / legacy.gridH,
     });
     expect(battle.board.entrance).toBeNull();
-    expect(battle.board.veils).toHaveLength(legacy.rooms.length);
+    // D11 (site-shape arc): the party STARTS in the spawn room on every
+    // site — its veil is never seeded, entrance or not. A complex still
+    // veils the remaining rooms for sequential play.
+    expect(battle.board.veils).toHaveLength(legacy.rooms.length - 1);
+    expect(battle.board.veils.every((veil) => veil.id !== spawn.id)).toBe(true);
   });
 });
 });
