@@ -10,7 +10,6 @@ import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
-import { coarseStructure } from '@/llm/encounterVision';
 import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
 import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Id, type Persona } from '@/domain';
@@ -201,11 +200,6 @@ beforeEach(async () => {
   vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model' });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, mimeType: 'image/webp' }));
-  vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
-  vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
-    const expected = coarseStructure(layout);
-    return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
-  });
 });
 
 afterEach(() => {
@@ -226,6 +220,14 @@ async function approveUntilPick(runId: string, runInput: StartRunInput): Promise
   });
   const run = await getRun(runId);
   return (run?.steps.find((step) => step.name === 'pick')?.output as { candidates: string[] }).candidates;
+}
+
+/** The pick step's index by name (the 6-step plan keeps no verify step). */
+async function pickIndexOf(runId: string): Promise<number> {
+  const run = await getRun(runId);
+  const index = run?.steps.find((step) => step.name === 'pick')?.index;
+  if (index === undefined) throw new Error('run has no pick step');
+  return index;
 }
 
 
@@ -249,7 +251,14 @@ describe('Encounter Cartographer run', () => {
     expect(candidates).toHaveLength(2);
     expect(useProgressStore.getState().jobs[0]?.detail).toContain('Waiting');
 
-    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    // The pipeline is brief→layout→schematic→stylize→pick→finalize — NO
+    // verify step (docs/11 D14): a manual run's last pause is the pick.
+    const paused = await getRun(runId);
+    expect(paused?.steps.map((step) => step.name)).toEqual([
+      'brief', 'layout', 'schematic', 'stylize', 'pick',
+    ]);
+
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
@@ -294,7 +303,7 @@ describe('Encounter Cartographer run', () => {
     expect(briefContent).toContain('Bag of Beans (equipment, 2000 gp, rare)');
 
     const candidates = await approveUntilPick(runId, runInput);
-    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
@@ -328,7 +337,7 @@ describe('Encounter Cartographer run', () => {
     expect(briefContent).toContain('[0] Dnd5e Bestiary Pack p.1 — Goblin Boss');
 
     const candidates = await approveUntilPick(runId, runInput);
-    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
@@ -473,7 +482,7 @@ describe('Encounter Cartographer run', () => {
       ),
     });
 
-    await expect(runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput)).rejects.toThrow(
+    await expect(runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput)).rejects.toThrow(
       'Encounter layout step has no valid approved output',
     );
     const after = await getRun(runId);
@@ -515,7 +524,7 @@ describe('Encounter Cartographer run', () => {
     const runInput = input(campaign, cartographer, target.id);
     const runId = await runEngine.startRun(runInput);
     const candidates = await approveUntilPick(runId, runInput);
-    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
@@ -555,7 +564,7 @@ describe('Encounter Cartographer run', () => {
     expect(briefContent).toContain('Treasure structure (owner-ratified)');
 
     const candidates = await approveUntilPick(runId, runInput);
-    await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('completed');
     });
@@ -655,30 +664,109 @@ describe('Encounter Cartographer run', () => {
     ]);
   });
 
-  it('sends verify to the dedicated vision model, falling back to the chat model', async () => {
+  it('regenerates candidates: re-runs stylize only, layout and keys byte-identical', async () => {
     const { campaign, cartographer } = await setup();
-    await saveSettings({
-      ...defaultSettings(),
-      openRouterApiKey: 'test-key',
-      imagesEnabled: true,
-      encounterVerifyModel: 'vision/verifier',
-    });
     chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
-    await approveUntilPick(runId, runInput);
-    expect(vi.mocked(encounterRunAdapters.verifyEncounterMap).mock.calls[0]?.[0]?.model).toBe(
-      'vision/verifier',
-    );
+    const firstBatch = await approveUntilPick(runId, runInput);
+    const before = await getRun(runId);
+    if (before === undefined) throw new Error('run missing');
+    const layoutBefore = JSON.stringify(before.steps.find((step) => step.name === 'layout'));
+    const briefBefore = JSON.stringify(before.steps.find((step) => step.name === 'brief'));
 
-    // Empty setting → the default chat model remains the fallback.
-    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key', imagesEnabled: true });
+    // Fresh batch: the generate adapter is called again (a NEW image call),
+    // the previous pick output is replaced and the run pauses at pick again.
+    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
+      images: [new Blob(['fresh-one']), new Blob(['fresh-two'])],
+      costUsd: 0.02,
+      cappedToOne: false,
+      modelUsed: 'test-image-model',
+    });
+    await runEngine.regenerateEncounterCandidates(runId, runInput);
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+      expect(run?.steps.at(-1)?.name).toBe('pick');
+    });
+
+    // The regenerate made exactly one new image call (stylize re-ran; brief
+    // and layout are untouched — the LLM was not called again).
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    const after = await getRun(runId);
+    expect(after?.steps.find((step) => step.name === 'layout')).toBeTruthy();
+    expect(JSON.stringify(after?.steps.find((step) => step.name === 'layout'))).toBe(layoutBefore);
+    expect(JSON.stringify(after?.steps.find((step) => step.name === 'brief'))).toBe(briefBefore);
+    const secondBatch = (after?.steps.find((step) => step.name === 'pick')?.output as { candidates: string[] }).candidates;
+    expect(secondBatch).toHaveLength(2);
+    // New candidates replace the old ones — no id carries over.
+    expect(secondBatch.some((id) => firstBatch.includes(id))).toBe(false);
+    // The discarded batch's unattached images were pruned.
+    for (const id of firstBatch) {
+      expect(await getImage(id)).toBeUndefined();
+    }
+
+    // The run continues coherently from the fresh batch's pick.
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [secondBatch[0] ?? ''] }, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(artifact.data.mapImageId).toBe(secondBatch[0]);
+    expect(artifact.data.layout?.rooms[0]?.key).toBe('Cracked doors hang off one hinge.');
+  });
+
+  it('completes a legacy run row that carries verify steps (parse drops them coherently)', async () => {
+    const { campaign, cartographer } = await setup();
     chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
-    const fallbackRunId = await runEngine.startRun(runInput);
-    await approveUntilPick(fallbackRunId, runInput);
-    expect(vi.mocked(encounterRunAdapters.verifyEncounterMap).mock.calls.at(-1)?.[0]?.model).toBe(
-      defaultSettings().defaultChatModel,
-    );
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    const candidates = await approveUntilPick(runId, runInput);
+
+    // Rewrite the row into the OLD 7-step shape: a verify step between
+    // stylize and pick, later steps re-indexed (what pre-deletion runs
+    // persisted). Put directly via Dexie — updateRun's parse now heals.
+    const { db } = await import('@/db');
+    const row = await db.runs.get(runId);
+    if (row === undefined) throw new Error('run row missing');
+    const legacy = [...row.steps];
+    const pickAt = legacy.findIndex((step) => step.name === 'pick');
+    if (pickAt === -1) throw new Error('run has no pick step');
+    legacy.splice(pickAt, 0, {
+      index: pickAt,
+      name: 'verify',
+      status: 'done',
+      input: {},
+      output: { verifications: [{ mismatchRatio: 0, needsReview: false, mismatchedIndexes: [], expected: { cols: 12, rows: 9 } }] },
+      userEdit: null,
+    });
+    await db.runs.put({
+      ...row,
+      steps: legacy.map((step, index) => ({ ...step, index })),
+    });
+
+    // Parse-on-read tolerance: the verify step is dropped and the remainder
+    // re-indexed, so the run still renders and continues from pick.
+    const healed = await getRun(runId);
+    expect(healed?.steps.map((step) => step.name)).toEqual([
+      'brief', 'layout', 'schematic', 'stylize', 'pick',
+    ]);
+    expect(healed?.steps.every((step, index) => step.index === index)).toBe(true);
+
+    // The pick → finalize continuation runs finalize (index-coherent): the
+    // legacy shape would have skipped it entirely (completed without an
+    // artifact).
+    await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0] ?? ''] }, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const run = await getRun(runId);
+    expect(run?.resultArtifactId).not.toBeNull();
+    const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(artifact.data.mapImageId).toBe(candidates[0]);
   });
 
   it('refuses map generation while the encounter has no roster', async () => {
@@ -701,92 +789,6 @@ describe('Encounter Cartographer run', () => {
     });
     expect((await getRun(runId))?.errorMessage).toContain('no monsters yet');
     expect(chatMock).not.toHaveBeenCalled();
-  });
-
-  it('stops a manual run for review when the map drifts', async () => {
-    const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
-    vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
-      const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true, report: 'structure verification: 20 of 94 graded cells mismatched the layout (allowance 11 = 12% of graded cells)' });
-    });
-    const runInput = input(campaign, cartographer);
-    const runId = await runEngine.startRun(runInput);
-    await waitForRun(async () => {
-      expect((await getRun(runId))?.steps.at(-1)?.name).toBe('brief');
-    });
-    await runEngine.approve(runId, runInput);
-    await waitForRun(async () => {
-      const run = await getRun(runId);
-      expect(run?.status).toBe('needs_review');
-      expect(run?.steps.at(-1)?.name).toBe('verify');
-      expect(run?.steps.at(-1)?.status).toBe('rejected');
-    });
-    await runEngine.approve(runId, runInput);
-    await waitForRun(async () => {
-      expect((await getRun(runId))?.steps.at(-1)?.name).toBe('pick');
-    });
-  });
-
-  it('verifies map candidates in parallel up to maxParallelRequests', async () => {
-    const { campaign, cartographer } = await setup();
-    await saveSettings({
-      ...defaultSettings(),
-      openRouterApiKey: 'test-key',
-      imagesEnabled: true,
-      maxParallelRequests: 2,
-    });
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
-    // Three stylized candidates → three verifications.
-    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValue({
-      images: [new Blob(['one']), new Blob(['two']), new Blob(['three'])],
-      costUsd: 0.03,
-      cappedToOne: false,
-      modelUsed: 'test-image-model',
-    });
-    // Hold the verifications behind one gate: with limit 2 the first two
-    // candidates fill both pool slots and the third cannot start until one
-    // finishes (a violation would make calls.length hit 3 before release).
-    const calls: number[] = [];
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
-      calls.push(calls.length + 1);
-      if (calls.length === 2) {
-        expect(calls).toHaveLength(2);
-        release();
-      }
-      return gate.then(() => {
-        const expected = coarseStructure(layout);
-        return { expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' };
-      });
-    });
-
-    const runInput = input(campaign, cartographer);
-    const runId = await runEngine.startRun(runInput);
-    const candidates = await approveUntilPick(runId, runInput);
-    expect(candidates).toHaveLength(3);
-    // Order preserved: verifications[i] corresponds to candidate[i].
-    expect(calls).toEqual([1, 2, 3]);
-    const run = await getRun(runId);
-    const verifyStep = run?.steps.find((step) => step.name === 'verify');
-    expect((verifyStep?.output as { verifications: unknown[] }).verifications).toHaveLength(3);
-  });
-
-  it('fails auto generation when verification exceeds the threshold', async () => {
-    const { campaign, cartographer } = await setup();
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
-    vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
-      const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true, report: 'structure verification: 20 of 94 graded cells mismatched the layout (allowance 11 = 12% of graded cells)' });
-    });
-    const runId = await runEngine.startRun({ ...input(campaign, cartographer), autonomy: 'auto' });
-    await waitForRun(async () => {
-      expect((await getRun(runId))?.status).toBe('failed');
-    });
-    expect((await getRun(runId))?.errorMessage).toContain('failed structure verification');
   });
 
   it('resumes a failed encounter run from stylize step without re-generating brief or layout', async () => {
@@ -873,7 +875,7 @@ describe('Encounter Cartographer run', () => {
       expect(briefContent).toContain('connected dungeon complex of 4\u201310 rooms');
 
       const candidates = await approveUntilPick(runId, runInput);
-      await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
       await waitForRun(async () => {
         expect((await getRun(runId))?.status).toBe('completed');
       });
@@ -904,7 +906,7 @@ describe('Encounter Cartographer run', () => {
       expect(briefContent).not.toContain('Preset: Dungeon');
 
       const candidates = await approveUntilPick(runId, runInput);
-      await runEngine.editStep(runId, 5, { keep: [candidates[0]] }, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
       await waitForRun(async () => {
         expect((await getRun(runId))?.status).toBe('completed');
       });

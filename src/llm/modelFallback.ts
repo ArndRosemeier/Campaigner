@@ -17,8 +17,8 @@ import { debugLog } from '@/lib/debug';
  *      no escalation and failures stay loud (AGENTS rule 1).
  */
 
-/** The first-try chat model: `preferredModel` (persona override, verify
- * model) when set, else the settings default. */
+/** The first-try chat model: `preferredModel` (a persona override) when set,
+ * else the settings default. */
 export function resolveChatModel(
   settings: Pick<Settings, 'defaultChatModel'>,
   preferredModel = '',
@@ -72,22 +72,6 @@ export function modelAcceptsImageInput(
   const found = models.find((model) => model.id === modelId);
   if (found?.architecture?.input_modalities === undefined) return undefined;
   return found.architecture.input_modalities.includes('image');
-}
-
-/**
- * The repair model for a VISION call (e.g. encounter-map verification): the
- * escalation tier only when the cached /models data knows it accepts image
- * input. An unknown fallback is attempted anyway — the failure stays loud.
- */
-export function visionRepairModel(
-  firstTryModel: string,
-  fallbackModel: string,
-  models: readonly CachedModel[] | null,
-): string {
-  const chain = buildModelChain(firstTryModel, fallbackModel);
-  const escalated = chain[chain.length - 1];
-  if (escalated === undefined || escalated === firstTryModel) return firstTryModel;
-  return modelAcceptsImageInput(escalated, models) === false ? firstTryModel : escalated;
 }
 
 /**

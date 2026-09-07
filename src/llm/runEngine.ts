@@ -70,11 +70,10 @@ import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { statBlockSchema } from '@/domain/statblock';
 import { ZodError, z } from 'zod';
-import { chat, MissingApiKeyError, OpenRouterError, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
-import { getCachedModels } from '@/llm/modelCache';
+import { chat, MissingApiKeyError, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
-import { resolveChatModel, repairModel, visionRepairModel } from '@/llm/modelFallback';
+import { resolveChatModel, repairModel } from '@/llm/modelFallback';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { failureKindOf } from '@/llm/failureKind';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
@@ -93,12 +92,10 @@ import {
 } from '@/llm/schemas';
 import type { EncounterDraft, EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
 import { normalizeImageAspect } from '@/lib/imageAspect';
-import { verifyEncounterMap } from '@/llm/encounterVision';
 
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
-import { mapWithConcurrency } from '@/lib/parallel';
 import { toastError } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
@@ -110,8 +107,6 @@ export const encounterRunAdapters = {
   generateImages,
   normalizeImageAspect,
   intakeImage,
-  verifyEncounterMap,
-  blobToDataUrl,
 };
 
 /**
@@ -198,12 +193,16 @@ export type ReviewStepName = (typeof REVIEW_STEP_NAMES)[number];
 const IMAGE_STEP_NAMES = ['prompt-draft', 'generate', 'pick'] as const;
 export type ImageStepName = (typeof IMAGE_STEP_NAMES)[number];
 
+/**
+ * Encounter Cartographer (docs/11): the pipeline has NO verify step — the
+ * human picks the candidate and regenerate is the correction path (D14);
+ * pick ALWAYS pauses (manual/review), auto picks candidate one.
+ */
 const ENCOUNTER_STEP_NAMES = [
   'brief',
   'layout',
   'schematic',
   'stylize',
-  'verify',
   'pick',
   'finalize',
 ] as const;
@@ -1055,6 +1054,44 @@ export class RunEngine {
     });
   }
 
+  /**
+   * Re-runs the STYLIZE step only (owner ask, docs/11 D14 — "the user is the
+   * judge with a regenerate option"): same approved brief and layout — room
+   * keys and geometry are untouched, so no key-replacement concern — with a
+   * fresh candidate batch, and the run pauses at pick again. The discarded
+   * batch's still-unattached candidates are pruned first
+   * (deleteUnreferencedImages re-checks the referenced set, so an id that
+   * somehow got attached survives). Mirrors regenerateEncounterLayout's
+   * truncate-and-execute resume machinery; the schematic is re-rendered
+   * deterministically from the same layout when its cache is cold.
+   */
+  async regenerateEncounterCandidates(runId: Id, input: StartRunInput): Promise<void> {
+    const run = await getRun(runId);
+    if (run === undefined || input.persona.mode !== 'encounter') return;
+    const stepIndex = run.steps.findIndex((step) => step.name === 'stylize');
+    if (stepIndex === -1) throw new Error('Encounter run has no stylize step to regenerate');
+    const discarded = run.steps
+      .filter((step) => step.name === 'stylize' || step.name === 'pick')
+      .flatMap((step) => {
+        const output = (step.output ?? {}) as { imageIds?: unknown; candidates?: unknown };
+        const ids = [
+          ...(Array.isArray(output.imageIds) ? (output.imageIds as readonly unknown[]) : []),
+          ...(Array.isArray(output.candidates) ? (output.candidates as readonly unknown[]) : []),
+        ];
+        return ids.filter((id): id is Id => typeof id === 'string');
+      });
+    if (discarded.length > 0) await deleteUnreferencedImages(run.campaignId, discarded);
+    await updateRun(runId, {
+      status: 'running',
+      steps: run.steps.slice(0, stepIndex),
+      errorMessage: '',
+      failureKind: null,
+    });
+    void this.executeFrom(runId, stepIndex, input).catch((error: unknown) => {
+      void this.fail(runId, error);
+    });
+  }
+
   /** Cancels the run, aborting any in-flight request. */
   async cancel(runId: Id): Promise<void> {
     this.cancelRequested.add(runId);
@@ -1272,8 +1309,6 @@ export class RunEngine {
         return this.runEncounterSchematic(runId, stepIndex, steps);
       case 'stylize':
         return this.runEncounterStylize(runId, stepIndex, steps, input, signal);
-      case 'verify':
-        return this.runEncounterVerify(runId, stepIndex, steps, input, signal);
       case 'pick':
         return input.persona.mode === 'encounter'
           ? this.runEncounterPick(stepIndex, steps, input)
@@ -2707,91 +2742,6 @@ export class RunEngine {
     };
   }
 
-  private async runEncounterVerify(
-    runId: Id,
-    stepIndex: number,
-    steps: RunStep[],
-    input: StartRunInput,
-    signal: AbortSignal,
-  ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
-    const settings = await getSettings();
-    const layout = this.effectiveEncounterLayout(steps);
-    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
-    const stylize = steps.find((step) => step.name === 'stylize')?.output as
-      | { imageIds?: Id[] }
-      | undefined;
-    const imageIds = stylize?.imageIds ?? [];
-    if (imageIds.length === 0) throw new Error('Encounter stylize step produced no map candidates');
-    // Verify sends the stylized map to a *chat* model (vision call) — not the
-    // image model. The dedicated setting keeps writing and vision models
-    // independent; '' falls back to the default chat model.
-    const verifyModel = resolveChatModel(settings, settings.encounterVerifyModel);
-    // The grid-repair attempt escalates to the fallback model — but only if
-    // the cached /models data knows it accepts image input.
-    const verifyRepairModel = visionRepairModel(verifyModel, settings.fallbackChatModel, getCachedModels());
-    // Candidates are independent: verify up to maxParallelRequests maps at
-    // once. Order is preserved, so verifications[i] still corresponds to
-    // imageIds[i] (the review UI maps them positionally). A missing image or
-    // an unusable verify model still fails the step loudly — the pool
-    // rethrows the first rejection once its in-flight siblings finish.
-    const verifications = await mapWithConcurrency(
-      imageIds,
-      Math.max(1, settings.maxParallelRequests),
-      async (imageId) => {
-        const image = await getImage(imageId);
-        if (image === undefined) throw new Error(`Generated map ${imageId} no longer exists`);
-        const stylizedDataUrl = await encounterRunAdapters.blobToDataUrl(
-          new Blob([image.bytes], { type: image.mimeType }),
-        );
-        try {
-          return await encounterRunAdapters.verifyEncounterMap({
-            layout,
-            schematicDataUrl: schematic.dataUrl,
-            stylizedDataUrl,
-            model: verifyModel,
-            repairModel: verifyRepairModel,
-            signal,
-          });
-        } catch (error) {
-          if (!(error instanceof OpenRouterError)) throw error;
-          // A 400 is the "this model cannot even accept the request" signal —
-          // point at the settings. Congestion/timeouts/refusals speak for
-          // themselves (their message already says what happened) and now
-          // propagate unchanged instead of masquerading as a vision problem.
-          if (error.status !== 400) throw error;
-          throw new Error(
-            `Map verification model "${verifyModel}" cannot process images: ${error.message} ` +
-              'Pick a vision-capable chat model in Settings → "Encounter map verify model" ' +
-              '(its browse list only offers models that accept image input).',
-            { cause: error },
-          );
-        }
-      },
-    );
-    const needsReview = verifications.some((verification) => verification.needsReview);
-    if (needsReview && input.autonomy === 'auto') {
-      // Name WHAT failed and by how much, per candidate (owner
-      // debuggability requirement) — never a bare "failed threshold".
-      const failed = verifications
-        .map((verification, index) => ({ verification, index }))
-        .filter((entry) => entry.verification.needsReview)
-        .map(
-          (entry) =>
-            `candidate ${String(entry.index + 1)}/${String(verifications.length)} — ${entry.verification.report}`,
-        )
-        .join('; ');
-      throw new Error(`Generated battlemap failed structure verification (${failed})`);
-    }
-    return {
-      step: this.finishStep(
-        steps[stepIndex],
-        { verifications },
-        needsReview ? 'rejected' : 'done',
-      ),
-      ...(needsReview ? { runStatus: 'needs_review' as const } : {}),
-    };
-  }
-
   private async runEncounterPick(
     stepIndex: number,
     steps: RunStep[],
@@ -3556,28 +3506,10 @@ function encounterStepDetail(name: StepName): string {
     layout: 'Packing rooms into the map grid…',
     schematic: 'Rendering layout reference…',
     stylize: 'Generating candidate battlemaps…',
-    verify: 'Verifying the generated map against the layout…',
     pick: 'Waiting for a map selection…',
     finalize: 'Saving the encounter and map…',
   };
   return labels[name] ?? `Running ${name}…`;
-}
-
-function blobToDataUrl(blob: Blob): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => {
-      reject(reader.error ?? new Error('Could not read generated map'));
-    };
-    reader.onload = () => {
-      if (typeof reader.result !== 'string') {
-        reject(new Error('Generated map did not produce a data URL'));
-        return;
-      }
-      resolve(reader.result);
-    };
-    reader.readAsDataURL(blob);
-  });
 }
 
 /** The engine singleton used by the persona panel. */

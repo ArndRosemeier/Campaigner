@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { saveSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
 
-import { chat, fetchWithRetries, listModels, listVisionChatModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
+import { chat, fetchWithRetries, listModels, modelSupportsReasoning, MissingApiKeyError, type ChatStreamActivity } from '@/llm/openrouter';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { z } from 'zod';
 
@@ -79,7 +79,6 @@ const SETTINGS = {
   },
   encounterMapAspect: '4:3' as const,
   encounterPreset: 'standard' as const,
-  encounterVerifyModel: '',
   runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,
   language: 'en' as const,
@@ -312,48 +311,6 @@ describe('listModels', () => {
 
     const models = await listModels();
     expect(models.map((model) => model.id)).toEqual(['a/b', 'c/d']);
-  });
-});
-
-describe('listVisionChatModels', () => {
-  it('keeps only models that take image input and produce text output', async () => {
-    const fetchMock = vi.fn((_url: unknown) =>
-      Promise.resolve(
-        new Response(
-          JSON.stringify({
-            data: [
-              {
-                id: 'vision/chat',
-                architecture: { input_modalities: ['text', 'image'], output_modalities: ['text'] },
-              },
-              {
-                id: 'text/only',
-                architecture: { input_modalities: ['text'], output_modalities: ['text'] },
-              },
-              {
-                id: 'pure/image-gen',
-                architecture: { input_modalities: ['image'], output_modalities: ['image'] },
-              },
-              { id: 'no/architecture' },
-            ],
-          }),
-          { status: 200 },
-        ),
-      ),
-    );
-    vi.stubGlobal('fetch', fetchMock);
-
-    const models = await listVisionChatModels();
-    expect(models).toEqual(['vision/chat']);
-    expect(String(fetchMock.mock.calls[0]?.[0])).toContain('input_modalities=image');
-  });
-
-  it('rejects a malformed /models payload loudly', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(() => Promise.resolve(new Response('{"data": "not-an-array"}', { status: 200 }))),
-    );
-    await expect(listVisionChatModels()).rejects.toThrow();
   });
 });
 

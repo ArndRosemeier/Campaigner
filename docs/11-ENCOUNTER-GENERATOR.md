@@ -4,10 +4,11 @@ Adds a **fully generated encounter** to Campaigner: an LLM drafts the design
 (rooms, roster, tactics), deterministic code turns it into a **grid layout**
 (rooms as rectangle unions, corridors, doors), a canvas renderer draws a
 **schematic map**, an OpenRouter image model **stylizes** it under a
-structure-preserving contract, and an optional **vision check** flags drift.
-The result is an `encounter` artifact whose battles seed with **mobs placed in
-their rooms and one veil per room** — the party reveals the fight room by
-room, exactly the GM-Cockpit veil mechanic M5 already runs.
+structure-preserving contract, and **the human picks the candidate** — the
+regenerate affordance is the correction path (D14). The result is an
+`encounter` artifact whose battles seed with **mobs placed in their rooms and
+one veil per room** — the party reveals the fight room by room, exactly the
+GM-Cockpit veil mechanic M5 already runs.
 
 Binding conventions from `00-OVERVIEW.md §Global conventions` and `AGENTS.md`
 apply throughout (no silent fallbacks; zod at every boundary; failures loud;
@@ -41,12 +42,13 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D4 | **One veil per room**, kind `fog`, exactly `mobsRect`. Corridors stay open (GM can add fog manually). |
 | D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below.* |
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
-| D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. The vision check only flags drift for human review — it can never repair or invent geometry. |
+| D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. Amended 2026-09-08 (D14): the vision check that "only flagged drift for human review" is GONE entirely — no pixel is read back anywhere, and the human is the judge at pick. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
 | D9 | **Room keys & mob treasure are GM-only text that travels with its structure** (owner-ratified, 2026-09-07): every layout room carries additive `key`/`keyTreasure` (persisted ON the room — `packRooms` rotates brief rooms, so a parallel roomId-keyed array would orphan), every roster entry carries additive `treasure` (persisted ON the entry — the editor removes roster rows, so an index-keyed array would orphan). The encounter editor edits them; battle seed freezes roster `treasure` onto each token (frozen-copy precedent, initiativeBonus); the battle surface renders GM-only key markers at room staging points + a rail key card + a GM-only token-treasure block — none of which mounts in player view (M5-D contract, 09 amendment). Map regeneration replaces room keys with the fresh brief's (accepted, stated in UI copy and the prompt clause). |
 | D11 | **Encounters have a SHAPE — `siteShape: 'single' \| 'complex'` on the encounter data, additive default `'single'`** (owner-ratified, 2026-09-08): editor labels **"Encounter" (single)** and **"Dungeon" (complex)**. A single site is one arena — `rooms.length === 1`, `corridors: []`, NO veils at seed, start position = the entrance cell when present else the room's mobsRect center, no room discovery. A complex is a dungeon — multi-room, one board, sequential play along the path, GM-only Path rail + "Reveal next room" as an ADVISORY aid (no locks, no initiative resets; the latecomer auto-roll stays an editable aid). The derived default: `locationKind === 'dungeon'` ⇒ complex, else single — materialized for legacy rows by `normalizeEncounterShapeData` (parse-on-read) AND the v17 backfill. Hard invariants refine on the ARTIFACT data (single ⇒ 1 room & no corridors; complex ⇒ >1 room); the stricter generation dichotomy — a brief commits to 1 room or 4–10, never 2–3 — is a repairable brief-boundary issue. See "Site shape, per-room challenge and the path" below. |
 | D12 | **Asymmetric per-room budget loop (owner-specified)**: each complex room carries `targetLevel` (additive, optional; defaults to the encounter's parsed levelHint) and the assigned creatures' levels are summed against a documented band — **too easy ⇒ ship silently (owner: fine)**; **too hard ⇒ lower that room's targetLevel a step (floor 1) and retry through the encounter brief's EXISTING single repair turn** (budget issues join the issue list like coverage/source issues); **after the bounded retry still over ⇒ LOUD advisory** persisted on the step output AND `data.budgetAdvisory` on the artifact — never silent, never a failed run. The final (possibly lowered) targetLevel persists on the room, visible and owner-editable. dnd5e band = our own documented approximation (verbatim rationale below, mirroring the treasure-ladder licensing stance, docs/12 §13.2/§14); pf2e ships NO numbers — GM Core verbatim from retrieved excerpts when present, else the always-on loud advisory. The in-place Smith content fill runs the same loop over a RECONCILED partition (see below). |
 | D13 | **The play path is stored on the layout** — `encounterLayoutSchema.path: z.array(z.uuid()).optional()`, a permutation of the room ids refined by the shared layout schema. The Cartographer brief's room order IS the path (stored explicitly — `packAttempt` ROTATES `brief.rooms`, so the array order cannot be trusted), rotated so the entry room is first: **first path room = spawn room**. Legacy complexes get `path` backfilled as their room-array order (spawn first if derivable) by the v17 migration; the surface falls back to array order when absent. |
+| D14 | **The user is the judge; regenerate is the correction; NO VLM verification** (owner-directed removal, 2026-09-08): "Nope. Stop the verification altogether. Let the user be the judge with a regenerate option. No need to waste model calls here. Things do not need to be verified in a brittle way. Just have a way to easily regenerate." The verify step (the 5a8f8f2/42db-era machinery: the coarse-grid cell contract, the `arena-verdict` structural check, thresholds, drift overlays, the dedicated verify model) is DELETED — model calls are not spent on brittle self-grading. The manual run pauses at pick; **"Regenerate candidates"** re-runs the stylize step only (same brief, same layout — room keys and geometry untouched) and pauses at pick again. Regenerating the LAYOUT (fresh keys/geometry) stays the separate existing affordance. Old run rows carrying verify steps heal at the run-row parse boundary. |
 | D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). **D10 amendment (locationKind, owner-ratified)**: encounters classify themselves — the encounter persona's EXISTING draft call gains a bounded `locationKind` (`'dungeon' | 'building' | 'wilderness' | 'other'`, persisted additively on the encounter artifact, owner-correctable in the editor, no extra LLM call), and the preset resolves per encounter: **explicit per-run choice > the encounter's own `locationKind` (`'dungeon'` → Dungeon tier, `'building'`/`'wilderness'` → Standard) > the Settings fallback** for unclassified (`'other'`) rows. The persona-panel Preset select gains **Auto** as its default (self-classification is the norm; Standard/Dungeon remain explicit overrides). See "D10 amendment — per-encounter locationKind" below. |
 
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
@@ -117,7 +119,6 @@ mode: run row per state change, event emitter for streaming, autonomy via
 | `layout` | deterministic | yes (review overlay) | `encounterLayout` JSON |
 | `schematic` | deterministic (canvas) | never | in-memory data URL, exact pixel size |
 | `stylize` | image API + `input_references` | no (candidates land in pick) | 2 image candidates (1 in auto) |
-| `verify` | VLM, flagged only | flags `needs_review` above threshold | complexes: mismatch ratio + per-cell diff; singles: structural verdict + named report |
 | `pick` | UI | **always** (auto: picks candidate 1 by contract) | kept map image id |
 | `finalize` | repo writes | — | encounter artifact updated/created |
 
@@ -150,37 +151,23 @@ mode: run row per state change, event emitter for streaming, autonomy via
   structure exactly as in the reference image; no text, no labels, no grid
   lines, no numbers, no tokens/minis, no watermark". `negative` and
   `styleNotes` mirror the Illustrator contract (07 §M3-A).
-- `verify` is **SHAPE-AWARE** (single-arena verify fix, 2026-09-07).
-  **Complex sites**: it overlays a **coarse** grid (every 2nd cell → ≤
-  ~12×9 classes) on the stylized image and asks the VLM to classify each
-  coarse cell `floor | wall | void` — classification, not coordinate
-  regression. The prompt anchors the model structurally (room count,
-  corridor count, each room's approximate coarse region, the entrance gap)
-  and defines the class semantics ("void" = everything beyond the mapped
-  structure: darkness, cliffs, water, empty margin) so the periphery is
-  judged consistently. Mismatch ratio > 0.12 (excluding door + entrance
-  cells) marks the run `needs_review` with the diff overlay in the pick UI;
-  the user may still keep the map. **Single-arena sites (D11)**: the cell
-  contract is theater there — one room on the standard 24×18 tier grades
-  ~88% of the grid as `void` periphery, and any honest reading of a
-  stylized walled arena (frame = wall or terrain) mismatches ~95/108 cells
-  (ratio 0.88 vs the 0.12 threshold). That is exactly the production
-  blocker this section fixes: after the site-shape arc made single sites
-  common, EVERY single-site verify failed (owner: 7/7 auto runs died at
-  verify). The single-arena check therefore asks coarse, decidable
-  questions under the `arena-verdict` strict contract: exactly ONE
-  distinct arena, the arena in the packed room's approximate coarse
-  region, and the entrance GAP present in the outer wall (the entrance is
-  judged as an opening — no painted markers/plaques/discs/letters are
-  referenced). Every failed expectation is NAMED in the verification
-  report; a verdict claims no per-cell mismatches, so the diff overlay
-  stays empty by construction.
-- Every verification carries a named `report` — the threshold semantics
-  ("structure verification: N of M graded cells mismatched the layout
-  (allowance A = 12% of graded cells; …)") or the failed verdict reasons —
-  and an auto run that fails verify throws `Generated battlemap failed
-  structure verification (candidate i/N — <report>)`: never a bare
-  "failed threshold".
+- **No verify step (D14)**: the former `verify` bullet set — the SHAPE-AWARE
+  coarse-grid contract for complexes, the `arena-verdict` structural check
+  for single arenas (the 5a8f8f2 fix for the 7/7 auto-run blocker), the 12%
+  `needs_review` threshold with named reports, the drift overlays and the
+  dedicated vision model — is SUPERSEDED and then DELETED (owner, 2026-09-08,
+  verbatim in D14). `src/llm/encounterVision.ts` is gone; nothing reads map
+  pixels or spends a chat call grading a stylized image. What replaced the
+  correction loop:
+  - **"Regenerate candidates"** in the pick view (`runEngine.regenerateEncounterCandidates`)
+    truncates the run back to the stylize step — the approved brief and
+    layout (room keys included) stay untouched — and re-runs stylize, so the
+    user judges a fresh batch at the same pick pause. The discarded batch's
+    still-unattached candidates are pruned (`deleteUnreferencedImages`
+    re-checks references, so an id that somehow got attached survives).
+  - **Regenerate layout** (the pre-existing affordance) remains the full-geometry
+    correction: fresh pack (variant ladder), fresh room keys — the ratified
+    D9 consequence.
 - `pick` renders each candidate with the **room overlay** (labeled room
   rects + mobs rect) so the user judges alignment, not just looks.
 - `finalize` stores the kept image (`role: 'map'`), writes
@@ -396,15 +383,10 @@ room like everyone else. `layout === null` encounters seed exactly as today.
   that came back with a different aspect is letterboxed/cropped to the exact
   layout aspect on the canvas **before** `intakeImage`, and the guard's action
   is recorded on the step output (never silent).
-- `openrouter.ts`: `ChatMessage.content` widens to `string | content parts`
-  (`{ type: 'text' | 'image_url', … }`) for the `verify` call; response
-  parsing unchanged (text-only output expected from the verify model).
-- Verify model: `settings.encounterVerifyModel` (dedicated setting; its
-  browse list only offers models with `input_modalities=image` and text
-  output), falling back to `settings.defaultChatModel` when empty. A
-  non-vision model fails the step loudly with a pointer to the setting;
-  if the model returns invalid JSON the existing one-shot repair retry
-  applies, then the step fails loudly.
+- `openrouter.ts`: `ChatMessage.content` retains the widened
+  `string | content parts` shape (client-level capability; the vision guard
+  in `walkModelChain` still consults `requestHasImageInput`). No pipeline
+  call sends image parts anymore — the verify call was the only one (D14).
 
 ## Persona + run engine
 
@@ -412,13 +394,13 @@ room like everyone else. `layout === null` encounters seed exactly as today.
   `producesKind: 'encounter'` (mode enum and the `producesKind` refine extend).
 - Run engine: step list above; `brief` and `layout` are user-editable
   checkpoints (the layout editor shows the rendered schematic + overlays);
-  `stylize`/`verify` never pause; `pick` pauses on every autonomy except the
-  unattended queue path (D2). Verify above threshold ⇒ `needs_review`
-  (review/manual) — in auto runs a failed verify **fails the run** loudly
-  (module generation must not silently accept a broken map).
+  `stylize` never pauses; `pick` pauses on every autonomy except the
+  unattended queue path (D2). The **pick view** carries **Regenerate
+  candidates** (D14) beside the layout review's Regenerate layout.
 - Run panel: generic step rendering plus two new step UIs — the layout review
   (schematic + room overlay, **Regenerate layout** button) and the map pick
-  (candidates with overlays). Room rects are **not** hand-editable in v1
+  (candidates with overlays + **Regenerate candidates**). Room rects are
+  **not** hand-editable in v1
   (regenerate instead — D2's "later refinements" = edit the roster/brief and
   re-run).
 - Standalone entry points: persona panel (new encounter from a brief), the
@@ -461,8 +443,8 @@ room like everyone else. `layout === null` encounters seed exactly as today.
 
 ## Cost & latency (per encounter, indicative)
 
-Manual run: 2–3 chat calls (brief, verify, optional repair) + 2 image calls
-(schematic stylize candidates). Auto/module batch: 2 chat + 1 image call per
+Manual run: 1–2 chat calls (brief, optional repair) + 2 image calls
+(schematic stylize candidates). Auto/module batch: 1 chat + 1 image call per
 encounter. Image calls ride the existing 5-minute headers timeout. Progress
 docks on the shared `useProgressStore` job for batch, on run steps for
 interactive runs.
@@ -503,13 +485,12 @@ all anchored to the layout (D7):
   `observed` is absorbed. No detected triangle ⇒ no candidate ⇒ finalize
   uses the packed layout verbatim. Layouts WITHOUT an entrance keep
   today's marker-staging candidate path unchanged (their own pins).
-- **Verify + seed** (C2/C3): `coarseDriftTolerances` extends the default
-  comparison exclusion (door cells) with the entrance gap and its outward
-  landing cell — the floor-colored opening is expected drift, not a
-  mismatch (complex sites). Single-arena sites confirm the entrance through
-  the `arena-verdict` question instead (the gap, never the painted
-  triangle). Seeding anchors the party at the entrance (see below) and the
-  table surface renders an emerald cell overlay with an inward triangle.
+- **Verify + seed** (C2/C3): seeding anchors the party at the entrance (see
+  below) and the table surface renders an emerald cell overlay with an inward
+  triangle. The verify half of this arc (the coarse-drift exclusion for
+  door/entrance cells, the `arena-verdict` entrance question) died with the
+  verify step (D14) — the entrance survives as geometry, prompt clause and
+  seed anchor.
 
 ### Seeding extension (C3, `aea57a5`)
 
@@ -783,7 +764,9 @@ completion is 149 test files / 1443 tests, and the marker path is fully
 deleted (record above). The single-arena verify fix (2026-09-07) replaced
 the single-site cell contract with the `arena-verdict` structural check and
 named threshold reports after the production blocker (every single-site
-verify failed: the graded grid is ~88% `void` periphery for one room). The room-keys &
+verify failed: the graded grid is ~88% `void` periphery for one room) — its
+machinery was subsequently DELETED with the verify step (D14, owner-directed:
+the user is the judge; regenerate is the correction). The room-keys &
 mob-treasure arc (D9, 2026-09-07, e489a65 → 01a0b5e) shipped in five
 bounded commits (generation, editor, seed, surface, docs) on top of the
 room-key persistence; the gate at completion is 140 test files / 1265
@@ -816,12 +799,14 @@ data model, run-engine threading, UI, docs); the gate at completion is
   map-role map image whose aspect matches the layout, and a computed veil set
   (one `fog` per room's `mobsRect`).
 - A manual run pauses at `brief` and `layout` (both editable/regeneratable)
-  and at map pick; a verify mismatch above threshold forces `needs_review`
-  with the diff overlay (complex sites — single arenas get the named
-  verdict report instead); a failed layout after the retry ladder fails the run
-  with an `errorMessage` — no placeholder encounter anywhere. An auto run
-  that fails verify names the failing candidates and their reports in the
-  run's `errorMessage`.
+  and at map pick — the LAST pause is the pick, and the pipeline is
+  `brief→layout→schematic→stylize→pick→finalize` with NO verify step; the
+  pick view's **Regenerate candidates** re-runs stylize only (layout and
+  room keys byte-identical, fresh batch, still paused at pick); a failed
+  layout after the retry ladder fails the run with an `errorMessage` — no
+  placeholder encounter anywhere. An auto run completes unattended: stylize
+  → pick picks candidate one by contract → finalize; a failing encounter
+  fails loudly and the queue continues.
 - **Run battle** on a generated encounter: every mob token sits in its room's
   area, covered by its room veil and absent from the DOM and initiative;
   lifting the room's veil reveals the mobs and auto-rolls their initiative;
@@ -885,5 +870,6 @@ data model, run-engine threading, UI, docs); the gate at completion is
   left this list 2026-09-06: the M5-D dice-roller amendment — 09-MILESTONE-5
   §M5-D, 4e3de75 — ships `@3d-dice/dice-box` in the battle surface's roller.)
 - Player-facing second render surface / sync (M5 non-goal stands).
-- Reading geometry back from stylized images beyond the verify flag.
+- Reading geometry back from stylized images (D7 holds unconditionally since
+  D14 deleted the verify step).
 - PDF export of layouts.

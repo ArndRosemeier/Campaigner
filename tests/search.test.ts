@@ -94,7 +94,6 @@ async function enableEmbeddings(): Promise<void> {
     },
     encounterMapAspect: '4:3' as const,
     encounterPreset: 'standard' as const,
-    encounterVerifyModel: '',
   runExtras: { image: false, statBlock: false, mobPortraits: false },
     retiredSessionNotesRemoved: 0,
     language: 'en' as const,

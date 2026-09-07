@@ -12,7 +12,6 @@ import { createPersona } from '@/db/personaRepo';
 import { createRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import { db } from '@/db/db';
 import { newId, type Campaign, type Persona } from '@/domain';
-import { coarseStructure } from '@/llm/encounterVision';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
@@ -152,18 +151,6 @@ beforeEach(async () => {
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) =>
     Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }),
   );
-  vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
-  vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
-    const expected = coarseStructure(layout);
-    return Promise.resolve({
-      expected,
-      actual: expected,
-      mismatchedIndexes: [],
-      mismatchRatio: 0,
-      needsReview: false,
-      report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance',
-    });
-  });
   intakeImageMock.mockImplementation((blob: Blob) =>
     Promise.resolve({ blob, width: 64, height: 64, mimeType: 'image/webp' }),
   );
@@ -493,6 +480,26 @@ describe('PersonaPanel run lifecycle', () => {
     expect(
       await screen.findByTestId('encounter-map-pick', {}, { timeout: 10_000 }),
     ).toBeInTheDocument();
+    // The owner's correction path (docs/11 D14): the pick view carries a
+    // "Regenerate candidates" button — clicking re-runs the stylize step
+    // only and the run pauses at pick again with the fresh batch. The
+    // click → engine-settle window drains inside ONE act (docs/08 §Console
+    // guard): the engine's step writes drive liveQuery cascades while the
+    // run views are mounted. Timer polling instead of RTL waitFor inside
+    // act — waitFor toggles IS_REACT_ACT_ENVIRONMENT mid-act, which itself
+    // leaks the act warning.
+    const generateCallsAfterFirstBatch = generateImagesMock.mock.calls.length;
+    await user.click(await screen.findByTestId('regenerate-map-candidates'));
+    await actDrained(async () => {
+      for (let round = 0; round < 400; round += 1) {
+        if (screen.queryByTestId('encounter-map-pick') !== null) break;
+        await new Promise((resolve) => {
+          setTimeout(resolve, 25);
+        });
+      }
+      expect(screen.queryByTestId('encounter-map-pick')).not.toBeNull();
+    });
+    expect(generateImagesMock.mock.calls.length).toBeGreaterThan(generateCallsAfterFirstBatch);
     await flushAsyncUpdates();
     // The cancel is a DB write while the run views are mounted — actDrained
     // keeps its liveQuery cascade inside act (docs/08 §Console guard).

@@ -238,19 +238,11 @@ export const settingsSchema = z.object({
     })
     .default({ image: false, statBlock: false, mobPortraits: false }),
   /**
-   * Chat model for the encounter verify step (docs/11 §verify). It sends the
-   * generated map image to the model, so it must accept image input. ''
-   * falls back to `defaultChatModel` (a genuine preference default, not a
-   * failure mask — the run fails loudly when the resolved model is not
-   * vision-capable).
-   */
-  encounterVerifyModel: z.string().default(''),
-  /**
    * Parallelization (optimization feature): how many OpenRouter requests may
    * run at once when independent work is generated (entity batches, queued
-   * entity images, encounter map verification). 1 = the old sequential
-   * behavior. Dependent chains (module parts, persona chains) are always
-   * sequential regardless of this value.
+   * entity images). 1 = the old sequential behavior. Dependent chains
+   * (module parts, persona chains) are always sequential regardless of this
+   * value.
    */
   maxParallelRequests: z.number().int().min(1).max(4).default(2),
   /** v11 migration notice, consumed once by AppShell after it is shown. */
@@ -286,7 +278,6 @@ export function defaultSettings(): Settings {
     encounterMapAspect: '4:3',
     encounterPreset: null,
     runExtras: { image: false, statBlock: false, mobPortraits: false },
-    encounterVerifyModel: '',
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
     onboarding: { status: 'fresh', stepState: [] },

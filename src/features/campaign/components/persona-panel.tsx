@@ -1123,17 +1123,6 @@ function EncounterRunActions({
   const pick = run.steps.find((step) => step.name === 'pick');
   const candidates =
     ((pick?.output as { candidates?: Id[] } | null | undefined)?.candidates ?? []);
-  const verification = run.steps.find((step) => step.name === 'verify')?.output as
-    | {
-        verifications?: {
-          mismatchRatio: number;
-          needsReview: boolean;
-          mismatchedIndexes: number[];
-          expected: { cols: number; rows: number };
-          report?: string;
-        }[];
-      }
-    | undefined;
   const input = {
     campaign,
     persona,
@@ -1167,15 +1156,8 @@ function EncounterRunActions({
           <span className="text-xs text-muted-foreground">Click to select · Double-click or inspect to enlarge</span>
         </div>
         {layout !== null && <EncounterLayoutPreview layout={layout} />}
-        {verification?.verifications?.map((result, index) => (
-          <p key={String(index)} className={result.needsReview ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
-            {result.report === undefined
-              ? `Candidate ${String(index + 1)} structure mismatch: ${String(Math.round(result.mismatchRatio * 100))}%`
-              : `Candidate ${String(index + 1)}: ${result.report}`}
-          </p>
-        ))}
         <div className="flex flex-wrap gap-2">
-          {candidates.map((candidateId, candidateIndex) => (
+          {candidates.map((candidateId) => (
             <div
               key={candidateId}
               className={`group/candidate relative rounded-md border p-1 transition-all ${
@@ -1197,13 +1179,7 @@ function EncounterRunActions({
                 {layout === null ? (
                   <ImageThumb imageId={candidateId} alt="Generated battlemap candidate" size={144} />
                 ) : (
-                  <EncounterMapCandidate
-                    imageId={candidateId}
-                    layout={layout}
-                    {...(verification?.verifications?.[candidateIndex] === undefined
-                      ? {}
-                      : { verification: verification.verifications[candidateIndex] })}
-                  />
+                  <EncounterMapCandidate imageId={candidateId} layout={layout} />
                 )}
               </button>
               <Button
@@ -1237,6 +1213,19 @@ function EncounterRunActions({
           <CheckIcon aria-hidden data-icon="inline-start" />
           Use selected map
         </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid="regenerate-map-candidates"
+          onClick={() => {
+            void runEngine.regenerateEncounterCandidates(run.id, input).catch((error: unknown) => {
+              toastError('Could not regenerate the map candidates', error);
+            });
+          }}
+        >
+          <RotateCcwIcon aria-hidden data-icon="inline-start" />
+          Regenerate candidates
+        </Button>
         <CandidatePreviewDialog
           candidates={candidates}
           currentId={previewMapId}
@@ -1262,14 +1251,9 @@ function EncounterRunActions({
 function EncounterMapCandidate({
   imageId,
   layout,
-  verification,
 }: {
   imageId: Id;
   layout: EncounterLayout;
-  verification?: {
-    mismatchedIndexes: number[];
-    expected: { cols: number; rows: number };
-  };
 }): JSX.Element {
   const url = useImageUrl(imageId);
   return (
@@ -1279,23 +1263,6 @@ function EncounterMapCandidate({
     >
       {url !== null && <img src={url} alt="Generated battlemap candidate" className="absolute inset-0 size-full object-fill" />}
       <EncounterLayoutPreview layout={layout} overlay />
-      {verification?.mismatchedIndexes.map((index) => {
-        const column = index % verification.expected.cols;
-        const row = Math.floor(index / verification.expected.cols);
-        return (
-          <span
-            key={String(index)}
-            className="pointer-events-none absolute bg-destructive/45"
-            style={{
-              left: `${String((column / verification.expected.cols) * 100)}%`,
-              top: `${String((row / verification.expected.rows) * 100)}%`,
-              width: `${String(100 / verification.expected.cols)}%`,
-              height: `${String(100 / verification.expected.rows)}%`,
-            }}
-            data-testid="vision-diff-cell"
-          />
-        );
-      })}
     </div>
   );
 }
@@ -1372,10 +1339,7 @@ function RunActions({
   }
   if (!paused || input === null || step === undefined) return null;
   // Rejected LLM output has no validated payload and cannot safely advance.
-  // Encounter verify is the exception: rejection there means a valid map
-  // exceeded the drift threshold and the user may deliberately continue.
-  const canApprove =
-    step.status !== 'rejected' || (personaRow?.mode === 'encounter' && step.name === 'verify');
+  const canApprove = step.status !== 'rejected';
   const issues = canApprove ? [] : rejectionIssues(step);
 
   return (

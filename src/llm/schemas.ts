@@ -29,7 +29,6 @@ const draftBase = {
  * parsed output — and every consumer reading it — keeps the old
  * `T | undefined` shape.
  */
-/** Shared with the vision verify contract (encounterVision.ts). */
 export function absentable<T extends z.ZodType>(inner: T) {
   return z.preprocess((value) => (value === null ? undefined : value), inner.optional());
 }
@@ -38,7 +37,7 @@ export function absentable<T extends z.ZodType>(inner: T) {
 const rosterIndex = z.coerce.number().int().nonnegative();
 
 /** z.boolean() that tolerates the quoted "true"/"false" models sometimes send.
- * Shared with the vision verify contract (encounterVision.ts). */
+ */
 export function booleanish() {
   return z.preprocess((value) => {
     if (value === 'true') return true;

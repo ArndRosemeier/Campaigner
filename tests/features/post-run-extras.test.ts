@@ -18,7 +18,6 @@ import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { clearDatabase } from '../db/helpers';
-import { coarseStructure } from '@/llm/encounterVision';
 
 /**
  * Ratified: the creation dialog's ticked extras execute AFTER the run
@@ -99,17 +98,12 @@ beforeEach(async () => {
   useMobPortraitQueue.getState().reset();
   useEncounterMapQueue.getState().reset();
   await updateSettings({ imagesEnabled: true });
-  // Green-path map runs: the unattended Cartographer's image/verify steps
-  // run on adapters, spied exactly like tests/features/encounter-map-queue.
+  // Green-path map runs: the unattended Cartographer's image step runs on
+  // adapters, spied exactly like tests/features/encounter-map-queue.
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 240, height: 180 });
   vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [blobOf()], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model' });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, mimeType: 'image/webp' }));
-  vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
-  vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
-    const expected = coarseStructure(layout);
-    return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
-  });
 });
 
 afterEach(() => {
@@ -480,8 +474,8 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(ENCOUNTER_DRAFT), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce({ text: JSON.stringify(CARTOGRAPHER_BRIEF), modelUsed: 'test-model', fallback: null });
-    // The verify step collapses — the map run fails, the queue reports it.
-    vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockRejectedValue(new Error('vision drift'));
+    // The stylize step collapses — the map run fails, the queue reports it.
+    vi.spyOn(encounterRunAdapters, 'generateImages').mockRejectedValue(new Error('image drift'));
 
     const runId = await runEngine.startRun({
       campaign,

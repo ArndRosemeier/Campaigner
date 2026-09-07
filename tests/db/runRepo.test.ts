@@ -208,4 +208,59 @@ describe('runRepo', () => {
     expect(run?.failureKind).toBeNull();
     expect(run?.errorMessage).toBe('OpenRouter request failed (503): provider overloaded');
   });
+
+  /**
+   * Legacy-run tolerance for the REMOVED encounter `verify` step (docs/11
+   * D14): a pre-deletion run row carries a persisted 'verify' step between
+   * 'stylize' and 'pick'. The parse boundary drops it and re-indexes the
+   * remainder so every consumer — the Runs tab step list (which renders
+   * `step.name` generically) and the engine's index-based continuation —
+   * sees the current plan's alignment. The verify output had exactly one
+   * consumer (the pick UI's drift overlay, removed with the step).
+   */
+  it('drops legacy verify steps and re-indexes the remainder at the parse boundary', async () => {
+    const personaId = await makePersona();
+    const campaignId = newId();
+    const legacy = {
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId,
+      personaId,
+      autonomy: 'manual',
+      status: 'awaiting_user',
+      userBrief: 'pre-deletion cartographer run',
+      pinnedChunkIds: [],
+      // The OLD 7-step encounter plan, pick paused.
+      steps: [
+        { index: 0, name: 'brief', status: 'done', input: {}, output: { parsed: {} }, userEdit: null },
+        { index: 1, name: 'layout', status: 'approved', input: {}, output: { layout: {} }, userEdit: null },
+        { index: 2, name: 'schematic', status: 'done', input: {}, output: { width: 1, height: 1 }, userEdit: null },
+        { index: 3, name: 'stylize', status: 'done', input: {}, output: { imageIds: ['img-1'] }, userEdit: null },
+        { index: 4, name: 'verify', status: 'rejected', input: {}, output: { verifications: [{ needsReview: true, report: 'structure verification: 20 of 94 graded cells mismatched the layout' }] }, userEdit: null },
+        { index: 5, name: 'pick', status: 'done', input: {}, output: { candidates: ['img-1'] }, userEdit: null },
+        { index: 6, name: 'finalize', status: 'pending', input: {}, output: null, userEdit: null },
+      ],
+      resultArtifactId: null,
+      targetArtifactId: null,
+      errorMessage: '',
+    };
+    await db.runs.put(legacy as unknown as PersonaRun);
+
+    const run = await getRun(legacy.id);
+    expect(run?.status).toBe('awaiting_user');
+    // The verify step is gone; the remainder is index-coherent.
+    expect(run?.steps.map((step) => step.name)).toEqual([
+      'brief', 'layout', 'schematic', 'stylize', 'pick', 'finalize',
+    ]);
+    expect(run?.steps.every((step, index) => step.index === index)).toBe(true);
+    const listed = await listRunsByCampaign(campaignId);
+    expect(listed[0]?.steps.find((step) => step.name === 'verify')).toBeUndefined();
+
+    // The next engine write heals the STORED row too (the normalizeLegacy
+    // precedent): updateRun parses before put.
+    await updateRun(legacy.id, { status: 'failed', errorMessage: 'healed' });
+    const raw = await db.runs.get(legacy.id);
+    expect(raw?.steps.some((step) => step.name === 'verify')).toBe(false);
+  });
 });

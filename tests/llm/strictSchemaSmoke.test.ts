@@ -5,7 +5,6 @@ import { z } from 'zod';
 import { moduleEntityKindSchema, moduleSpineSchema } from '@/domain';
 import { normalizationReplySchema } from '@/domain/entityNormalization';
 import { statBlockSchema } from '@/domain/statblock';
-import { structureGridSchema } from '@/llm/encounterVision';
 import {
   continuityReportSchema,
   encounterDraftSchema,
@@ -39,7 +38,6 @@ const CONTRACTS: Record<string, z.ZodType> = {
   'image-prompt-draft': imagePromptDraftSchema,
   'module-spine': spineReply,
   'entity-normalization': normalizationReplySchema,
-  'structure-grid': structureGridSchema,
 };
 
 function walk(node: unknown, visit: (node: Record<string, unknown>) => void): void {

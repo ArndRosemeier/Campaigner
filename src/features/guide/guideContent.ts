@@ -214,7 +214,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
     title: 'Battlemaps',
     minutes: 5,
     intro:
-      'Encounters can get a generated battlemap: a deterministic room layout, one map candidate, and a structure-verify pass — unattended, per encounter.',
+      'Encounters can get a generated battlemap: a deterministic room layout and stylized candidates you judge yourself — unattended, per encounter.',
     sections: [
       {
         heading: 'Generate encounter maps',
@@ -222,9 +222,9 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
           'Encounters created by automation — an encounter persona run, a module batch, or the post-parts pass — are mapped automatically: an unattended Cartographer run with the campaign\'s defaults, the Dungeon tier only for dungeon encounters. An encounter that already has a map (or a map in the queue) is never re-mapped automatically; regenerating stays your explicit call from the entity panel or the encounter editor — regenerating preserves the authored prose, tactics and roster.',
       },
       {
-        heading: 'Verify, aspect, failure',
+        heading: 'Pick, aspect, failure',
         markdown:
-          'The verify step sends the map image to a vision-capable chat model (Settings → "Encounter map verify model") to check it against the room layout; failures stay named and retryable. The layout aspect preference lives in Settings. Maps without a generated layout fall back to the legacy pixel grid.',
+          'You are the judge: every manual run pauses at the map pick, and "Regenerate candidates" re-runs only the image step (same layout, same brief) when none of the candidates suits you. Regenerating the LAYOUT — fresh room keys and geometry — stays the separate affordance in the layout review. The layout aspect preference lives in Settings. Maps without a generated layout fall back to the legacy pixel grid.',
       },
     ],
     appLink: openModules,

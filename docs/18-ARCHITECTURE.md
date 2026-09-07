@@ -40,8 +40,8 @@ sanctioned only because a static import would be a cycle).
   strict JSON schema), `jsonReply.ts` (reply parsing), `runEngine.ts` (persona
   run pipelines), `chainRunner.ts` (Writers'-Room multi-persona chains),
   `moduleGen.ts` (module forge spine→parts + entity name normalization),
-  `modelFallback.ts` (escalation chains), the encounter/roster/items/vision
-  and image clients, `campaignGrounding.ts` (docs/15), `treasureGuidance.ts`.
+  `modelFallback.ts` (escalation chains), the encounter/roster/items and
+  image clients, `campaignGrounding.ts` (docs/15), `treasureGuidance.ts`.
   Persists exclusively through `db` repos.
 - **`src/search`** — MiniSearch keyword index, OpenRouter embeddings, hybrid
   `searchRules` (docs/03). Rebuilt from Dexie; invalidation is coupled to
@@ -103,7 +103,7 @@ column.
 | Model escalation / refusals | `modelFallback.walkModelChain` + `openrouterErrors.fallbackReasonFor` (refusal → `'filter'` fallback; schema-rejected → `null`, loud) | ad-hoc retry loops; silent model swaps |
 | Classify a failed run for the owner | `failureKind.failureKindOf(error)` (`llm/failureKind.ts` — structural over the typed error classes) + the `domain/run` `FAILURE_KIND_LABELS`/`FAILURE_KIND_GUIDANCE` maps; every fail site writes the kind next to the verbatim `errorMessage` (docs/05, ledger 35) | prose-matching the raw message; replacing or truncating the message with the kind |
 | Wait for a run | `runEngine.waitForRunStatus` (one primitive; `includePaused` for chain steps) | private poll loops; `TERMINAL_RUN_STATUSES` is the only terminal-status list |
-| Persona run pipelines | `runEngine` step plans per mode (`domain/persona.mode` = generate/review/image/encounter): `retrieve→draft→statblock→finalize`, `gather→check→finalize`, `prompt-draft→generate→pick` (pick ALWAYS pauses), `brief→layout→schematic→stylize→verify→pick→finalize` | a bespoke pipeline for a shape that fits an existing plan |
+| Persona run pipelines | `runEngine` step plans per mode (`domain/persona.mode` = generate/review/image/encounter): `retrieve→draft→statblock→finalize`, `gather→check→finalize`, `prompt-draft→generate→pick` (pick ALWAYS pauses), `brief→layout→schematic→stylize→pick→finalize` (pick ALWAYS pauses; NO verify step — D14, the user is the judge and Regenerate candidates is the correction) | a bespoke pipeline for a shape that fits an existing plan |
 | Image generation | `imageGen.generateImages` (n-retry, `cappedToOne` → user-visible notice) | raw image API calls elsewhere |
 | Monster stat lookups | `monsterResolve.resolveMonsterEntryWithRepos`; fighter shapes via `db/fighterStats.ts` (`fighterStatsFromArtifact`, `buildFighterStatsLookup`) | re-parsing `statBlock` ad hoc |
 | Monster level → sort key | `encounterRoster.parseLevelSort` | a second level parser |
@@ -116,6 +116,7 @@ column.
 | Per-room challenge budgets | `roomBudget.ts` (`checkRoomBudget`, `reconcileRoomAssignments`, `roomBudgetGuidanceFor`, `parseBudgetLevel` over `encounterRoster.parseLevelSort`) — the asymmetric loop: too easy ships, too hard lowers a step through the brief's single repair turn, then LOUD advisory on step output + `data.budgetAdvisory` | a second level parser; numeric pf2e budgets (Paizo licensing — docs/11 D12) |
 | Encounter site shape / play path | `domain/artifact.normalizeEncounterShapeData` (ONE derivation: parse-on-read + v17 backfill + backup validation) + `domain/encounterMap/schema` (`encounterSiteShapeSchema`, `spawnFirstPath`, layout `path` refine) | deriving siteShape from room count at read sites; trusting the rooms-array order as play order (packAttempt rotates it) |
 | Legacy persona values (removed kinds) | `domain/persona.normalizeLegacyProducesKind` (ONE `z.preprocess`: parse boundary + `updatePersona` + backup restore heal the stored row — git-proven mapping table, unknown values still fail loudly) | a catch-all kind fallback; hand-editing or deleting the poisoned row |
+| Legacy run rows carrying a REMOVED step | `domain/run.normalizeLegacyRunSteps` (ONE `z.preprocess` inside `personaRunSchema`: drops the deleted encounter `verify` step and re-indexes, so reads/updates heal the row and every engine continuation stays index-coherent) | executing the engine plan positionally over a shifted steps array |
 | Campaign grounding for runs | `campaignGrounding.computeCampaignGrounding` + renderer (docs/15) | a second wiki-expansion implementation |
 
 ### 2.3 App & UI

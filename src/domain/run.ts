@@ -85,6 +85,29 @@ export const runStepStatusSchema = z.enum([
 
 export type RunStepStatus = z.infer<typeof runStepStatusSchema>;
 
+/**
+ * Legacy-run tolerance for the REMOVED encounter `verify` step (owner-directed
+ * deletion — "the user is the judge; regenerate is the correction"; docs/11
+ * D14): old run rows carry persisted steps named 'verify' between `stylize`
+ * and `pick`, and the engine's step plan no longer contains one. The verify
+ * step's output had exactly one consumer (the pick UI's drift overlay, itself
+ * removed), so the tolerance drops the step and re-indexes the remainder —
+ * every continuation path (pick → finalize, resume, retry) then sees the
+ * current plan's index alignment instead of executing `kinds[i]` against a
+ * shifted array (which would mark a legacy pick-paused run completed WITHOUT
+ * running finalize). One preprocess step inside `personaRunSchema`, so repo
+ * reads/updates normalize (an update heals the stored row, the
+ * `normalizeLegacyProducesKind` precedent) and restored legacy backup rows
+ * heal on their next read. Rows without a 'verify' step parse value-identical.
+ */
+export function normalizeLegacyRunSteps(steps: unknown): unknown {
+  if (!Array.isArray(steps)) return steps;
+  if (!steps.some((step) => (step as { name?: unknown } | null)?.name === 'verify')) return steps;
+  return steps
+    .filter((step) => (step as { name?: unknown } | null)?.name !== 'verify')
+    .map((step, index) => ({ ...(step as object), index }));
+}
+
 /** One pipeline step ('retrieve' | 'draft' | 'statblock' | 'finalize'). */
 export const runStepSchema = z.object({
   index: z.number().int().nonnegative(),
@@ -110,8 +133,9 @@ export const personaRunSchema = z.object({
   userBrief: z.string(),
   /** User-pinned rule chunks. */
   pinnedChunkIds: z.array(z.string()),
-  /** Embedded array (runs are small). */
-  steps: z.array(runStepSchema),
+  /** Embedded array (runs are small); legacy 'verify' steps drop at the
+   * parse boundary (normalizeLegacyRunSteps above). */
+  steps: z.preprocess(normalizeLegacyRunSteps, z.array(runStepSchema)),
   resultArtifactId: z.uuid().nullable(),
   /**
    * The artifact a run operates on: review personas check it (M2), image

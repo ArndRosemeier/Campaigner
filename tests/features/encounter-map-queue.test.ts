@@ -12,7 +12,6 @@ import { saveSettings } from '@/db/settingsRepo';
 import { createModule, defaultSettings, type Id } from '@/domain';
 import { encounterNeedsMap, isEncounterMapPending, useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useProgressStore } from '@/lib/progress';
-import { coarseStructure } from '@/llm/encounterVision';
 import { chat } from '@/llm/openrouter';
 import { encounterRunAdapters } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
@@ -53,7 +52,6 @@ beforeEach(async () => {
   vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model' });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, mimeType: 'image/webp' }));
-  vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
 });
 
 afterEach(() => {
@@ -91,12 +89,14 @@ describe('module encounter map queue', () => {
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'Second',
       data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
-    let verificationCalls = 0;
-    vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
-      verificationCalls += 1;
-      if (verificationCalls === 2) return Promise.reject(new Error('vision drift'));
-      const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
+    // The stylize step fails for the SECOND job only — the queue continues
+    // with the next job and reports the failure loudly.
+    const generateSpy = vi.spyOn(encounterRunAdapters, 'generateImages');
+    let stylizeAttempts = 0;
+    generateSpy.mockImplementation(() => {
+      stylizeAttempts += 1;
+      if (stylizeAttempts === 2) return Promise.reject(new Error('image drift'));
+      return Promise.resolve({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model' });
     });
 
     useEncounterMapQueue.getState().enqueue([
@@ -144,10 +144,6 @@ describe('module encounter map queue', () => {
     });
     // Settings stay Auto (null) — the encounter's own classification decides.
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
-    vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
-      const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
-    });
     const dungeon = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
       data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '' },

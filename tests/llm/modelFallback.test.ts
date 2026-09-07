@@ -7,7 +7,6 @@ import {
   repairModel,
   resolveChatModel,
   resolveImageModel,
-  visionRepairModel,
   walkModelChain,
 } from '@/llm/modelFallback';
 import { OpenRouterError } from '@/llm/openrouterErrors';
@@ -114,7 +113,7 @@ describe('resolveChatModel', () => {
     expect(resolveChatModel(settings, 'openai/gpt-4o')).toBe('openai/gpt-4o');
   });
 
-  it('resolves the verify model the same way: non-empty wins, empty = default', () => {
+  it('resolves a preferred model the same way: non-empty wins, empty = default', () => {
     expect(resolveChatModel(settings, settings.defaultChatModel)).toBe(DEFAULT_CHAT_MODEL);
     expect(resolveChatModel(settings, 'qwen/qwen-2.5-vl')).toBe('qwen/qwen-2.5-vl');
   });
@@ -152,25 +151,5 @@ describe('repairModel', () => {
     expect(repairModel('cheap/primary', { fallbackChatModel: 'cheap/primary' })).toBe(
       'cheap/primary',
     );
-  });
-});
-
-describe('visionRepairModel', () => {
-  const models = [
-    { id: 'vision/fallback', architecture: { input_modalities: ['text', 'image'] } },
-    { id: 'text/fallback', architecture: { input_modalities: ['text'] } },
-  ];
-
-  it('escalates the vision repair to a vision-capable fallback', () => {
-    expect(visionRepairModel('cheap/primary', 'vision/fallback', models)).toBe('vision/fallback');
-  });
-
-  it('stays on the first-try model when the fallback cannot take images', () => {
-    expect(visionRepairModel('cheap/primary', 'text/fallback', models)).toBe('cheap/primary');
-  });
-
-  it('attempts an unknown fallback — the failure would stay loud', () => {
-    expect(visionRepairModel('cheap/primary', 'unknown/model', models)).toBe('unknown/model');
-    expect(visionRepairModel('cheap/primary', 'vision/fallback', null)).toBe('vision/fallback');
   });
 });
