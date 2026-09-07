@@ -276,7 +276,8 @@ interface Persona extends BaseEntity {
   temperature: number;          // default 0.8
   producesKind?: ArtifactKind;  // artifact kind this persona outputs;
                                 // omitted for image personas (mode 'image', M3-A)
-  mode: 'generate' | 'review' | 'image';  // default 'generate'
+  mode: 'generate' | 'review' | 'image' | 'encounter';  // default 'generate';
+                                // 'encounter' = Cartographer (docs/11, b0f6fc8)
   builtIn: boolean;             // built-ins are re-seeded on app start if missing
 }
 
@@ -307,6 +308,22 @@ interface RunStep {
   userEdit: unknown | null;     // user's edited version of output, if any
 }
 ```
+
+**Legacy `producesKind` normalization** (`normalizeLegacyProducesKind`, one
+preprocess step inside `personaSchema`): persona rows predate their enum —
+personas are global, `seedBuiltInPersonas` skips existing slugs, and writes
+never rewrite old rows — so a value the ARTIFACT_KINDS union once held must
+parse forever. The git-proven removed-value map (complete historic
+enumeration, docs/17 row 34):
+
+| stored (legacy) | parses as | provenance |
+|-----------------|-----------|------------|
+| `'session'` | `'note'` | kind existed M2 `cd8e751` → removed M6-E `a670751`; only ever carried by the built-in `session-chronicler` (added `b18e33a`), removed with the kind. The v11 migration deleted session artifacts but no persona rows; `'note'` is the current kind for persona-authored plans/reports (review personas, Plot Architect). |
+
+Anything outside the current enum ∪ this table — including `null`, which no
+write path ever produced — still fails loudly at the boundary (AGENTS rule
+1). When a future arc removes an artifact kind again, the removed value is
+added HERE with its provenance.
 
 ### Deliverable (M3-D)
 

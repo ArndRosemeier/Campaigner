@@ -1,8 +1,59 @@
 import { z } from 'zod';
 
 import { BaseEntitySchema } from '@/domain/entity';
-import { artifactKindSchema } from '@/domain/artifact';
+import { artifactKindSchema, type ArtifactKind } from '@/domain/artifact';
 import { reasoningEffortSchema } from '@/domain/settings';
+
+/**
+ * Legacy `producesKind` normalization — the git-proven removed-value map.
+ *
+ * `producesKind` was always `artifactKindSchema`; the ARTIFACT_KINDS union
+ * across the repo's entire history is
+ * {npc, location, faction, note} (T2 3279ea7)
+ *   + {encounter, plotarc, session} (M2 cd8e751)
+ *   + {pc} (M5-A 27b2ecb)
+ *   − {session} (M6-E a670751),
+ * so 'session' is the ONLY value the current enum ever dropped. It rode the
+ * built-in Session Chronicler (`session-chronicler`, added b18e33a, removed
+ * with the kind in a670751): the v11 migration deleted session ARTIFACTS but
+ * never touched persona rows, personas are global and `seedBuiltInPersonas`
+ * skips existing slugs — so a pre-M6-E DB keeps that row with
+ * `producesKind: 'session'` forever, and the parse-on-read boundary
+ * (caa40b0) turned it into a ZodError on every workspace render (owner
+ * crash report).
+ *
+ * Mapping: 'session' → 'note'. The session kind has no successor kind (M6-E
+ * moved play to modules); 'note' is what persona-authored free-text
+ * reports/plans produce today (review personas and Plot Architect produce
+ * 'note' at HEAD), so the retired chronicler parses as a note-producing
+ * generate persona.
+ *
+ * NOT a catch-all (AGENTS rule 1): any value outside the current enum ∪ this
+ * table — e.g. the never-valid 'map'/'story', or null, which no write path
+ * ever produced (the field was a required enum T2→M3-A, then `.optional()`
+ * for image personas) — still fails loudly at the boundary. The table is the
+ * complete historic enumeration; when a future arc removes an artifact kind
+ * again, add the removed value HERE with its provenance.
+ */
+const LEGACY_PRODUCES_KIND: Readonly<Record<string, ArtifactKind>> = {
+  session: 'note',
+};
+
+/**
+ * Rewrites a raw row's known-legacy `producesKind` to its current equivalent
+ * before schema parsing (ONE normalization shared by every personaSchema
+ * boundary: repo reads/updates, backup-restore healing on the next read).
+ * Current-enum values and absent values pass through untouched.
+ */
+export function normalizeLegacyProducesKind<T extends { producesKind?: unknown }>(row: T): T {
+  const kind = row.producesKind;
+  if (typeof kind !== 'string') return row;
+  // noUncheckedIndexedAccess: the lookup is undefined for current-enum (and
+  // unknown) values — exactly the rows that must pass through or fail loudly.
+  const mapped: ArtifactKind | undefined = LEGACY_PRODUCES_KIND[kind];
+  if (mapped === undefined) return row;
+  return { ...row, producesKind: mapped };
+}
 
 /**
  * Post-create extras the creation dialog can offer for a freshly created
@@ -24,7 +75,7 @@ export const postCreateExtraSchema = z.enum(POST_CREATE_EXTRAS);
 
 export type PostCreateExtra = z.infer<typeof postCreateExtraSchema>;
 
-export const personaSchema = z
+const personaObjectSchema = z
   .object({
     ...BaseEntitySchema.shape,
     /** 'npc-smith' — unique, used in code. */
@@ -75,6 +126,18 @@ export const personaSchema = z
       });
     }
   });
+
+/**
+ * The persona schema every boundary parses through: the documented legacy
+ * pre-pass runs FIRST (same house pattern as `encounterDataSchema` +
+ * `normalizeEncounterShapeData`), so repo reads/updates and restored backup
+ * rows normalize the git-proven removed values before the object validates.
+ */
+export const personaSchema = z.preprocess(
+  // Raw rows are untrusted input — the house cast pattern (encounterDataSchema).
+  (row: unknown) => normalizeLegacyProducesKind(row as { producesKind?: unknown }),
+  personaObjectSchema,
+);
 
 export type Persona = z.infer<typeof personaSchema>;
 

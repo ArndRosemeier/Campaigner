@@ -10,7 +10,8 @@ import { createArtifact, publishToLibrary } from '@/db/artifactRepo';
 import { createCampaign, listCampaigns } from '@/db/campaignRepo';
 import { createPersona } from '@/db/personaRepo';
 import { createRun, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
-import type { Campaign, Persona } from '@/domain';
+import { db } from '@/db/db';
+import { newId, type Campaign, type Persona } from '@/domain';
 import { coarseStructure } from '@/llm/encounterVision';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { runEngine } from '@/llm/runEngine';
@@ -1187,4 +1188,43 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     });
     await flushAsyncUpdates();
   }, 30000);
+});
+
+/**
+ * Owner production crash (parse-on-read, caa40b0): a pre-M6-E DB keeps the
+ * retired `session-chronicler` row (personas are global, seeding skips
+ * existing slugs) with `producesKind: 'session'` — the only artifact kind
+ * the enum ever dropped (M2 cd8e751 → removed a670751) — and every workspace
+ * render threw a ZodError from listPersonas. The personaSchema boundary now
+ * normalizes the git-proven value (docs/01 §Persona), so the panel renders
+ * the row as a note-producing persona.
+ */
+describe('PersonaPanel legacy persona rows', () => {
+  it('renders the persona list with a pre-M6-E session-chronicler row instead of crashing', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
+    await db.personas.put({
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 1,
+      slug: 'session-chronicler',
+      name: 'Session Chronicler',
+      description: 'Ready-to-run session plans',
+      systemPrompt: 'You are the Session Chronicler, a table-ready session planner.',
+      model: '',
+      temperature: 0.8,
+      producesKind: 'session',
+      mode: 'generate',
+      builtIn: true,
+    } as unknown as Persona);
+
+    render(
+      <MemoryRouter>
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
+    expect(await screen.findByRole('option', { name: 'Session Chronicler' })).toBeInTheDocument();
+  });
 });
