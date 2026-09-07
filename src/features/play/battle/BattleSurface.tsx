@@ -1171,18 +1171,18 @@ export function BattleSurface(): JSX.Element {
           {playerSafe ? 'Player view' : 'GM view'}
         </Button>
         <div className="ml-auto flex items-center gap-1">
-          <Button size="icon-sm" variant="ghost" aria-label="Zoom out" onClick={() => {
+          <Button size="icon-sm" variant="ghost" aria-label="Zoom out" className="min-h-11 min-w-11" onClick={() => {
             setZoom((current) => clampZoom(current / 1.25));
           }}>
             <MinusIcon aria-hidden className="size-4" />
           </Button>
           <span className="w-10 text-center text-xs text-zinc-400">{Math.round(zoom * 100)}%</span>
-          <Button size="icon-sm" variant="ghost" aria-label="Zoom in" onClick={() => {
+          <Button size="icon-sm" variant="ghost" aria-label="Zoom in" className="min-h-11 min-w-11" onClick={() => {
             setZoom((current) => clampZoom(current * 1.25));
           }}>
             <PlusIcon aria-hidden className="size-4" />
           </Button>
-          <Button size="icon-sm" variant="ghost" aria-label="Reset view" onClick={() => {
+          <Button size="icon-sm" variant="ghost" aria-label="Reset view" className="min-h-11 min-w-11" onClick={() => {
             setZoom(1);
             setPan({ x: 0, y: 0 });
           }}>
@@ -1916,7 +1916,13 @@ function VeilView({
             key={handle.edge}
             type="button"
             aria-label={`Resize veil ${handle.edge}`}
-            className={cn('absolute size-3 rounded-full border border-zinc-900 bg-amber-400', handle.className)}
+            // T2a: the visible dot stays 12px, but the hit target is a 44px
+            // (size-11) transparent pad around it — same click-to-resize
+            // discrete steps via onResize, no drag/commit changes.
+            className={cn(
+              'absolute flex size-11 touch-none items-center justify-center',
+              handle.className,
+            )}
             data-testid={`veil-handle-${handle.edge}`}
             onPointerDown={(event) => {
               event.stopPropagation();
@@ -1924,7 +1930,9 @@ function VeilView({
             onClick={(event) => {
               onResize(handle.edge, event as unknown as React.PointerEvent<HTMLDivElement>);
             }}
-          />
+          >
+            <span aria-hidden className="size-3 rounded-full border border-zinc-900 bg-amber-400" />
+          </button>
         ))}
     </div>
   );

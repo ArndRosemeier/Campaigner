@@ -590,6 +590,60 @@ describe('veil presentation', () => {
     await flushAsyncUpdates();
     expectTint(screen.getByTestId('battle-veil'));
   });
+
+  it('gives veil resize handles a 44px touch target while the visible dot stays small (T2a)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: newId(), kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    // GM view, unlocked board: all four edge handles render.
+    for (const edge of ['n', 's', 'e', 'w'] as const) {
+      const handle = screen.getByTestId(`veil-handle-${edge}`);
+      // The 44px (size-11) transparent hit pad lives on the button itself…
+      expect(handle.className).toContain('size-11');
+      // …with the visible affordance unchanged at 12px (size-3) inside.
+      const dot = handle.querySelector('span');
+      if (dot === null) throw new Error(`veil handle ${edge} lost its visible dot`);
+      expect(dot.className).toContain('size-3');
+    }
+    // Click-to-resize still commits through the discrete-step path: click the
+    // east handle one cell outward of its edge and the veil grows exactly one
+    // cell wider (opposite edge pinned).
+    vi.mocked(saveBattleBoard).mockClear();
+    const before = (await currentBattle(moduleId)).board.veils[0];
+    if (before === undefined) throw new Error('veil missing');
+    const eastEdgeX = (before.x + (before.widthCells * 72) / BOARD_W / 2) * BOARD_W + 72;
+    fireEvent.click(screen.getByTestId('veil-handle-e'), {
+      clientX: eastEdgeX,
+      clientY: CONTENT_TOP + before.y * CONTENT_H,
+    });
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalled();
+    const after = (await currentBattle(moduleId)).board.veils[0];
+    if (after === undefined) throw new Error('veil vanished');
+    expect(after.widthCells).toBe(before.widthCells + 1);
+  });
+});
+
+describe('zoom controls touch targets (T4)', () => {
+  it('keeps the zoom toolbar buttons at a 44px touch target', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    for (const label of ['Zoom in', 'Zoom out', 'Reset view'] as const) {
+      const button = screen.getByLabelText(label);
+      expect(button.className).toContain('min-h-11');
+      expect(button.className).toContain('min-w-11');
+    }
+  });
 });
 
 describe('drag & tap', () => {
