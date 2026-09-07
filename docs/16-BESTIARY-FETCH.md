@@ -210,6 +210,38 @@ sources' full listings are unchanged — pinned by test).
 GETs only (git/trees + raw document fetches); no repo state was modified and
 no authenticated endpoint was touched.
 
+### 4.2 Amendment (2026-09-07, rules-text packs arc, verified live): the journal, conditions and rules sources
+
+The rules-text lane (12-BESTIARY-PACKS §15) adds three sources — same repo
+and ref as the creature/equipment pair, each `packDirs`-scoped to its
+folders of the shared `packs/pf2e` root. Counts re-verified live at the
+pinned ref (trees API for the journals listing, a sparse clone for the
+nested corpus folders, raw document fetches for shape samples):
+
+| Source (adapter) | Pack path | Documents (verified) | Unit |
+|---|---|---|---|
+| PF2e GM Screen & journals (`foundry-pf2e-journal`) | `packs/pf2e/journals/gm-screen.json` | ONE JournalEntry document, 61 pages | pages |
+| PF2e Conditions (`foundry-pf2e-conditions`) | `packs/pf2e/conditions` | 43 | sections |
+| PF2e Rules Text (`foundry-pf2e-rules`) | `packs/pf2e/feats` · `spells` · `actions` · `class-features` | 6284 · 1994 · 574 · 874 (~9.7k) | sections |
+
+- **Single-document recipes.** Journal packs are one JSON per journal, so
+  `selectCreatureFiles` accepts a recipe that names ONE file; folder recipes
+  behave byte-identically. The GM Screen recipe counts PAGES (the volume the
+  user opts into), the full-listing grouping still counts files (1 per
+  journal) — curated recipes are the volume-bearing surface.
+- **The GM Screen is the budget-grounding source**: its pages carry the GM
+  Core Encounter Budget / XP Awards / Elite-Weak Adjustments / DC tables
+  with per-page "Pathfinder GM Core pg. N" citations (the book label says it
+  SUMMARIZES GM Core — Paizo–Foundry partnership). No HTML scraping surface
+  exists anywhere: the journal arrives through this same fetch machinery.
+- **The corpus source is deliberately opt-in**: one card labelled with the
+  volumes ("feats 6,284 · spells 1,994 · actions 574 · class features 874"),
+  ~9.7k documents per full corpus import. The keyword index absorbs the
+  volume (retrieval-weight tradeoff named in 12-BESTIARY-PACKS §15.1); the
+  rules browser's book/type filters are the throttle.
+- **Probe hygiene**: same side-effect-free GET discipline as §4.1 (trees
+  API, one sparse clone, raw document fetches); no authenticated endpoints.
+
 ## 5. UX (Settings → "Bestiary packs" card)
 
 Per registered adapter with fetch recipes (pf2e + dnd5e; Cosmere has none),

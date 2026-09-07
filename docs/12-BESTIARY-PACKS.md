@@ -704,3 +704,154 @@ treasure clause is per-system, and the licensing shape is binding:
   §13.6 non-goals): hoard-level finds go to the encounter's top-level
   `treasure` field or the room's `keyTreasure`, pocket finds to the roster
   entry's additive `treasure` string.
+
+## 15. Rules-text packs (journal/conditions/corpus arc, 2026-09-07)
+
+The pack pipeline gains a THIRD parallel lane: rules TEXT. Motivation: the
+encounter-budget advisory should ground in real GM Core tables, and the
+already-pinned Foundry VTT PF2e repo ships them as journal packs —
+`packs/pf2e/journals/gm-screen.json` is ONE JournalEntry document whose
+pages carry the Encounter Budget (Trivial 40 or less / Low 60 / Moderate 80 /
+Severe 120 / Extreme 160 + character adjustments), XP Awards by level offset,
+Elite/Weak Monster Adjustments and the DC tables, each page footer-citing its
+source ("Pathfinder GM Core pg. 75"). The same machinery then imports
+conditions and the feats/spells/actions/class-features corpus. The contract
+is unchanged: user-triggered fetches, per-pack buttons, provenance + license
+on the book, network-free adapters, loud per-entry failures.
+
+### 15.1 Binding decisions
+
+- **A third parallel lane, not a parser change.** `PackFileParse` gains
+  optional `sections: PackSectionEntry[]` (`{ categories, name, text }`) —
+  `PackEntry.statBlock` stays REQUIRED and the creature/item lanes are
+  untouched. `packImport` persists `section` RuleChunks (`statBlock: null`,
+  `itemData` absent) after the item lane and counts them in
+  `PackImportResult.sectionsImported` + `packMeta.sectionsImported` (both
+  additive-optional — old rows parse unchanged; `entriesImported` counts all
+  three lanes).
+- **One chunk per journal page.** The journal adapter turns each page into a
+  section chunk: the page name is the heading, the HTML is stripped
+  TABLE-AWARE (cells join with ` | ` so "Trivial | 40 or less | 10 or less"
+  stays readable), the page's `<em>Section: X</em>` footer becomes the
+  heading category (the 5 level-1 divider pages carry no footer →
+  `headingPath [pageName]`), and the `<em>…pg. N</em>` footer is re-emitted
+  verbatim as a trailing `Source: …` line — citations preserved, never
+  duplicated.
+- **Per-entry licensing is PRESERVED, not dropped.** Conditions, feats,
+  spells and actions carry `system.publication {license, remaster, title}`
+  at full coverage (sampled: ORC/Player Core, OGL/Core Rulebook); the
+  adapters re-emit it as each chunk text's trailing
+  `Source: <title> (<license>)` line. The hygiene rider (same arc) carries
+  the same field into creature `statBlock.extras['Source']` and additive
+  `itemData.publication` (+ its `Source:` text line) — one convention across
+  lanes.
+- **The roster must skip section chunks.** Rules-text books are `origin:
+  'pack'` books of the same system; `collectPackRoster` skips `item` AND
+  `section` chunks — without the guard every encounter run after such an
+  import would die on "no validated stat block".
+- **Volume honesty on the opt-in.** The GM Screen recipe counts PAGES (61 —
+  the fetch is one document, the volume is its pages); the conditions recipe
+  counts its 43 documents; the corpus source is ONE entry labelled with the
+  volumes ("feats 6,284 · spells 1,994 · actions 574 · class features 874")
+  so the user opts in deliberately. Toast/report nouns: journal pages and
+  condition/corpus entries are all "sections".
+- **Retrieval-weight tradeoff (named).** The corpus is ~9.7k new chunks; the
+  keyword index is an in-memory MiniSearch rebuilt from Dexie, and hybrid
+  ranking weights by relevance, so corpus hits rank alongside PDF-derived
+  sections. The rules browser's book/type filters are the user's throttle;
+  no retrieval code changed.
+- **Single-document recipes.** `selectCreatureFiles` accepts a recipe that
+  names ONE file (journal packs are one JSON per journal) — folder recipes
+  behave byte-identically.
+
+### 15.2 Licensing
+
+- **GM Screen journal** — the book label says "PF2e GM Screen (Paizo–Foundry
+  partnership; summarizes GM Core)": the journal SUMMARIZES Pathfinder GM
+  Core, it is not GM Core itself; per-page citations to the GM Core source
+  are preserved in the chunk text. Book license string keeps the CUP
+  non-redistribution terms (§13.2 pattern).
+- **Conditions / corpus** — Paizo content via the Foundry Gaming LLC
+  partnership with PER-ENTRY licensing (ORC or OGL) stored in each chunk's
+  Source line; user-imported for personal use under Paizo's Community Use
+  Policy, not for redistribution.
+
+### 15.3 Verified source formats (re-verified live 2026-09-07 at `v14-dev`; fixture tests pin them)
+
+- **journals/gm-screen.json** — one JournalEntry document: `{name: 'GM
+  Screen', pages: [61], categories: []}` (the discovery's "~100 pages"
+  estimate was off — 61 actual, disclosed); page = `{name, text: {content:
+  HTML}, title: {level, show}, category: null}`. Grouping lives in the page
+  HTML footer, not `page.category`.
+- **conditions/** — 43 flat per-condition JSON documents (`type:
+  'condition'`; description HTML, traits, valued conditions like Frightened
+  carry `value {isValued, value}` — not rendered, the description states the
+  mechanics).
+- **feats/** — 6,284 documents in 7 category folders (ancestry 1,561,
+  archetype 2,340, class 1,993, general 41, miscellaneous 72, mythic 49,
+  skill 228), nested to `feats/<category>/<sub>/<slug>.json`.
+- **spells/** — 1,994 in focus (545) / impossible-spells (5) / rituals (167)
+  / rank folders under `spells/spells/` (cantrip 71, rank-1 183 … rank-10
+  28).
+- **actions/** — 574 in 20 category folders (basic 30, skill 54, archetype
+  140, class 196 …), nested to depth 3.
+- **class-features/** — 874 documents, flat or per-class folders; they are
+  `type: 'feat'` with `system.category: 'classfeature'` — the corpus
+  adapter's folder walk (not the doc type) labels them "Class Features".
+- Entity shape (feat/spell/action): `system.description.value` HTML,
+  `system.traits {value, rarity, traditions}`, `system.level.value`,
+  `system.actionType.value`, `system.prerequisites.value[].value`, spell
+  `time/range/target/duration`, `system.publication` — the consumed subset;
+  unknown keys ignored, never re-serialized.
+
+### 15.4 Data model (delta to 01-DATA-MODEL and §4)
+
+- `packMeta.sectionsImported` (optional int, nonneg) — valid rules-text
+  entries in the book; `PackImportResult` gains `sectionsImported`.
+- `itemData.publication` (additive nullish `{title, license}`) — the
+  hygiene rider's stored metadata for items; rendered by `formatItemText`.
+- No new chunk type (`'section'` exists for PDFs), no Dexie index change.
+
+### 15.5 Adapter, fetch and pipeline delta (delta to §5–§7 and 16)
+
+- Three adapters, self-contained per §5's precedent (each carries its own
+  strip/Source-line helpers): `foundry-pf2e-journal` (JournalEntry → one
+  section per page), `foundry-pf2e-conditions` (condition entities),
+  `foundry-pf2e-rules` (feat/spell/action corpus). All accept `.json`/`.db`.
+- The corpus adapter maps the fetch-relative FOLDER PATH into heading
+  categories: the pack folder names the lane ('Feats', 'Spells', 'Actions',
+  'Class Features'), the first category folder rides the lane label
+  ('Feats — Skill'), deeper folders become titled segments ('Level 1',
+  'Cantrip', 'Rank 2'), the pack folder never repeats ('spells/spells/…' →
+  'Spells — Cantrip'); loose manual imports fall back to doc type/category.
+- Three fetch sources join `PACK_FETCH_SOURCES` (all foundryvtt/pf2e @
+  `v14-dev`, `packRoot packs/pf2e`, `packDirs` scoped): journals (curated:
+  GM Screen, 61 pages), conditions (43), rules corpus (4 recipes with the
+  volume counts). Per-type summary lines: Feat/Spell/Cantrip + level, traits
+  (+ spell traditions), Action/Reaction/Free Action, rarity when uncommon+,
+  spell Cast line, Prerequisites line.
+- The Settings card, import report badge and toasts name the new counts
+  ('pages', 'sections'); the report gains a sections badge like the items
+  one.
+
+### 15.6 Non-goals
+
+- No PDF/scraped Paizo text: the GM Screen arrives through the SAME curated
+  fetch machinery as bestiaries (docs/16 §4.2) — no HTML scraping surface.
+- No structured rules payloads (conditions/feats stay TEXT sections — no
+  `conditionData` schema), no rules-aware prompt sections beyond the
+  existing retrieve lane, no class-features-only recipe split, no per-entry
+  license ENFORCEMENT.
+
+### 15.7 Acceptance criteria (additive to §10)
+
+- Each import produces a section-only book: `sectionsImported` in badge/
+  toast, chunks of type `section` with adapter-supplied heading paths and
+  per-entry Source lines; encounter runs still work after such an import
+  (roster skip-guard, pinned by test).
+- The GM Screen book's Encounter Budget chunk contains the table text
+  ('Trivial | 40 or less | 10 or less' … 'Extreme | 160 | 40') and the
+  'Source: Pathfinder GM Core pg. 75' line — the advisory-grounding pin.
+- The corpus import lands folder-derived heading paths ('Feats — Skill' …)
+  and ORC/OGL Source lines on real fixtures (2 feats + 1 spell + 1 action).
+- Every gate passes against exactly the committed slice, per commit.
