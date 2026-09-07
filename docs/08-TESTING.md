@@ -41,7 +41,23 @@ Rules:
   - end flows with `findBy*`/`waitFor` (both act-wrapped),
   - wrap raw DB writes that re-fire live queries in `act(async () => …)`,
   - drain pending cascades with `flushAsyncUpdates()` from
-    `tests/helpers/flush.ts` before un-wrapped plain reads.
+    `tests/helpers/flush.ts` before un-wrapped plain reads,
+  - run raw awaited steps (DB reads) that sit between act-wrapped steps
+    inside act — `actDrained()` from `tests/helpers/flush.ts` wraps the step
+    and drains before exiting. A bare `await someDexieRead()` while the tree
+    is mounted re-opens the leak window: during the raw await the event loop
+    turns fake-indexeddb's timed queue, and a liveQuery that (re)subscribed
+    there — e.g. a token's image query resubscribed by a late-landing
+    artifacts cascade — emits outside act. This was the intermittent flake in
+    `battle-surface.test.tsx > selection card` ("tap shows the card…"):
+    fixed by moving `tapToken`'s battle-row read into `actDrained`, zero
+    assertion changes. Do NOT wrap paired `fireEvent` pointer sequences in
+    one spanning act — each `fireEvent` flushes its own render and
+    down→up gesture pairing reads that state; a spanning act defers the
+    commit and strands the gesture gate. The same wrapper is the migration
+    path for the allowlisted persona-run-ui and onboarding-wizard act-timing
+    entries if their sources are ever chased down (not done here — their
+    entries stay).
 
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 
@@ -74,7 +90,9 @@ surface mounts nothing-checked until it does.
   `role="button"`** — Base UI imposes button semantics on non-native renders
   (`useButton`). Query with `getByRole('button', …)` and pin the `href`.
 - Dexie live queries re-fire on timed queues; writes that re-fire queries
-  belong inside `act`, stragglers go through `flushAsyncUpdates()`.
+  belong inside `act`, stragglers go through `flushAsyncUpdates()`. Raw
+  awaited reads between act-wrapped steps open the same leak window — wrap
+  them in `actDrained()` (§Console guard).
 
 ## UI coverage matrix (05-UI inventory → tests)
 
