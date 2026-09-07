@@ -6,6 +6,8 @@ import {
   AlertCircleIcon,
   BanIcon,
   CheckIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
   CircleDotIcon,
   CopyIcon,
   Maximize2Icon,
@@ -34,6 +36,7 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { ARTIFACT_KIND_SINGULAR } from '@/domain/artifact';
+import { FAILURE_KIND_GUIDANCE, FAILURE_KIND_LABELS } from '@/domain/run';
 import { Textarea } from '@/components/ui/textarea';
 import { HelpButton } from '@/help/HelpButton';
 import { ROUTES, artifactPath } from '@/app/routes';
@@ -1507,6 +1510,125 @@ function safeJson(text: string): unknown {
   }
 }
 
+/**
+ * The step a failed run died on: the first rejected/running step, else the
+ * first never-attempted one — the same step `resumeRun` restarts from.
+ */
+function failedStepName(run: PersonaRun): string | null {
+  const active = run.steps.find(
+    (step) => step.status === 'rejected' || step.status === 'running',
+  );
+  if (active !== undefined) return active.name;
+  const unattempted = run.steps.find(
+    (step) => step.output === null && step.status !== 'skipped',
+  );
+  return unattempted?.name ?? null;
+}
+
+/**
+ * The failed-run Details section (docs/05 run views): the classification
+ * badge with its one-line guidance, the step the run died on, the started/
+ * failed timestamps and the FULL raw errorMessage in a selectable mono block
+ * with a Copy affordance. Purely additive context — recovery (Resume) stays
+ * in FailedRunActions; this section never replaces the message with the
+ * classification, it shows both.
+ */
+function FailedRunDetails({ run }: { run: PersonaRun }): JSX.Element {
+  const kind = run.failureKind ?? 'unknown';
+  const [copied, setCopied] = useState(false);
+  const [clipboardNote, setClipboardNote] = useState(false);
+  const stepName = failedStepName(run);
+
+  async function handleCopy(): Promise<void> {
+    try {
+      const clipboard: Clipboard | undefined = navigator.clipboard;
+      if (clipboard === undefined) throw new Error('Clipboard API is unavailable here');
+      await clipboard.writeText(run.errorMessage);
+      setCopied(true);
+      toastSuccess('Error copied to clipboard');
+      setTimeout(() => {
+        setCopied(false);
+      }, 2000);
+    } catch (error) {
+      // Loud fallback (AGENTS 2): say the clipboard failed instead of
+      // silently doing nothing — the block is select-text, so the raw error
+      // can still be copied by hand.
+      setClipboardNote(true);
+      toastError('Clipboard unavailable — select the error text and copy it manually', error);
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-md border bg-background/60 p-2.5"
+      data-testid="failed-run-details"
+    >
+      <div className="flex flex-wrap items-center gap-2">
+        <Badge variant="destructive" className="text-[10px]" data-testid="failure-kind-badge">
+          {FAILURE_KIND_LABELS[kind]}
+        </Badge>
+        <span className="text-muted-foreground" data-testid="failure-kind-guidance">
+          {FAILURE_KIND_GUIDANCE[kind]}
+        </span>
+      </div>
+      {stepName !== null && (
+        <p className="text-muted-foreground">
+          Failed at step: <span className="font-medium text-foreground">{stepName}</span>
+        </p>
+      )}
+      <p className="text-muted-foreground">
+        Started {new Date(run.createdAt).toLocaleString()} · Failed{' '}
+        {new Date(run.updatedAt).toLocaleString()}
+      </p>
+      {run.errorMessage !== '' ? (
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Raw error
+            </span>
+            <Button
+              variant="outline"
+              size="xs"
+              className="h-6 gap-1 text-[11px]"
+              data-testid="copy-error-details"
+              onClick={() => {
+                void handleCopy();
+              }}
+            >
+              {copied ? (
+                <>
+                  <CheckIcon className="size-3 text-green-600" aria-hidden />
+                  <span>Copied</span>
+                </>
+              ) : (
+                <>
+                  <CopyIcon className="size-3" aria-hidden />
+                  <span>Copy</span>
+                </>
+              )}
+            </Button>
+          </div>
+          <pre
+            className="max-h-40 select-text overflow-y-auto whitespace-pre-wrap break-words rounded bg-muted/60 p-2 font-mono text-[11px]"
+            data-testid="failed-run-raw-error"
+          >
+            {run.errorMessage}
+          </pre>
+          {clipboardNote && (
+            <p className="text-destructive" role="note" data-testid="clipboard-note">
+              Clipboard is unavailable here — select the error text above and copy it manually.
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="text-muted-foreground" data-testid="failed-run-no-message">
+          No error message was recorded for this run.
+        </p>
+      )}
+    </div>
+  );
+}
+
 function FailedRunActions({
   run,
   campaign,
@@ -1519,6 +1641,7 @@ function FailedRunActions({
   const [resuming, setResuming] = useState(false);
   const [retryText, setRetryText] = useState('');
   const [showInstruction, setShowInstruction] = useState(false);
+  const [showDetails, setShowDetails] = useState(false);
 
   const input: StartRunInput | undefined =
     persona === undefined
@@ -1599,7 +1722,26 @@ function FailedRunActions({
         >
           Dismiss
         </Button>
+
+        <Button
+          variant="outline"
+          size="sm"
+          aria-expanded={showDetails}
+          data-testid="failed-run-details-toggle"
+          onClick={() => {
+            setShowDetails((previous) => !previous);
+          }}
+        >
+          {showDetails ? (
+            <ChevronDownIcon aria-hidden className="size-3.5" data-icon="inline-start" />
+          ) : (
+            <ChevronRightIcon aria-hidden className="size-3.5" data-icon="inline-start" />
+          )}
+          Details
+        </Button>
       </div>
+
+      {showDetails && <FailedRunDetails run={run} />}
     </div>
   );
 }
@@ -1824,6 +1966,8 @@ function RunsList({
               </div>
             </div>
           )}
+
+          {openRun.status === 'failed' && <FailedRunDetails run={openRun} />}
 
           <div className="max-h-[65vh] min-h-[180px] overflow-y-auto overflow-x-auto rounded-md border bg-background p-2.5">
             <pre className="font-mono text-[11px] whitespace-pre-wrap select-text text-foreground">

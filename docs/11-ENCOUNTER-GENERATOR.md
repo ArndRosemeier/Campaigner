@@ -812,10 +812,10 @@ data model, run-engine threading, UI, docs); the gate at completion is
   tests on `treasureGuidanceFor`.
 - Dungeon preset (D10): a `dungeon` brief packs on the fixed ×2 tier per
   aspect (48×36 / 56×32 / 40×40) regardless of room count, deterministically;
-  a standard brief stays on the base tier; staging-marker rebuilds honor the
-  preset; the run row, artifact data and Settings round-trip the choice; the
-  v14→v15 migration backfills the defaults. The battle surface needs no
-  preset awareness — the layout's `cols/rows` carry the finer grid.
+  a standard brief stays on the base tier; the run row, artifact data and
+  Settings round-trip the choice; the v14→v15 migration backfills the
+  defaults. The battle surface needs no preset awareness — the layout's
+  `cols/rows` carry the finer grid.
 - Site shape (D11): a single encounter seeds with ZERO veils and starts at
   the entrance cell (else mobsRect center); a complex opens with the spawn
   room revealed and the rest veiled; the editor selector disables the shape

@@ -3517,10 +3517,10 @@ function encounterProgressId(runId: Id): string {
 function encounterStepDetail(name: StepName): string {
   const labels: Partial<Record<StepName, string>> = {
     brief: 'Drafting the encounter brief…',
-    layout: 'Preparing staging layout…',
+    layout: 'Packing rooms into the map grid…',
     schematic: 'Rendering layout reference…',
     stylize: 'Generating candidate battlemaps…',
-    verify: 'Detecting room staging markers…',
+    verify: 'Verifying the generated map against the layout…',
     pick: 'Waiting for a map selection…',
     finalize: 'Saving the encounter and map…',
   };

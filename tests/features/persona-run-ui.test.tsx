@@ -16,8 +16,10 @@ import { coarseStructure } from '@/llm/encounterVision';
 import { PersonaPanel } from '@/features/campaign/components/persona-panel';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { useProgressStore } from '@/lib/progress';
+import { FAILURE_KIND_GUIDANCE } from '@/domain';
+import { Toaster } from 'sonner';
 
 /**
  * Persona panel run lifecycle UI (08-TESTING matrix gap): start a run through
@@ -1023,6 +1025,226 @@ describe('PersonaPanel run lifecycle', () => {
     expect(await screen.findByRole('button', { name: 'Open artifact' })).toBeInTheDocument();
     await flushAsyncUpdates(60);
   }, 30000);
+});
+
+describe('PersonaPanel failed-run details', () => {
+  const RAW_ERROR = 'OpenRouter request failed (504): gateway timeout between models';
+
+  /**
+   * Seeds a FAILED run row directly (docs/05 run views): retrieve done, the
+   * draft step the run died on left 'running', optional failureKind — omit it
+   * to reproduce a legacy row (parses to failureKind null).
+   */
+  async function seedFailedRun(
+    campaign: Campaign,
+    persona: Persona,
+    failureKind?: 'congestion' | 'filter',
+    errorMessage: string = RAW_ERROR,
+  ): Promise<string> {
+    const run = await createRun({
+      campaignId: campaign.id,
+      personaId: persona.id,
+      autonomy: 'manual',
+      userBrief: 'A failed run with details',
+      pinnedChunkIds: [],
+      targetArtifactId: null,
+      encounterMapAspect: null,
+    });
+    await updateRun(run.id, {
+      status: 'failed',
+      errorMessage,
+      ...(failureKind === undefined ? {} : { failureKind }),
+      steps: [
+        {
+          index: 0,
+          name: 'retrieve',
+          status: 'done',
+          input: {},
+          output: { chunkIds: [], titles: [] },
+          userEdit: null,
+        },
+        { index: 1, name: 'draft', status: 'running', input: {}, output: null, userEdit: null },
+      ],
+    });
+    return run.id;
+  }
+
+  function stubClipboard(writeText: ((text: string) => Promise<void>) | undefined): void {
+    Object.defineProperty(navigator, 'clipboard', {
+      value: writeText === undefined ? undefined : { writeText },
+      writable: true,
+      configurable: true,
+    });
+  }
+
+  afterEach(() => {
+    delete (navigator as { clipboard?: unknown }).clipboard;
+  });
+
+  it('Details expands the classification, guidance, raw error, step and timestamps; recovery stays put', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const runId = await seedFailedRun(campaign, persona, 'congestion');
+
+    render(
+      <MemoryRouter>
+        <Toaster />
+        <PersonaPanel campaign={campaign} hasApiKey initialRunId={runId} />
+      </MemoryRouter>,
+    );
+
+    const failedActions = await screen.findByTestId('failed-run-actions');
+    // Recovery affordances before expanding…
+    expect(within(failedActions).getByTestId('resume-failed-run')).toBeInTheDocument();
+    expect(within(failedActions).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+    // …and the section is collapsed until asked for (disclosure, not a modal).
+    expect(screen.queryByTestId('failed-run-details')).not.toBeInTheDocument();
+
+    const toggle = within(failedActions).getByTestId('failed-run-details-toggle');
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+
+    const details = screen.getByTestId('failed-run-details');
+    expect(within(details).getByTestId('failure-kind-badge')).toHaveTextContent(
+      'Provider congestion or timeout',
+    );
+    expect(within(details).getByTestId('failure-kind-guidance')).toHaveTextContent(
+      FAILURE_KIND_GUIDANCE.congestion,
+    );
+    // The FULL raw message is shown verbatim next to the classification.
+    expect(within(details).getByTestId('failed-run-raw-error')).toHaveTextContent(RAW_ERROR);
+    expect(within(details).getByText(/Failed at step:/)).toHaveTextContent(/draft/);
+    // One timestamps line: "Started <ts> · Failed <ts>".
+    expect(within(details).getByText(/· Failed /)).toBeInTheDocument();
+    expect(within(details).getByTestId('copy-error-details')).toBeInTheDocument();
+
+    // Recovery affordances untouched AFTER expanding.
+    expect(within(failedActions).getByTestId('resume-failed-run')).toBeInTheDocument();
+    expect(within(failedActions).getByRole('button', { name: 'Dismiss' })).toBeInTheDocument();
+
+    // It is a disclosure: toggling again collapses it.
+    await user.click(toggle);
+    expect(screen.queryByTestId('failed-run-details')).not.toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20000);
+
+  it('a legacy failed row (failureKind null) shows the unknown guidance with the raw message', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const runId = await seedFailedRun(campaign, persona);
+
+    // Raw awaited read wrapped in actDrained (docs/18 §3): the panel is not
+    // mounted yet, but keep the file's leak discipline uniform.
+    const stored = await actDrained(() => getRun(runId));
+    expect(stored?.failureKind).toBeNull();
+
+    render(
+      <MemoryRouter>
+        <Toaster />
+        <PersonaPanel campaign={campaign} hasApiKey initialRunId={runId} />
+      </MemoryRouter>,
+    );
+
+    await user.click(
+      within(await screen.findByTestId('failed-run-actions')).getByTestId(
+        'failed-run-details-toggle',
+      ),
+    );
+
+    const details = screen.getByTestId('failed-run-details');
+    expect(within(details).getByTestId('failure-kind-badge')).toHaveTextContent(
+      'Unclassified failure',
+    );
+    expect(within(details).getByTestId('failure-kind-guidance')).toHaveTextContent(
+      FAILURE_KIND_GUIDANCE.unknown,
+    );
+    expect(within(details).getByTestId('failed-run-raw-error')).toHaveTextContent(RAW_ERROR);
+    await flushAsyncUpdates();
+  }, 20000);
+
+  it('Copy writes the FULL raw error to the clipboard and confirms with a toast', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const runId = await seedFailedRun(campaign, persona, 'congestion');
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    stubClipboard(writeText);
+
+    render(
+      <MemoryRouter>
+        <Toaster />
+        <PersonaPanel campaign={campaign} hasApiKey initialRunId={runId} />
+      </MemoryRouter>,
+    );
+
+    await user.click(
+      within(await screen.findByTestId('failed-run-actions')).getByTestId(
+        'failed-run-details-toggle',
+      ),
+    );
+    await user.click(screen.getByTestId('copy-error-details'));
+
+    expect(writeText).toHaveBeenCalledWith(RAW_ERROR);
+    expect(await screen.findByText('Error copied to clipboard')).toBeInTheDocument();
+    expect(await screen.findByText('Copied')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20000);
+
+  it('without a clipboard the Copy button fails loudly with a manual-select note', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    const runId = await seedFailedRun(campaign, persona, 'congestion');
+    stubClipboard(undefined);
+
+    render(
+      <MemoryRouter>
+        <Toaster />
+        <PersonaPanel campaign={campaign} hasApiKey initialRunId={runId} />
+      </MemoryRouter>,
+    );
+
+    await user.click(
+      within(await screen.findByTestId('failed-run-actions')).getByTestId(
+        'failed-run-details-toggle',
+      ),
+    );
+    await user.click(screen.getByTestId('copy-error-details'));
+
+    expect(screen.getByTestId('clipboard-note')).toHaveTextContent(
+      /select the error text above and copy it manually/i,
+    );
+    expect(await screen.findByText(/Clipboard unavailable/)).toBeInTheDocument();
+    // The raw error stays selectable (the manual fallback path).
+    expect(screen.getByTestId('failed-run-raw-error')).toHaveClass('select-text');
+    await flushAsyncUpdates();
+  }, 20000);
+
+  it('the Runs tab report shows the same details section for a failed run', async () => {
+    const user = userEvent.setup();
+    const { campaign, persona } = await seed();
+    await seedFailedRun(campaign, persona, 'filter', 'I cannot help with that request');
+
+    render(
+      <MemoryRouter>
+        <Toaster />
+        <PersonaPanel campaign={campaign} hasApiKey />
+      </MemoryRouter>,
+    );
+
+    await user.click(await screen.findByRole('tab', { name: 'Runs' }));
+    await user.click(await screen.findByText('A failed run with details'));
+    const report = await screen.findByTestId('open-run-report');
+
+    expect(within(report).getByTestId('failure-kind-badge')).toHaveTextContent('Model refusal');
+    expect(within(report).getByTestId('failure-kind-guidance')).toHaveTextContent(
+      FAILURE_KIND_GUIDANCE.filter,
+    );
+    expect(within(report).getByTestId('failed-run-raw-error')).toHaveTextContent(
+      'I cannot help with that request',
+    );
+    expect(within(report).getByTestId('copy-error-details')).toBeInTheDocument();
+    await flushAsyncUpdates(60);
+  }, 20000);
 });
 
 describe('PersonaPanel creation dialog (module placement + extras)', () => {
