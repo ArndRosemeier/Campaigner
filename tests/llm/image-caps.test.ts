@@ -139,7 +139,11 @@ describe('image candidate-count caps', () => {
     responses.push(new Response(CAP_400_BODY, { status: 400 }));
     const calls = captureFetch(responses);
 
-    await expect(generateImages('x', 1, { model })).rejects.toThrow(/must be exactly 1/);
+    // Single-entry chain: the error names the provider diagnosis AND the
+    // config gap (the fallback tier cannot fire without a configured model).
+    await expect(generateImages('x', 1, { model })).rejects.toThrow(
+      /No provider for x-ai\/grok-imagine-image-2.0 supports the requested parameter\(s\).*no fallback image model is configured/s,
+    );
     expect(calls).toHaveLength(1);
   });
 

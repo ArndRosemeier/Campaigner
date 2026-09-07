@@ -102,7 +102,7 @@ beforeEach(async () => {
   // Green-path map runs: the unattended Cartographer's image step runs on
   // adapters, spied exactly like tests/features/encounter-map-queue.
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 240, height: 180 });
-  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [blobOf()], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model' });
+  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [blobOf()], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, mimeType: 'image/webp' }));
 });
@@ -167,6 +167,8 @@ describe('post-run extras', () => {
       modelUsed: 'image-model',
       costUsd: null,
       cappedToOne: false,
+      fallback: null,
+      filteredCount: 0,
     });
     intakeImageMock.mockResolvedValue({
       blob: blobOf(),

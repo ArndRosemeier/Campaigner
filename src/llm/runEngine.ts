@@ -75,7 +75,7 @@ import { ZodError, z } from 'zod';
 import { chat, MissingApiKeyError, type ChatFallback, type ChatMessage, type ChatOptions } from '@/llm/openrouter';
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
-import { resolveChatModel, repairModel } from '@/llm/modelFallback';
+import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFallback';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { failureKindOf } from '@/llm/failureKind';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
@@ -373,6 +373,50 @@ function contractRepairNotice(firstTryModel: string, repairTarget: string): stri
   return repairTarget === firstTryModel
     ? null
     : `The reply contract failed on “${firstTryModel}” — the repair attempt ran on “${repairTarget}”.`;
+}
+
+/**
+ * The persisted note for an image-step escalation (imageGen's
+ * GeneratedImages.fallback): names the failed first-try model and the
+ * fallback that actually produced the image. The reason words the trigger
+ * honestly (filter refused / congestion / plain failure) — a fallback must
+ * be visible, never silent (AGENTS rule 1).
+ */
+function imageFallbackNotice(fallback: ChainFallback): string {
+  switch (fallback.reason) {
+    case 'filter':
+      return `Content filter on “${fallback.from}” — the fallback model “${fallback.to}” produced this image.`;
+    case 'congestion':
+      return `Congestion on “${fallback.from}” — the fallback model “${fallback.to}” produced this image.`;
+    default:
+      return `“${fallback.from}” failed — the fallback model “${fallback.to}” produced this image.`;
+  }
+}
+
+/**
+ * The persisted note for an image step's degradations (escalation fallback,
+ * partially filtered candidates, candidate-count cap) — the image-mode twin
+ * of withNotice. Null when the step ran clean.
+ */
+function imageStepNotice(generated: {
+  fallback: ChainFallback | null;
+  filteredCount: number;
+  images: { length: number };
+  cappedToOne: boolean;
+  modelUsed: string;
+}): string | null {
+  const parts = [
+    generated.fallback === null ? null : imageFallbackNotice(generated.fallback),
+    generated.filteredCount > 0
+      ? `${generated.filteredCount} of ${generated.images.length + generated.filteredCount} candidates ${
+          generated.filteredCount === 1 ? 'was' : 'were'
+        } filtered.`
+      : null,
+    generated.cappedToOne
+      ? `“${generated.modelUsed}” generates one image per request — this run produced a single candidate.`
+      : null,
+  ].filter((part): part is string => part !== null);
+  return parts.length === 0 ? null : parts.join(' ');
 }
 
 /**
@@ -2951,6 +2995,9 @@ export class RunEngine {
         aspectActions,
         costUsd: generated.costUsd,
         cappedToOne: generated.cappedToOne,
+        // Degradations must be visible here too (AGENTS rule 1): escalation
+        // fallback and partial filtering name themselves on the step.
+        notice: imageStepNotice(generated),
       }),
     };
   }
@@ -3217,12 +3264,11 @@ export class RunEngine {
       });
       imageIds.push(stored.id);
     }
-    // The model capping candidates at 1 (e.g. x-ai/grok-imagine-image-2.0)
-    // is a degradation the user must see (AGENTS rule 1): persist a notice
-    // on the step — the run panel renders it next to the pick UI.
-    const notice = generated.cappedToOne
-      ? `“${generated.modelUsed}” generates one image per request — this run produced a single candidate.`
-      : null;
+    // Degradations the user must see (AGENTS rule 1): an escalation fallback
+    // that produced the image, partially filtered candidates, and the model
+    // capping candidates at 1 (e.g. x-ai/grok-imagine-image-2.0) — persist a
+    // notice on the step; the run panel renders it next to the pick UI.
+    const notice = imageStepNotice(generated);
     const step = this.finishStep(steps[stepIndex], { imageIds, costUsd: generated.costUsd, notice });
     return { step };
   }

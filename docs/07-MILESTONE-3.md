@@ -55,11 +55,16 @@ a new "Images" section, with a model combobox fetched from
 on `architecture.output_modalities` remains the fallback for the shared
 `listModels` response). A `fallbackImageModel: string` ('' = no fallback)
 adds the escalation tier: `generateImages` walks
-`[primary, fallbackImageModel]` when the first-try model is congested or
-refuses (a 200 response with no images counts as congestion), reports the
-model that actually produced the images as `modelUsed`, and image rows
-persist that. Structure-first edits (input_references) skip a fallback the
-cached `/models` data knows is text-to-image only.
+`[primary, fallbackImageModel]` on ANY failure of the first-try model (owner
+2026-09-07: "ANY ERROR, ANY AT ALL should lead to the fallback" — content
+filters, congestion, typed OpenRouter error envelopes, empty responses; the
+chain is the bound), reports the model that actually produced the images as
+`modelUsed`, and image rows persist that. A single-entry chain's failure
+names the config gap ("no fallback image model is configured — set one in
+Settings → Image generation"); an escalation fallback and partially filtered
+candidates surface as persisted step notices. Structure-first edits
+(input_references) skip a fallback the cached `/models` data knows is
+text-to-image only.
 
 ### Generation client (`/src/llm/imageGen.ts`)
 

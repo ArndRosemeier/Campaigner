@@ -103,6 +103,11 @@ function isModelIndependentFailure(error: unknown): boolean {
   return error instanceof DOMException && error.name === 'AbortError';
 }
 
+/** Exposed for call sites that wrap a failed walk's error (e.g. imageGen's
+ * config-gap guidance): those must leave model-independent failures
+ * untouched, exactly as the walk itself does. */
+export { isModelIndependentFailure };
+
 export interface WalkModelChainOptions {
   /** The combined end-of-chain error's label (chainError kind). */
   kind: 'chat' | 'image';

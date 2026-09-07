@@ -50,7 +50,7 @@ beforeEach(async () => {
   chatMock.mockReset().mockResolvedValue({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
   toastErrorMock.mockReset();
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 240, height: 180 });
-  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model' });
+  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, mimeType: 'image/webp' }));
 });
@@ -97,7 +97,7 @@ describe('module encounter map queue', () => {
     generateSpy.mockImplementation(() => {
       stylizeAttempts += 1;
       if (stylizeAttempts === 2) return Promise.reject(new Error('image drift'));
-      return Promise.resolve({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model' });
+      return Promise.resolve({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
     });
 
     useEncounterMapQueue.getState().enqueue([

@@ -132,7 +132,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: 0.021,
-    cappedToOne: false, modelUsed: 'test-image-model',
+    cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -200,7 +200,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('one'), fakeImageBytes('two')],
       costUsd: null,
-    cappedToOne: false, modelUsed: 'test-image-model',
+    cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -239,7 +239,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('library-keep'), fakeImageBytes('library-discard')],
       costUsd: null,
-      cappedToOne: false, modelUsed: 'test-image-model',
+      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -276,7 +276,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('only')],
       costUsd: null,
-    cappedToOne: false, modelUsed: 'test-image-model',
+    cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -330,7 +330,7 @@ describe('illustrator run (image persona)', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('single')],
       costUsd: 0.011,
-      cappedToOne: true, modelUsed: 'test-image-model',
+      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     const runId = await runEngine.startRun(input(campaignId, persona, targetId));
@@ -351,6 +351,65 @@ describe('illustrator run (image persona)', () => {
     // The degradation is persisted on the step — the run panel renders it.
     expect(output.notice).toContain('single candidate');
     expect((run?.steps[2]?.output as { candidates: Id[] }).candidates).toHaveLength(1);
+  });
+
+  it('persists the fallback and partial-filter notices on the generate step', async () => {
+    // The fallback model produced the images after a content filter on the
+    // first-try model, and one of the returned candidates was filtered —
+    // both degradations must be visible (AGENTS rule 1), mirroring the
+    // cappedToOne notice pattern.
+    const { campaignId, persona, targetId } = await seed();
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('kept')],
+      costUsd: 0.03,
+      cappedToOne: false,
+      modelUsed: 'potent/image',
+      fallback: { from: 'cheap/image', to: 'potent/image', reason: 'filter' },
+      filteredCount: 1,
+    });
+
+    const runId = await runEngine.startRun(input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+    await runEngine.editStep(runId, 0, { parsed: VALID_PROMPT_DRAFT }, input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps).toHaveLength(3);
+      expect(run?.status).toBe('awaiting_user');
+    });
+
+    const run = await getRun(runId);
+    const output = run?.steps[1]?.output as { imageIds: Id[]; notice: string | null };
+    expect(output.imageIds).toHaveLength(1);
+    expect(output.notice).toContain('Content filter on “cheap/image”');
+    expect(output.notice).toContain('the fallback model “potent/image” produced this image');
+    expect(output.notice).toContain('1 of 2 candidates was filtered');
+  });
+
+  it('leaves the generate-step notice null when the run was clean', async () => {
+    const { campaignId, persona, targetId } = await seed();
+    generateImagesMock.mockResolvedValue({
+      images: [fakeImageBytes('one'), fakeImageBytes('two')],
+      costUsd: null,
+      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
+    });
+
+    const runId = await runEngine.startRun(input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+    await runEngine.editStep(runId, 0, { parsed: VALID_PROMPT_DRAFT }, input(campaignId, persona, targetId));
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.steps).toHaveLength(3);
+      expect(run?.status).toBe('awaiting_user');
+    });
+
+    const output = (await getRun(runId))?.steps[1]?.output as { notice: string | null };
+    expect(output.notice).toBeNull();
   });
 });
 
@@ -422,7 +481,7 @@ describe('image persona validation', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('pf1'), fakeImageBytes('pf2')],
       costUsd: 0.02,
-      cappedToOne: false, modelUsed: 'test-image-model',
+      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     const runInput = {
@@ -552,7 +611,7 @@ describe('image persona validation', () => {
     generateImagesMock.mockResolvedValue({
       images: [fakeImageBytes('g1'), fakeImageBytes('g2')],
       costUsd: null,
-      cappedToOne: false, modelUsed: 'test-image-model',
+      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     const runId = await runEngine.startRun({

@@ -467,7 +467,7 @@ describe('PersonaPanel run lifecycle', () => {
     generateImagesMock.mockResolvedValue({
       images: [new Blob(['one'], { type: 'image/webp' })],
       costUsd: 0.01,
-      cappedToOne: true, modelUsed: 'test-image-model',
+      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
     render(
       <MemoryRouter>
@@ -640,7 +640,7 @@ describe('PersonaPanel run lifecycle', () => {
     generateImagesMock.mockResolvedValue({
       images: [new Blob(['one'], { type: 'image/webp' })],
       costUsd: 0.01,
-      cappedToOne: true, modelUsed: 'test-image-model',
+      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
     render(
       <MemoryRouter>
@@ -715,7 +715,7 @@ describe('PersonaPanel run lifecycle', () => {
     generateImagesMock.mockResolvedValue({
       images: [new Blob(['one'], { type: 'image/webp' })],
       costUsd: 0.01,
-      cappedToOne: true, modelUsed: 'test-image-model',
+      cappedToOne: true, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
     intakeImageMock.mockImplementation((blob: Blob) =>
       Promise.resolve({ blob, width: 64, height: 64, mimeType: 'image/webp' }),

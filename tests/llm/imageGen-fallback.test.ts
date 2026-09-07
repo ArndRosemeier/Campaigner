@@ -312,3 +312,111 @@ describe('image error shapes → typed classification + escalation (owner sympto
     expect(failureKindOf(error)).toBe('filter');
   });
 });
+
+describe('image fallback visibility (fallback + filteredCount + config gap)', () => {
+  it('reports the escalation on the result — a typed refusal escalation classifies as filter', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: 'potent/image' };
+    captureFetch([refusal400(), imageResponse()]);
+
+    const result = await generateImages('a slime monster', 1, {
+      model: 'cheap/image',
+      retryBackoffs: [0, 0],
+    });
+    expect(result.fallback).toEqual({ from: 'cheap/image', to: 'potent/image', reason: 'filter' });
+  });
+
+  it('reports congestion as the escalation reason for a 429 fallback', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: 'potent/image' };
+    captureFetch([
+      new Response('rate limited', { status: 429 }),
+      new Response('rate limited', { status: 429 }),
+      new Response('rate limited', { status: 429 }),
+      imageResponse(),
+    ]);
+
+    const result = await generateImages('x', 1, { model: 'cheap/image', ...FAST_RETRIES });
+    expect(result.fallback).toEqual({ from: 'cheap/image', to: 'potent/image', reason: 'congestion' });
+  });
+
+  it('reports no escalation on a first-try success (fallback null, nothing filtered)', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: 'potent/image' };
+    captureFetch([imageResponse()]);
+
+    const result = await generateImages('x', 1, { model: 'cheap/image', retryBackoffs: [0, 0] });
+    expect(result.fallback).toBeNull();
+    expect(result.filteredCount).toBe(0);
+  });
+
+  it('counts partially filtered candidates (null entry / empty b64) in filteredCount', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: 'potent/image' };
+    const b64 = btoa('fake-webp-bytes');
+    captureFetch([
+      new Response(
+        JSON.stringify({
+          data: [null, { b64_json: '', media_type: 'image/webp' }, { b64_json: b64, media_type: 'image/webp' }],
+          usage: { cost: 0.02 },
+        }),
+        { status: 200 },
+      ),
+      imageResponse(),
+    ]);
+
+    // The primary's partial filter is NOT a failure: one usable candidate
+    // came back, so the walk succeeded on the first entry — the filter drop
+    // must be visible via filteredCount (the caller persists a notice).
+    const result = await generateImages('x', 2, { model: 'cheap/image', retryBackoffs: [0, 0] });
+    expect(result.modelUsed).toBe('cheap/image');
+    expect(result.fallback).toBeNull();
+    expect(result.images).toHaveLength(1);
+    expect(result.filteredCount).toBe(2);
+  });
+
+  it('ALL candidates filtered still throws no-images (never a silent zero-image success)', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: '' };
+    captureFetch([new Response(JSON.stringify({ data: [null, { b64_json: '' }] }), { status: 200 })]);
+
+    await expect(
+      generateImages('x', 2, { model: 'cheap/image', retryBackoffs: [0, 0] }),
+    ).rejects.toThrow(/image API returned no images/);
+  });
+
+  it('a single-entry chain failure names the config gap (the owner symptom can never recur silently)', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: '' };
+    captureFetch([refusal400()]);
+
+    const error = await generateImages('a heroic slime monster', 1, {
+      model: 'cheap/image',
+      retryBackoffs: [0, 0],
+    }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(String(error)).toMatch(/no fallback image model is configured/);
+    expect(String(error)).toMatch(/Settings → Image generation/);
+    // The real diagnosis survives next to the guidance.
+    expect(String(error)).toMatch(/slime monster prompt violates policy/);
+  });
+
+  it('the config-gap wrap keeps the classification (kind/status/code) intact', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: '' };
+    captureFetch([refusal400()]);
+
+    const error = await generateImages('x', 1, { model: 'cheap/image', retryBackoffs: [0, 0] }).then(
+      () => null,
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(OpenRouterError);
+    expect((error as OpenRouterError).kind).toBe('http');
+    expect((error as OpenRouterError).code).toBe('refusal');
+    expect(failureKindOf(error)).toBe('filter');
+  });
+
+  it('a multi-entry exhaustion does NOT claim a missing fallback (the chain ran)', async () => {
+    currentSettings = { ...currentSettings, fallbackImageModel: 'potent/image' };
+    captureFetch([refusal400(), refusal400(), refusal400(), refusal400(), refusal400(), refusal400()]);
+
+    await expect(
+      generateImages('x', 1, { model: 'cheap/image', retryBackoffs: [0, 0] }),
+    ).rejects.toThrow(/every image model in the escalation chain failed(?!.*no fallback image model)/s);
+  });
+});

@@ -197,7 +197,7 @@ beforeEach(async () => {
   searchRulesMock.mockReset();
   searchRulesMock.mockResolvedValue([]);
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 2304, height: 1728 });
-  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model' });
+  vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }));
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, mimeType: 'image/webp' }));
 });
@@ -275,6 +275,32 @@ describe('Encounter Cartographer run', () => {
     expect((await getImage(candidates[0] ?? ''))?.role).toBe('map');
     expect(await getImage(candidates[1] ?? '')).toBeUndefined();
     expect(useProgressStore.getState().jobs).toEqual([]);
+  });
+
+  it('persists the fallback notice on the stylize step (map degradations are visible)', async () => {
+    const { campaign, cartographer } = await setup();
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+    // The stylize image call escalates to the fallback image model after a
+    // content filter on the primary — the step must name both models
+    // (AGENTS rule 1: a fallback is never silent).
+    vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
+      images: [new Blob(['map-one']), new Blob(['map-two'])],
+      costUsd: 0.02,
+      cappedToOne: false,
+      modelUsed: 'potent/image',
+      fallback: { from: 'cheap/image', to: 'potent/image', reason: 'filter' },
+      filteredCount: 0,
+    });
+    const runInput = input(campaign, cartographer);
+    const runId = await runEngine.startRun(runInput);
+    await approveUntilPick(runId, runInput);
+
+    const run = await getRun(runId);
+    const output = run?.steps.find((step) => step.name === 'stylize')?.output as {
+      notice?: string | null;
+    };
+    expect(output.notice).toContain('Content filter on “cheap/image”');
+    expect(output.notice).toContain('the fallback model “potent/image” produced this image');
   });
 
   it('grounds the brief in the pack roster and resolves sourceName through map finalize (§7)', async () => {
@@ -681,7 +707,7 @@ describe('Encounter Cartographer run', () => {
       images: [new Blob(['fresh-one']), new Blob(['fresh-two'])],
       costUsd: 0.02,
       cappedToOne: false,
-      modelUsed: 'test-image-model',
+      modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
     await runEngine.regenerateEncounterCandidates(runId, runInput);
     await waitForRun(async () => {
@@ -817,7 +843,7 @@ describe('Encounter Cartographer run', () => {
     vi.mocked(encounterRunAdapters.generateImages).mockResolvedValueOnce({
       images: [new Blob(['resumed-image'])],
       costUsd: 0.02,
-      cappedToOne: false, modelUsed: 'test-image-model',
+      cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0,
     });
 
     await runEngine.resumeRun(runId);

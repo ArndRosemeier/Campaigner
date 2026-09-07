@@ -11,7 +11,10 @@
  * (MissingApiKeyError, user aborts). Nothing in this module gates escalation
  * anymore: the kinds, `fallbackReasonFor` and FILTER_PATTERN are the
  * CLASSIFICATION layer that annotates a failure for the run Details view
- * (failureKind.ts) and words the escalation notice honestly.
+ * (failureKind.ts) and words the escalation notice honestly. OpenRouter's
+ * non-streaming error envelope (`metadata.error_type`, parsed by
+ * `errorTypeFromBody`/`parseOpenRouterErrorEnvelope`) rides the typed error
+ * as `code` and classifies BEFORE the status checks and prose patterns.
  */
 
 import { z } from 'zod';

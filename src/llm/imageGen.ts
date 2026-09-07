@@ -1,8 +1,9 @@
 import { DEFAULT_RETRY_BACKOFFS_MS, MissingApiKeyError, OPENROUTER_BASE, OpenRouterError, fetchWithRetries, openRouterHeaders } from '@/llm/openrouter';
 import { parseOpenRouterErrorEnvelope } from '@/llm/openrouterErrors';
 import { getSettings } from '@/db/settingsRepo';
-import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
+import { buildModelChain, walkModelChain, isModelIndependentFailure, type ChainFallback } from '@/llm/modelFallback';
 import { bytesFromBase64 } from '@/lib/base64';
+import { errorMessage } from '@/lib/errors';
 import { parseErrorSummary } from '@/llm/jsonReply';
 import { z } from 'zod';
 
@@ -25,6 +26,19 @@ export interface GeneratedImages {
   cappedToOne: boolean;
   /** The model that actually produced the images (escalation-aware). */
   modelUsed: string;
+  /**
+   * Escalation info when a fallback image model produced the images (null on
+   * a first-try success). Callers MUST surface it (AGENTS rule 1) — the run
+   * steps persist a notice naming the failed model and the fallback.
+   */
+  fallback: ChainFallback | null;
+  /**
+   * How many returned candidates were dropped as filtered (null entry or
+   * empty/missing `b64_json`) on the successful attempt. Callers MUST
+   * surface a partial filter; ALL candidates filtered still throws
+   * ('no-images') — a run never completes with zero images silently.
+   */
+  filteredCount: number;
 }
 
 export interface GenerateImagesOptions {
@@ -227,7 +241,44 @@ async function generateImagesWithModel(
     costUsd: json.usage?.cost ?? null,
     cappedToOne,
     modelUsed: model,
+    // Set by the escalation walk in generateImages (null per single model).
+    fallback: null,
+    // Filtered candidates (null entry / empty b64_json) on this attempt —
+    // the caller surfaces a partial filter (AGENTS rule 1).
+    filteredCount: (json.data ?? []).length - images.length,
   };
+}
+
+/**
+ * The guidance appended to a single-entry chain's failure: without a
+ * configured fallback the escalation tier cannot fire, so the error must
+ * name the config gap itself — the owner symptom (a content-filtered image
+ * failing with a generic error and nobody pointing at the missing setting)
+ * must never recur silently.
+ */
+const IMAGE_CONFIG_GAP_GUIDANCE =
+  'no fallback image model is configured — set one in Settings → Image generation';
+
+function withImageConfigGapGuidance(error: unknown): Error {
+  if (error instanceof OpenRouterError) {
+    // Prefer the envelope's message (the provider's real diagnosis) over the
+    // raw JSON body — it says in one line what the body says in three. The
+    // error class truncates its body snippet at 200 chars, so the diagnosis
+    // is trimmed to make room: the guidance (the actionable part) is never
+    // cut off.
+    const envelope = parseOpenRouterErrorEnvelope(error.bodyText);
+    const raw = envelope?.message ?? error.bodyText;
+    const budget = 200 - (IMAGE_CONFIG_GAP_GUIDANCE.length + ' — '.length);
+    const diagnosis =
+      raw.length > budget ? `${raw.slice(0, budget - 1)}…` : raw;
+    return new OpenRouterError(
+      error.kind,
+      error.status,
+      `${diagnosis} — ${IMAGE_CONFIG_GAP_GUIDANCE}`,
+      error.code,
+    );
+  }
+  return new Error(`${errorMessage(error)} — ${IMAGE_CONFIG_GAP_GUIDANCE}`, { cause: error });
 }
 
 /**
@@ -236,7 +287,10 @@ async function generateImagesWithModel(
  * unconditional — transport failures only, since image generation has no
  * output contract to repair; MissingApiKeyError and user aborts stop the
  * walk). The returned `modelUsed` tells the caller which model produced the
- * images so image rows record the truth instead of the requested model.
+ * images so image rows record the truth instead of the requested model, and
+ * `fallback`/`filteredCount` carry the degradations the caller must surface.
+ * A single-entry chain (no fallback configured) appends the config-gap
+ * guidance to its failure so the missing setting is named, loudly.
  */
 export async function generateImages(
   prompt: string,
@@ -250,13 +304,23 @@ export async function generateImages(
   // model-independent failures rethrow → single-entry rethrow → vision
   // guard → chainError) is shared with the chat client.
   const chain = buildModelChain(opts.model, settings.fallbackImageModel);
-  const walk = await walkModelChain(
-    chain,
-    (model) => generateImagesWithModel(prompt, n, opts, settings, model),
-    {
-      kind: 'image',
-      needsImageInput: opts.inputReferences !== undefined && opts.inputReferences.length > 0,
-    },
-  );
-  return walk.value;
+  try {
+    const walk = await walkModelChain(
+      chain,
+      (model) => generateImagesWithModel(prompt, n, opts, settings, model),
+      {
+        kind: 'image',
+        needsImageInput: opts.inputReferences !== undefined && opts.inputReferences.length > 0,
+      },
+    );
+    return { ...walk.value, fallback: walk.fallback };
+  } catch (error) {
+    // Single-entry chain: the walk rethrows the original error unchanged —
+    // append the config-gap guidance (model-independent failures keep their
+    // semantics: an abort stays an abort, a missing key stays a missing key).
+    if (chain.length === 1 && !isModelIndependentFailure(error)) {
+      throw withImageConfigGapGuidance(error);
+    }
+    throw error;
+  }
 }

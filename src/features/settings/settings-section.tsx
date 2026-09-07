@@ -313,9 +313,10 @@ export function SettingsSection(): JSX.Element {
             fetchOptions={listImageModels}
           />
           <p className="text-xs text-muted-foreground">
-            The fallback image model runs only when the first-try model is congested or refuses —
-            empty = no fallback. Structure-first edits (encounter maps) skip it unless it accepts
-            image input.
+            The fallback image model runs when the first-try model fails for any reason — content
+            filters, congestion, errors (the chain is the bound). Empty = no fallback: failures
+            stay loud and name the missing setting. Structure-first edits (encounter maps) skip it
+            unless it accepts image input.
           </p>
         </div>
       </CardContent>

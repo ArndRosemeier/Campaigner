@@ -54,7 +54,7 @@ beforeEach(async () => {
   toastErrorMock.mockReset();
   useEntityImageQueue.getState().reset();
   useProgressStore.getState().reset();
-  generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
+  generateImagesMock.mockResolvedValue({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
   intakeImageMock.mockResolvedValue({
     blob: blobOf('intake'),
     mimeType: 'image/webp',
@@ -180,7 +180,7 @@ describe('entity image queue', () => {
             abort();
             return;
           }
-          resolve({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model' });
+          resolve({ images: [blobOf('gen')], costUsd: 0.01, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
         });
       });
     });
