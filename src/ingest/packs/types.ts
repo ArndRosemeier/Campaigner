@@ -35,6 +35,22 @@ export interface PackItemEntry {
   text: string;
 }
 
+/**
+ * One rules-TEXT entry ready to become a `section` RuleChunk (rules-text
+ * packs arc, docs/12 §15): a THIRD parallel lane after creatures and items —
+ * journal pages, conditions, feats, spells, actions, class features. The
+ * full heading path is supplied by the adapter (category segments first, the
+ * entry name last); `statBlock`/`itemData` stay null/absent on the chunk.
+ */
+export interface PackSectionEntry {
+  /** Category path above the name, most general first (may be empty). */
+  categories: string[];
+  /** Entry name — the LAST `headingPath` element. */
+  name: string;
+  /** Rendered plain-text block (search text, display, contentHash). */
+  text: string;
+}
+
 /** One entry that failed creature/item mapping or validation. Always surfaced. */
 export interface PackEntryFailure {
   file: string;
@@ -50,6 +66,12 @@ export interface PackFileParse {
    * adapters never set it; the runner treats a missing list as empty.
    */
   items?: PackItemEntry[];
+  /**
+   * Rules-text entries (rules-text packs arc, docs/12 §15). Optional —
+   * creature/item adapters never set it; the runner treats a missing list
+   * as empty. The third parallel lane: parsed into `section` chunks.
+   */
+  sections?: PackSectionEntry[];
   /** Documents that are not entries by design (folders, non-NPC/non-item). */
   skipped: number;
   failures: PackEntryFailure[];

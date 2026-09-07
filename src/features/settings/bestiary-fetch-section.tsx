@@ -79,10 +79,17 @@ export function BestiaryFetchSection(): JSX.Element {
       setState(adapterId, { kind: 'done', result });
       // Loud on fallback (16 §1.1 amendment): when the ref chain fired, the
       // toast names BOTH attempts via `fetchNote` — no silent degradation.
-      // Item packs (12-BESTIARY-PACKS §13) are named "items", not "creatures".
+      // Item packs (12-BESTIARY-PACKS §13) are named "items", not "creatures";
+      // rules-text packs (docs/12 §15) are "sections".
+      const noun =
+        result.sectionsImported === result.imported
+          ? 'sections'
+          : result.itemsImported === result.imported
+            ? 'items'
+            : 'creatures';
       toastSuccess(
         `Fetched & imported “${result.book.title}” (${String(result.imported)} ` +
-          `${result.itemsImported === result.imported ? 'items' : 'creatures'}, ` +
+          `${noun}, ` +
           `${String(result.skipped)} skipped, ${String(result.failed.length)} failed) — it is in Rules` +
           (result.fetchNote === undefined ? '' : ` — ${result.fetchNote}`),
       );
@@ -150,16 +157,21 @@ export function BestiaryFetchSection(): JSX.Element {
                       {recipe.label}{' '}
                       <span className="text-xs text-muted-foreground">
                         {/* Item packs (12-BESTIARY-PACKS §13) count documents
-                            in "items"; the listing counts adapter-parseable
-                            files either way. */}
+                            in "items", journal packs (docs/12 §15) count
+                            pages; the listing counts adapter-parseable files
+                            either way. */}
                         ({String(recipe.creatures)}{' '}
                         {recipe.unit === 'items'
                           ? recipe.creatures === 1
                             ? 'item'
                             : 'items'
-                          : recipe.creatures === 1
-                            ? 'creature'
-                            : 'creatures'})
+                          : recipe.unit === 'pages'
+                            ? recipe.creatures === 1
+                              ? 'page'
+                              : 'pages'
+                            : recipe.creatures === 1
+                              ? 'creature'
+                              : 'creatures'})
                       </span>
                     </span>
                     <Button

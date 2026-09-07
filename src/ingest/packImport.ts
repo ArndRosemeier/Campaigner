@@ -13,17 +13,25 @@ import { sha256Hex } from '@/lib/hash';
 import { errorMessage } from '@/lib/errors';
 
 import { getPackAdapter } from './packs/registry';
-import type { PackAdapter, PackEntry, PackEntryFailure, PackInputFile, PackItemEntry } from './packs/types';
+import type {
+  PackAdapter,
+  PackEntry,
+  PackEntryFailure,
+  PackInputFile,
+  PackItemEntry,
+  PackSectionEntry,
+} from './packs/types';
 
 /**
- * Bestiary pack import runner (12-BESTIARY-PACKS §6/§13): expands zip inputs,
- * hands files to the selected adapter, validates creature entries at the
- * `statBlockSchema` boundary and item entries at the `itemDataSchema`
- * boundary, persists `statblock` and `item` RuleChunks in batches, and
- * finalizes the pack book with its import report. Failure policy is loud:
- * per-entry problems are collected into the report, and a selection with zero
- * valid entries fails the book (`status: 'error'`) and throws — an empty
- * "ready" book is forbidden.
+ * Bestiary pack import runner (12-BESTIARY-PACKS §6/§13; docs/12 §15): expands
+ * zip inputs, hands files to the selected adapter, validates creature entries
+ * at the `statBlockSchema` boundary, item entries at the `itemDataSchema`
+ * boundary and rules-text entries at the `section`-chunk boundary, persists
+ * `statblock`, `item` and `section` RuleChunks in batches, and finalizes the
+ * pack book with its import report. Failure policy is loud: per-entry
+ * problems are collected into the report, and a selection with zero valid
+ * entries fails the book (`status: 'error'`) and throws — an empty "ready"
+ * book is forbidden.
  *
  * The Dexie deps are injectable so tests run the whole flow in memory; the
  * UI integration points are `importPack(adapterId, await Promise.all(files.map
@@ -46,6 +54,11 @@ export interface PackImportResult {
   imported: number;
   /** Valid item entries (the `item` chunk lane, 12-BESTIARY-PACKS §13). */
   itemsImported: number;
+  /**
+   * Valid rules-text entries (the `section` chunk lane, docs/12 §15): journal
+   * pages, conditions, feats, spells, actions, class features.
+   */
+  sectionsImported: number;
   skipped: number;
   failed: PackEntryFailure[];
 }
@@ -161,6 +174,7 @@ export async function importPack(
 
   const entries: PackEntry[] = [];
   const items: PackItemEntry[] = [];
+  const sections: PackSectionEntry[] = [];
   const failures: PackEntryFailure[] = [...(options.extraFailures ?? [])];
   let skipped = 0;
   for (const expanded of expandFiles(inputs, adapter)) {
@@ -180,6 +194,7 @@ export async function importPack(
       const parsed = await adapter.parseFile(expanded.file.name, expanded.file.bytes);
       entries.push(...parsed.entries);
       items.push(...(parsed.items ?? []));
+      sections.push(...(parsed.sections ?? []));
       skipped += parsed.skipped;
       failures.push(...parsed.failures);
     } catch (error) {
@@ -214,6 +229,12 @@ export async function importPack(
       await itemChunk(entry, item, book.id, base + entries.length + index),
     );
   }
+  // The rules-text lane (docs/12 §15): stamps continue after the item lane.
+  for (const [index, entry] of sections.entries()) {
+    chunks.push(
+      await sectionChunk(entry, book.id, base + entries.length + items.length + index),
+    );
+  }
 
   let done = 0;
   for (const batch of batches(chunks, CHUNK_BATCH)) {
@@ -225,14 +246,15 @@ export async function importPack(
   const packMeta: PackMeta = {
     sourceId: adapter.id,
     license: adapter.license,
-    entriesImported: entries.length + items.length,
+    entriesImported: entries.length + items.length + sections.length,
     entriesSkipped: skipped,
     entriesFailed: failures.length,
     itemsImported: items.length,
+    sectionsImported: sections.length,
     ...options.provenance,
   };
 
-  if (entries.length === 0 && items.length === 0) {
+  if (entries.length === 0 && items.length === 0 && sections.length === 0) {
     const fetchedCount =
       inputs.length + (options.extraFailures?.length ?? 0);
     // 16-BESTIARY-FETCH §6: when the selection validates nothing, the error
@@ -255,8 +277,9 @@ export async function importPack(
   return {
     book: ready,
     chunkCount: chunks.length,
-    imported: entries.length + items.length,
+    imported: entries.length + items.length + sections.length,
     itemsImported: items.length,
+    sectionsImported: sections.length,
     skipped,
     failed: failures,
   };
@@ -323,6 +346,32 @@ async function itemChunk(
     text,
     statBlock: null,
     itemData: item,
+    contentHash: await sha256Hex(text),
+  });
+}
+
+/**
+ * Validates + stamps one rules-text entry as a `section` RuleChunk (docs/12
+ * §15): same conventions as the other two lanes — page numbers are
+ * meaningless for packs, the adapter supplies the full heading path
+ * (category segments first, the entry name last), `statBlock` stays null and
+ * the rendered text drives search, display and the `contentHash` cache key.
+ */
+async function sectionChunk(
+  entry: PackSectionEntry,
+  bookId: Id,
+  stampBase: number,
+): Promise<RuleChunk> {
+  const text = entry.text;
+  return ruleChunkSchema.parse({
+    ...stampNewEntity(stampBase),
+    bookId,
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'section',
+    headingPath: [...entry.categories, entry.name],
+    text,
+    statBlock: null,
     contentHash: await sha256Hex(text),
   });
 }

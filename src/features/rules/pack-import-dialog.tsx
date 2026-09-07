@@ -203,6 +203,13 @@ export function PackImportReport({
             {String(result.itemsImported)} items
           </Badge>
         )}
+        {/* Rules-text packs (docs/12 §15): journal pages, conditions, feats,
+            spells, … — a `section` chunk count, named explicitly like items. */}
+        {result.sectionsImported > 0 && (
+          <Badge className="bg-violet-600/15 text-violet-500" data-testid="pack-import-sections">
+            {String(result.sectionsImported)} sections
+          </Badge>
+        )}
         <Badge variant="secondary">{String(skipped)} skipped</Badge>
         <Badge variant={failed.length === 0 ? 'outline' : 'destructive'}>
           {String(failed.length)} failed

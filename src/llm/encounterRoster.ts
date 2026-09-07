@@ -210,9 +210,11 @@ export async function collectPackRoster(
   for (const chunk of chunks) {
     // Item chunks (12-BESTIARY-PACKS §13) live in pack books of the same
     // system but are equipment, not creatures — they are the item pool's
-    // input, never the roster's. Only a NON-item chunk without a validated
+    // input, never the roster's. Rules-text `section` chunks (docs/12 §15:
+    // journal pages, conditions, feats, spells, …) are retrieval context for
+    // the same reason. Only a NON-item/NON-section chunk without a validated
     // stat block is the data error below.
-    if (chunk.chunkType === 'item') continue;
+    if (chunk.chunkType === 'item' || chunk.chunkType === 'section') continue;
     if (chunk.chunkType !== 'statblock' || chunk.statBlock === null) {
       throw new Error(`pack chunk ${chunk.id} has no validated stat block — re-import the pack`);
     }

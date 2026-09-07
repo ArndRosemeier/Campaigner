@@ -177,13 +177,15 @@ describe('pack fetch sources (ratified pins)', () => {
     expect(PACK_FETCH_NEWEST_REF).toBe('HEAD');
     expect(PACK_FETCH_FALLBACK_VALID_RATIO).toBe(0.5);
     // Every source's chain: newest (HEAD) first, then its pinned verified ref.
-    // The pf2e pair shares v14-dev and the dnd5e pair shares 6.0.x; the item
-    // sources joined with the item-corpus arc (12-BESTIARY-PACKS §13).
+    // The pf2e family shares v14-dev and the dnd5e pair shares 6.0.x; the item
+    // sources joined with the item-corpus arc (12-BESTIARY-PACKS §13), the
+    // journal source with the rules-text arc (docs/12 §15).
     expect(PACK_FETCH_SOURCES.map((source) => packRefChain(source))).toEqual([
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
       ['HEAD', 'v14-dev'],
       ['HEAD', '6.0.x'],
+      ['HEAD', 'v14-dev'],
     ]);
   });
 
@@ -231,6 +233,107 @@ describe('pack fetch sources (ratified pins)', () => {
     ];
     expect(selectCreatureFiles(['.json'], 'packs/pf2e', 'packs/pf2e/npc-gallery', paths)).toEqual([
       'packs/pf2e/npc-gallery/acolyte-of-nethys.json',
+    ]);
+  });
+});
+
+describe('journal fetch source foundry-pf2e-journal (docs/12 §15)', () => {
+  /** The whole GM Screen journal IS the pack: one document, 61 pages. */
+  const gmScreenDoc = {
+    _id: 'S55aqwWIzpQRFhcq',
+    name: 'GM Screen',
+    categories: [],
+    pages: [
+      {
+        name: 'Encounter Budget',
+        text: {
+          content:
+            '<table border="1" class="pf2e remaster"><thead><tr style="text-align:right"><th>Difficulty</th>' +
+            '<th>XP Budget</th><th>Character Adjustment</th></tr></thead><tbody><tr><td>Trivial</td>' +
+            '<td>40 or less</td><td>10 or less</td></tr><tr><td>Low</td><td>60</td><td>20</td></tr></tbody></table>' +
+            '<p><em>Section: Running the Game</em><span style="float:right"><em>Pathfinder GM Core pg. 75</em></span></p>',
+        },
+      },
+      {
+        name: 'XP Awards',
+        text: { content: '<p><em>Section: Running the Game</em><span style="float:right"><em>Pathfinder GM Core pg. 56</em></span></p>' },
+      },
+    ],
+  };
+
+  const JOURNAL_TREE = {
+    sha: 'tree-sha',
+    truncated: false,
+    tree: [
+      { path: 'packs/pf2e/journals/gm-screen.json', type: 'blob' },
+      { path: 'packs/pf2e/journals/ancestries.json', type: 'blob' },
+      { path: 'packs/pf2e/pathfinder-monster-core/goblin.json', type: 'blob' },
+    ],
+  };
+  const journalRoutes = () => ({
+    [HEAD_LIST_URL]: listingResponse(JOURNAL_TREE),
+    [PINNED_LIST_URL]: listingResponse(JOURNAL_TREE),
+    [RAW('packs/pf2e/journals/gm-screen.json')]: creatureResponse(gmScreenDoc),
+    [RAW_PINNED('packs/pf2e/journals/gm-screen.json')]: creatureResponse(gmScreenDoc),
+  });
+
+  it('pins the journal source: shared repo ref, packDirs restriction, page-count recipe', () => {
+    const source = PACK_FETCH_SOURCES.find((entry) => entry.adapterId === 'foundry-pf2e-journal');
+    expect(source).toBeDefined();
+    expect(source?.owner).toBe('foundryvtt');
+    expect(source?.repo).toBe('pf2e');
+    expect(source?.ref).toBe('v14-dev');
+    expect(source?.packRoot).toBe('packs/pf2e');
+    // The journal source shares the packRoot with the creature/equipment
+    // sources: without packDirs the advanced listing would offer every pack.
+    expect(source?.packDirs).toEqual(['journals']);
+    // Verified 2026-09-07 at v14-dev: gm-screen.json is ONE JournalEntry
+    // document with 61 pages (the brief's "~100" estimate was off — disclosed
+    // in docs/12 §15). The recipe counts PAGES: the volume the user opts into.
+    expect(source?.curated).toEqual([
+      {
+        id: 'packs/pf2e/journals/gm-screen.json',
+        label: 'PF2e GM Screen (Paizo–Foundry partnership; summarizes GM Core)',
+        creatures: 61,
+        unit: 'pages',
+      },
+    ]);
+  });
+
+  it('fetches the single-document journal recipe and imports one section chunk per page', async () => {
+    const fetchFn = mockFetch(journalRoutes());
+    const deps = memoryDeps();
+
+    const result = await fetchAndImportPack(
+      'foundry-pf2e-journal',
+      'packs/pf2e/journals/gm-screen.json',
+      { deps, fetchDeps: { fetchFn } },
+    );
+
+    // Curated label becomes the book title; exactly ONE file was downloaded.
+    expect(deps.created[0]?.title).toBe('PF2e GM Screen (Paizo–Foundry partnership; summarizes GM Core)');
+    expect(fetchFn.calls.filter((url) => url.startsWith('https://raw.githubusercontent.com'))).toHaveLength(1);
+    expect(result.imported).toBe(2);
+    expect(result.sectionsImported).toBe(2);
+    expect(result.book.status).toBe('ready');
+    expect(result.book.packMeta?.sourceUrl).toBe(
+      'https://github.com/foundryvtt/pf2e/tree/HEAD/packs/pf2e/journals/gm-screen.json',
+    );
+    const chunks = deps.persisted.flat();
+    expect(chunks.map((chunk) => chunk.chunkType)).toEqual(['section', 'section']);
+    expect(chunks[0]?.headingPath).toEqual(['Running the Game', 'Encounter Budget']);
+    expect(chunks[0]?.text).toContain('Trivial | 40 or less | 10 or less');
+    expect(chunks[0]?.text).toContain('Source: Pathfinder GM Core pg. 75');
+  });
+
+  it('restricts the full listing to the journals folder, counted per adapter-parseable file', async () => {
+    const fetchFn = mockFetch(journalRoutes());
+    clearPackTreeCache();
+    const recipes = await listPackRecipes('foundry-pf2e-journal', { full: true, fetchDeps: { fetchFn } });
+    expect(recipes).toEqual([
+      // The full listing groups by folder and counts FILES (one per journal) —
+      // curated recipes are the ones that carry the page-count volume.
+      { id: 'packs/pf2e/journals', label: 'journals', creatures: 2 },
     ]);
   });
 });

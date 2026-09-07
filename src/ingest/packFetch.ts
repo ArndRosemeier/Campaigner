@@ -42,10 +42,14 @@ export interface PackRecipe {
   id: string;
   /** Book title / UI label. */
   label: string;
-  /** Verified creature-file count (display only; the listing decides what is fetched). */
+  /**
+   * Verified entry-file count (display only; the listing decides what is
+   * fetched). Journal recipes count PAGES instead of files — the fetch is one
+   * document, the volume the user opts into is its pages (docs/12 §15).
+   */
   creatures: number;
-  /** Entry noun for the count label ('creatures' default; item packs: 'items'). */
-  unit?: 'creatures' | 'items';
+  /** Entry noun for the count label ('creatures' default; item packs: 'items'; journal packs: 'pages'). */
+  unit?: 'creatures' | 'items' | 'pages';
 }
 
 export interface PackFetchSource {
@@ -144,6 +148,30 @@ export const PACK_FETCH_SOURCES: readonly PackFetchSource[] = [
       { id: 'packs/_source/tradegoods', label: 'D&D 5e Trade Goods', creatures: 23, unit: 'items' },
     ],
   },
+  {
+    // Rules-text packs arc (docs/12 §15): pf2e journal packs are one
+    // JournalEntry JSON PER FILE whose PAGES are the entries (the GM Screen
+    // ships 61 pages in one 214 KB document) — the recipe counts PAGES so the
+    // opt-in names the real volume. packDirs scopes the shared-packRoot
+    // listing to the journals folder. The GM Screen is the curated entry: it
+    // carries the GM Core Encounter Budget / XP / DC tables the advisory
+    // grounding cites ("PF2e GM Screen" — it SUMMARIZES GM Core, Paizo–
+    // Foundry partnership; per-page citations preserved).
+    adapterId: 'foundry-pf2e-journal',
+    owner: 'foundryvtt',
+    repo: 'pf2e',
+    ref: 'v14-dev',
+    packRoot: 'packs/pf2e',
+    packDirs: ['journals'],
+    curated: [
+      {
+        id: 'packs/pf2e/journals/gm-screen.json',
+        label: 'PF2e GM Screen (Paizo–Foundry partnership; summarizes GM Core)',
+        creatures: 61,
+        unit: 'pages',
+      },
+    ],
+  },
 ];
 
 export function getPackFetchSource(adapterId: string): PackFetchSource {
@@ -192,14 +220,23 @@ export function selectCreatureFiles(
   paths: readonly string[],
 ): string[] {
   const prefix = `${packId}/`;
+  const extensionOf = (base: string): string => {
+    const dot = base.lastIndexOf('.');
+    return dot === -1 ? '' : base.slice(dot).toLowerCase();
+  };
+  // A SINGLE-DOCUMENT pack (rules-text packs arc, docs/12 §15): journal packs
+  // are one JournalEntry JSON per file, so the recipe names the file itself
+  // ('packs/pf2e/journals/gm-screen.json'). Same metadata-doc rule as below.
+  if (paths.includes(packId)) {
+    const base = packId.split('/').pop() ?? '';
+    return !base.startsWith('_') && adapterExtensions.includes(extensionOf(base)) ? [packId] : [];
+  }
   return paths.filter((path) => {
     if (!path.startsWith(prefix) || path === packId) return false;
     const relative = path.slice(packRoot.length + 1);
     const base = path.split('/').pop() ?? '';
     if (base.startsWith('_')) return false; // _folders.json / _folder.yml metadata docs
-    const dot = base.lastIndexOf('.');
-    const extension = dot === -1 ? '' : base.slice(dot).toLowerCase();
-    return adapterExtensions.includes(extension) && relative.length > 0;
+    return adapterExtensions.includes(extensionOf(base)) && relative.length > 0;
   });
 }
 

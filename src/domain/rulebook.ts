@@ -35,6 +35,13 @@ export const packMetaSchema = z.object({
    * counts both lanes.
    */
   itemsImported: z.number().int().nonnegative().optional(),
+  /**
+   * Valid rules-text entries in this book (docs/12 §15, the rules-text packs
+   * arc) — journal pages, conditions, feats, spells, actions, class features
+   * landing as `section` chunks. Optional, so old rows parse unchanged;
+   * `entriesImported` counts all three lanes.
+   */
+  sectionsImported: z.number().int().nonnegative().optional(),
   // Provenance of a FETCHED pack (16-BESTIARY-FETCH §7) — absent for manual
   // file imports; all optional, so old backups parse unchanged (no migration).
   /** The ref the pack was ACTUALLY imported from: 'HEAD' (newest) or the

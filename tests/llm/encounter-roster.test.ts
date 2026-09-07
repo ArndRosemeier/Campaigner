@@ -344,6 +344,37 @@ describe('collectPackRoster', () => {
     expect(roster.lines).toEqual(['Goblin Warrior (-1)']);
   });
 
+  it('skips rules-text section chunks (docs/12 §15) — a journal/conditions pack never poisons the roster', async () => {
+    // The rules-text lane lands `section` chunks in pack books of the same
+    // system; like item chunks they are retrieval context, not creatures —
+    // the skip guard keeps encounter runs working after such an import.
+    const section = (name: string): RuleChunk =>
+      ruleChunkSchema.parse({
+        id: crypto.randomUUID(),
+        createdAt: 1,
+        updatedAt: 1,
+        bookId: crypto.randomUUID(),
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'section',
+        headingPath: ['Running the Game', name],
+        text: `${name}\nEncounter budget text`,
+        statBlock: null,
+        contentHash: crypto.randomUUID().replaceAll('-', '0').padEnd(64, '0'),
+      });
+    const deps: PackRosterDeps = {
+      listBooks: () => Promise.resolve([book()]),
+      listChunks: () =>
+        Promise.resolve([
+          section('Encounter Budget'),
+          chunk({ name: 'Goblin Warrior', level: '-1' }),
+        ]),
+    };
+    const roster = await collectPackRoster('pathfinder2e', deps);
+    expect(roster.entries.map((entry) => entry.name)).toEqual(['Goblin Warrior']);
+    expect(roster.lines).toEqual(['Goblin Warrior (-1)']);
+  });
+
   it('builds an empty roster — not an error — from an item-only pack book', async () => {
     const deps: PackRosterDeps = {
       listBooks: () => Promise.resolve([book()]),
