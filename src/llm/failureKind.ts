@@ -6,21 +6,23 @@ import { StrictSchemaError } from '@/llm/strictSchema';
 
 /**
  * Classifies WHY a run failed (docs/05 run views): pure error-object →
- * `FailureKind`, the same structural reading of the typed error classes that
- * `fallbackReasonFor` does for escalation (openrouterErrors.ts header: match
- * structured data, never English prose). The classification only ANNOTATES
- * the raw `errorMessage` (AGENTS 2 — the message stays the error surface);
- * runEngine writes both when it fails a run.
+ * `FailureKind`, the same structural reading of the typed error classes
+ * that `fallbackReasonFor` does for the escalation-notice wording
+ * (openrouterErrors.ts header: match structured data, never English
+ * prose). The classification only ANNOTATES the raw `errorMessage` (AGENTS
+ * 2 — the message stays the error surface); runEngine writes both when it
+ * fails a run. It has NO escalation role: the model chain escalates on any
+ * error regardless of kind (owner decision 2026-09-07).
  *
  * Mapping:
  * - OpenRouter kinds: refusal → filter; schema-rejected keeps its kind;
  *   the delivery-watchdog family (stall/content-stall/max-duration/
  *   headers-timeout/no-images) → congestion; length → invalid-output
- *   (a truncated reply is unusable output, not provider congestion —
- *   `fallbackReasonFor` deliberately refuses to escalate it);
+ *   (a truncated reply is unusable output — the chain escalates anyway,
+ *   but the Details view names the real failure);
  *   http/stream-error refine through `fallbackReasonFor` (status /
  *   provider-code / filter-pattern) and stay 'unknown' when that returns
- *   its loud null (auth, credits, opaque 400s).
+ *   its null (auth, credits, opaque 400s).
  * - DOMException: AbortError → cancelled; the fetch timeout (TimeoutError)
  *   → congestion.
  * - ZodError → invalid-output (contract failures; AGENTS 3).
@@ -49,9 +51,13 @@ export function failureKindOf(error: unknown): FailureKind {
       case 'length':
         return 'invalid-output';
       // 'http', 'stream-error' and any unrecognized kind refine through the
-      // shared status/code/filter-pattern logic; null stays unknown (loud).
-      default:
-        return fallbackReasonFor(error) ?? 'unknown';
+      // shared status/code/filter-pattern classification. 'other' and null
+      // both stay 'unknown' (loud) — the Details vocabulary is unchanged;
+      // all of this is annotation, escalation is unconditional.
+      default: {
+        const reason = fallbackReasonFor(error);
+        return reason === 'congestion' || reason === 'filter' ? reason : 'unknown';
+      }
     }
   }
   if (error instanceof StrictSchemaError) return 'bug';

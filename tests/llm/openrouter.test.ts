@@ -522,30 +522,45 @@ describe('model fallback chain', () => {
     expect(chatCallsOf(fetchMock)).toHaveLength(6); // 429-retries run per model
   });
 
-  it('never falls back on errors that are not congestion or filter', async () => {
+  it('escalates on an unknown 400 — the owner\'s Meta content-filter body verbatim', async () => {
+    // Owner bug report: Meta's content-management rejection never matched
+    // FILTER_PATTERN, so the old gate let it die without trying the
+    // fallback. Escalation is now unconditional — the chain is the bound.
     await saveSettings(FALLBACK_SETTINGS);
-    const fetchMock = vi.fn(() => Promise.resolve(new Response('bad request', { status: 400 })));
+    const metaBody =
+      'The response was filtered due to the prompt triggering our content management policy.';
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(metaBody, { status: 400 }))
+      .mockResolvedValueOnce(sseResponse([{ choices: [{ delta: { content: 'ok' } }] }]));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(
-      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
-    ).rejects.toMatchObject({ status: 400 });
-    expect(chatCallsOf(fetchMock)).toHaveLength(1);
+    const result = await chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]);
+    expect(result.modelUsed).toBe('potent/fallback');
+    expect(result.fallback).toEqual({
+      from: 'cheap/primary',
+      to: 'potent/fallback',
+      reason: 'other',
+    });
+    const bodies = chatCallsOf(fetchMock).map(
+      (call) => JSON.parse((call[1] as { body: string }).body) as { model: string },
+    );
+    expect(bodies.map((body) => body.model)).toEqual(['cheap/primary', 'potent/fallback']);
   });
 
-  it('never falls back on truncation (finish_reason "length")', async () => {
+  it('escalates truncation (finish_reason "length") — another model may fit the answer', async () => {
     await saveSettings(FALLBACK_SETTINGS);
     const fetchMock = vi
       .fn()
-      .mockResolvedValue(
+      .mockResolvedValueOnce(
         sseResponse([{ choices: [{ delta: { content: 'partial' }, finish_reason: 'length' }] }]),
-      );
+      )
+      .mockResolvedValueOnce(sseResponse([{ choices: [{ delta: { content: 'full answer' } }] }]));
     vi.stubGlobal('fetch', fetchMock);
 
-    await expect(
-      chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]),
-    ).rejects.toMatchObject({ status: 200 });
-    expect(chatCallsOf(fetchMock)).toHaveLength(1);
+    const result = await chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 1 }, [0, 0]);
+    expect(result.modelUsed).toBe('potent/fallback');
+    expect(chatCallsOf(fetchMock)).toHaveLength(2);
   });
 
   it('skips the fallback for image-input requests when the fallback model is not vision-capable', async () => {
@@ -678,7 +693,10 @@ describe('strict structured outputs (json_schema response_format)', () => {
     expect(callsOf(fetchMock)).toHaveLength(2);
   });
 
-  it('never auto-downgrades nor escalates a schema rejection, even with a fallback configured', async () => {
+  it('escalates a schema rejection to the fallback WITHOUT downgrading the strict format', async () => {
+    // Owner decision 2026-09-07: the rejection escalates like any other
+    // error (another model may support strict mode) — but every attempt
+    // still sends json_schema; there is no automatic downgrade anywhere.
     await saveSettings({ ...SETTINGS, fallbackChatModel: 'potent/fallback' });
     const fetchMock = vi.fn(() => Promise.resolve(new Response('json_schema not supported', { status: 400 })));
     vi.stubGlobal('fetch', fetchMock);
@@ -686,7 +704,16 @@ describe('strict structured outputs (json_schema response_format)', () => {
     await expect(
       chat([{ role: 'user', content: 'hi' }], { model: 'cheap/primary', temperature: 0, responseFormat: contract }, [1, 1]),
     ).rejects.toMatchObject({ kind: 'schema-rejected' });
-    expect(callsOf(fetchMock)).toHaveLength(1);
+    const attempts = callsOf(fetchMock);
+    expect(attempts).toHaveLength(2);
+    const bodies = attempts.map(
+      (call) => JSON.parse((call[1] as { body: string }).body) as { model?: string; response_format?: Record<string, unknown> },
+    );
+    expect(bodies.map((body) => body.model)).toEqual(['cheap/primary', 'potent/fallback']);
+    for (const body of bodies) {
+      // The strict format rides EVERY attempt — escalation is not a downgrade.
+      expect(body.response_format).toMatchObject({ type: 'json_schema' });
+    }
   });
 
   it('treats a strict-mode refusal (delta.refusal) as a loud refusal error', async () => {

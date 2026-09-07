@@ -205,10 +205,11 @@ async function generateImagesWithModel(
 
 /**
  * Generates up to `n` images for `prompt`, escalating across the model
- * fallback chain when the first-try model is congested or refuses (transport
- * failures only — image generation has no output contract to repair). The
- * returned `modelUsed` tells the caller which model produced the images so
- * image rows record the truth instead of the requested model.
+ * fallback chain when the first-try model fails at all (escalation is
+ * unconditional — transport failures only, since image generation has no
+ * output contract to repair; MissingApiKeyError and user aborts stop the
+ * walk). The returned `modelUsed` tells the caller which model produced the
+ * images so image rows record the truth instead of the requested model.
  */
 export async function generateImages(
   prompt: string,
@@ -218,8 +219,9 @@ export async function generateImages(
   const settings = await getSettings();
   if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
 
-  // The escalation walk (failures → AbortError/unclassifiable/single-entry
-  // rethrows → vision guard → chainError) is shared with the chat client.
+  // The escalation walk (unconditional advance on ANY failure →
+  // model-independent failures rethrow → single-entry rethrow → vision
+  // guard → chainError) is shared with the chat client.
   const chain = buildModelChain(opts.model, settings.fallbackImageModel);
   const walk = await walkModelChain(
     chain,

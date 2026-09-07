@@ -75,9 +75,10 @@ export interface ChatOptions {
    * (queued providers, reasoning models thinking before the first delta). */
   onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
   /**
-   * Model-fallback feature: called when the previous chain entry failed with
-   * a fallback-worthy error (congestion / filter) and the next model is about
-   * to be tried. Never fires when no fallback model is configured.
+   * Model-fallback feature: called when the previous chain entry failed —
+   * which escalates unconditionally (owner: "ANY ERROR, ANY AT ALL should
+   * lead to the fallback") — and the next model is about to be tried. Never
+   * fires when no fallback model is configured.
    */
   onFallback?: ((info: ChatFallback) => void) | undefined;
   /**
@@ -264,10 +265,12 @@ export async function chat(
   if (settings.openRouterApiKey === '') throw new MissingApiKeyError();
 
   // Model-fallback feature: primary first, then the configured escalation
-  // tier ('' or duplicate = disabled). Transport failures classified as
-  // congestion/filter escalate; everything else fails loudly exactly as
-  // before (AGENTS rule 1 — fallback is surfaced, never silent). The walk
-  // itself lives in walkModelChain (shared with the image client).
+  // tier ('' or duplicate = disabled). Escalation is UNCONDITIONAL (owner
+  // decision 2026-09-07): every error advances to the next chain entry and
+  // only an exhausted chain fails, with the combined end-of-chain error;
+  // the sole stops are the model-independent failures (MissingApiKeyError
+  // — thrown above — and user aborts). The walk itself lives in
+  // walkModelChain (shared with the image client).
   const chain = buildModelChain(opts.model, settings.fallbackChatModel);
   const walk = await walkModelChain(
     chain,

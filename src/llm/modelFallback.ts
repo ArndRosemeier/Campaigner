@@ -1,6 +1,6 @@
 import type { Settings } from '@/domain';
 import { getCachedModels, type CachedModel } from '@/llm/modelCache';
-import { chainError, fallbackReasonFor, type FallbackReason } from '@/llm/openrouterErrors';
+import { chainError, fallbackReasonFor, MissingApiKeyError, type FallbackReason } from '@/llm/openrouterErrors';
 import { debugLog } from '@/lib/debug';
 
 /**
@@ -11,10 +11,12 @@ import { debugLog } from '@/lib/debug';
  *   1. First-try model — persona override or settings default. A cheaper
  *      model is fine; it is the workhorse.
  *   2. Fallback model — the escalation tier (settings `fallbackChatModel` /
- *      `fallbackImageModel`). Used when the first-try model is congested,
- *      refuses content, or fails the output contract; pick one at least as
- *      capable as the first-try models. Defining it activates it — '' means
- *      no escalation and failures stay loud (AGENTS rule 1).
+ *      `fallbackImageModel`). Used when the first-try model fails AT ALL:
+ *      escalation is unconditional (owner decision 2026-09-07, "ANY ERROR,
+ *      ANY AT ALL should lead to the fallback") — the chain itself is the
+ *      bound. Pick one at least as capable as the first-try models.
+ *      Defining it activates it — '' means no escalation and failures stay
+ *      loud (AGENTS rule 1).
  */
 
 /** The first-try chat model: `preferredModel` (a persona override) when set,
@@ -84,6 +86,23 @@ export interface ChainFallback {
   reason: FallbackReason;
 }
 
+/**
+ * The ONLY model-independent failure classes — errors that fail identically
+ * for every model in the chain, so escalating cannot help (owner-ratified
+ * minimal list, 2026-09-07; everything else escalates):
+ *
+ * - `MissingApiKeyError`: no key is account-level, not model-level — every
+ *   attempt would fail the same way; escalating is pure noise.
+ * - a user-initiated abort (the platform `AbortError` DOMException — the
+ *   caller's AbortSignal, e.g. Stop all / run cancel): escalating would
+ *   defy the stop the user just asked for. (The transport's own watchdog
+ *   timeouts abort with `TimeoutError`, which is congestion and escalates.)
+ */
+function isModelIndependentFailure(error: unknown): boolean {
+  if (error instanceof MissingApiKeyError) return true;
+  return error instanceof DOMException && error.name === 'AbortError';
+}
+
 export interface WalkModelChainOptions {
   /** The combined end-of-chain error's label (chainError kind). */
   kind: 'chat' | 'image';
@@ -115,17 +134,25 @@ export interface ChainWalkResult<T> {
 
 /**
  * THE model-escalation walk (one implementation for the formerly divergent
- * copies in openrouter.chat and imageGen.generateImages). Unified contract:
+ * copies in openrouter.chat and imageGen.generateImages). Unified contract
+ * (owner decision 2026-09-07 — escalation is UNCONDITIONAL):
  *
- * - every failure is recorded, then the walk decides:
- *   a user cancel (AbortError), an unclassifiable error (fallbackReasonFor
- *   null) and a single-entry chain rethrow the ORIGINAL error unchanged —
- *   the three checks are order-swappable (all rethrow the same error);
+ * - every model failure advances to the next chain entry — 'length'
+ *   truncation, strict-schema rejections, unknown 400s (e.g. Meta's
+ *   content-management-policy body the filter pattern never matched),
+ *   watchdog stalls, refusals, unexpected throws: ALL escalate ("ANY ERROR,
+ *   ANY AT ALL should lead to the fallback");
+ * - the only stops are the model-independent failures
+ *   (`isModelIndependentFailure`: MissingApiKeyError, user aborts — they
+ *   rethrow the ORIGINAL error unchanged, no wrapping) and a single-entry
+ *   chain (the bound is exhausted immediately; the original error stays the
+ *   diagnosis, exactly the pre-fallback-feature surface);
  * - the vision guard blocks escalation to the NEXT entry (chain[attempts+1],
  *   mid-chain-correct — the chat copy used the fixed `chain[1]`) when
  *   `needsImageInput` is set and the cache knows that entry cannot take
  *   image input; the primary's failure stays the diagnosis;
- * - exhausting the chain throws the combined chainError(failures, kind).
+ * - exhausting the chain throws the combined chainError(failures, kind):
+ *   every model tried, in order, last error's kind/status surviving.
  */
 export async function walkModelChain<T>(
   chain: readonly string[],
@@ -139,8 +166,11 @@ export async function walkModelChain<T>(
     const model = chain[attempt];
     if (model === undefined) break;
     if (attempt > 0) {
-      const reason = fallbackReasonFor(failures[failures.length - 1]?.error);
-      if (reason !== null) opts.onFallback?.({ from: firstModel, to: model, reason });
+      // Escalation is unconditional, so this fires for EVERY previous
+      // failure; the reason is the honest classification of the trigger
+      // ('other' when no specific class applies) — never a gate.
+      const reason = fallbackReasonFor(failures[failures.length - 1]?.error) ?? 'other';
+      opts.onFallback?.({ from: firstModel, to: model, reason });
       opts.onReset?.();
     }
     try {
@@ -154,15 +184,14 @@ export async function walkModelChain<T>(
             : {
                 from: firstModel,
                 to: model,
-                reason: fallbackReasonFor(failures[0]?.error) ?? 'congestion',
+                reason: fallbackReasonFor(failures[0]?.error) ?? 'other',
               },
       };
     } catch (error) {
       failures.push({ model, error });
-      // A user cancel is never an escalation trigger.
-      if (error instanceof DOMException && error.name === 'AbortError') throw error;
-      // Anything not classified congestion/filter fails loudly, as before.
-      if (fallbackReasonFor(error) === null) throw error;
+      // Model-independent failures (no API key, user abort): escalating
+      // cannot help — fail immediately on the original error.
+      if (isModelIndependentFailure(error)) throw error;
       // Single-model chain: behavior is exactly what it was before the
       // fallback feature — no wrapping, no change.
       if (chain.length === 1) throw error;
@@ -177,6 +206,8 @@ export async function walkModelChain<T>(
         debugLog('llm', 'fallback skipped: request needs image input the fallback model cannot take');
         throw error;
       }
+      // Anything else escalates: the loop's next iteration tries the next
+      // chain entry; exhausting the chain throws the combined chainError.
     }
   }
   throw chainError(failures, opts.kind);

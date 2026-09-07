@@ -49,12 +49,24 @@ async function chat(messages: ChatMessage[], opts: ChatOptions): Promise<string>
   Parallel generation (Settings → Parallel requests, see 05-UI) multiplies
   simultaneous traffic — keep the level low for `:free` models.
 - Model escalation (`/src/llm/modelFallback.ts`): when `fallbackChatModel` is
-  set, `chat()` walks `[primary, fallback]` — a failure classified as
-  congestion (429/5xx/408/timeouts) or filter (403/moderation phrasings)
-  escalates to the fallback; aborts and anything else rethrow the original
-  error, and an exhausted chain throws one combined error naming every
-  model. Vision requests (image input) skip a fallback the cached `/models`
-  data knows is text-only. `chat()` returns
+  set, `chat()` walks `[primary, fallback]` and EVERY failure escalates to
+  the next model — owner decision (2026-09-07): "ANY ERROR, ANY AT ALL
+  should lead to the fallback." The chain itself is the bound: only an
+  exhausted chain fails the call, with one combined error naming every
+  model tried (the last error's kind/status survive). The only
+  non-escalating errors are the model-independent ones —
+  `MissingApiKeyError` (no key fails identically for every model) and
+  user-initiated aborts (`AbortError` from the caller's signal; escalating
+  would defy the stop; the transport's own watchdog aborts with
+  `TimeoutError`, which escalates). 'length' truncation, strict-schema
+  rejections, unknown 400s (e.g. Meta's "The response was filtered due to
+  the prompt triggering our content management policy.", which
+  `FILTER_PATTERN` never matched), watchdog stalls, refusals — all
+  escalate. Failure classification (`failureKindOf`/`fallbackReasonFor`,
+  'congestion'/'filter'/…) remains as the Details-view ANNOTATION only; it
+  no longer gates anything. Vision requests (image input) still skip a
+  fallback the cached `/models` data knows is text-only — a text-only
+  fallback cannot serve the request at all. `chat()` returns
   `ChatResult { text, modelUsed, fallback }`; run steps persist an
   escalation `notice` so a fallback is visible, never silent.
 - Contract repair escalates too: the ONE automatic retry after a schema/
@@ -95,8 +107,12 @@ normalizes each contract to the strict subset:
 
 Failure behavior (loud, never silent):
 
-- A provider that rejects the schema (HTTP 400/422) fails the step as
-  `kind: 'schema-rejected'`, naming the model. No downgrade, no escalation.
+- A provider that rejects the schema (HTTP 400/422) is recorded as
+  `kind: 'schema-rejected'`, naming the model (Details view). The chain
+  escalates to the next model like for any other failure (owner decision
+  2026-09-07 — another model may support strict mode); without a fallback
+  configured the failure stays loud. No automatic DOWNGRADE exists: the
+  strict `json_schema` response_format rides every escalation attempt.
 - A model refusal arrives as OpenAI-style `delta.refusal` →
   `kind: 'refusal'`, classified `filter`: with a fallback model configured
   the chain retries censorship there (owner: "we still need repair models,

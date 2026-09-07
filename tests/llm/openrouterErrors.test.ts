@@ -6,7 +6,17 @@ import {
   FILTER_PATTERN,
 } from '@/llm/openrouterErrors';
 
-describe('fallbackReasonFor', () => {
+/**
+ * `fallbackReasonFor` is the pure failure CLASSIFIER: it names the
+ * congestion/filter classes for the Details-view kind (failureKind.ts) and
+ * the escalation-notice wording. It no longer gates escalation — the model
+ * chain escalates on ANY error regardless of what this returns (owner
+ * decision 2026-09-07: "ANY ERROR, ANY AT ALL should lead to the
+ * fallback"); null only means "no specific class" ('unknown' in the Details
+ * view, plain "failed" in the notice). These pins hold the vocabulary
+ * stable.
+ */
+describe('fallbackReasonFor (classification only — escalation is unconditional)', () => {
   it('classifies congestion statuses on plain HTTP errors', () => {
     for (const status of [408, 429, 500, 502, 503, 504, 508]) {
       expect(fallbackReasonFor(new OpenRouterError('http', status, 'boom'))).toBe('congestion');
@@ -21,14 +31,14 @@ describe('fallbackReasonFor', () => {
     ).toBe('filter');
   });
 
-  it('never falls back on auth, credits, validation or truncation', () => {
+  it('classifies auth, credits, validation and truncation as null (Details view: unknown/invalid-output)', () => {
     expect(fallbackReasonFor(new OpenRouterError('http', 401, 'invalid key'))).toBeNull();
     expect(fallbackReasonFor(new OpenRouterError('http', 402, 'insufficient credits'))).toBeNull();
     expect(fallbackReasonFor(new OpenRouterError('http', 400, 'model not found'))).toBeNull();
     expect(fallbackReasonFor(new OpenRouterError('length', 200, 'truncated'))).toBeNull();
   });
 
-  it('recognizes filter phrasings inside 400 bodies', () => {
+  it('recognizes filter phrasings inside 400 bodies (annotation only)', () => {
     expect(
       fallbackReasonFor(new OpenRouterError('http', 400, 'content_policy_violation: disallowed')),
     ).toBe('filter');
@@ -52,7 +62,8 @@ describe('fallbackReasonFor', () => {
   it('treats the platform TimeoutError from fetchWithHeadersTimeout as congestion', () => {
     const timeout = new DOMException('OpenRouter request timed out: no response headers', 'TimeoutError');
     expect(fallbackReasonFor(timeout)).toBe('congestion');
-    // User aborts must never fall back.
+    // User aborts classify as null — and stop the walk as model-independent
+    // failures (modelFallback.isModelIndependentFailure), never escalate.
     expect(fallbackReasonFor(new DOMException('Aborted', 'AbortError'))).toBeNull();
   });
 
@@ -71,18 +82,18 @@ describe('fallbackReasonFor', () => {
     );
   });
 
-  it('is null for unknown errors and unknown mid-stream failures (loud default)', () => {
+  it('is null for unknown errors and unknown mid-stream failures (Details view: unknown)', () => {
     expect(fallbackReasonFor(new TypeError('Failed to fetch'))).toBeNull();
     expect(fallbackReasonFor(new Error('anything'))).toBeNull();
     expect(fallbackReasonFor(new OpenRouterError('stream-error', 200, 'opaque failure'))).toBeNull();
     // The empty-result image failure is delivery congestion.
     expect(fallbackReasonFor(new OpenRouterError('no-images', 200, 'no images'))).toBe('congestion');
   });
-  it('classifies a model refusal as filter (censorship routes to the fallback tier)', () => {
+  it('classifies a model refusal as filter (censorship class)', () => {
     expect(fallbackReasonFor(new OpenRouterError('refusal', 200, 'the model refused the task: no'))).toBe('filter');
   });
 
-  it('never escalates a rejected strict response_format (loud, explicit toggle is the escape hatch)', () => {
+  it('classifies a rejected strict response_format as null (its own Details kind; the chain still escalates)', () => {
     expect(fallbackReasonFor(new OpenRouterError('schema-rejected', 400, 'model "m" rejected the strict JSON-schema response format'))).toBeNull();
     expect(fallbackReasonFor(new OpenRouterError('schema-rejected', 422, 'invalid schema'))).toBeNull();
   });

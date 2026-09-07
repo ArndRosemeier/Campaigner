@@ -1,9 +1,17 @@
 /**
  * Typed OpenRouter failures. Every throw site in the OpenRouter clients
- * labels WHY it failed via `kind`, so fallback classification reads
- * structured data instead of matching English prose (model-fallback
- * feature). This is a leaf module: both the OpenRouter client and the
- * model-fallback helpers import it — never the other way around.
+ * labels WHY it failed via `kind`, so failure classification reads
+ * structured data instead of matching English prose. This is a leaf module:
+ * both the OpenRouter client and the model-fallback helpers import it —
+ * never the other way around.
+ *
+ * ESCALATION IS UNCONDITIONAL (owner decision 2026-09-07, model-fallback
+ * arc): `walkModelChain` escalates on ANY error — "ANY ERROR, ANY AT ALL
+ * should lead to the fallback" — with only two model-independent exceptions
+ * (MissingApiKeyError, user aborts). Nothing in this module gates escalation
+ * anymore: the kinds, `fallbackReasonFor` and FILTER_PATTERN are the
+ * CLASSIFICATION layer that annotates a failure for the run Details view
+ * (failureKind.ts) and words the escalation notice honestly.
  */
 
 import { errorMessage } from '@/lib/errors';
@@ -25,14 +33,17 @@ export type OpenRouterErrorKind =
   | 'length'
   /**
    * The model declined the task itself (OpenAI-style `delta.refusal`).
-   * Censorship class — escalates to the configured fallback model (owner:
-   * "we still need repair models, for censorship and congestion").
+   * Censorship class — classified 'filter' for the Details view; the chain
+   * escalates like it does for every other error (owner: "we still need
+   * repair models, for censorship and congestion").
    */
   | 'refusal'
   /**
    * The provider rejected the strict JSON-schema response_format (HTTP
-   * 400/422). Never escalates: loud failure naming the model; the Settings
-   * "Strict structured outputs" toggle is the explicit escape hatch.
+   * 400/422). Classified as its own kind for the Details view; the chain
+   * escalates to the next model like for any other error (owner decision
+   * 2026-09-07 — another model may support strict mode). The Settings
+   * "Strict structured outputs" toggle remains the explicit downgrade.
    */
   | 'schema-rejected'
   /** The image API answered 200 but with zero images. */
@@ -70,12 +81,23 @@ export class MissingApiKeyError extends Error {
   }
 }
 
-export type FallbackReason = 'congestion' | 'filter';
+/**
+ * Why an escalation-triggering error reads the way it does in user-facing
+ * surfaces: 'congestion' (provider availability), 'filter' (moderation /
+ * refusal), 'other' (everything the classifier cannot name — truncation,
+ * schema rejections, opaque 400s, unexpected throws). This is NOT an
+ * escalation gate: the chain escalates regardless (owner: "ANY ERROR, ANY
+ * AT ALL should lead to the fallback"); it only words the escalation notice
+ * and refines the Details-view kind for http/stream errors.
+ */
+export type FallbackReason = 'congestion' | 'filter' | 'other';
 
-/** Why `error` qualifies for escalation to the fallback model, or null when
- * it must NOT fall back. Null is the loud default: auth/credit problems,
- * request validation and truncated output change nothing on another model
- * (or would mask a failure the user must see — AGENTS rule 1). */
+/**
+ * The pure failure classifier: names the congestion/filter classes, or null
+ * when the error belongs to no specific class. Null is NOT "do not
+ * escalate" (escalation is unconditional) — it maps to the Details view's
+ * 'unknown' kind (failureKind.ts) and the notice's plain "failed" wording.
+ */
 export function fallbackReasonFor(error: unknown): FallbackReason | null {
   // Our own fetchWithHeadersTimeout aborts with a platform TimeoutError when
   // no response headers arrive: the provider accepted nothing — congestion.
@@ -84,12 +106,11 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
   switch (error.kind) {
     case 'refusal':
       // The model refused the task: censorship, the class the fallback tier
-      // exists for. Without a configured fallback this still fails loudly.
+      // was built for.
       return 'filter';
     case 'schema-rejected':
-      // The provider cannot enforce strict JSON schemas. Another model in
-      // the chain is NOT tried automatically — the failure must be visible
-      // and the user opts out via the Settings toggle (no silent downgrade).
+      // The provider cannot enforce strict JSON schemas. Classified as its
+      // own kind; the chain escalates like for any other error.
       return null;
     case 'stall':
     case 'content-stall':
@@ -99,9 +120,9 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
       // The provider never delivered a usable answer — availability.
       return 'congestion';
     case 'length':
-      // Truncation is task-shaped (output budget vs prompt size), not
-      // model-availability: retrying on another model doubles spend for a
-      // failure the user must fix (shorten the task or raise the budget).
+      // Truncation is task-shaped output, not provider congestion — the
+      // Details view shows 'invalid-output'; the chain still escalates (a
+      // larger-context model may fit the answer).
       return null;
     case 'stream-error': {
       const code = Number(error.code);
@@ -117,14 +138,22 @@ export function fallbackReasonFor(error: unknown): FallbackReason | null {
       // and OpenRouter's documented 403 "input was flagged" moderation.
       if (error.status === 403) return 'filter';
       if (error.status === 408 || error.status === 429 || error.status >= 500) return 'congestion';
-      // Some providers report content filters as plain 400s with a telling body.
+      // Some providers report content filters as plain 400s with a telling
+      // body (e.g. Meta's "content management policy" phrasing, which this
+      // pattern deliberately does not need to catch for escalation's sake —
+      // the chain escalates on it regardless; this only names the class).
       if (FILTER_PATTERN.test(error.bodyText)) return 'filter';
       return null;
     }
   }
 }
 
-/** Provider phrasings for moderation / content-policy refusals. */
+/**
+ * Provider phrasings for moderation / content-policy refusals. ANNOTATION
+ * ONLY since the unconditional-escalation owner decision: classification
+ * informs the Details view (failureKind.ts) and the escalation notice;
+ * escalation itself is unconditional and no longer reads this pattern.
+ */
 export const FILTER_PATTERN =
   /content[ _-]?filter|content[ _-]?polic(?:y|ies)|moderation|flagged|inappropriate/i;
 

@@ -100,7 +100,7 @@ column.
 | One JSON-contract chat call | `openrouter.chat` with `responseFormat: schemaResponseFormat(zodSchema)` (`strictSchema.ts`) | hand-written `response_format`; the ONLY downgrade to `'json'` is the Settings `strictOutputs` toggle (default ON) — never automatic |
 | zod → JSON Schema | `strictSchema.strictJsonSchema` / `schemaResponseFormat` — read the strict-subset header first | a private converter |
 | Parse a model reply | `jsonReply.parseJsonReply` + the contract's zod `parse`; failure fails the run / pauses for review (AGENTS 3) | catch-and-continue around parsing |
-| Model escalation / refusals | `modelFallback.walkModelChain` + `openrouterErrors.fallbackReasonFor` (refusal → `'filter'` fallback; schema-rejected → `null`, loud) | ad-hoc retry loops; silent model swaps |
+| Model escalation / refusals | `modelFallback.walkModelChain` — UNCONDITIONAL escalation (owner 2026-09-07: "ANY ERROR, ANY AT ALL should lead to the fallback"): every error advances to the next chain entry, the chain is the bound, exhaustion throws the combined `chainError`; only `MissingApiKeyError` and user aborts stop the walk. `failureKind`/`fallbackReasonFor`/`FILTER_PATTERN` classify for the Details view and notice wording — annotation only, never a gate | ad-hoc retry loops; silent model swaps; gating escalation on the failure class again |
 | Classify a failed run for the owner | `failureKind.failureKindOf(error)` (`llm/failureKind.ts` — structural over the typed error classes) + the `domain/run` `FAILURE_KIND_LABELS`/`FAILURE_KIND_GUIDANCE` maps; every fail site writes the kind next to the verbatim `errorMessage` (docs/05, ledger 35) | prose-matching the raw message; replacing or truncating the message with the kind |
 | Wait for a run | `runEngine.waitForRunStatus` (one primitive; `includePaused` for chain steps) | private poll loops; `TERMINAL_RUN_STATUSES` is the only terminal-status list |
 | Cancel all in-flight runs | `runEngine.cancelAllActive()` — the engine's controller registry is the authoritative in-flight set (rows → resumable 'cancelled'; paused runs are not stoppable work) | querying `db.runs` for 'running' rows; ad-hoc cancel sweeps |
@@ -165,8 +165,10 @@ column.
   Queue failures toast per artifact and land on a retryable failed list.
 - **Strict contracts** (docs/04 §Strict structured outputs): contract-shaped
   calls send zod→strict-schema (`strictSchema.ts`); the zod parse still
-  guards every reply; OpenAI-style refusals escalate per `fallbackReasonFor`
-  and fail loudly with the refusal text when no fallback is configured.
+  guards every reply; the escalation chain retries EVERY failure on the
+  next model — refusals included — and fails loudly with the combined
+  end-of-chain error when no fallback is configured or the chain exhausts
+  (classification annotates, it does not gate).
 - **Test hygiene** (docs/08 — read before touching tests): the
   console-hygiene guard (`tests/setup.ts`) fails any test that logs
   `console.error`/`warn` outside `ALLOWED_NOISE`; entries need file scope +

@@ -339,10 +339,18 @@ export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}):
 /**
  * The persisted escalation note for a step output (the 'notice' convention
  * the persona panel renders): a fallback must be visible, never silent
- * (AGENTS rule 1).
+ * (AGENTS rule 1). Escalation is unconditional (owner: "ANY ERROR, ANY AT
+ * ALL should lead to the fallback"), so the reason words the trigger
+ * honestly — 'filter' refused, 'congestion' was unavailable, anything else
+ * just failed.
  */
 function escalationNotice(fallback: ChatFallback): string {
-  const why = fallback.reason === 'filter' ? 'refused the content' : 'was congested';
+  const why =
+    fallback.reason === 'filter'
+      ? 'refused the content'
+      : fallback.reason === 'congestion'
+        ? 'was congested'
+        : 'failed';
   return `Primary model “${fallback.from}” ${why} — answered by fallback “${fallback.to}”.`;
 }
 

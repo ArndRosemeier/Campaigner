@@ -9,7 +9,7 @@ import {
   resolveImageModel,
   walkModelChain,
 } from '@/llm/modelFallback';
-import { OpenRouterError } from '@/llm/openrouterErrors';
+import { MissingApiKeyError, OpenRouterError } from '@/llm/openrouterErrors';
 
 const settings = {
   defaultChatModel: DEFAULT_CHAT_MODEL,
@@ -17,7 +17,7 @@ const settings = {
 } as Pick<Settings, 'defaultChatModel' | 'imageModel'>;
 
 describe('walkModelChain', () => {
-  /** A fallback-worthy failure (the walker escalates on this class). */
+  /** A congestion-class failure (classifyable, escalates). */
   const congested = (): OpenRouterError => new OpenRouterError('stall', 500, 'stalled');
 
   it('returns the first try untouched when it succeeds', async () => {
@@ -45,14 +45,124 @@ describe('walkModelChain', () => {
     expect(resets).toBe(1);
   });
 
-  it('rethrows unclassifiable errors and user cancels unchanged', async () => {
+  it('escalates on ANY error — the chain itself is the bound (owner headline pin)', async () => {
+    // Every class the old gate used to stop: unclassifiable throws,
+    // truncation, strict-schema rejections, opaque 400s (the owner's Meta
+    // content-management body verbatim — never matched FILTER_PATTERN).
+    const anyError = (): Error[] => [
+      new Error('bad request'),
+      new OpenRouterError('length', 200, 'truncated mid-answer'),
+      new OpenRouterError('schema-rejected', 400, 'model "m" rejected the strict JSON-schema response format'),
+      new OpenRouterError(
+        'http',
+        400,
+        'The response was filtered due to the prompt triggering our content management policy.',
+      ),
+    ];
+    for (const error of anyError()) {
+      const attempts: string[] = [];
+      const result = await walkModelChain(
+        ['a', 'b'],
+        (model) => {
+          attempts.push(model);
+          return model === 'a' ? Promise.reject(error) : Promise.resolve(`ok:${model}`);
+        },
+        { kind: 'chat' },
+      );
+      expect(attempts).toEqual(['a', 'b']);
+      expect(result.modelUsed).toBe('b');
+    }
+  });
+
+  it('reports reason "other" for an escalation the classifier cannot name', async () => {
+    const fallbacks: unknown[] = [];
+    const result = await walkModelChain(
+      ['a', 'b'],
+      (model) => (model === 'a' ? Promise.reject(new Error('opaque')) : Promise.resolve('ok')),
+      { kind: 'chat', onFallback: (info) => fallbacks.push(info) },
+    );
+    expect(result.fallback).toEqual({ from: 'a', to: 'b', reason: 'other' });
+    expect(fallbacks).toEqual([{ from: 'a', to: 'b', reason: 'other' }]);
+  });
+
+  it('escalates a strict-schema rejection to the next chain entry; exhaustion combines loudly', async () => {
+    const rejected = new OpenRouterError(
+      'schema-rejected',
+      422,
+      'provider cannot enforce strict JSON schemas',
+    );
+    let attempts = 0;
+    // Another model may support strict mode: the walk advances.
+    const result = await walkModelChain(
+      ['a', 'b'],
+      (model) => {
+        attempts += 1;
+        return model === 'a' ? Promise.reject(rejected) : Promise.resolve(`ok:${model}`);
+      },
+      { kind: 'chat' },
+    );
+    expect(attempts).toBe(2);
+    expect(result.modelUsed).toBe('b');
+
+    // Chain exhausted: the combined error names every model in order and
+    // the LAST error's kind/status survive for outer instanceof/status
+    // checks.
     await expect(
-      walkModelChain(['a', 'b'], () => Promise.reject(new Error('bad request')), { kind: 'chat' }),
-    ).rejects.toThrow('bad request');
+      walkModelChain(['a', 'b'], () => Promise.reject(rejected), { kind: 'chat' }),
+    ).rejects.toMatchObject({
+      kind: 'schema-rejected',
+      status: 422,
+    });
+    await expect(
+      walkModelChain(['a', 'b'], () => Promise.reject(rejected), { kind: 'chat' }),
+    ).rejects.toThrow(/every chat model in the escalation chain failed.*“a”.*“b”/s);
+  });
+
+  it('escalates truncation (finish_reason "length") — another model may fit the answer', async () => {
+    const attempts: string[] = [];
+    const result = await walkModelChain(
+      ['a', 'b'],
+      (model) => {
+        attempts.push(model);
+        return model === 'a'
+          ? Promise.reject(new OpenRouterError('length', 200, 'truncated'))
+          : Promise.resolve(`ok:${model}`);
+      },
+      { kind: 'chat' },
+    );
+    expect(attempts).toEqual(['a', 'b']);
+    expect(result.modelUsed).toBe('b');
+  });
+
+  it('does not escalate a user abort — the stop defies the chain', async () => {
     const abort = new DOMException('cancelled', 'AbortError');
+    const attempts: string[] = [];
     await expect(
-      walkModelChain(['a', 'b'], () => Promise.reject(abort), { kind: 'chat' }),
+      walkModelChain(
+        ['a', 'b'],
+        (model) => {
+          attempts.push(model);
+          return Promise.reject(abort);
+        },
+        { kind: 'chat' },
+      ),
     ).rejects.toBe(abort);
+    expect(attempts).toEqual(['a']);
+  });
+
+  it('does not escalate a MissingApiKeyError — it fails identically for every model', async () => {
+    const attempts: string[] = [];
+    await expect(
+      walkModelChain(
+        ['a', 'b'],
+        (model) => {
+          attempts.push(model);
+          return Promise.reject(new MissingApiKeyError());
+        },
+        { kind: 'chat' },
+      ),
+    ).rejects.toThrow(MissingApiKeyError);
+    expect(attempts).toEqual(['a']);
   });
 
   it('rethrows the original error on a single-entry chain', async () => {

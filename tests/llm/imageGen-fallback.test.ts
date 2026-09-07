@@ -8,9 +8,10 @@ import { defaultSettings } from '@/domain';
 
 /**
  * Image escalation chain (model fallback feature): the /images client
- * escalates across `[primary, settings.fallbackImageModel]` on congestion-
- * or filter-classified transport failures (a 200 response with no images is
- * classified congestion). Output-contract-free path — no repair tier here.
+ * escalates across `[primary, settings.fallbackImageModel]` on ANY failure —
+ * escalation is unconditional (owner decision 2026-09-07; a 200 response
+ * with no images and unknown 400s alike advance to the next chain entry).
+ * Output-contract-free path — no repair tier here.
  */
 
 let currentSettings = {
@@ -106,14 +107,16 @@ describe('image model fallback chain', () => {
     expect(calls).toHaveLength(2);
   });
 
-  it('never escalates on errors that are not congestion or filter', async () => {
+  it('escalates on an unknown 400 — the chain is the bound even for unclassifiable errors', async () => {
     currentSettings = { ...currentSettings, fallbackImageModel: 'potent/image' };
-    const calls = captureFetch([new Response('{"error":{"message":"prompt too long"}}', { status: 400 })]);
+    const calls = captureFetch([
+      new Response('{"error":{"message":"prompt too long"}}', { status: 400 }),
+      imageResponse(),
+    ]);
 
-    await expect(
-      generateImages('x', 1, { model: 'cheap/image', retryBackoffs: [0, 0] }),
-    ).rejects.toThrow(/prompt too long/);
-    expect(calls).toHaveLength(1);
+    const result = await generateImages('x', 1, { model: 'cheap/image', retryBackoffs: [0, 0] });
+    expect(result.modelUsed).toBe('potent/image');
+    expect(calls).toHaveLength(2);
   });
 
   it('throws a combined error naming every model when the chain is exhausted', async () => {
