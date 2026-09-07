@@ -114,6 +114,9 @@ describe('runRepo', () => {
     const reread = await getRun(running.id);
     expect(reread?.status).toBe('failed');
     expect(reread?.errorMessage).toBe('Interrupted by reload');
+    // Reload interruptions classify as 'cancelled' (docs/05 run views) —
+    // the run died with the page, not because the provider failed.
+    expect(reread?.failureKind).toBe('cancelled');
     expect((await getRun(done.id))?.status).toBe('completed');
 
     // Idempotent: nothing left running.
@@ -171,5 +174,38 @@ describe('runRepo', () => {
     const listed = await listRunsByCampaign(campaignId);
     expect(listed[0]?.encounterPreset).toBeNull();
     expect(listed[0]?.runExtras).toBeNull();
+  });
+
+  /**
+   * failureKind rides the same additive-defaults rule: a legacy FAILED row
+   * (written before the field existed) parses with failureKind null and its
+   * errorMessage untouched — the UI renders null as 'unknown' guidance, no
+   * migration (docs/05 run views).
+   */
+  it('materializes failureKind null on a legacy failed row and keeps the raw message', async () => {
+    const personaId = await makePersona();
+    const campaignId = newId();
+    const legacy = {
+      id: newId(),
+      createdAt: 1,
+      updatedAt: 2,
+      campaignId,
+      personaId,
+      autonomy: 'auto',
+      status: 'failed',
+      userBrief: 'pre-classification run',
+      pinnedChunkIds: [],
+      steps: [],
+      resultArtifactId: null,
+      targetArtifactId: null,
+      errorMessage: 'OpenRouter request failed (503): provider overloaded',
+      // NO failureKind.
+    };
+    await db.runs.put(legacy as unknown as PersonaRun);
+
+    const run = await getRun(legacy.id);
+    expect(run?.status).toBe('failed');
+    expect(run?.failureKind).toBeNull();
+    expect(run?.errorMessage).toBe('OpenRouter request failed (503): provider overloaded');
   });
 });

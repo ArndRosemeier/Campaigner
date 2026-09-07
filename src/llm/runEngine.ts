@@ -76,6 +76,7 @@ import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, visionRepairModel } from '@/llm/modelFallback';
 import { schemaResponseFormat } from '@/llm/strictSchema';
+import { failureKindOf } from '@/llm/failureKind';
 import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 import {
@@ -962,7 +963,7 @@ export class RunEngine {
     );
     if (stepIndex === -1) return;
     await this.resetStep(runId, stepIndex);
-    await updateRun(runId, { status: 'running', errorMessage: '' });
+    await updateRun(runId, { status: 'running', errorMessage: '', failureKind: null });
     this.emit({ kind: 'run', runId, status: 'running' });
     void this.executeFrom(runId, stepIndex, input, extraInstruction).catch((error: unknown) => {
       void this.fail(runId, error);
@@ -1024,6 +1025,9 @@ export class RunEngine {
     await updateRun(runId, {
       status: 'running',
       errorMessage: '',
+      // Restarting also drops the stale classification — a resumed run must
+      // not carry the previous attempt's failure kind if it fails again.
+      failureKind: null,
     });
     this.emit({ kind: 'run', runId, status: 'running' });
 
@@ -1044,6 +1048,7 @@ export class RunEngine {
       status: 'running',
       steps: run.steps.slice(0, stepIndex),
       errorMessage: '',
+      failureKind: null,
     });
     void this.executeFrom(runId, stepIndex, input).catch((error: unknown) => {
       void this.fail(runId, error);
@@ -1167,7 +1172,12 @@ export class RunEngine {
             (issues.length === 0 ? '' : ` (${issues.join('; ')})`) +
             `. The run failed without saving partial results — ` +
             `run it again, or use manual/review autonomy to keep the raw reply for editing.`;
-          await updateRun(runId, { status: 'failed', errorMessage: reason, steps: [...steps] });
+          await updateRun(runId, {
+            status: 'failed',
+            errorMessage: reason,
+            failureKind: 'invalid-output',
+            steps: [...steps],
+          });
           this.draftRetried.delete(runId);
           this.statblockRetried.delete(runId);
           this.sourceRepaired.delete(runId);
@@ -3476,14 +3486,24 @@ export class RunEngine {
     this.statblockRetried.delete(runId);
     if (error instanceof MissingApiKeyError) {
       toastError('No API key — add one in Settings', error);
-      await updateRun(runId, { status: 'failed', errorMessage: error.message });
+      await updateRun(runId, {
+        status: 'failed',
+        errorMessage: error.message,
+        failureKind: failureKindOf(error),
+      });
       this.emit({ kind: 'run', runId, status: 'failed' });
       return;
     }
     const message = errorMessage(error);
     toastError(message, error);
     try {
-      await updateRun(runId, { status: 'failed', errorMessage: message });
+      // The kind annotates the message (docs/05 run views) — the raw text
+      // above stays verbatim and is what the user sees first.
+      await updateRun(runId, {
+        status: 'failed',
+        errorMessage: message,
+        failureKind: failureKindOf(error),
+      });
     } finally {
       this.emit({ kind: 'run', runId, status: 'failed' });
     }

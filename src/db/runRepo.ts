@@ -58,14 +58,22 @@ export async function deleteRun(id: Id): Promise<void> {
 
 /**
  * Marks runs stuck in 'running' as failed (called on app start: the engine
- * does not survive a reload — 04-LLM-PERSONAS acceptance criteria).
+ * does not survive a reload — 04-LLM-PERSONAS acceptance criteria). The
+ * interruption classifies as 'cancelled' (docs/05 run views): the run died
+ * with the page, not because the provider or a contract failed.
  */
 export async function failRunningRuns(errorMessage = 'Interrupted by reload'): Promise<number> {
   const running = await db.runs.where('status').equals('running').toArray();
   if (running.length === 0) return 0;
 
   const failed = running.map((run) =>
-    personaRunSchema.parse({ ...run, status: 'failed', errorMessage, updatedAt: Date.now() }),
+    personaRunSchema.parse({
+      ...run,
+      status: 'failed',
+      errorMessage,
+      failureKind: 'cancelled',
+      updatedAt: Date.now(),
+    }),
   );
   await db.transaction('rw', db.runs, async () => {
     await db.runs.bulkPut(failed);
