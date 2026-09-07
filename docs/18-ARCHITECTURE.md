@@ -81,7 +81,7 @@ column.
 | Read/write artifacts | `artifactRepo` — every read zod-parses the row | importing `db` and querying `db.artifacts` raw |
 | Change an artifact's scope (move / adopt / publish) | `moveToModule` / `adoptIntoCampaign` / `publishToLibrary` — all funnel through the private `moveScope`, one tx incl. image re-anchor | a patch carrying `campaignId`/`moduleId` — `updateArtifact` pins scope fields |
 | Give a generated artifact module ownership | `artifactRepo.stampModuleOwnership` (loud existence check inside the tx) | `updateArtifact` with `moduleId` |
-| Attach images (store + reference + re-anchor + prune) | `artifactRepo.attachImagesToArtifact` — one rw tx over images+artifacts+revisions | `createImage` then `updateArtifact` as separate writes |
+| Attach images (store + reference + re-anchor + prune) | `artifactRepo.attachImagesToArtifact` — one rw tx over images+artifacts+revisions; blobs are byte-prepared (`buildStoredImage`) BEFORE it opens | `createImage` then `updateArtifact` as separate writes |
 | Create / edit / restore content | `createArtifact` / `updateArtifact` / `restoreRevision` (restore is content-only, scope pinned) | hand-writing revision rows (`writeRevision` is private) |
 | Write rule chunks | `chunkRepo.writeChunks` (`putChunks` alias) — invalidates the keyword index with the write | `db.chunks.bulkPut` anywhere else; backup restore MUST route through this door |
 | Get/create the live battle for a module | `battleRepo.ensureBattle` — the v16 unique `&moduleId` index is the arbiter | get-then-create across two transactions |
@@ -89,7 +89,7 @@ column.
 | Read / patch settings | `getSettings` (write-creates defaults) / `readSettings` (pure — liveQuery-safe) / `updateSettings` (tx, schema-validated merge; existing rows merge over defaults) | raw `db.settings` reads without the defaults-merge parse |
 | Show an image | `useImageUrl` (`features/images/use-image-url.ts`) — object URLs revoked on change/unmount | `URL.createObjectURL` without revoke |
 | Bring an image INTO the app (upload or generated blob) | `imageIntake.intakeImage` — EXIF-safe decode, ≤1600px long edge, WebP re-encode | ad-hoc canvas/FileReader scaling |
-| Store map candidates mid-run | `imageRepo.createImage` per candidate — deliberately UNATTACHED until the pick step attaches via the seam | attaching candidates eagerly |
+| Store map candidates mid-run | `imageRepo.createImage` per candidate — deliberately UNATTACHED until the pick step attaches via the seam; top-level use only (inside a tx: `buildStoredImage` before it opens, `db.images.put` inside) | attaching candidates eagerly |
 | Delete a module / campaign / artifact | `moduleRepo.deleteModule` / `campaignRepo.deleteCampaign` / `artifactRepo.deleteArtifact` | ad-hoc cascades — these are transactional, recount-honest (rows re-listed inside the tx), scrub battles/links/images |
 | Backup / export / import | `lib/backup.ts` (whole-DB restore rides `db.transaction('rw', db.tables)` + the chunk door) / `lib/exportImport.ts` (import = ONE tx over the four tables) | table-by-table writes that can strand a half-import |
 
@@ -216,6 +216,16 @@ column.
   properties are DROPPED (StatBlock `extras` never comes from the LLM);
   constraint keywords are stripped (zod still enforces them at the boundary);
   recursive schemas throw `StrictSchemaError` — loud, by design.
+- **No native promises inside a transaction scope** (`createImage`'s
+  `blob.arrayBuffer()` broke the attach seam): awaiting a non-Dexie promise
+  (`Blob.arrayBuffer()`, `createImageBitmap`, `canvas.toBlob`, FileReader,
+  fetch) inside a `db.transaction` scope breaks Dexie's PSD zone — the tx
+  auto-commits at that gap and later writes land outside it ("Transaction
+  committed too early", http://bit.ly/2kdckMn). Decode/encode/byte
+  preparation happens BEFORE the tx opens; the scope holds Dexie operations
+  only. Inside a caller's tx, `imageRepo.buildStoredImage` prepares the row
+  first and `db.images.put` persists it (`attachImagesToArtifact` is the
+  template; regression-pinned in `tests/db/artifactRepo.test.ts`).
 - **pdfjs under vitest** warns about `standardFontDataUrl` (allowlisted; text
   extraction does not use fonts). jsdom lacks ResizeObserver /
   `scrollIntoView` / Web Animations — stubbed in `tests/setup.ts`.

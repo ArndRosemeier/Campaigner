@@ -29,9 +29,21 @@ export interface NewStoredImage {
   role?: 'artwork' | 'map';
 }
 
-export async function createImage(input: NewStoredImage): Promise<StoredImage> {
+/**
+ * Non-Dexie image-row preparation: converts the blob to clone-safe bytes and
+ * schema-parses the row. MUST run OUTSIDE any transaction scope —
+ * `Blob.prototype.arrayBuffer()` resolves on a native (non-Dexie) promise,
+ * and awaiting it inside a `db.transaction` scope breaks Dexie's PSD zone:
+ * the IndexedDB transaction auto-commits at that gap and every later write in
+ * the scope lands outside it ("Transaction committed too early" — the Dexie
+ * async-transaction trap, http://bit.ly/2kdckMn). Helpers that must persist a
+ * new image INSIDE a caller's transaction (attachImagesToArtifact) prepare
+ * the row with this function BEFORE the tx opens and `db.images.put` the
+ * parsed row inside.
+ */
+export async function buildStoredImage(input: NewStoredImage): Promise<StoredImage> {
   const bytes = new Uint8Array(await input.blob.arrayBuffer());
-  const image = storedImageSchema.parse({
+  return storedImageSchema.parse({
     ...stampNewEntity(),
     campaignId: input.campaignId,
     bytes,
@@ -43,6 +55,17 @@ export async function createImage(input: NewStoredImage): Promise<StoredImage> {
     source: input.source,
     ...(input.role === undefined ? {} : { role: input.role }),
   });
+}
+
+/**
+ * Stores one image row (its own implicit single-write transaction). Top-level
+ * use only — inside a caller's transaction scope, prepare the row with
+ * `buildStoredImage` BEFORE the tx opens and `db.images.put` it inside; an
+ * awaited `blob.arrayBuffer()` in the scope would commit the transaction
+ * early (see buildStoredImage).
+ */
+export async function createImage(input: NewStoredImage): Promise<StoredImage> {
+  const image = await buildStoredImage(input);
   await db.images.put(image);
   return image;
 }

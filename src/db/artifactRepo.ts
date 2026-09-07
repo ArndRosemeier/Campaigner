@@ -13,6 +13,7 @@ import {
   type GlobalArtifact,
   type Id,
   type RevisionSource,
+  type StoredImage,
   MAX_REVISIONS_PER_ARTIFACT,
   globalArtifactKindSchema,
   globalArtifactSchema,
@@ -20,7 +21,7 @@ import {
 import { db } from '@/db/db';
 import { scrubArtifactFromBattles } from '@/db/battleRepo';
 import {
-  createImage,
+  buildStoredImage,
   deleteImageIfUnreferenced,
   deleteUnreferencedImages,
   pruneUnreferencedImages,
@@ -188,11 +189,19 @@ export interface AttachableImage extends NewStoredImage {
  * only the image/artifact pair is owned here. `updateArtifact` joins as a
  * nested transaction; the prune runs last, so kept images are already
  * referenced when the candidate scan runs.
+ *
+ * The blob→bytes conversion is NOT Dexie work: `Blob.prototype.arrayBuffer()`
+ * resolves on a native promise whose await would commit this transaction
+ * early (the Dexie async-transaction trap, http://bit.ly/2kdckMn). Every
+ * image row is therefore prepared (bytes + schema parse) BEFORE the tx opens;
+ * the tx scope contains Dexie operations only.
  */
 export async function attachImagesToArtifact(
   id: Id,
   input: {
-    /** Image rows stored INSIDE the attach transaction (generated-image paths). */
+    /** Image rows stored INSIDE the attach transaction — their blobs are
+     * prepared (byte conversion + parse) BEFORE it opens (generated-image
+     * paths). */
     createImages?: readonly AttachableImage[];
     /** Already-stored image ids appended to the artifact's imageIds. */
     appendImageIds?: readonly Id[];
@@ -206,13 +215,22 @@ export async function attachImagesToArtifact(
     pruneCandidates?: { campaignId: Id; candidateIds: readonly Id[] };
   },
 ): Promise<AnyArtifact> {
+  // Phase 1 — outside the transaction: the only native-promise work (the
+  // blob read) happens here, so the tx scope below stays Dexie-only.
+  const preparedImages: { image: StoredImage; asCover: boolean }[] = [];
+  for (const newImage of input.createImages ?? []) {
+    preparedImages.push({
+      image: await buildStoredImage(newImage),
+      asCover: newImage.asCover === true,
+    });
+  }
   return db.transaction('rw', [db.images, db.artifacts, db.revisions], async () => {
     const created: Id[] = [];
     let createdCover: Id | null = null;
-    for (const newImage of input.createImages ?? []) {
-      const stored = await createImage(newImage);
-      created.push(stored.id);
-      if (newImage.asCover === true) createdCover = stored.id;
+    for (const { image, asCover } of preparedImages) {
+      await db.images.put(image);
+      created.push(image.id);
+      if (asCover) createdCover = image.id;
     }
     const attached = [...created, ...(input.appendImageIds ?? [])];
     if (input.anchorImagesTo !== undefined && attached.length > 0) {

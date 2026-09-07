@@ -973,4 +973,104 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
     // The kept image followed the global target into the library.
     expect((await db.images.get(keptId))?.campaignId).toBeNull();
   });
+
+  /**
+   * The Dexie async-transaction trap (http://bit.ly/2kdckMn): awaiting a
+   * NATIVE promise inside a `db.transaction` scope breaks Dexie's PSD zone —
+   * the IndexedDB transaction auto-commits at that gap, every later write in
+   * the scope lands outside it, and Dexie rejects the scope with
+   * "Transaction committed too early". `Blob.prototype.arrayBuffer()` is such
+   * a native promise: in a real browser it resolves on a macrotask (a real
+   * file read), which is exactly the production failure on the image-creation
+   * paths (mob portrait / entity image queues) that store their intake blob
+   * through the seam. fake-indexeddb only commits on task boundaries, so the
+   * injected setTimeout makes the browser's real gap deterministic here. The
+   * byte preparation must run BEFORE the transaction opens — this pin fails
+   * if it ever moves back inside.
+   */
+  it('keeps the blob→bytes preparation out of the attach tx (premature-commit regression)', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Zone trap target' });
+    // Simulate the browser's real async blob read on THIS blob's read path:
+    // resolve on a macrotask (a task boundary — what a real file read does).
+    const blob = new Blob([new Uint8Array([9, 9, 9])]);
+    const realRead = blob.arrayBuffer.bind(blob);
+    blob.arrayBuffer = async (): Promise<ArrayBuffer> => {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      return realRead();
+    };
+    const next = await attachImagesToArtifact(npc.id, {
+      createImages: [
+        {
+          campaignId,
+          blob,
+          mimeType: 'image/png',
+          width: 3,
+          height: 3,
+          prompt: 'zone-trap',
+          model: 'm',
+          source: 'generated',
+          asCover: true,
+        },
+      ],
+    });
+    // No premature-commit rejection — and the whole attach landed
+    // atomically: image row + reference + cover + attach revision.
+    if (next.kind !== 'npc') throw new Error('wrong kind');
+    expect(next.currentRevision).toBe(2);
+    expect(next.coverImageId).toBe(next.imageIds[0]);
+    if (next.coverImageId === null) throw new Error('no cover attached');
+    const stored = await db.images.get(next.coverImageId);
+    expect(stored?.prompt).toBe('zone-trap');
+    expect(stored?.source).toBe('generated');
+  });
+
+  /** Structural pin (the mobArtifacts tx-wrapper pattern): the attach
+   * transaction's scope must never invoke the native-async blob read —
+   * byte preparation happens before `db.transaction` opens. */
+  it('structurally: the attach tx scope contains no native blob.arrayBuffer await', async () => {
+    const npc = await createArtifact({ campaignId, kind: 'npc', name: 'Zone shape target' });
+    let insideAttachTx = false;
+    let arrayBufferInsideTx = false;
+    const originalTransaction = db.transaction.bind(db) as (...args: unknown[]) => unknown;
+    const target = db as unknown as { transaction: (...args: unknown[]) => unknown };
+    // The probe blob records WHERE its bytes are read from; the read itself
+    // stays synchronous-honest (the macrotask gap is the other pin's job).
+    const probeBlob = new Blob([new Uint8Array([1, 2, 3])]);
+    const realRead = probeBlob.arrayBuffer.bind(probeBlob);
+    probeBlob.arrayBuffer = async (): Promise<ArrayBuffer> => {
+      if (insideAttachTx) arrayBufferInsideTx = true;
+      return realRead();
+    };
+    target.transaction = (...args: unknown[]) => {
+      // Wrap ONLY the attach's own rw tx (the ARRAY form — nested
+      // updateArtifact joins variadically and is not the seam's scope).
+      if (args[0] === 'rw' && Array.isArray(args[1])) {
+        const scopeIndex = args.findIndex((arg) => typeof arg === 'function');
+        const scope = args[scopeIndex] as () => Promise<unknown>;
+        args[scopeIndex] = async () => {
+          insideAttachTx = true;
+          try {
+            return await scope();
+          } finally {
+            insideAttachTx = false;
+          }
+        };
+      }
+      return originalTransaction(...args);
+    };
+    await attachImagesToArtifact(npc.id, {
+      createImages: [
+        {
+          campaignId,
+          blob: probeBlob,
+          mimeType: 'image/png',
+          width: 3,
+          height: 3,
+          source: 'generated',
+        },
+      ],
+    });
+    target.transaction = originalTransaction;
+    expect(arrayBufferInsideTx).toBe(false);
+  });
 });
