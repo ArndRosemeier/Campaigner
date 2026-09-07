@@ -96,7 +96,7 @@ describe('module encounter map queue', () => {
       verificationCalls += 1;
       if (verificationCalls === 2) return Promise.reject(new Error('vision drift'));
       const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false });
+      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
     });
 
     useEncounterMapQueue.getState().enqueue([
@@ -146,7 +146,7 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
       const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false });
+      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
     });
     const dungeon = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Cellar',

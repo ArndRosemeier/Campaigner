@@ -29,15 +29,17 @@ const draftBase = {
  * parsed output — and every consumer reading it — keeps the old
  * `T | undefined` shape.
  */
-function absentable<T extends z.ZodType>(inner: T) {
+/** Shared with the vision verify contract (encounterVision.ts). */
+export function absentable<T extends z.ZodType>(inner: T) {
   return z.preprocess((value) => (value === null ? undefined : value), inner.optional());
 }
 
 /** Models often send indexes/counts as "2"; accept numeric strings. */
 const rosterIndex = z.coerce.number().int().nonnegative();
 
-/** z.boolean() that tolerates the quoted "true"/"false" models sometimes send. */
-function booleanish() {
+/** z.boolean() that tolerates the quoted "true"/"false" models sometimes send.
+ * Shared with the vision verify contract (encounterVision.ts). */
+export function booleanish() {
   return z.preprocess((value) => {
     if (value === 'true') return true;
     if (value === 'false') return false;

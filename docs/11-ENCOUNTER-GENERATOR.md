@@ -117,7 +117,7 @@ mode: run row per state change, event emitter for streaming, autonomy via
 | `layout` | deterministic | yes (review overlay) | `encounterLayout` JSON |
 | `schematic` | deterministic (canvas) | never | in-memory data URL, exact pixel size |
 | `stylize` | image API + `input_references` | no (candidates land in pick) | 2 image candidates (1 in auto) |
-| `verify` | VLM, flagged only | flags `needs_review` above threshold | mismatch ratio + per-cell diff |
+| `verify` | VLM, flagged only | flags `needs_review` above threshold | complexes: mismatch ratio + per-cell diff; singles: structural verdict + named report |
 | `pick` | UI | **always** (auto: picks candidate 1 by contract) | kept map image id |
 | `finalize` | repo writes | — | encounter artifact updated/created |
 
@@ -150,11 +150,37 @@ mode: run row per state change, event emitter for streaming, autonomy via
   structure exactly as in the reference image; no text, no labels, no grid
   lines, no numbers, no tokens/minis, no watermark". `negative` and
   `styleNotes` mirror the Illustrator contract (07 §M3-A).
-- `verify` overlays a **coarse** grid (every 2nd cell → ≤ ~12×9 classes) on
-  the stylized image and asks the VLM to classify each coarse cell
-  `floor | wall | void` — classification, not coordinate regression. Mismatch
-  ratio > 0.12 (excluding door cells) marks the run `needs_review` with the
-  diff overlay in the pick UI; the user may still keep the map.
+- `verify` is **SHAPE-AWARE** (single-arena verify fix, 2026-09-07).
+  **Complex sites**: it overlays a **coarse** grid (every 2nd cell → ≤
+  ~12×9 classes) on the stylized image and asks the VLM to classify each
+  coarse cell `floor | wall | void` — classification, not coordinate
+  regression. The prompt anchors the model structurally (room count,
+  corridor count, each room's approximate coarse region, the entrance gap)
+  and defines the class semantics ("void" = everything beyond the mapped
+  structure: darkness, cliffs, water, empty margin) so the periphery is
+  judged consistently. Mismatch ratio > 0.12 (excluding door + entrance
+  cells) marks the run `needs_review` with the diff overlay in the pick UI;
+  the user may still keep the map. **Single-arena sites (D11)**: the cell
+  contract is theater there — one room on the standard 24×18 tier grades
+  ~88% of the grid as `void` periphery, and any honest reading of a
+  stylized walled arena (frame = wall or terrain) mismatches ~95/108 cells
+  (ratio 0.88 vs the 0.12 threshold). That is exactly the production
+  blocker this section fixes: after the site-shape arc made single sites
+  common, EVERY single-site verify failed (owner: 7/7 auto runs died at
+  verify). The single-arena check therefore asks coarse, decidable
+  questions under the `arena-verdict` strict contract: exactly ONE
+  distinct arena, the arena in the packed room's approximate coarse
+  region, and the entrance GAP present in the outer wall (the entrance is
+  judged as an opening — no painted markers/plaques/discs/letters are
+  referenced). Every failed expectation is NAMED in the verification
+  report; a verdict claims no per-cell mismatches, so the diff overlay
+  stays empty by construction.
+- Every verification carries a named `report` — the threshold semantics
+  ("structure verification: N of M graded cells mismatched the layout
+  (allowance A = 12% of graded cells; …)") or the failed verdict reasons —
+  and an auto run that fails verify throws `Generated battlemap failed
+  structure verification (candidate i/N — <report>)`: never a bare
+  "failed threshold".
 - `pick` renders each candidate with the **room overlay** (labeled room
   rects + mobs rect) so the user judges alignment, not just looks.
 - `finalize` stores the kept image (`role: 'map'`), writes
@@ -480,7 +506,9 @@ all anchored to the layout (D7):
 - **Verify + seed** (C2/C3): `coarseDriftTolerances` extends the default
   comparison exclusion (door cells) with the entrance gap and its outward
   landing cell — the floor-colored opening is expected drift, not a
-  mismatch. Seeding anchors the party at the entrance (see below) and the
+  mismatch (complex sites). Single-arena sites confirm the entrance through
+  the `arena-verdict` question instead (the gap, never the painted
+  triangle). Seeding anchors the party at the entrance (see below) and the
   table surface renders an emerald cell overlay with an inward triangle.
 
 ### Seeding extension (C3, `aea57a5`)
@@ -752,7 +780,10 @@ queue. The gate is 90 test files / 576 tests at completion. The site-shape
 arc (D11–D13, 2026-09-08, c0bf5cf → 32db5bb) shipped in six bounded commits
 (schema+v17, generation, surface, editor, deletion, docs); the gate at
 completion is 149 test files / 1443 tests, and the marker path is fully
-deleted (record above). The room-keys &
+deleted (record above). The single-arena verify fix (2026-09-07) replaced
+the single-site cell contract with the `arena-verdict` structural check and
+named threshold reports after the production blocker (every single-site
+verify failed: the graded grid is ~88% `void` periphery for one room). The room-keys &
 mob-treasure arc (D9, 2026-09-07, e489a65 → 01a0b5e) shipped in five
 bounded commits (generation, editor, seed, surface, docs) on top of the
 room-key persistence; the gate at completion is 140 test files / 1265
@@ -786,8 +817,11 @@ data model, run-engine threading, UI, docs); the gate at completion is
   (one `fog` per room's `mobsRect`).
 - A manual run pauses at `brief` and `layout` (both editable/regeneratable)
   and at map pick; a verify mismatch above threshold forces `needs_review`
-  with the diff overlay; a failed layout after the retry ladder fails the run
-  with an `errorMessage` — no placeholder encounter anywhere.
+  with the diff overlay (complex sites — single arenas get the named
+  verdict report instead); a failed layout after the retry ladder fails the run
+  with an `errorMessage` — no placeholder encounter anywhere. An auto run
+  that fails verify names the failing candidates and their reports in the
+  run's `errorMessage`.
 - **Run battle** on a generated encounter: every mob token sits in its room's
   area, covered by its room veil and absent from the DOM and initiative;
   lifting the room's veil reveals the mobs and auto-rolls their initiative;

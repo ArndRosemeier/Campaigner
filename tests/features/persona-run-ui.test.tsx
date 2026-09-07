@@ -161,6 +161,7 @@ beforeEach(async () => {
       mismatchedIndexes: [],
       mismatchRatio: 0,
       needsReview: false,
+      report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance',
     });
   });
   intakeImageMock.mockImplementation((blob: Blob) =>

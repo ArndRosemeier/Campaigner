@@ -1130,6 +1130,7 @@ function EncounterRunActions({
           needsReview: boolean;
           mismatchedIndexes: number[];
           expected: { cols: number; rows: number };
+          report?: string;
         }[];
       }
     | undefined;
@@ -1168,7 +1169,9 @@ function EncounterRunActions({
         {layout !== null && <EncounterLayoutPreview layout={layout} />}
         {verification?.verifications?.map((result, index) => (
           <p key={String(index)} className={result.needsReview ? 'text-xs text-destructive' : 'text-xs text-muted-foreground'}>
-            Candidate {String(index + 1)} structure mismatch: {Math.round(result.mismatchRatio * 100)}%
+            {result.report === undefined
+              ? `Candidate ${String(index + 1)} structure mismatch: ${String(Math.round(result.mismatchRatio * 100))}%`
+              : `Candidate ${String(index + 1)}: ${result.report}`}
           </p>
         ))}
         <div className="flex flex-wrap gap-2">

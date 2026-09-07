@@ -108,7 +108,7 @@ beforeEach(async () => {
   vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
   vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
     const expected = coarseStructure(layout);
-    return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false });
+    return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
   });
 });
 

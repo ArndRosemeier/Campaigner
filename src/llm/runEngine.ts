@@ -2744,7 +2744,17 @@ export class RunEngine {
     );
     const needsReview = verifications.some((verification) => verification.needsReview);
     if (needsReview && input.autonomy === 'auto') {
-      throw new Error('Generated battlemap failed the structure verification threshold');
+      // Name WHAT failed and by how much, per candidate (owner
+      // debuggability requirement) — never a bare "failed threshold".
+      const failed = verifications
+        .map((verification, index) => ({ verification, index }))
+        .filter((entry) => entry.verification.needsReview)
+        .map(
+          (entry) =>
+            `candidate ${String(entry.index + 1)}/${String(verifications.length)} — ${entry.verification.report}`,
+        )
+        .join('; ');
+      throw new Error(`Generated battlemap failed structure verification (${failed})`);
     }
     return {
       step: this.finishStep(

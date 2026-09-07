@@ -204,7 +204,7 @@ beforeEach(async () => {
   vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,map');
   vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
     const expected = coarseStructure(layout);
-    return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false });
+    return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' });
   });
 });
 
@@ -708,7 +708,7 @@ describe('Encounter Cartographer run', () => {
     chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
       const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true });
+      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true, report: 'structure verification: 20 of 94 graded cells mismatched the layout (allowance 11 = 12% of graded cells)' });
     });
     const runInput = input(campaign, cartographer);
     const runId = await runEngine.startRun(runInput);
@@ -760,7 +760,7 @@ describe('Encounter Cartographer run', () => {
       }
       return gate.then(() => {
         const expected = coarseStructure(layout);
-        return { expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false };
+        return { expected, actual: expected, mismatchedIndexes: [], mismatchRatio: 0, needsReview: false, report: 'structure verification: 0 of 94 graded cells mismatched (allowance 11 = 12% of graded cells) — within tolerance' };
       });
     });
 
@@ -780,13 +780,13 @@ describe('Encounter Cartographer run', () => {
     chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     vi.mocked(encounterRunAdapters.verifyEncounterMap).mockImplementation(({ layout }) => {
       const expected = coarseStructure(layout);
-      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true });
+      return Promise.resolve({ expected, actual: expected, mismatchedIndexes: [0], mismatchRatio: 0.2, needsReview: true, report: 'structure verification: 20 of 94 graded cells mismatched the layout (allowance 11 = 12% of graded cells)' });
     });
     const runId = await runEngine.startRun({ ...input(campaign, cartographer), autonomy: 'auto' });
     await waitForRun(async () => {
       expect((await getRun(runId))?.status).toBe('failed');
     });
-    expect((await getRun(runId))?.errorMessage).toContain('verification threshold');
+    expect((await getRun(runId))?.errorMessage).toContain('failed structure verification');
   });
 
   it('resumes a failed encounter run from stylize step without re-generating brief or layout', async () => {
