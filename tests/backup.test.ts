@@ -256,13 +256,25 @@ describe('app backup', () => {
       new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
     ) as { data?: Record<string, unknown[]> };
     if (manifest.data === undefined) throw new Error('backup manifest is missing data');
-    const personas = manifest.data.personas as { id: string; producesKind: string }[];
+    const personas = manifest.data.personas as {
+      id: string;
+      mode: string;
+      producesKind: string;
+    }[];
     expect(personas.length).toBeGreaterThan(0);
 
     // Legacy pre-M6-E row (producesKind 'session', removed in a670751): the
     // restore heals it through personaSchema's preprocess — the same
-    // normalization the repo read boundary applies (docs/18 §2.2).
-    const legacyId = personas[0]?.id ?? '';
+    // normalization the repo read boundary applies (docs/18 §2.2). The
+    // experiment needs a NON-encounter row: rows export in random-id order,
+    // and healing an encounter-mode persona to kind 'note' would trip the
+    // schema's cross-field refine (encounter personas must produce
+    // encounters) — a fixture artifact, not the behavior under test.
+    const legacyTarget = personas.find((row) => row.mode !== 'encounter');
+    if (legacyTarget === undefined) {
+      throw new Error('backup fixture has no non-encounter persona to rewrite');
+    }
+    const legacyId = legacyTarget.id;
     manifest.data.personas = personas.map((row) =>
       row.id === legacyId ? { ...row, producesKind: 'session' } : row,
     );

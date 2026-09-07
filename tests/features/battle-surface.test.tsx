@@ -285,9 +285,24 @@ async function renderSurface(moduleId: string): Promise<void> {
   await flushAsyncUpdates(20);
 }
 
+/**
+ * The battle-row read runs inside ONE act with a drain (actDrained, docs/08
+ * §Console guard) — for EVERY caller: a bare `await currentBattle()` while
+ * the surface is mounted hands fake-indexeddb's timed queue an outside-act
+ * window, and a token's image liveQuery that (re)subscribed when a late
+ * cascade landed emits its subscribe-time query there (dispatch + re-render
+ * outside act — the intermittent act-leak class: first caught in 'tap shows
+ * the card…', again in 'GM view: tapping a treasure-carrying token…' under
+ * full-suite load). The helper absorbs the window so call sites stay plain
+ * awaits; reads are safe to wrap (the spanning-act caveat applies to paired
+ * fireEvent pointer sequences, which stay bare everywhere).
+ */
 async function currentBattle(moduleId: string) {
-  const battle = await getBattleByModule(moduleId);
-  if (battle === undefined) throw new Error('battle row missing');
+  const battle = await actDrained(async () => {
+    const row = await getBattleByModule(moduleId);
+    if (row === undefined) throw new Error('battle row missing');
+    return row;
+  });
   return battle;
 }
 
@@ -717,18 +732,13 @@ describe('veil live drag', () => {
 
 describe('selection card', () => {
   /**
-   * The battle-row read runs inside ONE act with a drain (actDrained,
-   * docs/08-TESTING.md §Console guard): a bare `await currentBattle()` while
-   * the tree is mounted hands fake-indexeddb's timed queue an outside-act
-   * window — a token's image liveQuery that (re)subscribed when the
-   * artifacts cascade landed emits its subscribe-time query there, and the
-   * dispatch + its re-render land outside act (the intermittent act-leak the
-   * console guard caught in 'tap shows the card…'). The pointer events stay
-   * bare fireEvents on purpose: each flushes its own render, which the
-   * down→up gesture pairing (live drag state) depends on.
+   * The battle-row read is actDrained inside currentBattle itself (see the
+   * helper): the pointer events stay bare fireEvents on purpose — each
+   * flushes its own render, which the down→up gesture pairing (live drag
+   * state) depends on.
    */
   async function tapToken(label: string, moduleId: string): Promise<void> {
-    const battle = await actDrained(() => currentBattle(moduleId));
+    const battle = await currentBattle(moduleId);
     const token = battle.board.tokens.find((entry) => entry.label === label);
     if (token === undefined) throw new Error(`${label} missing`);
     const el = screen
