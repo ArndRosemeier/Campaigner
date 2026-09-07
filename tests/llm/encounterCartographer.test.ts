@@ -504,7 +504,7 @@ describe('Encounter Cartographer run', () => {
         difficulty: 'old', levelHint: '2',
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
-        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
     });
     if (target.kind !== 'encounter') throw new Error('encounter target missing');
@@ -579,7 +579,7 @@ describe('Encounter Cartographer run', () => {
         difficulty: 'old', levelHint: '2',
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
-        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
     });
     // The model echoes the roster but decorates it with a stub inline stat
@@ -615,7 +615,7 @@ describe('Encounter Cartographer run', () => {
         difficulty: 'old', levelHint: '2',
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
         terrain: 'old terrain', tactics: 'old tactics', treasure: 'old treasure',
-        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
     });
     chatMock.mockResolvedValue({ text: JSON.stringify({
@@ -689,7 +689,7 @@ describe('Encounter Cartographer run', () => {
       links: [],
       data: {
         difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
-        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
     });
     const runInput = input(campaign, cartographer, target.id);

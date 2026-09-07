@@ -86,11 +86,11 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const first = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'First',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     const second = await createArtifact({
       campaignId: campaign.id, moduleId: module.id, kind: 'encounter', name: 'Second',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     let verificationCalls = 0;
     vi.spyOn(encounterRunAdapters, 'verifyEncounterMap').mockImplementation(({ layout }) => {
@@ -151,11 +151,11 @@ describe('module encounter map queue', () => {
     });
     const dungeon = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '' },
     });
     const hall = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Great Hall',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'building' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'building', siteShape: 'single', budgetAdvisory: '' },
     });
     useEncounterMapQueue.getState().enqueue([
       { campaignId: campaign.id, moduleId: dungeon.moduleId, artifactId: dungeon.id, name: dungeon.name },
@@ -185,7 +185,7 @@ describe('module encounter map queue', () => {
     const campaign = await createCampaign({ name: 'Guards', system: 'dnd5e' });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Guarded',
-      data: { difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
+      data: { difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // encounterNeedsMap is the automation-path guard: layout + map present
     // means the encounter never gets re-enqueued automatically.
@@ -221,7 +221,7 @@ describe('module encounter map queue', () => {
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
     const encounter = await createArtifact({
       campaignId: campaign.id, kind: 'encounter', name: 'Withdrawn',
-      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other' },
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
     });
     // Hold the Cartographer's brief call until the abort — the job's abort
     // signal is the cancellation seam (runEngine.cancel aborts it).

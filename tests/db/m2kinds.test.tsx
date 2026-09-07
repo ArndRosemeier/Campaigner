@@ -38,6 +38,8 @@ describe('encounter / plotarc kinds', () => {
         layout: null,
         preset: 'standard',
         locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
       },
     });
     const stored = await getArtifact(encounter.id);
@@ -65,6 +67,8 @@ describe('encounter / plotarc kinds', () => {
           layout: null,
           preset: 'standard',
           locationKind: 'other',
+          siteShape: 'single',
+          budgetAdvisory: '',
         },
       }),
     ).rejects.toThrow();

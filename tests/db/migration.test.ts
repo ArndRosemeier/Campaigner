@@ -914,3 +914,193 @@ describe('v15 → v16 migration (one live battle per module)', () => {
     await db.delete();
   }, 20000);
 });
+
+describe('v16 → v17 migration (site shape + per-room challenge, docs/11 D11/D12)', () => {
+  it('backfills siteShape, complex path (spawn first) and the under-budget note', async () => {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(16).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      settings: 'id',
+    });
+    await legacy.open();
+    // Multi-room layout (spawn room SECOND — "spawn room first if derivable").
+    const roomIdA = '00000000-0000-4000-8000-0000000001a1';
+    const roomIdB = '00000000-0000-4000-8000-0000000001a2';
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-000000000a17',
+      campaignId: '00000000-0000-4000-8000-000000000c17',
+      kind: 'encounter',
+      name: 'Legacy warren',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      moduleId: null,
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        preset: 'standard',
+        locationKind: 'dungeon',
+        layout: {
+          gridW: 24,
+          gridH: 18,
+          theme: 'warren',
+          corridors: [],
+          rooms: [
+            {
+              id: roomIdA,
+              name: 'Hall',
+              rects: [{ x: 1, y: 1, w: 6, h: 6 }],
+              mobsRect: { x: 2, y: 2, w: 4, h: 4 },
+              description: '',
+              monsterIndexes: [],
+              spawn: false,
+              key: '',
+              keyTreasure: '',
+            },
+            {
+              id: roomIdB,
+              name: 'Entry',
+              rects: [{ x: 10, y: 1, w: 6, h: 6 }],
+              mobsRect: { x: 11, y: 2, w: 4, h: 4 },
+              description: '',
+              monsterIndexes: [],
+              spawn: true,
+              key: '',
+              keyTreasure: '',
+            },
+          ],
+        },
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    // One-room layout ⇒ single.
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-000000000a18',
+      campaignId: '00000000-0000-4000-8000-000000000c17',
+      kind: 'encounter',
+      name: 'Legacy arena',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      moduleId: null,
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        preset: 'standard',
+        locationKind: 'wilderness',
+        layout: {
+          gridW: 24,
+          gridH: 18,
+          theme: 'arena',
+          corridors: [],
+          rooms: [
+            {
+              id: roomIdA,
+              name: 'Arena',
+              rects: [{ x: 1, y: 1, w: 6, h: 6 }],
+              mobsRect: { x: 2, y: 2, w: 4, h: 4 },
+              description: '',
+              monsterIndexes: [],
+              spawn: true,
+              key: '',
+              keyTreasure: '',
+            },
+          ],
+        },
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    // Layoutless (uploaded map) ⇒ single, byte-identical behavior.
+    await legacy.table('artifacts').put({
+      id: '00000000-0000-4000-8000-000000000a19',
+      campaignId: '00000000-0000-4000-8000-000000000c17',
+      kind: 'encounter',
+      name: 'Legacy upload',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      imageIds: [],
+      coverImageId: null,
+      moduleId: null,
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+      },
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    const { db } = await import('@/db/db');
+    await db.open();
+    const warren = await db.artifacts.get('00000000-0000-4000-8000-000000000a17');
+    const arena = await db.artifacts.get('00000000-0000-4000-8000-000000000a18');
+    const upload = await db.artifacts.get('00000000-0000-4000-8000-000000000a19');
+    expect(warren?.kind === 'encounter' ? warren.data.siteShape : undefined).toBe('complex');
+    expect(warren?.kind === 'encounter' ? warren.data.layout?.path : undefined).toEqual([
+      roomIdB,
+      roomIdA,
+    ]);
+    expect(warren?.kind === 'encounter' ? warren.data.budgetAdvisory : undefined).toContain(
+      'under-budget',
+    );
+    expect(arena?.kind === 'encounter' ? arena.data.siteShape : undefined).toBe('single');
+    expect(arena?.kind === 'encounter' ? arena.data.layout?.path : undefined).toBeUndefined();
+    expect(arena?.kind === 'encounter' ? arena.data.budgetAdvisory : undefined).toBe('');
+    expect(upload?.kind === 'encounter' ? upload.data.siteShape : undefined).toBe('single');
+    expect(upload?.kind === 'encounter' ? upload.data.budgetAdvisory : undefined).toBe('');
+
+    // The upgraded rows validate against the current schemas.
+    const { artifactSchema } = await import('@/domain');
+    for (const row of [warren, arena, upload]) {
+      expect(artifactSchema.parse(row).kind).toBe('encounter');
+    }
+    await db.delete();
+  }, 20000);
+});

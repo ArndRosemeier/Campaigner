@@ -116,6 +116,8 @@ async function addEncounter(monsters: { name: string; count: number; source: Rec
       layout: null,
       preset: 'standard',
       locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
     },
   });
 }

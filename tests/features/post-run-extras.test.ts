@@ -402,7 +402,7 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
       campaignId: campaign.id, kind: 'encounter', name: 'Ford Ambush',
       data: {
         difficulty: '', levelHint: '', monsters: [], terrain: '', tactics: '', treasure: '',
-        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other',
+        mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
     });
     chatMock.mockResolvedValue({ text: JSON.stringify(ENCOUNTER_DRAFT), modelUsed: 'test-model', fallback: null });

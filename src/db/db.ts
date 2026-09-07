@@ -17,6 +17,7 @@ import type {
   StoredPdf,
 } from '@/domain';
 import type { Id } from '@/domain';
+import { LEGACY_COMPLEX_BUDGET_NOTE, normalizeEncounterShapeData } from '@/domain';
 
 /**
  * The single Dexie database (01-DATA-MODEL §Dexie schema). All IndexedDB
@@ -51,6 +52,11 @@ import type { Id } from '@/domain';
  * Version 15 (docs/11 D10 dungeon preset): encounter artifacts gain
  * `preset: 'standard'`, runs gain `encounterPreset: null`, settings gain
  * `encounterPreset: 'standard'` (additive backfills, M5-C pattern).
+ *
+ * Version 17 (docs/11 D11/D12 site shape + per-room challenge): encounter
+ * artifacts gain `siteShape` (derived from the layout via
+ * `normalizeEncounterShapeData`), complex layouts gain `path`, and legacy
+ * multi-room complexes gain the under-budget note on `budgetAdvisory`.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -500,6 +506,52 @@ export class CampaignerDB extends Dexie {
       pdfFiles: 'id, &bookId',
       settings: 'id',
     });
+
+    // Encounter site shape + per-room challenge backfill (docs/11 D11/D12):
+    // encounter artifacts gain `siteShape` — derived from the layout exactly
+    // as parse-on-read derives it (`normalizeEncounterShapeData`, ONE shared
+    // derivation): layout null ⇒ 'single' (uploaded maps behave byte-
+    // identical); rooms.length <= 1 ⇒ 'single' (corridors cleared — a
+    // one-room arena has none); rooms.length > 1 ⇒ 'complex' with `path`
+    // backfilled as the current room-array order, spawn room first when
+    // derivable. The backfill exists so the STORED rows agree with what every
+    // parse materializes (the battle surface reads `layout.path` and
+    // `siteShape` directly) — it complements, never duplicates, the parse
+    // boundary. Legacy multi-room complexes also gain the under-budget
+    // migration note on `budgetAdvisory` (their rooms carry no per-room
+    // challenge targets until the battlemap is regenerated). Additive data
+    // only — no index changes, hence no store-shape change.
+    this.version(17)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, &moduleId',
+        pdfFiles: 'id, &bookId',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        await tx.table('artifacts').where('kind').equals('encounter').modify(
+          (artifact: { data?: Record<string, unknown> | null }) => {
+            if (artifact.data === undefined || artifact.data === null) return;
+            const declaredShape = artifact.data.siteShape;
+            const normalized = normalizeEncounterShapeData(artifact.data);
+            if (declaredShape === undefined && normalized.siteShape === 'complex') {
+              normalized.budgetAdvisory = LEGACY_COMPLEX_BUDGET_NOTE;
+            }
+            if (normalized.budgetAdvisory === undefined) normalized.budgetAdvisory = '';
+            artifact.data = { ...normalized };
+          },
+        );
+      });
   }
 }
 

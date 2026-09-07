@@ -7,6 +7,7 @@ import {
   cellKeyOf,
   entranceOutwardCell,
   entranceSideDelta,
+  spawnFirstPath,
   type EncounterLayout,
   type EncounterMapAspect,
   type EncounterMapBrief,
@@ -96,6 +97,13 @@ function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout
   const rows = Math.ceil(count / columns);
   const slotW = Math.floor(gridW / columns);
   const slotH = Math.floor(gridH / rows);
+  // The path is the BRIEF's room order (docs/11 D13) — captured before the
+  // rotation below reorders the rooms array, entry room first. First path
+  // room = spawn room = where the party starts.
+  const path = spawnFirstPath(
+    brief.rooms.map((room) => room.id),
+    brief.entryRoomId,
+  );
   const ordered = rotate(brief.rooms, attempt % count);
   const rooms = ordered.map((room, index): LayoutRoom => {
     const column = index % columns;
@@ -117,6 +125,8 @@ function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout
       // (attempt % count), so any parallel key list would desync.
       key: room.key,
       keyTreasure: room.keyTreasure,
+      // The room's own challenge target travels with it for the same reason.
+      ...(room.targetLevel === undefined ? {} : { targetLevel: room.targetLevel }),
       rects: sized.rects.map((rect) => translate(rect, xOffset, yOffset)),
       mobsRect: translate(sized.mobsRect, xOffset, yOffset),
     };
@@ -142,7 +152,7 @@ function packAttempt(brief: EncounterMapBrief, attempt: number): EncounterLayout
     if (entrance !== undefined) spawn.entrance = entrance;
   }
 
-  return { gridW, gridH, theme: brief.theme, rooms, corridors };
+  return { gridW, gridH, theme: brief.theme, rooms, corridors, path };
 }
 
 const ENTRANCE_SIDES: readonly LayoutEntranceSide[] = ['north', 'west', 'east', 'south'];

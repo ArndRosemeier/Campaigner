@@ -33,6 +33,34 @@ export const encounterLocationKindSchema = z.enum([
 export type EncounterLocationKind = z.infer<typeof encounterLocationKindSchema>;
 
 /**
+ * The encounter's SHAPE (docs/11 D11): `'single'` is one arena (one room, no
+ * corridors, no veils at seed — straight to melee); `'complex'` is a dungeon
+ * (multi-room, sequential play over the layout's `path`, room veils). The
+ * derived default: `locationKind === 'dungeon'` ⇒ complex, else single —
+ * materialized for legacy rows by the v17 backfill and, at every read, by
+ * `normalizeEncounterShapeData` (the parse-on-read convention). Editor
+ * labels: "Encounter" (single) / "Dungeon" (complex).
+ */
+export const encounterSiteShapeSchema = z.enum(['single', 'complex']);
+export type EncounterSiteShape = z.infer<typeof encounterSiteShapeSchema>;
+
+/**
+ * The path order for a room-id list: the given order with `spawnId` moved to
+ * the FRONT when present (derivable) — the first path room is where the
+ * party starts. The Cartographer brief's room order IS the path
+ * (`packAttempt` rotates `brief.rooms` for packing, so the packed array
+ * order cannot be trusted — the path is stored explicitly).
+ */
+export function spawnFirstPath(
+  ids: readonly string[],
+  spawnId: string | null | undefined,
+): string[] {
+  if (spawnId === null || spawnId === undefined) return [...ids];
+  const spawnIndex = ids.indexOf(spawnId);
+  return spawnIndex <= 0 ? [...ids] : [...ids.slice(spawnIndex), ...ids.slice(0, spawnIndex)];
+}
+
+/**
  * The D10 preset resolution order (docs/11 D10 amendment):
  * 1. an explicit per-run choice (the run row's persisted preset — the
  *    persona-panel Auto select writes null here, Standard/Dungeon override),
@@ -71,10 +99,17 @@ export const encounterMapRoomBriefSchema = z.object({
   size: encounterRoomSizeSchema,
   monsterIndexes: z.array(z.number().int().nonnegative()),
   adjacentRoomIds: z.array(z.uuid()),
-  /** GM-only room key (read at the staging point); '' when the brief gave none. */
+  /** GM-only room key (read at the room's key marker); '' when the brief gave none. */
   key: z.string().default(''),
   /** This room's treasure checklist (one item per line); '' when none. */
   keyTreasure: z.string().default(''),
+  /**
+   * The room's own challenge target (docs/11 D12): the level this room alone
+   * should challenge. The Cartographer brief may set it per room; the run
+   * stamps the encounter's parsed levelHint when omitted. Optional — the
+   * budget loop treats "no derivable target" as loud-unverified, never silent.
+   */
+  targetLevel: z.number().int().optional(),
 });
 export type EncounterMapRoomBrief = z.infer<typeof encounterMapRoomBriefSchema>;
 
@@ -161,6 +196,15 @@ export const layoutRoomSchema = z.object({
   key: z.string().default(''),
   keyTreasure: z.string().default(''),
   /**
+   * This room's own challenge target (docs/11 D12): the level this room
+   * alone should challenge. Additive + optional — legacy rooms parse without
+   * it. Stamped from the Cartographer brief (or the encounter's parsed
+   * levelHint) at generation; the asymmetric budget loop may LOWER it a step
+   * (floor 1) when the room's creatures overrun its band, and the final
+   * (possibly lowered) value persists here, visible and owner-editable.
+   */
+  targetLevel: z.number().int().optional(),
+  /**
    * The party's way in (entrance/exit spawn zones, doc 11): one opening in
    * the spawn room's outer wall. Only the spawn room may carry one, and a
    * layout carries at most one. Optional — legacy layouts have none and fall
@@ -191,8 +235,29 @@ export const encounterLayoutSchema = z
     theme: z.string(),
     rooms: z.array(layoutRoomSchema).min(1).max(10),
     corridors: z.array(layoutCorridorSchema),
+    /**
+     * Ordered play sequence of room ids (docs/11 D13): the Cartographer
+     * brief's room order, spawn room first. Stored EXPLICITLY because
+     * `packAttempt` rotates `brief.rooms`, so the rooms-array order cannot
+     * be trusted. Optional: legacy layouts have none (the room-array order
+     * is the fallback) and the v17 migration backfills it for complexes.
+     */
+    path: z.array(z.uuid()).optional(),
   })
   .superRefine((layout, context) => {
+    if (layout.path !== undefined) {
+      const roomIds = layout.rooms.map((room) => room.id);
+      if (
+        layout.path.length !== roomIds.length ||
+        new Set(layout.path).size !== layout.path.length ||
+        layout.path.some((id) => !roomIds.includes(id))
+      ) {
+        context.addIssue({
+          code: 'custom',
+          message: 'path must be a permutation of the layout room ids',
+        });
+      }
+    }
     if (layout.rooms.filter((room) => room.spawn).length !== 1) {
       context.addIssue({ code: 'custom', message: 'layout must contain exactly one spawn room' });
     }

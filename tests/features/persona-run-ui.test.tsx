@@ -1175,6 +1175,8 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
         layout: null,
         preset: 'standard',
         locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
       },
     });
 

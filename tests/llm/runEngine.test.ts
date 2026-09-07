@@ -573,6 +573,8 @@ describe('runEngine', () => {
         layout: null,
         preset: 'standard',
         locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
       },
     });
 

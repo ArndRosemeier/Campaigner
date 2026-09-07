@@ -504,6 +504,10 @@ function dataForDraft(kind: ArtifactKind, draft: Record<string, unknown>): Artif
         // The content-only Smith run produces no map: always standard (the
         // Cartographer map run owns the preset, docs/11 D10).
         preset: 'standard',
+        // A Smith-created encounter has no layout yet: a single site until
+        // the Cartographer generates one (docs/11 D11).
+        siteShape: 'single',
+        budgetAdvisory: '',
       };
     case 'plotarc':
       return {
@@ -2790,6 +2794,9 @@ export class RunEngine {
           // (regenerate keeps the target's preset via the run input; an
           // explicit change re-tiers the map — docs/11 D10).
           preset: this.effectiveEncounterBrief(steps).preset,
+          // So is the shape it just produced (docs/11 D11): the target's old
+          // shape may not match the fresh layout's room count.
+          siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
         },
       }, { source: 'persona', runId });
       artifactId = target.id;
@@ -2858,6 +2865,11 @@ export class RunEngine {
           // Cartographer-created encounters classify themselves too (D10
           // amendment; the Smith draft classifies via its own field).
           locationKind: parsed.environment === 'dungeon' ? 'dungeon' : 'wilderness',
+          // The shape the run just produced (docs/11 D11): one arena room =
+          // single, anything multi-room = complex. The brief boundary
+          // enforces 1-or-4–10; the persisted field records the outcome.
+          siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
+          budgetAdvisory: '',
         },
       }, { source: 'persona', runId });
       artifactId = artifact.id;

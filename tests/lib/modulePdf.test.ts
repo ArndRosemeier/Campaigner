@@ -82,6 +82,8 @@ async function seed(): Promise<{ deliverable: Deliverable; npcId: string; gmNote
       layout: null,
       preset: 'standard',
       locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
     },
     links: [{ targetId: location.id, relation: 'at' }],
   });

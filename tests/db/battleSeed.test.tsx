@@ -116,6 +116,11 @@ async function addEncounter(over: SeedOptions = {}): Promise<Artifact> {
       layout: over.layout ?? null,
       preset: 'standard',
       locationKind: 'other',
+      siteShape:
+        over.layout === undefined || over.layout === null || over.layout.rooms.length <= 1
+          ? 'single'
+          : 'complex',
+      budgetAdvisory: '',
     },
     links: over.linkLocationId === undefined ? [] : [{ targetId: over.linkLocationId, relation: 'at' }],
   });

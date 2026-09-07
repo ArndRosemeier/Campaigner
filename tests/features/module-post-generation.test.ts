@@ -270,6 +270,8 @@ describe('runModulePostGeneration', () => {
         layout: null,
         preset: 'standard',
         locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
       },
     });
     await saveSettings({ ...defaultSettings(), imagesEnabled: true });

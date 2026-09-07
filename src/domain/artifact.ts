@@ -6,6 +6,8 @@ import {
   encounterLayoutSchema,
   encounterLocationKindSchema,
   encounterPresetSchema,
+  encounterSiteShapeSchema,
+  spawnFirstPath,
 } from '@/domain/encounterMap/schema';
 
 /** Artifact kinds; M1 shipped npc/location/faction/note, M2 adds the rest.
@@ -210,7 +212,75 @@ export const monsterEntrySchema = z.object({
 
 export type MonsterEntry = z.infer<typeof monsterEntrySchema>;
 
-export const encounterDataSchema = z.object({
+/**
+ * Derives the additive shape fields for encounter data written before they
+ * existed (docs/11 D11 + the v17 backfill; ONE derivation shared by the
+ * migration, parse-on-read and backup validation so every legacy row reads
+ * identically):
+ *
+ * - `siteShape` absent (legacy) ⇒ derived: layout null ⇒ 'single' (uploaded
+ *   maps stay byte-identical in behavior); `rooms.length <= 1` ⇒ 'single'
+ *   (and corridors cleared — a one-room arena has none); `rooms.length > 1`
+ *   ⇒ 'complex' with `path` backfilled as the current room-array order,
+ *   spawn room first when derivable.
+ * - A persisted `siteShape` always wins — the owner's editor value and the
+ *   generation output are never overwritten here.
+ */
+export function normalizeEncounterShapeData(data: EncounterShapeDataLike): EncounterShapeDataLike {
+  if (data.siteShape === 'single' || data.siteShape === 'complex') return data;
+  const layout = data.layout;
+  if (layout === null || layout === undefined) return { ...data, siteShape: 'single' };
+  // Array.isArray would narrow to `any[]` — keep the row's record shape and
+  // validate each member explicitly (raw legacy rows are untrusted).
+  const rawRooms: unknown = layout.rooms;
+  const rooms: (Record<string, unknown> | null)[] = Array.isArray(rawRooms)
+    ? (rawRooms as (Record<string, unknown> | null)[])
+    : [];
+  if (rooms.length <= 1) {
+    return { ...data, siteShape: 'single', layout: { ...layout, corridors: [] } };
+  }
+  // Spawn room first "if derivable": legacy rooms carry a spawn flag; a
+  // layout without one keeps the plain room-array order.
+  const ids: string[] = [];
+  let spawnId: string | undefined;
+  for (const room of rooms) {
+    if (room === null || typeof room.id !== 'string') continue;
+    ids.push(room.id);
+    if (room.spawn === true) spawnId = room.id;
+  }
+  const path = Array.isArray(layout.path) ? layout.path : spawnFirstPath(ids, spawnId);
+  return {
+    ...data,
+    siteShape: 'complex',
+    layout: { ...layout, path },
+  };
+}
+
+/** Structural input of `normalizeEncounterShapeData` (raw legacy rows). */
+export interface EncounterShapeDataLike {
+  siteShape?: unknown;
+  budgetAdvisory?: unknown;
+  layout?:
+    | {
+        rooms?: readonly { id?: unknown; spawn?: unknown }[];
+        corridors?: unknown;
+        path?: unknown;
+      }
+    | null
+    | undefined;
+}
+
+/**
+ * The migration note (docs/11 D12) the v17 upgrade writes onto encounter
+ * rows it maps to 'complex' (legacy multi-room layouts): their rooms carry
+ * no per-room challenge targets, so each is roughly 1/N of the whole and
+ * may be under-budget until the battlemap is regenerated. The editor shows
+ * it verbatim via the room-keys/budget advisory block.
+ */
+export const LEGACY_COMPLEX_BUDGET_NOTE =
+  'This encounter was written before per-room challenge budgets: each room is roughly 1/N of the whole encounter\'s strength and may be under-budget until the battlemap is regenerated.';
+
+const encounterDataShape = z.object({
   /** e.g. 'medium', 'deadly', or free text. */
   difficulty: z.string(),
   /** Party level this encounter targets. */
@@ -238,7 +308,53 @@ export const encounterDataSchema = z.object({
    * additive M5-C pattern).
    */
   locationKind: encounterLocationKindSchema.default('other'),
+  /**
+   * The encounter's SHAPE (docs/11 D11): 'single' = one arena (one room, no
+   * corridors, no veils at seed), 'complex' = a dungeon (multi-room,
+   * sequential play along the layout's path). Editor labels: "Encounter" /
+   * "Dungeon". 'single' default — legacy rows parse without a Dexie bump and
+   * `normalizeEncounterShapeData` (below) derives the real shape from the
+   * layout at every read; the v17 backfill writes the same value into the
+   * stored rows.
+   */
+  siteShape: encounterSiteShapeSchema.default('single'),
+  /**
+   * Loud per-room challenge advisory (docs/11 D12): the asymmetric budget
+   * loop persists here when a room ships over its challenge band (or could
+   * not be verified), and the v17 migration notes legacy multi-room rows'
+   * ~1/N-strength rooms. '' = no advisory.
+   */
+  budgetAdvisory: z.string().default(''),
 });
+
+export const encounterDataSchema = z.preprocess(
+  (data: unknown) => normalizeEncounterShapeData(data as EncounterShapeDataLike),
+  encounterDataShape.superRefine((data, context) => {
+    // D11 shape invariants (the shared layout schema stays shape-agnostic —
+    // it is also the packer's output type). Generation enforces the stricter
+    // 1-or-4–10 dichotomy at the brief boundary; here only the two hard
+    // invariants bind, so grandfathered legacy complexes (2–3 rooms) parse.
+    if (data.layout === null) return;
+    if (data.siteShape === 'single' && data.layout.rooms.length !== 1) {
+      context.addIssue({
+        code: 'custom',
+        message: 'a single-site encounter carries exactly one room',
+      });
+    }
+    if (data.siteShape === 'single' && data.layout.corridors.length !== 0) {
+      context.addIssue({
+        code: 'custom',
+        message: 'a single-site encounter carries no corridors',
+      });
+    }
+    if (data.siteShape === 'complex' && data.layout.rooms.length < 2) {
+      context.addIssue({
+        code: 'custom',
+        message: 'a complex (dungeon) encounter carries more than one room',
+      });
+    }
+  }),
+);
 
 export type EncounterArtifactData = z.infer<typeof encounterDataSchema>;
 

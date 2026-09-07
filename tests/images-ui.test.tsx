@@ -266,6 +266,8 @@ describe('images ui', () => {
         layout: null,
         preset: 'standard',
         locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
       },
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));
@@ -316,6 +318,8 @@ describe('images ui', () => {
         layout: null,
         preset: 'dungeon',
         locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
       },
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));
