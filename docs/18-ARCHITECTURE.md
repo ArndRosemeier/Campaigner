@@ -101,6 +101,7 @@ column.
 | zod → JSON Schema | `strictSchema.strictJsonSchema` / `schemaResponseFormat` — read the strict-subset header first | a private converter |
 | Parse a model reply | `jsonReply.parseJsonReply` + the contract's zod `parse`; failure fails the run / pauses for review (AGENTS 3) | catch-and-continue around parsing |
 | Model escalation / refusals | `modelFallback.walkModelChain` + `openrouterErrors.fallbackReasonFor` (refusal → `'filter'` fallback; schema-rejected → `null`, loud) | ad-hoc retry loops; silent model swaps |
+| Classify a failed run for the owner | `failureKind.failureKindOf(error)` (`llm/failureKind.ts` — structural over the typed error classes) + the `domain/run` `FAILURE_KIND_LABELS`/`FAILURE_KIND_GUIDANCE` maps; every fail site writes the kind next to the verbatim `errorMessage` (docs/05, ledger 35) | prose-matching the raw message; replacing or truncating the message with the kind |
 | Wait for a run | `runEngine.waitForRunStatus` (one primitive; `includePaused` for chain steps) | private poll loops; `TERMINAL_RUN_STATUSES` is the only terminal-status list |
 | Persona run pipelines | `runEngine` step plans per mode (`domain/persona.mode` = generate/review/image/encounter): `retrieve→draft→statblock→finalize`, `gather→check→finalize`, `prompt-draft→generate→pick` (pick ALWAYS pauses), `brief→layout→schematic→stylize→verify→pick→finalize` | a bespoke pipeline for a shape that fits an existing plan |
 | Image generation | `imageGen.generateImages` (n-retry, `cappedToOne` → user-visible notice) | raw image API calls elsewhere |
