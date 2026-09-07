@@ -13,7 +13,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { readSettings, saveSettings } from '@/db/settingsRepo';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * First-run setup wizard (05-UI.md §Onboarding): the one-time auto-open on a
@@ -21,6 +21,15 @@ import { flushAsyncUpdates } from '../helpers/flush';
  * Finish/dismiss persistence and the re-open affordances. App-shell tests
  * seed a settled onboarding row instead — the wizard must never hijack a
  * shell test.
+ *
+ * Leak discipline (docs/08 §Console guard): the real app shell is mounted
+ * here, so its live queries (settings, campaigns) and the wizard dialog's
+ * own queries re-fire on fake-indexeddb's timed queue. The auto-open's
+ * `setOnboardingStatus('active')` write and every step/status write land
+ * AFTER the act-wrapped step that triggered them, and Base UI's dialog exit
+ * transition schedules rAF/timer updates of its own — raw awaited
+ * `readSettings()` reads are wrapped in `actDrained` and every test ends
+ * with `flushAsyncUpdates()` so the cascades drain inside act.
  */
 
 function renderAppAt(path: string): void {
@@ -51,7 +60,10 @@ describe('auto-open', () => {
       expect(useOnboardingStore.getState().open).toBe(true);
     });
     await flushAsyncUpdates();
-    const status = (await readSettings()).onboarding.status;
+    // Raw awaited read while the shell is mounted — actDrained closes the
+    // leak window (the auto-open's status write re-fires the settings
+    // live queries on the timed queue).
+    const status = (await actDrained(() => readSettings())).onboarding.status;
     expect(status).toBe('active');
 
     // Second launch on the same browser: no auto-open.
@@ -62,6 +74,7 @@ describe('auto-open', () => {
     renderAppAt(ROUTES.campaignPicker);
     await flushAsyncUpdates();
     expect(screen.queryByTestId('setup-wizard')).toBeNull();
+    await flushAsyncUpdates();
   }, 20000);
 
   it('does not auto-open when campaigns already exist (upgrade safety)', async () => {
@@ -70,7 +83,8 @@ describe('auto-open', () => {
     await flushAsyncUpdates();
     expect(screen.queryByTestId('setup-wizard')).toBeNull();
     // The status stays 'fresh' so a genuinely first run still gets it.
-    expect((await readSettings()).onboarding.status).toBe('fresh');
+    expect((await actDrained(() => readSettings())).onboarding.status).toBe('fresh');
+    await flushAsyncUpdates();
   }, 20000);
 
   it('does not auto-open when dismissed', async () => {
@@ -81,6 +95,8 @@ describe('auto-open', () => {
     renderAppAt(ROUTES.campaignPicker);
     await flushAsyncUpdates();
     expect(screen.queryByTestId('setup-wizard')).toBeNull();
+    expect((await actDrained(() => readSettings())).onboarding.status).toBe('dismissed');
+    await flushAsyncUpdates();
   }, 20000);
 });
 
@@ -99,9 +115,11 @@ describe('checklist semantics', () => {
       expect(screen.getByTestId('wizard-row-welcome')).toHaveAttribute('aria-expanded', 'false');
       expect(screen.getByTestId('wizard-row-openrouter')).toHaveAttribute('aria-expanded', 'true');
     });
-    expect((await readSettings()).onboarding.stepState).toEqual([
+    // The Begin write's liveQuery cascade drains inside act (docs/08).
+    expect((await actDrained(() => readSettings())).onboarding.stepState).toEqual([
       { id: 'welcome', state: 'done' },
     ]);
+    await flushAsyncUpdates();
   }, 20000);
 
   it('Skip persists as skipped and the wizard resumes at the first unresolved step', async () => {
@@ -117,7 +135,9 @@ describe('checklist semantics', () => {
     });
     await user.click(screen.getByTestId('wizard-skip-openrouter'));
 
-    const onboarding = (await readSettings()).onboarding;
+    // Raw awaited read while the shell + dialog are mounted — actDrained
+    // closes the leak window opened by the skip's settings write (docs/08).
+    const onboarding = (await actDrained(() => readSettings())).onboarding;
     expect(onboarding.stepState).toEqual([
       { id: 'welcome', state: 'done' },
       { id: 'openrouter', state: 'skipped' },
@@ -135,6 +155,7 @@ describe('checklist semantics', () => {
     await waitFor(() => {
       expect(screen.getByTestId('wizard-row-language')).toHaveAttribute('aria-expanded', 'true');
     });
+    await flushAsyncUpdates();
   }, 20000);
 
   it('auto-ticks a pending step when its detection signal fires (saved key)', async () => {
@@ -155,6 +176,9 @@ describe('checklist semantics', () => {
       const onboarding = (await readSettings()).onboarding;
       expect(onboarding.stepState).toContainEqual({ id: 'openrouter', state: 'done' });
     });
+    // The auto-tick's settings write can straggle past waitFor's last poll —
+    // drain it inside act (docs/08).
+    await flushAsyncUpdates();
   }, 20000);
 
   it('shows campaign/module sub-progress on the author step', async () => {
@@ -168,6 +192,7 @@ describe('checklist semantics', () => {
     const step = screen.getByTestId('wizard-step-author');
     expect(within(step).getByTestId('wizard-detail-campaign')).toHaveTextContent('✓');
     expect(within(step).getByTestId('wizard-detail-module')).toHaveTextContent('·');
+    await flushAsyncUpdates();
   }, 20000);
 });
 
@@ -205,7 +230,11 @@ describe('completion + dismissal persistence', () => {
     await waitFor(() => {
       expect(useOnboardingStore.getState().open).toBe(false);
     });
-    expect((await readSettings()).onboarding.status).toBe('complete');
+    // Raw awaited read while the shell is mounted; the Finish write and the
+    // dialog's exit transition land on the timed queue — actDrained + a
+    // final drain keep them inside act (docs/08).
+    expect((await actDrained(() => readSettings())).onboarding.status).toBe('complete');
+    await flushAsyncUpdates();
   }, 20000);
 
   it('"Don\'t show again" persists dismissed and closes', async () => {
@@ -216,7 +245,8 @@ describe('completion + dismissal persistence', () => {
     await waitFor(() => {
       expect(useOnboardingStore.getState().open).toBe(false);
     });
-    expect((await readSettings()).onboarding.status).toBe('dismissed');
+    expect((await actDrained(() => readSettings())).onboarding.status).toBe('dismissed');
+    await flushAsyncUpdates();
   }, 20000);
 });
 
@@ -239,6 +269,9 @@ describe('steps link out to existing surfaces', () => {
       expect(useOnboardingStore.getState().open).toBe(false);
     });
     expect(window.location.pathname).toBe(ROUTES.settings);
+    // The closed dialog's exit transition (Base UI unmounts it after the
+    // transition) drains inside act (docs/08).
+    await flushAsyncUpdates();
   }, 20000);
 });
 
@@ -248,6 +281,9 @@ describe('re-open affordances', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByTestId('get-set-up'));
     expect(await screen.findByTestId('setup-wizard')).toBeInTheDocument();
+    // The auto-open's status write (it fired on this fresh shell) can
+    // straggle past the findBy act — drain it (docs/08).
+    await flushAsyncUpdates();
   }, 20000);
 
   it('welcome panel offers "Set up Campaigner" while the wizard is unfinished', async () => {
@@ -261,6 +297,7 @@ describe('re-open affordances', () => {
     const user = userEvent.setup();
     await user.click(screen.getByTestId('welcome-set-up'));
     expect(await screen.findByTestId('setup-wizard')).toBeInTheDocument();
+    await flushAsyncUpdates();
   }, 20000);
 
   it("help's setup topic reopens the wizard and closes help", async () => {
@@ -275,5 +312,6 @@ describe('re-open affordances', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('help-dialog')).toBeNull();
     });
+    await flushAsyncUpdates();
   }, 20000);
 });

@@ -13,6 +13,7 @@ import { createModule } from '@/db/moduleRepo';
 import { createPackBook, createRulebook, finalizePackBook, updateRulebook } from '@/db/rulebookRepo';
 import { db } from '@/db/db';
 import { clearDatabase } from '../db/helpers';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
@@ -267,8 +268,13 @@ describe('BestiaryRoster', () => {
     expect(message).toBe("Goblin spawned into 'Vault of Whispers'");
     expect(action).toMatchObject({ label: 'Open module' });
 
-    // The artifact exists exactly once, owned by the module, tagged.
-    const mobs = (await db.artifacts.toArray()).filter(
+    // The artifact exists exactly once, owned by the module, tagged. The
+    // read is actDrained (docs/08 §Console guard): the spawn write re-fires
+    // the picker's live queries and Base UI's DialogRoot schedules its
+    // transition-reset rAF on the timed queue — the raw await used to hand
+    // both an outside-act window (the intermittent 'An update to
+    // DialogRoot…' leak).
+    const mobs = (await actDrained(() => db.artifacts.toArray())).filter(
       (artifact) => artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined,
     );
     expect(mobs).toHaveLength(1);
@@ -281,6 +287,9 @@ describe('BestiaryRoster', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('spawn-module-picker')).not.toBeInTheDocument();
     });
+    // The closing dialog's exit transition (Base UI unmounts it on a timer)
+    // drains inside act.
+    await flushAsyncUpdates();
   }, 30000);
 
   it('names the empty state loudly when the campaign has no modules', async () => {
@@ -299,11 +308,18 @@ describe('BestiaryRoster', () => {
     expect(await screen.findByTestId('spawn-picker-no-modules')).toHaveTextContent(
       'No modules in “Barren” yet.',
     );
-    // Nothing was created — a closed path is not a silent success.
+    // Nothing was created — a closed path is not a silent success. The read
+    // is actDrained (docs/08 §Console guard): the open dialog's DialogRoot
+    // transition-reset rAF and the picker's liveQuery emissions ride
+    // fake-indexeddb's timed queue, and the bare await handed them an
+    // outside-act window (the intermittent 'An update to DialogRoot…' leak
+    // this test was reported with). The trailing drain absorbs any
+    // straggler before cleanup.
     expect(
-      (await db.artifacts.toArray()).filter(
+      (await actDrained(() => db.artifacts.toArray())).filter(
         (artifact) => artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined,
       ),
     ).toHaveLength(0);
+    await flushAsyncUpdates();
   }, 30000);
 });

@@ -18,6 +18,7 @@ import { useProgressStore } from '@/lib/progress';
 import { runEntityBatch } from '@/features/modules/entity-batch';
 import { updateSettings } from '@/db/settingsRepo';
 import { clearDatabase } from '../db/helpers';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 vi.mock('@/llm/openrouter', () => ({
   chat: vi.fn(),
@@ -169,7 +170,14 @@ describe('entity batch — real chain persistence and live resolution', () => {
       { timeout: 10_000 },
     );
 
-    const artifacts = await listArtifactsByCampaign(campaign.id);
+    // Raw awaited read while the Harness (useArtifacts live query + dock) is
+    // still mounted — wrapped in actDrained (docs/08 §Console guard): the
+    // batch's artifact write re-fires the live query on fake-indexeddb's
+    // timed queue, and the bare await handed that emission an outside-act
+    // window (the "Console noise leaked" act warning reported for the batch
+    // run views under full-suite load). The trailing drain absorbs any
+    // straggler before cleanup.
+    const artifacts = await actDrained(() => listArtifactsByCampaign(campaign.id));
     expect(artifacts).toHaveLength(1);
     const artifact = artifacts[0];
     expect(artifact?.name).toBe('Kael');
@@ -183,6 +191,7 @@ describe('entity batch — real chain persistence and live resolution', () => {
       expect(artifact.data.statBlock?.ac).toBe(15);
     }
     expect(toastErrorMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
   }, 20_000);
 
   it('generates independent entities concurrently up to maxParallelRequests', async () => {
