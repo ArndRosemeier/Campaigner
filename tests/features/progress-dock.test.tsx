@@ -1,7 +1,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { useProgressStore } from '@/lib/progress';
@@ -10,18 +10,41 @@ import { useProgressStore } from '@/lib/progress';
  * The app-wide progress dock (00-OVERVIEW): renders one stacked job per
  * running task — label, determinate fill + percent, or an indeterminate
  * sweep — and the detail line describing the current step. No jobs → the
- * dock disappears entirely.
+ * dock disappears entirely — unless a Writers' Room chain is running (its
+ * steps are real runs that start no dock job of their own). The header hosts
+ * the owner-requested **Stop all** button: visible whenever the dock is,
+ * sweeping every generation surface through stopAllGenerations (mocked here
+ * — the orchestrator has its own pin), disabled while the sweep runs.
  */
+
+const mocks = vi.hoisted(() => ({
+  stopAllGenerations: vi.fn(),
+  chainGetState: vi.fn(() => ({ steps: [], currentIndex: 0, status: 'idle' })),
+}));
+
+vi.mock('@/features/progress/stop-all-generations', () => ({
+  stopAllGenerations: mocks.stopAllGenerations,
+}));
+vi.mock('@/llm/chainRunner', () => ({
+  chainRunner: { getState: mocks.chainGetState, on: vi.fn(() => () => undefined), cancel: vi.fn() },
+}));
+
+function chainRunning(): void {
+  mocks.chainGetState.mockReturnValue({ steps: [], currentIndex: 0, status: 'running' });
+}
 
 describe('ProgressDock', () => {
   beforeEach(() => {
     useProgressStore.getState().reset();
+    mocks.stopAllGenerations.mockReset();
+    mocks.chainGetState.mockReset().mockReturnValue({ steps: [], currentIndex: 0, status: 'idle' });
   });
   afterEach(cleanup);
 
   it('renders nothing when no jobs are running', () => {
     render(<ProgressDock />);
     expect(screen.queryByTestId('progress-dock')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('stop-all-generations')).not.toBeInTheDocument();
   });
 
   it('shows a determinate bar with percent and the current detail', () => {
@@ -100,5 +123,45 @@ describe('ProgressDock', () => {
 
     expect(screen.getByTestId('progress-label')).toBeInTheDocument();
     expect(screen.queryByTestId('progress-open')).not.toBeInTheDocument();
+  });
+
+  it('offers Stop all while jobs are running and disables it until the sweep settles', async () => {
+    const user = userEvent.setup();
+    useProgressStore.getState().start('job-1', 'Generating 2 npcs');
+    let resolveStop: (value: { stopped: number }) => void = () => undefined;
+    mocks.stopAllGenerations.mockImplementation(
+      () => new Promise((resolve) => {
+        resolveStop = resolve;
+      }),
+    );
+
+    render(<ProgressDock />);
+
+    const button = screen.getByTestId('stop-all-generations');
+    expect(button).toHaveTextContent('Stop all');
+    expect(button).toBeEnabled();
+
+    await user.click(button);
+    expect(mocks.stopAllGenerations).toHaveBeenCalledTimes(1);
+    // While the sweep runs the button is its own running state — a second
+    // press must be impossible.
+    expect(button).toBeDisabled();
+    expect(button).toHaveTextContent('Stopping…');
+    await act(async () => {
+      resolveStop({ stopped: 2 });
+      await Promise.resolve();
+    });
+    expect(button).toBeEnabled();
+    expect(button).toHaveTextContent('Stop all');
+  });
+
+  it('shows Stop all while only a Writers\u2019 Room chain is running (no dock jobs)', () => {
+    chainRunning();
+
+    render(<ProgressDock />);
+
+    expect(screen.getByTestId('progress-dock')).toBeInTheDocument();
+    expect(screen.queryByTestId('progress-job')).not.toBeInTheDocument();
+    expect(screen.getByTestId('stop-all-generations')).toBeInTheDocument();
   });
 });

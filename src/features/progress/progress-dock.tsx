@@ -1,7 +1,12 @@
-import type { JSX } from 'react';
+import { useEffect, useState, type JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { SquareStop } from 'lucide-react';
 
+import { Button } from '@/components/ui/button';
+import { chainRunner, type ChainState } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
+import { stopAllGenerations } from '@/features/progress/stop-all-generations';
+import { toastError } from '@/lib/toast';
 
 /**
  * App-wide progress dock (AppShell, above <main>): one stacked job per
@@ -12,10 +17,31 @@ import { useProgressStore } from '@/lib/progress';
  * destination (a run's workspace view, the module mid-forge) render their
  * label as a button that navigates there — generation stays observable from
  * every screen, not only from the pane that started it.
+ *
+ * The header hosts **Stop all** (owner request): one press sweeps every
+ * generation surface via `stopAllGenerations` — queue jobs, in-flight runs,
+ * the module forge, an active Writers' Room chain. Non-destructive (stopped
+ * runs stay resumable), no confirmation, disabled while the sweep runs. The
+ * dock (and with it the button) also appears while ONLY a chain is running —
+ * chain steps are real runs but report no dock job of their own.
  */
 export function ProgressDock(): JSX.Element | null {
   const jobs = useProgressStore((state) => state.jobs);
-  if (jobs.length === 0) return null;
+  const chain = useChainState();
+  const [stopping, setStopping] = useState(false);
+  if (jobs.length === 0 && chain.status !== 'running') return null;
+
+  const stopAll = (): void => {
+    if (stopping) return;
+    setStopping(true);
+    stopAllGenerations()
+      .catch((error: unknown) => {
+        toastError('Could not stop the running generations', error);
+      })
+      .finally(() => {
+        setStopping(false);
+      });
+  };
 
   return (
     <div
@@ -23,6 +49,19 @@ export function ProgressDock(): JSX.Element | null {
       data-testid="progress-dock"
     >
       <div className="pointer-events-auto flex w-full max-w-xl flex-col gap-4 rounded-lg border bg-popover p-4 shadow-lg">
+        <div className="flex justify-end">
+          <Button
+            type="button"
+            variant="destructive"
+            size="xs"
+            disabled={stopping}
+            onClick={stopAll}
+            data-testid="stop-all-generations"
+          >
+            <SquareStop />
+            {stopping ? 'Stopping…' : 'Stop all'}
+          </Button>
+        </div>
         {jobs.map((job) => (
           <div key={job.id} className="flex flex-col gap-1.5" data-testid="progress-job">
             <div className="flex items-baseline justify-between gap-2 text-sm font-medium">
@@ -98,4 +137,16 @@ function DockLink({ href, label }: { href: string; label: string }): JSX.Element
       {label}
     </button>
   );
+}
+
+/**
+ * The Writers'-Room chain is the one running thing that reports no dock job
+ * (its steps are real runs, but only encounter runs start dock entries), so
+ * the dock subscribes to the chain state directly: a running chain keeps the
+ * dock — and its Stop all button — on screen even with an empty job list.
+ */
+function useChainState(): ChainState {
+  const [chain, setChain] = useState<ChainState>(() => chainRunner.getState());
+  useEffect(() => chainRunner.on(setChain), []);
+  return chain;
 }
