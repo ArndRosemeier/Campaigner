@@ -622,6 +622,38 @@ describe('drag & tap', () => {
     expect(Math.abs((px % 72) - 36)).toBeLessThan(1e-6);
   });
 
+  it('commits the drag when the pointer leaves the token node mid-gesture', async () => {
+    // The reported intermittent failure: a fast drag outruns the token
+    // element, so the token's own move/up stream dies and the mob "snaps
+    // back". Moves bubble to the board, which now follows the active drag,
+    // and an off-piece release finishes it with identical commit semantics.
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const pcToken = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (pcToken === undefined) throw new Error('pc token missing');
+    const tokenEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Serren');
+    if (tokenEl === undefined) throw new Error('serren element missing');
+    const board = screen.getByTestId('battle-board');
+    fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
+    fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.55 * BOARD_W, clientY: 0.5 * BOARD_H });
+    // The cursor leaves the token node: the rest of the gesture lands on the board.
+    fireEvent.pointerMove(board, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    fireEvent.pointerUp(board, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    await flushAsyncUpdates();
+    const after = await currentBattle(moduleId);
+    const moved = after.board.tokens.find((token) => token.label === 'Serren');
+    if (moved === undefined) throw new Error('token vanished');
+    expect(moved.x).not.toBe(pcToken.x);
+    const px = moved.x * BOARD_W;
+    expect(Math.abs((px % 72) - 36)).toBeLessThan(1e-6);
+  });
+
   it('taps to select and shows name + HP only in the controls', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);

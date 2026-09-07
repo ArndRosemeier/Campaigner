@@ -449,6 +449,19 @@ export function BattleSurface(): JSX.Element {
       }
       return;
     }
+    // Drag fallback: the token/veil/effect move handlers live on the piece
+    // node, so a fast drag that leaves the node (or a node remount mid-drag)
+    // stops that stream and the piece "snaps back". Moves bubble to the
+    // board, so keep following the active drag here — same math, same state.
+    if (liveDrag !== null) {
+      const at = boardPointFromEvent(event);
+      const movedPx = Math.max(
+        liveDrag.movedPx,
+        Math.hypot(event.clientX - liveDrag.startClientX, event.clientY - liveDrag.startClientY),
+      );
+      setLiveDrag({ ...liveDrag, x: at.x, y: at.y, movedPx });
+      return;
+    }
     const panning = panRef.current;
     if (panning !== null && panning.pointerId === event.pointerId) {
       setPan({ x: panning.originX + (event.clientX - panning.startX), y: panning.originY + (event.clientY - panning.startY) });
@@ -456,6 +469,25 @@ export function BattleSurface(): JSX.Element {
   }
 
   function onBoardPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
+    // Release fallback (pairs with the move fallback above): a drag released
+    // off its piece node never fires that node's own pointerup, which used
+    // to leak liveDrag (the piece stayed lifted / snapped back on next
+    // render). Finish it here with identical semantics — one commit, tap
+    // selects. Piece pointerups stop propagation, so this only fires for
+    // releases the piece node missed. Releases ON a piece bubble through
+    // the piece's own pointerup first — those own their finish, so only
+    // step in when the release landed off-piece (avoids a double commit).
+    const releaseTarget = event.target as Element | null;
+    const releasedOnPiece =
+      releaseTarget !== null &&
+      releaseTarget.closest(
+        '[data-token-label],[data-testid="battle-veil"],[data-testid="battle-effect"]',
+      ) !== null;
+    if (liveDrag !== null && !releasedOnPiece) {
+      if (liveDrag.tokenId.startsWith('veil:')) finishVeilDrag();
+      else if (liveDrag.tokenId.startsWith('effect:')) finishEffectDrag();
+      else finishTokenDrag();
+    }
     // Background tap (down→up within the screen-space threshold) clears the
     // selection — tapping empty board is a deselect, not just a no-op pan.
     // Pan gestures (≥ threshold) keep it. Token/veil pointerdowns stop
@@ -486,9 +518,23 @@ export function BattleSurface(): JSX.Element {
       setSelectedVeilId(null);
       return;
     }
-    // Pointer capture is a browser nicety; jsdom (tests) lacks it.
-    if (typeof event.currentTarget.setPointerCapture === 'function') {
-      event.currentTarget.setPointerCapture(event.pointerId);
+    // Pointer capture keeps the move/up stream on THIS token even when the
+    // DOM under the cursor changes mid-drag (a live Dexie emission replacing
+    // the token node, or the cursor crossing an overlay edge) — without it a
+    // re-rendered node swallows the stream and the mob "snaps back". jsdom
+    // (tests) lacks the API; the gesture is unsafe without it.
+    const downTarget = event.target as Element | null;
+    const pieceNode = downTarget?.closest('[data-token-label]');
+    const element =
+      pieceNode instanceof HTMLElement ? pieceNode : event.currentTarget;
+    if (typeof element.setPointerCapture === 'function') {
+      try {
+        element.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture can fail (already released, gesture stolen): the
+        // drag still works while the pointer stays over the node, and release
+        // is handled at the board with the same semantics.
+      }
     }
     beginBoardGesture();
     setLiveDrag({
@@ -1747,6 +1793,7 @@ function TokenView({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
       <div
         className={cn(
@@ -1861,6 +1908,7 @@ function VeilView({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
       {resizable &&
         handles.map((handle) => (
@@ -1942,6 +1990,7 @@ function EffectView({
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
+      onPointerCancel={onPointerUp}
     >
       {effect.label.length > 0 && (
         <span className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-[10px] font-medium text-zinc-100 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
