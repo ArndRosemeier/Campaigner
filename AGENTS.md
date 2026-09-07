@@ -40,17 +40,20 @@ conventions` are binding.
 
 ## Parallel writers
 
-Two agents may write concurrently only after a dispatch-time safety check —
-never by default:
+Read-only agents always run in parallel. Two WRITING agents may run in
+parallel only in SEPARATE worktrees (`git worktree add` per agent): writers
+sharing one working tree share one git index, and `git commit` commits the
+whole index — file-disjointness does NOT protect the commit phase (real
+incident: a purge commit swept a concurrent writer's staged feature work
+under the wrong subject). Same-tree writers therefore serialize: one
+writer stages, commits and pushes at a time. When separate worktrees are
+used:
 
-1. **File disjointness**: enumerate the files each task will touch; ANY shared
-   file = serialize (or re-scope the tasks until disjoint).
-2. **Gate budget**: combined test workers must stay within the machine's cores
-   — the second agent runs gates with a reduced `--maxWorkers`.
-3. **Rebase discipline**: `git pull --rebase origin main` before every push;
+1. File disjointness still applies (no shared files across the slices).
+2. Gate budget: combined test workers ≤ cores — the second agent runs
+   gates with a reduced `--maxWorkers`.
+3. Rebase discipline: `git pull --rebase origin main` before every push;
    any conflict means the disjointness check missed something — stop and
    report instead of resolving.
-4. **Re-verify duty**: whichever brief was written against an older HEAD
+4. Re-verify duty: whichever brief was written against an older HEAD
    re-verifies its findings at landing time.
-
-Read-only agents always run in parallel with anything.
