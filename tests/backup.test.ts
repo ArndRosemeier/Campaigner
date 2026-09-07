@@ -12,6 +12,7 @@ import { putChunks } from '@/db/chunkRepo';
 import { searchKeyword } from '@/search/keywordIndex';
 import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
+import { getPersona } from '@/db/personaRepo';
 import { backupFileName, buildBackup, importBackup } from '@/lib/backup';
 import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
@@ -245,6 +246,45 @@ describe('app backup', () => {
     expect(await db.personas.count()).toBeGreaterThan(0);
     expect(await db.pdfFiles.toArray()).toEqual([]);
     expect(result.tableCounts.pdfFiles).toBe(0);
+  });
+
+  it('heals legacy persona rows on restore and fails loudly on a truly invalid kind', async () => {
+    await seedBuiltInPersonas();
+    const { bytes } = await buildBackup();
+    const entries = unzipSync(bytes);
+    const manifest = JSON.parse(
+      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
+    ) as { data?: Record<string, unknown[]> };
+    if (manifest.data === undefined) throw new Error('backup manifest is missing data');
+    const personas = manifest.data.personas as { id: string; producesKind: string }[];
+    expect(personas.length).toBeGreaterThan(0);
+
+    // Legacy pre-M6-E row (producesKind 'session', removed in a670751): the
+    // restore heals it through personaSchema's preprocess — the same
+    // normalization the repo read boundary applies (docs/18 §2.2).
+    const legacyId = personas[0]?.id ?? '';
+    manifest.data.personas = personas.map((row) =>
+      row.id === legacyId ? { ...row, producesKind: 'session' } : row,
+    );
+    const healedZip = zipSync({
+      ...entries,
+      'campaigner-backup.json': strToU8(JSON.stringify(manifest)),
+    });
+    await clearDatabase();
+    await importBackup(new Uint8Array(healedZip));
+    expect((await getPersona(legacyId))?.producesKind).toBe('note');
+
+    // A value that never existed in any enum still fails the restore loudly
+    // (AGENTS 1) — the normalization maps history, it does not catch-all.
+    manifest.data.personas = (manifest.data.personas as { id: string; producesKind: string }[]).map(
+      (row) => (row.id === legacyId ? { ...row, producesKind: 'story' } : row),
+    );
+    const poisonZip = zipSync({
+      ...entries,
+      'campaigner-backup.json': strToU8(JSON.stringify(manifest)),
+    });
+    await clearDatabase();
+    await expect(importBackup(new Uint8Array(poisonZip))).rejects.toThrow(/producesKind/);
   });
 
   it('names the file after the export date', () => {

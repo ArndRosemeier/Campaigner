@@ -113,6 +113,7 @@ column.
 | Treasure clauses in prompts | `treasureGuidanceFor` / `roomKeyGuidanceFor` (`treasureGuidance.ts`) | quoting DMG tables or paraphrasing Paizo numbers (licensing — docs/12 §13.2/§14) |
 | Per-room challenge budgets | `roomBudget.ts` (`checkRoomBudget`, `reconcileRoomAssignments`, `roomBudgetGuidanceFor`, `parseBudgetLevel` over `encounterRoster.parseLevelSort`) — the asymmetric loop: too easy ships, too hard lowers a step through the brief's single repair turn, then LOUD advisory on step output + `data.budgetAdvisory` | a second level parser; numeric pf2e budgets (Paizo licensing — docs/11 D12) |
 | Encounter site shape / play path | `domain/artifact.normalizeEncounterShapeData` (ONE derivation: parse-on-read + v17 backfill + backup validation) + `domain/encounterMap/schema` (`encounterSiteShapeSchema`, `spawnFirstPath`, layout `path` refine) | deriving siteShape from room count at read sites; trusting the rooms-array order as play order (packAttempt rotates it) |
+| Legacy persona values (removed kinds) | `domain/persona.normalizeLegacyProducesKind` (ONE `z.preprocess`: parse boundary + `updatePersona` + backup restore heal the stored row — git-proven mapping table, unknown values still fail loudly) | a catch-all kind fallback; hand-editing or deleting the poisoned row |
 | Campaign grounding for runs | `campaignGrounding.computeCampaignGrounding` + renderer (docs/15) | a second wiki-expansion implementation |
 
 ### 2.3 App & UI

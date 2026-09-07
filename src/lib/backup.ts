@@ -6,6 +6,7 @@ import { writeChunks } from '@/db/chunkRepo';
 import {
   anyArtifactSchema,
   battleSchema,
+  personaSchema,
   settingsSchema,
   storedImageSchema,
   type RuleChunk,
@@ -193,6 +194,16 @@ export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportRe
             throw new Error(`Backup is missing the binary for image ${meta.id}`);
           }
           await table.put(storedImageSchema.parse({ ...meta, bytes }));
+        }
+      } else if (table.name === 'personas') {
+        // Personas heal on restore: each row runs through personaSchema,
+        // whose preprocess applies the legacy producesKind normalization
+        // (normalizeLegacyProducesKind — e.g. pre-M6-E 'session' rows
+        // become 'note') exactly as the repo read boundary does (docs/18
+        // §2.2). A truly invalid row fails the restore loudly and the
+        // transaction aborts untouched — never a planted crash.
+        for (const row of rows) {
+          await table.put(personaSchema.parse(row));
         }
       } else if (table.name === 'chunks') {
         // F10: chunkRepo is the only chunk-write door — the restore goes
