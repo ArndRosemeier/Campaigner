@@ -1457,6 +1457,25 @@ export function BattleSurface(): JSX.Element {
               )}
             </div>
           )}
+          {/* Free-roll dice button (GM-only): opens the roller with a generic
+          intent and NO pending HP target, so the settled total lands in the
+          roller's own log only — applyDiceRoll's null-pending path no-ops.
+          Player-safe mode has no button (the roller never renders there). */}
+          {!playerSafe && (
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full"
+              data-testid="open-dice-roller"
+              onClick={() => {
+                pendingRollRef.current = null;
+                setDiceIntent({ kind: 'generic' });
+              }}
+            >
+              <DicesIcon aria-hidden data-icon="inline-start" />
+              Roll dice
+            </Button>
+          )}
           <InitiativeSidebar
             battle={battle}
             onReorder={(order) => {

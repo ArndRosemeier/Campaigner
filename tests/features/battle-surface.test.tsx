@@ -40,6 +40,7 @@ vi.mock('@/features/dice/DiceRoller', () => ({
   DiceRoller: function StubDiceRoller(props: {
     open: boolean;
     intent?: { kind: string; subject?: string } | undefined;
+    onOpenChange?: (open: boolean) => void;
     onResult?: (result: { total: number; summary: string; perDie: number[] }) => void;
   }) {
     if (!props.open) return null;
@@ -53,6 +54,9 @@ vi.mock('@/features/dice/DiceRoller', () => ({
           onClick={() => props.onResult?.({ total: 7, summary: '2d6+1', perDie: [3, 4] })}
         >
           apply-7
+        </button>
+        <button type="button" data-testid="stub-close-roll" onClick={() => props.onOpenChange?.(false)}>
+          close-without-rolling
         </button>
       </div>
     );
@@ -2091,6 +2095,90 @@ describe('dice-roller damage/heal (M5-D amendment)', () => {
     await user.click(screen.getByTestId('player-safe-toggle'));
     expect(screen.queryByTestId('token-controls')).toBeNull();
     expect(screen.queryByTestId('roll-damage')).toBeNull();
+    expect(screen.queryByTestId('dice-roller-stub')).toBeNull();
+    await flushAsyncUpdates();
+  });
+});
+
+describe('rail free-roll dice button (GM-only)', () => {
+  async function selectByLabel(moduleId: string, label: string): Promise<void> {
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === label);
+    if (token === undefined) throw new Error(`${label} missing`);
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === label);
+    if (el === undefined) throw new Error(`${label} element missing`);
+    fireEvent.pointerDown(el, { pointerId: 1, clientX: token.x * BOARD_W, clientY: token.y * BOARD_H });
+    fireEvent.pointerUp(el, { pointerId: 1 });
+    await flushAsyncUpdates();
+  }
+
+  it('opens the roller in generic free-roll mode and the settled total touches no HP', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+
+    await selectByLabel(moduleId, 'Troll');
+    expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 84 / 84');
+    // The rail button opens the roller with NO subject and the generic
+    // intent — no pending HP target is captured.
+    await user.click(screen.getByTestId('open-dice-roller'));
+    expect(screen.getByTestId('dice-roller-stub')).toBeInTheDocument();
+    expect(screen.getByTestId('stub-intent-kind')).toHaveTextContent('generic');
+    expect(screen.getByTestId('stub-intent-subject')).toHaveTextContent('');
+    // A settled roll of 7 is a safe no-op: the troll keeps full HP, both in
+    // the rail readout and on the stored token instance.
+    await user.click(screen.getByTestId('stub-apply-roll'));
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 84 / 84');
+    const battle = await currentBattle(moduleId);
+    expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(84);
+  });
+
+  it('a stale HP intent does not leak into the free roll: clearing it keeps HP intact', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+
+    // Arm a damage intent, then close the roller WITHOUT rolling (the
+    // stub's close button mirrors the real dialog's cancel path) — this
+    // leaves the pending HP target behind, and the free-roll button must
+    // clear it so the next settled total cannot land on the fighter.
+    await selectByLabel(moduleId, 'Troll');
+    await user.click(screen.getByTestId('roll-damage'));
+    expect(screen.getByTestId('dice-roller-stub')).toBeInTheDocument();
+    await user.click(screen.getByTestId('stub-close-roll'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('dice-roller-stub')).toBeNull();
+    });
+    await user.click(screen.getByTestId('open-dice-roller'));
+    expect(screen.getByTestId('stub-intent-kind')).toHaveTextContent('generic');
+    await user.click(screen.getByTestId('stub-apply-roll'));
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 84 / 84');
+    const battle = await currentBattle(moduleId);
+    expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(84);
+  });
+
+  it('player-safe mode shows no free-roll button and never renders the roller', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    // GM view: the rail button is present.
+    expect(screen.getByTestId('open-dice-roller')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('open-dice-roller')).toBeNull();
     expect(screen.queryByTestId('dice-roller-stub')).toBeNull();
     await flushAsyncUpdates();
   });
