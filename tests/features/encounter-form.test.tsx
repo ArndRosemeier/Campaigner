@@ -293,6 +293,135 @@ function vi_noop(): (data: EncounterArtifactData) => void {
   return () => undefined;
 }
 
+describe('encounter form site shape, path reorder and target levels (docs/11 D11/D12)', () => {
+  beforeEach(clearDatabase);
+
+  function StatefulEncounterForm({ initial }: { initial: EncounterArtifactData }) {
+    const [data, setData] = useState(initial);
+    return <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={setData} />;
+  }
+
+  function singleData(overrides: Partial<EncounterArtifactData> = {}): EncounterArtifactData {
+    return {
+      difficulty: 'hard',
+      levelHint: '4',
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+      layout: null,
+      ...overrides,
+    };
+  }
+
+  it('labels the selector Encounter/Dungeon and writes the owner choice', async () => {
+    const user = userEvent.setup();
+    render(<StatefulEncounterForm initial={singleData()} />);
+    const trigger = screen.getByRole('combobox', { name: 'Site shape' });
+    expect(trigger).toHaveTextContent('Encounter');
+    await user.click(trigger);
+    await user.click(screen.getByRole('option', { name: 'Dungeon (complex)' }));
+    expect(screen.getByRole('combobox', { name: 'Site shape' })).toHaveTextContent('Dungeon');
+  });
+
+  it('disables the shape the battlemap on file cannot hold', async () => {
+    const user = userEvent.setup();
+    const twoRooms = {
+      ...singleData({ siteShape: 'complex' }),
+      layout: {
+        gridW: 24,
+        gridH: 18,
+        theme: 't',
+        rooms: [
+          {
+            id: '00000000-0000-4000-8000-0000000000c1', name: 'A',
+            rects: [{ x: 1, y: 1, w: 6, h: 6 }], mobsRect: { x: 2, y: 2, w: 4, h: 4 },
+            description: '', monsterIndexes: [], spawn: true, key: '', keyTreasure: '',
+          },
+          {
+            id: '00000000-0000-4000-8000-0000000000c2', name: 'B',
+            rects: [{ x: 10, y: 1, w: 6, h: 6 }], mobsRect: { x: 11, y: 2, w: 4, h: 4 },
+            description: '', monsterIndexes: [], spawn: false, key: '', keyTreasure: '',
+          },
+        ],
+        corridors: [],
+      },
+    };
+    render(<StatefulEncounterForm initial={twoRooms} />);
+    await user.click(screen.getByRole('combobox', { name: 'Site shape' }));
+    const single = screen.getByRole('option', { name: 'Encounter (single)' });
+    expect(single).toHaveAttribute('data-disabled');
+    expect(screen.getByRole('option', { name: 'Dungeon (complex)' })).not.toHaveAttribute('data-disabled');
+  });
+
+  it('shows the budget advisory from the generation loop', () => {
+    render(<StatefulEncounterForm initial={singleData({ budgetAdvisory: 'Room "Arena" ships over its challenge budget.' })} />);
+    expect(screen.getByTestId('budget-advisory')).toHaveTextContent('ships over its challenge budget');
+  });
+
+  it('edits a room target level (owner-corrected challenge target)', async () => {
+    const user = userEvent.setup();
+    render(<StatefulEncounterForm initial={twoRoomData()} />);
+    await user.type(screen.getByTestId('room-target-level-0'), '6');
+    const label = screen.getByTestId('room-keys-editor');
+    expect(label).toBeInTheDocument();
+    // The stateful harness re-renders with the typed value; read the input.
+    expect(screen.getByTestId('room-target-level-0')).toHaveValue(6);
+  });
+
+  it('reorders the dungeon path from the Room Keys section without touching the rooms array', async () => {
+    const user = userEvent.setup();
+    render(<StatefulEncounterForm initial={twoRoomData()} />);
+    // Path order starts as the rooms array order: Entry (path 1), Sanctum (path 2).
+    expect(screen.getByTestId('room-key-label-0')).toHaveTextContent('Room A — Entry (path 1)');
+    expect(screen.getByTestId('room-key-label-1')).toHaveTextContent('Room B — Sanctum (path 2)');
+    await user.click(screen.getByTestId('room-move-down-0'));
+    // Sanctum is now path room 1; the ROOMS array (rects/keys) is untouched.
+    expect(screen.getByTestId('room-key-label-0')).toHaveTextContent('Room B — Sanctum (path 1)');
+    expect(screen.getByTestId('room-key-label-1')).toHaveTextContent('Room A — Entry (path 2)');
+  });
+});
+
+/** A complex two-room fixture (Entry spawn first, Sanctum second). */
+function twoRoomData(): EncounterArtifactData {
+  return {
+    difficulty: 'hard',
+    levelHint: '4',
+    monsters: [],
+    terrain: '',
+    tactics: '',
+    treasure: '',
+    mapImageId: null,
+    preset: 'standard',
+    locationKind: 'dungeon',
+    siteShape: 'complex',
+    budgetAdvisory: '',
+    layout: {
+      gridW: 24,
+      gridH: 18,
+      theme: 'ash temple',
+      rooms: [
+        {
+          id: '00000000-0000-4000-8000-0000000000b1', name: 'Entry',
+          rects: [{ x: 1, y: 1, w: 6, h: 6 }], mobsRect: { x: 2, y: 2, w: 4, h: 4 },
+          description: '', monsterIndexes: [], spawn: true, key: '', keyTreasure: '',
+        },
+        {
+          id: '00000000-0000-4000-8000-0000000000b2', name: 'Sanctum',
+          rects: [{ x: 10, y: 1, w: 6, h: 6 }], mobsRect: { x: 11, y: 2, w: 4, h: 4 },
+          description: '', monsterIndexes: [], spawn: false, key: '', keyTreasure: '',
+        },
+      ],
+      corridors: [],
+    },
+  };
+}
+
 describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
   beforeEach(clearDatabase);
 

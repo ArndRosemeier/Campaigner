@@ -470,8 +470,24 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
     onChange({ ...data, ...next });
   }
 
+  // Site-shape boundary (docs/11 D11): the owner can only pick a shape the
+  // layout on file can hold — a single arena is exactly one room with no
+  // corridors, a dungeon is multi-room. An incompatible option is disabled
+  // with the reason in the hint (loud, never silently rewritten).
+  const layout = data.layout;
+  const canBeSingle = layout == null || (layout.rooms.length === 1 && layout.corridors.length === 0);
+  const canBeComplex = layout == null || layout.rooms.length >= 2;
+
   return (
     <div className="flex flex-col gap-3">
+      {data.budgetAdvisory !== '' && (
+        <p
+          className="rounded-md border border-amber-300/40 bg-amber-950/30 p-2 text-xs whitespace-pre-line text-amber-200"
+          data-testid="budget-advisory"
+        >
+          {data.budgetAdvisory}
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-2">
         <Field label="Difficulty">
           <Input
@@ -503,47 +519,77 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
         }}
       />
       <MonsterStatblocksPanel monsters={data.monsters} />
-      <Field label="Location kind">
-        <Select
-          value={data.locationKind}
-          items={{
-            dungeon: 'Dungeon',
-            building: 'Building',
-            wilderness: 'Wilderness',
-            other: 'Other / unclassified',
-          }}
-          onValueChange={(value) => {
-            if (
-              value === 'dungeon' ||
-              value === 'building' ||
-              value === 'wilderness' ||
-              value === 'other'
-            ) {
-              patch({ locationKind: value });
-            }
-          }}
-        >
-          <SelectTrigger aria-label="Location kind" className="h-7 text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="dungeon">Dungeon</SelectItem>
-            <SelectItem value="building">Building</SelectItem>
-            <SelectItem value="wilderness">Wilderness</SelectItem>
-            <SelectItem value="other">Other / unclassified</SelectItem>
-          </SelectContent>
-        </Select>
-        <span className="text-[11px] font-normal text-muted-foreground">
-          Where this encounter takes place. An automatic battlemap maps dungeons on the
-          Dungeon tier (finer grid) and everything else on Standard; the encounter
-          personas classify this themselves and you can correct it here.
-        </span>
-      </Field>
-      {data.layout !== null && (
+      <div className="grid grid-cols-2 gap-2">
+        <Field label="Location kind">
+          <Select
+            value={data.locationKind}
+            items={{
+              dungeon: 'Dungeon',
+              building: 'Building',
+              wilderness: 'Wilderness',
+              other: 'Other / unclassified',
+            }}
+            onValueChange={(value) => {
+              if (
+                value === 'dungeon' ||
+                value === 'building' ||
+                value === 'wilderness' ||
+                value === 'other'
+              ) {
+                patch({ locationKind: value });
+              }
+            }}
+          >
+            <SelectTrigger aria-label="Location kind" className="h-7 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="dungeon">Dungeon</SelectItem>
+              <SelectItem value="building">Building</SelectItem>
+              <SelectItem value="wilderness">Wilderness</SelectItem>
+              <SelectItem value="other">Other / unclassified</SelectItem>
+            </SelectContent>
+          </Select>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            Where this encounter takes place. An automatic battlemap maps dungeons on the
+            Dungeon tier (finer grid) and everything else on Standard; the encounter
+            personas classify this themselves and you can correct it here.
+          </span>
+        </Field>
+        <Field label="Site shape">
+          <Select
+            value={data.siteShape}
+            items={{ single: 'Encounter', complex: 'Dungeon' }}
+            onValueChange={(value) => {
+              if (value === 'single' || value === 'complex') {
+                patch({ siteShape: value });
+              }
+            }}
+          >
+            <SelectTrigger aria-label="Site shape" className="h-7 text-sm">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="single" disabled={!canBeSingle}>
+                Encounter (single)
+              </SelectItem>
+              <SelectItem value="complex" disabled={!canBeComplex}>
+                Dungeon (complex)
+              </SelectItem>
+            </SelectContent>
+          </Select>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            {canBeSingle && canBeComplex
+              ? 'Encounter = one arena (straight to melee). Dungeon = multi-room complex, played room by room along the path.'
+              : 'The battlemap on file fixes this shape — regenerate the map as the other shape first.'}
+          </span>
+        </Field>
+      </div>
+      {layout !== null && (
         <RoomKeysEditor
-          layout={data.layout}
-          onChange={(layout) => {
-            patch({ layout });
+          layout={layout}
+          onChange={(next) => {
+            patch({ layout: next });
           }}
         />
       )}
@@ -575,9 +621,12 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
 }
 
 /**
- * Per-room GM keys (owner-ratified): one key textarea + room-treasure
- * checklist per layout room. Edits touch ONLY the key fields — room
- * rectangles stay regenerate-only (docs/11 non-goals). Regenerating the
+ * Per-room GM keys (owner-ratified) + the dungeon path (docs/11 D11/D12):
+ * one key textarea, room-treasure checklist and owner-editable targetLevel
+ * per layout room, listed in PATH order for complexes (the play order).
+ * Moving a room rewrites only `layout.path` — room rectangles stay
+ * regenerate-only (docs/11 non-goals), and the rooms array itself never
+ * reorders (its rects and keys travel with the room). Regenerating the
  * battlemap replaces keys with the fresh brief's (accepted consequence,
  * stated here and in the map-regeneration copy).
  */
@@ -588,21 +637,72 @@ function RoomKeysEditor({
   layout: NonNullable<EncounterArtifactData['layout']>;
   onChange: (layout: NonNullable<EncounterArtifactData['layout']>) => void;
 }) {
+  const isComplex = layout.rooms.length > 1;
+  const currentPath = layout.path ?? layout.rooms.map((room) => room.id);
+  const roomById = new Map(layout.rooms.map((room) => [room.id, room]));
+  const orderedIds = isComplex
+    ? currentPath.filter((id) => roomById.has(id))
+    : layout.rooms.map((room) => room.id);
+  const orderedRooms = orderedIds.flatMap((id) => {
+    const room = roomById.get(id);
+    return room === undefined ? [] : [{ room, index: layout.rooms.indexOf(room) }];
+  });
+  function movePathRoom(from: number, to: number): void {
+    if (to < 0 || to >= orderedIds.length) return;
+    const next = [...orderedIds];
+    const moved = next[from];
+    if (moved === undefined) return;
+    next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onChange({ ...layout, path: next });
+  }
+
   return (
     <div className="flex flex-col gap-2 border-t pt-3" data-testid="room-keys-editor">
       <div className="flex items-baseline justify-between">
         <h2 className="text-sm font-medium">Room keys</h2>
         <span className="text-[11px] text-muted-foreground">
-          GM-only; shown at each room's staging marker. Regenerating the battlemap rewrites them.
+          GM-only; shown at each room's mob area. Regenerating the battlemap rewrites them.
         </span>
       </div>
-      {layout.rooms.map((room, index) => {
+      {orderedRooms.map(({ room, index }, position) => {
         const marker = room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1);
         return (
           <div key={room.id} className="flex flex-col gap-1 rounded-md border p-1.5">
-            <span className="text-xs font-medium text-muted-foreground" data-testid={`room-key-label-${index}`}>
-              Room {marker} — {room.name}
-            </span>
+            <div className="flex items-center justify-between gap-1">
+              <span className="text-xs font-medium text-muted-foreground" data-testid={`room-key-label-${position}`}>
+                Room {marker} — {room.name}
+                {isComplex ? ` (path ${String(position + 1)})` : ''}
+              </span>
+              {isComplex && (
+                <span className="flex items-center gap-0.5">
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Move room ${marker} up`}
+                    data-testid={`room-move-up-${position}`}
+                    disabled={position === 0}
+                    onClick={() => {
+                      movePathRoom(position, position - 1);
+                    }}
+                  >
+                    ↑
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label={`Move room ${marker} down`}
+                    data-testid={`room-move-down-${position}`}
+                    disabled={position === orderedRooms.length - 1}
+                    onClick={() => {
+                      movePathRoom(position, position + 1);
+                    }}
+                  >
+                    ↓
+                  </Button>
+                </span>
+              )}
+            </div>
             <Textarea
               value={room.key}
               placeholder="What the GM reads when the party first enters…"
@@ -624,6 +724,27 @@ function RoomKeysEditor({
                 onChange({
                   ...layout,
                   rooms: layout.rooms.map((r, i) => (i === index ? { ...r, keyTreasure: event.target.value } : r)),
+                });
+              }}
+            />
+            <Input
+              type="number"
+              min={1}
+              value={room.targetLevel === undefined ? '' : String(room.targetLevel)}
+              placeholder="Target level"
+              className="h-7 text-sm"
+              aria-label={`Room ${marker} target level`}
+              data-testid={`room-target-level-${position}`}
+              onChange={(event) => {
+                const raw = event.target.value.trim();
+                const parsed = raw === '' ? Number.NaN : Number.parseInt(raw, 10);
+                onChange({
+                  ...layout,
+                  rooms: layout.rooms.map((r, i) =>
+                    i === index
+                      ? { ...r, targetLevel: Number.isNaN(parsed) ? undefined : Math.max(1, parsed) }
+                      : r,
+                  ),
                 });
               }}
             />
