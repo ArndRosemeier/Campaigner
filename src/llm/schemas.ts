@@ -8,9 +8,33 @@ import { statBlockSchema } from '@/domain/statblock';
  * their artifact `data` fields; `body` is always markdown for the artifact.
  */
 
+/**
+ * Minimum-content contract (owner-ratified empty-text rejection): an empty
+ * body never ships as a generation result, and neither do empty summary/name
+ * where they carry the artifact's substance. The strict JSON schema cannot
+ * express this (constraint keywords are stripped from the emitted schema),
+ * so the zod parse enforces it at the boundary — a violation is a named
+ * issue that rides the EXISTING one-repair turn (04 §draft step: parse
+ * failure → one retry naming every problem → loud rejection), never a
+ * silent pass.
+ *
+ * The floor is deliberately ONE non-whitespace character, not a prose
+ * minimum: notes and hooks can be short, and a length floor (≥40 chars)
+ * would over-reject legitimate short artifacts. Whitespace-only output is
+ * the "empty text" failure mode; a short-but-real answer is not.
+ */
+function substanceText(label: string) {
+  return z
+    .string()
+    .min(1)
+    .refine((value) => value.trim() !== '', {
+      message: `${label} is empty — it must contain at least one non-whitespace character (an empty generation is rejected, not shipped)`,
+    });
+}
+
 const draftBase = {
-  name: z.string().min(1),
-  summary: z.string(),
+  name: substanceText('name'),
+  summary: substanceText('summary'),
   /** Models often omit tags entirely; a single string is also tolerated. */
   suggestedTags: z.preprocess(
     (value): unknown =>
@@ -18,7 +42,7 @@ const draftBase = {
     z.array(z.string()),
   ),
   /** Markdown for the artifact body. */
-  body: z.string(),
+  body: substanceText('body'),
 };
 
 /**
@@ -216,9 +240,9 @@ export type EncounterDraft = z.infer<typeof encounterDraftSchema>;
  */
 export const encounterGeneratorBriefSchema = z
   .object({
-    name: z.string().min(1),
-    summary: z.string(),
-    body: z.string(),
+    name: substanceText('name'),
+    summary: substanceText('summary'),
+    body: substanceText('body'),
     difficulty: z.string(),
     levelHint: z.string(),
     terrain: z.string(),

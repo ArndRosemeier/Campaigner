@@ -19,8 +19,10 @@ describe('encounter locationKind (docs/11 D10 amendment)', () => {
   it('bounds the draft classification to the four kinds and defaults to unclassified', () => {
     const base = {
       name: 'X',
-      summary: '',
-      body: '',
+      // Minimum-content contract: summary/body carry substance (the empty
+      // case is a rejected draft; this test pins the locationKind bounds).
+      summary: 'S',
+      body: 'B',
       difficulty: '',
       levelHint: '',
       monsters: [],

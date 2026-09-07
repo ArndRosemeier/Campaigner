@@ -334,6 +334,30 @@ describe('in-place refill parity (module grounding)', () => {
 });
 
 describe('empty-content rejection (loud, at every layer)', () => {
+  it('repairs an empty-body draft once by name, then fails the auto run loudly without an artifact', async () => {
+    const { campaign } = await seedCampaignOnly();
+    const persona = await seedPersona();
+    const emptyBody = { ...NPC_DRAFT, body: '   \n\t ' };
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(emptyBody), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(emptyBody), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun(INPUT(campaign, persona, undefined));
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+
+    // Exactly the one bounded repair turn, with the issue NAMED.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(userMessage(1)).toContain('body is empty');
+    const run = await getRun(runId);
+    expect(run?.failureKind).toBe('invalid-output');
+    expect(run?.errorMessage).toContain('body is empty');
+    // No artifact materialized.
+    const artifacts = await import('@/db/artifactRepo');
+    expect(await artifacts.listArtifactsByCampaign(campaign.id)).toHaveLength(0);
+  }, 30000);
+
   it('refuse-and-preserve: an empty refill never clobbers the existing content', async () => {
     const { campaign, targetId } = await seed();
     const persona = await seedPersona();

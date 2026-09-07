@@ -132,8 +132,10 @@ describe('draft and report tolerances', () => {
 
     const brief = encounterGeneratorBriefSchema.parse({
       name: 'Y',
-      summary: '',
-      body: '',
+      // Minimum-content contract: summary/body carry substance (an empty
+      // draft is rejected; the empty case is pinned in draftSchemas.test).
+      summary: 'One-line digest.',
+      body: 'Room prose.',
       difficulty: '',
       levelHint: '',
       terrain: '',

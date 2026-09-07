@@ -5,7 +5,10 @@ import {
   encounterGeneratorBriefSchema,
   factionDraftSchema,
   locationDraftSchema,
+  npcDraftSchema,
+  pcDraftSchema,
   plotArcDraftSchema,
+  noteDraftSchema,
 } from '@/llm/schemas';
 
 /**
@@ -107,5 +110,86 @@ describe('draft schema coercions', () => {
     });
     expect(brief.monsters[0]?.sourceName).toBe('goblin boss');
     expect(brief.monsters[0]?.sourceChunkIndex).toBeUndefined();
+  });
+});
+
+/**
+ * Minimum-content contract (owner-ratified empty-text rejection): an empty
+ * body never ships as a generation result; neither do empty summary/name
+ * where they carry the artifact's substance. A violation is a NAMED zod
+ * issue so the existing one-repair turn can name it (04 §draft step).
+ */
+describe('draft schema minimum content', () => {
+  const VALID = {
+    npc: {
+      ...BASE,
+      appearance: 'a',
+      personality: 'p',
+      needsStatBlock: false,
+    },
+    pc: { ...BASE, concept: 'c', notes: 'n', needsStatBlock: false },
+    location: { ...BASE, locationType: 't', inhabitants: 'i', pointsOfInterest: [], hooks: [] },
+    faction: { ...BASE, goals: 'g', methods: 'm', resources: 'r', ranks: [] },
+    note: { ...BASE },
+    plotarc: { ...BASE, arcType: 'a', premise: 'p', stakes: 's', beats: [], hooks: [], climax: 'c' },
+  } as const;
+
+  it('rejects an empty or whitespace-only body for every draft kind', () => {
+    for (const [kind, schema] of [
+      ['npc', npcDraftSchema],
+      ['pc', pcDraftSchema],
+      ['location', locationDraftSchema],
+      ['faction', factionDraftSchema],
+      ['note', noteDraftSchema],
+      ['plotarc', plotArcDraftSchema],
+    ] as const) {
+      for (const body of ['', '   \n\t ']) {
+        const parsed = schema.safeParse({ ...VALID[kind], body });
+        expect(parsed.success, `${kind} body ${JSON.stringify(body)}`).toBe(false);
+        if (!parsed.success) {
+          const messages = parsed.error.issues.map((issue) => issue.message).join('; ');
+          expect(messages).toMatch(/body is empty/);
+        }
+      }
+    }
+  });
+
+  it('rejects an empty summary and a whitespace-only name (substance fields)', () => {
+    const emptySummary = npcDraftSchema.safeParse({ ...VALID.npc, summary: '' });
+    expect(emptySummary.success).toBe(false);
+    const blankName = npcDraftSchema.safeParse({ ...VALID.npc, name: '   ' });
+    expect(blankName.success).toBe(false);
+    if (!emptySummary.success) {
+      expect(emptySummary.error.issues.map((issue) => issue.message).join('; ')).toMatch(
+        /summary is empty/,
+      );
+    }
+  });
+
+  it('accepts a short-but-real draft (one non-whitespace char is the floor)', () => {
+    const parsed = noteDraftSchema.parse({ name: 'X', summary: 'S', body: 'B' });
+    expect(parsed.body).toBe('B');
+  });
+
+  it('rejects an empty body/summary on the encounter brief too', () => {
+    const base = {
+      name: 'Goblin Gate',
+      summary: 'S',
+      body: 'B',
+      difficulty: 'medium',
+      levelHint: '3',
+      terrain: 't',
+      tactics: 'x',
+      treasure: 'y',
+      theme: 'gate',
+      monsters: [{ name: 'Goblin Boss', count: 2, notes: '', sourceName: 'Goblin Boss' }],
+      rooms: [{ name: 'Entry', monsterIndexes: [0] }],
+      entryRoomIndex: 0,
+    };
+    expect(encounterGeneratorBriefSchema.safeParse({ ...base, body: '' }).success).toBe(false);
+    expect(encounterGeneratorBriefSchema.safeParse({ ...base, summary: '  ' }).success).toBe(
+      false,
+    );
+    expect(encounterGeneratorBriefSchema.safeParse(base).success).toBe(true);
   });
 });

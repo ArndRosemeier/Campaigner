@@ -33,7 +33,8 @@ const STATBLOCK = {
   saves: '', skills: '', senses: '', languages: '', traits: [], actions: [], reactions: [], legendary: [], extras: {},
 };
 const BRIEF = {
-  name: 'Ignored regeneration name', summary: '', body: '', difficulty: 'medium', levelHint: '3',
+  // Minimum-content contract: summary/body carry substance.
+  name: 'Ignored regeneration name', summary: 'Skeletons in the crypt.', body: '# Crypt\nRoom prose.', difficulty: 'medium', levelHint: '3',
   terrain: '', tactics: '', treasure: '', theme: 'crypt', styleNotes: '', negative: '',
   monsters: [{ name: 'Skeleton', count: 1, notes: '', statBlock: STATBLOCK }],
   rooms: [

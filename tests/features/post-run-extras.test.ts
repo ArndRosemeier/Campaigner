@@ -81,7 +81,8 @@ const ENCOUNTER_DRAFT = {
 };
 /** The Cartographer brief the mocked chat returns when a map job runs. */
 const CARTOGRAPHER_BRIEF = {
-  name: 'Ignored regeneration name', summary: '', body: '', difficulty: 'deadly', levelHint: '5',
+  // Minimum-content contract: summary/body carry substance.
+  name: 'Ignored regeneration name', summary: 'Kuo-toa in flooded cellars.', body: '# The Drowned Cellars\nRoom prose.', difficulty: 'deadly', levelHint: '5',
   terrain: 'flooded cellars', tactics: '', treasure: '', theme: 'drowned cellars', styleNotes: '', negative: '',
   monsters: [{ name: 'Kuo-toa', count: 3, notes: '', statBlock: ENCOUNTER_STATBLOCK }],
   rooms: [
