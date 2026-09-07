@@ -31,11 +31,13 @@ Rules:
   in app code: name the source, show it is intentional and bounded. Current
   entries: react-router v6 future-flag notices, pdfjs `standardFontDataUrl`
   (unfetchable under vitest; text extraction does not use it), the
-  deliberate render-crash noise of `global-errors.test`, the persona-run-ui
-  act-timing leak (documented in the entry), and pdfjs `Indexing all PDF
-  objects` in `ingestFiles.test` (the ingest-failure test deliberately feeds
-  a truncated PDF; pdfjs's xref-recovery warning is the trace of the loud
-  failure under test).
+  deliberate render-crash noise of `global-errors.test`, and pdfjs `Indexing
+  all PDF objects` in `ingestFiles.test` (the ingest-failure test deliberately
+  feeds a truncated PDF; pdfjs's xref-recovery warning is the trace of the loud
+  failure under test). The formerly-allowlisted act-timing entries
+  (`persona-run-ui`, `onboarding-wizard`) are GONE — their sources were
+  root-fixed with `actDrained` and the entries were removed (zero allowlisted
+  act-timing noise; the guard stays strict).
 - React `act(...)` warnings are *not* allowlisted. They mean a state update
   fired outside act — fix the test, don't silence it:
   - end flows with `findBy*`/`waitFor` (both act-wrapped),
@@ -54,10 +56,22 @@ Rules:
     assertion changes. Do NOT wrap paired `fireEvent` pointer sequences in
     one spanning act — each `fireEvent` flushes its own render and
     down→up gesture pairing reads that state; a spanning act defers the
-    commit and strands the gesture gate. The same wrapper is the migration
-    path for the allowlisted persona-run-ui and onboarding-wizard act-timing
-    entries if their sources are ever chased down (not done here — their
-    entries stay).
+    commit and strands the gesture gate. The same wrapper migrated the
+    formerly-allowlisted persona-run-ui and onboarding-wizard act-timing
+    entries: the panel's raw run-row reads between engine writes and the
+    wizard's raw `readSettings()` calls between settings writes are wrapped,
+    and the tests end with a drain so the post-act cascade tail
+    (auto-open status write, dialog exit transitions) stays inside act.
+- **Base UI dialogs add timed updates of their own**: opening schedules a
+  transition-reset `requestAnimationFrame` (DialogRoot's state) and closing
+  unmounts the popup on a timer. Under an open dialog, raw awaited reads need
+  `actDrained` too — this was bestiary-roster's intermittent "An update to
+  DialogRoot inside a test was not wrapped in act" (SpawnModulePicker) and
+  the same class behind the onboarding-wizard entries. The full-suite proof
+  runs surfaced the long tail of the same window: shared read helpers are
+  the best cure point (battle-surface's `currentBattle` actDrains for every
+  caller), and a fixture that rewrites exported rows must respect schema
+  invariants across the whole row (backup's random-order personas).
 
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 
@@ -92,7 +106,9 @@ surface mounts nothing-checked until it does.
 - Dexie live queries re-fire on timed queues; writes that re-fire queries
   belong inside `act`, stragglers go through `flushAsyncUpdates()`. Raw
   awaited reads between act-wrapped steps open the same leak window — wrap
-  them in `actDrained()` (§Console guard).
+  them in `actDrained()` (§Console guard). Under an open Base UI dialog the
+  window is wider: the dialog's own transition-reset rAF / unmount timers
+  land on the queue too.
 
 ## UI coverage matrix (05-UI inventory → tests)
 

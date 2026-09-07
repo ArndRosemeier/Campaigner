@@ -164,12 +164,14 @@ column.
 - **Test hygiene** (docs/08 — read before touching tests): the
   console-hygiene guard (`tests/setup.ts`) fails any test that logs
   `console.error`/`warn` outside `ALLOWED_NOISE`; entries need file scope +
-  a concrete `why`. act() warnings are never NEWLY allowlisted — the two
-  legacy act-timing entries (`persona-run-ui`, `onboarding-wizard`) stay
-  documented as debt; `actDrained` is their migration path. Leak prevention:
-  `tests/helpers/flush.ts` — `actDrained` wraps raw awaited steps that sit
-  between act-wrapped ones; `flushAsyncUpdates` drains cascades before
-  unwrapped reads. **Caveat:** never wrap paired `fireEvent` pointer
+  a concrete `why`. act() warnings are never allowlisted — zero act-timing
+  entries exist (the two legacy `persona-run-ui`/`onboarding-wizard` ones
+  were root-fixed and removed; `actDrained` is the standing cure, including
+  under open Base UI dialogs whose transition rAF/unmount timers ride the
+  same queue). Leak prevention: `tests/helpers/flush.ts` — `actDrained`
+  wraps raw awaited steps that sit between act-wrapped ones;
+  `flushAsyncUpdates` drains cascades before unwrapped reads and at test
+  end. **Caveat:** never wrap paired `fireEvent` pointer
   sequences (down→up) in ONE spanning act — each `fireEvent` must flush its
   own render or the gesture pairing strands (the battle-surface
   selection-card class). New routes/shell elements extend
