@@ -97,6 +97,22 @@ function isAbort(error: unknown): boolean {
 }
 
 /**
+ * Cancellation recognition (18-ARCHITECTURE seam): the run controller's
+ * `signal.aborted` is the source of truth — NOT the error's type. The
+ * streaming pipeline may surface a user stop as a same-realm AbortError, a
+ * cross-realm AbortError (`instanceof DOMException` fails across realms —
+ * probed with a real abort mid-stream: CTOR DOMException, name AbortError,
+ * instanceof false), a wrapped transport error, or no error at all (a stop
+ * landing between calls). Every moduleGen catch that decides
+ * cancel-vs-failure reads this helper with the run's own signal, so a stop
+ * can never be misread as a part failure that lets the chain advance.
+ */
+function isCancel(error: unknown, signal: AbortSignal): boolean {
+  if (signal.aborted) return true;
+  return isAbort(error);
+}
+
+/**
  * Live dock detail for one streamed LLM call (00-OVERVIEW: multi-minute work
  * must never look like a hang). The spine and part passes feed the stream's
  * `onToken`/`onActivity` events through this reporter; it throttles dock
@@ -282,7 +298,7 @@ export async function runSpine(
     await promoteSecondModuleUses(moduleId, [spine.premise]);
     return saved;
   } catch (error) {
-    await failModule(moduleId, error);
+    await failModule(moduleId, error, controller.signal);
     throw error;
   } finally {
     progress.finish(jobId);
@@ -484,8 +500,8 @@ async function spineMessages(
   ];
 }
 
-async function failModule(moduleId: Id, error: unknown): Promise<void> {
-  if (isAbort(error)) {
+async function failModule(moduleId: Id, error: unknown, signal: AbortSignal): Promise<void> {
+  if (isCancel(error, signal)) {
     // Cancellation: rewind a spine-only module so the user can retry cleanly.
     const module = await getModule(moduleId);
     if (module?.status === 'generating' && module.parts.length === 0) {
@@ -549,6 +565,13 @@ export async function runParts(
     );
     let index = 0;
     for (const planIndex of planIndexes) {
+      // A stop that landed between calls throws no error on its own — without
+      // this guard the loop would mark the next part 'generating' and fire a
+      // doomed chat call before the abort surfaces. Fail fast instead: the
+      // outer catch owns the quiet rewind (ready/draft, no toast, no advance).
+      if (controller.signal.aborted) {
+        throw new DOMException('Module generation was cancelled', 'AbortError');
+      }
       const target = await requireModule(moduleId);
       if (target.spine === null) throw new Error('The spine was removed mid-generation');
       const title = target.spine.partPlan[planIndex]?.title ?? `Part ${String(planIndex + 1)}`;
@@ -591,7 +614,7 @@ export async function runParts(
           },
         );
       } catch (error) {
-        if (isAbort(error)) throw error;
+        if (isCancel(error, controller.signal)) throw error;
         // The failed part is persisted with its error by generatePart; the
         // chain continues with the next part (08 §M4-B).
       }
@@ -610,7 +633,7 @@ export async function runParts(
     });
     return result;
   } catch (error) {
-    if (isAbort(error)) {
+    if (isCancel(error, controller.signal)) {
       // Parts already written stay; the interrupted part keeps its slot
       // status, and the module returns to `ready` (or `draft` before the
       // first part) so its Retry buttons stay available.
@@ -622,7 +645,7 @@ export async function runParts(
       }
       return (await getModule(moduleId)) ?? (await requireModule(moduleId));
     }
-    await failModule(moduleId, error);
+    await failModule(moduleId, error, controller.signal);
     throw error;
   } finally {
     progress.finish(jobId);
@@ -685,7 +708,7 @@ export async function generatePart(
     await promoteSecondModuleUses(moduleId, [markdown]);
     return markdown;
   } catch (error) {
-    if (isAbort(error)) {
+    if (isCancel(error, options.signal)) {
       // Cancelled mid-part: leave the slot pending so Retry can pick it up.
       await setPart({
         planIndex,

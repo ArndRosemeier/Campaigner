@@ -580,6 +580,159 @@ describe('cancelModuleGen', () => {
   }, 20000);
 });
 
+describe('stop-all aborts the parts chain (signal.aborted is the source of truth)', () => {
+  /**
+   * A chat call that hangs until the moduleGen abort signal fires, then
+   * rejects with whatever shape the factory builds — stands in for every way
+   * the streaming pipeline can surface a user stop (same-realm AbortError,
+   * cross-realm AbortError, wrapped transport error, …).
+   */
+  function chatUntilAbortedWith(
+    signal: AbortSignal | undefined,
+    makeError: () => Error,
+  ): Promise<ChatResult> {
+    return new Promise<ChatResult>((_resolve, reject) => {
+      if (signal === undefined || signal.aborted) {
+        reject(makeError());
+        return;
+      }
+      signal.addEventListener(
+        'abort',
+        () => {
+          reject(makeError());
+        },
+        { once: true },
+      );
+    });
+  }
+
+  it('abort mid-parts stops the chain: later parts never start (call counts)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+    chatMock.mockImplementationOnce((_messages, options) => chatUntilAborted(options.signal));
+
+    const pending = guard(runParts(moduleId, campaign));
+    await waitFor(async () => {
+      const module = await getModule(moduleId);
+      expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
+    });
+
+    cancelModuleGen(moduleId);
+
+    // The parts run RESOLVES on abort (its Retry buttons must stay usable).
+    const after = await pending;
+    // Part 2's chat never started: the chain stopped instead of advancing.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(after.status).toBe('ready');
+    expect(after.errorMessage).toBe('');
+    const part0 = after.parts.find((part) => part.planIndex === 0);
+    expect(part0?.status).toBe('ready');
+    expect(part0?.markdown).toContain('PART-ONE');
+    const part1 = after.parts.find((part) => part.planIndex === 1);
+    expect(part1?.status).toBe('pending');
+    expect(part1?.errorMessage).toBe('Cancelled');
+    expect(after.parts.find((part) => part.planIndex === 2)).toBeUndefined();
+    // Cancellation is not an error surface: no failure toast, no errorMessage.
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    // The dock job is finished: no 'generating' ghost left behind.
+    expect(
+      useProgressStore.getState().jobs.some((job) => job.id === `module-parts-${moduleId}`),
+    ).toBe(false);
+  }, 20000);
+
+  const abortShapes: [string, () => Error][] = [
+    ['same-realm AbortError', () => new DOMException('The operation was aborted.', 'AbortError')],
+    // Cross-realm stand-in: the name matches but the prototype chain does
+    // not, so `instanceof DOMException` is false — the probed real abort
+    // mid-stream under jsdom (CTOR DOMException, name AbortError).
+    [
+      'cross-realm AbortError shape',
+      () => Object.assign(new Error('This operation was aborted'), { name: 'AbortError' }),
+    ],
+    ['plain transport Error', () => new Error('connection reset mid-stream')],
+    ['reader-style TypeError', () => new TypeError('Body used already for another stream')],
+  ];
+
+  for (const [shapeName, makeError] of abortShapes) {
+    it(`stops the chain when the abort surfaces as: ${shapeName}`, async () => {
+      const { campaign, moduleId } = await seedModule();
+      await seedSpine(moduleId);
+      chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+      chatMock.mockImplementationOnce((_messages, options) =>
+        chatUntilAbortedWith(options.signal, makeError),
+      );
+
+      const pending = guard(runParts(moduleId, campaign));
+      await waitFor(async () => {
+        const module = await getModule(moduleId);
+        expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
+      });
+
+      cancelModuleGen(moduleId);
+
+      const after = await pending;
+      // Misclassification would continue the chain into part 2 (a third chat
+      // call); cancellation stops it regardless of the error shape.
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      expect(after.status).toBe('ready');
+      expect(after.errorMessage).toBe('');
+      expect(after.parts.find((part) => part.planIndex === 1)?.status).toBe('pending');
+      expect(toastErrorMock).not.toHaveBeenCalled();
+      expect(
+        useProgressStore.getState().jobs.some((job) => job.id === `module-parts-${moduleId}`),
+      ).toBe(false);
+    }, 20000);
+  }
+
+  it('does not advance past a part that completed after the stop was requested', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValueOnce(partMarkdown('PART-ONE'));
+    const partTwo = deferredChat();
+    chatMock.mockImplementationOnce(() => partTwo.promise);
+
+    const pending = guard(runParts(moduleId, campaign));
+    await waitFor(async () => {
+      const module = await getModule(moduleId);
+      expect(module?.parts.find((part) => part.planIndex === 1)?.status).toBe('generating');
+    });
+
+    cancelModuleGen(moduleId);
+    // The transport delivers part 2 anyway (late abort delivery) — the loop
+    // guard still stops the chain instead of advancing to part 3.
+    partTwo.resolve(partMarkdown('PART-TWO').text);
+
+    const after = await pending;
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(after.status).toBe('ready');
+    expect(after.errorMessage).toBe('');
+    // Work that already landed stays; nothing new starts.
+    expect(after.parts.find((part) => part.planIndex === 1)?.status).toBe('ready');
+    expect(after.parts.find((part) => part.planIndex === 2)).toBeUndefined();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('runSpine treats a non-AbortError rejection after abort as cancellation', async () => {
+    const { campaign, moduleId } = await seedModule();
+    chatMock.mockImplementationOnce((_messages, options) =>
+      chatUntilAbortedWith(options.signal, () => new Error('connection reset mid-stream')),
+    );
+
+    const pending = guard(runSpine(moduleId, campaign));
+    await waitFor(async () => {
+      expect((await getModule(moduleId))?.status).toBe('generating');
+    });
+
+    cancelModuleGen(moduleId);
+
+    await expect(pending).rejects.toThrow('connection reset mid-stream');
+    // Quiet rewind to draft — not a failed row, not a toast.
+    expect((await getModule(moduleId))?.status).toBe('draft');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 20000);
+});
+
 describe('ModuleBusyError', () => {
   it('rejects a second spine run on the same module while one is in flight', async () => {
     const { campaign, moduleId } = await seedModule();

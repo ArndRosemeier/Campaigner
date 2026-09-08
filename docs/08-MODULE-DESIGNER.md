@@ -244,7 +244,14 @@ Sequential execution; module `status:'generating'` with the reader already
 showing finished parts (progressive reveal — the user reads part 1 while part
 3 generates). Part failure does NOT stop the chain: mark that part failed
 (visible error card with Retry button in its slot) and continue with the next
-part, using the last *successful* part as continuity context.
+part, using the last *successful* part as continuity context. Cancellation is
+NOT a part failure: when the run's abort signal has fired (Stop all / the
+reader Stop button) the chain STOPS — the in-flight part keeps its slot
+(pending, 'Cancelled'), finished parts stay, the module returns to ready
+(draft before the first part), and the dock job finishes quietly with no
+failure toast. Abort recognition reads the controller's signal, never the
+error's shape (the streaming pipeline can surface a stop as a cross-realm
+AbortError, a wrapped transport error, or no error at all).
 
 Per-part **"Rewrite…"** button (also for successful parts): optional user
 instruction appended, regenerates just that part with the same context recipe
