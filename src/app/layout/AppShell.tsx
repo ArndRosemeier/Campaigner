@@ -4,6 +4,7 @@ import { Outlet } from 'react-router-dom';
 
 import { TopBar } from '@/app/layout/TopBar';
 import { CampaignBar } from '@/app/layout/CampaignBar';
+import { MissingRefsBanner } from '@/features/campaign/components/missing-refs-banner';
 import { useThemeSync } from '@/app/theme/theme';
 import { useUiScaleSync } from '@/app/theme/uiScale';
 import { TooltipProvider } from '@/components/ui/tooltip';
@@ -119,6 +120,10 @@ export function AppShell(): JSX.Element {
         <InstallHint />
         <TopBar />
         <CampaignBar />
+        {/* Campaign-level missing-refs banner (M3-E slice B): null unless
+            the open campaign's encounters dangle — so the picker, Rules,
+            Settings and clean campaigns render exactly as before. */}
+        <MissingRefsBanner />
         <main className="min-h-0 flex-1">
           <Outlet />
         </main>

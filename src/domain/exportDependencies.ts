@@ -146,6 +146,264 @@ export const exportMissingImageSchema = z.object({
 export type ExportMissingImage = z.infer<typeof exportMissingImageSchema>;
 
 /**
+ * Import-side dependency verdicts (07-MILESTONE-3 M3-E slice B): the same
+ * L0/L1/L2 identity contract as the manifest, read against the LOCAL
+ * library. Pure — no IO; the caller pools candidate chunks into
+ * `chunksByHash` (cited hashes for L0, chunks of title-matched books for L1,
+ * chunks of same-system books for the L2 fuzzy advisory) and passes every
+ * local book. `checkImportDependencies` (lib/exportImport) owns that pooling
+ * (the `collectDependencies`/`DependencyLibrary` precedent in reverse).
+ */
+
+/** Per-citation verdict: L0 hit, L1 equivalent, or unmet. */
+export type CitationVerdict = 'present' | 'version-drift' | 'missing';
+
+/** Per-book rollup level: L0 byte-identical, L1 equivalent book, L2 fuzzy
+ *  advisory, or no trace of the book at all. */
+export type BookMatchLevel = 'L0' | 'L1' | 'L2' | 'missing';
+
+export interface AnalyzedCitation {
+  citation: ExportCitation;
+  verdict: CitationVerdict;
+  /** L2 fuzzy advisory: same-creature chunks found outside any L0/L1 hit
+   *  (`‘<creature>’ in ‘<book>’ (<system>)`), capped at 3. Never satisfies. */
+  fuzzyHints: string[];
+}
+
+export interface AnalyzedBook {
+  book: ExportBookDep;
+  matchLevel: BookMatchLevel;
+  /** The local book's title when an L0/L1 title+system match exists. */
+  localTitle?: string;
+  /** Human hint for L1-drift/L2/missing (creature absent, fuzzy traces…). */
+  hint?: string;
+}
+
+export interface DependencyLibrarySnapshot {
+  /** Candidate chunks keyed by content hash: cited-hash hits (L0) plus the
+   *  pooled chunks of title-matched (L1) and same-system (L2) books. */
+  chunksByHash: ReadonlyMap<string, readonly RuleChunk[]>;
+  /** Every local rulebook (title/system matching needs the whole shelf). */
+  books: readonly Rulebook[];
+}
+
+export interface DependencyAnalysis {
+  citations: AnalyzedCitation[];
+  books: AnalyzedBook[];
+  /** NPC refs the export does not carry — always blocking (they resolve to
+   *  `missing ref` exactly like unmet statblock citations). */
+  unmetLibraryRefs: ExportUnmetRef[];
+  /** Pins whose chunk/book is gone — ADVISORY, never blocking. */
+  pinnedMissing: ExportPinnedChunk[];
+  /** True ⇔ every statblock citation is L0-present and no unmet NPC refs:
+   *  the import may proceed on today's one-click path. */
+  clean: boolean;
+  /** Citations with a verdict other than `present` (the abort trigger). */
+  blockingCitations: number;
+}
+
+/** Title/creature comparison: trimmed + casefolded (book titles are
+ *  user-editable; a re-ingest under a new row id must still satisfy L1). */
+function normName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+/** The L1 creature identity of a citation (the manifest's heading-fallback). */
+function citationCreature(citation: ExportCitation): string {
+  return citation.creatureName ?? citation.monsterName;
+}
+
+/** The L1 creature identity of a local chunk. */
+function chunkCreature(chunk: RuleChunk): string {
+  return chunk.headingPath[0]?.trim() ?? '';
+}
+
+function fuzzyHintFor(chunk: RuleChunk, booksById: ReadonlyMap<Id, Rulebook>): string | null {
+  const creature = chunkCreature(chunk);
+  if (creature === '') return null;
+  const book = booksById.get(chunk.bookId);
+  const where =
+    book === undefined ? 'an unknown book' : `‘${book.title}’ (${book.system})`;
+  return `‘${creature}’ in ${where}`;
+}
+
+/**
+ * Reads the manifest against a local library snapshot: per-citation
+ * present (L0: a same-hash chunk WITH stats — a hash hit on a statless
+ * chunk still shows `missing ref`, so it never satisfies) | version-drift
+ * (L1: same system+title book holding the same creature under a different
+ * hash) | missing, plus the per-book L0/L1/L2 rollup. No IO, no writes —
+ * throws loudly on nothing (every gap is data, returned as verdicts).
+ */
+export function analyzeDependencies(
+  manifest: ExportDependencies | undefined,
+  library: DependencyLibrarySnapshot,
+): DependencyAnalysis {
+  if (manifest === undefined) {
+    return { citations: [], books: [], unmetLibraryRefs: [], pinnedMissing: [], clean: true, blockingCitations: 0 };
+  }
+  const booksById = new Map<Id, Rulebook>(library.books.map((book) => [book.id, book] as const));
+  const pooled = [...library.chunksByHash.values()].flat();
+
+  const matchBooks = (system: string, title: string): Rulebook[] =>
+    library.books.filter(
+      (book) => book.system === system && normName(book.title) === normName(title),
+    );
+
+  const citations: AnalyzedCitation[] = manifest.citations.map((citation) => {
+    const target = citationCreature(citation);
+    // L0 — content identity: a same-hash chunk that actually carries stats.
+    const hashHits = (citation.contentHash === undefined
+      ? []
+      : (library.chunksByHash.get(citation.contentHash) ?? [])
+    ).filter((chunk) => chunk.statBlock !== null);
+    if (hashHits.length > 0) {
+      return { citation, verdict: 'present', fuzzyHints: [] };
+    }
+    // L1 — logical identity: the SAME book (system + title) holding the
+    // same creature under a different hash (re-ingest, new row id).
+    if (citation.bookTitle !== undefined && citation.system !== undefined) {
+      const equivalents = matchBooks(citation.system, citation.bookTitle);
+      if (equivalents.length > 0) {
+        const equivalentIds = new Set(equivalents.map((book) => book.id));
+        const sameCreature = pooled.some(
+          (chunk) =>
+            equivalentIds.has(chunk.bookId) &&
+            chunk.statBlock !== null &&
+            normName(chunkCreature(chunk)) === normName(target),
+        );
+        if (sameCreature) {
+          return { citation, verdict: 'version-drift', fuzzyHints: [] };
+        }
+      }
+    }
+    // Missing — with the L2 fuzzy advisory: the same creature surfacing
+    // anywhere else in the pool (substring either direction, same system
+    // preferred first for stable ordering).
+    const wanted = normName(target);
+    const fuzzy = wanted === ''
+      ? []
+      : pooled
+          .filter((chunk) => {
+            if (chunk.statBlock === null) return false;
+            const name = normName(chunkCreature(chunk));
+            return name !== '' && (name.includes(wanted) || wanted.includes(name));
+          })
+          .sort((a, b) => {
+            const aSame =
+              citation.system !== undefined && booksById.get(a.bookId)?.system === citation.system
+                ? 0
+                : 1;
+            const bSame =
+              citation.system !== undefined && booksById.get(b.bookId)?.system === citation.system
+                ? 0
+                : 1;
+            return aSame - bSame;
+          })
+          .slice(0, 3)
+          .map((chunk) => fuzzyHintFor(chunk, booksById))
+          .filter((hint): hint is string => hint !== null);
+    return { citation, verdict: 'missing', fuzzyHints: [...new Set(fuzzy)] };
+  });
+
+  const verdictByCitation = new Map<ExportCitation, CitationVerdict>(
+    citations.map((entry) => [entry.citation, entry.verdict] as const),
+  );
+
+  const books: AnalyzedBook[] = manifest.books.map((book) => {
+    const matched = matchBooks(book.system, book.title);
+    if (matched.length === 0) {
+      // No equivalent book: L2 when the book's own citations carry fuzzy
+      // traces, otherwise plain missing.
+      const traces = citations
+        .filter(
+          (entry) =>
+            entry.citation.bookTitle !== undefined &&
+            entry.citation.system !== undefined &&
+            normName(entry.citation.bookTitle) === normName(book.title) &&
+            entry.citation.system === book.system &&
+            entry.fuzzyHints.length > 0,
+        )
+        .flatMap((entry) => entry.fuzzyHints);
+      const unique = [...new Set(traces)].slice(0, 3);
+      return unique.length > 0
+        ? {
+            book,
+            matchLevel: 'L2',
+            hint: `No book ‘${book.title}’ here, but similar content exists: ${unique.join('; ')}`,
+          }
+        : {
+            book,
+            matchLevel: 'missing',
+            hint: `No book ‘${book.title}’ (${book.system}) in this library`,
+          };
+    }
+    const localTitle = matched[0]?.title;
+    // The book's own citations decide L0 vs L1 (a title match with
+    // changed stats is drift, not presence).
+    const own = manifest.citations.filter(
+      (citation) =>
+        citation.bookTitle !== undefined &&
+        citation.system !== undefined &&
+        normName(citation.bookTitle) === normName(book.title) &&
+        citation.system === book.system,
+    );
+    const allPresent = own.length > 0 && own.every((citation) => verdictByCitation.get(citation) === 'present');
+    if (allPresent) {
+      // Conditional spread (not `localTitle: undefined`): exactOptionalPropertyTypes.
+      return { book, matchLevel: 'L0', ...(localTitle === undefined ? {} : { localTitle }) };
+    }
+    const absent = own
+      .filter((citation) => verdictByCitation.get(citation) !== 'present')
+      .map((citation) => citationCreature(citation));
+    return {
+      book,
+      matchLevel: 'L1',
+      ...(localTitle === undefined ? {} : { localTitle }),
+      hint:
+        own.length === 0
+          ? 'Book is here but none of its cited creatures match this version'
+          : `Book is here but ${String(absent.length)} cited ${absent.length === 1 ? 'stat block differs' : 'stat blocks differ'}: ${[...new Set(absent)].slice(0, 3).join(', ')}`,
+    };
+  });
+
+  const pinnedMissing = manifest.pinnedChunks.filter((pin) => pin.status !== 'resolved');
+  const blockingCitations = citations.filter((entry) => entry.verdict !== 'present').length;
+  return {
+    citations,
+    books,
+    unmetLibraryRefs: manifest.unmetLibraryRefs,
+    pinnedMissing,
+    clean: blockingCitations === 0 && manifest.unmetLibraryRefs.length === 0,
+    blockingCitations,
+  };
+}
+
+/** Dialog grouping: citing artifacts with their creatures + verdicts. */
+export interface CitingArtifact {
+  artifactName: string;
+  monsters: { monsterName: string; verdict: CitationVerdict }[];
+}
+
+export function groupCitationsByArtifact(analysis: DependencyAnalysis): CitingArtifact[] {
+  const byArtifact = new Map<string, CitingArtifact>();
+  for (const entry of analysis.citations) {
+    if (entry.verdict === 'present') continue;
+    const group = byArtifact.get(entry.citation.artifactName);
+    const monster = { monsterName: entry.citation.monsterName, verdict: entry.verdict };
+    if (group === undefined) {
+      byArtifact.set(entry.citation.artifactName, {
+        artifactName: entry.citation.artifactName,
+        monsters: [monster],
+      });
+    } else {
+      group.monsters.push(monster);
+    }
+  }
+  return [...byArtifact.values()];
+}
+
+/**
  * Library reads injected into `collectDependencies` — the
  * `resolveMonsterEntry`/`MonsterLookups` precedent (domain/encounterResolve):
  * the builder stays pure (no Dexie, sync, easily unit-tested with plain

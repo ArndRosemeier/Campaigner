@@ -13,6 +13,7 @@ import type {
   PersonaRun,
 } from '@/domain';
 import {
+  analyzeDependencies,
   artifactSchema,
   artifactRevisionSchema,
   battleSchema,
@@ -24,6 +25,7 @@ import {
   moduleSchema,
   personaRunSchema,
   storedImageSchema,
+  type DependencyAnalysis,
   type ExportDependencies,
   type ExportMissingImage,
 } from '@/domain';
@@ -316,6 +318,122 @@ export interface ImportResult {
   createdArtifacts: number;
 }
 
+/** Dependency policy for `importExport`/`importZip` (07-MILESTONE-3 M3-E
+ *  slice B, owner-confirmed): `abort` (default) refuses an import whose
+ *  statblock citations or NPC refs have no local counterpart — before the
+ *  transaction opens, so there is nothing to roll back; `import-anyway`
+ *  lands the encounters as-is, where they resolve to the existing
+ *  `missing ref` markers until the content is installed. */
+export type DependencyPolicy = 'abort' | 'import-anyway';
+
+export interface ImportOptions {
+  dependencyPolicy?: DependencyPolicy;
+}
+
+/**
+ * Thrown (before the import transaction opens) when the default
+ * abort-policy refuses an import with unmet dependencies. Carries the full
+ * `DependencyAnalysis` so the picker can render the dep-summary dialog
+ * instead of a bare toast. Never thrown for `import-anyway` imports.
+ */
+export class MissingDependenciesError extends Error {
+  readonly analysis: DependencyAnalysis;
+
+  constructor(analysis: DependencyAnalysis) {
+    const blocking = analysis.blockingCitations;
+    const unmet = analysis.unmetLibraryRefs.length;
+    const parts: string[] = [];
+    if (blocking > 0) {
+      parts.push(
+        `${String(blocking)} statblock ${blocking === 1 ? 'citation has' : 'citations have'} no matching content in this library`,
+      );
+    }
+    if (unmet > 0) {
+      parts.push(
+        `${String(unmet)} NPC ${unmet === 1 ? 'reference points' : 'references point'} outside the export`,
+      );
+    }
+    super(
+      `Import needs rulebook content missing from this library (${parts.join('; ')}). ` +
+        `Install the listed book(s) in Rules (“Import bestiary pack”, or re-import the rulebook PDF), ` +
+        `then import again — or import anyway and the encounters will show ‘missing ref’ until then.`,
+    );
+    this.name = 'MissingDependenciesError';
+    this.analysis = analysis;
+  }
+}
+
+/** Zod-validates a parsed export payload at the boundary (loud, never lenient). */
+export function parseExport(raw: unknown): z.infer<typeof exportSchema> {
+  return exportSchema.parse(raw);
+}
+
+/** Splits a zip bundle into its manifest payload + image binaries (M3-A). */
+export function parseZipExport(zipBytes: Uint8Array): {
+  manifest: unknown;
+  files: Record<string, Uint8Array>;
+} {
+  const unzipped = unzipSync(zipBytes);
+  const manifestEntry = Object.entries(unzipped).find(
+    ([path]) => path === 'campaigner-export.json' || path.endsWith('/campaigner-export.json'),
+  );
+  if (manifestEntry === undefined) {
+    throw new Error('Not a Campaigner zip export (manifest missing)');
+  }
+  const manifest = JSON.parse(new TextDecoder().decode(manifestEntry[1])) as unknown;
+  const { 'campaigner-export.json': _manifest, ...rest } = unzipped;
+  void _manifest;
+  return { manifest, files: rest };
+}
+
+/**
+ * Reads a manifest against the LOCAL library (no writes): L0 probes go
+ * through the `contentHash` index (`getChunksByContentHash` one id at a
+ * time would N-query — `anyOf` does it in one); the L1 pool is every chunk
+ * of every title+system-matched book; the L2 pool is every chunk of every
+ * same-system book (the fuzzy advisory needs creature names, which no
+ * index carries). Pure verdicts come from `analyzeDependencies`.
+ */
+export async function checkImportDependencies(
+  manifest: ExportDependencies | undefined,
+): Promise<DependencyAnalysis> {
+  if (manifest === undefined) {
+    return analyzeDependencies(undefined, { chunksByHash: new Map(), books: [] });
+  }
+  const hashes = [...new Set(
+    [...manifest.citations, ...manifest.pinnedChunks]
+      .map((entry) => entry.contentHash)
+      .filter((hash): hash is string => hash !== undefined),
+  )];
+  const systems = new Set(
+    [...manifest.citations, ...manifest.books]
+      .map((entry) => entry.system)
+      .filter((system): system is NonNullable<typeof system> => system !== undefined),
+  );
+  const [hashChunks, books] = await Promise.all([
+    hashes.length === 0
+      ? Promise.resolve([])
+      : db.chunks.where('contentHash').anyOf(hashes).toArray(),
+    db.rulebooks.toArray(),
+  ]);
+  // The L1 books (title+system match) are a subset of the same-system pool
+  // by construction — one query covers both pools.
+  const poolBookIds = new Set(
+    books.filter((book) => systems.has(book.system)).map((book) => book.id),
+  );
+  const poolChunks =
+    poolBookIds.size === 0
+      ? []
+      : await db.chunks.where('bookId').anyOf([...poolBookIds]).toArray();
+  const chunksByHash = new Map<string, (typeof hashChunks)[number][]>();
+  for (const chunk of [...hashChunks, ...poolChunks]) {
+    const list = chunksByHash.get(chunk.contentHash);
+    if (list === undefined) chunksByHash.set(chunk.contentHash, [chunk]);
+    else list.push(chunk);
+  }
+  return analyzeDependencies(manifest, { chunksByHash, books });
+}
+
 /** Rewrites a deliverable outline's artifact references to imported ids. */
 function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id>): OutlineNode[] {
   return nodes.map((node) => {
@@ -345,7 +463,15 @@ function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id
  * result/target artifacts and deliverable outline nodes follow the artifact
  * re-id map, falling back to the original id when the target was outside a
  * selection export. The dependency manifest and `missingImages` are metadata
- * only (no tables) — validated, not imported (slice B owns enforcement).
+ * only (no tables) — validated, not imported.
+ *
+ * Dependency enforcement (M3-E slice B): unless `options.dependencyPolicy`
+ * is `'import-anyway'`, the manifest is checked against the local library
+ * FIRST (`checkImportDependencies` — Dexie reads only) and an unmet
+ * statblock citation or unmet NPC ref throws `MissingDependenciesError`
+ * BEFORE the transaction opens (nothing to roll back). Rulebook chunkIds
+ * are KEPT as-is either way, so encounters that land without their content
+ * resolve to the existing `missing ref` markers — truthful, never healed.
  *
  * The whole import is ONE rw transaction over the eight touched tables (the
  * same contract as backup.ts's restore, array form past Dexie's five-table
@@ -356,8 +482,15 @@ function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id
 export async function importExport(
   raw: unknown,
   files: Record<string, Uint8Array> = {},
+  options: ImportOptions = {},
 ): Promise<ImportResult> {
-  const parsed = exportSchema.parse(raw);
+  const parsed = parseExport(raw);
+
+  if (options.dependencyPolicy !== 'import-anyway') {
+    const analysis = await checkImportDependencies(parsed.dependencies);
+    if (!analysis.clean) throw new MissingDependenciesError(analysis);
+  }
+
   const stamp = Date.now();
   const newCampaignId = crypto.randomUUID();
 
@@ -552,20 +685,15 @@ export async function importExport(
 
 /**
  * Imports a zip bundle: extracts the manifest JSON and the `images/*`
- * binaries, then defers to `importExport` (M3-A).
+ * binaries, then defers to `importExport` (M3-A). The dependency policy
+ * rides through (default abort on unmet deps).
  */
-export async function importZip(zipBytes: Uint8Array): Promise<ImportResult> {
-  const unzipped = unzipSync(zipBytes);
-  const manifestEntry = Object.entries(unzipped).find(
-    ([path]) => path === 'campaigner-export.json' || path.endsWith('/campaigner-export.json'),
-  );
-  if (manifestEntry === undefined) {
-    throw new Error('Not a Campaigner zip export (manifest missing)');
-  }
-  const manifest = JSON.parse(new TextDecoder().decode(manifestEntry[1])) as unknown;
-  const { 'campaigner-export.json': _manifest, ...rest } = unzipped;
-  void _manifest;
-  return importExport(manifest, rest);
+export async function importZip(
+  zipBytes: Uint8Array,
+  options: ImportOptions = {},
+): Promise<ImportResult> {
+  const { manifest, files } = parseZipExport(zipBytes);
+  return importExport(manifest, files, options);
 }
 
 const exportSchema = z.object({

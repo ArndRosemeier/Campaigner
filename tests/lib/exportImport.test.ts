@@ -33,7 +33,9 @@ import {
   exportFileName,
   importExport,
   importZip,
+  MissingDependenciesError,
 } from '@/lib/exportImport';
+import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { db } from '@/db/db';
 import { clearDatabase } from '../db/helpers';
 
@@ -605,6 +607,165 @@ describe('export v2', () => {
     expect(await listModulesByCampaign(result.campaignId)).toHaveLength(0);
     expect(await listRunsByCampaign(result.campaignId)).toHaveLength(0);
   });
+
+/**
+ * Dependency enforcement on import (07-MILESTONE-3 M3-E slice B): the
+ * default abort on L0-miss (zero rows written — the check runs BEFORE the
+ * transaction opens) vs import-anyway (lands with `missing ref` markers,
+ * rulebook chunkIds kept as-is).
+ */
+describe('import dependency enforcement', () => {
+  beforeEach(clearDatabase);
+
+  async function exportGoblinCampaign(): Promise<{ json: unknown; campaignId: string }> {
+    const campaign = await createCampaign({ name: 'Dep source', system: 'pathfinder2e' });
+    const book = await createPackBook({
+      title: 'Monster Core',
+      system: 'pathfinder2e',
+      filename: 'monster-core.zip',
+    });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 120,
+      entriesSkipped: 3,
+      entriesFailed: 0,
+    });
+    const text = 'Goblin Warrior stat block';
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Goblin Warrior'],
+        text,
+        statBlock: fixtureStatBlock(),
+        contentHash: await sha256Hex(text),
+      }),
+    ]);
+    const [chunk] = await db.chunks.toArray();
+    if (chunk === undefined) throw new Error('chunk missing');
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Goblin ambush',
+      data: encounterDataWith([
+        { name: 'Goblin Warrior', count: 2, notes: '', treasure: '', source: { type: 'rulebook', chunkId: chunk.id } },
+      ]) as never,
+    });
+    return {
+      json: JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown,
+      campaignId: campaign.id,
+    };
+  }
+
+  it('aborts by default when the cited book is gone — zero rows written', async () => {
+    const { json } = await exportGoblinCampaign();
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    const campaignsBefore = await listCampaigns();
+    const artifactsBefore = await db.artifacts.count();
+    let caught: unknown = null;
+    try {
+      await importExport(json);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(MissingDependenciesError);
+    const analysis = (caught as MissingDependenciesError).analysis;
+    expect(analysis.citations[0]?.verdict).toBe('missing');
+    expect(analysis.books[0]?.matchLevel).toBe('missing');
+    expect(analysis.clean).toBe(false);
+    // Abort-before-tx: nothing to roll back, nothing written.
+    expect(await listCampaigns()).toHaveLength(campaignsBefore.length);
+    expect(await db.artifacts.count()).toBe(artifactsBefore);
+  });
+
+  it('import-anyway lands the encounter with a truthful `missing ref`', async () => {
+    const { json } = await exportGoblinCampaign();
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    const result = await importExport(json, {}, { dependencyPolicy: 'import-anyway' });
+    const imported = await db.artifacts.where('campaignId').equals(result.campaignId).toArray();
+    expect(imported).toHaveLength(1);
+    const encounter = imported[0];
+    if (encounter?.kind !== 'encounter') throw new Error('imported encounter missing');
+    // The rulebook chunkId is KEPT as-is (never healed) — so the row
+    // resolves exactly like any other dangling citation.
+    expect(encounter.data.monsters[0]?.source.type).toBe('rulebook');
+    const first = encounter.data.monsters[0];
+    if (first === undefined) throw new Error('imported roster entry missing');
+    const resolved = await resolveMonsterEntryWithRepos(first);
+    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref' });
+  });
+
+  it('still aborts on version drift (L1) but import-anyway lands it', async () => {
+    const { json } = await exportGoblinCampaign();
+    // Same book re-ingested: same title/system/creature, different bytes.
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+    const book = await createPackBook({
+      title: 'Monster Core',
+      system: 'pathfinder2e',
+      filename: 'monster-core.zip',
+    });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 120,
+      entriesSkipped: 3,
+      entriesFailed: 0,
+    });
+    const revised = 'Goblin Warrior stat block, revised printing';
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Goblin Warrior'],
+        text: revised,
+        statBlock: fixtureStatBlock(),
+        contentHash: await sha256Hex(revised),
+      }),
+    ]);
+
+    let caught: unknown = null;
+    try {
+      await importExport(json);
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(MissingDependenciesError);
+    expect((caught as MissingDependenciesError).analysis.citations[0]?.verdict).toBe(
+      'version-drift',
+    );
+    expect((caught as MissingDependenciesError).analysis.books[0]?.matchLevel).toBe('L1');
+    expect(await listCampaigns()).toHaveLength(1); // source only
+
+    const result = await importExport(json, {}, { dependencyPolicy: 'import-anyway' });
+    expect(result.createdArtifacts).toBe(1);
+  });
+
+  it('zip imports enforce the same policy', async () => {
+    const { campaignId } = await exportGoblinCampaign();
+    const zip = buildZip(
+      await buildCampaignExport(campaignId, undefined, { images: true }),
+    );
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    await expect(importZip(zip)).rejects.toBeInstanceOf(MissingDependenciesError);
+    expect(await listCampaigns()).toHaveLength(1);
+    const result = await importZip(zip, { dependencyPolicy: 'import-anyway' });
+    expect(result.createdArtifacts).toBe(1);
+  });
+});
 
   it('records a loud missing-binary note instead of silently dropping refs', async () => {
     const campaign = await createCampaign({ name: 'Gappy', system: 'dnd5e' });

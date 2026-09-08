@@ -74,6 +74,11 @@ Run `pnpm lint && pnpm typecheck && pnpm test` before every commit.
 - Continuity Editor persona (checks drafts against existing artifacts).
 - Encounter/PlotArc/Session artifact kinds; graph view of links.
 - Import of exported JSON; embedding whole-library management UI.
+- Import enforces the v2 dependency manifest (07-MILESTONE-3 M3-E slice B,
+  abort-by-default): parse-first analysis in the picker opens a dep-summary
+  dialog on L0-miss (per-book match levels + citing encounters, resolve path
+  via Rules); Abort never enters the transaction, Import-anyway lands
+  `missing ref` encounters plus the campaign banner.
 
 ## Non-goals (never in scope unless the user says so)
 
