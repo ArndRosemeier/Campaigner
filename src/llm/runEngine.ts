@@ -43,6 +43,7 @@ import { getChunksByIds } from '@/db/chunkRepo';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
+import { convergeBoardsToRegeneratedMap } from '@/db/battleRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
@@ -3105,12 +3106,26 @@ export class RunEngine {
     let artifactId: Id;
     if (target !== undefined) {
       if (target.kind !== 'encounter') throw new Error('Encounter regeneration target changed kind');
+      // Single-map-slot replace (owner decision, docs/11): the gallery holds
+      // EXACTLY one map per encounter. The previous battlemap leaves
+      // `imageIds` in the SAME attach-seam transaction that lands the fresh
+      // one (true replace, not accumulate), and rides `pruneCandidates` so
+      // its blob is refchecked and freed when nothing still pins it (live
+      // boards and history pin via the imageRepo refcount). Unpicked
+      // candidates were already pruned at pick — only the previous map goes
+      // here. History keeps the old id via revision snapshots (writeRevision
+      // clones the whole row, `data.mapImageId` included).
+      const previousMapImageId = target.data.mapImageId;
       // The re-anchor + content write commit as ONE attach-seam
       // transaction: a crash between the two used to strand a
       // library-scoped unreferenced image while the artifact kept the old
       // map (docs/18 known debt, now closed).
       await attachImagesToArtifact(target.id, {
         appendImageIds: [selected],
+        // The slot swap: the old map id leaves the gallery with the new one.
+        ...(previousMapImageId !== null && previousMapImageId !== selected
+          ? { removeImageIds: [previousMapImageId] }
+          : {}),
         // Only a global target re-anchors its kept image (D2/D9): omitting
         // the key leaves campaign anchors untouched.
         ...(target.campaignId === null ? { anchorImagesTo: null } : {}),
@@ -3133,8 +3148,32 @@ export class RunEngine {
           budgetAdvisory: this.encounterBudgetAdvisory(steps),
         },
         meta: { source: 'persona', runId },
+        // Refchecked prune of the replaced map (no-op while a live board or
+        // history still pins it — the refcount decides, never the caller).
+        ...(previousMapImageId !== null && previousMapImageId !== selected
+          ? {
+              pruneCandidates: {
+                campaignId: input.campaign.id,
+                candidateIds: [previousMapImageId],
+              },
+            }
+          : {}),
       });
       artifactId = target.id;
+      // Board convergence (owner decision, docs/11): never-opened battles
+      // seeded from this encounter move onto the fresh map+layout; live
+      // battles stay frozen (Open battle never reseeds — docs/18 gotcha).
+      const { liveSkipped } = await convergeBoardsToRegeneratedMap(target.id, {
+        mapImageId: selected,
+        mapLayout: { cols: layout.gridW, rows: layout.gridH },
+      });
+      if (liveSkipped > 0) {
+        // Loud (AGENTS rule 2): the new map is saved, but the live table
+        // still plays the old board — the GM must act to pick it up.
+        toastError(
+          `The battlemap was replaced, but ${liveSkipped === 1 ? 'a live battle is' : `${String(liveSkipped)} live battles are`} still frozen on the old board — re-run battle to pick up the new map.`,
+        );
+      }
     } else {
       // Mob artifacts (owner-ratified): a rulebook citation gets ONE
       // image-able npc artifact per campaign per chunkId — roster name +

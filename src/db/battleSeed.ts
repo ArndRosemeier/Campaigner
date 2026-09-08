@@ -11,6 +11,7 @@ import { stagingBlockRect } from '@/domain/encounterMap/layout';
 import { abilityModifier } from '@/domain/statblock';
 import { db } from '@/db/db';
 import { NotFoundError } from '@/lib/errors';
+import { toastError } from '@/lib/toast';
 import { getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import {
   ensureBattle,
@@ -54,12 +55,26 @@ function defaultStagingGround(): ReturnType<typeof stagingGroundAt> {
  * The battle's map (M5-C step 2): the encounter's designed battlemap, else
  * the cover of a linked location when that cover is map-role, else no map
  * (viewport board — the source behavior for mapless encounters).
+ *
+ * Single-map-slot robustness: the encounter's `mapImageId` wins ONLY when
+ * its image row still exists — a pruned row falls through to the
+ * location-cover branch (LOUD toast, never a frozen dangling id that would
+ * seed a board pointing at nothing). Precedence stays mapImageId →
+ * location map-cover → null.
  */
 async function resolveMapImageId(
   encounter: AnyArtifact & { kind: 'encounter' },
 ): Promise<Id | null> {
   if (encounter.data.mapImageId !== null) {
-    return encounter.data.mapImageId;
+    if ((await db.images.get(encounter.data.mapImageId)) !== undefined) {
+      return encounter.data.mapImageId;
+    }
+    // Loud (AGENTS rule 2): the encounter names a battlemap whose blob is
+    // gone — the seed does NOT freeze the dangling id onto the board.
+    toastError(
+      `The battlemap for encounter “${encounter.name}” is missing — seeding without it. ` +
+        'Regenerate the encounter map to restore it.',
+    );
   }
   const linked = await db.artifacts.bulkGet(encounter.links.map((link) => link.targetId));
   for (const artifact of linked) {

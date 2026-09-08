@@ -246,6 +246,13 @@ On encounter cards in Play (and the workspace editor header): **Run battle**
    snapshot and existing pieces are untouched.*
 2. Seed map: the encounter's `mapImageId`, else the linked location's cover
    image if it is map-role, else no map (viewport board — source behavior).
+   Amended 2026-09-08 (single-map-slot arc, docs/11 D16): *precedence is
+   unchanged (mapImageId → location map-cover → null), but branch 1 now
+   checks EXISTENCE — a `mapImageId` whose image row is gone falls through
+   to the location-cover branch with a loud toast, never a frozen dangling
+   id on the board. Freshness follows from the same rule: seeding reads the
+   CURRENT map, so a seed after a regenerate picks up the new board copy
+   while never-opened battles converge and live ones stay frozen.*
 3. Expand the roster: each `MonsterEntry` with resolved stats
    (`resolveMonsterEntry`) produces `count` portrait tokens ("Goblin 1..n"),
    `maxHp` from the statblock, `currentHp` = max, dex modifier (+ PC-style

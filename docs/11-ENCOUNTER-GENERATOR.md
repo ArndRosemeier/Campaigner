@@ -465,6 +465,33 @@ promotes the artifact to campaign level (loud toast) before the seed rows
 freeze identity, so the first module never loses its monster silently and
 both modules share the one row.
 
+### D16 — single-map-slot replace (owner decision, 2026-09-08)
+
+The gallery holds EXACTLY one map per encounter — regenerate REPLACES, never
+accumulates (multiple maps per encounter stays a v1 non-goal). The
+regenerate finalize rides the attach seam in one transaction: the fresh map
+appends, the previous `mapImageId` leaves `imageIds` via `removeImageIds`,
+its blob rides `pruneCandidates` (refchecked — freed only when nothing still
+pins it), and unpicked candidates stay pruned at pick as before. History
+keeps every replaced id: `writeRevision` clones the whole row, so each
+revision snapshot's `data.mapImageId` names the map on file at that revision
+— and the imageRepo refcount pins exactly those ids (live `data.mapImageId`,
+snapshot `data.mapImageId`, frozen `board.mapImageId`), so deleting an old
+gallery row can never destroy the blob under a live board. The live
+battlemap itself is undeletable: `removeImageFromArtifact` refuses (loud,
+with Regenerate guidance) any image that is any encounter's current
+`data.mapImageId` — the editor lightbox delete rides the same function.
+
+Board convergence: after the finalize swaps the map, every battle with
+`encounterArtifactId` on the target and `board.everLive === false`
+converges onto the fresh `mapImageId` + `mapLayout` (repo-level
+`convergeBoardsToRegeneratedMap` through the `patchBattle` path — tokens,
+veils and everything else ride along untouched). A battle that already went
+live stays FROZEN on the board the table actually played — Open battle never
+reseeds (docs/18 gotcha) — and the finalize toasts loudly so the GM re-runs
+the battle to pick up the new map. Seeding always reads the CURRENT map, so
+a seed after a replace picks up the new board copy.
+
 ## LLM/image client changes
 
 - `imageGen.ts`: optional `inputReferences: { dataUrl: string }[]` on
@@ -919,7 +946,10 @@ data model, run-engine threading, UI, docs); the gate at completion is
 - Resizing the window (tablet ↔ desktop) keeps every group veil on its room —
   layout-anchored metrics, golden-tested.
 - Regenerating on an edited roster keeps the artifact's identity/links/body,
-  replaces `layout` + `mapImageId`, and re-derives placement.
+  replaces `layout` + `mapImageId` under the single-map-slot rule (D16: the
+  previous map leaves the gallery in the same attach transaction, never-live
+  boards converge, live boards stay frozen with a loud re-run toast),
+  and re-derives placement.
 - Module generation with encounters: encounter stubs become full encounters
   with maps unattended; a failing encounter reports loudly and does not stop
   the queue; retry re-runs only the failed job.

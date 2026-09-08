@@ -129,37 +129,53 @@ export async function deleteImageIfUnreferenced(imageId: Id): Promise<boolean> {
 /**
  * Reference set across every campaign — for library images whose owning
  * artifact was published (D2). Local data, full scan is fine.
+ *
+ * Single-map-slot coverage (owner decision, docs/11): encounter live maps
+ * (`data.mapImageId`), their history (`snapshot.data.mapImageId`), and
+ * frozen battle boards (`board.mapImageId`) all pin their blobs — deleting
+ * an old gallery row must never destroy the blob under a live board.
  */
 async function referencedImageIdsGlobal(): Promise<Set<Id>> {
-  const [artifacts, revisions] = await Promise.all([
+  const [artifacts, revisions, battles] = await Promise.all([
     db.artifacts.toArray(),
     db.revisions.toArray(),
+    db.battles.toArray(),
   ]);
   const referenced = new Set<Id>();
   for (const artifact of artifacts) {
     for (const id of artifact.imageIds) referenced.add(id);
     if (artifact.coverImageId !== null) referenced.add(artifact.coverImageId);
+    if (artifact.kind === 'encounter' && artifact.data.mapImageId !== null) {
+      referenced.add(artifact.data.mapImageId);
+    }
   }
   for (const revision of revisions) {
     const snapshot = revision.snapshot as {
       imageIds?: Id[];
       coverImageId?: Id | null;
+      data?: { mapImageId?: Id | null };
     } | null;
     if (snapshot === null) continue;
     for (const id of snapshot.imageIds ?? []) referenced.add(id);
     const cover = snapshot.coverImageId;
     if (cover !== undefined && cover !== null) referenced.add(cover);
+    const map = snapshot.data?.mapImageId;
+    if (map !== undefined && map !== null) referenced.add(map);
+  }
+  for (const battle of battles) {
+    if (battle.board.mapImageId !== null) referenced.add(battle.board.mapImageId);
   }
   return referenced;
 }
 
 /**
  * All image ids referenced anywhere in the campaign — by artifacts
- * (`imageIds`/`coverImageId`) and by revision snapshots (restored history
- * must still render).
+ * (`imageIds`/`coverImageId`), by revision snapshots (restored history
+ * must still render), by encounter live maps and their history, and by
+ * frozen battle boards (see above).
  */
 export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
-  const [artifacts, revisions] = await Promise.all([
+  const [artifacts, revisions, battles] = await Promise.all([
     db.artifacts.where('campaignId').equals(campaignId).toArray(),
     (async () => {
       const artifactIds = (await db.artifacts.where('campaignId').equals(campaignId).toArray()).map(
@@ -169,22 +185,32 @@ export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
       const rows = await db.revisions.where('artifactId').anyOf(artifactIds).toArray();
       return rows;
     })(),
+    db.battles.where('campaignId').equals(campaignId).toArray(),
   ]);
   const referenced = new Set<Id>();
   for (const artifact of artifacts) {
     for (const id of artifact.imageIds) referenced.add(id);
     if (artifact.coverImageId !== null) referenced.add(artifact.coverImageId);
+    if (artifact.kind === 'encounter' && artifact.data.mapImageId !== null) {
+      referenced.add(artifact.data.mapImageId);
+    }
   }
   for (const revision of revisions) {
     // Old (pre-M3) snapshots lack both fields — read defensively.
     const snapshot = revision.snapshot as {
       imageIds?: Id[];
       coverImageId?: Id | null;
+      data?: { mapImageId?: Id | null };
     } | null;
     if (snapshot === null) continue;
     for (const id of snapshot.imageIds ?? []) referenced.add(id);
     const cover = snapshot.coverImageId;
     if (cover !== undefined && cover !== null) referenced.add(cover);
+    const map = snapshot.data?.mapImageId;
+    if (map !== undefined && map !== null) referenced.add(map);
+  }
+  for (const battle of battles) {
+    if (battle.board.mapImageId !== null) referenced.add(battle.board.mapImageId);
   }
   return referenced;
 }
@@ -193,7 +219,8 @@ export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
  * Deletes every image of the campaign that nothing references anymore.
  * Called after artifact deletion (cascade) and after run picks discard
  * candidates. Safe inside a caller's transaction when `db.images` (and the
- * tables it reads) are part of its scope.
+ * tables it reads — artifacts, revisions, battles) are part of its scope
+ * (a read on a table the scope omits throws "object store not found").
  */
 export async function pruneUnreferencedImages(campaignId: Id): Promise<number> {
   const referenced = await referencedImageIds(campaignId);

@@ -35,6 +35,13 @@ interface StoredImage extends BaseEntity {
   campaign — the reference check must cover **artifacts and revisions**
   (revision snapshots keep `imageIds` so restored history still renders)
   before deleting a blob.
+  Battle-board sweep gap (closed 2026-09-08 by docs/11 D16, single-map-slot):
+  *the M3-A check above never covered battle boards or encounter live maps —
+  the seed froze a COPY of `mapImageId` onto `board`, and the refcount was
+  blind to both, so deleting a replaced gallery row destroyed the blob under
+  a live board (viewport "no map"). `referencedImageIds` (+ the global
+  variant) now also pins encounter `data.mapImageId`,
+  `snapshot.data.mapImageId`, and campaign `battles.board.mapImageId`.*
 - Re-encode on intake in `/src/lib/imageIntake.ts`:
   `createImageBitmap(blob, { imageOrientation: 'from-image' })` (EXIF-safe),
   draw onto canvas, scale to ≤ 1600px long edge, `canvas.toBlob('image/webp',

@@ -82,7 +82,7 @@ column.
 | Change an artifact's scope (move / adopt / publish) | `moveToModule` / `adoptIntoCampaign` / `publishToLibrary` — all funnel through the private `moveScope`, one tx incl. image re-anchor | a patch carrying `campaignId`/`moduleId` — `updateArtifact` pins scope fields |
 | Promote an artifact on second-module use (link / roster / battle) | `db/artifactAutoPromote` — `promoteSecondModuleUses` (post-save text scans), `promoteRosterUses` (roster/seed/spawn hooks), `promoteArtifactForModuleUse[Loud]` (single-artifact) — every path funnels through `adoptIntoCampaign` → `moveScope` (no separate core state); the surface is a batched `toastSuccess` notice, never run-issue escalation | hooking render (`wiki-markdown` resolution stays pure); a second scope writer; silent promotion |
 | Give a generated artifact module ownership | `artifactRepo.stampModuleOwnership` (loud existence check inside the tx) | `updateArtifact` with `moduleId` |
-| Attach images (store + reference + re-anchor + prune + optional content patch) | `artifactRepo.attachImagesToArtifact` — one rw tx over images+artifacts+revisions; blobs are byte-prepared (`buildStoredImage`) BEFORE it opens; the optional `data` + `meta` patch lets a content write that must land with the attach (map-regenerate's layout/mapImageId/preset/siteShape/budgetAdvisory) commit atomically instead of a second `updateArtifact` write | `createImage` then `updateArtifact` as separate writes |
+| Attach images (store + reference + re-anchor + prune + optional content patch) | `artifactRepo.attachImagesToArtifact` — one rw tx over images+artifacts+revisions+battles (battles rides the scope because the post-attach prune refchecks frozen boards — a read on an undeclared table throws); blobs are byte-prepared (`buildStoredImage`) BEFORE it opens; the optional `data` + `meta` patch lets a content write that must land with the attach (map-regenerate's layout/mapImageId/preset/siteShape/budgetAdvisory) commit atomically instead of a second `updateArtifact` write; the optional `removeImageIds` swaps gallery ids out in the same tx (single-map-slot replace, docs/11 D16) | `createImage` then `updateArtifact` as separate writes |
 | Create / edit / restore content | `createArtifact` / `updateArtifact` / `restoreRevision` (restore is content-only, scope pinned) | hand-writing revision rows (`writeRevision` is private) |
 | Write rule chunks | `chunkRepo.writeChunks` (`putChunks` alias) — invalidates the keyword index with the write | `db.chunks.bulkPut` anywhere else; backup restore MUST route through this door |
 | Get/create the live battle for a module | `battleRepo.ensureBattle` — the v16 unique `&moduleId` index is the arbiter | get-then-create across two transactions |
@@ -263,6 +263,14 @@ column.
   module row (`patchModuleTextPart`: `status: 'ready'`, `edited: true`) and
   the revision story is the `edited` flag + the rewrite-overwrite confirm.
   Never route a part-text write through the artifact revision seam.
+- **The battle board is a FROZEN COPY of the encounter map; Open battle never
+  reseeds.** Seeding copies `mapImageId` + `mapLayout` onto the board, and
+  from then on the two evolve independently: regenerate swaps the
+  encounter's slot (docs/11 D16) and only never-live boards converge — a
+  live board keeps playing the old map until the GM explicitly re-runs the
+  battle. Never "refresh" a board from the encounter outside
+  `convergeBoardsToRegeneratedMap` (repo-level, `patchBattle` path), and
+  never touch the surface for it.
 - **UI scale never touches px-measured surfaces**: `--ui-scale` (uiScale
   store) multiplies the root font-size, so only the rem-based Tailwind/shadcn
   scale grows. The battle board (DOM + transforms over world units, measured
@@ -273,7 +281,7 @@ column.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 
-- ~~Map-regenerate attach bypasses the image seam~~ — closed: `runEngine.runEncounterFinalize`'s regenerate branch rides `attachImagesToArtifact` (new optional `data` + `meta` patch fields) — re-anchor + content write commit in the one attach tx, and the cover is explicitly kept (never cleared). The fresh-encounter `createArtifact` birth path stays intentionally off-seam (single-row create, no desync window — see below).
+- ~~Map-regenerate attach bypasses the image seam~~ — closed: `runEngine.runEncounterFinalize`'s regenerate branch rides `attachImagesToArtifact` (new optional `data` + `meta` patch fields) — re-anchor + content write commit in the one attach tx, and the cover is explicitly kept (never cleared). Extended by docs/11 D16 (single-map-slot): the same tx swaps the previous map out of `imageIds` (`removeImageIds`), refchecks its blob (`pruneCandidates`), converges never-live boards, and declares `db.battles` in its scope for the board-aware refcount. The fresh-encounter `createArtifact` birth path stays intentionally off-seam (single-row create, no desync window — see below).
 - **Queue reload survival is deferred BY OWNER DECISION** (`lib/jobQueue`
   header): the in-memory queues lose queued/failed jobs on reload; run rows
   reconcile via `runRepo.failRunningRuns`. Do not invent persistence.

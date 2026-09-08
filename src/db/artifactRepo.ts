@@ -189,7 +189,10 @@ export interface AttachableImage extends NewStoredImage {
  * Callers keep their own surrounding semantics (run-step writes, toasts);
  * only the image/artifact pair is owned here. `updateArtifact` joins as a
  * nested transaction; the prune runs last, so kept images are already
- * referenced when the candidate scan runs.
+ * referenced when the candidate scan runs. `db.battles` rides the scope
+ * because the post-attach prune refchecks frozen battle boards (single-map
+ * slot) — a table the scope omits throws "object store not found" at the
+ * read (the deleteArtifact-scope precedent).
  *
  * The optional `data` patch rides the SAME transaction: content writes that
  * must land with the attach (map-regenerate's layout/mapImageId/preset/
@@ -212,6 +215,11 @@ export async function attachImagesToArtifact(
     createImages?: readonly AttachableImage[];
     /** Already-stored image ids appended to the artifact's imageIds. */
     appendImageIds?: readonly Id[];
+    /** Already-stored image ids REMOVED from the artifact's imageIds in the
+     * same transaction (single-map-slot replace: the regenerate finalize
+     * swaps the previous battlemap out while the fresh one lands — the
+     * gallery holds exactly one map per encounter, never an append). */
+    removeImageIds?: readonly Id[];
     /** Re-anchor the attached images to this campaign anchor (D2/D9 — `null`
      * moves them into the library before a global target references them). */
     anchorImagesTo?: Id | null;
@@ -237,7 +245,7 @@ export async function attachImagesToArtifact(
       asCover: newImage.asCover === true,
     });
   }
-  return db.transaction('rw', [db.images, db.artifacts, db.revisions], async () => {
+  return db.transaction('rw', [db.images, db.artifacts, db.revisions, db.battles], async () => {
     const created: Id[] = [];
     let createdCover: Id | null = null;
     for (const { image, asCover } of preparedImages) {
@@ -251,8 +259,13 @@ export async function attachImagesToArtifact(
     }
     const current = await getAnyArtifact(id);
     if (current === undefined) throw new NotFoundError('Artifact', id);
+    // A keep wins over a removal: an id that is both appended and removed
+    // stays (defensive — the map-slot caller never sends the selected id as
+    // removed, but the seam must not strand a kept image).
+    const attachedSet = new Set(attached);
+    const removed = new Set((input.removeImageIds ?? []).filter((imageId) => !attachedSet.has(imageId)));
     const mergedImages = [
-      ...current.imageIds,
+      ...current.imageIds.filter((imageId) => !removed.has(imageId)),
       ...attached.filter((imageId) => !current.imageIds.includes(imageId)),
     ];
     const next = await updateArtifact(id, {
@@ -356,8 +369,27 @@ export async function stampModuleOwnership(
  * restorable — restored revisions simply show the entity without the
  * deleted image. The blob row is deleted unless something else (another
  * artifact or another artifact's revisions) still references it.
+ *
+ * Single-map-slot guard (owner decision, docs/11): the LIVE battlemap of an
+ * encounter (`data.mapImageId`) can never be deleted — neither from its own
+ * gallery nor from any other artifact's. The gallery holds exactly one map
+ * per encounter and Regenerate replaces it; deleting the row would destroy
+ * the blob under the live board. Refuses LOUDLY (both gallery call sites
+ * surface the throw as a toast) with guidance toward Regenerate.
  */
 export async function removeImageFromArtifact(artifactId: Id, imageId: Id): Promise<void> {
+  const mapped = await db.artifacts
+    .filter((row) => row.kind === 'encounter' && (row.data as { mapImageId?: unknown }).mapImageId === imageId)
+    .toArray();
+  const owner = mapped[0];
+  if (owner !== undefined) {
+    const ownerName = (owner as { name?: unknown }).name;
+    throw new Error(
+      `Regenerate replaces the battlemap; the live map cannot be deleted${
+        typeof ownerName === 'string' ? ` (it is the battlemap of encounter “${ownerName}”)` : ''
+      } — run Regenerate on the encounter to swap in a fresh map.`,
+    );
+  }
   await db.transaction('rw', db.artifacts, db.revisions, async () => {
     const current = await db.artifacts.get(artifactId);
     if (current === undefined) throw new NotFoundError('Artifact', artifactId);

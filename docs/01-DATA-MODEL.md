@@ -386,6 +386,17 @@ Binary payloads live in their own table; artifacts reference them by id
 boundary. A blob is deleted only when no artifact AND no revision snapshot
 references it anymore (reference-counted deletion in `imageRepo`).
 
+`mapImageId` ownership (single-map-slot, docs/11 D16): an encounter's
+battlemap is OWNED by the encounter row — the gallery holds exactly one map
+(`imageIds` replace, not accumulate) while `data.mapImageId` names the live
+one. The refcount sees all three map roles, so a blob survives while any of
+them names it: the live `data.mapImageId` on encounter rows, the replaced
+`snapshot.data.mapImageId` in revision history (restored history still
+renders), and the frozen `board.mapImageId` on battle rows (campaign-scoped
+battle scan; the global variant scans every campaign). The live battlemap
+is undeletable through `removeImageFromArtifact` — Regenerate is the only
+way to swap it.
+
 ```ts
 interface StoredImage extends BaseEntity {
   campaignId: Id | null;        // null when owned by a global artifact

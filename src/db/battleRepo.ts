@@ -213,6 +213,39 @@ export async function deleteBattlesByModule(moduleId: Id): Promise<void> {
 }
 
 /**
+ * Single-map-slot convergence (owner decision, docs/11): after an encounter
+ * regenerate-finalize swaps the battlemap, every battle seeded from that
+ * encounter but never opened (`board.everLive === false`) converges onto the
+ * fresh map — `board.mapImageId` + `board.mapLayout` move, tokens/veils and
+ * everything else stay. A battle that already went live stays FROZEN on the
+ * board the table actually played (Open battle never reseeds — docs/18
+ * gotcha); the caller toasts loudly so the GM re-runs the battle to pick up
+ * the new map. Rides the `patchBattle` path (parse-normalized, one tx per
+ * battle) — never the surface.
+ */
+export async function convergeBoardsToRegeneratedMap(
+  encounterArtifactId: Id,
+  map: { mapImageId: Id; mapLayout: BattleBoard['mapLayout'] },
+): Promise<{ converged: number; liveSkipped: number }> {
+  const rows = await db.battles.filter((battle) => battle.encounterArtifactId === encounterArtifactId).toArray();
+  let converged = 0;
+  let liveSkipped = 0;
+  for (const row of rows) {
+    const battle = parseBattleRow(row);
+    if (battle.board.everLive) {
+      liveSkipped += 1;
+      continue;
+    }
+    if (battle.board.mapImageId === map.mapImageId) continue;
+    await patchBattle(battle.id, {
+      board: { ...battle.board, mapImageId: map.mapImageId, mapLayout: map.mapLayout },
+    });
+    converged += 1;
+  }
+  return { converged, liveSkipped };
+}
+
+/**
  * Normalize-on-write: PC tokens ensured, NPC token HP re-filled from the
  * backing stats when null and clamped to [0, maxHp]. PC token HP is NEVER
  * written here — the pc artifact owns it (the UI writes damage/heal for PCs
