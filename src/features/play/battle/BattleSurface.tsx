@@ -141,6 +141,14 @@ export function BattleSurface(): JSX.Element {
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [liveDrag, setLiveDrag] = useState<LiveDrag | null>(null);
+  // Live-drag frame throttle (iPad batch H): pointermove streams run hotter
+  // than the display, and every setLiveDrag re-renders the whole surface
+  // (audit #22). Moves queue the latest position into pendingDragRef and
+  // commit to state at most once per animation frame; release paths flush
+  // the queue synchronously (exactly one commit, exact final position) and
+  // abort paths cancel the frame (no stale lift after release).
+  const pendingDragRef = useRef<LiveDrag | null>(null);
+  const dragFrameRef = useRef<number | null>(null);
   const [selectedTokenId, setSelectedTokenId] = useState<BattleTokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
   const [selectedEffectId, setSelectedEffectId] = useState<BattleEffect['id'] | null>(null);
@@ -218,6 +226,16 @@ export function BattleSurface(): JSX.Element {
       }),
     [],
   );
+
+  // A coalesced drag frame must never fire after unmount (stale setState on
+  // an unmounted surface).
+  useEffect(() => () => {
+    if (dragFrameRef.current !== null) {
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    pendingDragRef.current = null;
+  }, []);
 
   // Track the board's pixel size (coverage + snapping need real px). The
   // effect re-runs when the board mounts (before the battle row loads, the
@@ -424,6 +442,54 @@ export function BattleSurface(): JSX.Element {
     };
   }
 
+  // --- Live-drag frame queue -------------------------------------------------
+  // Coalesces pointermove → state commits to one render per animation frame.
+  // Trailing edge wins: the queued position IS the drop, so the final spot
+  // is exact and desktop feel is unchanged (same positions, fewer renders).
+
+  function queueLiveDrag(next: LiveDrag): void {
+    pendingDragRef.current = next;
+    if (dragFrameRef.current !== null) return;
+    if (typeof requestAnimationFrame !== 'function') {
+      // No frame scheduler (non-visual engines): apply synchronously — same
+      // positions and commits, just unthrottled. Production browsers always
+      // schedule below; this branch exists so the gesture never strands.
+      pendingDragRef.current = null;
+      setLiveDrag(next);
+      return;
+    }
+    dragFrameRef.current = requestAnimationFrame(() => {
+      dragFrameRef.current = null;
+      const pending = pendingDragRef.current;
+      pendingDragRef.current = null;
+      if (pending !== null) setLiveDrag(pending);
+    });
+  }
+
+  /** Release paths: consume the coalesced position (or the rendered one when
+   * nothing is queued) so the single commit's drop is exact even mid-frame.
+   * Cancels the scheduled frame — it must never re-lift after release. */
+  function takePendingDrag(): LiveDrag | null {
+    if (dragFrameRef.current !== null) {
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    const pending = pendingDragRef.current;
+    pendingDragRef.current = null;
+    return pending ?? liveDrag;
+  }
+
+  /** Abort paths: drop the queue and any scheduled frame, then unlift — no
+   * commit, and no trailing frame may resurrect the drag. */
+  function abandonLiveDrag(): void {
+    if (dragFrameRef.current !== null) {
+      cancelAnimationFrame(dragFrameRef.current);
+      dragFrameRef.current = null;
+    }
+    pendingDragRef.current = null;
+    setLiveDrag(null);
+  }
+
   // --- Pointer handling ------------------------------------------------------
 
   function onBoardPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
@@ -435,12 +501,12 @@ export function BattleSurface(): JSX.Element {
     pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     if (pinchRef.current.size === 2) {
       panRef.current = null;
-      if (liveDrag !== null) {
+      if ((pendingDragRef.current ?? liveDrag) !== null) {
         // Second finger mid-drag → pinch/rotation takes over the gesture: the
         // piece's pointer stream is dead and its release will never arrive.
         // Abandon the drag with NO commit (no drop point was chosen) and close
         // the gesture so reconcile resumes — otherwise liveDrag strands.
-        setLiveDrag(null);
+        abandonLiveDrag();
         endBoardGesture();
       }
       return;
@@ -484,13 +550,14 @@ export function BattleSurface(): JSX.Element {
     // node, so a fast drag that leaves the node (or a node remount mid-drag)
     // stops that stream and the piece "snaps back". Moves bubble to the
     // board, so keep following the active drag here — same math, same state.
-    if (liveDrag !== null) {
+    const boardDrag = pendingDragRef.current ?? liveDrag;
+    if (boardDrag !== null) {
       const at = boardPointFromEvent(event);
       const movedPx = Math.max(
-        liveDrag.movedPx,
-        Math.hypot(event.clientX - liveDrag.startClientX, event.clientY - liveDrag.startClientY),
+        boardDrag.movedPx,
+        Math.hypot(event.clientX - boardDrag.startClientX, event.clientY - boardDrag.startClientY),
       );
-      setLiveDrag({ ...liveDrag, x: at.x, y: at.y, movedPx });
+      queueLiveDrag({ ...boardDrag, x: at.x, y: at.y, movedPx });
       return;
     }
     const panning = panRef.current;
@@ -514,9 +581,10 @@ export function BattleSurface(): JSX.Element {
       releaseTarget.closest(
         '[data-token-label],[data-testid="battle-veil"],[data-testid="battle-effect"]',
       ) !== null;
-    if (liveDrag !== null && !releasedOnPiece) {
-      if (liveDrag.tokenId.startsWith('veil:')) finishVeilDrag();
-      else if (liveDrag.tokenId.startsWith('effect:')) finishEffectDrag();
+    const releasedDrag = pendingDragRef.current ?? liveDrag;
+    if (releasedDrag !== null && !releasedOnPiece) {
+      if (releasedDrag.tokenId.startsWith('veil:')) finishVeilDrag();
+      else if (releasedDrag.tokenId.startsWith('effect:')) finishEffectDrag();
       else finishTokenDrag();
     }
     // Player-safe off-piece release (pairs with the fallback above): a tap
@@ -567,8 +635,8 @@ export function BattleSurface(): JSX.Element {
       cancelTarget.closest(
         '[data-token-label],[data-testid="battle-veil"],[data-testid="battle-effect"]',
       ) !== null;
-    if (liveDrag !== null && !cancelledOnPiece) {
-      setLiveDrag(null);
+    if ((pendingDragRef.current ?? liveDrag) !== null && !cancelledOnPiece) {
+      abandonLiveDrag();
       endBoardGesture();
     }
     playerTapRef.current = null;
@@ -615,7 +683,7 @@ export function BattleSurface(): JSX.Element {
         // pointer stream is gone, so dragging on would strand liveDrag with a
         // release that never arrives. Abort instead — no live drag, gesture
         // closed — rather than dragging without capture.
-        setLiveDrag(null);
+        abandonLiveDrag();
         endBoardGesture();
         return;
       }
@@ -631,7 +699,7 @@ export function BattleSurface(): JSX.Element {
   }
 
   function moveTokenDrag(event: React.PointerEvent<HTMLDivElement>): void {
-    const drag = liveDrag;
+    const drag = pendingDragRef.current ?? liveDrag;
     if (drag === null) {
       // Player-safe tap tracking (no live drag exists in that mode): fold
       // the move into the tap's screen-space distance so a drag fails the
@@ -653,11 +721,11 @@ export function BattleSurface(): JSX.Element {
       drag.movedPx,
       Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
     );
-    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
+    queueLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
   }
 
   function finishTokenDrag(): void {
-    const drag = liveDrag;
+    const drag = takePendingDrag();
     if (drag === null) {
       // Player-safe release (no gesture was begun, so none ends here): a
       // release below the tap threshold opens the fullscreen portrait
@@ -715,7 +783,7 @@ export function BattleSurface(): JSX.Element {
   }
 
   function moveVeilDrag(event: React.PointerEvent<HTMLDivElement>): void {
-    const drag = liveDrag;
+    const drag = pendingDragRef.current ?? liveDrag;
     if (drag?.tokenId.startsWith('veil:') !== true) return;
     const at = boardPointFromEvent(event);
     // Screen-space threshold, same as tokens (see moveTokenDrag).
@@ -723,11 +791,11 @@ export function BattleSurface(): JSX.Element {
       drag.movedPx,
       Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
     );
-    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
+    queueLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
   }
 
   function finishVeilDrag(): void {
-    const drag = liveDrag;
+    const drag = takePendingDrag();
     setLiveDrag(null);
     if (drag?.tokenId.startsWith('veil:') !== true) return;
     // Paired with the begin in startVeilDrag (same rule as finishTokenDrag).
@@ -797,18 +865,18 @@ export function BattleSurface(): JSX.Element {
   }
 
   function moveEffectDrag(event: React.PointerEvent<HTMLDivElement>): void {
-    const drag = liveDrag;
+    const drag = pendingDragRef.current ?? liveDrag;
     if (drag?.tokenId.startsWith('effect:') !== true) return;
     const at = boardPointFromEvent(event);
     const movedPx = Math.max(
       drag.movedPx,
       Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
     );
-    setLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
+    queueLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
   }
 
   function finishEffectDrag(): void {
-    const drag = liveDrag;
+    const drag = takePendingDrag();
     setLiveDrag(null);
     if (drag?.tokenId.startsWith('effect:') !== true) return;
     endBoardGesture();

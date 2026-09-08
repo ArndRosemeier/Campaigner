@@ -291,6 +291,24 @@ async function renderSurface(moduleId: string): Promise<void> {
 }
 
 /**
+ * Live-drag frames (batch H throttle): the surface coalesces pointermove
+ * renders to requestAnimationFrame, so a mid-drag position only reaches the
+ * DOM after a frame. The drag's own frame is always scheduled BEFORE this
+ * waiter frame, so one call lands it deterministically. Release/commit paths
+ * flush the queue synchronously and need no helper — only assertions that
+ * read the piece's LIVE position do.
+ */
+async function flushDragFrames(): Promise<void> {
+  await act(async () => {
+    await new Promise<void>((resolve) => {
+      requestAnimationFrame(() => {
+        resolve();
+      });
+    });
+  });
+}
+
+/**
  * The battle-row read runs inside ONE act with a drain (actDrained, docs/08
  * §Console guard) — for EVERY caller: a bare `await currentBattle()` while
  * the surface is mounted hands fake-indexeddb's timed queue an outside-act
@@ -795,6 +813,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
     fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.55 * BOARD_W, clientY: 0.5 * BOARD_H });
     await flushAsyncUpdates();
+    await flushDragFrames();
     expect(tokenEl.className).toContain('opacity-90');
     // Fingers 2+3 land on the background: the second board-visible pointer
     // starts a pinch/rotation, and the token drag is abandoned, not stranded.
@@ -930,6 +949,7 @@ describe('veil live drag', () => {
     fireEvent.pointerDown(veilEl, { pointerId: 5, clientX: cx(0.3), clientY: cy(0.3) });
     fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.55), clientY: cy(0.62) });
     await flushAsyncUpdates();
+    await flushDragFrames();
     expect(Number.parseFloat(veilEl.style.left) / 100).toBeCloseTo(0.55, 9);
     expect(Number.parseFloat(veilEl.style.top) / 100).toBeCloseTo(0.62, 9);
     // Dragging visual mirrors tokens: lifted (z-20) with outline emphasis —
@@ -987,6 +1007,87 @@ describe('veil live drag', () => {
     expect(veil?.x).toBe(0.3);
     expect(veil?.y).toBe(0.3);
     expect(screen.getByTestId('delete-veil')).toBeInTheDocument();
+  });
+});
+
+describe('live-drag frame throttle (batch H)', () => {
+  it('coalesces a burst of moves to one render and commits the final position exactly once', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const veilId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const veilEl = screen.getByTestId('battle-veil');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    // A burst of moves inside one frame: synchronous fireEvents give the
+    // frame timer no window to interleave, so NOTHING may reach the DOM yet —
+    // every move is coalesced into the single queued frame.
+    fireEvent.pointerDown(veilEl, { pointerId: 5, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.4), clientY: cy(0.4) });
+    fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.48), clientY: cy(0.55) });
+    fireEvent.pointerMove(veilEl, { pointerId: 5, clientX: cx(0.55), clientY: cy(0.62) });
+    expect(Number.parseFloat(veilEl.style.left) / 100).toBeCloseTo(0.3, 9);
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    // One frame lands the FINAL burst position (intermediates never render).
+    await flushDragFrames();
+    expect(Number.parseFloat(veilEl.style.left) / 100).toBeCloseTo(0.55, 9);
+    expect(Number.parseFloat(veilEl.style.top) / 100).toBeCloseTo(0.62, 9);
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    // Release commits the coalesced drop exactly once, snapped like a token.
+    fireEvent.pointerUp(veilEl, { pointerId: 5 });
+    await flushAsyncUpdates();
+    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    const after = await currentBattle(moduleId);
+    const dropped = after.board.veils.find((veil) => veil.id === veilId);
+    if (dropped === undefined) throw new Error('veil vanished');
+    expect(dropped.x).toBeCloseTo(0.54, 9);
+    expect(dropped.y).toBeCloseTo(0.64, 9);
+  });
+
+  it('drops the queued frame on cancel so no stale position commits after release', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const veilId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const veilEl = screen.getByTestId('battle-veil');
+    const board = screen.getByTestId('battle-board');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    // Queue moves, then kill the stream off-piece before any frame lands: the
+    // queued frame is cancelled, nothing commits, the gesture closes.
+    fireEvent.pointerDown(veilEl, { pointerId: 9, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerMove(veilEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
+    fireEvent.pointerCancel(board, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
+    // Let every timer drain: a stale frame would re-lift the veil here.
+    await flushAsyncUpdates();
+    await flushDragFrames();
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(isBoardGestureActive()).toBe(false);
+    const after = await currentBattle(moduleId);
+    expect(after.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
   });
 });
 
