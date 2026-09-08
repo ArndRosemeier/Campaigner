@@ -75,3 +75,32 @@ was mistaken for pending work, a stopped agent lingered for days).
   from a clean tree.
 - Prune stale worktree metadata whenever worktrees go missing (temp-dir
   cleanup orphans them: `git worktree prune`).
+
+## Goal rounds vs. waiting (round discipline)
+
+An armed goal's round ticks are NOT work orders. Real incident (twice in
+one day): with two writers mid-flight, the dispatcher treated successive
+round ticks as license to churn — first deleting a writer whose registry
+state was RUNNING (violating "never delete a running writer"; it was in a
+legitimate deep-verify phase with no commits yet), then narrating
+"holding" into every round while running read-only checks, which is
+itself churn. Binding rules:
+
+1. **All remaining work delegated ⇒ pause the goal** (`update_goal`
+   action `pause`). Round ticks must never trigger status nudges,
+   salvage deletes, re-dispatches, or holding commentary. Wake
+   conditions are: a writer's landing/BLOCKED report, a runtime failure
+   notice, or a direct user message. Nothing else.
+2. **[running] means alive.** Clean tree + no commit while the registry
+   says running is NORMAL for a deep-verify or long-generation phase —
+   never grounds for a nudge, let alone deletion. The salvage protocol
+   above applies only after the registry shows the writer NOT running.
+3. **Round-budget pressure is never the writer's problem.** If rounds
+   run short while work is in flight, `edit` `max_goal_rounds` upward
+   and stay paused. Compressing a writer to satisfy a tick is forbidden.
+4. **A nudge (`send_message`) is a last resort** for real stagnation
+   only: registry idle/ready (not running) with no report across
+   checks, or the writer itself reporting being stuck. A nudge may not
+   demand intermediate reports — that churns the writer's context.
+5. Briefs carry the cadence contract: writers report on LANDING or
+   BLOCKED, nothing in between; dispatchers wait in silence.
