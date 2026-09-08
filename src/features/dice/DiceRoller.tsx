@@ -43,6 +43,10 @@ const LOG_LIMIT = 3;
 interface ActiveRoll {
   total: number;
   summary: string;
+  /** True only for engine throws — flat modifier values settle engine-free
+   * and must never raise the 3D stage (an empty physics table behind the
+   * number would read as a broken throw, not a clean flat result). */
+  dice: boolean;
 }
 
 interface LogEntry {
@@ -62,6 +66,12 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
   const engine = useDiceEngine();
   const [tray, setTray] = useState<DiceTray>(EMPTY_TRAY);
   const [roll, setRoll] = useState<ActiveRoll | null>(null);
+  // True while the 3D engine owns the board: the stage fades in for the
+  // whole physics throw, not just the settled result — binding the stage to
+  // the result alone played the animation behind an `opacity-0` div (the
+  // roll promise resolves only after the dice settle), so the user never
+  // saw a single frame and got the flat overlay number instead.
+  const [rolling, setRolling] = useState(false);
   const [rollError, setRollError] = useState<string | null>(null);
   const [log, setLog] = useState<LogEntry[]>([]);
   const pendingTrayRef = useRef<{ tray: DiceTray } | null>(null);
@@ -165,8 +175,8 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
   }, []);
 
   const finishRoll = useCallback(
-    (total: number, summary: string, perDie: number[], rolled: DiceTray): void => {
-      setRoll({ total, summary });
+    (total: number, summary: string, perDie: number[], rolled: DiceTray, dice: boolean): void => {
+      setRoll({ total, summary, dice });
       setRollError(null);
       setLog((current) => [{ id: crypto.randomUUID(), total, summary }, ...current].slice(0, LOG_LIMIT));
       persistRolledTray(rolled);
@@ -186,7 +196,7 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
     onOpenChange(false);
     if (tray.dice.length === 0) {
       // Flat value: engine-free, settles instantly.
-      finishRoll(tray.modifier, summary, [], tray);
+      finishRoll(tray.modifier, summary, [], tray, false);
       setTray(EMPTY_TRAY);
       return;
     }
@@ -199,11 +209,12 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
     const notation = buildNotation(tray.dice);
     const percentileCount = countPercentileDice(tray.dice);
     const modifier = tray.modifier;
+    setRolling(true);
     try {
       const dieResults = await engine.rollDice(notation);
       const total = sumRollTotal(dieResults, modifier, percentileCount);
       const rolled = takePendingTray();
-      finishRoll(total, summary, dieResults.map((die) => die.value), rolled);
+      finishRoll(total, summary, dieResults.map((die) => die.value), rolled, true);
     } catch (error) {
       // Loud: the picker reopens with the tray intact and the failure shown.
       pendingTrayRef.current = null;
@@ -211,6 +222,8 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
       setRollError(error instanceof Error ? error.message : 'Dice roll failed');
       toastError('Dice roll failed', error);
       onOpenChange(true);
+    } finally {
+      setRolling(false);
     }
   }, [engine, finishRoll, onOpenChange, takePendingTray, tray]);
 
@@ -221,16 +234,22 @@ export function DiceRoller({ open, onOpenChange, intent, onResult }: DiceRollerP
 
   const canRoll = tray.dice.length > 0 || tray.modifier !== 0;
   const diceBlocked = tray.dice.length > 0 && (engine.status !== 'ready' || engine.error !== null);
-  const resultVisible = roll !== null;
+  // The 3D throw must be on screen WHILE it happens: `rollDice` resolves
+  // after the dice settle, so gating on the result alone hid the animation.
+  // Settled dice stay up behind the result number; flat values never raise
+  // the stage (engine-free by contract).
+  const stageVisible = rolling || (roll?.dice === true);
 
   return (
     <>
       <div
         ref={engine.stageRef}
         aria-hidden
+        data-testid="dice-stage"
+        data-visible={stageVisible ? 'true' : 'false'}
         className={cn(
           'dice-stage pointer-events-none fixed inset-0 z-40 overflow-hidden transition-opacity duration-300',
-          resultVisible ? 'opacity-100' : 'opacity-0',
+          stageVisible ? 'opacity-100' : 'opacity-0',
         )}
       />
       <Dialog open={open} onOpenChange={onOpenChange}>

@@ -159,6 +159,57 @@ describe('DiceRoller', () => {
     expect(overlay).toHaveTextContent('2d6+2');
   });
 
+  it('shows the 3D stage WHILE the dice roll, not just on the settled result', async () => {
+    // The reported bug: stage visibility was bound to the settled result,
+    // but `roll()` resolves only after the physics settle — so the throw
+    // played behind an `opacity-0` div and the user saw the flat overlay
+    // number instead of any animation.
+    let resolveRoll: ((dice: { value: number; sides: number }[]) => void) | undefined;
+    h.rollImpl = () =>
+      new Promise<{ value: number; sides: number }[]>((resolve) => {
+        resolveRoll = resolve;
+      });
+    const user = userEvent.setup();
+    await renderRoller();
+    await addDice(['d6']);
+    const rollButton = screen.getByRole('button', { name: 'Roll' });
+    await waitFor(() => {
+      expect(rollButton).toBeEnabled();
+    });
+    await user.click(rollButton);
+    // The throw is in flight (promise pending): the stage is already up.
+    await waitFor(() => {
+      expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'true');
+    });
+    if (resolveRoll === undefined) throw new Error('roll never started');
+    const settle = resolveRoll;
+    act(() => {
+      settle([{ value: 4, sides: 6 }]);
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Roll result 4/ })).toBeInTheDocument();
+    });
+    expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'true');
+    // Dismissing the result clears the board and drops the stage again.
+    await user.click(screen.getByRole('button', { name: /Roll result 4/ }));
+    await waitFor(() => {
+      expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'false');
+    });
+  });
+
+  it('keeps the 3D stage down for engine-free flat rolls', async () => {
+    const onResult = vi.fn();
+    const user = userEvent.setup();
+    await renderRoller({ onResult });
+    expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'false');
+    await user.click(screen.getByRole('button', { name: 'Add 5' }));
+    await user.click(screen.getByRole('button', { name: 'Roll' }));
+    await waitFor(() => {
+      expect(onResult).toHaveBeenCalledWith({ total: 5, summary: '+5', perDie: [] });
+    });
+    // Flat value: settled overlay, but the 3D stage never came up.
+    expect(screen.getByTestId('dice-stage')).toHaveAttribute('data-visible', 'false');
+  });
   it('fixes percentile zeros up to 100 in the reported total', async () => {
     h.rollImpl = () => Promise.resolve([{ value: 0, sides: 100 }]);
     const onResult = vi.fn();
