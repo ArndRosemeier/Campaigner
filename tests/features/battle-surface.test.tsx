@@ -1465,6 +1465,160 @@ describe('token portrait lightbox', () => {
   });
 });
 
+describe('sidebar portrait fullscreen', () => {
+  /**
+   * GM-mode select: pointer down→up on the piece (select-only — the board
+   * never opens the portrait here, so the sidebar button is the entry).
+   */
+  async function selectToken(label: string, moduleId: string): Promise<void> {
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === label);
+    if (token === undefined) throw new Error(`${label} missing`);
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === label);
+    if (el === undefined) throw new Error(`${label} element missing`);
+    fireEvent.pointerDown(el, { pointerId: 2, clientX: token.x * BOARD_W, clientY: CONTENT_TOP + token.y * CONTENT_H });
+    fireEvent.pointerUp(el, { pointerId: 2 });
+    await flushAsyncUpdates();
+  }
+
+  async function seedTrollPortrait(npcId: string): Promise<void> {
+    const image = await createImage({
+      campaignId,
+      blob: new Blob(['fake-png-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 64,
+      height: 64,
+      prompt: 'troll portrait',
+      model: 'google/gemini-2.5-flash-image',
+      source: 'generated',
+    });
+    await updateArtifact(npcId, { coverImageId: image.id });
+  }
+
+  it('GM mode: the sidebar image opens the same fullscreen portrait (image + name only), Esc returns focus to it', async () => {
+    const { moduleId, npcId } = await seedStandardBattle();
+    await seedTrollPortrait(npcId);
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    await selectToken('Troll', moduleId);
+    // Select-only board tap: the card mounts, no portrait yet.
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('selection-card-portrait-button'));
+    // The lightbox's own useImageUrl resolves a tick after mount (null while
+    // loading), so wait for the image — the same art the sidebar showed.
+    await waitFor(() => {
+      expect(screen.getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+    });
+    const lightbox = screen.getByTestId('token-lightbox');
+    // The SAME lightbox the board tokens use: image + name only, never stats.
+    expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Troll');
+    expect(within(lightbox).getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+    expect(within(lightbox).queryByTestId('selection-card-statblock')).toBeNull();
+    expect(lightbox.textContent).not.toContain('AC');
+    // Esc dismisses and focus returns to the sidebar portrait button, so the
+    // rail (Damage/Heal) stays usable without re-selecting.
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    });
+    expect(document.activeElement).toBe(screen.getByTestId('selection-card-portrait-button'));
+    expect(screen.getByTestId('roll-damage')).toBeInTheDocument();
+    expect(screen.getByTestId('roll-heal')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  });
+
+  it('player-safe mode: the sidebar image opens the same fullscreen portrait (image + name only)', async () => {
+    const { moduleId, npcId } = await seedStandardBattle();
+    await seedTrollPortrait(npcId);
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    // The board tap opens the portrait (existing path) — dismiss it so the
+    // sidebar button is the entry under test.
+    await selectToken('Troll', moduleId);
+    expect(screen.getByTestId('token-lightbox')).toBeInTheDocument();
+    await user.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    });
+    // Selection survives the dismiss; the sidebar shows the same image.
+    expect(screen.getByTestId('selection-card-portrait-button')).toBeInTheDocument();
+    await user.click(screen.getByTestId('selection-card-portrait-button'));
+    // The lightbox's own useImageUrl resolves a tick after mount (null while
+    // loading), so wait for the image — the same art the sidebar showed.
+    await waitFor(() => {
+      expect(screen.getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+    });
+    const lightbox = screen.getByTestId('token-lightbox');
+    expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Troll');
+    expect(within(lightbox).getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+    // Player-safe DOM contract holds with the sidebar-opened lightbox mounted.
+    const surface = screen.getByTestId('battle-surface');
+    expect(surface.textContent).not.toContain('AC');
+    expect(surface.textContent).not.toContain('Hit Dice');
+    expect(surface.textContent).not.toContain('Regenerates');
+    await flushAsyncUpdates();
+  });
+
+  it('imageless entries: the initials fallback is not clickable and opens nothing', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    // Serren (PC) carries no cover art, so the card falls back to initials.
+    await selectToken('Serren', moduleId);
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    expect(screen.getByTestId('selection-card-initials')).toHaveTextContent('S');
+    // No portrait button mounts — the fallback is plain text, never a dead
+    // affordance.
+    expect(screen.queryByTestId('selection-card-portrait-button')).toBeNull();
+    expect(screen.getByTestId('selection-card-initials').closest('button')).toBeNull();
+    fireEvent.click(screen.getByTestId('selection-card-initials'));
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('sidebar portrait lightbox closes on backdrop click and on the close button', async () => {
+    const { moduleId, npcId } = await seedStandardBattle();
+    await seedTrollPortrait(npcId);
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await selectToken('Troll', moduleId);
+    await user.click(screen.getByTestId('selection-card-portrait-button'));
+    expect(screen.getByTestId('token-lightbox')).toBeInTheDocument();
+    const overlay = document.querySelector('[data-slot="dialog-overlay"]');
+    if (overlay === null) throw new Error('dialog overlay missing');
+    await user.click(overlay);
+    await waitFor(() => {
+      expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    });
+    // Reopen and dismiss via the dialog close button.
+    await user.click(screen.getByTestId('selection-card-portrait-button'));
+    expect(screen.getByTestId('token-lightbox')).toBeInTheDocument();
+    const close = document.querySelector('[data-slot="dialog-close"]');
+    if (close === null) throw new Error('dialog close button missing');
+    await user.click(close);
+    await waitFor(() => {
+      expect(screen.queryByTestId('token-lightbox')).toBeNull();
+    });
+    await flushAsyncUpdates();
+  });
+});
+
 describe('pan from the map', () => {
   /** The transformed background wrapper (pan/zoom transform lives here). */
   function panWrapper(): HTMLElement {

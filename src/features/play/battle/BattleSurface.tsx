@@ -153,7 +153,8 @@ export function BattleSurface(): JSX.Element {
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
   const [selectedEffectId, setSelectedEffectId] = useState<BattleEffect['id'] | null>(null);
   // Fullscreen token portrait (image + name only): opened by a player-safe
-  // token tap, closed by Esc/tap-outside/the close button. GM taps stay
+  // token tap or by the sidebar selection-card portrait button (both modes),
+  // closed by Esc/tap-outside/the close button. GM board taps stay
   // select-only so the rail stays usable.
   const [lightboxTokenId, setLightboxTokenId] = useState<BattleTokenId | null>(null);
   // GM-only room-key marker selection (owner-ratified room-keys/treasure
@@ -1623,6 +1624,9 @@ export function BattleSurface(): JSX.Element {
               stats={stats}
               statBlock={selectedStatBlock}
               playerSafe={playerSafe}
+              onOpenPortrait={() => {
+                setLightboxTokenId(selectedToken.id);
+              }}
               onRollHp={(kind) => {
                 pendingRollRef.current = { tokenId: selectedToken.id, kind };
                 setDiceIntent({ kind, subject: selectedToken.label });
@@ -2227,6 +2231,11 @@ interface SelectionCardProps {
   stats: FighterStatsLookup;
   statBlock: StatBlock | null;
   playerSafe: boolean;
+  /** Opens the fullscreen token portrait for this token (the TokenLightbox
+   * at the surface root — image + name only, in both modes). The card
+   * attaches it to the portrait image only; the initials fallback for
+   * imageless entries stays non-clickable so there is no dead affordance. */
+  onOpenPortrait: () => void;
   /** GM-only: opens the dice roller with a damage/heal intent for this
    * token (the pendingRollRef → applyDiceRoll path). Never rendered in
    * player-safe mode. */
@@ -2243,6 +2252,11 @@ interface SelectionCardProps {
  * full artifact card (statblock) is GM-only behind an explicit button and
  * never mounts in player-safe mode.
  *
+ * The portrait image is a button opening the fullscreen token portrait
+ * (the same TokenLightbox the board tokens use — image + name only, both
+ * modes); the initials fallback for imageless entries is plain text, never
+ * a dead button.
+ *
  * GM-only, directly below the name (above the lengthy treasure/statblock
  * descriptions that would otherwise push them out of view): the HP readout,
  * Damage / Heal roller buttons, and the piece floats (scale, visibility,
@@ -2255,6 +2269,7 @@ function SelectionCard({
   stats,
   statBlock,
   playerSafe,
+  onOpenPortrait,
   onRollHp,
   onToggleVisibility,
   onScale,
@@ -2279,13 +2294,21 @@ function SelectionCard({
     <div className="flex flex-col gap-1.5 rounded-md border border-white/10 bg-zinc-900 p-2" data-testid="selection-card">
       <div className="flex items-center gap-2">
         {url !== null ? (
-          <img
-            src={url}
-            alt=""
-            className="size-12 shrink-0 rounded-md object-cover"
-            data-testid="selection-card-portrait"
-            draggable={false}
-          />
+          <button
+            type="button"
+            aria-label={`Open fullscreen portrait of ${token.label}`}
+            data-testid="selection-card-portrait-button"
+            className="shrink-0 cursor-zoom-in rounded-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            onClick={onOpenPortrait}
+          >
+            <img
+              src={url}
+              alt=""
+              className="size-12 rounded-md object-cover"
+              data-testid="selection-card-portrait"
+              draggable={false}
+            />
+          </button>
         ) : (
           <span
             className="flex size-12 shrink-0 items-center justify-center rounded-md bg-zinc-700 font-bold text-white"
@@ -2416,8 +2439,9 @@ interface TokenLightboxProps {
 /**
  * Fullscreen token portrait (mob token view): image + name ONLY — never
  * stats, so the player-safe DOM contract holds in both modes. Opens on a
- * player-safe token tap (pointer-up below DRAG_THRESHOLD_PX); a drag never
- * opens it, and GM taps stay select-only (the rail must stay usable).
+ * player-safe token tap (pointer-up below DRAG_THRESHOLD_PX) or on the
+ * sidebar selection-card portrait button (both modes); a drag never
+ * opens it, and GM board taps stay select-only (the rail must stay usable).
  * Imageless tokens render their deterministic initials large, so no tap is
  * dead. Esc / tap-outside / the close button dismiss via the dialog
  * defaults; focus returns to the element that held it when the lightbox
