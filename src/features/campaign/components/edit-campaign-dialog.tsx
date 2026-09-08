@@ -1,7 +1,18 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
+import { useLiveQuery } from 'dexie-react-hooks';
 
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
@@ -13,7 +24,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { GAME_SYSTEM_LABELS, type Campaign } from '@/domain';
-import { updateCampaign } from '@/db/campaignRepo';
+import {
+  describeGeneratedContent,
+  removeAllGeneratedContent,
+  updateCampaign,
+  type RemovedContentCounts,
+} from '@/db/campaignRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -36,6 +52,17 @@ export function EditCampaignDialog({
   const [name, setName] = useState(campaign.name);
   const [description, setDescription] = useState(campaign.description);
   const [saving, setSaving] = useState(false);
+  const [wipeOpen, setWipeOpen] = useState(false);
+  const [wiping, setWiping] = useState(false);
+
+  // Live census for the wipe confirm: re-derives while the confirm is open,
+  // so the dialog lists what the campaign holds NOW, not what it held when
+  // the confirm opened. The execute path re-lists once more inside its own
+  // transaction — these numbers never decide what goes.
+  const wipeSummary = useLiveQuery(async () => {
+    if (!wipeOpen) return null;
+    return describeGeneratedContent(campaign.id);
+  }, [campaign.id, wipeOpen]);
 
   // Re-seed from the row every time the dialog opens, so a stale draft can
   // never overwrite newer data written while the dialog was closed.
@@ -65,7 +92,24 @@ export function EditCampaignDialog({
     }
   }
 
+  async function handleWipe(): Promise<void> {
+    setWiping(true);
+    try {
+      // Fresh recount + disposal happen inside the repo's transaction; the
+      // returned counts describe what actually went. Any failure rejects —
+      // no success toast on a half-applied (rolled-back) wipe.
+      const removed = await removeAllGeneratedContent(campaign.id);
+      setWipeOpen(false);
+      toastSuccess(formatRemoved(removed));
+    } catch (error) {
+      toastError('Could not remove generated content', error);
+    } finally {
+      setWiping(false);
+    }
+  }
+
   return (
+    <>
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent data-testid="edit-campaign-dialog">
         <form
@@ -117,6 +161,29 @@ export function EditCampaignDialog({
               />
             </label>
           </div>
+          {/* Danger zone: the fresh-generation wipe lives here — the campaign
+              settings surface — never in the tree or another high-traffic
+              spot. Opening the confirm is step one; the confirm itself is
+              step two. */}
+          <div className="mb-3 rounded-lg border border-destructive/30 p-3">
+            <p className="text-xs font-semibold text-destructive">Danger zone</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Delete everything generation produced — artifacts (except the Party), modules,
+              battles, runs and outlines — so generation can restart clean. The Party stays.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2 text-destructive"
+              data-testid="remove-all-generated"
+              onClick={() => {
+                setWipeOpen(true);
+              }}
+            >
+              Remove all generated content…
+            </Button>
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -134,5 +201,88 @@ export function EditCampaignDialog({
         </form>
       </DialogContent>
     </Dialog>
+
+    <AlertDialog
+      open={wipeOpen}
+      onOpenChange={(next) => {
+        if (!next) setWipeOpen(false);
+      }}
+    >
+      <AlertDialogContent data-testid="remove-all-confirm-dialog">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Remove all generated content?</AlertDialogTitle>
+          <AlertDialogDescription data-testid="remove-all-counts">
+            {wipeSummary === null || wipeSummary === undefined
+              ? 'Counting what generation produced…'
+              : wipeSummary.removableArtifacts === 0 &&
+                  wipeSummary.modules === 0 &&
+                  wipeSummary.battles === 0 &&
+                  wipeSummary.runs === 0 &&
+                  wipeSummary.deliverables === 0
+                ? 'This campaign holds no generated content — only the Party (which is kept) or nothing at all.'
+                : `This permanently deletes ${formatCensus(wipeSummary)}. The Party (${String(wipeSummary.pcCount)} PC${wipeSummary.pcCount === 1 ? '' : 's'}) stays untouched, and the global library is never affected.`}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={wiping}>Cancel</AlertDialogCancel>
+          <AlertDialogAction
+            data-testid="remove-all-confirm"
+            disabled={wiping}
+            onClick={() => {
+              void handleWipe();
+            }}
+          >
+            {wiping ? 'Removing…' : 'Remove everything'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
+}
+
+function pluralize(count: number, singular: string, plural?: string): string {
+  return `${String(count)} ${count === 1 ? singular : (plural ?? `${singular}s`)}`;
+}
+
+/** Live census line for the confirm dialog (display only — the execute path
+ * recounts inside its transaction). */
+function formatCensus(summary: {
+  byKind: { kind: string; count: number }[];
+  removableArtifacts: number;
+  modules: number;
+  battles: number;
+  runs: number;
+  deliverables: number;
+}): string {
+  const parts: string[] = [];
+  if (summary.removableArtifacts > 0) {
+    const kinds = summary.byKind.map((entry) => pluralize(entry.count, entry.kind)).join(', ');
+    parts.push(`${pluralize(summary.removableArtifacts, 'artifact')} (${kinds})`);
+  }
+  if (summary.modules > 0) parts.push(pluralize(summary.modules, 'module'));
+  if (summary.battles > 0) parts.push(pluralize(summary.battles, 'battle'));
+  if (summary.runs > 0) parts.push(pluralize(summary.runs, 'run'));
+  if (summary.deliverables > 0) parts.push(pluralize(summary.deliverables, 'outline'));
+  return parts.join(', ');
+}
+
+/** Success toast body: what the wipe actually removed (in-transaction
+ * recount), plus what it kept. */
+function formatRemoved(removed: RemovedContentCounts): string {
+  const parts: string[] = [];
+  if (removed.artifacts > 0) {
+    const kinds = removed.byKind.map((entry) => pluralize(entry.count, entry.kind)).join(', ');
+    parts.push(`${pluralize(removed.artifacts, 'artifact')} (${kinds})`);
+  }
+  parts.push(pluralize(removed.modules, 'module'));
+  parts.push(pluralize(removed.battles, 'battle'));
+  if (removed.runs > 0) parts.push(pluralize(removed.runs, 'run'));
+  if (removed.deliverables > 0) parts.push(pluralize(removed.deliverables, 'outline'));
+  const kept =
+    removed.pcsKept > 0
+      ? `${pluralize(removed.pcsKept, 'PC')} kept`
+      : 'nothing to keep';
+  if (parts.length === 0) return `Nothing to remove — ${kept}.`;
+  return `Removed ${parts.join(', ')}; ${kept}.`;
 }

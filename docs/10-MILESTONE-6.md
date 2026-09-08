@@ -24,6 +24,7 @@ failures loud; gate + one logical task per commit).
 | D8 | Bare-name wiki-link resolution across scopes, fixed precedence **module-owned → campaign → global**; no cross-scope ambiguity warnings (fix-01 keeps working within each scope). |
 | D9 | Persona runs may **target global artifacts** (`runs.campaignId` stays NOT NULL — the run is anchored where it started; the write lands on the global row). |
 | D10 | **Battles anchor per module**: `battles` gains `moduleId`, "Run battle" lives in the module view, battle route moves under the module reader. The `session` artifact kind is **removed** along with the play view. |
+| D11 | A campaign can **restart generation clean** ("Remove all generated content…", campaign settings danger zone): ONE transaction deletes every non-`pc` artifact (revisions scrubbed through the artifact delete path), every module row, every battle, and the campaign runs + deliverable outlines that would dangle — the Party (`pc` artifacts, untouched), the campaign row, settings, personas and the global library survive. The confirm lists live counts by kind + module/battle counts; the execute path re-lists inside the transaction, so any failure rolls the whole wipe back loudly. |
 
 ## M6-A — Storage: the ownership fields (v10, additive only)
 
@@ -85,6 +86,11 @@ failures loud; gate + one logical task per commit).
 - Delete-module both branches (cascade counts; keep → rows survive with
   `moduleId: null`).
 - Adopt/move preserve ids, images, revisions.
+- Fresh-generation wipe (D11): PCs survive with revisions/images/links;
+  modules + battles + runs + deliverables gone; artifact revisions of doomed
+  rows scrubbed; orphaned campaign images pruned, library images untouched;
+  returned counts match the execution-time recount; a mid-wipe failure rolls
+  everything back and rejects.
 
 ## M6-C — Scope control + the global library
 
