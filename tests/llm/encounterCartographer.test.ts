@@ -952,6 +952,55 @@ describe('Encounter Cartographer run', () => {
       expect(prompt).not.toContain('disc on open floor');
       expect(prompt).not.toContain('plaque labeled');
     });
+
+    it('bans hallucinated label-like geometry (white/pale boxes, plaques, discs, signposts)', async () => {
+      // Owner-observed failure: a jungle map came back with white rectangles
+      // baked into the floors — the image model read the schematic's pale
+      // room fills as geometry to preserve. The stylize prompt's hard-ban
+      // list is the only lever we own, so it pins these negatives (the
+      // contract pin IS the test — image generation itself is unmockable).
+      const { campaign, cartographer } = await setup();
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer);
+      const runId = await runEngine.startRun(runInput);
+      await approveUntilPick(runId, runInput);
+
+      const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
+      // Every pre-existing ban stays intact...
+      for (const ban of [
+        'no title banner',
+        'no compass rose',
+        'no map legend',
+        'no scale bar',
+        'no grid lines',
+        'no text labels',
+        'no characters',
+        'no monsters',
+        'no tokens',
+        'no miniatures',
+      ]) {
+        expect(prompt.toLowerCase()).toContain(ban);
+      }
+      // ...plus the anti-hallucination negatives...
+      for (const negative of [
+        'white or pale boxes',
+        'rectangles',
+        'plaques',
+        'discs',
+        'signposts',
+        'label-like geometry',
+        'continuous natural terrain',
+        'no discrete light-colored sub-rectangles',
+      ]) {
+        expect(prompt.toLowerCase()).toContain(negative);
+      }
+      // ...while the keep-structure instruction and the entrance
+      // preserve-clause survive untouched.
+      expect(prompt).toContain('Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.');
+      expect(prompt).toContain(
+        "Entrance marker: The party enters the map through a single open gap in the entry room's outer wall",
+      );
+    });
   });
 
   describe('dungeon preset (docs/11 D10)', () => {

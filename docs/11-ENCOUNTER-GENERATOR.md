@@ -213,7 +213,13 @@ mode: run row per state change, event emitter for streaming, autonomy via
 - `stylize` prompt contract: style guidance from the brief (medium, palette,
   biome, era) + the binding instruction "keep walls, openings and overall
   structure exactly as in the reference image; no text, no labels, no grid
-  lines, no numbers, no tokens/minis, no watermark". `negative` and
+  lines, no numbers, no tokens/minis, no watermark" + the anti-hallucination
+  negatives (owner-observed 2026-09-08: a jungle map came back with white
+  rectangles baked into the floors — the image model read the schematic's
+  pale room fills as geometry to preserve): no white/pale boxes,
+  rectangles, plaques, discs, signposts or other label-like markers apart
+  from the entrance triangle; room floors are painted as continuous natural
+  terrain with no discrete light-colored sub-rectangles. `negative` and
   `styleNotes` mirror the Illustrator contract (07 §M3-A).
 - **No verify step (D14)**: the former `verify` bullet set — the SHAPE-AWARE
   coarse-grid contract for complexes, the `arena-verdict` structural check

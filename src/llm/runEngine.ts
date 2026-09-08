@@ -2963,7 +2963,7 @@ export class RunEngine {
       'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
       entranceClause,
       'Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.',
-      'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures.',
+      'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures. No white or pale boxes, rectangles, plaques, discs, signposts, or other markers or label-like geometry apart from the entrance triangle: paint every room floor as continuous natural terrain with no discrete light-colored sub-rectangles.',
       parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
     ].filter((part) => part !== null && part !== '').join(' ');
     const generated = await encounterRunAdapters.generateImages(prompt, input.unattended === true ? 1 : 2, {
