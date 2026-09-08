@@ -32,6 +32,7 @@ import { MODULE_SIZE_LABELS, entityKindFor, moduleDocumentText, moduleTagFor } f
 import { artifactRepo } from '@/db';
 import { getCampaign } from '@/db/campaignRepo';
 import { patchModule } from '@/db/moduleRepo';
+import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { useArtifacts, useCampaign, useGlobalArtifacts, useScopedArtifacts } from '@/features/campaign/hooks';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
@@ -1013,12 +1014,16 @@ function LinkExistingPicker(props: {
   );
 }
 
-/** Persists one part's hand edit (marks it `edited` for rewrite confirmations). */
+/** Persists one part's hand edit (marks it `edited` for rewrite confirmations).
+ * After the write lands, second-module wikilink uses auto-promote to campaign
+ * level (LINKS hook) — the scan runs post-save, never inside render. */
 async function patchModuleTextPart(module: Module, planIndex: number, markdown: string): Promise<Module> {
   const parts = module.parts.map((part) =>
     part.planIndex === planIndex
       ? { ...part, markdown, status: 'ready' as const, errorMessage: '', edited: true }
       : part,
   );
-  return patchModule(module.id, { parts });
+  const saved = await patchModule(module.id, { parts });
+  await promoteSecondModuleUses(module.id, [markdown]);
+  return saved;
 }

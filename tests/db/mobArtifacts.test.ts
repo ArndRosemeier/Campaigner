@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -12,6 +12,9 @@ import { createModule as createModuleSchema, encounterDataSchema, monsterSourceS
 import { db } from '@/db/db';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from './helpers';
+
+// Promotion toasts are mocked (sonner needs a DOM; db tests run in node).
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
 
 /**
  * Mob artifacts (owner-ratified mob-artifact arc): a bestiary creature cited
@@ -204,7 +207,7 @@ describe('spawnMobArtifactIntoModule', () => {
     expect(mob?.moduleId).toBe(vault.id);
   });
 
-  it('moves the artifact when spawned into a different module (single placement, tag history kept)', async () => {
+  it('PROMOTES (shares) the artifact when spawned into a different module — never moves it away', async () => {
     const { chunkId } = await seedGoblinChunk();
     const vault = await createModule(
       createModuleSchema({ campaignId, title: 'The Sunless Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
@@ -214,13 +217,14 @@ describe('spawnMobArtifactIntoModule', () => {
     );
     await spawnMobArtifactIntoModule(campaignId, chunkId, 'Goblin Boss', vault.id, vault.title);
 
-    const moved = await spawnMobArtifactIntoModule(campaignId, chunkId, 'Goblin Boss', mill.id, mill.title);
+    const shared = await spawnMobArtifactIntoModule(campaignId, chunkId, 'Goblin Boss', mill.id, mill.title);
 
-    expect(moved.stamped).toBe(true);
+    expect(shared.stamped).toBe(true);
     const mob = await findMobArtifactByChunk(campaignId, chunkId);
-    expect(mob?.moduleId).toBe(mill.id); // single placement — it moved
-    expect(mob?.tags).toContain(`module:${vault.title}`); // history kept
-    expect(mob?.tags).toContain(`module:${mill.title}`);
+    // Auto-promote on second-module use: campaign-level (shared), NOT moved
+    // to the mill — the vault keeps its monster too.
+    expect(mob?.moduleId).toBeNull();
+    expect(mob?.tags).toContain(`module:${vault.title}`); // placement history kept
   });
 
   it('stamps an artifact that already existed from an earlier encounter run', async () => {

@@ -7,9 +7,11 @@ import { createCampaign } from '@/db/campaignRepo';
 import { createArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
-import { createModule, modulePartSchema, moduleSpineSchema, type Campaign, type Id, type Module } from '@/domain';
+import { createModule, modulePartSchema, moduleSpineSchema, newId, type Campaign, type Id, type Module } from '@/domain';
 import {
   cancelModuleGen,
+  campaignCastContext,
+  CAMPAIGN_CAST_NAME_CAP,
   classifyEntityName,
   createModuleAndRun,
   generateMissingParts,
@@ -20,6 +22,7 @@ import {
   parseSpine,
   parseSpineEntities,
   PRIOR_MODULE_CHAR_CAP,
+  PRIOR_MODULES_TOTAL_CAP,
   PRIOR_PART_CHAR_CAP,
   priorModulesContext,
   rewritePart,
@@ -924,6 +927,53 @@ describe('priorModulesContext (pure builder)', () => {
     ]);
     if (context === null) throw new Error('context missing');
     expect(context.indexOf('Alpha')).toBeLessThan(context.indexOf('Beta'));
+  });
+});
+
+describe('campaign cast context (auto-promote follow-up reuse)', () => {
+  it('lists moduleId-null rows with kinds and skips module-owned rows', async () => {
+    const campaignId = newId();
+    const shared = await createArtifact({ campaignId, kind: 'npc', name: 'Shared Sage' });
+    const owned = await createArtifact({ campaignId, moduleId: newId(), kind: 'location', name: 'Owned Cave' });
+
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const cast = campaignCastContext(await listArtifactsByCampaign(campaignId));
+
+    expect(cast).toContain('Shared Sage (npc)');
+    expect(cast).not.toContain('Owned Cave');
+    expect(shared).toBeDefined();
+    expect(owned).toBeDefined();
+  });
+
+  it('returns null when nothing is shared yet', async () => {
+    const campaignId = newId();
+    await createArtifact({ campaignId, moduleId: newId(), kind: 'npc', name: 'Owned Only' });
+
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    expect(campaignCastContext(await listArtifactsByCampaign(campaignId))).toBeNull();
+  });
+
+  it('caps the roster at the 60-name convention', async () => {
+    const campaignId = newId();
+    for (let index = 0; index < CAMPAIGN_CAST_NAME_CAP + 10; index += 1) {
+      await createArtifact({ campaignId, kind: 'npc', name: `Extra ${String(index).padStart(3, '0')}` });
+    }
+
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const cast = campaignCastContext(await listArtifactsByCampaign(campaignId));
+
+    expect(cast).not.toBeNull();
+    expect(cast?.split('\n').filter((line) => line.startsWith('- '))).toHaveLength(CAMPAIGN_CAST_NAME_CAP);
+  });
+
+  it('rides the prior-modules section inside the total cap — even with no priors', () => {
+    const cast = campaignCastContext([
+      { name: 'Shared Sage', kind: 'npc', moduleId: null } as never,
+    ]);
+    const context = priorModulesContext([], cast);
+    expect(context).toContain('Previous modules of this campaign');
+    expect(context).toContain('Shared Sage (npc)');
+    expect(context === null ? 0 : context.length).toBeLessThanOrEqual(PRIOR_MODULES_TOTAL_CAP + 400);
   });
 });
 

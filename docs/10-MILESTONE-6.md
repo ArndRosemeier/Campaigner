@@ -19,6 +19,7 @@ failures loud; gate + one logical task per commit).
 | D3 | Visibility is a **user-controlled scope filter** (three toggles: Global / Campaign / Module), remembered as a UI preference — not a hardcoded default. |
 | D4 | The **module view is the play view**; its scope control defaults to **all scopes visible**. There is no separate Play page (retired in M6-E). |
 | D5 | Deleting a module **asks**: delete its artifacts (cascade, counts shown) or keep them (they become campaign-owned). "Adopt into campaign" is available per artifact at any time. |
+| D12 | **Auto-promote on second-module use** (owner-ratified): module-created artifacts stay module-owned until a SECOND module references one (wikilink, encounter roster, battle token) — then they promote to campaign level via `adoptIntoCampaign` (no separate core state) with a loud batched toast. `spawnMobArtifactIntoModule` promotes instead of moving on a second-module spawn. Deleting a module whose artifacts are referenced elsewhere offers promote-and-keep vs force-delete (never silent dangle). |
 | D6 | Global kinds: `npc`, `location`, `event`, `faction`, `encounter`. **Never** `pc` (its HP lives on the artifact — a global PC would share wounds across campaigns; pregens ship via a later import/export feature), never `plotarc`, and `session` ceases to exist (D8). |
 | D7 | Campaigns **always reference** global artifacts in place — links, battles, persona reads, images all point at the one global row. **Duplication is not a feature**: no copy-on-use, no "duplicate" button. Editing a global artifact is instantly visible to every campaign that references it; the Global badge is the warning surface. |
 | D8 | Bare-name wiki-link resolution across scopes, fixed precedence **module-owned → campaign → global**; no cross-scope ambiguity warnings (fix-01 keeps working within each scope). |
@@ -199,6 +200,32 @@ play mechanic and re-anchors battles:
 - `00-OVERVIEW.md`: doc index + global-conventions note ("module view is
   the play view").
 - This document becomes the binding spec of record.
+
+## Auto-promote on second-module use (D12, owner-ratified)
+
+- **Rule**: module-created artifacts stay module-owned. The moment a second
+  module references one, it promotes to campaign level (`moduleId: null`)
+  with a LOUD batched toast (`«Name» is now shared across the campaign
+  (used by Module B)`). No separate core state — promotion IS
+  `adoptIntoCampaign` through the sanctioned `moveScope` path. The run-issue
+  channel is never used for this notice (that channel is LLM-run escalation).
+- **Hooks** (`src/db/artifactAutoPromote.ts`): LINKS — post-save scan
+  (`promoteSecondModuleUses`) on every module text write (reader part edit,
+  entity-panel rewrite-apply + focus change, spine/parts generation saves,
+  spine approval, stub-popover alias writes); resolution itself stays pure
+  (render is NOT hooked). ROSTER — `promoteRosterUses` at every encounter
+  `data.monsters` write (run-engine finalize both remap sites, the
+  artifact-editor encounter save) and BATTLE — top of
+  `seedBattleFromEncounter` + `spawnRosterInstance`, before identity
+  freezes. `spawnMobArtifactIntoModule` promotes (shared) on second-module
+  spawn instead of moving.
+- **Delete**: `modulesReferencingOwnedArtifacts` unions wiki-graph edges
+  (uncapped `buildWikiGraph`) + roster npc-ref/mobArtifactId scan + battle
+  token/seed-fighter scan (no stored index). The list dialog grows a third
+  state listing referenced artifacts: [Promote & keep referenced, cascade
+  rest] vs [Force-delete all]. Keep/cascade branches unchanged.
+- **Failures** surface loudly (toast); a failed promote never leaves a
+  half-moved row (`moveScope` is one transaction).
 
 ## Build order
 

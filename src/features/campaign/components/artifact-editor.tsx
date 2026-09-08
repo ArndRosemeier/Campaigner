@@ -8,6 +8,7 @@ import { artifactRepo } from '@/db';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
 import { AliasEditor } from '@/features/campaign/components/alias-editor';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
+import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { modulePath } from '@/app/routes';
 import { getModule } from '@/db/moduleRepo';
 import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
@@ -188,6 +189,13 @@ export function ArtifactEditor({
     setSaveState('saving');
     try {
       await artifactRepo.updateArtifact(artifact.id, draftPatch(effective));
+      // ROSTER hook (monster-source picker commit path): the saved roster
+      // may now cite another module's npc/mob artifact — a second-module use
+      // promotes it to shared campaign ownership. Idempotent: already-shared
+      // rows are a silent no-op, so autosave bursts never re-toast.
+      if (effective.kind === 'encounter') {
+        await promoteRosterUses(artifact.moduleId, effective.data.monsters);
+      }
       lastSavedRef.current = effective;
       setSaveState('saved');
       return true;
@@ -196,7 +204,7 @@ export function ArtifactEditor({
       toastError('Autosave failed', error);
       return false;
     }
-  }, [artifact.id]);
+  }, [artifact.id, artifact.moduleId]);
 
   // Debounced autosave: every draft change restarts the 800 ms timer.
   useEffect(() => {

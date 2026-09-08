@@ -1,8 +1,9 @@
-import type { Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
+import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
 import { createModule, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
 import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
@@ -273,7 +274,12 @@ export async function runSpine(
       );
       normalizedKinds = canonicalEntityRecords(verdicts);
     }
-    return await patchModule(moduleId, { spine, entityKinds: normalizedKinds, status: 'draft', errorMessage: '' });
+    const saved = await patchModule(moduleId, { spine, entityKinds: normalizedKinds, status: 'draft', errorMessage: '' });
+    // LINKS hook: the generated premise may reuse another module's entities
+    // by exact name — a second-module use promotes them to shared campaign
+    // ownership before the checkpoint approves the spine.
+    await promoteSecondModuleUses(moduleId, [spine.premise]);
+    return saved;
   } catch (error) {
     await failModule(moduleId, error);
     throw error;
@@ -323,6 +329,11 @@ export function parseSpineEntities(raw: string): ModuleEntityKind[] {
 export const PRIOR_PART_CHAR_CAP = 4000;
 export const PRIOR_MODULE_CHAR_CAP = 8000;
 export const PRIOR_MODULES_TOTAL_CAP = 24000;
+/** Campaign cast block budget inside the prior-modules total (~2.4k chars). */
+export const CAMPAIGN_CAST_CHAR_CAP = 2400;
+/** Shared-name roster cap — the same 60-name convention as the spine/parts
+ * campaign indexes. */
+export const CAMPAIGN_CAST_NAME_CAP = 60;
 
 /** True when the module carries any generator-authored text at all. */
 function hasPriorText(module: Module): boolean {
@@ -354,20 +365,45 @@ function priorModuleBlock(module: Module): string {
 }
 
 /**
+ * Campaign-level cast list (auto-promote follow-up reuse): moduleId-null
+ * rows — names + kinds, capped like the campaign indexes — so follow-up
+ * generations reuse the shared names exactly instead of inventing
+ * duplicates. Returns null when nothing is shared yet.
+ */
+export function campaignCastContext(artifacts: readonly AnyArtifact[]): string | null {
+  const shared = artifacts.filter((artifact) => artifact.moduleId === null);
+  if (shared.length === 0) return null;
+  const lines = shared
+    .slice(0, CAMPAIGN_CAST_NAME_CAP)
+    .map((artifact) => `- ${artifact.name} (${artifact.kind})`);
+  return truncate(
+    'Shared campaign cast (used across modules — reuse these exact names, do not duplicate them):\n' +
+      lines.join('\n'),
+    CAMPAIGN_CAST_CHAR_CAP,
+  );
+}
+
+/**
  * Builds the prior-modules context section (08 §M4-B opt-in continuity): the
  * campaign's other modules that carry any authored text — premise, part texts,
  * drafts included — in story order (oldest first). When the total cap would
  * overflow, the OLDEST modules are dropped first (recent history matters most
  * for continuity). Returns null when nothing qualifies — the section is then
  * omitted entirely; an empty set is not an error.
+ *
+ * The shared `cast` block (campaignCastContext) rides the same section so
+ * follow-ups reuse promoted names; it is budgeted INSIDE the 24k total.
  */
-export function priorModulesContext(priors: readonly Module[]): string | null {
+export function priorModulesContext(
+  priors: readonly Module[],
+  cast: string | null = null,
+): string | null {
   const blocks = [...priors]
     .sort((a, b) => a.createdAt - b.createdAt)
     .filter(hasPriorText)
     .map(priorModuleBlock);
   const kept: string[] = [];
-  let total = 0;
+  let total = cast?.length ?? 0;
   for (let index = blocks.length - 1; index >= 0; index -= 1) {
     const block = blocks[index];
     if (block === undefined) continue;
@@ -375,10 +411,11 @@ export function priorModulesContext(priors: readonly Module[]): string | null {
     kept.unshift(block);
     total += block.length;
   }
-  if (kept.length === 0) return null;
+  if (kept.length === 0 && cast === null) return null;
   return [
     'Previous modules of this campaign, oldest first — settled history. ' +
       'Build on their events and open threads, reuse their established names exactly, and never retcon them:',
+    ...(cast === null ? [] : [cast]),
     kept.join('\n\n'),
   ].join('\n\n');
 }
@@ -408,7 +445,7 @@ async function spineMessages(
           .slice(0, 60)
           .map((artifact) => `- ${artifact.name} (${artifact.kind})${artifact.summary === '' ? '' : ` — ${artifact.summary}`}`)
           .join('\n')}`;
-  const priorContext = priorModulesContext(await priorModulesOf(module));
+  const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
 
   const levelCount = module.levelMax - module.levelMin + 1;
   const instruction = [
@@ -629,6 +666,9 @@ export async function generatePart(
   try {
     const markdown = await partCall(module, spine, plan, planIndex, campaign, model, options);
     await setPart({ planIndex, markdown, status: 'ready', errorMessage: '', edited: false });
+    // LINKS hook: generated part prose reuses established names exactly —
+    // second-module wikilink uses promote to shared campaign ownership.
+    await promoteSecondModuleUses(moduleId, [markdown]);
     return markdown;
   } catch (error) {
     if (isAbort(error)) {
@@ -710,7 +750,7 @@ async function partCall(
     campaignNames.length === 0
       ? null
       : `Existing campaign entities (reuse by exact name where they fit):\n${campaignNames.join('\n')}`;
-  const priorContext = priorModulesContext(await priorModulesOf(module));
+  const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
 
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
@@ -1115,6 +1155,8 @@ export async function approveSpineAndRun(
   spine: ModuleSpine,
 ): Promise<void> {
   await patchModule(moduleId, { spine });
+  // LINKS hook: a user-edited spine may link another module's entities.
+  await promoteSecondModuleUses(moduleId, [spine.premise]);
   await runParts(moduleId, campaign).catch(() => undefined);
   void runModulePostGeneration(moduleId, campaign);
 }

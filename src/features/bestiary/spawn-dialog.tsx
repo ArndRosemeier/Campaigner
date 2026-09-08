@@ -33,9 +33,10 @@ export interface SpawnCreature {
 
 /**
  * Module picker for the bestiary roster's "Spawn into module" (owner-ratified
- * single placement): the creature's mob artifact is get-or-created for the
+ * placement + auto-promote): the creature's mob artifact is get-or-created for the
  * picked campaign/module and stamped module-owned via
- * `stampModuleOwnership`. `/rules` is campaign-agnostic, so the dialog picks
+ * `stampModuleOwnership` — a second-module spawn PROMOTES it to shared
+ * campaign level instead of moving it (10 D12). `/rules` is campaign-agnostic, so the dialog picks
  * the campaign too — one campaign preselects itself; several require an
  * explicit choice. Zero campaigns or zero modules are named empty states,
  * never silent no-ops. Success toasts with an "Open module" action that

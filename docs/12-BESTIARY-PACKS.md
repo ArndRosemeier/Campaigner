@@ -516,9 +516,9 @@ an encounter.
   The detail pane's "Spawn into module" get-or-creates the campaign's mob
   artifact for the creature's chunk (`spawnMobArtifactIntoModule`) and puts
   it into the picked module via `stampModuleOwnership` — module-owned,
-  `module:<title>` tagged, single placement (spawning into another module
-  MOVES it; same-module spawn is an idempotent no-op with no revision
-  churn). `/rules` is campaign-agnostic, so the picker chooses the campaign
+  `module:<title>` tagged (spawning into another module PROMOTES it to
+  shared campaign level instead of moving it — 10 D12; same-module spawn
+  is an idempotent no-op with no revision churn). `/rules` is campaign-agnostic, so the picker chooses the campaign
   too (one campaign preselects; zero campaigns/modules are named empty
   states). Success toasts `"<creature> spawned into '<module>'"` with an
   "Open module" action that navigates to the module reader.

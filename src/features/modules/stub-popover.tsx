@@ -16,6 +16,7 @@ import type { Campaign, EntityKind, Id } from '@/domain';
 import { artifactRepo } from '@/db';
 import { classifyEntityName } from '@/llm/moduleGen';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { promoteArtifactForModuleUseLoud } from '@/db/artifactAutoPromote';
 import { generateSingleEntity } from '@/features/modules/entity-detail';
 import {
   guessKindFromSentence,
@@ -149,6 +150,10 @@ export function StubPopover({
       if (needsAlias) {
         await artifactRepo.updateArtifact(artifact.id, { aliases: [...artifact.aliases, alias] });
       }
+      // LINKS hook: this module just referenced another scope's artifact by
+      // alias-linking — a second-module use promotes it to shared campaign
+      // ownership (no-op when already shared or own-module).
+      await promoteArtifactForModuleUseLoud(artifact.id, moduleId);
       toastSuccess(`“${alias}” now resolves to ${artifact.name}`);
       onClose();
     } catch (error) {

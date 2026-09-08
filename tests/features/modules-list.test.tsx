@@ -9,7 +9,7 @@ import { createAppRouter } from '@/app/router';
 import { modulesPath } from '@/app/routes';
 import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign, getCampaign } from '@/db/campaignRepo';
-import { getModule, saveModule } from '@/db/moduleRepo';
+import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
 import { useProgressStore } from '@/lib/progress';
@@ -453,5 +453,66 @@ describe('ModulesListPage', () => {
     // the long trailing drain absorbs the exit transition's timed updates.
     expect(await actDrained(() => getCampaign(campaign.id))).toMatchObject({ description: '' });
     await flushAsyncUpdates(60);
+  }, 20_000);
+});
+
+describe('ModulesListPage delete third state (referenced artifacts)', () => {
+  it('lists outside-referenced artifacts and promotes them on "Promote & keep"', async () => {
+    const user = userEvent.setup();
+    const { campaignId, draftId, failedId } = await seedModules();
+    // The draft owns an npc; the failed module links it in its part text.
+    const hexer = await createArtifact({ campaignId, moduleId: draftId, kind: 'npc', name: 'Shared Hexer' });
+    await patchModule(failedId, {
+      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true }],
+    });
+    renderAppAt(modulesPath(campaignId));
+    await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByRole('button', { name: 'Delete Vault of Whispers' }));
+    const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
+    const list = await within(confirm).findByTestId('delete-module-referenced-list', {}, { timeout: 5_000 });
+    expect(list).toHaveTextContent('Shared Hexer');
+    expect(list).toHaveTextContent('wiki-link');
+
+    await user.click(within(confirm).getByTestId('delete-module-promote-keep'));
+
+    await waitFor(
+      async () => {
+        expect(await getModule(draftId)).toBeUndefined();
+        expect((await getArtifact(hexer.id))?.moduleId).toBeNull();
+      },
+      { timeout: 10_000 },
+    );
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      'Module deleted — referenced artifacts are now shared across the campaign',
+    );
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('force-deletes referenced artifacts too when the user picks "Force-delete all"', async () => {
+    const user = userEvent.setup();
+    const { campaignId, draftId, failedId } = await seedModules();
+    const hexer = await createArtifact({ campaignId, moduleId: draftId, kind: 'npc', name: 'Shared Hexer' });
+    await patchModule(failedId, {
+      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true }],
+    });
+    renderAppAt(modulesPath(campaignId));
+    await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByRole('button', { name: 'Delete Vault of Whispers' }));
+    const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
+    await within(confirm).findByTestId('delete-module-referenced-list', {}, { timeout: 5_000 });
+
+    await user.click(within(confirm).getByTestId('delete-module-confirm'));
+
+    await waitFor(
+      async () => {
+        expect(await getModule(draftId)).toBeUndefined();
+        expect(await getArtifact(hexer.id)).toBeUndefined();
+      },
+      { timeout: 10_000 },
+    );
+    expect(toastSuccessMock).toHaveBeenCalledWith('Module deleted');
+    await flushAsyncUpdates();
   }, 20_000);
 });

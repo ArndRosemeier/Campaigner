@@ -166,6 +166,11 @@ Rules pinned by tests:
   entity nodes.
 - Deterministic: same inputs → same output (node order = first appearance in
   document order; modules sorted by title).
+- Reuse (10 D12): the module-delete reference scan calls `buildWikiGraph`
+  UNCAPPED (`cap: Number.POSITIVE_INFINITY`, the campaignGrounding
+  precedent) and reads cross-module edges into owned nodes — the delete
+  dialog must see every reference, not a ranked sample. The derivation
+  itself is unchanged (still pure, still capped by default).
 
 ## 4. UI (`GraphPage` rework)
 

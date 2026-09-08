@@ -110,6 +110,13 @@ The same wiki-link rendering must also apply to artifact `body` markdown
 everywhere it is rendered (workspace preview, Play mode) — one shared
 component, one behavior.
 
+**Post-save auto-promote (10 D12):** resolution stays pure — render never
+changes scopes. After a module text write lands (reader part edit,
+entity-panel rewrite-apply + focus change, spine/parts generation saves,
+spine approval, stub-popover alias writes), `promoteSecondModuleUses`
+scans the saved text and promotes second-module wikilink uses to campaign
+level with a loud toast.
+
 ---
 
 ## M4-B — Generator: spine → parts
@@ -130,7 +137,10 @@ carries the campaign's other modules — premise + written part texts, drafts
 included, ordered oldest first, per-part/per-module/total char caps, oldest
 dropped first on overflow — labeled as settled history to continue, never
 retcon. The section is omitted when the flag is off (default) or no other
-module has any text.
+module has any text. Both passes also carry the shared campaign cast
+list (`campaignCastContext`: moduleId-null rows, names+kinds, 60-name
+cap, ~2.4k chars inside the 24k total) so follow-ups reuse promoted
+names exactly instead of inventing duplicates.
 
 Prompt requirements (verbatim intent, exact wording up to implementer):
 - Propose `partPlan` covering the level range: **default one part per level;
@@ -315,7 +325,9 @@ revision snapshots + delete the blob when nothing else references it).
   navigation bridge is removed.)
 - **Link existing…**: quick-find over campaign artifacts; picking one adds
   the link name to that artifact's `aliases` (this is how near-miss names get
-  bound without editing text).
+  bound without editing text). Alias-linking another module's artifact is a
+  second-module use — it auto-promotes to campaign level with a loud toast
+  (10 D12).
 
 ### Batch generation
 

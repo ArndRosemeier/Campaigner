@@ -1,11 +1,12 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
 import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { createModule as createModuleRepo } from '@/db/moduleRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createImage } from '@/db/imageRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc } from '@/db/fighterStats';
@@ -14,9 +15,12 @@ import { createRulebook } from '@/db/rulebookRepo';
 import { fighterTokens } from '@/domain/battle/board';
 import { stagingBlockRect } from '@/domain/encounterMap/layout';
 import type { Artifact, EncounterLayout, Id, StatBlock } from '@/domain';
-import { newId, packRooms, placeMonsters, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
+import { createModule as createModuleSchema, newId, packRooms, placeMonsters, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from './helpers';
+
+// Seeding/spawning across module ownership promotes with a loud toast.
+vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn(), toastInfo: vi.fn() }));
 
 /**
  * Seeding a battle from an encounter artifact (09-MILESTONE-5 M5-C): roster
@@ -768,5 +772,69 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     await expect(spawnRosterInstance(bare.id, 0)).rejects.toThrow(
       'This battle has no seeding encounter to spawn from',
     );
+  });
+});
+
+describe('auto-promote on battle use', () => {
+  async function makeModule(title: string): Promise<Id> {
+    return (
+      await createModuleRepo(
+        createModuleSchema({ campaignId, title, concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+      )
+    ).id;
+  }
+
+  async function ownedNpc(moduleId: Id, name: string): Promise<Artifact> {
+    return createArtifact({
+      campaignId,
+      moduleId,
+      kind: 'npc',
+      name,
+      data: { appearance: '', personality: '', statBlock: statBlock({ hp: 84 }) },
+    });
+  }
+
+  it('seedBattleFromEncounter promotes another module\'s roster npc before freezing identity', async () => {
+    const ownerId = await makeModule('Owner Module');
+    const arenaId = await makeModule('Arena Module');
+    const npc = await ownedNpc(ownerId, 'Troll');
+    const encounter = await addEncounter({
+      monsters: [{ name: 'Troll', count: 1, source: { type: 'npc-ref', artifactId: npc.id } }],
+    });
+
+    const { battle } = await seedBattleFromEncounter(campaignId, arenaId, encounter.id);
+
+    // Promoted to shared campaign ownership — the owner module keeps it too.
+    expect((await getAnyArtifact(npc.id))?.moduleId).toBeNull();
+    // The seed still froze identity against the (now shared) row.
+    const fighters = fighterTokens(battle.board);
+    expect(fighters.find((token) => token.artifactId === npc.id)?.label).toBe('Troll');
+  });
+
+  it('spawnRosterInstance promotes a cross-module roster npc before spawning', async () => {
+    const ownerId = await makeModule('Owner Module');
+    const hallId = await makeModule('Hall Module');
+    const npc = await ownedNpc(ownerId, 'Ogre');
+    // Seed clean (empty roster — nothing to promote), then the encounter
+    // gains a cross-module roster entry outside the editor/finalize hooks.
+    const encounter = await addEncounter({ monsters: [] });
+    const { battle } = await seedBattleFromEncounter(campaignId, hallId, encounter.id);
+    const current = await getAnyArtifact(encounter.id);
+    if (current?.kind !== 'encounter') throw new Error('encounter missing');
+    await updateArtifact(encounter.id, {
+      data: {
+        ...current.data,
+        monsters: [
+          { name: 'Ogre', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: npc.id } },
+        ],
+      },
+    });
+
+    await spawnRosterInstance(battle.id, 0);
+
+    expect((await getAnyArtifact(npc.id))?.moduleId).toBeNull();
+    const after = await getBattleByModule(hallId);
+    if (after === undefined) throw new Error('battle missing');
+    expect(fighterTokens(after.board).some((token) => token.artifactId === npc.id)).toBe(true);
   });
 });

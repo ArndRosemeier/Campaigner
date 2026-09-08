@@ -20,6 +20,7 @@ import {
 } from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
+import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 
 /**
@@ -210,6 +211,12 @@ export async function seedBattleFromEncounter(
     throw new Error(`Artifact “${encounter.name}” is not an encounter`);
   }
 
+  // Auto-promote on second-module use (BATTLE hook): a token whose artifact
+  // is owned by another module promotes to campaign level BEFORE the seed
+  // freezes identity — the seed rows then point at the shared row, and the
+  // first module never loses its monster silently.
+  await promoteRosterUses(moduleId, encounter.data.monsters);
+
   const mapImageId = await resolveMapImageId(encounter);
   const layout = encounter.data.layout;
   // The encounter's shape (docs/11 D11): parsed rows always carry it
@@ -382,6 +389,9 @@ export async function spawnRosterInstance(
   if (entry === undefined) {
     throw new Error(`The seeding encounter has no roster entry ${String(monsterIndex)}`);
   }
+  // Auto-promote on second-module use (BATTLE hook): same ownership check
+  // as seeding — spawning another module's monster shares it campaign-wide.
+  await promoteRosterUses(battle.moduleId, [entry]);
   // Numbering continues the on-board count: "Goblin", "Goblin 2" … occupy
   // label slots named exactly or numbered after the entry.
   const escaped = entry.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

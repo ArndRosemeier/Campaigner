@@ -85,15 +85,26 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
  * Deletes a module row and disposes of the artifacts it owns (10-MILESTONE-6
  * D5): `'cascade'` deletes them (with their revisions/images scrub), `'keep'`
  * releases them into campaign ownership (`moduleId: null`, campaign anchor
- * stays). The choice is explicit and loud — the confirm dialog in the module
- * list is the only caller — so a silent orphaning or a silent wipe can
- * never happen by accident.
+ * stays), and `'promote-referenced'` shares every owned artifact that is
+ * referenced from outside the module (auto-promote's reference scan) into
+ * campaign ownership while cascading the unreferenced rest — never a silent
+ * dangle, never a silent wipe of something another module still uses. The
+ * choice is explicit and loud — the confirm dialog in the module list is the
+ * only caller — so a silent orphaning or a silent wipe can never happen by
+ * accident.
  *
  * The whole disposal is ONE `rw` transaction over every touched table, and
  * the owned rows are re-listed INSIDE it: the chosen branch applies to the
  * rows that exist at delete time (never to a snapshot counted when the
  * dialog opened), and a half-applied cascade is impossible — any failure
  * rolls the module delete back with it.
+ *
+ * `'promote-referenced'` does its adoptions BEFORE the transaction (each
+ * `adoptIntoCampaign` is its own atomic, revisioned scope change through the
+ * sanctioned `moveScope` path — never an inline scope write): the delete
+ * transaction then re-lists the owned rows, which no longer include the
+ * promoted ones, and cascades the rest. A promotion failure throws loudly
+ * before anything is deleted.
  *
  * Any in-flight spine/parts pass for this module is aborted first (it would
  * keep writing into a module that is being removed). Runs already in flight
@@ -103,12 +114,21 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
  */
 export async function deleteModule(
   id: Id,
-  ownedArtifacts: 'cascade' | 'keep',
+  ownedArtifacts: 'cascade' | 'keep' | 'promote-referenced',
 ): Promise<void> {
-  // Dynamic import: moduleGen transitively imports this repo — a static
-  // import would be a module cycle.
+  // Dynamic imports: moduleGen transitively imports this repo, and the
+  // auto-promote reference scan reads it — static imports would be module
+  // cycles.
   const { cancelModuleGen } = await import('@/llm/moduleGen');
   cancelModuleGen(id);
+  if (ownedArtifacts === 'promote-referenced') {
+    const { modulesReferencingOwnedArtifacts } = await import('@/db/artifactAutoPromote');
+    const { adoptIntoCampaign } = await import('@/db/artifactRepo');
+    const referenced = await modulesReferencingOwnedArtifacts(id);
+    for (const entry of referenced) {
+      await adoptIntoCampaign(entry.artifact.id);
+    }
+  }
   await db.transaction(
     'rw',
     [db.modules, db.artifacts, db.revisions, db.images, db.battles, db.settings],
@@ -133,6 +153,9 @@ export async function deleteModule(
         await db.modules.delete(id);
         return;
       }
+      // 'cascade' AND 'promote-referenced' both land here: referenced rows
+      // were already adopted above (re-listed ownedRows no longer include
+      // them), so the loop deletes exactly the unreferenced rest.
       for (const artifact of ownedRows) {
         await deleteArtifact(artifact.id);
       }

@@ -41,6 +41,7 @@ import {
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
+import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
 import { createRun, updateRun, getRun } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -3172,6 +3173,10 @@ export class RunEngine {
           source: { type: 'rulebook' as const, chunkId, mobArtifactId },
         });
       }
+      // Auto-promote on second-module use (ROSTER hook): a freshly drafted
+      // encounter placed in a module shares any other-module roster
+      // artifacts campaign-wide before the encounter row is created.
+      await promoteRosterUses(input.placementModuleId ?? null, monsters);
       const artifact = await createArtifact({
         campaignId: input.campaign.id,
         // Creation-dialog placement (one-off), same as generate finalize.
@@ -3463,6 +3468,23 @@ export class RunEngine {
             'Refusing to save an encounter with stat-less mobs; re-run the draft or edit it to add a source.',
         );
       }
+      // Auto-promote on second-module use (ROSTER hook): roster npc-ref /
+      // mob artifacts owned by another module promote to campaign level
+      // before the encounter persists — covers BOTH the mob get-or-create
+      // above and materializeMonsterNpc reuse below in one scan. A
+      // campaign-level encounter (no target, no placement) promotes any
+      // module owner; the promotion notice is loud, failures are loud.
+      const encounterOwner =
+        input.targetArtifactId === undefined
+          ? undefined
+          : await getAnyArtifact(input.targetArtifactId);
+      if (encounterOwner === undefined && input.targetArtifactId !== undefined) {
+        throw new Error('finalize: the encounter to fill no longer exists');
+      }
+      await promoteRosterUses(
+        encounterOwner?.moduleId ?? input.placementModuleId ?? null,
+        monsters,
+      );
       data.monsters = monsters;
     }
 

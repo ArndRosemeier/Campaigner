@@ -202,6 +202,11 @@ resolves." / "Every entity in scope is mentioned in module prose."
   are deterministic.
 - No prose mentions anywhere → the section does not render (the write-
   `[[wiki-links]]` empty state covers the page).
+- Auto-promote (10 D12) keeps the report honest: a second module's mention
+  of a module-owned entity promotes it to campaign level (loud toast), so
+  the never-mentioned list never fills with rows another module already
+  uses, and deleting a module offers promote-and-keep for referenced rows
+  instead of stranding their backlinks.
 - `buildWikiGraph` is unchanged: all 13 existing derivation tests pass;
   the uncapped `cap: Number.POSITIVE_INFINITY` behavior is pinned by an
   additional test.

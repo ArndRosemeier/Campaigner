@@ -1,6 +1,7 @@
 import type { Id, MonsterSource, NpcArtifact, StatBlock } from '@/domain';
 import { moduleTagFor } from '@/domain/module';
 import {
+  adoptIntoCampaign,
   createArtifact,
   getArtifact,
   listArtifactsByCampaign,
@@ -11,6 +12,7 @@ import {
 import { db } from '@/db/db';
 import { getModule } from '@/db/moduleRepo';
 import { fillCoverFromCache } from '@/db/mobPortraitCache';
+import { toastSuccess } from '@/lib/toast';
 
 /**
  * Mob artifacts (owner-ratified mob-artifact arc): a creature the encounter
@@ -126,13 +128,15 @@ export interface SpawnResult {
   stamped: boolean;
 }
 /**
- * Bestiary-roster spawn (owner-ratified single placement): get-or-create the
- * campaign's mob artifact for `chunkId` and put it into `moduleId` via
- * `stampModuleOwnership` — the artifact is module-owned (one placement at a
- * time) and carries the `module:<title>` compatibility tag. Spawning the
- * same creature into the SAME module again is an idempotent no-op (no
- * revision bump); into a DIFFERENT module it MOVES the artifact (the tag
- * list keeps the previous module tag as history, per stampModuleOwnership).
+ * Bestiary-roster spawn (owner-ratified single placement + auto-promote):
+ * get-or-create the campaign's mob artifact for `chunkId` and put it into
+ * `moduleId` via `stampModuleOwnership` — the artifact is module-owned (one
+ * placement at a time) and carries the `module:<title>` compatibility tag.
+ * Spawning the same creature into the SAME module again is an idempotent
+ * no-op (no revision bump). Spawning into a DIFFERENT module PROMOTES the
+ * artifact to campaign level via `adoptIntoCampaign` (shared — the second
+ * module's use keeps it for everyone) instead of moving it away from the
+ * first module (auto-promote on second-module use).
  */
 export async function spawnMobArtifactIntoModule(
   campaignId: Id,
@@ -151,6 +155,14 @@ export async function spawnMobArtifactIntoModule(
   }
   if (artifact.moduleId === moduleId) {
     return { artifactId, stamped: false };
+  }
+  if (artifact.moduleId !== null) {
+    // Second-module use: promote to shared campaign ownership (auto-promote
+    // on second-module use) instead of moving it away from the first
+    // module — with the same LOUD notice as every other promotion path.
+    await adoptIntoCampaign(artifactId);
+    toastSuccess(`«${artifact.name}» is now shared across the campaign (used by ${moduleTitle})`);
+    return { artifactId, stamped: true };
   }
   await stampModuleOwnership(artifactId, moduleId, moduleTagFor(moduleTitle), meta);
   return { artifactId, stamped: true };

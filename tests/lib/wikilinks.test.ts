@@ -421,3 +421,20 @@ describe('rewriteWikiLinkTargets', () => {
     expect(rewriteWikiLinkTargets('[[Alice]]', [])).toBe('[[Alice]]');
   });
 });
+
+describe('resolution purity (auto-promote contract)', () => {
+  it('resolving a second-module name never changes artifact scopes — promotion is post-save only', () => {
+    const owned = makeNote({ name: 'Goblin King', updatedAt: 2000, moduleId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb' });
+    const pool: AnyArtifact[] = [owned];
+    const before = structuredClone(pool);
+
+    const resolution = resolveWikiLink('Goblin King', pool, {
+      moduleId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+    });
+
+    expect(resolution.status).toBe('resolved');
+    expect(resolution.artifact?.id).toBe(owned.id);
+    // Pure: the pool is byte-identical afterwards — no scope side effects.
+    expect(pool).toEqual(before);
+  });
+});

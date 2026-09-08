@@ -20,6 +20,7 @@ import {
 import { MODULE_SIZE_LABELS, type Module } from '@/domain';
 import { getCampaign } from '@/db/campaignRepo';
 import { listArtifactsByModule } from '@/db/artifactRepo';
+import { modulesReferencingOwnedArtifacts, type ReferencedOwnedArtifact } from '@/db/artifactAutoPromote';
 import { deleteModule } from '@/db/moduleRepo';
 import { useModules } from '@/features/modules/hooks';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
@@ -58,14 +59,33 @@ export function ModulesListPage(): JSX.Element {
     if (deleteTarget === null) return null;
     return (await listArtifactsByModule(deleteTarget.id)).length;
   }, [deleteTarget]);
+  /**
+   * Owned artifacts referenced from OUTSIDE the delete target (auto-promote
+   * reference scan: wikilinks, rosters, battle tokens), LIVE like the count.
+   * Non-empty switches the dialog to its third state: promote-and-keep the
+   * referenced rows vs force-delete everything. null = still scanning.
+   */
+  const referenced = useLiveQuery(async () => {
+    if (deleteTarget === null) return null;
+    if ((await listArtifactsByModule(deleteTarget.id)).length === 0) return [];
+    return modulesReferencingOwnedArtifacts(deleteTarget.id);
+  }, [deleteTarget]);
+  // useLiveQuery is undefined until the first run — normalize to null so
+  // the dialog branches below stay total.
+  const owned: number | null = ownedCount ?? null;
+  const refs: ReferencedOwnedArtifact[] | null = referenced ?? null;
 
   /** Runs one delete branch (10-MILESTONE-6 D5): the user picked what happens
    * to the owned artifacts; the module row always goes. */
-  function runDelete(target: Module, ownedArtifacts: 'cascade' | 'keep'): void {
+  function runDelete(target: Module, ownedArtifacts: 'cascade' | 'keep' | 'promote-referenced'): void {
     setDeleteTarget(null);
     deleteModule(target.id, ownedArtifacts)
       .then(() => {
-        toastSuccess('Module deleted');
+        toastSuccess(
+          ownedArtifacts === 'promote-referenced'
+            ? 'Module deleted — referenced artifacts are now shared across the campaign'
+            : 'Module deleted',
+        );
       })
       .catch((error: unknown) => {
         toastError('Could not delete the module', error);
@@ -216,44 +236,87 @@ export function ModulesListPage(): JSX.Element {
             <AlertDialogTitle>Delete “{deleteTarget?.title}”?</AlertDialogTitle>
             <AlertDialogDescription>
               The module document and its parts are deleted.
-              {ownedCount === null
+              {owned === null || (owned > 0 && refs === null)
                 ? ' Counting the artifacts this module owns…'
-                : ownedCount === 0
+                : owned === 0
                   ? ' This module owns no artifacts.'
-                  : ` This module owns ${String(ownedCount)} artifact${ownedCount === 1 ? '' : 's'}. Choose what happens to them:`}
+                  : refs !== null && refs.length > 0
+                    ? ` ${String(refs.length)} owned artifact${refs.length === 1 ? ' is' : 's are'} still used outside this module — deleting would strand those references. Choose what happens:`
+                    : ` This module owns ${String(owned)} artifact${owned === 1 ? '' : 's'}. Choose what happens to them:`}
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {refs !== null && refs.length > 0 && (
+            <ul className="max-h-40 overflow-y-auto rounded-md border px-3 py-2 text-sm" data-testid="delete-module-referenced-list">
+              {refs.map((entry) => (
+                <li key={entry.artifact.id} className="truncate">
+                  “{entry.artifact.name}” ({entry.artifact.kind}) — used by{' '}
+                  {entry.via === 'link' ? 'a wiki-link' : entry.via === 'roster' ? 'an encounter roster' : 'a battle'}
+                </li>
+              ))}
+            </ul>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            {ownedCount !== null && ownedCount !== undefined && ownedCount > 0 && (
-              <AlertDialogAction
-                data-testid="delete-module-keep"
-                onClick={() => {
-                  const target = deleteTarget;
-                  if (target === null) return;
-                  runDelete(target, 'keep');
-                }}
-              >
-                Keep {String(ownedCount)} artifact{ownedCount === 1 ? '' : 's'}
-              </AlertDialogAction>
+            {refs !== null && refs.length > 0 ? (
+              <>
+                <AlertDialogAction
+                  data-testid="delete-module-promote-keep"
+                  onClick={() => {
+                    const target = deleteTarget;
+                    if (target === null) return;
+                    // deleteModule re-scans the references fresh inside the
+                    // branch — rows referenced after the dialog opened are
+                    // promoted too, never stranded.
+                    runDelete(target, 'promote-referenced');
+                  }}
+                >
+                  Promote & keep {String(refs.length)} referenced, delete the rest
+                </AlertDialogAction>
+                <AlertDialogAction
+                  className="text-destructive"
+                  data-testid="delete-module-confirm"
+                  onClick={() => {
+                    const target = deleteTarget;
+                    if (target === null) return;
+                    runDelete(target, 'cascade');
+                  }}
+                >
+                  Force-delete all
+                </AlertDialogAction>
+              </>
+            ) : (
+              <>
+                {owned !== null && owned > 0 && (
+                  <AlertDialogAction
+                    data-testid="delete-module-keep"
+                    onClick={() => {
+                      const target = deleteTarget;
+                      if (target === null) return;
+                      runDelete(target, 'keep');
+                    }}
+                  >
+                    Keep {String(owned)} artifact{owned === 1 ? '' : 's'}
+                  </AlertDialogAction>
+                )}
+                <AlertDialogAction
+                  className={
+                    owned !== null && owned > 0
+                      ? 'text-destructive'
+                      : undefined
+                  }
+                  data-testid="delete-module-confirm"
+                  onClick={() => {
+                    const target = deleteTarget;
+                    if (target === null) return;
+                    void confirmDelete(target);
+                  }}
+                >
+                  {owned !== null && owned > 0
+                    ? `Delete module and ${String(owned)} artifact${owned === 1 ? '' : 's'}`
+                    : 'Delete'}
+                </AlertDialogAction>
+              </>
             )}
-            <AlertDialogAction
-              className={
-                ownedCount !== null && ownedCount !== undefined && ownedCount > 0
-                  ? 'text-destructive'
-                  : undefined
-              }
-              data-testid="delete-module-confirm"
-              onClick={() => {
-                const target = deleteTarget;
-                if (target === null) return;
-                void confirmDelete(target);
-              }}
-            >
-              {ownedCount !== null && ownedCount !== undefined && ownedCount > 0
-                ? `Delete module and ${String(ownedCount)} artifact${ownedCount === 1 ? '' : 's'}`
-                : 'Delete'}
-            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

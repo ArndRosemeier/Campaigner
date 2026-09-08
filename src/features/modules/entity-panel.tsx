@@ -27,6 +27,7 @@ import { entityKindFor } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
+import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
@@ -45,6 +46,16 @@ import {
 import { toastError, toastSuccess } from '@/lib/toast';
 import { RunBattleButton } from '@/features/play/run-battle';
 import { cn } from '@/lib/utils';
+
+/** Every generator-authored text of a module, for post-save wikilink scans. */
+function moduleTexts(module: Module): string[] {
+  return [
+    ...(module.spine?.premise === undefined || module.spine.premise === ''
+      ? []
+      : [module.spine.premise]),
+    ...module.parts.map((part) => part.markdown).filter((markdown) => markdown !== ''),
+  ];
+}
 
 /**
  * Entity panel (08-MODULE-DESIGNER M4-C; fix-01 state surfaces): the right
@@ -200,7 +211,9 @@ export function EntityPanel({
   const focusedEntries = sortedEntries.filter((entry) => isFocused(entry.name));
   const unfocusedEntries = sortedEntries.filter((entry) => !isFocused(entry.name));
 
-  /** Moves an entity between the focused and unfocused lists (persisted). */
+  /** Moves an entity between the focused and unfocused lists (persisted).
+   * The focus change re-resolves names against the campaign pool, so the
+   * module's texts are re-scanned for second-module uses (LINKS hook). */
   async function toggleFocus(name: string): Promise<void> {
     const next = isFocused(name)
       ? module.focusedEntities.filter(
@@ -209,6 +222,7 @@ export function EntityPanel({
       : [...module.focusedEntities, name];
     try {
       await patchModule(module.id, { focusedEntities: next });
+      await promoteSecondModuleUses(module.id, moduleTexts(module));
     } catch (error) {
       toastError(`Could not update the focus for "${name}"`, error);
     }
@@ -267,6 +281,12 @@ export function EntityPanel({
         );
       }
       await patchModule(module.id, { spine, parts, entityRewriteProposals: null });
+      // The rewritten text may now link another module's entities under
+      // their canonical spellings — scan for second-module uses (LINKS hook).
+      await promoteSecondModuleUses(
+        module.id,
+        moduleTexts({ ...module, spine, parts }),
+      );
       toastSuccess('Normalization rewrites applied to the hand-edited text');
     } catch (error) {
       toastError('Could not apply the normalization rewrites', error);

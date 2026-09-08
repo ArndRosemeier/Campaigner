@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createModule as createModuleSchema, newId } from '@/domain';
 import type * as ArtifactRepo from '@/db/artifactRepo';
 import { createArtifact, getArtifact, listRevisions } from '@/db/artifactRepo';
-import { createModule, deleteModule, getModule } from '@/db/moduleRepo';
+import { createModule, deleteModule, getModule, patchModule } from '@/db/moduleRepo';
 import { clearDatabase } from './helpers';
 
 /**
@@ -95,6 +95,30 @@ describe('deleteModule — transaction atomicity', () => {
     expect(await getModule(module.id)).toBeUndefined();
     expect((await getArtifact(owned.id))?.moduleId).toBeNull();
     expect((await getArtifact(owned.id))?.campaignId).toBe(campaignId);
+  });
+
+  it("'promote-referenced' shares outside-referenced rows and cascades the rest", async () => {
+    const campaignId = newId();
+    const doomed = await createModule(
+      createModuleSchema({ campaignId, title: 'Doomed Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const reader = await createModule(
+      createModuleSchema({ campaignId, title: 'Reader Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const shared = await createArtifact({ campaignId, moduleId: doomed.id, kind: 'npc', name: 'Shared Hexer' });
+    const solo = await createArtifact({ campaignId, moduleId: doomed.id, kind: 'npc', name: 'Solo Squire' });
+    // The reader module links the hexer in its part text — an outside
+    // reference that must survive the delete as a shared row.
+    await patchModule(reader.id, {
+      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true }],
+    });
+
+    await deleteModule(doomed.id, 'promote-referenced');
+
+    expect(await getModule(doomed.id)).toBeUndefined();
+    expect((await getArtifact(shared.id))?.moduleId).toBeNull();
+    expect((await getArtifact(shared.id))?.campaignId).toBe(campaignId);
+    expect(await getArtifact(solo.id)).toBeUndefined();
   });
 });
 
