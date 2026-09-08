@@ -1,4 +1,5 @@
 import type { Id } from '@/domain';
+import type { StoredImage } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
@@ -6,6 +7,7 @@ import { buildStoredImage } from '@/db/imageRepo';
 import {
   canonicalCreatureName,
   getMobPortraitCacheEntry,
+  replaceCanonicalPortrait,
   storeCanonicalPortraitIfAbsent,
 } from '@/db/mobPortraitCache';
 import { getSettings } from '@/db/settingsRepo';
@@ -115,6 +117,49 @@ async function joinPending(
 }
 
 async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<EnsuredPortrait> {
+  const loaded = await loadCanonicalInputs(options);
+  // Double-checked read: a generation that overlapped this one's chunk load
+  // may have published while the prompt inputs were read.
+  const reread = await getMobPortraitCacheEntry(options.chunkId);
+  if (reread !== undefined) return { imageId: reread.imageId, generated: false };
+  const prepared = await generateFreshCanonicalImage(options, loaded);
+  const published = await storeCanonicalPortraitIfAbsent(options.chunkId, prepared);
+  return { imageId: published.imageId, generated: published.stored };
+}
+
+/**
+ * Owner-ordered portrait regeneration (docs/11 D5 amendment): generates
+ * FRESH bytes for the chunk's canonical portrait and REPUBLISHES the global
+ * slot via `replaceCanonicalPortrait` — the ONLY fresh-generation path, and
+ * the only caller of the unconditional slot writer.
+ *
+ * No fast-path read and no put-if-absent: regen always spends one image
+ * generation. Deliberately outside the `pendingGenerations` single-flight
+ * (an explicit rare user action; the unconditional republish converges
+ * last-writer-wins, and an overlapping normal generation converges on the
+ * fresh row through its own put-if-absent). The caller's local covers are
+ * detached separately and re-cloned from the new slot by the normal enqueue.
+ */
+export async function regenerateCanonicalMobPortrait(
+  options: EnsureCanonicalPortrait,
+): Promise<{ imageId: Id; supersededImageId: Id | null }> {
+  // No fast-path read and no put-if-absent: regen always spends one image
+  // generation on FRESH bytes (a plain re-enqueue would clone identical
+  // bytes — a no-op regen) and unconditionally republishes the slot.
+  const loaded = await loadCanonicalInputs(options);
+  const prepared = await generateFreshCanonicalImage(options, loaded);
+  return replaceCanonicalPortrait(options.chunkId, prepared);
+}
+
+interface CanonicalInputs {
+  canonical: string;
+  chunk: PortraitGroundingChunk;
+}
+
+/** Shared input load: settings + chunk + canonical-name checks (no image
+ * budget spent). Loud on every failure (AGENTS rule 1): regen validates
+ * BEFORE detaching, so a throw here leaves the old covers intact. */
+async function loadCanonicalInputs(options: EnsureCanonicalPortrait): Promise<CanonicalInputs> {
   const settings = await getSettings();
   if (!settings.imagesEnabled) {
     throw new Error('Image generation is disabled — enable it in Settings');
@@ -130,11 +175,20 @@ async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<Ens
   if (canonical === null) {
     throw new Error('the creature\u2019s stat-block chunk has no name to ground a canonical portrait');
   }
-  // Double-checked read: a generation that overlapped this one's chunk load
-  // may have published while the prompt inputs were read.
-  const reread = await getMobPortraitCacheEntry(options.chunkId);
-  if (reread !== undefined) return { imageId: reread.imageId, generated: false };
-  const finalPrompt = assembleImagePrompt(await draftCanonicalPrompt(canonical, chunk, options.campaignId));
+  return { canonical, chunk };
+}
+
+/** Shared fresh-byte generation: canonical prompt draft, n=1 generation,
+ * intake, global-scope row preparation (bytes + parse BEFORE any publish
+ * transaction opens — the Dexie async-transaction trap). */
+async function generateFreshCanonicalImage(
+  options: EnsureCanonicalPortrait,
+  loaded: CanonicalInputs,
+): Promise<StoredImage> {
+  const settings = await getSettings();
+  const finalPrompt = assembleImagePrompt(
+    await draftCanonicalPrompt(loaded.canonical, loaded.chunk, options.campaignId),
+  );
   // n=1 (owner-ratified): one portrait per creature kind.
   const generated = await generateImages(finalPrompt, 1, {
     model: settings.imageModel,
@@ -145,8 +199,8 @@ async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<Ens
   const intake = await intakeImage(blob);
   // Byte preparation is NOT Dexie work (the async-transaction trap) — it
   // happens before the publish transaction opens; the repo owns the
-  // put-if-absent inside it.
-  const prepared = await buildStoredImage({
+  // put/replace inside it.
+  return buildStoredImage({
     campaignId: null,
     blob: intake.blob,
     mimeType: intake.mimeType,
@@ -156,8 +210,6 @@ async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<Ens
     model: generated.modelUsed,
     source: 'generated',
   });
-  const published = await storeCanonicalPortraitIfAbsent(options.chunkId, prepared);
-  return { imageId: published.imageId, generated: published.stored };
 }
 
 /** Canonical prompt draft — the shared Illustrator contract grounded on the

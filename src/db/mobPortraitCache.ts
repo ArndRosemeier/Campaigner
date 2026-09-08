@@ -127,6 +127,59 @@ export async function storeCanonicalPortraitIfAbsent(
   }
 }
 
+export interface ReplaceResult {
+  imageId: Id;
+  /** The previous slot image, deleted in the same transaction — null when the slot was empty. */
+  supersededImageId: Id | null;
+}
+
+/**
+ * Republishes the canonical slot with FRESH bytes — the ONLY unconditional
+ * slot writer (owner-ordered portrait regeneration, docs/11 D5 amendment).
+ * `storeCanonicalPortraitIfAbsent` stays put-if-absent for first-time
+ * generations; THIS function is the regen path and must never be called
+ * outside an explicit user regenerate (a plain re-enqueue would clone
+ * identical bytes — a no-op regen).
+ *
+ * The superseded global row is deleted in the SAME transaction: it is
+ * referenced by NOTHING — render-is-clone means covers carry their own
+ * campaign-scoped rows (the shared global row is never attached), campaign
+ * prunes never scan global scope, and the slot now points at the fresh row
+ * — so regen never leaks one global blob per regeneration. Other
+ * campaigns' EXISTING covers keep their cloned bytes (independent rows);
+ * only FUTURE clones render the new art.
+ */
+export async function replaceCanonicalPortrait(
+  chunkId: Id,
+  prepared: StoredImage,
+): Promise<ReplaceResult> {
+  if (prepared.campaignId !== null) {
+    throw new Error('mob portrait cache: only global-scope (campaignId null) images may be cached');
+  }
+  try {
+    return await db.transaction('rw', [db.images, db.mobPortraits], async () => {
+      const existing = await db.mobPortraits.where('chunkId').equals(chunkId).first();
+      await db.images.put(prepared);
+      if (existing === undefined) {
+        const entry = parseCacheRow({ ...stampNewEntity(), id: newId(), chunkId, imageId: prepared.id });
+        await db.mobPortraits.put(entry);
+        return { imageId: prepared.id, supersededImageId: null };
+      }
+      const row = parseCacheRow(existing);
+      const superseded = row.imageId;
+      await db.mobPortraits.put({ ...row, imageId: prepared.id });
+      if (superseded !== prepared.id) await db.images.delete(superseded);
+      return { imageId: prepared.id, supersededImageId: superseded };
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'ConstraintError') {
+      const winner = await getMobPortraitCacheEntry(chunkId);
+      if (winner !== undefined) return { imageId: winner.imageId, supersededImageId: null };
+    }
+    throw error;
+  }
+}
+
 export type CloneOutcome = 'cloned' | 'skipped';
 
 /**

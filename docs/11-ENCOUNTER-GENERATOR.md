@@ -40,7 +40,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D2 | **Two autonomies**: interactive runs use the run-engine autonomy (manual/review pause at the checkpoints below; map pick always pauses, M3-A rule). **Unattended auto runs** (module generation) never pause: one stylize candidate, no pick gate — the `entity-image-queue` precedent (08 §M4-C). Any failure fails that encounter loudly; the batch continues. |
 | D3 | Rooms are **unions of rectangles** (1 rect = plain, 2–3 rects = L/T shapes). Every room carries a **mob sub-rectangle** (`mobsRect`) inscribed in the union — it is both the mob placement area and the source the per-group veil footprints are cut from (D4). |
 | D4 | **One fog veil per monster spawn group** (owner-ratified group veils — supersedes the old one-veil-per-room rule): each room's `mobsRect` is split per `monsterIndexes` entry, in the owner's group order, into the minimal cell bounding box of that group's `placeMonsters` cells (`veilsFromSpawnClusters`, beside the legacy `veilsFromRooms`) — kind `fog`, int cells ≥ `VEIL_MIN_CELLS`. Rooms with no monster groups seed no veil. The room's FIRST group keeps `id = room.id` so the Path rail's "Reveal next room" still resolves per room; later groups mint fresh ids and every group veil carries `roomId = room.id` (additive on `battleVeilSchema`). Corridors stay open (GM can add fog manually). |
-| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below. Amended 2026-09-08: uncited entries (`inline` / `none`) gain on-demand creature artifacts + local portraits ("Create creature + portrait", per entry and batch-all); invented covers stay local-only, never the global cache. |
+| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below. Amended 2026-09-08: uncited entries (`inline` / `none`) gain on-demand creature artifacts + local portraits ("Create creature + portrait", per entry and batch-all); invented covers stay local-only, never the global cache. Amended 2026-09-09: all-imaged batches offer portrait regeneration (canonical slots republished with fresh bytes — future clones everywhere get the new art, other campaigns' existing covers unchanged; flavored/invented regenerate locally). |
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. Amended 2026-09-08 (D14): the vision check that "only flagged drift for human review" is GONE entirely — no pixel is read back anywhere, and the human is the judge at pick. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
@@ -135,6 +135,24 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   enabled as **"Create creatures + portraits"**. GM-only (editor surface);
   materialize/generation failures surface loudly, never placeholders.
 
+- **Portrait regeneration (owner-ordered, 2026-09-09)**: when a batch would
+  enqueue NOTHING because every portrait already exists, the section offers
+  a **"Regenerate N portrait(s)?"** confirm (same for the per-entry
+  invented action) instead of the old already-generated toast — Confirm
+  detaches the existing covers and re-enqueues; Cancel keeps today's
+  toasts. Partial batches (some enqueued, some imaged) keep today's silent
+  behavior with NO regen offer (05-UI). Mechanics (`regenerateMobPortraits`
+  / `regenerateInventedCreaturePortraits`, the one way — docs/18):
+  resolve + validate with no side effects (unknown artifacts, unreadable
+  chunks throw loud with all old covers intact), republish canonical slots
+  with FRESH bytes first (below), detach covers via
+  `removeImageFromArtifact` (revision snapshots scrubbed, old blobs freed
+  refcount-aware), then enqueue normally. Between detach and the fresh
+  cover landing, tokens show initials (the D5 fallback) — accepted and
+  stated in the dialog. Flavored and invented covers regenerate locally,
+  always; a canonical citation regenerates by REPUBLISH (below) — a plain
+  re-enqueue would clone identical bytes, a no-op regen.
+
 ### Global portrait cache (slice A — owner-ratified)
 
 Core/external bestiary creatures only (NEVER module-generated NPCs):
@@ -174,6 +192,20 @@ shared-blob image row.
   every campaign prune's scan) and the global
   `deleteImageIfUnreferenced` path (explicit cache-record check) while
   the cache record exists.
+- **Regeneration = REPUBLISH (owner-ordered, 2026-09-09 — the coherent
+  canonical consequence).** Regenerating a canonical portrait generates
+  FRESH bytes and republishes the global slot (`replaceCanonicalPortrait`,
+  the ONLY unconditional slot writer, via
+  `regenerateCanonicalMobPortrait`, the ONLY fresh-generation path) — the
+  slot IS the canonical portrait, so future clones everywhere render the
+  new art. Other campaigns' EXISTING covers are INVARIANT: render-is-clone
+  means they carry independent campaign-scoped rows, verified before
+  claiming and pinned by tests. The superseded global blob is deleted in
+  the republish transaction (referenced by nothing — never a regen leak).
+  The regen surfaces a loud toast naming the shared consequence. The
+  local-only alternative (a fresh cover diverging from canon) was rejected:
+  a silently non-canonical "canonical" portrait is the worse lie —
+  regenerating a canonical citation is therefore NEVER local-only.
 - **Grandfathering.** Existing per-campaign covers are kept; no backfill.
 - **Firewall.** Every cache entry point gates on
   `cacheKeyForMonsterSource`: `source.type === 'rulebook'` with a defined

@@ -6,8 +6,20 @@ import type { AnyArtifact, Id } from '@/domain';
 import {
   enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
+  regenerateInventedCreaturePortraits,
+  regenerateMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
 import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
@@ -19,6 +31,18 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * portrait", per entry and batch-all). Every instance of an illustrated
  * creature shares the artifact — and its portrait — on the battle board
  * via the existing coverImageId token path.
+ *
+ * Regeneration (owner-ordered, docs/11 D5 amendment): when a batch would
+ * enqueue NOTHING because every portrait already exists, the section offers
+ * a "Regenerate N portrait(s)?" confirm instead of the old
+ * already-generated toast — Confirm detaches the existing covers and
+ * re-enqueues (canonical slots are republished with fresh bytes first; see
+ * `regenerateMobPortraits`), Cancel keeps the old all-generated toast.
+ * Partial states (some enqueued, some imaged) keep today's silent behavior
+ * with NO dialog — regen there is out of scope by owner-shaped decision
+ * (docs/05-UI). The per-entry invented action offers the same confirm for
+ * its single portrait. Between detach and the fresh cover landing, tokens
+ * show initials — the accepted, dialog-stated regen window.
  *
  * Rendered beside the encounter's monsters section (after the roster form),
  * only for campaign-scoped encounters: mob artifacts are campaign-scoped, so
@@ -35,6 +59,8 @@ export function MobPortraitsSection({
 }): JSX.Element | null {
   const [busy, setBusy] = useState(false);
   const [busyIndex, setBusyIndex] = useState<number | null>(null);
+  const [regenBatch, setRegenBatch] = useState<string[] | null>(null);
+  const [regenEntry, setRegenEntry] = useState<{ index: number; name: string } | null>(null);
   if (artifact.campaignId === null) return null;
   const data = artifact.data;
   const rulebookCount = data.monsters.filter((monster) => monster.source.type === 'rulebook').length;
@@ -57,8 +83,10 @@ export function MobPortraitsSection({
       const alreadyImaged = [...rulebook.alreadyImaged, ...invented.alreadyImaged];
       if (enqueued === 0 && alreadyImaged.length === 0 && invented.created === 0) {
         toastInfo('No creatures to illustrate — add roster entries first');
-      } else if (enqueued === 0) {
-        toastSuccess('All mob portraits are already generated');
+      } else if (enqueued === 0 && alreadyImaged.length > 0) {
+        // All-imaged: offer regeneration instead of the old toast (Cancel
+        // replays it — see cancelRegen).
+        setRegenBatch(alreadyImaged);
       }
     } catch (error) {
       toastError('Could not start mob portrait generation', error);
@@ -67,12 +95,51 @@ export function MobPortraitsSection({
     }
   }
 
+  async function confirmRegenBatch(): Promise<void> {
+    setRegenBatch(null);
+    setBusy(true);
+    try {
+      const rulebook =
+        rulebookCount === 0
+          ? { regenerated: 0, republishedCanonical: [] as string[] }
+          : await regenerateMobPortraits(artifact, campaignId);
+      const invented =
+        uncited.length === 0
+          ? { created: 0, regenerated: 0 }
+          : await regenerateInventedCreaturePortraits(artifact, campaignId);
+      const regenerated = rulebook.regenerated + invented.regenerated;
+      if (regenerated === 0) {
+        // Covers landed between the dialog and Confirm (read-through or a
+        // concurrent run) — nothing left to regen.
+        toastSuccess('All mob portraits are already generated');
+      } else {
+        toastSuccess(
+          `Regenerating ${String(regenerated)} portrait${regenerated === 1 ? '' : 's'} — existing covers are replaced`,
+        );
+        if (rulebook.republishedCanonical.length > 0) {
+          toastSuccess(
+            `Shared portrait republished for ${rulebook.republishedCanonical.map((name) => `"${name}"`).join(', ')} — future portraits in every campaign use the new art; existing covers elsewhere keep theirs`,
+          );
+        }
+      }
+    } catch (error) {
+      toastError('Could not regenerate mob portraits', error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelRegenBatch(): void {
+    setRegenBatch(null);
+    toastSuccess('All mob portraits are already generated');
+  }
+
   async function handleEntry(index: number, name: string): Promise<void> {
     setBusyIndex(index);
     try {
       const result = await enqueueInventedCreaturePortraits(artifact, campaignId, [index]);
       if (result.enqueued === 0 && result.alreadyImaged.length > 0) {
-        toastInfo(`"${name}" already has a portrait`);
+        setRegenEntry({ index, name });
       }
     } catch (error) {
       toastError(`Could not create a creature for "${name}"`, error);
@@ -81,8 +148,31 @@ export function MobPortraitsSection({
     }
   }
 
+  async function confirmRegenEntry(entry: { index: number; name: string }): Promise<void> {
+    setRegenEntry(null);
+    setBusyIndex(entry.index);
+    try {
+      const result = await regenerateInventedCreaturePortraits(artifact, campaignId, [entry.index]);
+      if (result.regenerated === 0) {
+        toastInfo(`"${entry.name}" already has a portrait`);
+      } else {
+        toastSuccess(`Regenerating portrait for "${entry.name}" — the existing cover is replaced`);
+      }
+    } catch (error) {
+      toastError(`Could not regenerate a portrait for "${entry.name}"`, error);
+    } finally {
+      setBusyIndex(null);
+    }
+  }
+
+  function cancelRegenEntry(entry: { index: number; name: string }): void {
+    setRegenEntry(null);
+    toastInfo(`"${entry.name}" already has a portrait`);
+  }
+
   const batchLabel = rulebookCount === 0 ? 'Create creatures + portraits' : 'Generate mob portraits';
   const batchDisabled = busy || busyIndex !== null || (rulebookCount === 0 && uncited.length === 0);
+  const regenNames = regenBatch ?? (regenEntry === null ? [] : [regenEntry.name]);
 
   return (
     <div
@@ -144,6 +234,49 @@ export function MobPortraitsSection({
           })}
         </ul>
       )}
+      <AlertDialog
+        open={regenBatch !== null || regenEntry !== null}
+        onOpenChange={(next) => {
+          // Silent dismiss (Esc/backdrop): clears the pending regen with no
+          // toast — the explicit Cancel buttons below replay today's toasts.
+          if (!next) {
+            setRegenBatch(null);
+            setRegenEntry(null);
+          }
+        }}
+      >
+        <AlertDialogContent data-testid="mob-portraits-regen-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Regenerate {regenNames.length} portrait{regenNames.length === 1 ? '' : 's'}?
+            </AlertDialogTitle>
+            <AlertDialogDescription data-testid="mob-portraits-regen-copy">
+              Existing covers are replaced — {regenNames.map((name) => `"${name}"`).join(', ')}.
+              Portraits show initials until the new art lands.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel
+              data-testid="mob-portraits-regen-cancel"
+              onClick={() => {
+                if (regenBatch !== null) cancelRegenBatch();
+                else if (regenEntry !== null) cancelRegenEntry(regenEntry);
+              }}
+            >
+              Cancel
+            </AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="mob-portraits-regen-confirm"
+              onClick={() => {
+                if (regenBatch !== null) void confirmRegenBatch();
+                else if (regenEntry !== null) void confirmRegenEntry(regenEntry);
+              }}
+            >
+              Regenerate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

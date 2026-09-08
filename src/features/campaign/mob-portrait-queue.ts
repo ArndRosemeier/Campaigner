@@ -1,6 +1,6 @@
 import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
-import { getAnyArtifact, attachImagesToArtifact } from '@/db/artifactRepo';
+import { getAnyArtifact, attachImagesToArtifact, removeImageFromArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { getOrCreateMobArtifact, materializeInventedCreatureArtifact } from '@/db/mobArtifacts';
@@ -20,7 +20,7 @@ import {
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
 import { intakeImage } from '@/lib/imageIntake';
-import { ensureCanonicalMobPortrait } from '@/features/campaign/mob-portrait-cache-queue';
+import { ensureCanonicalMobPortrait, regenerateCanonicalMobPortrait } from '@/features/campaign/mob-portrait-cache-queue';
 
 /**
  * Mob portrait queue (owner-ratified mob-artifact arc): one click on the
@@ -232,6 +232,30 @@ export interface MobPortraitBatchResult {
 }
 
 /**
+ * Detaches every image (cover included) from one portrait artifact — the
+ * regen primitive both batch flavors share. `removeImageFromArtifact`
+ * detaches + scrubs the artifact's revision snapshots + deletes the blob
+ * when nothing else references it (refcount-aware: a cover shared with
+ * another artifact survives). The old cover is truly freed, never leaked;
+ * history shows the entity without the removed cover (docs/11 D5).
+ *
+ * Between this detach and the fresh cover landing, tokens render initials
+ * (the D5 fallback) — the accepted, dialog-stated regen window.
+ */
+async function detachArtifactCovers(artifactId: Id, displayName: string): Promise<void> {
+  const artifact = await getAnyArtifact(artifactId);
+  if (artifact === undefined) {
+    throw new Error(
+      `Regenerate mob portraits: the artifact for "${displayName}" no longer exists — re-run the encounter content to restore it`,
+    );
+  }
+  const coverIds = artifact.coverImageId === null ? [] : [artifact.coverImageId];
+  for (const imageId of new Set([...coverIds, ...artifact.imageIds])) {
+    await removeImageFromArtifact(artifactId, imageId);
+  }
+}
+
+/**
  * The batch action (encounter editor): enumerates the encounter's
  * rulebook-cited entries, get-or-creates each mob artifact (lazy retro-fill
  * for encounters written before `mobArtifactId` — the same shared helper the
@@ -286,6 +310,84 @@ export async function enqueueMobPortraits(
   }
   useMobPortraitQueue.getState().enqueue(jobs);
   return { enqueued: jobs.length, alreadyImaged };
+}
+
+/**
+ * Owner-ordered portrait regeneration for rulebook-cited mobs (docs/11 D5
+ * amendment) — THE one way to regen a mob portrait (docs/18). Four phases:
+ *
+ * 1. Resolve + validate with NO side effects: unknown artifacts and
+ *    unreadable chunks throw loud with every old cover still intact.
+ * 2. Fresh canonical bytes FIRST: each canonically-cited chunk's global slot
+ *    is republished (`regenerateCanonicalMobPortrait` — always generates;
+ *    a plain re-enqueue would clone identical bytes, a no-op regen).
+ *    Flavored citations skip the cache entirely (local-only invariant).
+ * 3. Detach the imaged covers (`detachArtifactCovers`).
+ * 4. Enqueue normally — cover-less artifacts flow through the standard skip
+ *    branch, canonical jobs clone the NEW slot bytes, flavored generate
+ *    locally. (Unstamped old rows may read-through-clone the fresh bytes
+ *    synchronously instead of queueing — same fresh cover, no job.)
+ */
+export interface MobPortraitRegenResult {
+  /** Imaged mob artifacts detached and re-covered (deduped by artifact). */
+  regenerated: number;
+  /** Citing names whose canonical global slot now carries fresh bytes. */
+  republishedCanonical: string[];
+}
+
+export async function regenerateMobPortraits(
+  encounter: AnyArtifact & { kind: 'encounter' },
+  campaignId: Id,
+): Promise<MobPortraitRegenResult> {
+  const artifactIdByChunk = new Map<Id, Id>();
+  const seenArtifacts = new Set<Id>();
+  const imaged: { artifactId: Id; chunkId: Id; name: string }[] = [];
+  for (const entry of encounter.data.monsters) {
+    if (entry.source.type !== 'rulebook') continue;
+    const known = artifactIdByChunk.get(entry.source.chunkId);
+    const artifactId =
+      known ??
+      entry.source.mobArtifactId ??
+      // Pure resolve (NO read-through: cloning here would defeat the detach).
+      (await getOrCreateMobArtifact(campaignId, entry.source.chunkId, entry.name));
+    artifactIdByChunk.set(entry.source.chunkId, artifactId);
+    // One portrait per creature kind, not per roster entry.
+    if (seenArtifacts.has(artifactId)) continue;
+    seenArtifacts.add(artifactId);
+    const artifact = await getAnyArtifact(artifactId);
+    if (artifact === undefined) {
+      throw new Error(
+        `Regenerate mob portraits: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
+      );
+    }
+    if (artifact.coverImageId === null && artifact.imageIds.length === 0) continue;
+    imaged.push({ artifactId, chunkId: entry.source.chunkId, name: entry.name });
+  }
+  const republishedCanonical: string[] = [];
+  const republishedChunks = new Set<Id>();
+  for (const target of imaged) {
+    const chunk = (await getChunksByIds([target.chunkId]))[0];
+    if (chunk === undefined) {
+      throw new Error(
+        `Regenerate mob portraits: the stat-block chunk for "${target.name}" no longer exists — kept the existing cover`,
+      );
+    }
+    const canonical = canonicalCreatureName(chunk);
+    if (
+      canonical !== null &&
+      isCanonicalCitation(canonical, target.name) &&
+      !republishedChunks.has(target.chunkId)
+    ) {
+      republishedChunks.add(target.chunkId);
+      await regenerateCanonicalMobPortrait({ chunkId: target.chunkId, campaignId });
+      republishedCanonical.push(target.name);
+    }
+  }
+  for (const target of imaged) {
+    await detachArtifactCovers(target.artifactId, target.name);
+  }
+  await enqueueMobPortraits(encounter, campaignId);
+  return { regenerated: imaged.length, republishedCanonical };
 }
 
 /**
@@ -379,4 +481,65 @@ export async function enqueueInventedCreaturePortraits(
   }
   useMobPortraitQueue.getState().enqueue(jobs);
   return { created, enqueued: jobs.length, alreadyImaged };
+}
+
+export interface InventedCreatureRegenResult {
+  /** On-demand npc artifacts materialized (created or reused) for the selection. */
+  created: number;
+  /** Imaged invented creatures detached and re-enqueued (deduped by artifact). */
+  regenerated: number;
+}
+
+/**
+ * Owner-ordered portrait regeneration for uncited (invented) roster entries
+ * (docs/11 D5 amendment) — THE one way to regen an invented cover (docs/18).
+ * Materializes (reuses) the selection's npc artifacts, detaches the imaged
+ * covers, then enqueues normally as chunk-less local-only jobs (the
+ * canonical-cache firewall holds: invented covers never read, populate, or
+ * overwrite the global cache — regen included).
+ *
+ * Pass `entryIndexes` for the per-entry action; omit it for batch-all.
+ */
+export async function regenerateInventedCreaturePortraits(
+  encounter: AnyArtifact & { kind: 'encounter' },
+  campaignId: Id,
+  entryIndexes?: readonly number[],
+): Promise<InventedCreatureRegenResult> {
+  const only = entryIndexes === undefined ? undefined : new Set(entryIndexes);
+  const materialized = new Map<string, Id>();
+  const seenArtifacts = new Set<Id>();
+  const imaged: { artifactId: Id; name: string }[] = [];
+  let created = 0;
+  for (const [index, entry] of encounter.data.monsters.entries()) {
+    if (only !== undefined && !only.has(index)) continue;
+    if (entry.source.type !== 'inline' && entry.source.type !== 'none') continue;
+    const artifactId = await materializeInventedCreatureArtifact({
+      campaignId,
+      encounterId: encounter.id,
+      encounterName: encounter.name,
+      moduleId: encounter.moduleId,
+      name: entry.name,
+      notes: entry.notes,
+      treasure: entry.treasure,
+      statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
+      cache: materialized,
+    });
+    created += 1;
+    // One portrait per creature kind, not per roster entry.
+    if (seenArtifacts.has(artifactId)) continue;
+    seenArtifacts.add(artifactId);
+    const artifact = await getAnyArtifact(artifactId);
+    if (artifact === undefined) {
+      throw new Error(
+        `Regenerate creature portraits: the artifact for "${entry.name}" no longer exists — re-run the action to restore it`,
+      );
+    }
+    if (artifact.coverImageId === null && artifact.imageIds.length === 0) continue;
+    imaged.push({ artifactId, name: entry.name });
+  }
+  for (const target of imaged) {
+    await detachArtifactCovers(target.artifactId, target.name);
+  }
+  await enqueueInventedCreaturePortraits(encounter, campaignId, entryIndexes);
+  return { created, regenerated: imaged.length };
 }
