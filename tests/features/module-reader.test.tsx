@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { battlePath, modulePath } from '@/app/routes';
+import { artifactPath, battlePath, modulePath } from '@/app/routes';
 import { createArtifact, listArtifactsByCampaign, publishToLibrary, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
@@ -757,6 +757,35 @@ describe('ModuleReaderPage', () => {
 
     const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
     expect(within(peek).getByText('Old Tower')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('opens the workspace directly from an encounter panel row (no peek modal)', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: 'The [[Ford Ambush]] waits at the ford before dawn.',
+    });
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Ford Ambush',
+    });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const rows = await screen.findAllByTestId('entity-row', {}, { timeout: 10_000 });
+    const ambushRow = rows.find((row) => row.textContent.includes('Ford Ambush'));
+    if (ambushRow === undefined) throw new Error('Ford Ambush row not found in the entity panel');
+    await user.click(ambushRow);
+
+    // The encounter navigates straight to the workspace — the same target
+    // as the peek modal's "Open in workspace" button — without peeking.
+    await waitFor(
+      () => {
+        expect(window.location.pathname).toBe(artifactPath(campaignId, encounter.id));
+      },
+      { timeout: 10_000 },
+    );
+    expect(screen.queryByTestId('peek-modal')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
 

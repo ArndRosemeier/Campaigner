@@ -293,8 +293,12 @@ toggle to move between the lists (persisted on the module row as
 order inside both groups between **first mention** (document order, persisted
 as `entitySort: 'mention'`) and **alphabetical** (`'alphabetical'`), with a
 "N mentioned · M detailed" progress line. Clicking a resolved row opens the
-entity card (peek modal); unresolved rows offer the same actions as the stub
-popover.
+entity card (peek modal) — EXCEPT encounters, which navigate straight to
+the workspace (`artifactPath(campaignId, artifact.id)`, the same target as
+the peek modal's "Open in workspace" button) with no peek modal; the owner
+always wants an encounter directly. Unresolved rows offer the same actions
+as the stub popover. Wiki-link clicks in part bodies still peek for every
+kind — only the entity-panel path has the encounter exception.
 
 **Images mode** (module-mode-as-play): the "Images" button above the entities
 swaps the row stars for a checkbox per entry —

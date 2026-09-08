@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
-import { Link, useLocation, useParams } from 'react-router-dom';
+import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
   BanIcon,
   ArrowLeftIcon,
@@ -14,7 +14,7 @@ import {
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { battlePath, modulesPath } from '@/app/routes';
+import { artifactPath, battlePath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -77,6 +77,7 @@ export function ModuleReaderPage(): JSX.Element {
   // link-existing picker keep the campaign-only pool (10-MILESTONE-6 D).
   const globalArtifacts = useGlobalArtifacts();
   const location = useLocation();
+  const navigate = useNavigate();
 
   const [stub, setStub] = useState<StubPopoverState | null>(null);
   const [linkTargetName, setLinkTargetName] = useState<string | null>(null);
@@ -597,6 +598,13 @@ export function ModuleReaderPage(): JSX.Element {
           setStub({ name, ...anchor });
         }}
         onOpenCard={(artifact) => {
+          // Encounters skip the peek modal: the owner always wants the
+          // encounter directly in the workspace (same target as the peek
+          // modal's "Open in workspace" button). Every other kind peeks.
+          if (artifact.kind === 'encounter') {
+            navigate(artifactPath(campaignId, artifact.id));
+            return;
+          }
           setPeekId(artifact.id);
         }}
       />
