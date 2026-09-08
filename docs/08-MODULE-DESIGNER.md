@@ -84,8 +84,24 @@ level band badge), spine premise as an intro section. Sticky mini-ToC on the lef
 located in the rendered document; next/previous (and Enter/Shift+Enter)
 cycle through them, scrolling the active match into view and flashing a
 highlight on its containing block. Edit affordance per part: an ✎ toggle that
-swaps that part to the markdown textarea (same component as artifact bodies),
-save on blur → `saveModule`.
+swaps that part to the part text editor (`PartTextEditor` in
+`src/features/modules/part-text-editor.tsx`) — the shared `MarkdownBody`
+textarea plus a find/replace toolbar operating on the draft string: match
+count as `active / total`, Enter/Shift+Enter + prev/next navigation (which
+moves the draft selection), a case-sensitive toggle (default off, mirroring
+the sidebar search), replace-one + replace-all, a WikiMarkdown preview
+toggle, and explicit **Save part** / **Cancel**. Blur still saves (a blur
+whose focus lands inside the editor toolbar is ignored so finding/replacing
+never commits mid-search); every commit flows through `savePartEdit` →
+`patchModuleTextPart`, which writes the `parts` array on the MODULE ROW
+(part bodies live on the module row — there is no artifact revision for part
+markdown) with `status: 'ready'`, `edited: true`, the "Part saved" toast and
+the post-save auto-promote scan. `edited: true` is what arms the rewrite
+dialog's overwrite warning, so toolbar edits trip the confirm exactly like
+blur-saves. Generation semantics (`runParts`/`rewritePart`/
+`generateMissingParts`) and the normalization-verdict proposal flow are
+untouched by the editor; the reader stays the default view (no routing
+change).
 
 **Wiki-link rendering** (extend the existing `markdown-body.tsx` pipeline with
 a remark step or pre-tokenizer):

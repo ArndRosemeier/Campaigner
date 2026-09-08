@@ -136,6 +136,7 @@ column.
 | Surface an error | `lib/toast.ts` (`toastError`/`toastErrorPersistent`), a failed run row with `errorMessage`, or the global boundary (`app/GlobalErrorBoundary` + `lib/globalErrors.installGlobalErrorHandlers`) | `console.error` only (AGENTS 2) |
 | Long-running progress | `lib/progress.useProgressStore` + the app-wide `<ProgressDock/>`; queue jobs report via `dockGroup` | a disabled button or a "Generating…" label (00-OVERVIEW, binding) |
 | Wiki-link handling | `lib/wikilinks.ts` (extract/strip/rewrite/resolve/count; `WIKI_LINK_PATTERN`) + `lib/remark-wikilinks.ts` → `WikiMarkdown` | a private `\[\[...\]\]` regex |
+| Hand-edit module part text (find/replace) | `features/modules/part-text-editor.PartTextEditor` (toolbar over the `editDraft` string; pure `findDraftMatches`/`replaceDraftMatch`/`replaceAllDraftMatches`, same non-overlapping loop semantics as `reader-search.findMatches`) committing through `savePartEdit` → `patchModuleTextPart` (module-row `parts` write, `edited: true` + toast + auto-promote; arms the rewrite overwrite confirm) | artifact revisions for part markdown (there are none — parts live on the module row); a second save path around `savePartEdit` |
 | Markdown → plain text | `lib/markdown.markdownToText` | a second strip-regex |
 | PDF viewing | `lib/pdfRuntime.openPdfDocument` + `copyBytes` (worker-safe byte copies); retained book bytes via `pdfRepo` (`&bookId` unique) | re-parsing PDFs from user files |
 | Encounter preset resolution | `domain/encounterMap/schema.resolveEncounterPreset(preset, locationKind)` | branching on `locationKind` directly |
@@ -250,6 +251,12 @@ column.
 - **pdfjs under vitest** warns about `standardFontDataUrl` (allowlisted; text
   extraction does not use fonts). jsdom lacks ResizeObserver /
   `scrollIntoView` / Web Animations — stubbed in `tests/setup.ts`.
+- **Module part bodies live on the MODULE ROW, not in artifacts.**
+  `Module.parts[i].markdown` is the only copy — there is no `updateArtifact`
+  revision for part text, so hand edits persist via `patchModule` on the
+  module row (`patchModuleTextPart`: `status: 'ready'`, `edited: true`) and
+  the revision story is the `edited` flag + the rewrite-overwrite confirm.
+  Never route a part-text write through the artifact revision seam.
 - **UI scale never touches px-measured surfaces**: `--ui-scale` (uiScale
   store) multiplies the root font-size, so only the rem-based Tailwind/shadcn
   scale grows. The battle board (DOM + transforms over world units, measured

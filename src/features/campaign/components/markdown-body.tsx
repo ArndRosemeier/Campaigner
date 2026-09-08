@@ -18,6 +18,8 @@ export interface MarkdownBodyProps {
   onTextareaBlur?: (() => void) | undefined;
   /** Hides the section heading (module reader embeds its own labels). */
   hideHeading?: boolean | undefined;
+  /** Optional test id on the textarea (the part editor hosts sibling inputs). */
+  textareaTestId?: string | undefined;
 }
 
 /**
@@ -32,6 +34,7 @@ export function MarkdownBody({
   onOpenArtifact,
   onTextareaBlur,
   hideHeading = false,
+  textareaTestId,
 }: MarkdownBodyProps) {
   const [previewing, setPreviewing] = useState(false);
 
@@ -67,6 +70,7 @@ export function MarkdownBody({
           }}
           onBlur={onTextareaBlur}
           placeholder="Free-text content, written in Markdown…"
+          data-testid={textareaTestId}
           className="min-h-[240px] font-mono text-sm pointer-coarse:text-base"
         />
       )}

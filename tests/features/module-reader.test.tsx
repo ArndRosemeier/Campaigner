@@ -66,8 +66,10 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
   };
 });
 
-const { rewritePart, classifyEntityName, retrySpine } = await import('@/llm/moduleGen');
+const { rewritePart, classifyEntityName, retrySpine, generateMissingParts, runParts } = await import('@/llm/moduleGen');
 const rewriteMock = vi.mocked(rewritePart);
+const generateMissingPartsMock = vi.mocked(generateMissingParts);
+const runPartsMock = vi.mocked(runParts);
 const classifyEntityNameMock = vi.mocked(classifyEntityName);
 const retrySpineMock = vi.mocked(retrySpine);
 const { chat } = await import('@/llm/openrouter');
@@ -309,7 +311,7 @@ describe('ModuleReaderPage', () => {
     await user.click(within(part0).getByTestId('part-edit'));
 
     // The textarea opens prefilled with the part's markdown (save on blur).
-    const textarea = await within(part0).findByRole('textbox', {}, { timeout: 5_000 });
+    const textarea = await within(part0).findByTestId('part-draft', {}, { timeout: 5_000 });
     const edited =
       'The party climbs to the [[Old Tower]] at midnight. The vault door hums below the floor.';
     fireEvent.change(textarea, { target: { value: edited } });
@@ -357,6 +359,140 @@ describe('ModuleReaderPage', () => {
     await user.click(screen.getByTestId('part-rewrite'));
     const dialog2 = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
     await user.click(within(dialog2).getByRole('button', { name: 'Rewrite part' }));
+    expect(rewriteMock).toHaveBeenCalledTimes(1);
+    expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('edits with find/replace: counts, Enter navigation, case toggle, replace-one/all, save with edited:true', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Markdown: 'The lantern burns. A lantern gutters. LANTERN light.',
+    });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const part0 = await findPartSection(0);
+    await user.click(within(part0).getByTestId('part-edit'));
+
+    const editor = await within(part0).findByTestId('part-text-editor', {}, { timeout: 5_000 });
+    const findInput = within(editor).getByTestId('part-find-input');
+    await user.type(findInput, 'lantern');
+
+    // Case-insensitive default: all three casings match.
+    await waitFor(() => {
+      expect(within(editor).getByTestId('part-find-count')).toHaveTextContent('1 / 3');
+    });
+
+    // Enter advances to the next match, Shift+Enter retreats (ReaderSearch
+    // parity) — navigation moves the draft selection into view.
+    await user.keyboard('{Enter}');
+    expect(within(editor).getByTestId('part-find-count')).toHaveTextContent('2 / 3');
+    expect(document.activeElement?.getAttribute('data-testid')).toBe('part-draft');
+    await user.click(findInput);
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    expect(within(editor).getByTestId('part-find-count')).toHaveTextContent('1 / 3');
+
+    // The case-sensitive toggle narrows to the two lowercase hits.
+    await user.click(within(editor).getByTestId('part-case-toggle'));
+    await waitFor(() => {
+      expect(within(editor).getByTestId('part-find-count')).toHaveTextContent('1 / 2');
+    });
+
+    // Replace-one swaps the active (first) match.
+    await user.type(within(editor).getByTestId('part-replace-input'), 'lamp');
+    await user.click(within(editor).getByTestId('part-replace-one'));
+    await waitFor(() => {
+      expect(within(editor).getByTestId('part-draft')).toHaveValue(
+        'The lamp burns. A lantern gutters. LANTERN light.',
+      );
+    });
+    expect(within(editor).getByTestId('part-find-count')).toHaveTextContent('1 / 1');
+
+    // Back to case-insensitive: two matches left; replace-all swaps both.
+    await user.click(within(editor).getByTestId('part-case-toggle'));
+    await waitFor(() => {
+      expect(within(editor).getByTestId('part-find-count')).toHaveTextContent('1 / 2');
+    });
+    await user.click(within(editor).getByTestId('part-replace-all'));
+    await waitFor(() => {
+      expect(within(editor).getByTestId('part-draft')).toHaveValue(
+        'The lamp burns. A lamp gutters. lamp light.',
+      );
+    });
+    expect(within(editor).getByTestId('part-find-count')).toHaveTextContent('–');
+
+    // Explicit Save commits through the existing savePartEdit path.
+    await user.click(within(editor).getByTestId('part-edit-save'));
+    await waitFor(
+      async () => {
+        const row = await getModule(moduleId);
+        const part = row?.parts.find((entry) => entry.planIndex === 0);
+        expect(part?.markdown).toBe('The lamp burns. A lamp gutters. lamp light.');
+        expect(part?.edited).toBe(true);
+        expect(part?.status).toBe('ready');
+      },
+      { timeout: 10_000 },
+    );
+    expect(toastSuccessMock).toHaveBeenCalledWith('Part saved');
+    expect(await screen.findByTestId('part-body', {}, { timeout: 5_000 })).toBeInTheDocument();
+
+    // The hand-edit flow never touches generation (no regression pins).
+    expect(rewriteMock).not.toHaveBeenCalled();
+    expect(generateMissingPartsMock).not.toHaveBeenCalled();
+    expect(runPartsMock).not.toHaveBeenCalled();
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('cancels a part edit without touching the module row', async () => {
+    const user = userEvent.setup();
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const part0 = await findPartSection(0);
+    await user.click(within(part0).getByTestId('part-edit'));
+    const editor = await within(part0).findByTestId('part-text-editor', {}, { timeout: 5_000 });
+    const draft = within(editor).getByTestId('part-draft');
+    fireEvent.change(draft, { target: { value: 'discarded draft' } });
+    await user.click(within(editor).getByTestId('part-edit-cancel'));
+
+    // Edit mode exits, the rendered text is unchanged, the row is untouched.
+    await waitFor(() => {
+      expect(screen.getByTestId('part-body')).toBeInTheDocument();
+    });
+    const row = await getModule(moduleId);
+    expect(row?.parts.find((entry) => entry.planIndex === 0)?.edited).toBe(false);
+    expect(toastSuccessMock).not.toHaveBeenCalledWith('Part saved');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('trips the rewrite overwrite confirm after a find/replace toolbar edit', async () => {
+    const user = userEvent.setup();
+    const { campaign, campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    // A toolbar edit (not a blur-save) marks the part hand-edited…
+    const part0 = await findPartSection(0);
+    await user.click(within(part0).getByTestId('part-edit'));
+    const editor = await within(part0).findByTestId('part-text-editor', {}, { timeout: 5_000 });
+    fireEvent.change(within(editor).getByTestId('part-draft'), {
+      target: { value: 'Hand-edited through the find/replace toolbar.' },
+    });
+    await user.click(within(editor).getByTestId('part-edit-save'));
+    await waitFor(
+      async () => {
+        const row = await getModule(moduleId);
+        expect(row?.parts.find((entry) => entry.planIndex === 0)?.edited).toBe(true);
+      },
+      { timeout: 10_000 },
+    );
+
+    // …so the rewrite dialog warns before overwriting, exactly as after a
+    // blur-save (the confirm reads `edited` off the module row, and part
+    // markdown lives on the MODULE ROW — there is no artifact revision).
+    await user.click(screen.getByTestId('part-rewrite'));
+    const dialog = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('hand-edited');
+    await user.click(within(dialog).getByRole('button', { name: 'Rewrite part' }));
     expect(rewriteMock).toHaveBeenCalledTimes(1);
     expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');
     await flushAsyncUpdates();

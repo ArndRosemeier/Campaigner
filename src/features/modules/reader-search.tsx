@@ -19,8 +19,12 @@ interface TextMatch {
   offset: number;
 }
 
-/** Collects the matches of `needle` (case-insensitive) in document order. */
-function findMatches(container: HTMLElement, needle: string): TextMatch[] {
+/** Collects the matches of `needle` (case-insensitive) in document order.
+ * Exported for reuse by DOM-based find surfaces; the part-draft editor
+ * (`part-text-editor.tsx`) carries the string-offset counterpart
+ * (`findDraftMatches`, same non-overlapping loop semantics) because textarea
+ * content is not walkable DOM text. */
+export function findMatches(container: HTMLElement, needle: string): TextMatch[] {
   const matches: TextMatch[] = [];
   const lower = needle.toLowerCase();
   const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);

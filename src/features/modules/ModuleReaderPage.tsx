@@ -36,9 +36,9 @@ import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { useArtifacts, useCampaign, useGlobalArtifacts, useScopedArtifacts } from '@/features/campaign/hooks';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
-import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { useModule } from '@/features/modules/hooks';
 import { EntityPanel } from '@/features/modules/entity-panel';
+import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
@@ -239,6 +239,11 @@ export function ModuleReaderPage(): JSX.Element {
     } catch (error) {
       toastError('Could not save the part', error);
     }
+  }
+
+  /** Discards the edit draft — the module row is untouched, no `edited` flag. */
+  function cancelEditPart(): void {
+    setEditPartIndex(null);
   }
 
   function requestRewrite(planIndex: number): void {
@@ -560,7 +565,8 @@ export function ModuleReaderPage(): JSX.Element {
                       editing={editPartIndex === index}
                       editDraft={editDraft}
                       onEditDraftChange={setEditDraft}
-                      onEditBlur={() => void savePartEdit()}
+                      onEditSave={() => void savePartEdit()}
+                      onEditCancel={cancelEditPart}
                       onOpenArtifact={(artifact) => {
                         setPeekId(artifact.id);
                       }}
@@ -823,7 +829,8 @@ function PartBody({
   editing,
   editDraft,
   onEditDraftChange,
-  onEditBlur,
+  onEditSave,
+  onEditCancel,
   onOpenArtifact,
   onStub,
   onRetry,
@@ -838,7 +845,8 @@ function PartBody({
   editing: boolean;
   editDraft: string;
   onEditDraftChange: (value: string) => void;
-  onEditBlur: () => void;
+  onEditSave: () => void;
+  onEditCancel: () => void;
   onOpenArtifact: (artifact: AnyArtifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
   onRetry: () => void;
@@ -846,13 +854,15 @@ function PartBody({
 }): JSX.Element {
   if (editing) {
     return (
-      <MarkdownBody
+      <PartTextEditor
         value={editDraft}
         onChange={onEditDraftChange}
-        onTextareaBlur={onEditBlur}
-        hideHeading
+        onSave={onEditSave}
+        onCancel={onEditCancel}
         artifacts={artifacts}
         moduleId={moduleId}
+        onOpenArtifact={onOpenArtifact}
+        onStub={onStub}
       />
     );
   }
