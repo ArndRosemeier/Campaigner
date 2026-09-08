@@ -505,7 +505,7 @@ sequential.
 
 ### Post-generation automation (module row flags)
 
-The New Module dialog's "After the parts are written" grid persists three
+The New Module dialog's "After the parts are written" grid persists four
 flags on the module row (zod defaults keep old pass flags off):
 
 - `autoGenerateKinds: EntityKind[]` — per artifact type (npc, location,
@@ -524,6 +524,12 @@ flags on the module row (zod defaults keep old pass flags off):
   panel's "Generate encounter maps" button is unaffected either way. Batch
   artifacts are module-owned FROM BIRTH (the batch run carries
   `placementModuleId`), so the master switch applies to them too.
+- `autoGenerateMobImages: boolean` — after the parts pass, every
+  module-owned encounter's rulebook-cited roster mobs are enqueued on the
+  mob-portrait queue via the encounter editor's batch entry
+  (`enqueueMobPortraits`): one portrait per creature kind, canonically
+  cached, skip-if-imaged; enqueue is async (the dock carries progress).
+  Opt-in (off by default); needs image generation in Settings.
 
 Trigger: the ENGINE fires `runModulePostGeneration`
 (features/modules/post-generation.ts) — inside `approveSpineAndRun`
@@ -539,9 +545,9 @@ has `autoApproveSpine`). A single-part rewrite NEVER triggers it. Semantics:
 - Entity batches stay gated on `entityNamesNormalized` (fix-01): a failed
   normalization pass skips the batch step (its own failure is already loud
   with a Retry in the entity panel).
-- With image generation disabled in Settings, image/battlemap automation is
-  skipped with ONE loud toast each — never a wall of per-entity failures,
-  never a silent drop.
+- With image generation disabled in Settings, image/battlemap/mob-portrait
+  automation is skipped with ONE loud toast each — never a wall of
+  per-entity failures, never a silent drop.
 - Failures are loud per job (toasts + failed runs in the Runs tab) and never
   stop the remaining automation; one `toastSuccess` summarizes what ran.
 

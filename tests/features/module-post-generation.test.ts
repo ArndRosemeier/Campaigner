@@ -23,11 +23,12 @@ vi.mock('@/llm/openrouter', () => ({
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
-// The automation hands its results to the two background queues — replaced
-// with spies so the pumps never run inside this test.
-const { enqueueImageJobs, enqueueEncounterMaps } = vi.hoisted(() => ({
+// The automation hands its results to the background queues — replaced with
+// spies so the pumps never run inside this test.
+const { enqueueImageJobs, enqueueEncounterMaps, enqueueMobPortraits } = vi.hoisted(() => ({
   enqueueImageJobs: vi.fn(),
   enqueueEncounterMaps: vi.fn(),
+  enqueueMobPortraits: vi.fn(),
 }));
 
 vi.mock('@/features/modules/entity-image-queue', () => ({
@@ -37,6 +38,8 @@ vi.mock('@/features/modules/entity-image-queue', () => ({
 vi.mock('@/features/modules/encounter-map-queue', () => ({
   useEncounterMapQueue: { getState: () => ({ enqueue: enqueueEncounterMaps }) },
 }));
+
+vi.mock('@/features/campaign/mob-portrait-queue', () => ({ enqueueMobPortraits }));
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
@@ -77,6 +80,54 @@ const npcStatblock = {
 };
 
 const npcData = { appearance: '', personality: '', statBlock: null };
+
+const CHUNK_ID = '00000000-0000-4000-8000-00000000c001';
+
+/** A rulebook-cited roster entry (mobArtifactId when the row is stamped). */
+function rulebookEntry(mobArtifactId?: string) {
+  return {
+    name: 'Goblin',
+    count: 2,
+    notes: '',
+    treasure: '',
+    source: {
+      type: 'rulebook' as const,
+      chunkId: CHUNK_ID,
+      ...(mobArtifactId === undefined ? {} : { mobArtifactId }),
+    },
+  };
+}
+
+/** A module-owned encounter artifact carrying the given roster. */
+async function seedEncounter(
+  campaignId: string,
+  moduleId: string,
+  monsters: ReturnType<typeof rulebookEntry>[],
+  name = 'Ash Gate',
+) {
+  return createArtifact({
+    campaignId,
+    moduleId,
+    kind: 'encounter',
+    name,
+    summary: '',
+    body: '',
+    data: {
+      difficulty: 'medium',
+      levelHint: '3',
+      monsters,
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+    },
+  });
+}
 
 async function seedModule(
   campaignId: string,
@@ -136,6 +187,7 @@ describe('runModulePostGeneration', () => {
     toastSuccessMock.mockReset();
     enqueueImageJobs.mockReset();
     enqueueEncounterMaps.mockReset();
+    enqueueMobPortraits.mockReset();
     chainRunner.reset();
     useProgressStore.getState().reset();
   });
@@ -283,6 +335,125 @@ describe('runModulePostGeneration', () => {
     ]);
   }, 30_000);
 
+  it('enqueues mob portraits for module-owned encounters when configured', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await seedModule(campaign.id, {
+      autoGenerateKinds: [],
+      autoGenerateMobImages: true,
+    });
+    const encounter = await seedEncounter(campaign.id, module.id, [rulebookEntry()]);
+    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    enqueueMobPortraits.mockResolvedValue({ enqueued: 2, alreadyImaged: [] });
+
+    await runModulePostGeneration(module.id, campaign);
+
+    // The batch entry is called per encounter with the encounter itself.
+    expect(enqueueMobPortraits).toHaveBeenCalledTimes(1);
+    expect(enqueueMobPortraits.mock.calls[0]?.[0]).toMatchObject({
+      id: encounter.id,
+      kind: 'encounter',
+    });
+    expect(enqueueMobPortraits.mock.calls[0]?.[1]).toBe(campaign.id);
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      expect.stringContaining('2 mob portraits queued'),
+    );
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it('skips encounters whose cited mobs are all already imaged', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await seedModule(campaign.id, {
+      autoGenerateKinds: [],
+      autoGenerateMobImages: true,
+    });
+    // Campaign-level mob artifact (mobArtifacts are not module-owned) that
+    // the encounter's roster entry already points at, cover included.
+    const mob = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Goblin',
+      summary: '',
+      body: '',
+      coverImageId: '00000000-0000-4000-8000-00000000a001',
+      data: npcData,
+    });
+    await seedEncounter(campaign.id, module.id, [rulebookEntry(mob.id)]);
+    await seedEncounter(campaign.id, module.id, [rulebookEntry()], 'Flooded Stair');
+    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    enqueueMobPortraits.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
+
+    await runModulePostGeneration(module.id, campaign);
+
+    expect(enqueueMobPortraits).toHaveBeenCalledTimes(1);
+    expect(enqueueMobPortraits.mock.calls[0]?.[0]).toMatchObject({ name: 'Flooded Stair' });
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30_000);
+
+  it('skips mob portrait automation loudly when image generation is disabled', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await seedModule(campaign.id, {
+      autoGenerateKinds: [],
+      autoGenerateMobImages: true,
+    });
+    await seedEncounter(campaign.id, module.id, [rulebookEntry()]);
+    // defaultSettings has imagesEnabled: false.
+
+    await runModulePostGeneration(module.id, campaign);
+
+    expect(enqueueMobPortraits).not.toHaveBeenCalled();
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Auto mob portrait generation skipped — image generation is disabled in Settings',
+    );
+  }, 30_000);
+
+  it('keeps enqueueing portraits when one encounter fails loudly', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await seedModule(campaign.id, {
+      autoGenerateKinds: [],
+      autoGenerateMobImages: true,
+    });
+    await seedEncounter(campaign.id, module.id, [rulebookEntry()]);
+    await seedEncounter(campaign.id, module.id, [rulebookEntry()], 'Flooded Stair');
+    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+    // Sync implementation: the throw still rejects the awaited call, the
+    // plain return still satisfies it — no fake await needed.
+    enqueueMobPortraits.mockImplementation((encounter: { name: string }) => {
+      if (encounter.name === 'Ash Gate') {
+        throw new Error('the mob artifact no longer exists — regenerate the encounter');
+      }
+      return Promise.resolve({ enqueued: 1, alreadyImaged: [] });
+    });
+
+    await runModulePostGeneration(module.id, campaign);
+
+    // The failed encounter never stops the remaining automation.
+    expect(enqueueMobPortraits).toHaveBeenCalledTimes(2);
+    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    const failureToast = toastErrorMock.mock.calls[0]?.[0];
+    expect(failureToast).toContain('1 of 2 encounters failed to enqueue mob portraits');
+    expect(failureToast).toContain('"Ash Gate"');
+    expect(toastSuccessMock).toHaveBeenCalledWith(
+      expect.stringContaining('1 mob portrait queued'),
+    );
+  }, 30_000);
+
+  it('skips the portrait step silently-free when no encounter roster cites rulebook creatures', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await seedModule(campaign.id, {
+      autoGenerateKinds: [],
+      autoGenerateMobImages: true,
+    });
+    await seedEncounter(campaign.id, module.id, []);
+    await saveSettings({ ...defaultSettings(), imagesEnabled: false });
+
+    await runModulePostGeneration(module.id, campaign);
+
+    // Nothing to enqueue and nothing skipped: no false "disabled" toast.
+    expect(enqueueMobPortraits).not.toHaveBeenCalled();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+  }, 30_000);
+
   it('skips entity batches when the name-normalization pass has not succeeded', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await seedModule(campaign.id, { entityNamesNormalized: false });
@@ -299,6 +470,7 @@ describe('runModulePostGeneration', () => {
       autoGenerateKinds: [],
       autoImageKinds: [],
       autoGenerateBattlemaps: false,
+      autoGenerateMobImages: false,
     });
 
     await runModulePostGeneration(module.id, campaign);
@@ -306,6 +478,7 @@ describe('runModulePostGeneration', () => {
     expect(chatMock).not.toHaveBeenCalled();
     expect(enqueueImageJobs).not.toHaveBeenCalled();
     expect(enqueueEncounterMaps).not.toHaveBeenCalled();
+    expect(enqueueMobPortraits).not.toHaveBeenCalled();
   }, 30_000);
 
   it('is a no-op while the module is still generating', async () => {

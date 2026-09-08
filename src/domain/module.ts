@@ -191,6 +191,11 @@ export const moduleSchema = z
     autoImageKinds: z.array(z.enum(ENTITY_KINDS)).default([]),
     /** Whether encounter battlemaps should be generated automatically. */
     autoGenerateBattlemaps: z.boolean().default(false),
+    /** Whether each module-owned encounter's roster mob portraits should be
+     * enqueued automatically after the parts pass (the encounter editor's
+     * "Generate mob portraits" batch: one portrait per rulebook-cited
+     * creature kind, canonically cached, skip-if-imaged). */
+    autoGenerateMobImages: z.boolean().default(false),
     /** Opt-in unattended generation: the pass-0 spine is approved as-is and
      * pass 1 starts immediately — the spine checkpoint never stops the flow. */
     autoApproveSpine: z.boolean().default(false),
@@ -225,6 +230,7 @@ export interface NewModule {
   autoGenerateKinds?: EntityKind[];
   autoImageKinds?: EntityKind[];
   autoGenerateBattlemaps?: boolean;
+  autoGenerateMobImages?: boolean;
   /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
   autoApproveSpine?: boolean;
 }
@@ -257,6 +263,7 @@ export function createModule(input: NewModule): Module {
     autoGenerateKinds: input.autoGenerateKinds ?? [],
     autoImageKinds: input.autoImageKinds ?? [],
     autoGenerateBattlemaps: input.autoGenerateBattlemaps ?? false,
+    autoGenerateMobImages: input.autoGenerateMobImages ?? false,
     autoApproveSpine: input.autoApproveSpine ?? false,
   });
 }

@@ -98,6 +98,28 @@ describe('moduleSchema.includePriorModules', () => {
   });
 });
 
+describe('moduleSchema.autoGenerateMobImages', () => {
+  const base = {
+    campaignId: '00000000-0000-4000-8000-0000000000c1',
+    title: 'Test Module',
+    concept: '',
+    levelMin: 1,
+    levelMax: 3,
+    sizeDial: 'standard' as const,
+  };
+
+  it('defaults to false (opt-in portrait automation) and honors the explicit flag', () => {
+    expect(createModule(base).autoGenerateMobImages).toBe(false);
+    expect(createModule({ ...base, autoGenerateMobImages: true }).autoGenerateMobImages).toBe(true);
+  });
+
+  it('moduleSchema.parse fills the default for rows written before the flag', () => {
+    const module = createModule(base);
+    const parsed = moduleSchema.parse({ ...module, autoGenerateMobImages: undefined });
+    expect(parsed.autoGenerateMobImages).toBe(false);
+  });
+});
+
 describe('entityKindFor', () => {
   const records: ModuleEntityKind[] = [
     { name: 'Harbormaster Ilse', kind: 'npc', absorbed: [], wants: [], conflictKind: null },

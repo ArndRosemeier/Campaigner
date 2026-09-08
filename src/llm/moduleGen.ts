@@ -1800,6 +1800,8 @@ export async function createModuleAndRun(
     autoGenerateKinds?: EntityKind[];
     autoImageKinds?: EntityKind[];
     autoGenerateBattlemaps?: boolean;
+    /** Opt-in unattended mob portraits for the module's encounters (08). */
+    autoGenerateMobImages?: boolean;
     /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
     autoApproveSpine?: boolean;
   },

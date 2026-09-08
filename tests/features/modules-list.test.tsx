@@ -273,19 +273,22 @@ describe('ModulesListPage', () => {
     const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
 
     // Default: the pass automations off, battlemaps ON (owner request:
-    // automated encounters map automatically with the campaign's defaults).
+    // automated encounters map automatically with the campaign's defaults),
+    // mob portraits off (opt-in).
     expect(within(dialog).getByTestId('auto-generate-npc')).not.toBeChecked();
     expect(within(dialog).getByTestId('auto-image-npc')).not.toBeChecked();
     expect(within(dialog).getByTestId('auto-spine')).not.toBeChecked();
     expect(within(dialog).getByTestId('auto-battlemaps')).toBeChecked();
+    expect(within(dialog).getByTestId('auto-mob-images')).not.toBeChecked();
 
-    // Tick: unattended spine, auto-generate npcs + locations, auto-image npcs;
-    // untick battlemaps to keep this module's maps manual.
+    // Tick: unattended spine, auto-generate npcs + locations, auto-image npcs
+    // + mob portraits; untick battlemaps to keep this module's maps manual.
     await user.click(within(dialog).getByTestId('auto-spine'));
     await user.click(within(dialog).getByTestId('auto-generate-npc'));
     await user.click(within(dialog).getByTestId('auto-generate-location'));
     await user.click(within(dialog).getByTestId('auto-image-npc'));
     await user.click(within(dialog).getByTestId('auto-battlemaps'));
+    await user.click(within(dialog).getByTestId('auto-mob-images'));
 
     await user.type(within(dialog).getByLabelText('Concept'), 'Automated chapter.');
     createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
@@ -300,6 +303,7 @@ describe('ModulesListPage', () => {
         autoGenerateKinds: ['npc', 'location'],
         autoImageKinds: ['npc'],
         autoGenerateBattlemaps: false,
+        autoGenerateMobImages: true,
       }),
     );
     await flushAsyncUpdates();

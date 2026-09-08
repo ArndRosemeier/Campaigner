@@ -1,19 +1,22 @@
-import type { Campaign, EntityKind, Id, Module } from '@/domain';
+import type { AnyArtifact, Artifact, Campaign, EntityKind, Id, Module } from '@/domain';
 import { ENTITY_KINDS, entityKindFor, moduleDocumentText } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
+import { enqueueMobPortraits } from '@/features/campaign/mob-portrait-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { runEntityBatch } from '@/features/modules/entity-batch';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
+import { errorMessage } from '@/lib/errors';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * Post-generation automation (module row: `autoGenerateKinds`,
- * `autoImageKinds`, `autoGenerateBattlemaps`): after a FULL parts pass has
- * landed (spine approval or "generate missing parts" — never a single-part
- * rewrite), the module can finish its own entity workflow unattended:
+ * `autoImageKinds`, `autoGenerateBattlemaps`, `autoGenerateMobImages`): after
+ * a FULL parts pass has landed (spine approval or "generate missing parts" —
+ * never a single-part rewrite), the module can finish its own entity workflow
+ * unattended:
  *
  * 1. **Auto-generate artifacts** — for every configured kind, the unresolved
  *    wiki-link entities of that kind are batch-detailed through the same
@@ -26,12 +29,19 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * 3. **Auto-generate battlemaps** — module-owned encounters without a
  *    layout/map are enqueued in the unattended encounter-map queue (docs/11
  *    §Module generation integration; auto autonomy, no pick pause).
+ * 4. **Auto-generate mob portraits** — every module-owned encounter's
+ *    rulebook-cited roster mobs are enqueued on the mob-portrait queue
+ *    through the encounter editor's batch entry (`enqueueMobPortraits`):
+ *    one cover portrait per creature kind, canonically cached. Enqueue is
+ *    the contract — the queue carries the progress dock and the loud
+ *    per-mob failures; this sweep never awaits portrait completion.
  *
  * Everything is idempotent: batches target only UNRESOLVED entities, the
- * image queue skips artifacts that already have an image, and the map queue
- * skips encounters that already carry a map — re-running a full pass can
- * never double-generate. Failures are loud per job (toasts + the Runs tab)
- * and never stop the remaining automation.
+ * image queue skips artifacts that already have an image, the map queue
+ * skips encounters that already carry a map, and the portrait batch
+ * enumerates away already-imaged mobs — re-running a full pass can never
+ * double-generate. Failures are loud per job (toasts + the Runs tab) and
+ * never stop the remaining automation.
  */
 
 /** Configured kinds in the domain's stable order (encounters last). */
@@ -72,6 +82,37 @@ function encountersNeedingMaps(
 }
 
 /**
+ * Portrait targets: module-owned encounters whose roster still carries
+ * rulebook-cited creature work — an entry with no stamped `mobArtifactId`
+ * (the batch resolves or creates it) or one whose mob artifact is still
+ * cover-less. Cheap over the same artifact snapshot the other steps use;
+ * an unstamped entry whose campaign-wide mob artifact already exists imaged
+ * may over-notify the disabled skip below (errs loud, never silent). The
+ * queue's own one-per-creature-kind dedupe + skip-if-imaged make an enqueue
+ * re-run a no-op.
+ */
+function encountersNeedingMobPortraits(
+  module: Module,
+  artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
+): (AnyArtifact & { kind: 'encounter' })[] {
+  return artifacts.filter(
+    // listArtifactsByCampaign yields OWNED rows only (never global), so the
+    // owned encounter variant is what the predicate narrows to; it feeds the
+    // batch entry's `AnyArtifact & { kind: 'encounter' }` parameter as-is.
+    (artifact): artifact is Artifact & { kind: 'encounter' } => {
+      if (artifact.kind !== 'encounter' || artifact.moduleId !== module.id) return false;
+      return artifact.data.monsters.some((entry) => {
+        if (entry.source.type !== 'rulebook') return false;
+        const stamped = entry.source.mobArtifactId;
+        if (stamped === undefined) return true;
+        const mob = artifacts.find((candidate) => candidate.id === stamped);
+        return mob === undefined || (mob.coverImageId === null && mob.imageIds.length === 0);
+      });
+    },
+  );
+}
+
+/**
  * Runs the configured automation for one module. Fire-and-forget safe: an
  * unexpected throw is toasted, never left as an unhandled rejection. A
  * no-op when the module has nothing configured (or was deleted mid-run).
@@ -81,8 +122,14 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
     const module = await getModule(moduleId);
     if (module === undefined) return;
     if (module.status !== 'ready') return; // automation follows a COMPLETED parts pass
-    const { autoGenerateKinds, autoImageKinds, autoGenerateBattlemaps } = module;
-    if (autoGenerateKinds.length === 0 && autoImageKinds.length === 0 && !autoGenerateBattlemaps) {
+    const { autoGenerateKinds, autoImageKinds, autoGenerateBattlemaps, autoGenerateMobImages } =
+      module;
+    if (
+      autoGenerateKinds.length === 0 &&
+      autoImageKinds.length === 0 &&
+      !autoGenerateBattlemaps &&
+      !autoGenerateMobImages
+    ) {
       return;
     }
 
@@ -155,6 +202,40 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
       useEncounterMapQueue.getState().enqueue(mapJobs);
     }
 
+    // 4) Mob portraits — the encounter editor's "Generate mob portraits"
+    // batch entry per module-owned encounter. Enqueued-but-async is the
+    // contract: the portrait queue owns progress (dock) and the loud
+    // per-mob failure path; the sweep NEVER awaits portrait completion.
+    const portraitTargets = module.autoGenerateMobImages
+      ? encountersNeedingMobPortraits(module, artifacts)
+      : [];
+    let portraitJobs = 0;
+    if (portraitTargets.length > 0 && !settings.imagesEnabled) {
+      // One loud skip for the configured automation (never a silent drop,
+      // never a wall of per-encounter errors) — same pattern as images
+      // and battlemaps above.
+      toastError(
+        'Auto mob portrait generation skipped — image generation is disabled in Settings',
+      );
+    } else {
+      // One encounter's failure never kills the sweep: the rest still
+      // enqueue, and the failures aggregate into ONE loud toast.
+      const failedPortraits: string[] = [];
+      for (const encounter of portraitTargets) {
+        try {
+          portraitJobs += (await enqueueMobPortraits(encounter, module.campaignId)).enqueued;
+        } catch (error) {
+          failedPortraits.push(`"${encounter.name}" — ${errorMessage(error)}`);
+        }
+      }
+      if (failedPortraits.length > 0) {
+        toastError(
+          `${String(failedPortraits.length)} of ${String(portraitTargets.length)} encounters ` +
+            `failed to enqueue mob portraits (${failedPortraits.join('; ')})`,
+        );
+      }
+    }
+
     // One honest completion signal for work that lands minutes after the
     // parts finished (the docks carry the live progress of each queue).
     const parts = [
@@ -164,6 +245,9 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
         : null,
       mapJobs.length > 0 && settings.imagesEnabled
         ? `${String(mapJobs.length)} battlemap${mapJobs.length === 1 ? '' : 's'} queued`
+        : null,
+      portraitJobs > 0
+        ? `${String(portraitJobs)} mob portrait${portraitJobs === 1 ? '' : 's'} queued`
         : null,
     ].filter((part) => part !== null);
     if (parts.length > 0) {

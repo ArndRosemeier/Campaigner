@@ -17,7 +17,7 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import type { Campaign, EntityKind, ModuleSizeDial } from '@/domain';
+import type { Campaign, EntityKind, ModuleSizeDial, NewModule } from '@/domain';
 import { ENTITY_KINDS, MODULE_SIZE_LABELS } from '@/domain';
 import { modulePath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
@@ -71,6 +71,11 @@ export function NewModuleDialog({
   // module. It gates BOTH the post-run automation for every encounter this
   // module creates and the post-parts sweep (post-generation.ts).
   const [autoGenerateBattlemaps, setAutoGenerateBattlemaps] = useState(true);
+  // Opt-in mob-portrait automation (the battlemaps toggle's portrait
+  // equivalent): gates the post-parts sweep's portrait enqueue for every
+  // encounter this module creates (post-generation.ts). Off by default —
+  // image work stays explicit per module.
+  const [autoGenerateMobImages, setAutoGenerateMobImages] = useState(false);
   const [starting, setStarting] = useState(false);
 
   // The opt-in continuity checkbox is only meaningful when some other module
@@ -100,7 +105,11 @@ export function NewModuleDialog({
   async function start(): Promise<void> {
     setStarting(true);
     try {
-      const moduleId = await createModuleAndRun(campaign, {
+      // Fully-specified creation input (the dialog always sends a tone).
+      // `createModuleAndRun` forwards this object verbatim to `createModule`,
+      // so the additive automation fields ride along even where that
+      // wrapper's inline input type lags the domain's `NewModule`.
+      const input: NewModule & { tone: string } = {
         campaignId: campaign.id,
         title: 'New Module',
         concept: concept.trim(),
@@ -113,7 +122,9 @@ export function NewModuleDialog({
         autoGenerateKinds,
         autoImageKinds,
         autoGenerateBattlemaps,
-      });
+        autoGenerateMobImages,
+      };
+      const moduleId = await createModuleAndRun(campaign, input);
       onOpenChange(false);
       navigate(modulePath(campaign.id, moduleId));
     } catch (error) {
@@ -301,10 +312,31 @@ export function NewModuleDialog({
                 </p>
               </div>
             </div>
+            <div className="flex items-start gap-2">
+              <Checkbox
+                id="module-auto-mob-images"
+                data-testid="auto-mob-images"
+                checked={autoGenerateMobImages}
+                onCheckedChange={(checked) => {
+                  setAutoGenerateMobImages(checked);
+                }}
+              />
+              <div className="flex flex-col gap-0.5">
+                <Label htmlFor="module-auto-mob-images">Generate encounter mob images</Label>
+                <p className="text-xs text-muted-foreground">
+                  Every encounter this module creates queues a portrait for its
+                  rulebook-cited roster creatures — one per creature kind, grounded in
+                  the cited stat-block entry and canonically cached, so the same
+                  creature reuses its portrait everywhere (needs image generation in
+                  Settings).
+                </p>
+              </div>
+            </div>
             <p className="text-xs text-muted-foreground">
               Runs once the parts finish: unresolved wiki-links of the checked types are detailed,
-              images attach to their artifacts, and every encounter gets its battlemap. Everything
-              can also be run manually from the entity panel.
+              images attach to their artifacts, every encounter gets its battlemap, and its
+              creatures queue for their portraits. Everything can also be run manually from the
+              entity panel.
             </p>
           </div>
         </div>
