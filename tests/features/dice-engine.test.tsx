@@ -191,7 +191,7 @@ describe('useDiceEngine', () => {
       currentEngine().ensureStarted();
       await flushTicks();
     });
-    const rolls = await currentEngine().rollDice(['2d6', '1d%']);
+    const rolls = await currentEngine().rollDice(['2d6', '1d100']);
     expect(rolls).toEqual([{ value: 4, sides: 6 }]);
     expect(lastInstance().config.container).toMatch(/^#dice-stage-\d+$/);
     currentEngine().clearDice();

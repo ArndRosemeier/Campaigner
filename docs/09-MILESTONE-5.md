@@ -459,7 +459,11 @@ could see.*
   (inline status + toast + Retry; dice rolls blocked, flat steppers and
   modifier-only rolls unaffected; never a silent 2D degradation). The last
   rolled tray persists as a user preference (`dice.lastTray`); player view
-  renders neither the roll controls nor the roller.*
+  renders neither the roll controls nor the roller. Amended 2026-09-09:
+  *percentile dice roll engine-side as numeric `Nd100` (never `Nd%`, which
+  upstream parses to a lone tens die) so the engine throws the tens+ones
+  pair and settles one combined 1–100 result per die with 00+0 counting as
+  100 — `1d%` stays the chip/summary/log name only.*
 
 **Parking lot (not scheduled):**
 

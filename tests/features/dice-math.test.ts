@@ -40,9 +40,13 @@ describe('buildNotation', () => {
     ]);
   });
 
-  it('appends percentile dice in STANDARD_DICE order', () => {
-    expect(buildNotation([die(100, 'p'), die(6, 'a'), die(100, 'q')])).toEqual(['1d6', '2d%']);
-    expect(buildNotation([die(100, 'p')])).toEqual(['1d%']);
+  it('sends percentile dice as numeric Nd100 so the engine throws the tens/ones pair', () => {
+    expect(buildNotation([die(100, 'p'), die(6, 'a'), die(100, 'q')])).toEqual(['1d6', '2d100']);
+    expect(buildNotation([die(100, 'p')])).toEqual(['1d100']);
+  });
+
+  it('keeps plain d10s grouped apart from percentile dice in engine notation', () => {
+    expect(buildNotation([die(10, 't'), die(100, 'p'), die(10, 'o')])).toEqual(['2d10', '1d100']);
   });
 
   it('returns an empty notation for an empty tray', () => {
@@ -78,7 +82,7 @@ describe('percentile handling', () => {
     expect(countPercentileDice([die(6, 'a')])).toBe(0);
   });
 
-  it('fixes a percentile face of 0 up to 100', () => {
+  it('fixes a combined percentile result of 0 (00+0) up to 100', () => {
     expect(percentileFaceTotal(0)).toBe(100);
     expect(percentileFaceTotal(40)).toBe(40);
   });
@@ -93,18 +97,33 @@ describe('sumRollTotal', () => {
     expect(sumRollTotal([{ value: 4, sides: 6 }], -2, 0)).toBe(2);
   });
 
-  it('fixes percentile zeros up to 100 and sums them with other dice', () => {
+  it('sums engine-combined percentile results (tens+ones fused per die) with other dice', () => {
     expect(
       sumRollTotal(
         [
           { value: 0, sides: 100 },
-          { value: 60, sides: 100 },
+          { value: 76, sides: 100 },
           { value: 5, sides: 6 },
         ],
         1,
         2,
       ),
-    ).toBe(166);
+    ).toBe(182);
+  });
+
+  it('never confuses plain d10 results with percentile results in a mixed tray', () => {
+    // Tray [d%, d10]: the d100 result is the fused tens+ones pair, the d10
+    // result is a standalone die — sides disambiguate, no positional pairing.
+    expect(
+      sumRollTotal(
+        [
+          { value: 70, sides: 100 },
+          { value: 10, sides: 10 },
+        ],
+        0,
+        1,
+      ),
+    ).toBe(80);
   });
 
   it('accepts string sides from the engine response', () => {

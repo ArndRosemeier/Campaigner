@@ -20,6 +20,7 @@ const h = vi.hoisted(() => {
     initImpl: undefined as undefined | (() => Promise<unknown>),
     rollImpl: undefined as undefined | (() => Promise<unknown>),
     instances: [] as { cleared: number }[],
+    rollNotations: [] as unknown[],
   };
   return state;
 });
@@ -35,7 +36,8 @@ vi.mock('@3d-dice/dice-box', () => ({
     init(): Promise<unknown> {
       return h.initImpl === undefined ? Promise.resolve(this) : h.initImpl();
     }
-    roll(): Promise<unknown> {
+    roll(notation: unknown): Promise<unknown> {
+      h.rollNotations.push(notation);
       return h.rollImpl === undefined
         ? Promise.resolve([
             { value: 4, sides: 6 },
@@ -90,6 +92,7 @@ beforeEach(() => {
   h.initImpl = undefined;
   h.rollImpl = undefined;
   h.instances.length = 0;
+  h.rollNotations.length = 0;
   toastError.mockClear();
 });
 
@@ -224,6 +227,25 @@ describe('DiceRoller', () => {
     await waitFor(() => {
       expect(onResult).toHaveBeenCalledWith({ total: 100, summary: '1d%', perDie: [0] });
     });
+  });
+
+  it('sends a d% tray to the engine as numeric 1d100 so the tens/ones pair lands', async () => {
+    // `1d%` parses upstream to a lone tens die; numeric `1d100` throws the
+    // pair and settles one combined result. The UI summary keeps the `1d%` name.
+    h.rollImpl = () => Promise.resolve([{ value: 76, sides: 100 }]);
+    const onResult = vi.fn();
+    const user = userEvent.setup();
+    await renderRoller({ onResult });
+    await addDice(['d%']);
+    const rollButton = screen.getByRole('button', { name: 'Roll' });
+    await waitFor(() => {
+      expect(rollButton).toBeEnabled();
+    });
+    await user.click(rollButton);
+    await waitFor(() => {
+      expect(onResult).toHaveBeenCalledWith({ total: 76, summary: '1d%', perDie: [76] });
+    });
+    expect(h.rollNotations).toEqual([['1d100']]);
   });
 
   it('fails loudly on a roll error: picker reopens with the tray intact and the toast fires', async () => {
