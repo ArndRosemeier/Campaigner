@@ -293,15 +293,15 @@ describe('route smoke sweep', () => {
     expect(screen.getByTestId('ui-scale')).toHaveTextContent('100%');
     expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1');
 
-    // Exactly the four spec steps, in order.
+    // Exactly the six spec steps, in order.
     await user.click(screen.getByTestId('ui-scale'));
     const options = await screen.findAllByRole('option');
-    expect(options.map((option) => option.textContent)).toEqual(['90%', '100%', '110%', '125%']);
+    expect(options.map((option) => option.textContent)).toEqual(['90%', '100%', '110%', '125%', '150%', '200%']);
 
-    // Selecting 125% applies the factor to the document root (useUiScaleSync).
-    await user.click(screen.getByRole('option', { name: '125%' }));
-    expect(useUiScaleStore.getState().uiScale).toBe(1.25);
-    expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('1.25');
+    // Selecting 200% applies the factor to the document root (useUiScaleSync).
+    await user.click(screen.getByRole('option', { name: '200%' }));
+    expect(useUiScaleStore.getState().uiScale).toBe(2);
+    expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('2');
   });
 
   it('unknown routes render the not-found page', () => {

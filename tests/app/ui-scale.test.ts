@@ -63,8 +63,8 @@ describe('uiScale store', () => {
     expect(JSON.parse(raw)).toMatchObject({ state: { uiScale: 0.9 }, version: 0 });
   });
 
-  it('declares exactly the four spec steps', () => {
-    expect([...UI_SCALES]).toEqual([0.9, 1, 1.1, 1.25]);
+  it('declares exactly the six spec steps', () => {
+    expect([...UI_SCALES]).toEqual([0.9, 1, 1.1, 1.25, 1.5, 2]);
   });
 
   it('survives Delete-all-data next to the theme (PRESERVED_KEYS)', async () => {

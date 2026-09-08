@@ -19,6 +19,8 @@ const UI_SCALE_LABELS: Record<UiScale, string> = {
   1: '100%',
   1.1: '110%',
   1.25: '125%',
+  1.5: '150%',
+  2: '200%',
 };
 
 /**

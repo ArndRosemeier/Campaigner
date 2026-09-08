@@ -13,7 +13,7 @@ import { zodPersistStorage } from '@/lib/persisted';
  * stage and PDF viewer (docs/18 §2.3). Device display preference — persisted
  * in localStorage next to the theme (theme precedent), never in the data DB.
  */
-export const UI_SCALES = [0.9, 1, 1.1, 1.25] as const;
+export const UI_SCALES = [0.9, 1, 1.1, 1.25, 1.5, 2] as const;
 
 export type UiScale = (typeof UI_SCALES)[number];
 
