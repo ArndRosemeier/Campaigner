@@ -11,11 +11,12 @@ import {
   PlayIcon,
   RefreshCwIcon,
   RotateCcwIcon,
+  SquarePenIcon,
   SwordsIcon,
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { artifactPath, battlePath, boardPath, modulesPath } from '@/app/routes';
+import { artifactPath, battlePath, boardPath, canvasPath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -423,6 +424,18 @@ export function ModuleReaderPage(): JSX.Element {
               >
                 <NetworkIcon aria-hidden data-icon="inline-start" />
                 Board
+              </Button>
+              {/* Per-part document canvas (08 §Module canvas) — the module
+                  child surface for co-authoring ONE part beside the board. */}
+              <Button
+                variant="outline"
+                size="xs"
+                data-testid="canvas-header-link"
+                render={<Link to={canvasPath(campaignId, moduleId)} />}
+                nativeButton={false}
+              >
+                <SquarePenIcon aria-hidden data-icon="inline-start" />
+                Canvas
               </Button>
               <Button
                 variant="ghost"

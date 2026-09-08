@@ -21,6 +21,8 @@ export const ROUTES = {
   /** Whole-module board for one module (08 §Module board) — the module's
    * spatial overview. */
   board: '/c/:campaignId/m/:moduleId/board',
+  /** Document co-authoring canvas for ONE module part (08 §Module canvas). */
+  canvas: '/c/:campaignId/m/:moduleId/canvas',
   /** Deliverable builder for module PDFs (M3-D). */
   deliverables: '/c/:campaignId/deliverables',
   /** Module list (M4). */
@@ -67,6 +69,33 @@ export function boardPath(
 ): `/c/${string}/m/${string}/board${string}` {
   const hash = nodeKey === undefined ? '' : `#node-${encodeURIComponent(nodeKey)}`;
   return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/board${hash}`;
+}
+
+/**
+ * The canvas part selector target: a part's `planIndex`, or `'premise'` for
+ * the spine premise (read-only scope in canvas v1).
+ */
+export type CanvasPartParam = number | 'premise';
+
+/** Serializes the part selector target for the `?part=` query parameter. */
+export function canvasPartParam(part: CanvasPartParam): string {
+  return part === 'premise' ? 'premise' : String(part);
+}
+
+/**
+ * Path of the per-part document canvas (08 §Module canvas). An optional
+ * part target becomes a `?part=<planIndex|premise>` query parameter the
+ * page opens on (`#part-<n>` hashes are honored on load too — the reader's
+ * deep-link convention).
+ */
+export function canvasPath(
+  campaignId: string,
+  moduleId: string,
+  part?: CanvasPartParam,
+): `/c/${string}/m/${string}/canvas${string}` {
+  const query =
+    part === undefined ? '' : `?part=${encodeURIComponent(canvasPartParam(part))}`;
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/canvas${query}`;
 }
 
 /** Path of the deliverable builder for a given campaign (M3-D). */
@@ -124,6 +153,7 @@ export function campaignIdFromPath(pathname: string): string | undefined {
     matchPath(ROUTES.graph, pathname)?.params.campaignId ??
     matchPath(ROUTES.battle, pathname)?.params.campaignId ??
     matchPath(ROUTES.board, pathname)?.params.campaignId ??
+    matchPath(ROUTES.canvas, pathname)?.params.campaignId ??
     matchPath(ROUTES.deliverables, pathname)?.params.campaignId ??
     matchPath(ROUTES.modules, pathname)?.params.campaignId ??
     matchPath(ROUTES.module, pathname)?.params.campaignId ??

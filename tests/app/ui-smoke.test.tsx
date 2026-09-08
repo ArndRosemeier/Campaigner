@@ -7,6 +7,7 @@ import { createAppRouter } from '@/app/router';
 import {
   ROUTES,
   boardPath,
+  canvasPath,
   deliverablesPath,
   graphPath,
   workspacePath,
@@ -308,6 +309,14 @@ describe('route smoke sweep', () => {
     expect(screen.getByTestId('board-part-0')).toBeInTheDocument();
     // React Flow attribution: rendered by default, never hidden.
     expect(document.querySelector('.react-flow__attribution')).not.toBeNull();
+  });
+
+  it('module canvas route mounts with the part editor', async () => {
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+
+    expect(await screen.findByTestId('module-canvas', {}, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.getByTestId('canvas-part-select')).toBeInTheDocument();
+    expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
   });
 
   it('retired play route falls through to 404', async () => {

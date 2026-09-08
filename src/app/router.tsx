@@ -9,6 +9,7 @@ import { WorkspacePage } from '@/features/campaign/WorkspacePage';
 import { BattleSurface } from '@/features/play/battle/BattleSurface';
 import { DeliverablesPage } from '@/features/deliverables/DeliverablesPage';
 import { BoardPage } from '@/features/modules/board/BoardPage';
+import { CanvasPage } from '@/features/modules/canvas/CanvasPage';
 import { ModuleReaderPage } from '@/features/modules/ModuleReaderPage';
 import { ModulesListPage } from '@/features/modules/ModulesListPage';
 import { RulesPage } from '@/features/rules/RulesPage';
@@ -43,6 +44,7 @@ export function createAppRouter(): AppRouter {
           { path: ROUTES.graph, element: <GraphPage /> },
           { path: ROUTES.battle, element: <BattleSurface /> },
           { path: ROUTES.board, element: <BoardPage /> },
+          { path: ROUTES.canvas, element: <CanvasPage /> },
           { path: ROUTES.deliverables, element: <DeliverablesPage /> },
           { path: ROUTES.modules, element: <ModulesListPage /> },
           { path: ROUTES.module, element: <ModuleReaderPage /> },

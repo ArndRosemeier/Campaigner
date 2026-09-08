@@ -2,9 +2,9 @@ import { useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpenIcon, NetworkIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { BookOpenIcon, NetworkIcon, PencilIcon, PlusIcon, SquarePenIcon, Trash2Icon } from 'lucide-react';
 
-import { boardPath, guidePath, modulePath } from '@/app/routes';
+import { boardPath, canvasPath, guidePath, modulePath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -225,6 +225,20 @@ export function ModulesListPage(): JSX.Element {
                   }}
                 >
                   <NetworkIcon aria-hidden />
+                </Button>
+                {/* Per-part document canvas (08 §Module canvas) — opens on
+                    the module's first part. */}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Canvas: ${module.title}`}
+                  className="shrink-0"
+                  data-testid={`module-canvas-link-${module.id}`}
+                  onClick={() => {
+                    navigate(canvasPath(campaignId, module.id));
+                  }}
+                >
+                  <SquarePenIcon aria-hidden />
                 </Button>
                 <Button
                   variant="ghost"
