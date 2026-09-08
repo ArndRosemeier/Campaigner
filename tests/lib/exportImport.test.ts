@@ -698,8 +698,9 @@ describe('import dependency enforcement', () => {
     expect(imported).toHaveLength(1);
     const encounter = imported[0];
     if (encounter?.kind !== 'encounter') throw new Error('imported encounter missing');
-    // The rulebook chunkId is KEPT as-is (never healed) — so the row
-    // resolves exactly like any other dangling citation.
+    // The rulebook chunkId is KEPT as-is — so the row resolves exactly like
+    // any other dangling citation (the manifest hash heals content identity
+    // around it, but with no local bytes there is still nothing to hit).
     expect(encounter.data.monsters[0]?.source.type).toBe('rulebook');
     const first = encounter.data.monsters[0];
     if (first === undefined) throw new Error('imported roster entry missing');
@@ -768,6 +769,224 @@ describe('import dependency enforcement', () => {
     expect(await listCampaigns()).toHaveLength(1);
     const result = await importZip(zip, { dependencyPolicy: 'import-anyway' });
     expect(result.createdArtifacts).toBe(1);
+  });
+
+  it('MissingDependenciesError uses ASCII quotes around missing ref', async () => {
+    const { json } = await exportGoblinCampaign();
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    const caught: unknown = await importExport(json).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    expect(caught).toBeInstanceOf(MissingDependenciesError);
+    const message = (caught as MissingDependenciesError).message;
+    expect(message).toContain("'missing ref'");
+    expect(message).not.toContain('‘');
+    expect(message).not.toContain('’');
+  });
+});
+
+/**
+ * Import content-identity healing (chunk-hash-fallback arc): pre-stamp
+ * exports cite bare uuids, but the v2 manifest carries per-citation
+ * contentHash — import stamps manifest hashes onto entries whose source
+ * lacks them, so byte-identical installs resolve through the hash fallback.
+ * The owner's case end to end: L0-exact Monster Core installed, banner
+ * persists — now the markers clear with no re-export.
+ */
+describe('import content-identity healing', () => {
+  beforeEach(clearDatabase);
+
+  async function exportPrestampGoblinCampaign(): Promise<{ json: unknown; oldChunkId: string; contentHash: string }> {
+    const campaign = await createCampaign({ name: 'Dep source', system: 'pathfinder2e' });
+    const book = await createPackBook({
+      title: 'Monster Core',
+      system: 'pathfinder2e',
+      filename: 'monster-core.zip',
+    });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 120,
+      entriesSkipped: 3,
+      entriesFailed: 0,
+    });
+    const text = 'Goblin Warrior stat block';
+    const contentHash = await sha256Hex(text);
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Goblin Warrior'],
+        text,
+        statBlock: fixtureStatBlock(),
+        contentHash,
+      }),
+    ]);
+    const [chunk] = await db.chunks.toArray();
+    if (chunk === undefined) throw new Error('chunk missing');
+    // A pre-stamp citation: bare uuid, no content identity of its own.
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Goblin ambush',
+      data: encounterDataWith([
+        { name: 'Goblin Warrior', count: 2, notes: '', treasure: '', source: { type: 'rulebook', chunkId: chunk.id } },
+      ]) as never,
+    });
+    const exported = await buildCampaignExport(campaign.id);
+    // The manifest carries the hash even though the entry does not.
+    expect(exported.dependencies?.citations[0]?.contentHash).toBe(contentHash);
+    return {
+      json: JSON.parse(JSON.stringify(exported)) as unknown,
+      oldChunkId: chunk.id,
+      contentHash,
+    };
+  }
+
+  async function reinstallByteIdentical(): Promise<void> {
+    const book = await createPackBook({
+      title: 'Monster Core',
+      system: 'pathfinder2e',
+      filename: 'monster-core.zip',
+    });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 120,
+      entriesSkipped: 3,
+      entriesFailed: 0,
+    });
+    const text = 'Goblin Warrior stat block';
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Goblin Warrior'],
+        text,
+        statBlock: fixtureStatBlock(),
+        contentHash: await sha256Hex(text),
+      }),
+    ]);
+  }
+
+  async function importedEncounter(campaignId: string) {
+    const imported = await db.artifacts.where('campaignId').equals(campaignId).toArray();
+    const encounter = imported.find((row) => row.kind === 'encounter');
+    if (encounter?.kind !== 'encounter') throw new Error('imported encounter missing');
+    const first = encounter.data.monsters[0];
+    if (first === undefined) throw new Error('imported roster entry missing');
+    return first;
+  }
+
+  it('old-export import stamps manifest hashes and resolves byte-identical installs', async () => {
+    const { json, oldChunkId, contentHash } = await exportPrestampGoblinCampaign();
+    // Byte-identical reinstall under NEW row ids (the user case).
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+    await reinstallByteIdentical();
+
+    // L0-present: the default policy lets this through, no import-anyway.
+    const result = await importExport(json);
+    const first = await importedEncounter(result.campaignId);
+    if (first.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
+    // The uuid is KEPT as-is; content identity heals around it.
+    expect(first.source.chunkId).toBe(oldChunkId);
+    expect(first.source.contentHash).toBe(contentHash);
+    expect(first.source.creatureName).toBe('Goblin Warrior');
+    const resolved = await resolveMonsterEntryWithRepos(first);
+    expect(resolved.origin).toBe('Monster Core: Goblin Warrior');
+    expect(resolved.statBlock).not.toBeNull();
+  });
+
+  it('import-anyway heals the hash while content is absent; a later install clears the marker', async () => {
+    const { json, contentHash } = await exportPrestampGoblinCampaign();
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+
+    const result = await importExport(json, {}, { dependencyPolicy: 'import-anyway' });
+    const first = await importedEncounter(result.campaignId);
+    if (first.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
+    expect(first.source.contentHash).toBe(contentHash);
+    expect(await resolveMonsterEntryWithRepos(first)).toMatchObject({
+      statBlock: null,
+      origin: 'missing ref',
+    });
+
+    // Installing the byte-identical content later clears the marker with no
+    // further import — the banner contract is this same resolution.
+    await reinstallByteIdentical();
+    const cleared = await resolveMonsterEntryWithRepos(first);
+    expect(cleared.origin).toBe('Monster Core: Goblin Warrior');
+    expect(cleared.statBlock).not.toBeNull();
+  });
+
+  it('leaves already-stamped entries untouched', async () => {
+    const campaign = await createCampaign({ name: 'Stamped source', system: 'pathfinder2e' });
+    const book = await createPackBook({
+      title: 'Monster Core',
+      system: 'pathfinder2e',
+      filename: 'monster-core.zip',
+    });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 120,
+      entriesSkipped: 3,
+      entriesFailed: 0,
+    });
+    const text = 'Goblin Warrior stat block';
+    const contentHash = await sha256Hex(text);
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Goblin Warrior'],
+        text,
+        statBlock: fixtureStatBlock(),
+        contentHash,
+      }),
+    ]);
+    const [chunk] = await db.chunks.toArray();
+    if (chunk === undefined) throw new Error('chunk missing');
+    // A new-birth citation: stamped at creation, as finalize/the dialog write.
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Goblin ambush',
+      data: encounterDataWith([
+        {
+          name: 'Goblin Warrior',
+          count: 2,
+          notes: '',
+          treasure: '',
+          source: { type: 'rulebook', chunkId: chunk.id, contentHash, creatureName: 'Goblin Warrior' },
+        },
+      ]) as never,
+    });
+    const json = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as unknown;
+    await db.chunks.clear();
+    await db.rulebooks.clear();
+    await reinstallByteIdentical();
+
+    const result = await importExport(json);
+    const first = await importedEncounter(result.campaignId);
+    if (first.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
+    // The heal fills gaps only — a stamped entry lands verbatim.
+    expect(first.source.contentHash).toBe(contentHash);
+    expect(first.source.creatureName).toBe('Goblin Warrior');
+    expect((await resolveMonsterEntryWithRepos(first)).origin).toBe('Monster Core: Goblin Warrior');
   });
 });
 

@@ -587,7 +587,7 @@ function ImportDepsDialog({
               Rules
             </Link>{' '}
             (“Import bestiary pack”, or re-import the rulebook PDF), then import again — or
-            import anyway and the encounters below will show ‘missing ref’ until then.
+            import anyway and the encounters below will show 'missing ref' until then.
           </AlertDialogDescription>
         </AlertDialogHeader>
         {pending !== null && (

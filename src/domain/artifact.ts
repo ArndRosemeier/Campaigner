@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
+import { sha256HexSchema } from '@/domain/rulebook';
 import { statBlockSchema } from '@/domain/statblock';
 import {
   encounterLayoutSchema,
@@ -202,6 +203,23 @@ export const monsterSourceSchema = z.discriminatedUnion('type', [
      * Additive + optional: old rows parse unchanged and retro-fill at seed.
      */
     mobArtifactId: z.uuid().optional(),
+    /**
+     * Content identity (chunk-hash-fallback arc): SHA-256 of the cited
+     * chunk's text at citation birth. `resolveMonsterEntry` falls back to a
+     * content-hash lookup when the uuid misses (a re-ingest lands the same
+     * bytes under a new row id), so byte-identical installs clear
+     * 'missing ref'. Additive + optional: old rows parse unchanged and
+     * heal at import from the v2 manifest.
+     */
+    contentHash: sha256HexSchema.optional(),
+    /**
+     * Reserved L1 creature identity (chunk-hash-fallback arc):
+     * `chunk.headingPath[0]` trimmed, roster entry-name fallback — stamped
+     * at citation birth for a future same-creature resolver. UNUSED by the
+     * resolver in this slice (exact content-hash only): a same-creature
+     * chunk under a new hash still resolves 'missing ref' by design.
+     */
+    creatureName: z.string().optional(),
   }),
   z.object({ type: z.literal('none') }),
 ]);

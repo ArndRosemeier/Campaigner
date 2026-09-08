@@ -50,8 +50,8 @@ export function MissingRefsBanner(): JSX.Element | null {
       role="note"
     >
       {state.dangling === 1
-        ? '1 encounter entry cites a stat block missing from this library — it shows ‘missing ref’.'
-        : `${String(state.dangling)} encounter entries across ${String(state.encounters)} ${state.encounters === 1 ? 'encounter cite' : 'encounters cite'} stat blocks missing from this library — they show ‘missing ref’.`}{' '}
+        ? '1 encounter entry cites a stat block missing from this library — it shows \'missing ref\'.'
+        : `${String(state.dangling)} encounter entries across ${String(state.encounters)} ${state.encounters === 1 ? 'encounter cite' : 'encounters cite'} stat blocks missing from this library — they show 'missing ref'.`}{' '}
       <Link to={ROUTES.rules} className="font-medium underline" data-testid="missing-refs-rules-link">
         Open Rules to install the pack or re-import the rulebook
       </Link>

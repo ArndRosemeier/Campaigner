@@ -40,6 +40,7 @@ import {
   updateArtifact,
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
+import { contentIdentityFor } from '@/domain/encounterResolve';
 import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
@@ -813,6 +814,35 @@ function resolveEncounterMonsterSource(
     if (chunkId !== undefined) return chunkId;
   }
   return undefined;
+}
+
+/**
+ * Stamps a rulebook citation with content identity at birth
+ * (chunk-hash-fallback arc — the shared `contentIdentityFor` shape, so all
+ * births agree).
+ *
+ * Loud on a vanished chunk (AGENTS rule 1): validation upstream rejected
+ * unresolvable citations, so a chunk that is gone between retrieve and
+ * finalize is a real gap — refusing to write a dangling citation instead of
+ * saving a row that renders 'missing ref' on arrival.
+ */
+export async function rulebookSourceFor(
+  chunkId: Id,
+  entryName: string,
+  mobArtifactId: Id,
+): Promise<Extract<MonsterEntry['source'], { type: 'rulebook' }>> {
+  const chunk = (await getChunksByIds([chunkId]))[0];
+  if (chunk === undefined) {
+    throw new Error(
+      `finalize: cited rulebook chunk ${chunkId} no longer exists — refusing to save a dangling citation`,
+    );
+  }
+  return {
+    type: 'rulebook',
+    chunkId,
+    mobArtifactId,
+    ...contentIdentityFor(chunk.contentHash, chunk.headingPath[0], entryName),
+  };
 }
 
 /**
@@ -3210,7 +3240,7 @@ export class RunEngine {
           count: monster.count,
           notes: monster.notes,
           treasure: monster.treasure,
-          source: { type: 'rulebook' as const, chunkId, mobArtifactId },
+          source: await rulebookSourceFor(chunkId, monster.name, mobArtifactId),
         });
       }
       // Auto-promote on second-module use (ROSTER hook): a freshly drafted
@@ -3496,7 +3526,7 @@ export class RunEngine {
             count: monster.count,
             notes: monster.notes,
             treasure: monster.treasure,
-            source: { type: 'rulebook', chunkId, mobArtifactId },
+            source: await rulebookSourceFor(chunkId, monster.name, mobArtifactId),
           });
           continue;
         }

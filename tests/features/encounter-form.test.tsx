@@ -268,6 +268,75 @@ describe('encounter form monster sources', () => {
     expect(await within(dialog).findByText('Hill Giant')).toBeInTheDocument();
     expect(within(dialog).queryByText('Kobold Warrior')).not.toBeInTheDocument();
   });
+
+  it('stamps content identity when the rulebook-link dialog cites a chunk', async () => {
+    const user = userEvent.setup();
+    await createCampaign({ name: 'C', system: 'dnd5e' });
+    const book = await createRulebook({
+      title: 'Bestiary',
+      system: 'dnd5e',
+      filename: 'bestiary.pdf',
+      pageCount: 2,
+    });
+    await db.rulebooks.update(book.id, { status: 'ready' });
+    const text = 'Hill Giant stats, stamped.';
+    const contentHash = await sha256Hex(text);
+    const parsed = ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: book.id,
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'statblock',
+      headingPath: ['Hill Giant'],
+      text,
+      statBlock: statBlock(),
+      contentHash,
+    });
+    await putChunks([parsed]);
+    const data: EncounterArtifactData = {
+      difficulty: '',
+      levelHint: '',
+      monsters: [{ name: 'Giant', count: 1, notes: '', treasure: '', source: { type: 'none' } }],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+    };
+    let latest: EncounterArtifactData | null = null;
+    render(
+      <EncounterForm
+        data={data}
+        campaignArtifacts={[]}
+        campaignSystem="dnd5e"
+        onChange={(next) => {
+          latest = next;
+        }}
+      />,
+    );
+
+    await user.click(screen.getByLabelText('Stats source for Giant'));
+    await user.click(
+      await screen.findByRole('option', { name: 'From rulebook…' }, { timeout: 5_000 }),
+    );
+    const dialog = await screen.findByRole('dialog', { name: /Link a rulebook stat block/i });
+    await user.type(within(dialog).getByPlaceholderText('Search stat blocks…'), 'giant');
+    await user.click(await within(dialog).findByText('Hill Giant'));
+
+    // Citation birth carries content identity, not just the uuid.
+    await waitFor(() => {
+      expect(latest?.monsters[0]?.source).toEqual({
+        type: 'rulebook',
+        chunkId: parsed.id,
+        contentHash,
+        creatureName: 'Hill Giant',
+      });
+    });
+  });
 });
 
 async function makeChunk(

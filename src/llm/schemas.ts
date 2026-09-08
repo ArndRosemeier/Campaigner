@@ -215,8 +215,9 @@ export const encounterDraftSchema = z.object({
        * rejection (the guidance-fields convention). */
       treasure: z.string().default(''),
       /** M3-B: index into the numbered stat-block excerpts of the retrieve
-       * step — mapped back to { type: 'rulebook', chunkId } on finalize.
-       * Absentable: strict mode forces the key; `null` parses to undefined. */
+       * step — mapped back to a content-identity-stamped { type: 'rulebook' }
+       * citation on finalize. Absentable: strict mode forces the key; `null`
+       * parses to undefined. */
       sourceChunkIndex: absentable(rosterIndex),
       /** M-B (12-BESTIARY-PACKS §7): exact roster name of an imported pack
        * creature — resolved against the same roster the prompt listed. */

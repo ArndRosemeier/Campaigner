@@ -336,8 +336,9 @@ describe('Encounter Cartographer run', () => {
     const run = await getRun(runId);
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-    // The map finalize remapped the roster citation to the pack chunk.
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId) });
+    // The map finalize remapped the roster citation to the pack chunk —
+    // stamped with content identity at birth (chunk-hash-fallback arc).
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId), contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
   });
 
   it('finalizes a brief citing a pinned statblock chunk to {type:"rulebook", chunkId}', async () => {
@@ -371,8 +372,9 @@ describe('Encounter Cartographer run', () => {
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // The pinned citation (persisted with the brief through the pick pause)
-    // resolved in map finalize to the pinned chunk.
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId) });
+    // resolved in map finalize to the pinned chunk — stamped with content
+    // identity at birth (chunk-hash-fallback arc).
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId), contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
   });
 
   it('does not approve a rejected brief into an opaque downstream failure', async () => {

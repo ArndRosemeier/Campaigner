@@ -231,6 +231,11 @@ describe('CampaignPickerPage import dependencies', () => {
     // The resolve path names the Rules install surface explicitly + deep-links it.
     const rulesLink = within(dialog).getByTestId('import-deps-rules-link');
     expect(rulesLink.getAttribute('href')).toBe(ROUTES.rules);
+    // ASCII quotes around 'missing ref' (no curly-quote mojibake).
+    const description = within(dialog).getByText(/encounters below will show/).textContent;
+    expect(description).toContain("'missing ref'");
+    expect(description).not.toContain('‘');
+    expect(description).not.toContain('’');
 
     await user.click(within(dialog).getByTestId('import-deps-abort'));
     await waitFor(() => {

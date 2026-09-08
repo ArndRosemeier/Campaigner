@@ -15,6 +15,8 @@ import { fallbackSpawnPoint, spawnPointInStagingGround } from '@/domain/battle/b
 import { getBattle, patchBattle } from '@/db/battleRepo';
 import { expandRosterEntries, spawnRosterInstance, type SpawnReport } from '@/db/battleSeed';
 import { listChunksByBooks } from '@/db/chunkRepo';
+import { db } from '@/db/db';
+import { contentIdentityFor } from '@/domain/encounterResolve';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { buildBestiaryRows, filterRosterRows, type RosterEntry } from '@/features/bestiary/roster';
@@ -126,6 +128,31 @@ export function nextFreeSpawnPoint(
   // Every candidate occupied (a packed board): the clamped base is still the
   // documented spawn area — loud stacking beats inventing a new rule.
   return first;
+}
+
+/**
+ * Builds the synthetic single-instance entry for a core-mob pick (the
+ * bestiary spawn path): content identity stamped at citation birth
+ * (chunk-hash-fallback arc) so the shared expansion resolves it exactly
+ * like a persisted citation. A vanished chunk stays uuid-only with the
+ * pick name as creature — the statless toast below stays loud. Exported
+ * for tests (the click handler below is UI-only).
+ */
+export async function buildMobPickEntry(chunkId: Id, entryName: string): Promise<MonsterEntry> {
+  const chunk = await db.chunks.get(chunkId);
+  return monsterEntrySchema.parse({
+    name: entryName,
+    count: 1,
+    notes: '',
+    treasure: '',
+    source: chunk === undefined
+      ? { type: 'rulebook', chunkId, creatureName: entryName }
+      : {
+        type: 'rulebook',
+        chunkId,
+        ...contentIdentityFor(chunk.contentHash, chunk.headingPath[0], entryName),
+      },
+  });
 }
 
 /**
@@ -318,13 +345,7 @@ export function SpawnPicker({
     try {
       const result = await spawnPickedEntry(
         battleId,
-        monsterEntrySchema.parse({
-          name: entry.name,
-          count: 1,
-          notes: '',
-          treasure: '',
-          source: { type: 'rulebook', chunkId: entry.chunkId },
-        }),
+        await buildMobPickEntry(entry.chunkId, entry.name),
       );
       announceStatless(result.statless);
     } catch (error) {

@@ -31,6 +31,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
+import { contentIdentityFor } from '@/domain/encounterResolve';
 import { searchRules } from '@/search';
 
 /**
@@ -197,8 +198,14 @@ export function MonsterSourceControls({
         open={rulebookOpen}
         onOpenChange={setRulebookOpen}
         campaignSystem={campaignSystem}
-        onPick={(chunkId) => {
-          setSource({ type: 'rulebook', chunkId });
+        onPick={(pick) => {
+          // Content identity stamped at citation birth (chunk-hash-fallback
+          // arc): the uuid alone breaks on re-ingest; the hash survives it.
+          setSource({
+            type: 'rulebook',
+            chunkId: pick.chunkId,
+            ...contentIdentityFor(pick.contentHash, pick.creatureHeading, entry.name),
+          });
           setRulebookOpen(false);
         }}
       />
@@ -230,10 +237,12 @@ function RulebookStatblockDialog({
   onOpenChange: (open: boolean) => void;
   /** Only books of the campaign's system are offered — no cross-system links. */
   campaignSystem: GameSystem;
-  onPick: (chunkId: Id) => void;
+  onPick: (pick: { chunkId: Id; contentHash: string; creatureHeading: string }) => void;
 }): JSX.Element {
   const [query, setQuery] = useState('');
-  const [results, setResults] = useState<{ chunkId: Id; label: string; snippet: string }[]>([]);
+  const [results, setResults] = useState<
+    { chunkId: Id; label: string; snippet: string; contentHash: string; creatureHeading: string }[]
+  >([]);
 
   async function runSearch(text: string): Promise<void> {
     setQuery(text);
@@ -256,6 +265,8 @@ function RulebookStatblockDialog({
         chunkId: hit.chunk.id,
         label: hit.chunk.headingPath.join(' > '),
         snippet: hit.chunk.text.slice(0, 140),
+        contentHash: hit.chunk.contentHash,
+        creatureHeading: hit.chunk.headingPath[0] ?? '',
       })),
     );
   }
@@ -282,7 +293,11 @@ function RulebookStatblockDialog({
                   key={result.chunkId}
                   value={result.chunkId}
                   onSelect={() => {
-                    onPick(result.chunkId);
+                    onPick({
+                      chunkId: result.chunkId,
+                      contentHash: result.contentHash,
+                      creatureHeading: result.creatureHeading,
+                    });
                   }}
                 >
                   <div className="flex min-w-0 flex-col">

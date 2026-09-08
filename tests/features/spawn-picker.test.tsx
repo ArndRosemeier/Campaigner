@@ -29,6 +29,7 @@ import { sha256Hex } from '@/lib/hash';
 import { toastError } from '@/lib/toast';
 import {
   SpawnPicker,
+  buildMobPickEntry,
   countLabelSlots,
   nextFreeSpawnPoint,
   parseLevelOrLast,
@@ -413,5 +414,20 @@ describe('spawn picker helpers', () => {
       source: { type: 'none' },
     });
     await expect(spawnPickedEntry(newId(), entry)).rejects.toThrow();
+  });
+
+  it('buildMobPickEntry stamps content identity at citation birth', async () => {
+    const entry = await buildMobPickEntry(goblinChunkId, 'Goblin Boss');
+    if (entry.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
+    expect(entry.source.chunkId).toBe(goblinChunkId);
+    expect(entry.source.contentHash).toBe(await sha256Hex('Goblin Boss, a test creature of level 1.'));
+    expect(entry.source.creatureName).toBe('Goblin Boss');
+  });
+
+  it('buildMobPickEntry stays uuid-only for a vanished chunk (statless toast stays loud)', async () => {
+    const entry = await buildMobPickEntry(newId(), 'Ghost');
+    if (entry.source.type !== 'rulebook') throw new Error('expected a rulebook citation');
+    expect(entry.source.contentHash).toBeUndefined();
+    expect(entry.source.creatureName).toBe('Ghost');
   });
 });

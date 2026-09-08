@@ -9,11 +9,20 @@ import type { Artifact, Id, MonsterEntry, Rulebook, RuleChunk, StatBlock } from 
  * Dangling references (deleted NPC / book) never throw: they resolve to a
  * null stat block with origin "missing ref" so the UI can show a warning
  * badge instead of crashing.
+ *
+ * Content-identity fallback (chunk-hash-fallback arc): a rulebook citation
+ * whose uuid misses but carries `contentHash` resolves through
+ * `getChunkByContentHash` — a re-ingest under a new row id still satisfies a
+ * byte-identical citation. Exact content-hash ONLY in this slice: a
+ * same-creature chunk under a new hash stays 'missing ref' (L1 deferred;
+ * the import dep dialog already reports that drift).
  */
 
 export interface MonsterLookups {
   getArtifact: (id: Id) => Promise<Artifact | undefined>;
   getChunk: (id: Id) => Promise<RuleChunk | undefined>;
+  /** Content-identity fallback for uuid-mismatched installs (exact hash only). */
+  getChunkByContentHash: (contentHash: string) => Promise<RuleChunk | undefined>;
   /** The book a chunk belongs to — drives the origin label (12-BESTIARY-PACKS §8). */
   getRulebook: (bookId: Id) => Promise<Rulebook | undefined>;
 }
@@ -22,6 +31,26 @@ export interface ResolvedMonster {
   statBlock: StatBlock | null;
   /** Display string: "NPC: Vexra" / "Bestiary p.132" / "inline" / "missing ref" / "" (none). */
   origin: string;
+}
+
+/**
+ * Content identity stamped at citation birth (chunk-hash-fallback arc): the
+ * cited chunk's SHA-256 plus the L1-reserved creature name
+ * (`headingPath[0]`, roster entry-name fallback — the same fallback
+ * `collectDependencies` uses for its manifest `creatureName`). Shared by
+ * every rulebook-citation writer (runEngine finalize, the editor dialog,
+ * the spawn picker) so all births agree.
+ */
+export function contentIdentityFor(
+  contentHash: string,
+  creatureHeading: string | undefined,
+  entryName: string,
+): { contentHash: string; creatureName: string } {
+  const heading = creatureHeading?.trim();
+  return {
+    contentHash,
+    creatureName: heading === undefined || heading === '' ? entryName : heading,
+  };
 }
 
 export async function resolveMonsterEntry(
@@ -40,7 +69,15 @@ export async function resolveMonsterEntry(
       return { statBlock: artifact.data.statBlock, origin: `NPC: ${artifact.name}` };
     }
     case 'rulebook': {
-      const chunk = await lookups.getChunk(entry.source.chunkId);
+      // Uuid first (the cited instance); on a miss the stamped content hash
+      // falls back to whatever local chunk carries the identical bytes (a
+      // re-ingest under a new row id). No L1 fuzzy: same creature, new
+      // version stays 'missing ref'.
+      const byId = await lookups.getChunk(entry.source.chunkId);
+      const chunk = byId ??
+        (entry.source.contentHash === undefined
+          ? undefined
+          : await lookups.getChunkByContentHash(entry.source.contentHash));
       if (chunk?.statBlock == null) {
         return { statBlock: null, origin: 'missing ref' };
       }

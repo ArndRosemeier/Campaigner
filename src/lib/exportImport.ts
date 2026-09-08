@@ -26,6 +26,8 @@ import {
   personaRunSchema,
   storedImageSchema,
   type DependencyAnalysis,
+  type EncounterArtifactData,
+  type ExportCitation,
   type ExportDependencies,
   type ExportMissingImage,
 } from '@/domain';
@@ -396,7 +398,7 @@ export class MissingDependenciesError extends Error {
       `Import needs rulebook content missing from this library (${parts.join('; ')}). ` +
         `1. In Rules, choose “Import bestiary pack” (or re-import the rulebook PDF)${install}. ` +
         `2. Import this file again. ` +
-        `Or import anyway — the encounters land with ‘missing ref’ markers until the content is installed.`,
+        `Or import anyway — the encounters land with 'missing ref' markers until the content is installed.`,
     );
     this.name = 'MissingDependenciesError';
     this.analysis = analysis;
@@ -492,9 +494,42 @@ export async function checkImportDependencies(
   return analyzeDependencies(manifest, { chunksByHash, books });
 }
 
+/**
+ * Content-identity healing (chunk-hash-fallback arc): citations born before
+ * stamping carry no hash, but the v2 manifest does. Stamp manifest hashes
+ * (plus the manifest creature name when the entry lacks one) onto matching
+ * entries — matched by exporting artifact id + cited chunkId — so OLD
+ * exports resolve byte-identical installs through the hash fallback too.
+ * Entries with no manifest match (v1 files carry no manifest at all) land
+ * unchanged and keep resolving by uuid, exactly as before.
+ */
+function healRulebookSources(
+  exportedArtifactId: Id,
+  data: EncounterArtifactData,
+  manifestByCite: ReadonlyMap<string, ExportCitation>,
+): EncounterArtifactData {
+  return {
+    ...data,
+    monsters: data.monsters.map((entry) => {
+      if (entry.source.type !== 'rulebook' || entry.source.contentHash !== undefined) return entry;
+      const citation = manifestByCite.get(`${exportedArtifactId}::${entry.source.chunkId}`);
+      if (citation?.contentHash === undefined) return entry;
+      return {
+        ...entry,
+        source: {
+          ...entry.source,
+          contentHash: citation.contentHash,
+          ...(entry.source.creatureName !== undefined || citation.creatureName === undefined
+            ? {}
+            : { creatureName: citation.creatureName }),
+        },
+      };
+    }),
+  };
+}
+
 /** Rewrites a deliverable outline's artifact references to imported ids. */
-function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id>): OutlineNode[] {
-  return nodes.map((node) => {
+function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id>): OutlineNode[] {  return nodes.map((node) => {
     switch (node.type) {
       case 'artifact':
         return { ...node, artifactId: artifactIds.get(node.artifactId) ?? node.artifactId };
@@ -529,9 +564,12 @@ function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id
  * statblock citation or unmet NPC ref throws `MissingDependenciesError`
  * BEFORE the transaction opens (nothing to roll back). Rulebook chunkIds
  * are KEPT as-is either way, so encounters that land without their content
- * resolve to the existing `missing ref` markers — truthful, never healed.
- * Skipped retired rows never trip this check: their citations leave with
- * them (`parseExportTolerant` filters the manifest).
+ * resolve to the existing `missing ref` markers — truthful, never
+ * invented. Pre-stamp entries additionally heal their content identity from
+ * the manifest (`healRulebookSources`): a later byte-identical install
+ * clears those markers through the hash fallback. Skipped retired rows
+ * never trip this check: their citations leave with them
+ * (`parseExportTolerant` filters the manifest).
  *
  * Retired-row tolerance (M2 import rules): legacy exports carrying retired
  * `session` artifacts or session-anchored pre-v11 battles (or live rows that
@@ -559,6 +597,17 @@ export async function importExport(
 
   const stamp = Date.now();
   const newCampaignId = crypto.randomUUID();
+
+  // Content-identity healing (chunk-hash-fallback arc): the v2 manifest
+  // already carries per-citation contentHash — index it by exporting
+  // artifact + cited chunk so pre-stamp entries heal on the way in.
+  const manifestByCite = new Map<string, ExportCitation>(
+    (parsed.dependencies?.citations ?? []).flatMap((citation) =>
+      citation.contentHash === undefined
+        ? []
+        : [[`${citation.artifactId}::${citation.citedChunkId}`, citation] as const],
+    ),
+  );
 
   const campaign =
     parsed.campaign === null
@@ -632,6 +681,9 @@ export async function importExport(
         await db.artifacts.add(
           artifactSchema.parse({
             ...artifactFields,
+            ...(artifactFields.kind === 'encounter'
+              ? { data: healRulebookSources(exported.id, artifactFields.data, manifestByCite) }
+              : {}),
             id: artifactId,
             campaignId: newCampaignId,
             moduleId:

@@ -153,6 +153,44 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   always; a canonical citation regenerates by REPUBLISH (below) — a plain
   re-enqueue would clone identical bytes, a no-op regen.
 
+### Content identity at citation birth (chunk-hash-fallback, owner-observed false 'missing ref')
+
+Import keeps cited `chunkId`s as-is (source-instance uuids) but runtime
+resolution only knew uuids — so a byte-identical installed book under new
+row ids still showed 'missing ref' + the campaign banner, even though the
+banner promises it "clears itself the moment the content is installed".
+Rulebook citations now resolve by CONTENT identity, not just source uuid:
+
+- **Stamped at birth**: the rulebook `monsterSource` variant carries
+  additive optional `contentHash` (the cited chunk's SHA-256) + `creatureName`
+  (`chunk.headingPath[0]`, roster entry-name fallback). Stamped by EVERY
+  citation writer through the shared pure `contentIdentityFor`
+  (`src/domain/encounterResolve.ts`) so all births agree: runEngine
+  finalize (both remap sites, via `rulebookSourceFor` — a chunk that
+  vanished between retrieve and finalize throws LOUD instead of writing a
+  dangling citation), the editor's rulebook-link dialog (hash + heading ride
+  the search hit into `onPick`), and the spawn picker's synthetic mob entry
+  (`buildMobPickEntry`). Import heals pre-stamp entries from the v2 manifest
+  (`healRulebookSources` in `src/lib/exportImport.ts`, matched by exporting
+  artifact + cited chunkId) — old exports resolve too; the cited uuid is
+  still KEPT as-is. The bestiary spawn dialog (`mobArtifacts.ts`
+  `fillCoverFromCache` source) and the seed retro-fill write NO persisted
+  citation, so there is nothing to stamp — they resolve through the same
+  fallback below.
+- **Resolver fallback, exact-only**: `resolveMonsterEntry`'s rulebook branch
+  tries the uuid first, then `getChunkByContentHash` when the uuid misses
+  and a hash is stamped (`MonsterLookups` gains the method;
+  `resolveMonsterEntryWithRepos` prefers the statful hit when several local
+  chunks share one hash — a statless hash hit never satisfies, mirroring the
+  import L0 rule). A hit resolves stats + origin from the LOCAL chunk
+  exactly as a uuid hit (pack creature label / PDF page label from the local
+  row). A miss stays 'missing ref' unchanged.
+- **L1 explicitly deferred**: a same-creature chunk under a NEW hash
+  (revised printing) still resolves 'missing ref' — the import dep dialog
+  already reports that drift (`version-drift`), and the resolver stays
+  exact-content. `creatureName` is stamped now but RESERVED (unused by the
+  resolver) for that future fuzzy lane.
+
 ### Global portrait cache (slice A — owner-ratified)
 
 Core/external bestiary creatures only (NEVER module-generated NPCs):

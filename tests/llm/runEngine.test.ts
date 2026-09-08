@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule as createModuleSchema, type Persona } from '@/domain';
+import { createModule as createModuleSchema, newId, ruleChunkSchema, stampNewEntity, type Persona } from '@/domain';
 import { createPersona } from '@/db/personaRepo';
 import {
   createArtifact,
@@ -14,7 +14,10 @@ import {
 import { updateSettings } from '@/db/settingsRepo';
 import { getRun, listRunsByCampaign } from '@/db/runRepo';
 import { createModule as createModuleRow, deleteModule } from '@/db/moduleRepo';
-import { runEngine } from '@/llm/runEngine';
+import { runEngine, rulebookSourceFor } from '@/llm/runEngine';
+import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { sha256Hex } from '@/lib/hash';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { waitFor } from '@testing-library/react';
 import { clearDatabase } from '../db/helpers';
@@ -811,8 +814,7 @@ describe('runEngine', () => {
     expect(statblockSchema?.properties?.extras).toBeUndefined();
   }, 20000);
 
-  it('rollout: the continuity check step sends its strict json_schema responseFormat', async () => {
-    const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
+  it('rollout: the continuity check step sends its strict json_schema responseFormat', async () => {    const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
     if (editor === undefined) throw new Error('continuity-editor persona missing');
     const { campaignId, persona } = await seed();
     const editorPersona = persona.mode === 'review' ? persona : editor;
@@ -839,4 +841,69 @@ describe('runEngine', () => {
     expect(checkFormat).toMatchObject({ kind: 'schema', name: 'continuity-report' });
   }, 20000);
 
+});
+
+/**
+ * Finalize stamps content identity at citation birth (chunk-hash-fallback
+ * arc): both Smith paths (fresh-draft creation and the in-place remap)
+ * share `rulebookSourceFor`, so one test pins both.
+ */
+describe('rulebookSourceFor', () => {
+  beforeEach(clearDatabase);
+
+  async function installChunk(): Promise<{ chunkId: string; contentHash: string }> {
+    const book = await createPackBook({
+      title: 'Monster Core',
+      system: 'pathfinder2e',
+      filename: 'monster-core.zip',
+    });
+    await finalizePackBook(book.id, {
+      sourceId: 'foundry-pf2e',
+      license: 'Community Use Policy',
+      entriesImported: 1,
+      entriesSkipped: 0,
+      entriesFailed: 0,
+    });
+    const text = 'Goblin Warrior stat block';
+    const contentHash = await sha256Hex(text);
+    const [chunk] = await (async () => {
+      await putChunks([
+        ruleChunkSchema.parse({
+          ...stampNewEntity(),
+          bookId: book.id,
+          pageStart: 1,
+          pageEnd: 1,
+          chunkType: 'statblock',
+          headingPath: ['Goblin Warrior'],
+          text,
+          statBlock: null,
+          contentHash,
+        }),
+      ]);
+      const { db } = await import('@/db/db');
+      return db.chunks.toArray();
+    })();
+    if (chunk === undefined) throw new Error('chunk missing');
+    return { chunkId: chunk.id, contentHash };
+  }
+
+  it('stamps the cited chunk hash and creature name alongside the uuid', async () => {
+    const { chunkId, contentHash } = await installChunk();
+    const mobArtifactId = newId();
+
+    const source = await rulebookSourceFor(chunkId, 'Goblin Warrior', mobArtifactId);
+    expect(source).toEqual({
+      type: 'rulebook',
+      chunkId,
+      mobArtifactId,
+      contentHash,
+      creatureName: 'Goblin Warrior',
+    });
+  });
+
+  it('throws loudly for a chunk that vanished between retrieve and finalize', async () => {
+    await expect(rulebookSourceFor(newId(), 'Goblin Warrior', newId())).rejects.toThrow(
+      /no longer exists/,
+    );
+  });
 });

@@ -91,7 +91,7 @@ export const chunkTypeSchema = z.enum(['section', 'statblock', 'table', 'item'])
 
 export type ChunkType = z.infer<typeof chunkTypeSchema>;
 
-const sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/, 'SHA-256 hex digest');
+export const sha256HexSchema = z.string().regex(/^[0-9a-f]{64}$/, 'SHA-256 hex digest');
 
 export const ruleChunkSchema = z.object({
   ...BaseEntitySchema.shape,
