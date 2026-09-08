@@ -1,7 +1,14 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import * as exportImport from '@/lib/exportImport';
-import { BACKUP_TYPES, openSaveTarget, supportsFilePickers } from '@/lib/filePicker';
+import {
+  BACKUP_TYPES,
+  EXPORT_JSON_TYPES,
+  EXPORT_PDF_TYPES,
+  EXPORT_ZIP_TYPES,
+  openSaveTarget,
+  supportsFilePickers,
+} from '@/lib/filePicker';
 
 /**
  * The two-phase save destination (filePicker): the native save dialog must be
@@ -104,5 +111,22 @@ describe('openSaveTarget', () => {
 
     expect(downloadSpy).toHaveBeenCalledTimes(1);
     expect(downloadSpy.mock.calls[0]?.[1]).toBe('backup.zip');
+  });
+});
+
+describe('picker type registry', () => {
+  it('pins BACKUP_TYPES and the EXPORT_* lists (the one registry for save dialogs)', () => {
+    expect(BACKUP_TYPES).toEqual([
+      { description: 'Campaigner backup', accept: { 'application/zip': ['.zip'] } },
+    ]);
+    expect(EXPORT_ZIP_TYPES).toEqual([
+      { description: 'Campaigner export (zip)', accept: { 'application/zip': ['.zip'] } },
+    ]);
+    expect(EXPORT_JSON_TYPES).toEqual([
+      { description: 'Campaigner export (JSON)', accept: { 'application/json': ['.json'] } },
+    ]);
+    expect(EXPORT_PDF_TYPES).toEqual([
+      { description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } },
+    ]);
   });
 });

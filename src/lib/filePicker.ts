@@ -56,6 +56,23 @@ export const BACKUP_TYPES: PickerType[] = [
   { description: 'Campaigner backup', accept: { 'application/zip': ['.zip'] } },
 ];
 
+/**
+ * The one picker-type registry: every renderer-initiated file save
+ * (backup, campaign/artifact export, artifact PDF) acquires its destination
+ * through `openSaveTarget` with one of these type lists. `downloadBlob` is
+ * the no-picker fallback INSIDE `openSaveTarget` only — UI code never calls
+ * it directly.
+ */
+export const EXPORT_ZIP_TYPES: PickerType[] = [
+  { description: 'Campaigner export (zip)', accept: { 'application/zip': ['.zip'] } },
+];
+export const EXPORT_JSON_TYPES: PickerType[] = [
+  { description: 'Campaigner export (JSON)', accept: { 'application/json': ['.json'] } },
+];
+export const EXPORT_PDF_TYPES: PickerType[] = [
+  { description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } },
+];
+
 /** A save destination acquired up front, written to once the data exists. */
 export interface SaveTarget {
   /** True when the user backed out of the native dialog — nothing to write. */

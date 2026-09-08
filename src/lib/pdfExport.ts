@@ -5,6 +5,8 @@ import { imageBlob } from '@/domain';
 import { getImage } from '@/db/imageRepo';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
 import { markdownToText } from '@/lib/markdown';
+import { EXPORT_PDF_TYPES, openSaveTarget } from '@/lib/filePicker';
+import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * PDF export (06-MILESTONES M2): pdfmake definitions for the two templates —
@@ -309,14 +311,36 @@ async function loadPdfCoverImage(artifact: Artifact): Promise<PdfCoverImage | nu
   }
 }
 
-/** Generates and downloads the PDF for an artifact (used by the tree menu). */
+/**
+ * Generates and saves the PDF for an artifact (used by the tree menu).
+ * Click-initiated, and the build is slow (lazy pdfmake load + cover-image
+ * fetch), so the destination is acquired FIRST inside the click's gesture
+ * window and the finished blob is written to it afterwards (backup-section
+ * precedent). Picker cancel is a silent no-op; every failure toasts loudly
+ * (previously a failed PDF export vanished into an unhandled rejection).
+ */
 export async function exportArtifactPdfFile(
   artifact: Artifact,
   template: PdfTemplate,
 ): Promise<void> {
-  const { downloadBlob } = await import('@/lib/exportImport');
-  const blob = await exportArtifactPdf(artifact, template);
-  downloadBlob(blob, pdfFileName(artifact, template));
+  let target;
+  try {
+    target = await openSaveTarget({
+      suggestedName: pdfFileName(artifact, template),
+      types: EXPORT_PDF_TYPES,
+    });
+  } catch (error) {
+    toastError('PDF export failed', error);
+    return;
+  }
+  if (target.cancelled) return;
+  try {
+    const blob = await exportArtifactPdf(artifact, template);
+    await target.write(blob);
+    toastSuccess('PDF exported');
+  } catch (error) {
+    toastError('PDF export failed', error);
+  }
 }
 
 export function pdfFileName(artifact: Artifact, template: PdfTemplate): string {

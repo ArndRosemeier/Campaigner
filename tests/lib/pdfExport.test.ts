@@ -1,14 +1,17 @@
 import 'fake-indexeddb/auto';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, newId } from '@/domain';
 import {
   buildGmNotesDefinition,
   buildPlayerHandoutDefinition,
   exportArtifactPdf,
+  exportArtifactPdfFile,
   pdfFileName,
 } from '@/lib/pdfExport';
+import { EXPORT_PDF_TYPES, openSaveTarget } from '@/lib/filePicker';
+import * as toast from '@/lib/toast';
 import { markdownToText } from '@/lib/markdown';
 
 /**
@@ -16,6 +19,28 @@ import { markdownToText } from '@/lib/markdown';
  * definition builders are asserted as content; one test generates a real PDF
  * blob through pdfmake.
  */
+
+vi.mock('@/lib/filePicker', () => ({
+  EXPORT_JSON_TYPES: [
+    { description: 'Campaigner export (JSON)', accept: { 'application/json': ['.json'] } },
+  ],
+  EXPORT_ZIP_TYPES: [
+    { description: 'Campaigner export (zip)', accept: { 'application/zip': ['.zip'] } },
+  ],
+  EXPORT_PDF_TYPES: [
+    { description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } },
+  ],
+  openSaveTarget: vi.fn(),
+  supportsFilePickers: vi.fn(() => true),
+  pickBackupFile: vi.fn(),
+}));
+
+vi.mock('@/lib/toast', () => ({
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastInfo: vi.fn(),
+  toastErrorPersistent: vi.fn(),
+}));
 
 const NPC = {
   campaignId: newId(),
@@ -94,4 +119,70 @@ describe('pdf export definitions', () => {
       expect(head).toBe('%PDF-');
     }
   }, 30000);
+});
+
+describe('exportArtifactPdfFile save-picker flow', () => {
+  const savePicker = vi.mocked(openSaveTarget);
+  const toastError = vi.mocked(toast.toastError);
+  const toastSuccess = vi.mocked(toast.toastSuccess);
+
+  afterEach(() => {
+    savePicker.mockReset();
+    toastError.mockClear();
+    toastSuccess.mockClear();
+  });
+
+  it('acquires the PDF target first, then writes the generated blob', async () => {
+    const artifact = createArtifact({ ...NPC });
+    const written: Blob[] = [];
+    savePicker.mockImplementation(() =>
+      Promise.resolve({
+        cancelled: false,
+        write: (blob: Blob) => {
+          written.push(blob);
+          return Promise.resolve();
+        },
+      }),
+    );
+
+    await exportArtifactPdfFile(artifact, 'gm');
+
+    expect(savePicker).toHaveBeenCalledWith({
+      suggestedName: 'grimm-gm-notes.pdf',
+      types: EXPORT_PDF_TYPES,
+    });
+    expect(written).toHaveLength(1);
+    const blob = written[0];
+    if (blob === undefined) throw new Error('no PDF blob written');
+    expect(await blob.slice(0, 5).text()).toBe('%PDF-');
+    expect(toastSuccess).toHaveBeenCalledWith('PDF exported');
+    expect(toastError).not.toHaveBeenCalled();
+  }, 30000);
+
+  it('picker cancel generates nothing and toasts nothing', async () => {
+    const artifact = createArtifact({ ...NPC });
+    const write = vi.fn(() => Promise.resolve());
+    savePicker.mockImplementation(() => Promise.resolve({ cancelled: true, write }));
+
+    await exportArtifactPdfFile(artifact, 'player');
+
+    expect(savePicker).toHaveBeenCalledWith({
+      suggestedName: 'grimm-handout.pdf',
+      types: EXPORT_PDF_TYPES,
+    });
+    expect(write).not.toHaveBeenCalled();
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
+
+  it('picker failure toasts loudly without generating', async () => {
+    const artifact = createArtifact({ ...NPC });
+    const failure = new TypeError('SecurityError-ish');
+    savePicker.mockImplementation(() => Promise.reject(failure));
+
+    await exportArtifactPdfFile(artifact, 'gm');
+
+    expect(toastError).toHaveBeenCalledWith('PDF export failed', failure);
+    expect(toastSuccess).not.toHaveBeenCalled();
+  });
 });

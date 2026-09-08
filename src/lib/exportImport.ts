@@ -276,6 +276,17 @@ export function exportFileName(exported: CampaignExport): string {
   return `${sanitize(base)}-${new Date(exported.exportedAt).toISOString().slice(0, 10)}.json`;
 }
 
+/**
+ * Pre-build save name for the native picker: the save destination must be
+ * acquired inside the click handler BEFORE the (slow) export build, so the
+ * name is derived from the campaign name + today rather than from the built
+ * payload's `exportedAt` (same shape as `exportFileName`, same day in
+ * practice). The single source for every export save name.
+ */
+export function exportSuggestedName(campaignName: string, format: 'json' | 'zip'): string {
+  return `${sanitize(campaignName)}-${new Date(Date.now()).toISOString().slice(0, 10)}.${format}`;
+}
+
 /** Multi-file zip bundle: one JSON per artifact + a manifest + image files. */
 export function buildZip(exported: CampaignExport): Uint8Array {
   // Zip images are carried as binary files next to the JSON; the JSON keeps

@@ -17,9 +17,9 @@ import {
   buildCampaignExport,
   buildExport,
   buildZip,
-  downloadBlob,
-  exportFileName,
+  exportSuggestedName,
 } from '@/lib/exportImport';
+import { EXPORT_JSON_TYPES, EXPORT_ZIP_TYPES, openSaveTarget } from '@/lib/filePicker';
 import { listRevisions } from '@/db/artifactRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -71,6 +71,27 @@ export function ExportCampaignDialog({
 
   async function runExport(): Promise<void> {
     setBusy(true);
+    // Gesture-first (backup-section precedent): the native save picker needs
+    // transient user activation, and building the export easily outlives it —
+    // so the destination is acquired inside the click handler, BEFORE the
+    // slow build, and the finished blob is written to it afterwards.
+    let target;
+    try {
+      target = await openSaveTarget({
+        suggestedName: exportSuggestedName(campaignName, format),
+        types: format === 'zip' ? EXPORT_ZIP_TYPES : EXPORT_JSON_TYPES,
+      });
+    } catch (error) {
+      setBusy(false);
+      toastError('Export failed', error);
+      return;
+    }
+    if (target.cancelled) {
+      // The user backed out of the native dialog: the export dialog stays
+      // open with the selection intact — nothing was built, no toast.
+      setBusy(false);
+      return;
+    }
     try {
       const ids = artifacts
         .filter((artifact) => selected.has(artifact.id))
@@ -79,16 +100,13 @@ export function ExportCampaignDialog({
         selected.size === artifacts.length
           ? await buildCampaignExport(campaignId, undefined, { images: format === 'zip' })
           : await buildCampaignExport(campaignId, ids, { images: format === 'zip' });
-      const basename = exportFileName(exported).replace(/\.json$/, '');
       if (format === 'zip') {
-        downloadBlob(
+        await target.write(
           new Blob([buildZip(exported) as BlobPart], { type: 'application/zip' }),
-          `${basename}.zip`,
         );
       } else {
-        downloadBlob(
+        await target.write(
           new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
-          `${basename}.json`,
         );
       }
       toastSuccess(`Exported ${exported.artifacts.length} artifact(s)`);
@@ -196,11 +214,27 @@ function artifactSlug(name: string): string {
 
 /** One-click JSON export of a single artifact (tree context menu). */
 export async function exportSingleArtifact(artifact: Artifact): Promise<void> {
-  const revisions = await listRevisions(artifact.id);
-  const exported = buildExport(null, [{ ...artifact, revisions }]);
-  downloadBlob(
-    new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
-    `${artifactSlug(artifact.name)}-${new Date(exported.exportedAt).toISOString().slice(0, 10)}.json`,
-  );
-  toastSuccess('Artifact exported');
+  // Gesture-first like runExport above: the tree menu click carries the user
+  // activation the native picker needs, so the target is acquired first.
+  let target;
+  try {
+    target = await openSaveTarget({
+      suggestedName: `${artifactSlug(artifact.name)}-${new Date(Date.now()).toISOString().slice(0, 10)}.json`,
+      types: EXPORT_JSON_TYPES,
+    });
+  } catch (error) {
+    toastError('Artifact export failed', error);
+    return;
+  }
+  if (target.cancelled) return;
+  try {
+    const revisions = await listRevisions(artifact.id);
+    const exported = buildExport(null, [{ ...artifact, revisions }]);
+    await target.write(
+      new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
+    );
+    toastSuccess('Artifact exported');
+  } catch (error) {
+    toastError('Artifact export failed', error);
+  }
 }
