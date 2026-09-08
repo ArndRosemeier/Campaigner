@@ -1,5 +1,5 @@
 import type { AnyArtifact, Battle, BattleToken, BattleVeil, Id, MonsterEntry, SeedFighter } from '@/domain';
-import { GRID_SIZE_DEFAULT, newId, placeMonsters, spawnRoom, veilsFromRooms } from '@/domain';
+import { GRID_SIZE_DEFAULT, newId, placeMonsters, spawnRoom, veilsFromSpawnClusters } from '@/domain';
 import {
   ensurePcTokens,
   fallbackSpawnPoint,
@@ -298,14 +298,20 @@ export async function seedBattleFromEncounter(
           y: (entryRoom.entrance.y + 0.5) / layout.gridH,
           side: entryRoom.entrance.side,
         };
-  // Room veils (docs/11 D11): the party STARTS in the spawn room, so its
-  // veil is never seeded — a SINGLE site (one room) therefore seeds zero
-  // veils (straight to melee, no room discovery), and a COMPLEX opens at
-  // path room 1 for sequential play; the GM reveals the rest (the Path
-  // rail's "Reveal next room" is an advisory aid, never a lock).
+  // Spawn-group veils (docs/11 D4): EVERY monster spawn group is covered by
+  // default — one fog veil per `monsterIndexes` entry, including the spawn
+  // room's groups (the old spawn-room exemption is gone: the party starts in
+  // the spawn room, but its monsters still begin veiled). A room with no
+  // monster groups seeds no veil; a SINGLE site therefore seeds exactly its
+  // spawn groups' veils instead of zero. The room's first group keeps
+  // `id = room.id` so the Path rail's "Reveal next room" still resolves per
+  // room (an advisory aid, never a lock).
   let veils: BattleVeil[] = [];
   if (layout !== null) {
-    veils = veilsFromRooms(layout).filter((veil) => veil.id !== entryRoom?.id);
+    veils = veilsFromSpawnClusters(
+      layout,
+      encounter.data.monsters.map((entry) => entry.count),
+    );
   }
   const board = ensurePcTokens(
     {

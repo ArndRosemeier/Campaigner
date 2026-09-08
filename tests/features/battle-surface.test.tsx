@@ -2854,6 +2854,79 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     const after = await currentBattle(moduleId);
     expect(after.board.veils).toHaveLength(0);
   });
+
+  it('a multi-group room resolves per room on the Path rail: reveal lifts the primary veil, extras stay room-mapped', async () => {
+    const pc1 = await addPc('Serren', 20);
+    void pc1;
+    const roomA = newId();
+    const roomB = newId();
+    const layout = packRooms({
+      theme: 'Split sanctum',
+      aspect: '4:3',
+      entryRoomId: roomA,
+      rosterCounts: [1, 1, 1],
+      rooms: [
+        { id: roomA, name: 'Entry', description: '', size: 'small', monsterIndexes: [0], adjacentRoomIds: [roomB], key: '', keyTreasure: '' },
+        { id: roomB, name: 'Sanctum', description: '', size: 'large', monsterIndexes: [1, 2], adjacentRoomIds: [roomA], key: '', keyTreasure: '' },
+      ],
+    });
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Split ambush',
+      data: {
+        difficulty: 'hard',
+        levelHint: '4',
+        monsters: [1, 2, 3].map((number) => ({
+          name: `Cultist ${String(number)}`,
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: { type: 'inline', statBlock: statBlock({ hp: 22 }) },
+        })),
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'complex',
+        budgetAdvisory: '',
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Split Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+    );
+    await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+    await renderSurface(module.id);
+    await flushAsyncUpdates();
+    // Three spawn groups ⇒ three veils: Entry primary + Sanctum primary (room
+    // id, so the rail resolves it) + Sanctum secondary (roomId-mapped).
+    const seeded = await currentBattle(module.id);
+    expect(seeded.board.veils).toHaveLength(3);
+    const rail = screen.getByTestId('path-rail');
+    const veiledLabel = (testId: string): string | null =>
+      within(rail).getByTestId(testId).getAttribute('aria-label');
+    expect(veiledLabel('path-room-1')).toContain('(veiled)');
+    expect(veiledLabel('path-room-2')).toContain('(veiled)');
+    const user = userEvent.setup();
+    // Reveal room 1 (Entry): only its primary veil lifts.
+    await user.click(screen.getByTestId('reveal-next-room'));
+    await flushAsyncUpdates();
+    expect((await currentBattle(module.id)).board.veils).toHaveLength(2);
+    expect(veiledLabel('path-room-1')).not.toContain('(veiled)');
+    // Reveal room 2 (Sanctum): the primary veil lifts — the rail resolves the
+    // room — while the secondary group veil stays on the board, still mapped
+    // to the room via roomId for the GM to lift by hand.
+    await user.click(screen.getByTestId('reveal-next-room'));
+    await flushAsyncUpdates();
+    const after = await currentBattle(module.id);
+    expect(after.board.veils).toHaveLength(1);
+    expect(after.board.veils[0]?.roomId).toBe(roomB);
+    expect(after.board.veils[0]?.id).not.toBe(roomB);
+    expect(veiledLabel('path-room-2')).not.toContain('(veiled)');
+  });
 })
 
 describe('site shape on the surface (docs/11 D11)', () => {
@@ -2903,19 +2976,22 @@ describe('site shape on the surface (docs/11 D11)', () => {
     return { battle, layout, spawn };
   }
 
-  it('a single site seeds ZERO veils (straight to melee) and starts at the entrance cell', async () => {
+  it('a single site seeds its spawn-group veil (no more zero-veil singles) and starts at the entrance cell', async () => {
     const { battle, layout, spawn } = await seedSingleSite(true);
-    // One room ⇒ no veils at all: no room discovery on a single site.
-    expect(battle.board.veils).toEqual([]);
+    // One room, one spawn group ⇒ exactly one fog group veil (id = room id),
+    // covering the group's spawn cells — the old zero-veil exemption is gone.
+    expect(battle.board.veils).toHaveLength(1);
+    expect(battle.board.veils[0]).toMatchObject({ id: spawn.id, kind: 'fog', roomId: spawn.id });
     // The party starts AT the entrance cell when the layout carries one.
     if (spawn.entrance == undefined) throw new Error('packed arena has no entrance');
     expect(battle.board.stagingGround?.x).toBeCloseTo((spawn.entrance.x + 0.5) / layout.gridW, 9);
     expect(battle.board.stagingGround?.y).toBeCloseTo((spawn.entrance.y + 0.5) / layout.gridH, 9);
   });
 
-  it('a single site without an entrance starts at the room mobsRect center', async () => {
+  it('a single site without an entrance seeds its group veil and starts at the room mobsRect center', async () => {
     const { battle, spawn, layout } = await seedSingleSite(false);
-    expect(battle.board.veils).toEqual([]);
+    expect(battle.board.veils).toHaveLength(1);
+    expect(battle.board.veils[0]).toMatchObject({ id: spawn.id, kind: 'fog', roomId: spawn.id });
     expect(battle.board.stagingGround?.x).toBeCloseTo((spawn.mobsRect.x + spawn.mobsRect.w / 2) / layout.gridW, 9);
     expect(battle.board.stagingGround?.y).toBeCloseTo((spawn.mobsRect.y + spawn.mobsRect.h / 2) / layout.gridH, 9);
   });

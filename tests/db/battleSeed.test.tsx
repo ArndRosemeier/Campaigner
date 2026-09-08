@@ -331,15 +331,31 @@ describe('roster expansion', () => {
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
 
     expect(battle.board.mapLayout).toEqual({ cols: layout.gridW, rows: layout.gridH });
-    // Adjudicated fog exception (doc 11): with an entrance the party STARTS
-    // in the spawn room, so its fog veil is skipped at seed.
+    // Group veils (docs/11 D4): one fog veil per monsterIndexes entry — the
+    // spawn room (Gate) has no groups so it seeds none, while the Barracks
+    // seeds TWO (Goblins + Ogre), the first keeping the room id for the
+    // Path rail and the second resolving via roomId.
     const spawnRoomOfLayout = layout.rooms.find((room) => room.spawn);
-    const expectedVeils = layout.rooms.length - (spawnRoomOfLayout?.entrance !== undefined ? 1 : 0);
-    expect(battle.board.veils).toHaveLength(expectedVeils);
+    const barracks = layout.rooms.find((room) => room.id === roomB);
+    if (barracks === undefined) throw new Error('barracks missing');
+    expect(battle.board.veils).toHaveLength(2);
     expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
-    expect(battle.board.veils.some((veil) => veil.id === spawnRoomOfLayout?.id)).toBe(
-      spawnRoomOfLayout?.entrance === undefined,
-    );
+    const primary = battle.board.veils.find((veil) => veil.id === roomB);
+    expect(primary?.roomId).toBe(roomB);
+    const secondary = battle.board.veils.find((veil) => veil.id !== roomB);
+    expect(secondary?.roomId).toBe(roomB);
+    expect(battle.board.veils.some((veil) => veil.id === spawnRoomOfLayout?.id || veil.roomId === spawnRoomOfLayout?.id)).toBe(false);
+    // Both group veils sit inside the Barracks mobsRect (sub-rect partition).
+    for (const veil of battle.board.veils) {
+      const rect = {
+        x: Math.round(veil.x * layout.gridW - veil.widthCells / 2),
+        y: Math.round(veil.y * layout.gridH - veil.heightCells / 2),
+      };
+      expect(rect.x).toBeGreaterThanOrEqual(barracks.mobsRect.x);
+      expect(rect.y).toBeGreaterThanOrEqual(barracks.mobsRect.y);
+      expect(rect.x + veil.widthCells).toBeLessThanOrEqual(barracks.mobsRect.x + barracks.mobsRect.w);
+      expect(rect.y + veil.heightCells).toBeLessThanOrEqual(barracks.mobsRect.y + barracks.mobsRect.h);
+    }
     const expected = placeMonsters(layout, monsters);
     const npcTokens = battle.board.tokens.filter((token) => token.currentHp !== null);
     expect(npcTokens.map((token) => [token.x, token.y])).toEqual(
@@ -646,15 +662,50 @@ describe('entrance-anchored staging (adjudicated)', () => {
     expect(block).not.toEqual(spawn.mobsRect);
   });
 
-  it('skips the spawn-room fog veil when an entrance exists (adjudicated)', async () => {
-    const layout = gatehouseLayout();
-    const encounter = await addEncounter({ monsters, layout });
+  it('seeds the spawn-room spawn-group veils too (group-veil policy ends the spawn exemption)', async () => {
+    const spawnId = newId();
+    const farId = newId();
+    const layout = packRooms({
+      theme: 'Guarded gatehouse',
+      aspect: '4:3',
+      entryRoomId: spawnId,
+      rosterCounts: [2, 1],
+      rooms: [
+        { id: spawnId, name: 'Gate', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIds: [farId], key: '', keyTreasure: '' },
+        { id: farId, name: 'Barracks', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIds: [spawnId], key: '', keyTreasure: '' },
+      ],
+    });
+    const spawnMonsters = [
+      { name: 'Goblin', count: 2, source: { type: 'inline', statBlock: statBlock({ hp: 7 }) } },
+      { name: 'Ogre', count: 1, source: { type: 'inline', statBlock: statBlock({ hp: 30 }) } },
+    ];
+    const encounter = await addEncounter({ monsters: spawnMonsters, layout });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const spawn = layout.rooms.find((room) => room.spawn);
     if (spawn?.entrance === undefined) throw new Error('entrance missing');
-    expect(battle.board.veils.some((veil) => veil.id === spawn.id)).toBe(false);
-    expect(battle.board.veils).toHaveLength(layout.rooms.length - 1);
-    expect(battle.board.veils.every((veil) => veil.id !== spawn.id)).toBe(true);
+    // The party starts in the spawn room AND its monsters begin veiled: the
+    // spawn room's first group keeps the room id, so the Path rail still
+    // resolves it for "Reveal next room".
+    expect(battle.board.veils.some((veil) => veil.id === spawn.id)).toBe(true);
+    expect(battle.board.veils).toHaveLength(2);
+    expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
+  });
+
+  it('seeds a single-room site with its spawn-group veil (no more zero-veil singles)', async () => {
+    const arenaId = newId();
+    const layout = packRooms({
+      theme: 'Single arena',
+      aspect: '4:3',
+      entryRoomId: arenaId,
+      rosterCounts: [1],
+      rooms: [
+        { id: arenaId, name: 'Arena', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIds: [], key: '', keyTreasure: '' },
+      ],
+    });
+    const encounter = await addEncounter({ monsters, layout });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    expect(battle.board.veils).toHaveLength(1);
+    expect(battle.board.veils[0]).toMatchObject({ id: arenaId, kind: 'fog', roomId: arenaId });
   });
 
   it('keeps legacy behavior byte-identical when the layout has no entrance', async () => {
@@ -674,10 +725,13 @@ describe('entrance-anchored staging (adjudicated)', () => {
       cellHeight: spawn.mobsRect.h / 3 / legacy.gridH,
     });
     expect(battle.board.entrance).toBeNull();
-    // D11 (site-shape arc): the party STARTS in the spawn room on every
-    // site — its veil is never seeded, entrance or not. A complex still
-    // veils the remaining rooms for sequential play.
-    expect(battle.board.veils).toHaveLength(legacy.rooms.length - 1);
+    // Group veils (docs/11 D4): the spawn room (Gate) carries no monster
+    // groups, so it seeds no veil — while the Barracks still veils its one
+    // spawn group for sequential play. No entrance anywhere: legacy staging
+    // stays byte-identical.
+    expect(battle.board.veils).toHaveLength(1);
+    const farRoom = legacy.rooms.find((room) => !room.spawn);
+    expect(battle.board.veils[0]).toMatchObject({ id: farRoom?.id, kind: 'fog', roomId: farRoom?.id });
     expect(battle.board.veils.every((veil) => veil.id !== spawn.id)).toBe(true);
   });
 });

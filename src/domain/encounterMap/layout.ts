@@ -1,4 +1,5 @@
 import { errorMessage } from '@/lib/errors';
+import { newId } from '@/domain/entity';
 import type { z } from 'zod';
 import type { BattleVeil } from '@/domain/battle';
 import {
@@ -451,6 +452,63 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
     widthCells: room.mobsRect.w,
     heightCells: room.mobsRect.h,
   }));
+}
+
+/**
+ * One fog veil per monster spawn GROUP (docs/11 D4, owner-ratified): each
+ * room's `mobsRect` is split per `monsterIndexes` entry — in the owner's
+ * group order — into the minimal cell bounding box of that group's
+ * `placeMonsters` cells (the same row-major `mobsRect` enumeration, sliced
+ * by the roster counts, so every spawn cell is covered by construction).
+ * Rooms with no monster groups seed no veils.
+ *
+ * Path-rail identity (BattleSurface resolves rooms through `veil.id` and
+ * this module must not change the surface): the room's FIRST group keeps
+ * `id = room.id`, so the rail's "Reveal next room" still resolves and lifts
+ * the room's primary veil; later groups mint fresh ids and every group veil
+ * carries `roomId = room.id` for the room resolution. All veils are kind
+ * `'fog'` in the `battleVeilSchema` shape (int cells ≥ VEIL_MIN_CELLS holds
+ * because every emitted group owns at least one placement cell).
+ */
+export function veilsFromSpawnClusters(
+  layout: EncounterLayout,
+  rosterCounts: readonly number[],
+): BattleVeil[] {
+  const issues = validateEncounterLayout(layout, rosterCounts);
+  if (issues.length > 0) throw new EncounterLayoutError(issues);
+  const veils: BattleVeil[] = [];
+  for (const room of layout.rooms) {
+    const cells = cellsOfRect(room.mobsRect).map(parseCell);
+    let cursor = 0;
+    let emittedForRoom = 0;
+    for (const monsterIndex of room.monsterIndexes) {
+      const count = rosterCounts[monsterIndex];
+      if (count === undefined) {
+        throw new EncounterLayoutError([`${room.name}: missing roster entry`]);
+      }
+      const groupCells = cells.slice(cursor, cursor + count);
+      cursor += count;
+      // A zero-count group owns no spawn cells, so it seeds no veil; the
+      // room's FIRST emitted veil still carries the room id for the rail.
+      if (groupCells.length === 0) continue;
+      const minX = Math.min(...groupCells.map((cell) => cell.x));
+      const minY = Math.min(...groupCells.map((cell) => cell.y));
+      const maxX = Math.max(...groupCells.map((cell) => cell.x));
+      const maxY = Math.max(...groupCells.map((cell) => cell.y));
+      const subRect = { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+      veils.push({
+        id: emittedForRoom === 0 ? room.id : newId(),
+        kind: 'fog',
+        x: (subRect.x + subRect.w / 2) / layout.gridW,
+        y: (subRect.y + subRect.h / 2) / layout.gridH,
+        widthCells: subRect.w,
+        heightCells: subRect.h,
+        roomId: room.id,
+      });
+      emittedForRoom += 1;
+    }
+  }
+  return veils;
 }
 
 export function spawnRoom(layout: EncounterLayout): LayoutRoom {

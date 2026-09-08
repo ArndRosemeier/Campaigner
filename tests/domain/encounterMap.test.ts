@@ -10,7 +10,10 @@ import {
   stagingBlockRect,
   validateEncounterLayout,
   veilsFromRooms,
+  veilsFromSpawnClusters,
   encounterLayoutSchema,
+  battleVeilSchema,
+  VEIL_MIN_CELLS,
   type EncounterLayout,
   type EncounterMapBrief,
   type LayoutRoom,
@@ -161,6 +164,124 @@ describe('encounter map layout engine', () => {
       expect(veil?.x).toBe((room.mobsRect.x + room.mobsRect.w / 2) / layout.gridW);
       expect(veil?.y).toBe((room.mobsRect.y + room.mobsRect.h / 2) / layout.gridH);
     }
+  });
+
+  describe('veilsFromSpawnClusters (one fog veil per monster spawn group)', () => {
+    /** A room's mobsRect cells in the row-major order placeMonsters deals from. */
+    function mobsCells(room: LayoutRoom): { x: number; y: number }[] {
+      const cells: { x: number; y: number }[] = [];
+      for (let y = room.mobsRect.y; y < room.mobsRect.y + room.mobsRect.h; y += 1) {
+        for (let x = room.mobsRect.x; x < room.mobsRect.x + room.mobsRect.w; x += 1) {
+          cells.push({ x, y });
+        }
+      }
+      return cells;
+    }
+
+    /** Grid cells covered by a seeded veil rect. */
+    function veilCells(veil: { x: number; y: number; widthCells: number; heightCells: number }, layout: EncounterLayout): Set<string> {
+      const rect = {
+        x: Math.round(veil.x * layout.gridW - veil.widthCells / 2),
+        y: Math.round(veil.y * layout.gridH - veil.heightCells / 2),
+        w: veil.widthCells,
+        h: veil.heightCells,
+      };
+      const covered = new Set<string>();
+      for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+        for (let x = rect.x; x < rect.x + rect.w; x += 1) covered.add(`${String(x)},${String(y)}`);
+      }
+      return covered;
+    }
+
+    it('seeds one veil per group in owner order, rooms without groups seed none', () => {
+      const layout = packRooms(brief());
+      const counts = brief().rosterCounts;
+      const veils = veilsFromSpawnClusters(layout, counts);
+      // Entry Hall has no monster groups → no veil; Flooded Nave [0] and
+      // Reliquary [1] seed one group veil each, first group keeping room.id.
+      expect(veils).toHaveLength(2);
+      for (const room of layout.rooms) {
+        const roomVeils = veils.filter((veil) => veil.id === room.id || veil.roomId === room.id);
+        if (room.monsterIndexes.length === 0) {
+          expect(roomVeils).toHaveLength(0);
+        } else {
+          expect(roomVeils).toHaveLength(room.monsterIndexes.length);
+          expect(roomVeils[0]?.id).toBe(room.id);
+        }
+      }
+      for (const veil of veils) {
+        expect(battleVeilSchema.parse(veil)).toEqual(veil);
+        expect(veil.kind).toBe('fog');
+        expect(Number.isInteger(veil.widthCells) && veil.widthCells >= VEIL_MIN_CELLS).toBe(true);
+        expect(Number.isInteger(veil.heightCells) && veil.heightCells >= VEIL_MIN_CELLS).toBe(true);
+      }
+    });
+
+    it('covers each multi-group room with N sub-rects over exactly its spawn cells', () => {
+      const multiA = '00000000-0000-4000-8000-0000000000a1';
+      const multiB = '00000000-0000-4000-8000-0000000000b2';
+      const counts = [1, 2, 3];
+      const layout = packRooms({
+        theme: 'Divided crypt',
+        aspect: '4:3',
+        entryRoomId: multiA,
+        rosterCounts: counts,
+        rooms: [
+          { id: multiA, name: 'Vestry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIds: [multiB], key: '', keyTreasure: '' },
+          { id: multiB, name: 'Choir', description: '', size: 'large', monsterIndexes: [1, 2], adjacentRoomIds: [multiA], key: '', keyTreasure: '' },
+        ],
+      });
+      const veils = veilsFromSpawnClusters(layout, counts);
+      // One group in the Vestry + two groups in the Choir.
+      expect(veils).toHaveLength(3);
+      const choir = layout.rooms.find((room) => room.id === multiB);
+      if (choir === undefined) throw new Error('choir missing');
+      const choirVeils = veils.filter((veil) => veil.id === multiB || veil.roomId === multiB);
+      expect(choirVeils).toHaveLength(2);
+      // Rail identity: the first group keeps the room id, the second mints a
+      // fresh id — both still resolve to the room via roomId.
+      expect(choirVeils[0]?.id).toBe(multiB);
+      expect(choirVeils[1]?.id).not.toBe(multiB);
+      expect(choirVeils.every((veil) => veil.roomId === multiB)).toBe(true);
+      expect(new Set(veils.map((veil) => veil.id)).size).toBe(veils.length);
+      // Probe-mapped: every placement cell of a group lies inside that
+      // group's own veil sub-rect (same row-major deal order as
+      // placeMonsters, owner-ordered by monsterIndexes).
+      const placements = placeMonsters(layout, counts.map((count) => ({ count })));
+      const byGroup = new Map<number, { x: number; y: number }[]>();
+      for (const placement of placements) {
+        if (placement.roomId !== multiB) continue;
+        const list = byGroup.get(placement.monsterIndex) ?? [];
+        const cell = { x: Math.floor(placement.x * layout.gridW), y: Math.floor(placement.y * layout.gridH) };
+        list.push(cell);
+        byGroup.set(placement.monsterIndex, list);
+      }
+      // Group deal order in the Choir is [1] then [2] (monsterIndexes order).
+      const ordered = [1, 2].map((monsterIndex) => byGroup.get(monsterIndex) ?? []);
+      expect(ordered[0]).toHaveLength(2);
+      expect(ordered[1]).toHaveLength(3);
+      choirVeils.forEach((veil, groupPosition) => {
+        const covered = veilCells(veil, layout);
+        for (const cell of ordered[groupPosition] ?? []) {
+          expect(covered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
+        }
+        // Center normalized from the sub-rect center (layout-anchored, D6).
+        expect(veil.x).toBe((Math.round(veil.x * layout.gridW - veil.widthCells / 2) + veil.widthCells / 2) / layout.gridW);
+      });
+      // The Choir's groups share the room's mobsRect cells between them.
+      const allCovered = new Set<string>();
+      for (const veil of choirVeils) {
+        for (const key of veilCells(veil, layout)) allCovered.add(key);
+      }
+      for (const cell of mobsCells(choir).slice(0, (counts[1] ?? 0) + (counts[2] ?? 0))) {
+        expect(allCovered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
+      }
+    });
+
+    it('fails loudly when a room references a missing roster entry', () => {
+      const layout = packRooms(brief());
+      expect(() => veilsFromSpawnClusters(layout, [2])).toThrow(EncounterLayoutError);
+    });
   });
 
   it('renders schematic pixels at the exact layout dimensions', () => {

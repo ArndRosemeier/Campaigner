@@ -7,8 +7,8 @@ Adds a **fully generated encounter** to Campaigner: an LLM drafts the design
 structure-preserving contract, and **the human picks the candidate** — the
 regenerate affordance is the correction path (D14). The result is an
 `encounter` artifact whose battles seed with **mobs placed in their rooms and
-one veil per room** — the party reveals the fight room by room, exactly the
-GM-Cockpit veil mechanic M5 already runs.
+one fog veil per monster spawn group** — the party reveals the fight group by
+group, exactly the GM-Cockpit veil mechanic M5 already runs.
 
 Binding conventions from `00-OVERVIEW.md §Global conventions` and `AGENTS.md`
 apply throughout (no silent fallbacks; zod at every boundary; failures loud;
@@ -30,7 +30,7 @@ The **encounter generator** authors designed content (artifact). The live run
 stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 'encounter-cartographer'`); its run mode is `'encounter'` (extends
 `personaSchema.mode`). The map+layout data on the artifact is the
-**layout**; the room-cover veil on the board is a **room veil**.
+**layout**; the spawn-group cover veils on the board are **group veils**.
 
 ## Decisions (binding, settled with the user)
 
@@ -38,14 +38,14 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 |---|---|
 | D1 | **Standalone generator**: a run creates a complete `encounter` artifact from a brief — roster included — plus layout, map and room veils. It also runs in a **regenerate** mode against an existing encounter (same or edited roster): name, links and body survive; layout + map are replaced. |
 | D2 | **Two autonomies**: interactive runs use the run-engine autonomy (manual/review pause at the checkpoints below; map pick always pauses, M3-A rule). **Unattended auto runs** (module generation) never pause: one stylize candidate, no pick gate — the `entity-image-queue` precedent (08 §M4-C). Any failure fails that encounter loudly; the batch continues. |
-| D3 | Rooms are **unions of rectangles** (1 rect = plain, 2–3 rects = L/T shapes). Every room carries a **mob sub-rectangle** (`mobsRect`) inscribed in the union — it is both the mob placement area and the room's veil footprint. |
-| D4 | **One veil per room**, kind `fog`, exactly `mobsRect`. Corridors stay open (GM can add fog manually). |
+| D3 | Rooms are **unions of rectangles** (1 rect = plain, 2–3 rects = L/T shapes). Every room carries a **mob sub-rectangle** (`mobsRect`) inscribed in the union — it is both the mob placement area and the source the per-group veil footprints are cut from (D4). |
+| D4 | **One fog veil per monster spawn group** (owner-ratified group veils — supersedes the old one-veil-per-room rule): each room's `mobsRect` is split per `monsterIndexes` entry, in the owner's group order, into the minimal cell bounding box of that group's `placeMonsters` cells (`veilsFromSpawnClusters`, beside the legacy `veilsFromRooms`) — kind `fog`, int cells ≥ `VEIL_MIN_CELLS`. Rooms with no monster groups seed no veil. The room's FIRST group keeps `id = room.id` so the Path rail's "Reveal next room" still resolves per room; later groups mint fresh ids and every group veil carries `roomId = room.id` (additive on `battleVeilSchema`). Corridors stay open (GM can add fog manually). |
 | D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below. Amended 2026-09-08: uncited entries (`inline` / `none`) gain on-demand creature artifacts + local portraits ("Create creature + portrait", per entry and batch-all); invented covers stay local-only, never the global cache. |
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. Amended 2026-09-08 (D14): the vision check that "only flagged drift for human review" is GONE entirely — no pixel is read back anywhere, and the human is the judge at pick. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
 | D9 | **Room keys & mob treasure are GM-only text that travels with its structure** (owner-ratified, 2026-09-07): every layout room carries additive `key`/`keyTreasure` (persisted ON the room — `packRooms` rotates brief rooms, so a parallel roomId-keyed array would orphan), every roster entry carries additive `treasure` (persisted ON the entry — the editor removes roster rows, so an index-keyed array would orphan). The encounter editor edits them; battle seed freezes roster `treasure` onto each token (frozen-copy precedent, initiativeBonus); the battle surface renders GM-only key markers at room staging points + a rail key card + a GM-only token-treasure block — none of which mounts in player view (M5-D contract, 09 amendment). Map regeneration replaces room keys with the fresh brief's (accepted, stated in UI copy and the prompt clause). |
-| D11 | **Encounters have a SHAPE — `siteShape: 'single' \| 'complex'` on the encounter data, additive default `'single'`** (owner-ratified, 2026-09-08): editor labels **"Encounter" (single)** and **"Dungeon" (complex)**. A single site is one arena — `rooms.length === 1`, `corridors: []`, NO veils at seed, start position = the entrance cell when present else the room's mobsRect center, no room discovery. A complex is a dungeon — multi-room, one board, sequential play along the path, GM-only Path rail + "Reveal next room" as an ADVISORY aid (no locks, no initiative resets; the latecomer auto-roll stays an editable aid). The derived default: `locationKind === 'dungeon'` ⇒ complex, else single — materialized for legacy rows by `normalizeEncounterShapeData` (parse-on-read) AND the v17 backfill. Hard invariants refine on the ARTIFACT data (single ⇒ 1 room & no corridors; complex ⇒ >1 room); the stricter generation dichotomy — a brief commits to 1 room or 4–10, never 2–3 — is a repairable brief-boundary issue. See "Site shape, per-room challenge and the path" below. |
+| D11 | **Encounters have a SHAPE — `siteShape: 'single' \| 'complex'` on the encounter data, additive default `'single'`** (owner-ratified, 2026-09-08): editor labels **"Encounter" (single)** and **"Dungeon" (complex)**. A single site is one arena — `rooms.length === 1`, `corridors: []`, veils for its spawn groups at seed (group-veil policy: the spawn-room exemption is gone), start position = the entrance cell when present else the room's mobsRect center, no room discovery beyond the spawn groups. A complex is a dungeon — multi-room, one board, sequential play along the path, GM-only Path rail + "Reveal next room" as an ADVISORY aid (no locks, no initiative resets; the latecomer auto-roll stays an editable aid). The derived default: `locationKind === 'dungeon'` ⇒ complex, else single — materialized for legacy rows by `normalizeEncounterShapeData` (parse-on-read) AND the v17 backfill. Hard invariants refine on the ARTIFACT data (single ⇒ 1 room & no corridors; complex ⇒ >1 room); the stricter generation dichotomy — a brief commits to 1 room or 4–10, never 2–3 — is a repairable brief-boundary issue. See "Site shape, per-room challenge and the path" below. |
 | D12 | **Asymmetric per-room budget loop (owner-specified)**: each complex room carries `targetLevel` (additive, optional; defaults to the encounter's parsed levelHint) and the assigned creatures' levels are summed against a documented band — **too easy ⇒ ship silently (owner: fine)**; **too hard ⇒ lower that room's targetLevel a step (floor 1) and retry through the encounter brief's EXISTING single repair turn** (budget issues join the issue list like coverage/source issues); **after the bounded retry still over ⇒ LOUD advisory** persisted on the step output AND `data.budgetAdvisory` on the artifact — never silent, never a failed run. The final (possibly lowered) targetLevel persists on the room, visible and owner-editable. dnd5e band = our own documented approximation (verbatim rationale below, mirroring the treasure-ladder licensing stance, docs/12 §13.2/§14); pf2e ships NO numbers — GM Core verbatim from retrieved excerpts when present, else the always-on loud advisory. The in-place Smith content fill runs the same loop over a RECONCILED partition (see below). |
 | D13 | **The play path is stored on the layout** — `encounterLayoutSchema.path: z.array(z.uuid()).optional()`, a permutation of the room ids refined by the shared layout schema. The Cartographer brief's room order IS the path (stored explicitly — `packAttempt` ROTATES `brief.rooms`, so the array order cannot be trusted), rotated so the entry room is first: **first path room = spawn room**. Legacy complexes get `path` backfilled as their room-array order (spawn first if derivable) by the v17 migration; the surface falls back to array order when absent. |
 | D15 | **Auto-promote on second-module use** (owner-ratified, 10 D12): an encounter roster or battle token that cites another module's npc/mob artifact promotes it to campaign level with a loud toast — at run-engine finalize (both remap sites), the editor encounter save, the top of `seedBattleFromEncounter` / `spawnRosterInstance` (before identity freezes), and bestiary `spawnMobArtifactIntoModule` (second-module spawn promotes/shared instead of moving). No separate core state — every path funnels through `adoptIntoCampaign`. |
@@ -269,8 +269,12 @@ mode: run row per state change, event emitter for streaming, autonomy via
   is recomputed at seed time so roster edits never desync stored coordinates.
 - `veilsFromRooms(layout)`: one `BattleVeil` per room — kind `'fog'`, center
   normalized from `mobsRect`, `widthCells/heightCells` = the rect's cell
-  span. Correct under D6 because cell metrics are layout-anchored on the
-  surface.
+  span (legacy helper, kept for its pin tests). Battle seed uses
+  `veilsFromSpawnClusters(layout, rosterCounts)` (D4): one fog veil per
+  `monsterIndexes` entry — the minimal cell bounding box of the group's
+  `placeMonsters` cells, first group per room keeping `id = room.id`, every
+  group carrying `roomId`. Correct under D6 because cell metrics are
+  layout-anchored on the surface.
 - `renderSchematic(layout, cellPx)` — canvas: walls dark, floor light, doors
   as gaps, subtle per-room fill; **cell px = 96** (e.g. 24×18 → 2304×1728,
   inside the 4096 map cap). Returns a data URL; nothing stored.
@@ -443,9 +447,11 @@ checklist content — never player-facing, never structured loot output.
 For an encounter with `layout !== null`:
 
 1. Stamp `board.mapLayout` from the layout.
-2. Create the room veils (`veilsFromRooms`) — kind `'fog'`, one per room.
+2. Create the spawn-group veils (`veilsFromSpawnClusters`) — kind `'fog'`,
+   one per `monsterIndexes` entry (D4); the spawn room's groups are veiled
+   too (no exemption).
 3. Place each roster instance on a free cell of its room's `mobsRect`
-   (`placeMonsters`), `visible: true` — the room veil removes it from the DOM
+   (`placeMonsters`), `visible: true` — the group's veil removes it from the DOM
    and initiative (the existing player-safe mechanic; **reveal = GM lifts the
    veil**, and reconcile already auto-rolls revealed fighters).
 4. Spawn PCs in the spawn room's `mobsRect` instead of the default center.
@@ -593,7 +599,7 @@ battle rows parse with `entrance: null`, and re-seeding any encounter whose
 layout lacks an entrance reproduces the pre-entrance behavior byte-identical
 (mobsRect ground, no stamp).
 
-### D4 exception — spawn-room fog with an entrance (2026-09-05, adjudicated; implemented in `aea57a5`)
+### D4 exception — spawn-room fog with an entrance (2026-09-05, adjudicated; implemented in `aea57a5`; SUPERSEDED by group veils)
 
 > **D4 amendment:** when the encounter layout carries an entrance, seed
 > skips the spawn room's fog veil.
@@ -603,8 +609,15 @@ layout lacks an entrance reproduces the pre-entrance behavior byte-identical
 > room they occupy cannot begin veiled."* The GM reveals the remaining
 > rooms as before.
 
-Layouts without an entrance keep D4 exactly: one fog veil per room, exactly
-`mobsRect`, corridors open.
+SUPERSEDED (group-veil policy, owner-ratified): every monster spawn group is
+covered by default, INCLUDING the spawn room's — the exemption is gone, so
+single-room sites seed their spawn-group veils instead of zero. The party
+still starts in the spawn room (staging is unchanged); its monsters simply
+begin veiled. The passage above stays as history; D4 as amended is the rule.
+
+Layouts without an entrance keep D4 exactly: one fog veil per spawn group,
+each the minimal cell bounding box of its group's `placeMonsters` cells,
+corridors open.
 
 ### Exit (non-goal, name reserved)
 
@@ -722,13 +735,15 @@ editor → deletion → docs.
   stamps `siteShape` from the produced layout in BOTH branches (fresh
   create and map regenerate): the target's old shape may not match the
   fresh layout's room count.
-- **Seeding**: the spawn room's veil is NEVER seeded — the party starts in
-  it. This supersedes the D4 entrance-only exemption above (which opened
-  the spawn room only when an entrance existed): a SINGLE site seeds ZERO
-  veils (straight to melee, no room discovery); a COMPLEX opens at path
-  room 1 for sequential play. Start position on a single site is the
+- **Seeding**: every monster spawn group is covered by default, INCLUDING the
+  spawn room's — the group-veil policy ends the spawn-room exemption (which
+  the D4 entrance-only exemption above, and then the D11 never-seed rule,
+  once granted): a SINGLE site seeds its spawn groups' veils (no more
+  zero-veil singles); a COMPLEX veils every group on every room for
+  sequential play along the path. Start position on a single site is the
   entrance CELL when the layout carries one, else the room's mobsRect
-  center; complexes keep the entrance-hugging staging block.
+  center; complexes keep the entrance-hugging staging block. The room's
+  first group keeps `id = room.id` so the Path rail still resolves per room.
 
 ### D12 — the asymmetric per-room budget loop (`src/llm/roomBudget.ts`)
 
@@ -898,10 +913,10 @@ data model, run-engine threading, UI, docs); the gate at completion is
   → pick picks candidate one by contract → finalize; a failing encounter
   fails loudly and the queue continues.
 - **Run battle** on a generated encounter: every mob token sits in its room's
-  area, covered by its room veil and absent from the DOM and initiative;
-  lifting the room's veil reveals the mobs and auto-rolls their initiative;
+  area, covered by its spawn group's veil and absent from the DOM and initiative;
+  lifting the group's veil reveals the mobs and auto-rolls their initiative;
   PCs spawn in the entry room.
-- Resizing the window (tablet ↔ desktop) keeps every room veil on its room —
+- Resizing the window (tablet ↔ desktop) keeps every group veil on its room —
   layout-anchored metrics, golden-tested.
 - Regenerating on an edited roster keeps the artifact's identity/links/body,
   replaces `layout` + `mapImageId`, and re-derives placement.
@@ -925,9 +940,10 @@ data model, run-engine threading, UI, docs); the gate at completion is
   Settings round-trip the choice; the v14→v15 migration backfills the
   defaults. The battle surface needs no preset awareness — the layout's
   `cols/rows` carry the finer grid.
-- Site shape (D11): a single encounter seeds with ZERO veils and starts at
-  the entrance cell (else mobsRect center); a complex opens with the spawn
-  room revealed and the rest veiled; the editor selector disables the shape
+- Site shape (D11): a single encounter seeds its spawn groups' veils (group
+  veils — no spawn-room exemption) and starts at
+  the entrance cell (else mobsRect center); a complex veils every spawn group
+  on every room for sequential play along the path; the editor selector disables the shape
   the map on file cannot hold; the artifact refine rejects single-with-
   corridors and complex-with-one-room rows; legacy rows parse with the
   derived shape (multi-room ⇒ complex with a spawn-first path).
@@ -943,7 +959,9 @@ data model, run-engine threading, UI, docs); the gate at completion is
 - Path (D13): packRooms stores the brief's room order entry-room-first;
   the layout schema rejects a non-permutation path; the surface rail
   follows the stored path and "Reveal next room" lifts the next veiled
-  room's veil (advisory only — no locks, no initiative changes).
+  room's primary group veil (advisory only — no locks, no initiative
+  changes; a revealed room's SECONDARY group veils stay up for the GM to
+  lift by hand — group-veil seam, §18).
 - Marker-path deletion: no module under src/ reads map pixels for
   geometry; the detector module, staging builders and isStaging escapes
   are gone, and validation is unconditional.

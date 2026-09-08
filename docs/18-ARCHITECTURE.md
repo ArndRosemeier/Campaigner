@@ -144,6 +144,7 @@ column.
 | Markdown → plain text | `lib/markdown.markdownToText` | a second strip-regex |
 | PDF viewing | `lib/pdfRuntime.openPdfDocument` + `copyBytes` (worker-safe byte copies); retained book bytes via `pdfRepo` (`&bookId` unique) | re-parsing PDFs from user files |
 | Encounter preset resolution | `domain/encounterMap/schema.resolveEncounterPreset(preset, locationKind)` | branching on `locationKind` directly |
+| Cover monster spawn areas with fog at battle seed | `domain/encounterMap/layout.veilsFromSpawnClusters(layout, rosterCounts)` — ONE fog veil per `monsterIndexes` group (owner order; minimal cell box of the group's `placeMonsters` cells), no spawn-room exemption; the room's first group keeps `id = room.id` (the Path rail resolves rooms through `veil.id` — never re-id veils per room) and every group veil carries `roomId` (`battleVeilSchema`, additive/optional) | one veil per room for new seeds (`veilsFromRooms` is the legacy helper); duplicate `veil.id`s per room (breaks the rail lookup + React keys); "Reveal next room" lifting secondary group veils (surface-owned behavior — reveal lifts the primary, the GM lifts extras by hand) |
 | Graph page derivation | `domain/wikiGraph.ts` (pure; docs/13/14/15) | graph logic in components |
 | Bounded parallelism | `lib/parallel.mapWithConcurrency` | unguarded `Promise.all` over unbounded arrays |
 | Encounter map automation | `useEncounterMapQueue` + the guards `encounterNeedsMap` / `isEncounterMapPending` (serial by contract) | re-enqueueing an already-mapped encounter; a second queue implementation |
