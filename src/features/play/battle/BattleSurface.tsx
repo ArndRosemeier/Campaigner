@@ -1235,8 +1235,13 @@ export function BattleSurface(): JSX.Element {
       return entry === undefined ? [] : [entry];
     });
   }, [provenanceLayout, layoutRooms]);
+  // Room-aware (a seeded room carries one veil per spawn group — docs/11
+  // D4): the rail resolves per ROOM via `veil.roomId` as well as `veil.id`
+  // (the primary group keeps id = room id, secondaries resolve via roomId),
+  // so a room reads veiled until EVERY group veil lifts — never "revealed"
+  // with its mobs still covered and no rail path left.
   const veiledRoomIds = useMemo(
-    () => new Set((battle?.board.veils ?? []).map((veil) => veil.id)),
+    () => new Set((battle?.board.veils ?? []).flatMap((veil) => veil.roomId === undefined ? [veil.id] : [veil.id, veil.roomId])),
     [battle],
   );
   const currentPathIndex = useMemo(() => {
@@ -1572,10 +1577,14 @@ export function BattleSurface(): JSX.Element {
               {/* Room-key markers (owner-ratified, GM view only): one
                   tappable badge per keyed room at its mobsRect CENTER (D11
                   fix — the marker sits on the room's own floor, not the
-                  board center). They render BEFORE the veils so a covered
-                  room hides its key marker exactly like it hides its mobs —
-                  key content is GM-only text and never mounts in player
-                  view. */}
+                  board center). They mount BEFORE veils/effects/tokens with
+                  NO z-index, so DOM order paints them BELOW the veils and
+                  tokens: a covered room hides its marker exactly like it
+                  hides its mobs, and mob tokens + veil bodies win
+                  hit-testing over the 44px marker pad wherever they overlap
+                  (the old z-10 lifted markers above both, swallowing
+                  token/veil pointerdowns). Key content is GM-only text and
+                  never mounts in player view. */}
               {!playerSafe &&
                 hasRealSize &&
                 keyedRooms.map(({ room, letter, marker }) => (
@@ -1587,8 +1596,9 @@ export function BattleSurface(): JSX.Element {
                     // The visible badge stays size-6, but the hit target is a
                     // 44px (size-11) transparent pad around it — the sanctioned
                     // veil-handle pattern: coarse pointers get a finger-size
-                    // target with no visual change.
-                    className="absolute z-10 flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
+                    // target with no visual change. No z-index: markers paint
+                    // below veils/tokens by DOM order (see the block comment).
+                    className="absolute flex size-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center"
                     style={{
                       left: `${String(marker.x * 100)}%`,
                       top: `${String(marker.y * 100)}%`,
@@ -1836,9 +1846,12 @@ export function BattleSurface(): JSX.Element {
                 onClick={() => {
                   if (nextVeiledRoom === null) return;
                   const roomId = nextVeiledRoom.room.id;
+                  // Reveal-all: lift EVERY group veil mapped to the room
+                  // (primary by id, secondaries by roomId) — revealing a room
+                  // never leaves its mobs covered with no rail path.
                   void commit((current) => ({
                     ...current,
-                    veils: current.veils.filter((veil) => veil.id !== roomId),
+                    veils: current.veils.filter((veil) => veil.id !== roomId && veil.roomId !== roomId),
                   }));
                 }}
               >

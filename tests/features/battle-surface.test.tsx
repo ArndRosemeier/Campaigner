@@ -2935,6 +2935,29 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     expect(screen.getByTestId('room-key-card')).toBeInTheDocument();
   });
 
+  it('paints room-key markers BELOW veils and tokens (no z-10, DOM order decides hit-testing)', async () => {
+    const { moduleId } = await seedKeyedBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    const marker = screen.getByTestId('room-key-marker-A');
+    // No elevated z-index: markers must lose hit-testing to tokens and
+    // veil bodies wherever they overlap (the z-10 pad swallowed
+    // mob/veil pointerdowns in GM view).
+    expect(marker.className).not.toContain('z-10');
+    // jsdom has no hit-testing, so the paint order is pinned geometrically:
+    // markers mount BEFORE veils and tokens, so with equal (auto) stacking
+    // the later siblings paint — and hit-test — above the marker pad.
+    const followers = [...document.querySelectorAll('[data-testid="battle-veil"], [data-testid="battle-token"]')];
+    expect(followers.length).toBeGreaterThan(0);
+    for (const node of followers) {
+      expect(marker.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // The demoted marker still opens the key card (badge affordance kept).
+    fireEvent.click(marker);
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('room-key-card')).toBeInTheDocument();
+  });
+
   it('GM view: tapping a treasure-carrying token shows the frozen treasure on the selection card', async () => {
     const { moduleId } = await seedKeyedBattle();
     await renderSurface(moduleId);
@@ -2991,7 +3014,7 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     expect(after.board.veils).toHaveLength(0);
   });
 
-  it('a multi-group room resolves per room on the Path rail: reveal lifts the primary veil, extras stay room-mapped', async () => {
+  it('a multi-group room reveals ALL its group veils through the Path rail (reveal-all, no dead end)', async () => {
     const pc1 = await addPc('Serren', 20);
     void pc1;
     const roomA = newId();
@@ -3052,16 +3075,24 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     await flushAsyncUpdates();
     expect((await currentBattle(module.id)).board.veils).toHaveLength(2);
     expect(veiledLabel('path-room-1')).not.toContain('(veiled)');
-    // Reveal room 2 (Sanctum): the primary veil lifts — the rail resolves the
-    // room — while the secondary group veil stays on the board, still mapped
-    // to the room via roomId for the GM to lift by hand.
+    // Reveal room 2 (Sanctum): reveal-all lifts the primary AND the
+    // secondary group veil (both resolve per room via id + roomId) — no
+    // room ever reads revealed while its mobs stay covered with no rail
+    // path left.
     await user.click(screen.getByTestId('reveal-next-room'));
     await flushAsyncUpdates();
     const after = await currentBattle(module.id);
-    expect(after.board.veils).toHaveLength(1);
-    expect(after.board.veils[0]?.roomId).toBe(roomB);
-    expect(after.board.veils[0]?.id).not.toBe(roomB);
+    expect(after.board.veils).toHaveLength(0);
     expect(veiledLabel('path-room-2')).not.toContain('(veiled)');
+    expect(screen.getByTestId('reveal-next-room')).toBeDisabled();
+    // Player/GM consistency: with every Sanctum veil lifted, the covered
+    // mobs are back in the player-view DOM (coverage removed nothing else).
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    const labels = screen
+      .getAllByTestId('battle-token')
+      .map((element) => element.getAttribute('data-token-label'));
+    expect(labels).toEqual(expect.arrayContaining(['Cultist 1', 'Cultist 2', 'Cultist 3']));
   });
 })
 

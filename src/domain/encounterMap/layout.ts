@@ -457,10 +457,20 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
 /**
  * One fog veil per monster spawn GROUP (docs/11 D4, owner-ratified): each
  * room's `mobsRect` is split per `monsterIndexes` entry — in the owner's
- * group order — into the minimal cell bounding box of that group's
- * `placeMonsters` cells (the same row-major `mobsRect` enumeration, sliced
- * by the roster counts, so every spawn cell is covered by construction).
- * Rooms with no monster groups seed no veils.
+ * group order — into the cell bounding box of that group's `placeMonsters`
+ * cells (the same row-major `mobsRect` enumeration, sliced by the roster
+ * counts, so every spawn cell is covered by construction). Rooms with no
+ * monster groups seed no veils.
+ *
+ * COVER CONVENTION (veil reachability): a seeded group veil covers its
+ * group's spawn area PLUS a one-cell margin on every side, clamped to the
+ * board bounds — the minimal group box on its own sits exactly coincident
+ * with the mob tokens, and tokens paint strictly above veils, so a minimal
+ * box leaves no grabbable veil body and no reachable edge handle (both 100%
+ * occluded). The margin ring stays directly clickable for tokens (they win
+ * hit-testing above) while exposing veil body for drags and edge pads for
+ * resizes around them; a 1x1 group therefore seeds at most 3x3. GM-created
+ * veils never pass through here and are untouched.
  *
  * Path-rail identity (BattleSurface resolves rooms through `veil.id` and
  * this module must not change the surface): the room's FIRST group keeps
@@ -468,7 +478,8 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
  * the room's primary veil; later groups mint fresh ids and every group veil
  * carries `roomId = room.id` for the room resolution. All veils are kind
  * `'fog'` in the `battleVeilSchema` shape (int cells ≥ VEIL_MIN_CELLS holds
- * because every emitted group owns at least one placement cell).
+ * because every emitted group owns at least one placement cell, and the
+ * margin only grows the span).
  */
 export function veilsFromSpawnClusters(
   layout: EncounterLayout,
@@ -495,7 +506,14 @@ export function veilsFromSpawnClusters(
       const minY = Math.min(...groupCells.map((cell) => cell.y));
       const maxX = Math.max(...groupCells.map((cell) => cell.x));
       const maxY = Math.max(...groupCells.map((cell) => cell.y));
-      const subRect = { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+      // Cover convention: one-cell margin on every side, clamped to the
+      // board bounds (Math.max/min clamp — no helper exists; rectInBounds
+      // only tests). The span only grows, so VEIL_MIN_CELLS still holds.
+      const coverX0 = Math.max(0, minX - 1);
+      const coverY0 = Math.max(0, minY - 1);
+      const coverX1 = Math.min(layout.gridW, maxX + 1 + 1);
+      const coverY1 = Math.min(layout.gridH, maxY + 1 + 1);
+      const subRect = { x: coverX0, y: coverY0, w: coverX1 - coverX0, h: coverY1 - coverY0 };
       veils.push({
         id: emittedForRoom === 0 ? room.id : newId(),
         kind: 'fog',

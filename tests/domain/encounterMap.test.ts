@@ -282,6 +282,105 @@ describe('encounter map layout engine', () => {
       const layout = packRooms(brief());
       expect(() => veilsFromSpawnClusters(layout, [2])).toThrow(EncounterLayoutError);
     });
+
+    it('expands each group veil by a one-cell margin: a 1x1 interior group seeds 3x3 with handles beside the token', () => {
+      const roomId = '00000000-0000-4000-8000-0000000000d4';
+      const layout: EncounterLayout = {
+        gridW: 12,
+        gridH: 12,
+        theme: 'Margin probe',
+        rooms: [
+          {
+            id: roomId,
+            name: 'Cell',
+            rects: [{ x: 2, y: 2, w: 6, h: 6 }],
+            mobsRect: { x: 4, y: 4, w: 2, h: 2 },
+            description: '',
+            monsterIndexes: [0],
+            spawn: true,
+            key: '',
+            keyTreasure: '',
+          },
+        ],
+        corridors: [],
+      };
+      const veils = veilsFromSpawnClusters(layout, [1]);
+      expect(veils).toHaveLength(1);
+      const veil = veils[0];
+      if (veil === undefined) throw new Error('group veil missing');
+      // The group owns only the row-major first mobsRect cell (4,4); the
+      // cover convention expands the 1x1 box by one cell on every side.
+      expect(veil.widthCells).toBe(3);
+      expect(veil.heightCells).toBe(3);
+      expect(veil.x).toBe((3 + 3 / 2) / layout.gridW);
+      expect(veil.y).toBe((3 + 3 / 2) / layout.gridH);
+      const covered = veilCells(veil, layout);
+      const tokenKey = '4,4';
+      expect(covered.has(tokenKey)).toBe(true);
+      // Grabbable body: the margin ring around the token is veil, not token.
+      const ring = [...covered].filter((key) => key !== tokenKey);
+      expect(ring).toHaveLength(8);
+      // jsdom has no hit-testing, so the reachability contract is pinned
+      // geometrically: the four edge-handle midpoints (n/s/e/w, where the
+      // 44px pads center) land on margin-ring cells, never on token cells.
+      const handleCells = new Set([
+        `${String(Math.floor(veil.x * layout.gridW))},${String(Math.round(veil.y * layout.gridH - veil.heightCells / 2))}`,
+        `${String(Math.floor(veil.x * layout.gridW))},${String(Math.round(veil.y * layout.gridH + veil.heightCells / 2) - 1)}`,
+        `${String(Math.round(veil.x * layout.gridW - veil.widthCells / 2))},${String(Math.floor(veil.y * layout.gridH))}`,
+        `${String(Math.round(veil.x * layout.gridW + veil.widthCells / 2) - 1)},${String(Math.floor(veil.y * layout.gridH))}`,
+      ]);
+      expect(handleCells.has(tokenKey)).toBe(false);
+      for (const key of handleCells) expect(covered.has(key)).toBe(true);
+    });
+
+    it('clamps the margin to the board at grid edges while still covering multi-cell groups', () => {
+      const roomId = '00000000-0000-4000-8000-0000000000e5';
+      const layout: EncounterLayout = {
+        gridW: 12,
+        gridH: 12,
+        theme: 'Edge probe',
+        rooms: [
+          {
+            id: roomId,
+            name: 'Corner',
+            rects: [{ x: 0, y: 0, w: 6, h: 6 }],
+            mobsRect: { x: 1, y: 1, w: 3, h: 2 },
+            description: '',
+            monsterIndexes: [0, 1],
+            spawn: true,
+            key: '',
+            keyTreasure: '',
+          },
+        ],
+        corridors: [],
+      };
+      const veils = veilsFromSpawnClusters(layout, [2, 2]);
+      expect(veils).toHaveLength(2);
+      // Row-major deal: group 0 owns (1,1),(2,1); group 1 owns (3,1),(1,2).
+      const expected = [
+        { x: 0, y: 0, w: 4, h: 3, cells: ['1,1', '2,1'] },
+        { x: 0, y: 0, w: 5, h: 4, cells: ['3,1', '1,2'] },
+      ];
+      veils.forEach((veil, index) => {
+        const want = expected[index];
+        if (want === undefined) throw new Error('expected cover missing');
+        expect(veil.widthCells).toBe(want.w);
+        expect(veil.heightCells).toBe(want.h);
+        expect(veil.x).toBe((want.x + want.w / 2) / layout.gridW);
+        expect(veil.y).toBe((want.y + want.h / 2) / layout.gridH);
+        const covered = veilCells(veil, layout);
+        for (const key of want.cells) expect(covered.has(key)).toBe(true);
+        // Clamped to the board on every side.
+        for (const key of covered) {
+          const [x, y] = key.split(',').map(Number);
+          expect(x).toBeGreaterThanOrEqual(0);
+          expect(y).toBeGreaterThanOrEqual(0);
+          expect(x).toBeLessThan(layout.gridW);
+          expect(y).toBeLessThan(layout.gridH);
+        }
+        expect(battleVeilSchema.parse(veil)).toEqual(veil);
+      });
+    });
   });
 
   it('renders schematic pixels at the exact layout dimensions', () => {

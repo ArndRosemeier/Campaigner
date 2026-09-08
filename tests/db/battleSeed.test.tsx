@@ -336,8 +336,6 @@ describe('roster expansion', () => {
     // seeds TWO (Goblins + Ogre), the first keeping the room id for the
     // Path rail and the second resolving via roomId.
     const spawnRoomOfLayout = layout.rooms.find((room) => room.spawn);
-    const barracks = layout.rooms.find((room) => room.id === roomB);
-    if (barracks === undefined) throw new Error('barracks missing');
     expect(battle.board.veils).toHaveLength(2);
     expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
     const primary = battle.board.veils.find((veil) => veil.id === roomB);
@@ -345,17 +343,51 @@ describe('roster expansion', () => {
     const secondary = battle.board.veils.find((veil) => veil.id !== roomB);
     expect(secondary?.roomId).toBe(roomB);
     expect(battle.board.veils.some((veil) => veil.id === spawnRoomOfLayout?.id || veil.roomId === spawnRoomOfLayout?.id)).toBe(false);
-    // Both group veils sit inside the Barracks mobsRect (sub-rect partition).
-    for (const veil of battle.board.veils) {
+    // Cover convention (docs/11 D4): each group veil covers its spawn cells
+    // PLUS a one-cell margin clamped to the board — veils are NOT confined
+    // to the mobsRect (the margin is the grabbable veil body beside the
+    // tokens). Pin the exact expanded rect per group, in deal order.
+    const dealt = placeMonsters(layout, monsters);
+    const cellsByGroup = new Map<number, { x: number; y: number }[]>();
+    for (const placement of dealt) {
+      if (placement.roomId !== roomB) continue;
+      const cell = { x: Math.floor(placement.x * layout.gridW), y: Math.floor(placement.y * layout.gridH) };
+      cellsByGroup.set(placement.monsterIndex, [...(cellsByGroup.get(placement.monsterIndex) ?? []), cell]);
+    }
+    const orderedGroups = [0, 1].map((monsterIndex) => cellsByGroup.get(monsterIndex) ?? []);
+    expect(orderedGroups.map((cells) => cells.length)).toEqual([2, 1]);
+    const roomVeils = battle.board.veils.filter((veil) => veil.id === roomB || veil.roomId === roomB);
+    expect(roomVeils).toHaveLength(2);
+    expect(roomVeils[0]?.id).toBe(roomB);
+    roomVeils.forEach((veil, groupPosition) => {
+      const group = orderedGroups[groupPosition] ?? [];
+      const xs = group.map((cell) => cell.x);
+      const ys = group.map((cell) => cell.y);
+      const want = {
+        x: Math.max(0, Math.min(...xs) - 1),
+        y: Math.max(0, Math.min(...ys) - 1),
+      };
+      const wantW = Math.min(layout.gridW, Math.max(...xs) + 2) - want.x;
+      const wantH = Math.min(layout.gridH, Math.max(...ys) + 2) - want.y;
+      expect(veil.widthCells).toBe(wantW);
+      expect(veil.heightCells).toBe(wantH);
       const rect = {
         x: Math.round(veil.x * layout.gridW - veil.widthCells / 2),
         y: Math.round(veil.y * layout.gridH - veil.heightCells / 2),
       };
-      expect(rect.x).toBeGreaterThanOrEqual(barracks.mobsRect.x);
-      expect(rect.y).toBeGreaterThanOrEqual(barracks.mobsRect.y);
-      expect(rect.x + veil.widthCells).toBeLessThanOrEqual(barracks.mobsRect.x + barracks.mobsRect.w);
-      expect(rect.y + veil.heightCells).toBeLessThanOrEqual(barracks.mobsRect.y + barracks.mobsRect.h);
-    }
+      expect(rect.x).toBe(want.x);
+      expect(rect.y).toBe(want.y);
+      // Inside the board on every side, and every spawn cell covered.
+      expect(rect.x).toBeGreaterThanOrEqual(0);
+      expect(rect.y).toBeGreaterThanOrEqual(0);
+      expect(rect.x + veil.widthCells).toBeLessThanOrEqual(layout.gridW);
+      expect(rect.y + veil.heightCells).toBeLessThanOrEqual(layout.gridH);
+      const covered = new Set<string>();
+      for (let y = rect.y; y < rect.y + veil.heightCells; y += 1) {
+        for (let x = rect.x; x < rect.x + veil.widthCells; x += 1) covered.add(`${String(x)},${String(y)}`);
+      }
+      for (const cell of group) expect(covered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
+    });
     const expected = placeMonsters(layout, monsters);
     const npcTokens = battle.board.tokens.filter((token) => token.currentHp !== null);
     expect(npcTokens.map((token) => [token.x, token.y])).toEqual(

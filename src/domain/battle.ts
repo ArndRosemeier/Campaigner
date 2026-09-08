@@ -86,10 +86,11 @@ export const battleVeilSchema = z.object({
   heightCells: z.number().int().min(VEIL_MIN_CELLS),
   /**
    * The layout room this veil covers (group veils, docs/11 D4): the Path
-   * rail resolves rooms through the primary veil's `id` (= room id), so
-   * every seeded group veil ALSO carries its room here — the first group
-   * keeps `id = room.id`, later groups mint fresh ids. Optional: legacy
-   * rows and GM-drawn veils parse without it (no room = none).
+   * rail resolves rooms through `veil.id` AND `veil.roomId` — the first
+   * group keeps `id = room.id`, later groups mint fresh ids — and "Reveal
+   * next room" lifts every veil mapped to the room (reveal-all), so no room
+   * reads revealed while its mobs stay covered. Optional: legacy rows and
+   * GM-drawn veils parse without it (no room = none).
    */
   roomId: z.uuid().optional(),
 });
