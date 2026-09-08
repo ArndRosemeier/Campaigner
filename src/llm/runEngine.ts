@@ -101,6 +101,7 @@ import { surroundingParagraphs } from '@/lib/wikilinks';
 type ContinuityReport = z.infer<typeof continuityReportSchema>;
 import { searchRules } from '@/search';
 import { debugLog } from '@/lib/debug';
+import { collectTextLeaves, debrisIssuesForFields } from '@/lib/encodingHygiene';
 import { toastError } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
@@ -3360,7 +3361,7 @@ export class RunEngine {
     stepIndex: number,
     steps: RunStep[],
     input: StartRunInput,
-  ): Promise<{ step: RunStep; artifactId: Id }> {
+  ): Promise<{ step: RunStep; runStatus?: PersonaRun['status']; artifactId?: Id }> {
     const draft = this.effectiveDraft(steps) ?? {};
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not produce artifacts');
@@ -3388,6 +3389,22 @@ export class RunEngine {
     const statblockStep = steps.find((step) => step.name === 'statblock');
     const statblockOutput = (statblockStep?.userEdit ?? statblockStep?.output) as
       { statBlock?: StatBlock } | null | undefined;
+    // Escape-debris hygiene backstop (18-ARCHITECTURE seam): the UTF-8
+    // contract in `llm/language.ts` is prevention, this is detection. The
+    // effective draft (body/summary/name, encounter monster notes/treasure)
+    // plus the statblock strings are scanned BEFORE any create/updateArtifact
+    // below — a hit rejects the step LOUDLY with the debris named in the
+    // issues, and nothing persists. Never repair-and-continue (AGENTS 1-2).
+    const debrisIssues = debrisIssuesForFields([
+      ...collectTextLeaves(draft, 'draft'),
+      ...collectTextLeaves(statblockOutput?.statBlock, 'statBlock'),
+    ]);
+    if (debrisIssues.length > 0) {
+      const step = this.finishStep(steps[stepIndex], { raw: JSON.stringify(draft), issues: debrisIssues }, 'rejected');
+      if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
+      if (input.autonomy === 'auto') return { step };
+      return { step, runStatus: 'needs_review' };
+    }
     if ((kind === 'npc' || kind === 'pc') && 'statBlock' in data) {
       const statBlock = statblockOutput?.statBlock;
       if (statBlock !== undefined) data.statBlock = statBlock;

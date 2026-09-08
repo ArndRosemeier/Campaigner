@@ -216,7 +216,13 @@ For part i, the user message contains:
 
 Output is **plain markdown — no JSON, no zod** for the prose itself. Empty or
 <100-char output = failure (retry once, then part `status:'failed'`). Strip a
-single leading H1 if the model emits one.
+single leading H1 if the model emits one. Generated part prose is
+already-decoded stored text, so a `?xx` tail or literal `\uXXXX` in it is
+mangled output, never content: `generatePart` scans the normalized markdown
+with `findEscapeDebris` (`src/lib/encodingHygiene.ts`, pure) before the
+ready write, and on a hit marks the part `failed` with the debris named in
+its `errorMessage` — the existing failed semantics (the chain continues,
+the user retries); debris is never persisted as ready prose.
 
 Sequential execution; module `status:'generating'` with the reader already
 showing finished parts (progressive reveal — the user reads part 1 while part

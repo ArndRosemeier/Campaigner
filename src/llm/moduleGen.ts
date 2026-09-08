@@ -12,6 +12,7 @@ import { repairModel } from '@/llm/modelFallback';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
 import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
+import { debrisIssuesForFields } from '@/lib/encodingHygiene';
 // The engine triggers the module's own post-generation automation (the
 // unattended paths have no UI to do it); the orchestrator never imports this
 // module, so the direction stays acyclic.
@@ -665,6 +666,19 @@ export async function generatePart(
 
   try {
     const markdown = await partCall(module, spine, plan, planIndex, campaign, model, options);
+    // Escape-debris hygiene backstop (18-ARCHITECTURE seam): generated part
+    // prose is already-decoded stored text — a `?xx` tail or literal
+    // `\uXXXX` in it is mangled output, never content. The part fails with
+    // the debris named (existing failed semantics: the chain continues, the
+    // user retries) — debris is never persisted as a ready part.
+    const debrisIssues = debrisIssuesForFields([{ field: `part ${String(planIndex + 1)}`, text: markdown }]);
+    if (debrisIssues.length > 0) {
+      const debrisMessage =
+        `Part text contains escape debris (${debrisIssues.join('; ')}) — ` +
+        'half-formed unicode escape in generated prose; refusing to persist. Retry the part.';
+      await setPart({ planIndex, markdown: '', status: 'failed', errorMessage: debrisMessage, edited: false });
+      throw new Error(debrisMessage);
+    }
     await setPart({ planIndex, markdown, status: 'ready', errorMessage: '', edited: false });
     // LINKS hook: generated part prose reuses established names exactly —
     // second-module wikilink uses promote to shared campaign ownership.

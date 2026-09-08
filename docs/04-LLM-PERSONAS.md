@@ -261,6 +261,20 @@ schema-validated — so an empty body refuses to create or overwrite: an
 in-place refill that comes back empty keeps the existing content and fails
 the run loudly. Never materialize empty text.
 
+**Escape-debris hygiene (detection backstop for the UTF-8 contract).** The
+generation-language directive (`src/llm/language.ts`) requires non-ASCII
+written directly as UTF-8 (prevention); model prose still intermittently
+arrives as half-formed unicode escapes (`Flussmündung` → `Flussm?fcndung`).
+`findEscapeDebris` (`src/lib/encodingHygiene.ts`, pure) flags the two shapes
+in already-decoded text — `?` immediately followed by exactly two lowercase
+hex chars forming a non-ASCII codepoint tail, and a literal `\uXXXX`
+(which valid decoded text must never contain) — and finalize scans the
+effective draft (body/summary/name, encounter monster notes/treasure) plus
+the statblock strings BEFORE any create/updateArtifact. A hit rejects the
+step LOUDLY with the debris named in the issues (review pause under
+manual/review, run failure under `auto`), and nothing persists. Never
+repair-and-continue, never a placeholder.
+
 ### Autonomy semantics
 
 After each step completes:
