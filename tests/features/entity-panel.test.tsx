@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 
+import type { JSX } from 'react';
 import { act, cleanup, render as rtlRender, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
@@ -8,22 +9,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createArtifact, getArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage, getImage } from '@/db/imageRepo';
-import { getModule, saveModule } from '@/db/moduleRepo';
+import { getModule, saveModule, saveSpine } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { listRunsByCampaign } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
 import {
+  battleSchema,
   createArtifact as buildArtifact,
   createModule,
   moduleSchema,
   newId,
+  stampNewEntity,
   type AnyArtifact,
   type Artifact,
+  type Battle,
+  type BattleBoard,
   type Id,
   type Module,
-} from '@/domain';
+} from '@/domain';import { emptyBoard } from '@/domain/battle/board';
 import { EntityPanel, useModuleEntities } from '@/features/modules/entity-panel';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
@@ -53,7 +58,10 @@ const intakeImageMock = vi.mocked(intakeImage);
 
 const { toastError } = await import('@/lib/toast');
 const toastErrorMock = vi.mocked(toastError);
+const { toastSuccess } = await import('@/lib/toast');
+const toastSuccessMock = vi.mocked(toastSuccess);
 import { clearDatabase } from '../db/helpers';
+import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Every render gets a router context: the entity panel's Run battle button
@@ -1081,5 +1089,322 @@ describe('EntityPanel — bounded reader rail', () => {
     await user.click(toggle);
     expect(screen.getAllByTestId('entity-row').length).toBeGreaterThan(0);
     expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+});
+
+/**
+ * Orphaned entities (08-MODULE-DESIGNER §M4-C "Orphaned entities"): the
+ * third list — module-owned rows this module's prose never mentions, with
+ * the guarded delete-all + per-row trash riding the db sweep (recount in
+ * one tx; guards keep with reasons). The disambiguated term ("Orphaned
+ * (unmentioned)") distinguishes the tree's module-less Orphaned group.
+ */
+describe('EntityPanel — orphaned entities', () => {
+  beforeEach(clearDatabase);
+  beforeEach(() => {
+    toastErrorMock.mockClear();
+    toastSuccessMock.mockClear();
+  });
+  afterEach(cleanup);
+
+  /** A saved module whose prose mentions only the campaign-owned Mira. */
+  async function quietModule(campaignId: Id): Promise<Module> {
+    const base = createModule({
+      campaignId,
+      title: 'Quiet Shore',
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'sketch',
+    });
+    await saveModule(base);
+    const saved = await saveSpine(base.id, {
+      premise: 'A quiet shore where [[Mira]] waits.',
+      themes: [],
+      partPlan: [
+        {
+          title: 'The Shore',
+          levelBand: '1–2',
+          synopsis: 'Walk the shore.',
+          levelUpTrigger: 'The tide turns.',
+        },
+      ],
+    });
+    return saveModule(saved);
+  }
+
+  function orphanPanel(
+    module: Module,
+    campaign: Awaited<ReturnType<typeof createCampaign>>,
+    artifacts: readonly AnyArtifact[],
+  ): JSX.Element {
+    return (
+      <EntityPanel
+        module={module}
+        artifacts={artifacts}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />
+    );
+  }
+
+  /** A normalized battle row carrying the given board (the guard carrier). */
+  async function putBattle(
+    campaignId: Id,
+    moduleId: Id,
+    board: Partial<BattleBoard>,
+    seedFighters: Battle['seedFighters'] = [],
+  ): Promise<void> {
+    await db.battles.put(
+      battleSchema.parse({
+        ...stampNewEntity(),
+        campaignId,
+        moduleId,
+        encounterArtifactId: null,
+        reseed: null,
+        board: { ...emptyBoard(), ...board },
+        seedFighters,
+      }),
+    );
+  }
+
+  it('renders the third section with tagged rows (incl. plotarc) and the count-gated button', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+    const wraith = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Lonely Wraith',
+    });
+    const winter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'plotarc',
+      name: 'The Long Winter',
+    });
+
+    render(
+      orphanPanel(module, campaign, [mira, wraith, winter]),
+    );
+
+    const group = screen.getByTestId('orphaned-group');
+    expect(group).toHaveTextContent('Orphaned (unmentioned) · 2');
+    const rows = within(group).getAllByTestId('orphan-row');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveAttribute('data-name', 'Lonely Wraith');
+    expect(rows[0]).toHaveTextContent('npc');
+    expect(rows[0]).toHaveTextContent('no mentions');
+    // plotarc surfaces (owner-ratified) — the panel never lists it elsewhere.
+    expect(rows[1]).toHaveAttribute('data-name', 'The Long Winter');
+    expect(rows[1]).toHaveTextContent('plotarc');
+    // The mentioned campaign-owned row is not an orphan.
+    expect(within(group).queryByText('Mira')).not.toBeInTheDocument();
+    expect(screen.getByTestId('orphan-delete-all')).toHaveTextContent('Delete 2 orphans');
+  });
+
+  it('hides the group and the button when nothing is orphaned', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    render(orphanPanel(module, campaign, [mira]));
+
+    expect(screen.queryByTestId('orphaned-group')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('orphan-delete-all')).not.toBeInTheDocument();
+  });
+
+  it("excludes ambiguity-shadowed rows — the group stays empty for same-named duplicates", async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Goblin',
+    });
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Goblin',
+    });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    render(orphanPanel(module, campaign, [mira]));
+
+    expect(screen.queryByTestId('orphaned-group')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('orphan-delete-all')).not.toBeInTheDocument();
+  });
+
+  it('delete-all: the confirm names them, the sweep deletes them, one success toast', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    const wraith = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Lonely Wraith',
+    });
+    const winter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'plotarc',
+      name: 'The Long Winter',
+    });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    render(orphanPanel(module, campaign, [mira, wraith, winter]));
+    await user.click(screen.getByTestId('orphan-delete-all'));
+
+    const dialog = screen.getByTestId('orphan-sweep-dialog');
+    expect(within(dialog).getByTestId('orphan-sweep-title')).toHaveTextContent(
+      'Delete 2 orphaned entities?',
+    );
+    const list = within(dialog).getByTestId('orphan-sweep-list');
+    expect(list).toHaveTextContent('Lonely Wraith');
+    expect(list).toHaveTextContent('The Long Winter');
+    await user.click(within(dialog).getByTestId('orphan-sweep-confirm'));
+
+    // The tx re-counted and deleted exactly the offered orphans.
+    await waitFor(async () => {
+      expect(await getArtifact(wraith.id)).toBeUndefined();
+      expect(await getArtifact(winter.id)).toBeUndefined();
+    });
+    expect((await getArtifact(mira.id))?.name).toBe('Mira');
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith('Deleted 2 orphaned entities');
+    });
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    // Drain the dialog-close timers (Base UI) before unmount — docs/08.
+    await flushAsyncUpdates();
+  });
+
+  it('delete-all keeps a battle-tokened orphan with its reason in the one loud toast', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    const other = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'Tide Gate',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const wraith = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Lonely Wraith',
+    });
+    const winter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'plotarc',
+      name: 'The Long Winter',
+    });
+    // The token lives on a battle of ANOTHER module — the campaign-wide
+    // guard counts it (08 §M4-C: any campaign battle).
+    await putBattle(campaign.id, other.id, {
+      tokens: [
+        {
+          id: newId(),
+          artifactId: wraith.id,
+          label: 'Lonely Wraith',
+          x: 0.5,
+          y: 0.5,
+          visible: true,
+          scale: 1,
+          shape: 'portrait',
+          color: null,
+          currentHp: 9,
+          initiativeRoll: null,
+          initiativeBonus: 2,
+          treasure: '',
+          conditions: [],
+        },
+      ],
+    });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    render(orphanPanel(module, campaign, [mira, wraith, winter]));
+    await user.click(screen.getByTestId('orphan-delete-all'));
+    await user.click(within(screen.getByTestId('orphan-sweep-dialog')).getByTestId('orphan-sweep-confirm'));
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        'Deleted 1 of 2 orphans — kept 1: "Lonely Wraith" — ' +
+          'a portrait token on the battle of "Tide Gate"',
+      );
+    });
+    expect(await getArtifact(wraith.id)).toBeDefined();
+    await waitFor(async () => {
+      expect(await getArtifact(winter.id)).toBeUndefined();
+    });
+    // Drain the dialog-close timers (Base UI) before unmount — docs/08.
+    await flushAsyncUpdates();
+  });
+
+  it('per-row trash deletes a free orphan and toasts the deletion', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    const winter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'plotarc',
+      name: 'The Long Winter',
+    });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    render(orphanPanel(module, campaign, [mira, winter]));
+    await user.click(screen.getByTestId('orphan-delete'));
+
+    await waitFor(async () => {
+      expect(await getArtifact(winter.id)).toBeUndefined();
+    });
+    expect(toastSuccessMock).toHaveBeenCalledWith('Deleted orphaned entity "The Long Winter"');
+  });
+
+  it('per-row trash refuses a guarded orphan with the reason and keeps the row', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    const other = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'Tide Gate',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const wraith = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Lonely Wraith',
+    });
+    await putBattle(campaign.id, other.id, {}, [
+      { id: wraith.id, name: 'Lonely Wraith', maxHp: 9, initiativeBonus: 2 },
+    ]);
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    render(orphanPanel(module, campaign, [mira, wraith]));
+    await user.click(screen.getByTestId('orphan-delete'));
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        'Kept "Lonely Wraith" — a frozen seed fighter on the battle of "Tide Gate"',
+      );
+    });
+    expect(await getArtifact(wraith.id)).toBeDefined();
   });
 });

@@ -227,3 +227,23 @@ resolves." / "Every entity in scope is mentioned in module prose."
   the Relations section and quick-find behave exactly as before.
 - **No changes to `buildWikiGraph`** — no output-field extension was
   needed (decision 3); the module keeps its 13 pinned tests.
+
+## 7. Later arc: the orphaned-entity tag + guarded delete-all (cross-link)
+
+The never-mentioned report gained a destructive sibling (08-MODULE-DESIGNER
+§M4-C "Orphaned entities"): the module reader's entity panel tags its
+MODULE-owned rows with zero resolving mentions in THIS module's prose
+("Orphaned (unmentioned)" — the disambiguated term, 00-OVERVIEW) and offers a
+GUARDED delete. The delete gate is the campaign-wide version of this spec's
+never-mentioned rule — zero resolving mentions across ALL campaign modules,
+derived via the same UNCAPPED `buildWikiGraph` call (the link-health
+report's `cap: Number.POSITIVE_INFINITY` pattern); a row another module's
+prose mentions is kept, loudly. Deletion itself is NOT this spec's surface:
+`sweepOrphanedArtifacts` (db/orphanSweep.ts) re-derives orphans + guards
+inside ONE `rw` transaction (recount) and deletes through `deleteArtifact`.
+
+**Decision 5 stands untouched**: `deleteArtifact`'s semantics are frozen;
+the sweep is a NEW surface that CALLS it (links scrub + image refcount prune
+exactly as everywhere else), never a changed cleanup path. Terminology:
+"Orphaned (unmentioned)" is the panel's tag; the campaign tree's "Orphaned"
+group means module-less rows; **phantom** means an unresolved name.

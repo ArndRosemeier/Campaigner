@@ -441,6 +441,57 @@ the in-flight job) — no confirm; unchecking an entity WITH an image asks for
 confirmation first (`removeImageFromArtifact`: detach + scrub the artifact's
 revision snapshots + delete the blob when nothing else references it).
 
+### Orphaned entities (unmentioned)
+
+The panel's third list, below Unfocused: **"Orphaned (unmentioned)"** — every
+MODULE-owned entity (kind ∈ `ENTITY_KINDS` + `plotarc`, owner-ratified:
+module-owned produced content is orphanable even though the panel never lists
+plotarc elsewhere) whose own module's prose never mentions it (zero resolving
+wiki-link mentions in premise + parts). The term is disambiguated against the
+campaign tree's module-less "Orphaned" group and phantoms (00-OVERVIEW §
+Terminology). Amber family per row (the campaign-tree orphaned-badge
+convention): kind badge, "no mentions", a trash button, and Adopt (the row is
+still module-owned and adoptable). Rows carry the group even though they are
+not wiki-link tokens of the module — the panel's token lists can never show
+them; that is the point.
+
+- **Derivation** (read time, pure): `entity-orphans.ts`
+  (`deriveModuleOrphans` + the memoized `useModuleOrphans` hook over the
+  panel's EXISTING props — no live query, no new props). Mentions are
+  wiki-link TOKENS resolved via `buildWikiGraph` exactly the way the reader
+  resolves them (exact name then aliases, case-insensitive, module-tier
+  precedence) — never `countOccurrences` substrings. A module-tier
+  same-named row in ANOTHER module means that module's prose does not count
+  (the shadow rule); a name matching several artifacts is
+  ambiguity-shadowed (only the reader's winner gets the node) — shadowed
+  rows are excluded from the group and never offered for deletion.
+- **Delete-all**: destructive toolbar button "Delete N orphans" (hidden at
+  N=0) → an `AlertDialog` (count in the title, names in a scroll list,
+  destructive confirm) → `sweepOrphanedArtifacts` (db/orphanSweep.ts): ONE
+  `rw` transaction (array form: artifacts, revisions, images, battles,
+  modules, campaigns, deliverables) that RE-DERIVES the orphans + every
+  guard from re-listed rows INSIDE the tx (recount doctrine — the dialog's
+  list never decides what goes). Hard guards per artifact: campaign-wide
+  mentions (a row another module's prose mentions is KEPT — cross-module
+  prose is never broken), the ambiguity shadow (render→confirm race belt),
+  battle board `tokens[].artifactId` + `seedFighters[].id` on ANY campaign
+  battle, encounter roster `npc-ref`/rulebook `mobArtifactId` on any
+  SURVIVING encounter (SAME-module encounters count — the module survives),
+  and deliverable outline nodes. Per-artifact outcomes ride the failed[]
+  convention: deleted N / kept M with the kept names + reasons in ONE loud
+  toast — never silent. Safe cascades are named in the confirm copy
+  (relations pointing at deleted rows are scrubbed; images only they
+  referenced are pruned) — the deletions themselves ride the FROZEN
+  `deleteArtifact` (14 decision 5 untouched; the sweep is a NEW surface,
+  never an ad-hoc per-artifact cascade).
+- **Per-row single delete**: the same sweep surface with `onlyId` — the
+  same guard set; a refusal names its reason ("mentioned in campaign
+  prose — …", "same-named entity exists — resolve the duplicate first", a
+  battle token / seed fighter / roster citation / outline node) as the
+  toast instead of deleting.
+- **Never candidates**: promoted rows (`moduleId: null`), pc rows, global
+  library rows.
+
 ### Stub popover (click on an unresolved chip)
 
 - **Create stub**: kind picker (npc/location/event/faction/note/encounter;

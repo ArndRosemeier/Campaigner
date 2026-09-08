@@ -149,5 +149,12 @@ first-class support for d20 systems (D&D 5e, Pathfinder, Cosmere RPG, …).
     exactly or by alias): rendered as a dashed chip in the reader and a
     dashed node on the Graph page — the campaign's to-do list, never an
     artifact.
+  - **Orphaned (unmentioned)** — a MODULE-owned entity its own module's
+    prose never mentions (zero resolving wiki-link mentions in this
+    module; the delete gate additionally requires zero mentions
+    campaign-wide). Distinct from the campaign tree's **Orphaned** group
+    (module-less rows whose module row is gone) and from **phantom** (an
+    unresolved name, never an artifact) — the entity panel's third list
+    and its guarded delete sweep (08-MODULE-DESIGNER §M4-C, 14 §7).
 - No environment variables at build time; all configuration (API key, models)
   is user-entered at runtime and stored in Dexie `settings`.

@@ -9,8 +9,19 @@ import {
   ImageIcon,
   SparklesIcon,
   StarIcon,
+  Trash2Icon,
 } from 'lucide-react';
 
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -27,6 +38,14 @@ import { entityKindFor } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
+import {
+  sweepOrphanedArtifacts,
+  type OrphanSweepOutcome,
+} from '@/db/orphanSweep';
+import {
+  useModuleOrphans,
+  type ModuleOrphanRow,
+} from '@/features/modules/entity-orphans';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
@@ -55,6 +74,18 @@ function moduleTexts(module: Module): string[] {
       : [module.spine.premise]),
     ...module.parts.map((part) => part.markdown).filter((markdown) => markdown !== ''),
   ];
+}
+
+/** Adopt handler shared by the entity rows and the orphan rows (08 §M4-C:
+ * the orphan group keeps the Adopt affordance — one shared implementation). */
+function adoptArtifact(artifact: AnyArtifact): void {
+  adoptIntoCampaign(artifact.id)
+    .then((moved) => {
+      toastSuccess(`"${moved.name}" is owned by the campaign again`);
+    })
+    .catch((error: unknown) => {
+      toastError('Could not adopt the artifact into the campaign', error);
+    });
 }
 
 /**
@@ -153,6 +184,16 @@ export function EntityPanel({
   const [collapsed, setCollapsed] = useState(false);
   const [batching, setBatching] = useState<StubKind | null>(null);
   const [imageMode, setImageMode] = useState(false);
+  /** Orphaned entities (08 §M4-C): module-owned rows this module's prose
+   * never mentions, ambiguity-shadowed ones excluded. */
+  const orphanRows = useModuleOrphans(module, artifacts);
+  const orphans = useMemo(
+    () => orphanRows.filter((orphan) => !orphan.ambiguous),
+    [orphanRows],
+  );
+  /** The delete-all confirm dialog (the sweep re-counts at confirm). */
+  const [orphanSweepOpen, setOrphanSweepOpen] = useState(false);
+  const [sweeping, setSweeping] = useState(false);
   /** Entity awaiting confirmation to delete its image (images mode). */
   const [pendingImageDelete, setPendingImageDelete] = useState<{
     name: string;
@@ -352,6 +393,64 @@ export function EntityPanel({
     }
   }
 
+  /** The sweep's per-artifact outcomes as ONE loud toast (failed[] convention,
+   * 08 §M4-C): deleted N / kept M with the kept names + reasons — never silent. */
+  function toastSweepOutcome(outcome: OrphanSweepOutcome): void {
+    if (outcome.kept.length === 0) {
+      if (outcome.deleted.length === 0) {
+        toastSuccess('No orphaned entities remain — nothing to delete');
+        return;
+      }
+      toastSuccess(
+        `Deleted ${String(outcome.deleted.length)} orphaned ${
+          outcome.deleted.length === 1 ? 'entity' : 'entities'
+        }`,
+      );
+      return;
+    }
+    const keptText = outcome.kept
+      .map((row) => `"${row.name}" — ${row.reason}`)
+      .join('; ');
+    toastError(
+      `Deleted ${String(outcome.deleted.length)} of ${String(
+        outcome.deleted.length + outcome.kept.length,
+      )} orphans — kept ${String(outcome.kept.length)}: ${keptText}`,
+    );
+  }
+
+  /** Toolbar delete-all: the sweep re-derives orphans + guards inside its
+   * transaction (recount) — the dialog's list never decides what goes. */
+  async function runOrphanSweep(): Promise<void> {
+    setSweeping(true);
+    try {
+      const outcome = await sweepOrphanedArtifacts(module.id);
+      toastSweepOutcome(outcome);
+      setOrphanSweepOpen(false);
+    } catch (error) {
+      toastError('Could not delete the orphaned entities', error);
+    } finally {
+      setSweeping(false);
+    }
+  }
+
+  /** Per-row single delete: the same sweep surface + guard set — a refusal
+   * names its reason instead of deleting. */
+  async function deleteOrphan(orphan: ModuleOrphanRow): Promise<void> {
+    try {
+      const outcome = await sweepOrphanedArtifacts(module.id, { onlyId: orphan.artifact.id });
+      if (outcome.deleted.length > 0) {
+        toastSuccess(`Deleted orphaned entity "${orphan.artifact.name}"`);
+        return;
+      }
+      const keptRow = outcome.kept[0];
+      if (keptRow !== undefined) {
+        toastError(`Kept "${orphan.artifact.name}" — ${keptRow.reason}`);
+      }
+    } catch (error) {
+      toastError(`Could not delete "${orphan.artifact.name}"`, error);
+    }
+  }
+
   async function generateBatch(kind: StubKind): Promise<void> {
     // fix-01 gate (belt behind the disabled buttons): no batch generation
     // before the normalization pass succeeded — this is the guarantee that
@@ -536,6 +635,20 @@ export function EntityPanel({
                 {normalizing ? 'Normalizing…' : 'Normalize names'}
               </Button>
             )}
+            {orphans.length > 0 && (
+              <Button
+                variant="destructive"
+                size="xs"
+                disabled={sweeping}
+                data-testid="orphan-delete-all"
+                onClick={() => {
+                  setOrphanSweepOpen(true);
+                }}
+              >
+                <Trash2Icon aria-hidden data-icon="inline-start" />
+                {sweeping ? 'Deleting…' : `Delete ${String(orphans.length)} orphan${orphans.length === 1 ? '' : 's'}`}
+              </Button>
+            )}
             <Button
               variant="ghost"
               size="xs"
@@ -628,6 +741,32 @@ export function EntityPanel({
                 ))}
               </ul>
             </section>
+            {orphans.length > 0 && (
+              <>
+                <hr className="my-2 border-border" />
+                {/* Third list (08 §M4-C "Orphaned entities"): module-owned
+                 * rows this module's prose never mentions — the
+                 * disambiguated term for the tree's module-less "Orphaned"
+                 * group (00-OVERVIEW). */}
+                <section data-testid="orphaned-group" aria-label="Orphaned entities">
+                  <p className="px-1 pb-1 text-[11px] tracking-wide text-muted-foreground uppercase">
+                    Orphaned (unmentioned) · {String(orphans.length)}
+                  </p>
+                  <ul>
+                    {orphans.map((orphan) => (
+                      <OrphanRow
+                        key={orphan.artifact.id}
+                        orphan={orphan}
+                        onOpenCard={onOpenCard}
+                        onDelete={() => {
+                          void deleteOrphan(orphan);
+                        }}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              </>
+            )}
           </div>
         </>
       )}
@@ -725,6 +864,54 @@ export function EntityPanel({
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      <AlertDialog
+        open={orphanSweepOpen}
+        onOpenChange={(open) => {
+          if (!open) setOrphanSweepOpen(false);
+        }}
+      >
+        <AlertDialogContent data-testid="orphan-sweep-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle data-testid="orphan-sweep-title">
+              Delete {String(orphans.length)} orphaned{' '}
+              {orphans.length === 1 ? 'entity' : 'entities'}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              These module-owned entities have zero wiki-link mentions anywhere
+              in the campaign. Deleting removes their revision history, scrubs
+              relations pointing at them, and prunes images only they
+              referenced. Entities still referenced by a battle, an encounter
+              roster, a deliverable outline, or another module&apos;s prose are
+              kept and named in the result.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul
+            className="max-h-48 space-y-1 overflow-y-auto overscroll-contain text-xs"
+            data-testid="orphan-sweep-list"
+          >
+            {orphans.map((orphan) => (
+              <li key={orphan.artifact.id} className="rounded bg-muted px-2 py-1">
+                {orphan.artifact.name}
+                <span className="text-muted-foreground"> · {orphan.artifact.kind}</span>
+              </li>
+            ))}
+          </ul>
+          <AlertDialogFooter>
+            <AlertDialogCancel size="sm">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              size="sm"
+              disabled={sweeping || orphans.length === 0}
+              data-testid="orphan-sweep-confirm"
+              onClick={() => {
+                void runOrphanSweep();
+              }}
+            >
+              {sweeping ? 'Deleting…' : 'Delete orphans'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </aside>
   );
 }
@@ -809,13 +996,7 @@ function EntityRow({
           onClick={() => {
             const artifact = entry.artifact;
             if (artifact === undefined) return;
-            adoptIntoCampaign(artifact.id)
-              .then((moved) => {
-                toastSuccess(`"${moved.name}" is owned by the campaign again`);
-              })
-              .catch((error: unknown) => {
-                toastError('Could not adopt the artifact into the campaign', error);
-              });
+            adoptArtifact(artifact);
           }}
         >
           <FolderInputIcon aria-hidden className="size-4" />
@@ -859,6 +1040,76 @@ function EntityRow({
           onClick={onToggleFocus}
         >
           <StarIcon aria-hidden className={cn('size-4', focused && 'fill-current')} />
+        </Button>
+      )}
+    </li>
+  );
+}
+
+/**
+ * One row of the "Orphaned (unmentioned)" group (08 §M4-C): kind badge in
+ * the amber family (campaign-tree's orphaned-badge convention), the
+ * "no mentions" tag, a trash button for the guarded single delete, and
+ * Adopt — the row is still module-owned and adoptable. Clicking the name
+ * opens the entity card like every resolved row.
+ */
+function OrphanRow({
+  orphan,
+  onOpenCard,
+  onDelete,
+}: {
+  orphan: ModuleOrphanRow;
+  onOpenCard: (artifact: AnyArtifact) => void;
+  onDelete: () => void;
+}): JSX.Element {
+  const artifact = orphan.artifact;
+  return (
+    <li className="flex items-center">
+      <button
+        type="button"
+        data-testid="orphan-row"
+        data-name={artifact.name}
+        data-kind={artifact.kind}
+        className="flex min-w-0 flex-1 items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-accent"
+        onClick={() => {
+          onOpenCard(artifact);
+        }}
+      >
+        <span className="min-w-0 flex-1 truncate">{artifact.name}</span>
+        <Badge
+          variant="outline"
+          className="shrink-0 border-amber-500/60 px-1 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+        >
+          {artifact.kind}
+        </Badge>
+        <span className="shrink-0 text-xs text-muted-foreground">no mentions</span>
+      </button>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="shrink-0 text-muted-foreground/40 hover:text-destructive"
+        aria-label={`Delete orphaned entity ${artifact.name}`}
+        title="Delete this orphaned entity (guards keep it with a reason)"
+        data-testid="orphan-delete"
+        data-name={artifact.name}
+        onClick={onDelete}
+      >
+        <Trash2Icon aria-hidden className="size-4" />
+      </Button>
+      {artifact.moduleId !== null && (
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          className="shrink-0 text-muted-foreground/40 hover:text-foreground"
+          aria-label={`Adopt ${artifact.name} into the campaign — moves it out of this module's ownership`}
+          title="Adopt into campaign — moves the artifact out of this module's ownership (its relations here stay)"
+          data-testid="entity-adopt"
+          data-name={artifact.name}
+          onClick={() => {
+            adoptArtifact(artifact);
+          }}
+        >
+          <FolderInputIcon aria-hidden className="size-4" />
         </Button>
       )}
     </li>
