@@ -2,9 +2,9 @@ import { useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpenIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
+import { BookOpenIcon, NetworkIcon, PencilIcon, PlusIcon, Trash2Icon } from 'lucide-react';
 
-import { guidePath, modulePath } from '@/app/routes';
+import { canvasPath, guidePath, modulePath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -211,6 +211,20 @@ export function ModulesListPage(): JSX.Element {
                 <ProgressBadge module={module} />
                 {/* Cover generation (compact: icon-only — the row stays one line). */}
                 <GenerateModuleCoverButton module={module} compact />
+                {/* Whole-module canvas (08 §Module canvas): icon-only like the
+                    cover affordance — the row stays one line. */}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Canvas: ${module.title}`}
+                  className="shrink-0"
+                  data-testid={`module-canvas-link-${module.id}`}
+                  onClick={() => {
+                    navigate(canvasPath(campaignId, module.id));
+                  }}
+                >
+                  <NetworkIcon aria-hidden />
+                </Button>
                 <Button
                   variant="ghost"
                   size="icon-sm"

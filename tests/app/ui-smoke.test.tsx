@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import {
   ROUTES,
+  canvasPath,
   deliverablesPath,
   graphPath,
   workspacePath,
@@ -15,11 +16,17 @@ import {
   useUiScaleStore,
 } from '@/app/theme/uiScale';
 import { ARTIFACT_KINDS, type ArtifactKind, ruleChunkSchema, stampNewEntity } from '@/domain';
+import {
+  createModule,
+  modulePartSchema,
+  moduleSpineSchema,
+} from '@/domain';
 import { artifactRepo } from '@/db';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { createRun, updateRun } from '@/db/runRepo';
+import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { listPersonas } from '@/db/personaRepo';
 import { clearDatabase } from '../db/helpers';
@@ -49,9 +56,9 @@ const KIND_NAMES: Record<ArtifactKind, string> = {
   plotarc: 'The Sunken Crown',
 };
 
-let world: { campaignId: string } = { campaignId: '' };
+let world: { campaignId: string; moduleId: string } = { campaignId: '', moduleId: '' };
 
-async function seedSmokeWorld(): Promise<{ campaignId: string }> {
+async function seedSmokeWorld(): Promise<{ campaignId: string; moduleId: string }> {
   const campaign = await createCampaign({ name: 'Smoke', system: 'dnd5e' });
   for (const kind of ARTIFACT_KINDS) {
     await artifactRepo.createArtifact({
@@ -95,7 +102,38 @@ async function seedSmokeWorld(): Promise<{ campaignId: string }> {
     }),
   ]);
 
-  return { campaignId: campaign.id };
+  // One generated module (spine + one ready part) — the canvas route sweep
+  // and the reader both need a real module row.
+  const moduleDraft = createModule({
+    campaignId: campaign.id,
+    title: 'Smoke Module',
+    concept: 'A smoke-test module.',
+    levelMin: 1,
+    levelMax: 2,
+    tone: '',
+    sizeDial: 'standard',
+  });
+  await saveModule({
+    ...moduleDraft,
+    spine: moduleSpineSchema.parse({
+      premise: 'The smoke premise.',
+      themes: [],
+      partPlan: [
+        { title: 'Smoke Part', levelBand: '1', synopsis: 's', levelUpTrigger: 't' },
+      ],
+    }),
+    parts: [
+      modulePartSchema.parse({
+        planIndex: 0,
+        markdown: 'The [[Gorim]] smoke part body.',
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    ],
+  });
+
+  return { campaignId: campaign.id, moduleId: moduleDraft.id };
 }
 
 function renderAppAt(path: string): void {
@@ -261,6 +299,15 @@ describe('route smoke sweep', () => {
       'href',
       workspacePath(world.campaignId),
     );
+  });
+
+  it('module canvas route mounts with cards and the attribution badge', async () => {
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+
+    expect(await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.getByTestId('canvas-part-0')).toBeInTheDocument();
+    // React Flow attribution: rendered by default, never hidden.
+    expect(document.querySelector('.react-flow__attribution')).not.toBeNull();
   });
 
   it('retired play route falls through to 404', async () => {

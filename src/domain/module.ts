@@ -82,6 +82,57 @@ export const modulePartSchema = z.object({
 export type ModulePart = z.infer<typeof modulePartSchema>;
 
 /**
+ * Canvas v1 (08-MODULE-DESIGNER §Module canvas): the user-arranged layout of
+ * the whole-module canvas — one position per node key plus the persisted
+ * viewport. Node keys are STABLE identifiers, never indexes that renumber:
+ * `'premise'` and `'part-<planIndex>'` for this module's own cards
+ * (`planIndex` is IDENTITY — deliverable seeding and encounter-floor bands
+ * depend on it), `'prior-<moduleId>'` for prior-module text groups. The
+ * layout rides the module row through `patchModule` (backup/export follow);
+ * NO Dexie version, NO localStorage (parse-on-read precedent, additive
+ * `.default(null)` like the cover backfill).
+ */
+export const moduleCanvasNodeSchema = z.object({
+  key: z.string().min(1),
+  x: z.number(),
+  y: z.number(),
+});
+
+export type ModuleCanvasNode = z.infer<typeof moduleCanvasNodeSchema>;
+
+export const moduleCanvasSchema = z.object({
+  nodes: z.array(moduleCanvasNodeSchema),
+  zoom: z.number(),
+  pan: z.object({ x: z.number(), y: z.number() }),
+});
+
+export type ModuleCanvas = z.infer<typeof moduleCanvasSchema>;
+
+/** The premise card's stable canvas node key. */
+export const CANVAS_PREMISE_NODE_KEY = 'premise';
+
+/** The stable canvas node key of part `planIndex` (identity, never renumbered). */
+export function canvasPartNodeKey(planIndex: number): string {
+  return `part-${String(planIndex)}`;
+}
+
+/** The stable canvas node key of a prior module's read-only text group. */
+export function canvasPriorModuleNodeKey(moduleId: string): string {
+  return `prior-${moduleId}`;
+}
+
+/**
+ * The `planIndex` encoded in a canvas part node key, or null for every other
+ * key (`premise`, `prior-…`) — the one parse site for the key format.
+ */
+export function planIndexFromCanvasNodeKey(key: string): number | null {
+  const match = /^part-(\d+)$/.exec(key);
+  if (match === null) return null;
+  const index = Number(match[1]);
+  return Number.isInteger(index) ? index : null;
+}
+
+/**
  * The kinds the generator can declare for entities it introduces (08 §M4-C:
  * the model decides the type when it invents the name — never a client-side
  * heuristic). These are the stub-able artifact kinds.
@@ -204,6 +255,11 @@ export const moduleSchema = z
      * backfill, so rows written before covers parse at the read boundary —
      * NO Dexie version bump, NO index changes (cover-only; no gallery). */
     coverImageId: z.uuid().nullable().default(null),
+    /** Whole-module canvas layout (08 §Module canvas): user-arranged node
+     * positions + viewport, or null until the canvas was used. Additive
+     * `.default(null)` — parse-on-read, no Dexie version, rides
+     * backup/export with the rest of the row. */
+    canvas: moduleCanvasSchema.nullable().default(null),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',
