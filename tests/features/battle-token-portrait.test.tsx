@@ -404,7 +404,7 @@ describe('battle-card mob portrait action', () => {
     expect(dialog.textContent).toMatch(/Regenerate portrait\?/);
     expect(screen.getByTestId('token-portrait-regen-copy').textContent).toMatch(/"Goblin Boss"/);
     expect(screen.getByTestId('token-portrait-regen-copy').textContent).toMatch(/Existing cover is replaced/);
-    expect(screen.getByTestId('token-portrait-regen-copy').textContent).toMatch(/shows initials/);
+    expect(screen.getByTestId('token-portrait-regen-copy').textContent).toMatch(/stays until the new art lands/);
 
     await user.click(screen.getByTestId('token-portrait-regen-confirm'));
     await waitFor(() => {

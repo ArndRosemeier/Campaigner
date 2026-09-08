@@ -185,7 +185,7 @@ describe('MobPortraitsSection regeneration confirm', () => {
     expect(screen.getByTestId('mob-portraits-regen-copy').textContent).toMatch(/"Goblin Boss"/);
     expect(screen.getByTestId('mob-portraits-regen-copy').textContent).toMatch(/"Gloom Ooze"/);
     expect(screen.getByTestId('mob-portraits-regen-copy').textContent).toMatch(/Existing covers are replaced/);
-    expect(screen.getByTestId('mob-portraits-regen-copy').textContent).toMatch(/show initials/);
+    expect(screen.getByTestId('mob-portraits-regen-copy').textContent).toMatch(/stays until the new art lands/);
     expect(toastSuccessMock).not.toHaveBeenCalled();
 
     await user.click(screen.getByTestId('mob-portraits-regen-confirm'));

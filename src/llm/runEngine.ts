@@ -41,7 +41,7 @@ import {
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { contentIdentityFor } from '@/domain/encounterResolve';
-import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
+import { carryMobCoversForward, getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
 import { convergeBoardsToRegeneratedMap } from '@/db/battleRepo';
@@ -3775,6 +3775,18 @@ export class RunEngine {
         },
         { source: 'persona', runId },
       );
+      // Portrait preservation (docs/11 D5): re-cited roster entries converge
+      // on NEW cover-less mob-artifact rows when the chunk changed
+      // (re-chunked/re-imported bestiary) — the old row's cover would strand
+      // as an orphan while tokens render initials. Carry covers forward
+      // (same-named old row → new row, cloned bytes, old row untouched).
+      // Best-effort: never fails the finalize (the helper never throws for
+      // missing rows).
+      await carryMobCoversForward({
+        campaignId: input.campaign.id,
+        oldMonsters: target.data.monsters,
+        newMonsters: data.monsters,
+      });
       const step = this.finishStep(
         steps[stepIndex],
         withNotice(

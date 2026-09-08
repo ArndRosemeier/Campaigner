@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getAnyArtifact, updateArtifact } from '@/db/artifactRepo';
+import { getAnyArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createImage, getImage } from '@/db/imageRepo';
@@ -27,7 +27,9 @@ import { clearDatabase } from '../db/helpers';
  * Single-mob portrait entry points (battle surface selection card, docs/11 D5):
  * the SAME queue and the SAME regen phases as the editor batch, for ONE
  * already-resolved token → mob artifact target — no second pipeline, no
- * second detach path.
+ * second replace path. Delete-after-replace (preservation rule): the old
+ * cover survives until the fresh cover commits; failures and dropped queues
+ * keep it intact with loud errors.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -47,6 +49,8 @@ const { generateImages } = await import('@/llm/imageGen');
 const generateImagesMock = vi.mocked(generateImages);
 const { intakeImage } = await import('@/lib/imageIntake');
 const intakeImageMock = vi.mocked(intakeImage);
+const { toastError } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
 
 const GOBLIN_TEXT = 'Goblin Boss, humanoid, agile commander. HP 21, AC 17.';
 
@@ -117,6 +121,53 @@ async function bytesText(imageId: string): Promise<string | null> {
   return new TextDecoder().decode(stored.bytes);
 }
 
+/** How many of the artifact's revision snapshots still pin `imageId` —
+ * the restore path the preservation rule protects. */
+async function snapshotRefs(artifactId: string, imageId: string): Promise<number> {
+  const revisions = await listRevisions(artifactId);
+  return revisions.filter((revision) => {
+    const snapshot = revision.snapshot as { coverImageId?: string | null; imageIds?: string[] };
+    return snapshot.coverImageId === imageId || (snapshot.imageIds ?? []).includes(imageId);
+  }).length;
+}
+
+/** Hangs the NEXT fresh generation until released (abort still rejects, so
+ * `cancelAll` withdraws it silently) — deterministic while-queued pins. */
+function hangGeneration(releaseBytes: string): { release: () => void } {
+  let release!: () => void;
+  generateImagesMock.mockImplementationOnce((_prompt, _count, opts) => {
+    const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+    return new Promise((resolve, reject) => {
+      if (signal === undefined) {
+        reject(new Error('no abort signal passed'));
+        return;
+      }
+      if (signal.aborted) {
+        reject(new DOMException('Aborted', 'AbortError'));
+        return;
+      }
+      signal.addEventListener('abort', () => {
+        reject(new DOMException('Aborted', 'AbortError'));
+      });
+      release = () => {
+        resolve({
+          images: [blobOf(releaseBytes)],
+          costUsd: 0.01,
+          cappedToOne: false,
+          modelUsed: 'test-image-model',
+          fallback: null,
+          filteredCount: 0,
+        });
+      };
+    });
+  });
+  return {
+    release: () => {
+      release();
+    },
+  };
+}
+
 beforeEach(async () => {
   await clearDatabase();
   await seedBuiltInPersonas();
@@ -124,6 +175,7 @@ beforeEach(async () => {
   chatMock.mockReset();
   generateImagesMock.mockReset();
   intakeImageMock.mockReset();
+  toastErrorMock.mockReset();
   __clearPendingMobPortraitGenerationsForTests();
   useMobPortraitQueue.getState().reset();
   useProgressStore.getState().reset();
@@ -180,7 +232,7 @@ describe('enqueueSingleMobPortrait', () => {
 });
 
 describe('regenerateSingleMobPortrait', () => {
-  it('regenerates a canonical cover: fresh slot bytes first, old cover freed, new cover cloned', async () => {
+  it('regenerates a canonical cover delete-after-replace: fresh slot bytes, old cover live until the force-clone commits', async () => {
     const chunkId = await seedCreatureChunk('Ogre', 'Ogre, big and rude. HP 59, AC 11.');
     const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'Ogre');
     // Populate the slot + cover through the normal canonical flow first.
@@ -193,31 +245,53 @@ describe('regenerateSingleMobPortrait', () => {
     const oldCover = (await getAnyArtifact(artifactId))?.coverImageId ?? '';
     expect(await bytesText(oldCover)).toBe('gen-1');
 
+    // Serialize the pump behind a blocker: the regen's force-clone commits
+    // no generation, so only a blocker gates the while-queued pins.
+    await updateSettings({ maxParallelRequests: 1 });
+    const blocker = hangGeneration('blocker-bytes');
+    const decoyChunkId = await seedCreatureChunk('Decoy Drake', 'Decoy Drake, scaly. HP 10, AC 10.');
+    const decoyArtifactId = await getOrCreateMobArtifact(campaignId, decoyChunkId, 'Decoy Drake');
+    enqueueSingleMobPortrait({ campaignId, artifactId: decoyArtifactId, chunkId: decoyChunkId, name: 'Decoy Drake' });
+    await waitFor(() => {
+      expect(useMobPortraitQueue.getState().active).toHaveLength(1);
+    });
+
     const result = await regenerateSingleMobPortrait({ campaignId, artifactId, chunkId, name: 'Ogre' });
     expect(result).toEqual({ regenerated: true, republishedCanonical: true });
     // Fresh bytes were spent (no-op re-clone would have generated nothing).
-    expect(generateImagesMock).toHaveBeenCalledTimes(2);
+    expect(generateImagesMock).toHaveBeenCalledTimes(3);
     expect(chatMock).not.toHaveBeenCalled();
-    // The slot now points at a fresh row; both superseded blobs are freed.
+    // The slot now points at a fresh row; the superseded slot blob is freed.
     const slotAfter = await getMobPortraitCacheEntry(chunkId);
     expect(slotAfter?.imageId).not.toBe(slotBefore.imageId);
     expect(await bytesText(slotAfter?.imageId ?? '')).toBe('gen-2');
     expect(await getImage(slotBefore.imageId)).toBeUndefined();
-    expect(await getImage(oldCover)).toBeUndefined();
+    // …while the old LOCAL cover is still live behind the blocker.
+    expect((await getAnyArtifact(artifactId))?.coverImageId).toBe(oldCover);
+    expect(await bytesText(oldCover)).toBe('gen-1');
+    expect(await snapshotRefs(artifactId, oldCover)).toBeGreaterThan(0);
+    expect(useMobPortraitQueue.getState().queued).toHaveLength(1);
 
-    // The re-enqueue clones the NEW slot bytes into the cover.
+    blocker.release();
+    // The regen force-clones the NEW slot bytes over the old cover; only
+    // then is the superseded local blob freed.
     await waitFor(async () => {
-      expect((await getAnyArtifact(artifactId))?.coverImageId).not.toBeNull();
+      const cover = (await getAnyArtifact(artifactId))?.coverImageId;
+      expect(cover).not.toBeNull();
+      expect(cover).not.toBe(oldCover);
     });
     const cover = (await getAnyArtifact(artifactId))?.coverImageId ?? '';
-    expect(cover).not.toBe(oldCover);
     expect(await bytesText(cover)).toBe('gen-2');
+    expect(await getImage(oldCover)).toBeUndefined();
+    expect(await snapshotRefs(artifactId, oldCover)).toBe(0);
   });
 
-  it('regenerates a flavored cover locally: never reads, populates, or overwrites the cache', async () => {
+  it('regenerates a flavored cover locally: old cover live until the fresh cover commits, cache untouched', async () => {
     const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
     const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'sickly goblin boss');
     const oldCoverId = await attachUploadedCover(artifactId);
+    // Hang the worker's fresh generation for deterministic while-queued pins.
+    const hung = hangGeneration('gen-1');
 
     const result = await regenerateSingleMobPortrait({
       campaignId,
@@ -226,16 +300,95 @@ describe('regenerateSingleMobPortrait', () => {
       name: 'sickly goblin boss',
     });
     expect(result).toEqual({ regenerated: true, republishedCanonical: false });
-    expect(await getImage(oldCoverId)).toBeUndefined();
-    expect((await getAnyArtifact(artifactId))?.coverImageId).toBeNull();
+    expect((await getAnyArtifact(artifactId))?.coverImageId).toBe(oldCoverId);
+    expect(await bytesText(oldCoverId)).toBe('old-cover');
+    expect(await snapshotRefs(artifactId, oldCoverId)).toBeGreaterThan(0);
+    const hungState = useMobPortraitQueue.getState();
+    expect(hungState.queued.length + hungState.active.length).toBe(1);
+    // The worker is inside the hung generation — now let it commit.
+    await waitFor(() => {
+      expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    });
 
+    hung.release();
     await waitFor(async () => {
-      expect((await getAnyArtifact(artifactId))?.coverImageId).not.toBeNull();
+      const cover = (await getAnyArtifact(artifactId))?.coverImageId;
+      expect(cover).not.toBeNull();
+      expect(cover).not.toBe(oldCoverId);
     });
     expect(await bytesText((await getAnyArtifact(artifactId))?.coverImageId ?? '')).toBe('gen-1');
+    expect(await getImage(oldCoverId)).toBeUndefined();
+    expect(await snapshotRefs(artifactId, oldCoverId)).toBe(0);
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
     expect(chatMock).not.toHaveBeenCalled();
     expect(await getMobPortraitCacheEntry(chunkId)).toBeUndefined();
+  });
+
+  it('a failed single fresh generation keeps the old cover: loud error, blob + snapshot pins intact', async () => {
+    const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+    const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'sickly goblin boss');
+    const oldCoverId = await attachUploadedCover(artifactId);
+    generateImagesMock.mockRejectedValueOnce(new Error('model exploded'));
+
+    const result = await regenerateSingleMobPortrait({
+      campaignId,
+      artifactId,
+      chunkId,
+      name: 'sickly goblin boss',
+    });
+    expect(result).toEqual({ regenerated: true, republishedCanonical: false });
+
+    await waitFor(() => {
+      expect(useMobPortraitQueue.getState().failed).toHaveLength(1);
+    });
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not generate a portrait for "sickly goblin boss"',
+      expect.any(Error),
+    );
+    expect((await getAnyArtifact(artifactId))?.coverImageId).toBe(oldCoverId);
+    expect(await bytesText(oldCoverId)).toBe('old-cover');
+    expect(await snapshotRefs(artifactId, oldCoverId)).toBeGreaterThan(0);
+  });
+
+  it('a failed canonical republish throws loud BEFORE enqueueing — the old cover stays', async () => {
+    const chunkId = await seedCreatureChunk('Ogre', 'Ogre, big and rude. HP 59, AC 11.');
+    const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'Ogre');
+    const oldCoverId = await attachUploadedCover(artifactId);
+    generateImagesMock.mockRejectedValueOnce(new Error('slot generation exploded'));
+
+    await expect(
+      regenerateSingleMobPortrait({ campaignId, artifactId, chunkId, name: 'Ogre' }),
+    ).rejects.toThrow('slot generation exploded');
+    expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
+    expect((await getAnyArtifact(artifactId))?.coverImageId).toBe(oldCoverId);
+    expect(await bytesText(oldCoverId)).toBe('old-cover');
+    expect(await snapshotRefs(artifactId, oldCoverId)).toBeGreaterThan(0);
+    expect(await getMobPortraitCacheEntry(chunkId)).toBeUndefined();
+  });
+
+  it('a dropped single queue keeps the old cover', async () => {
+    const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+    const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'sickly goblin boss');
+    const oldCoverId = await attachUploadedCover(artifactId);
+    hangGeneration('gen-never');
+
+    const result = await regenerateSingleMobPortrait({
+      campaignId,
+      artifactId,
+      chunkId,
+      name: 'sickly goblin boss',
+    });
+    expect(result).toEqual({ regenerated: true, republishedCanonical: false });
+    await waitFor(() => {
+      expect(useMobPortraitQueue.getState().active).toHaveLength(1);
+    });
+    await useMobPortraitQueue.getState().cancelAll();
+
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect((await getAnyArtifact(artifactId))?.coverImageId).toBe(oldCoverId);
+    expect(await bytesText(oldCoverId)).toBe('old-cover');
+    expect(await snapshotRefs(artifactId, oldCoverId)).toBeGreaterThan(0);
   });
 
   it('reports unregenerated (no detach, no job) when the cover already landed elsewhere', async () => {

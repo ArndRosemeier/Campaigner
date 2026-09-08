@@ -1,6 +1,6 @@
 import type { AnyArtifact, Id } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
-import { getAnyArtifact, attachImagesToArtifact, removeImageFromArtifact } from '@/db/artifactRepo';
+import { getAnyArtifact, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { getOrCreateMobArtifact, materializeInventedCreatureArtifact } from '@/db/mobArtifacts';
@@ -8,6 +8,7 @@ import {
   canonicalCreatureName,
   cloneCachedPortraitToArtifact,
   isCanonicalCitation,
+  supersededCoverIds,
 } from '@/db/mobPortraitCache';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
@@ -55,7 +56,16 @@ import { ensureCanonicalMobPortrait, regenerateCanonicalMobPortrait } from '@/fe
  * Single-mob entry points (battle surface selection card, docs/11 D5): the
  * same queue and the same regen phases for ONE already-resolved target
  * (`enqueueSingleMobPortrait` / `regenerateSingleMobPortrait`) — no second
- * pipeline, no second detach path.
+ * pipeline, no second replace path.
+ *
+ * Preservation (docs/11 D5 preservation rule): regeneration NEVER detaches
+ * first. Every regen entry enqueues delete-after-replace jobs (`regen: true`):
+ * the worker generates fresh bytes, then swaps the cover in ONE attach-seam
+ * transaction (fresh cover commits, ONLY the superseded ids are scrubbed
+ * from this artifact's snapshots and refcount-pruned). A failed generation,
+ * a skipped job, or an in-memory queue dropped on reload leaves the old
+ * portrait — blob and restore path — intact, with a loud error surfacing on
+ * the queue's per-mob failure path.
  */
 
 export interface MobPortraitJob {
@@ -72,6 +82,12 @@ export interface MobPortraitJob {
    * the creation-dialog portrait extra, which grounds on the artifact's own
    * data (name/summary/body + the appearance shortcut). */
   chunkId?: Id;
+  /** Delete-after-replace regen (docs/11 D5 preservation rule): the worker
+   * generates FRESH bytes even though the artifact is imaged, then swaps
+   * the cover atomically — the old cover (blob + snapshot pins) survives
+   * until the fresh cover commits, and only the superseded blob is freed.
+   * Absent/false = the normal skip-if-imaged path. */
+  regen?: boolean;
 }
 
 export const useMobPortraitQueue = createJobQueue<MobPortraitJob>({
@@ -108,8 +124,13 @@ async function processJob(
     throw new Error('the mob artifact no longer exists — regenerate the encounter');
   }
   // A cover may have appeared while the job sat in the queue (editor
-  // upload, another queue run) — no re-generation of imaged mobs.
-  if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
+  // upload, another queue run) — no re-generation of imaged mobs. Regen
+  // jobs (`regen: true`) flow past this branch: they generate FRESH bytes
+  // and swap the cover delete-after-replace (the old cover stays until the
+  // fresh one commits — a failed, skipped, or dropped regen never destroys
+  // the existing portrait).
+  const superseded = supersededCoverIds(artifact);
+  if (superseded.length > 0 && job.regen !== true) {
     return 'skipped';
   }
   const summary = artifact.summary;
@@ -140,10 +161,14 @@ async function processJob(
         campaignId: job.campaignId,
         signal: ctx.signal,
       });
+      // Regen clones with `force` (the slot already carries FRESH bytes from
+      // the entry's republish phase): the clone commits as the new cover
+      // FIRST, then the superseded blob is freed — never detached first.
       const outcome = await cloneCachedPortraitToArtifact({
         artifactId: artifact.id,
         campaignId: job.campaignId,
         imageId: ensured.imageId,
+        ...(job.regen === true ? { force: true } : {}),
       });
       return outcome === 'cloned' ? 'done' : 'skipped';
     }
@@ -177,7 +202,11 @@ async function processJob(
   const intake = await intakeImage(blob);
   // Store + attach (as cover) is ONE repo transaction — a crash between
   // the image write and the artifact update must not leak the blob as an
-  // unreferenced orphan or leave the artifact pointing at nothing.
+  // unreferenced orphan or leave the artifact pointing at nothing. Regen
+  // jobs ride the same transaction as a delete-after-replace: the fresh
+  // cover commits FIRST (gallery swap + snapshot scrub of ONLY the
+  // superseded ids + refcount prune), so the old portrait survives until
+  // the replacement lands and a failed job leaves it untouched.
   await attachImagesToArtifact(artifact.id, {
     createImages: [
       {
@@ -189,10 +218,18 @@ async function processJob(
         prompt: finalPrompt,
         model: generated.modelUsed,
         source: 'generated',
-        // The skip branch above guarantees the artifact had no image yet.
+        // The skip branch above guarantees the artifact had no image yet —
+        // unless this is a regen job replacing the superseded set below.
         asCover: true,
       },
     ],
+    ...(superseded.length === 0
+      ? {}
+      : {
+          removeImageIds: superseded,
+          scrubImageIds: superseded,
+          pruneCandidates: { campaignId: job.campaignId, candidateIds: superseded },
+        }),
   });
   return 'done';
 }
@@ -237,27 +274,23 @@ export interface MobPortraitBatchResult {
 }
 
 /**
- * Detaches every image (cover included) from one portrait artifact — the
- * regen primitive both batch flavors share. `removeImageFromArtifact`
- * detaches + scrubs the artifact's revision snapshots + deletes the blob
- * when nothing else references it (refcount-aware: a cover shared with
- * another artifact survives). The old cover is truly freed, never leaked;
- * history shows the entity without the removed cover (docs/11 D5).
- *
- * Between this detach and the fresh cover landing, tokens render initials
- * (the D5 fallback) — the accepted, dialog-stated regen window.
+ * Enqueues delete-after-replace regen jobs, upgrading any stale queued or
+ * in-flight normal job for the same artifact FIRST. The queue dedupes by
+ * artifact key: a regen dropped against a stale normal job would strand the
+ * regen as a silent no-op (the normal job skips on the still-imaged
+ * artifact and drains). The stale job is withdrawn before the regen is
+ * enqueued — it never committed cover work over an imaged artifact (the
+ * skip branch), so withdrawing it destroys nothing. State is probed first
+ * so the dock counters move only when a real job is withdrawn.
  */
-async function detachArtifactCovers(artifactId: Id, displayName: string): Promise<void> {
-  const artifact = await getAnyArtifact(artifactId);
-  if (artifact === undefined) {
-    throw new Error(
-      `Regenerate mob portraits: the artifact for "${displayName}" no longer exists — re-run the encounter content to restore it`,
-    );
-  }
-  const coverIds = artifact.coverImageId === null ? [] : [artifact.coverImageId];
-  for (const imageId of new Set([...coverIds, ...artifact.imageIds])) {
-    await removeImageFromArtifact(artifactId, imageId);
-  }
+function enqueueRegenJobs(jobs: MobPortraitJob[]): void {
+  const state = useMobPortraitQueue.getState();
+  const keys = new Set(jobs.map((job) => `${job.campaignId}:${job.artifactId}`));
+  const stale = [...state.queued, ...state.active].filter((queued) =>
+    keys.has(`${queued.campaignId}:${queued.artifactId}`),
+  );
+  for (const job of stale) state.dequeue(job);
+  state.enqueue(jobs.map((job) => ({ ...job, regen: true })));
 }
 
 /**
@@ -319,22 +352,26 @@ export async function enqueueMobPortraits(
 
 /**
  * Owner-ordered portrait regeneration for rulebook-cited mobs (docs/11 D5
- * amendment) — THE one way to regen a mob portrait (docs/18). Four phases:
+ * amendment) — THE one way to regen a mob portrait (docs/18). Three phases:
  *
  * 1. Resolve + validate with NO side effects: unknown artifacts and
  *    unreadable chunks throw loud with every old cover still intact.
  * 2. Fresh canonical bytes FIRST: each canonically-cited chunk's global slot
  *    is republished (`regenerateCanonicalMobPortrait` — always generates;
- *    a plain re-enqueue would clone identical bytes, a no-op regen).
- *    Flavored citations skip the cache entirely (local-only invariant).
- * 3. Detach the imaged covers (`detachArtifactCovers`).
- * 4. Enqueue normally — cover-less artifacts flow through the standard skip
- *    branch, canonical jobs clone the NEW slot bytes, flavored generate
- *    locally. (Unstamped old rows may read-through-clone the fresh bytes
- *    synchronously instead of queueing — same fresh cover, no job.)
+ *    a plain re-enqueue would clone identical bytes, a no-op regen). A
+ *    failed republish throws loud here with every old cover still intact —
+ *    nothing is enqueued. Flavored citations skip the cache entirely
+ *    (local-only invariant).
+ * 3. Enqueue delete-after-replace regen jobs for the imaged artifacts (plus
+ *    the normal cover-less batch for the remainder, which also retro-fills
+ *    unstamped rows through the cache read-through). The old covers stay
+ *    until each worker commits its replacement; a failed, skipped, or
+ *    queue-dropped regen leaves the old portrait intact (loud error, never
+ *    silent loss). Only the superseded blob is freed, and only after the
+ *    fresh cover commits.
  */
 export interface MobPortraitRegenResult {
-  /** Imaged mob artifacts detached and re-covered (deduped by artifact). */
+  /** Imaged mob artifacts replaced delete-after-replace (deduped by artifact). */
   regenerated: number;
   /** Citing names whose canonical global slot now carries fresh bytes. */
   republishedCanonical: string[];
@@ -388,9 +425,18 @@ export async function regenerateMobPortraits(
       republishedCanonical.push(target.name);
     }
   }
-  for (const target of imaged) {
-    await detachArtifactCovers(target.artifactId, target.name);
-  }
+  enqueueRegenJobs(
+    imaged.map((target) => ({
+      campaignId,
+      encounterId: encounter.id,
+      artifactId: target.artifactId,
+      name: target.name,
+      chunkId: target.chunkId,
+    })),
+  );
+  // The cover-less remainder (including unstamped rows the resolve above
+  // retro-filled) flows through the normal batch — read-through included.
+  // Imaged targets enumerate away there as already-imaged: no second job.
   await enqueueMobPortraits(encounter, campaignId);
   return { regenerated: imaged.length, republishedCanonical };
 }
@@ -463,13 +509,15 @@ export interface SingleMobPortraitRegenResult {
 
 /**
  * The battle-card "Regenerate portrait" action — the single-mob flavor of
- * `regenerateMobPortraits` (docs/18: detach-then-enqueue is the one way).
- * Same four phases on ONE target: resolve + validate with NO side effects
+ * `regenerateMobPortraits` (docs/18: delete-after-replace is the one way).
+ * Same three phases on ONE target: resolve + validate with NO side effects
  * (unknown artifact / unreadable chunk throw loud with the old cover
  * intact), republish the canonical slot with FRESH bytes first for canonical
- * citations (flavored citations stay local-only), detach the imaged covers,
- * then enqueue normally (canonical clones the NEW slot bytes, flavored
- * generates locally).
+ * citations (flavored citations stay local-only; a failed republish throws
+ * loud with the old cover intact and nothing enqueued), then enqueue a
+ * delete-after-replace regen job (canonical clones the NEW slot bytes,
+ * flavored generates locally — the old cover stays until the fresh one
+ * commits).
  */
 export async function regenerateSingleMobPortrait(
   target: SingleMobPortraitTarget,
@@ -498,8 +546,7 @@ export async function regenerateSingleMobPortrait(
   if (isCanonical) {
     await regenerateCanonicalMobPortrait({ chunkId: target.chunkId, campaignId: target.campaignId });
   }
-  await detachArtifactCovers(target.artifactId, name);
-  useMobPortraitQueue.getState().enqueue([
+  enqueueRegenJobs([
     {
       campaignId: target.campaignId,
       artifactId: target.artifactId,
@@ -597,10 +644,13 @@ export interface InventedCreatureRegenResult {
 /**
  * Owner-ordered portrait regeneration for uncited (invented) roster entries
  * (docs/11 D5 amendment) — THE one way to regen an invented cover (docs/18).
- * Materializes (reuses) the selection's npc artifacts, detaches the imaged
- * covers, then enqueues normally as chunk-less local-only jobs (the
- * canonical-cache firewall holds: invented covers never read, populate, or
- * overwrite the global cache — regen included).
+ * Materializes (reuses) the selection's npc artifacts, enqueues
+ * delete-after-replace regen jobs for the imaged ones (chunk-less
+ * local-only jobs — the canonical-cache firewall holds: invented covers
+ * never read, populate, or overwrite the global cache — regen included),
+ * and runs the normal invented batch for the cover-less remainder. The old
+ * covers stay until each worker commits its replacement; a failed, skipped,
+ * or queue-dropped regen leaves the old portrait intact.
  *
  * Pass `entryIndexes` for the per-entry action; omit it for batch-all.
  */
@@ -641,9 +691,16 @@ export async function regenerateInventedCreaturePortraits(
     if (artifact.coverImageId === null && artifact.imageIds.length === 0) continue;
     imaged.push({ artifactId, name: entry.name });
   }
-  for (const target of imaged) {
-    await detachArtifactCovers(target.artifactId, target.name);
-  }
+  enqueueRegenJobs(
+    imaged.map((target) => ({
+      campaignId,
+      encounterId: encounter.id,
+      artifactId: target.artifactId,
+      name: target.name,
+    })),
+  );
+  // The cover-less remainder flows through the normal invented batch.
+  // Imaged targets enumerate away there as already-imaged: no second job.
   await enqueueInventedCreaturePortraits(encounter, campaignId, entryIndexes);
   return { created, regenerated: imaged.length };
 }

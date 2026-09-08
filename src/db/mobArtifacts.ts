@@ -1,9 +1,10 @@
-import type { Id, MonsterSource, NpcArtifact, StatBlock } from '@/domain';
+import type { Id, MonsterEntry, MonsterSource, NpcArtifact, StatBlock } from '@/domain';
 import { moduleTagFor } from '@/domain/module';
 import {
   adoptIntoCampaign,
   createArtifact,
   getArtifact,
+  getAnyArtifact,
   listArtifactsByCampaign,
   stampModuleOwnership,
   updateArtifact,
@@ -11,7 +12,7 @@ import {
 } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import { getModule } from '@/db/moduleRepo';
-import { fillCoverFromCache } from '@/db/mobPortraitCache';
+import { cloneArtifactCover, fillCoverFromCache } from '@/db/mobPortraitCache';
 import { toastSuccess } from '@/lib/toast';
 
 /**
@@ -120,6 +121,65 @@ export async function getOrCreateMobArtifact(
     });
   }
   return artifactId;
+}
+
+/**
+ * Cover carry-forward (docs/11 D5 preservation rule): after an encounter
+ * content regeneration re-cites its roster, a rulebook entry that converged
+ * on a NEW cover-less mob-artifact row (re-chunked/re-imported chunk, or a
+ * deleted-then-recreated row) inherits the OLD same-named row's cover —
+ * cloned through `cloneArtifactCover` (the portrait worker's own clone
+ * mechanism, no second mechanism), so tokens keep rendering art instead of
+ * falling back to initials while the old blob stays intact. Old rows remain
+ * as orphans (no deletion sweep in this slice — out of scope).
+ *
+ * Best-effort: entries whose new artifact is already imaged, whose old row
+ * is gone or cover-less, or with no same-named old rulebook entry are left
+ * untouched (`carried` counts only actual clones). Never throws for a
+ * missing row — content regeneration must not fail over a cosmetic carry.
+ */
+export async function carryMobCoversForward(options: {
+  campaignId: Id;
+  /** The encounter's roster BEFORE the content write. */
+  oldMonsters: readonly MonsterEntry[];
+  /** The encounter's roster AFTER the content write. */
+  newMonsters: readonly MonsterEntry[];
+}): Promise<{ carried: number }> {
+  const oldByName = new Map<string, Id[]>();
+  for (const entry of options.oldMonsters) {
+    if (entry.source.type !== 'rulebook') continue;
+    // Unstamped old rows (pre-marker encounters) carry no artifact identity
+    // — nothing to carry from.
+    if (entry.source.mobArtifactId === undefined) continue;
+    const key = entry.name.trim().toLowerCase();
+    if (key === '') continue;
+    const known = oldByName.get(key);
+    if (known === undefined) oldByName.set(key, [entry.source.mobArtifactId]);
+    else known.push(entry.source.mobArtifactId);
+  }
+  let carried = 0;
+  for (const entry of options.newMonsters) {
+    if (entry.source.type !== 'rulebook') continue;
+    if (entry.source.mobArtifactId === undefined) continue;
+    const candidates = oldByName.get(entry.name.trim().toLowerCase());
+    if (candidates === undefined) continue;
+    const next = await getAnyArtifact(entry.source.mobArtifactId);
+    if (next === undefined) continue;
+    if (next.coverImageId !== null || next.imageIds.length > 0) continue;
+    for (const fromArtifactId of candidates) {
+      if (fromArtifactId === entry.source.mobArtifactId) continue;
+      const outcome = await cloneArtifactCover({
+        fromArtifactId,
+        toArtifactId: entry.source.mobArtifactId,
+        campaignId: options.campaignId,
+      });
+      if (outcome === 'cloned') {
+        carried += 1;
+        break;
+      }
+    }
+  }
+  return { carried };
 }
 
 export interface SpawnResult {

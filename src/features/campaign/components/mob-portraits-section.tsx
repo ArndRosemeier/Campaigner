@@ -35,14 +35,15 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * Regeneration (owner-ordered, docs/11 D5 amendment): when a batch would
  * enqueue NOTHING because every portrait already exists, the section offers
  * a "Regenerate N portrait(s)?" confirm instead of the old
- * already-generated toast — Confirm detaches the existing covers and
- * re-enqueues (canonical slots are republished with fresh bytes first; see
+ * already-generated toast — Confirm replaces the existing covers
+ * delete-after-replace (canonical slots are republished with fresh bytes first; see
  * `regenerateMobPortraits`), Cancel keeps the old all-generated toast.
  * Partial states (some enqueued, some imaged) keep today's silent behavior
  * with NO dialog — regen there is out of scope by owner-shaped decision
  * (docs/05-UI). The per-entry invented action offers the same confirm for
- * its single portrait. Between detach and the fresh cover landing, tokens
- * show initials — the accepted, dialog-stated regen window.
+ * its single portrait. The old art stays until the fresh cover commits — a
+ * failed or dropped regen leaves every portrait intact (docs/11 D5
+ * preservation rule).
  *
  * Rendered beside the encounter's monsters section (after the roster form),
  * only for campaign-scoped encounters: mob artifacts are campaign-scoped, so
@@ -252,7 +253,7 @@ export function MobPortraitsSection({
             </AlertDialogTitle>
             <AlertDialogDescription data-testid="mob-portraits-regen-copy">
               Existing covers are replaced — {regenNames.map((name) => `"${name}"`).join(', ')}.
-              Portraits show initials until the new art lands.
+              The current art stays until the new art lands — if generation fails, nothing changes.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

@@ -189,35 +189,125 @@ export type CloneOutcome = 'cloned' | 'skipped';
  * revisioned. Returns `skipped` when the artifact already carries an image
  * (skip-if-imaged wins the race) or the cache slot is empty — never
  * overwrites, never generates.
+ *
+ * `force` is the delete-after-replace regen flavor (docs/11 D5 preservation
+ * rule): an imaged artifact gets fresh bytes ANYWAY — the clone commits as
+ * the new cover FIRST (same attach-seam transaction swaps the gallery,
+ * scrubs ONLY the superseded ids from this artifact's snapshots, and
+ * refcount-prunes them), so the old cover survives until the replacement
+ * lands. A failed clone leaves the old cover untouched (loud error, the
+ * transaction never commits).
  */
 export async function cloneCachedPortraitToArtifact(options: {
   artifactId: Id;
   campaignId: Id;
   imageId: Id;
+  force?: boolean;
 }): Promise<CloneOutcome> {
   const artifact = await getAnyArtifact(options.artifactId);
   if (artifact === undefined) {
     throw new Error('mob portrait cache: the mob artifact no longer exists — re-run the portrait batch');
   }
-  if (artifact.coverImageId !== null || artifact.imageIds.length > 0) return 'skipped';
+  if ((artifact.coverImageId !== null || artifact.imageIds.length > 0) && options.force !== true) {
+    return 'skipped';
+  }
   const cached = await db.images.get(options.imageId);
   if (cached === undefined) {
     throw new Error('mob portrait cache: the cached portrait image is gone — regenerate the portrait');
   }
-  await attachImagesToArtifact(options.artifactId, {
+  await attachClonedCover({
+    artifact,
+    campaignId: options.campaignId,
+    source: cached,
+    supersededImageIds: options.force === true ? supersededCoverIds(artifact) : [],
+  });
+  return 'cloned';
+}
+
+/** Every live image reference on an imaged artifact (cover + gallery) — the
+ * delete-after-replace superseded set: the replacement's commit releases
+ * exactly these pins, never anything else. */
+export function supersededCoverIds(artifact: {
+  coverImageId: Id | null;
+  imageIds: readonly Id[];
+}): Id[] {
+  return [...new Set([...(artifact.coverImageId === null ? [] : [artifact.coverImageId]), ...artifact.imageIds])];
+}
+
+/**
+ * The ONE cover-clone mechanism (D4 render + D5 preservation): a fresh
+ * campaign-scoped row carrying `source`'s bytes lands as the artifact's
+ * cover through the attach seam. `supersededImageIds` (empty for first-time
+ * covers) leaves the gallery, is scrubbed from this artifact's snapshots,
+ * and is refcount-pruned — atomically with the new cover's commit, so the
+ * old art survives until the replacement lands and a shared id pinned
+ * elsewhere is never freed.
+ */
+async function attachClonedCover(options: {
+  artifact: { id: Id };
+  campaignId: Id;
+  source: StoredImage;
+  supersededImageIds: readonly Id[];
+}): Promise<void> {
+  await attachImagesToArtifact(options.artifact.id, {
     createImages: [
       {
         campaignId: options.campaignId,
-        blob: imageBlob(cached),
-        mimeType: cached.mimeType,
-        width: cached.width,
-        height: cached.height,
-        prompt: cached.prompt,
-        model: cached.model,
+        blob: imageBlob(options.source),
+        mimeType: options.source.mimeType,
+        width: options.source.width,
+        height: options.source.height,
+        prompt: options.source.prompt,
+        model: options.source.model,
         source: 'generated',
         asCover: true,
       },
     ],
+    ...(options.supersededImageIds.length === 0
+      ? {}
+      : {
+          removeImageIds: [...options.supersededImageIds],
+          scrubImageIds: [...options.supersededImageIds],
+          pruneCandidates: {
+            campaignId: options.campaignId,
+            candidateIds: [...options.supersededImageIds],
+          },
+        }),
+  });
+}
+
+/**
+ * Cover carry-forward (docs/11 D5 preservation rule): clone one artifact's
+ * live cover onto a cover-less artifact of the same campaign — the SAME
+ * `attachClonedCover` mechanism as the cache render above (fresh
+ * campaign-scoped row, attach seam, revisioned), no second mechanism. The
+ * source row is never attached or moved, so it stays intact; the target
+ * keeps its own cover when it already has one (`skipped`).
+ *
+ * Best-effort by design: a vanished source artifact (or a source with no
+ * cover) returns `skipped` instead of throwing — content regeneration must
+ * not fail over a cosmetic carry, and the re-cite is then simply a fresh
+ * cover-less citation in its normal state.
+ */
+export async function cloneArtifactCover(options: {
+  fromArtifactId: Id;
+  toArtifactId: Id;
+  campaignId: Id;
+}): Promise<CloneOutcome> {
+  const [from, to] = await Promise.all([
+    getAnyArtifact(options.fromArtifactId),
+    getAnyArtifact(options.toArtifactId),
+  ]);
+  if (from === undefined || to === undefined) return 'skipped';
+  if (to.coverImageId !== null || to.imageIds.length > 0) return 'skipped';
+  if (from.coverImageId === null) return 'skipped';
+  const cover = await db.images.get(from.coverImageId);
+  if (cover === undefined) return 'skipped';
+  await attachClonedCover({
+    artifact: to,
+    campaignId: options.campaignId,
+    source: cover,
+    supersededImageIds: [],
   });
   return 'cloned';
 }

@@ -139,19 +139,37 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   enqueue NOTHING because every portrait already exists, the section offers
   a **"Regenerate N portrait(s)?"** confirm (same for the per-entry
   invented action) instead of the old already-generated toast — Confirm
-  detaches the existing covers and re-enqueues; Cancel keeps today's
+  enqueues delete-after-replace regen jobs; Cancel keeps today's
   toasts. Partial batches (some enqueued, some imaged) keep today's silent
   behavior with NO regen offer (05-UI). Mechanics (`regenerateMobPortraits`
   / `regenerateInventedCreaturePortraits`, the one way — docs/18):
   resolve + validate with no side effects (unknown artifacts, unreadable
   chunks throw loud with all old covers intact), republish canonical slots
-  with FRESH bytes first (below), detach covers via
-  `removeImageFromArtifact` (revision snapshots scrubbed, old blobs freed
-  refcount-aware), then enqueue normally. Between detach and the fresh
-  cover landing, tokens show initials (the D5 fallback) — accepted and
-  stated in the dialog. Flavored and invented covers regenerate locally,
+  with FRESH bytes first (below — a failed republish throws loud with all
+  old covers intact and nothing enqueued), then enqueue regen jobs (`regen:
+  true`) for the imaged artifacts plus the normal batch for the cover-less
+  remainder. The old covers stay until each worker commits its replacement
+  (preservation rule below); tokens never sit on initials mid-regen.
+  Flavored and invented covers regenerate locally,
   always; a canonical citation regenerates by REPUBLISH (below) — a plain
   re-enqueue would clone identical bytes, a no-op regen.
+
+- **Portrait preservation rule (owner-observed permanent loss, 2026-09-09)**:
+  regenerate/reseed NEVER destroys a mob portrait. Delete-after-replace is
+  the only semantics: the old cover (blob + revision-snapshot pins) survives
+  until the fresh cover COMMITS on the artifact in ONE attach-seam
+  transaction (fresh cover lands, ONLY the superseded ids leave the gallery,
+  are scrubbed from that artifact's snapshots, and are refcount-pruned) —
+  snapshots are never scrubbed before the replacement commits, and the
+  success path frees ONLY the superseded blob. A failed fresh generation, a
+  skipped job, or the in-memory queue dropped on reload therefore leaves the
+  old portrait — bytes and restore path — intact, with a loud error on the
+  queue's per-mob failure path (never silent loss). Complementary:
+  encounter content regeneration carries covers forward — when a re-cited
+  roster entry converges on a NEW cover-less mob-artifact row (re-chunked /
+  re-imported chunk), the old same-named row's cover is cloned onto the new
+  row (`carryMobCoversForward`, the portrait worker's own clone mechanism);
+  old rows remain as orphans (no deletion sweep — out of scope).
 
 - **Battle-card trigger (2026-09-09)**: the battle surface's selection card
   offers per-token **Generate portrait** (cover-less) / **Regenerate
@@ -258,7 +276,10 @@ shared-blob image row.
   The regen surfaces a loud toast naming the shared consequence. The
   local-only alternative (a fresh cover diverging from canon) was rejected:
   a silently non-canonical "canonical" portrait is the worse lie —
-  regenerating a canonical citation is therefore NEVER local-only.
+  regenerating a canonical citation is therefore NEVER local-only. The
+  republished bytes reach existing covers through the preservation rule's
+  delete-after-replace force-clone (old local cover live until the clone
+  commits), never through a detach.
 - **Grandfathering.** Existing per-campaign covers are kept; no backfill.
 - **Firewall.** Every cache entry point gates on
   `cacheKeyForMonsterSource`: `source.type === 'rulebook'` with a defined

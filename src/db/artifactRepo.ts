@@ -220,6 +220,14 @@ export async function attachImagesToArtifact(
      * swaps the previous battlemap out while the fresh one lands — the
      * gallery holds exactly one map per encounter, never an append). */
     removeImageIds?: readonly Id[];
+    /** Already-stored image ids scrubbed from THIS artifact's revision
+     * snapshots in the same transaction (portrait delete-after-replace:
+     * the superseded cover's history pins are released atomically with the
+     * fresh cover's commit, so the post-attach prune frees exactly the
+     * superseded blob — never before the replacement lands). Only this
+     * artifact's snapshots are touched; other artifacts' pins still
+     * refcount-protect a shared id through the prune. */
+    scrubImageIds?: readonly Id[];
     /** Re-anchor the attached images to this campaign anchor (D2/D9 — `null`
      * moves them into the library before a global target references them). */
     anchorImagesTo?: Id | null;
@@ -273,6 +281,9 @@ export async function attachImagesToArtifact(
       ...(input.data !== undefined ? { data: input.data } : {}),
       coverImageId: input.coverImageId !== undefined ? input.coverImageId : createdCover,
     }, input.meta ?? USER_SAVE);
+    if (input.scrubImageIds !== undefined && input.scrubImageIds.length > 0) {
+      await scrubSnapshotImages(id, input.scrubImageIds);
+    }
     if (input.pruneCandidates !== undefined) {
       await deleteUnreferencedImages(
         input.pruneCandidates.campaignId,
@@ -400,29 +411,50 @@ export async function removeImageFromArtifact(artifactId: Id, imageId: Id): Prom
       });
     }
     const revisions = await db.revisions.where('artifactId').equals(artifactId).toArray();
-    for (const revision of revisions) {
-      // Snapshot images are scrubbed in place; the row is parsed on load
-      // everywhere else (parseRevisionRow), so only the two fields this
-      // function touches are read here.
-      const snapshot = revision.snapshot as {
-        imageIds?: Id[];
-        coverImageId?: Id | null;
-      } | null;
-      if (snapshot === null) continue;
-      const inList = (snapshot.imageIds ?? []).includes(imageId);
-      const isCover = snapshot.coverImageId === imageId;
-      if (!inList && !isCover) continue;
-      await db.revisions.put({
-        ...revision,
-        snapshot: {
-          ...snapshot,
-          ...(inList ? { imageIds: (snapshot.imageIds ?? []).filter((id) => id !== imageId) } : {}),
-          ...(isCover ? { coverImageId: null } : {}),
-        } as unknown as Artifact,
-      });
-    }
+    await scrubSnapshotRows(revisions, [imageId]);
   });
   await deleteImageIfUnreferenced(imageId);
+}
+
+/**
+ * Releases snapshot pins for image ids on ONE artifact's revision history.
+ * Runs inside the caller's rw transaction over artifacts + revisions (both
+ * `removeImageFromArtifact` and the attach seam's delete-after-replace
+ * provide one). Scrubbed snapshots render the entity without the image;
+ * restored revisions simply show it imageless — the restore path stays
+ * intact, only the pin is gone.
+ */
+async function scrubSnapshotImages(artifactId: Id, imageIds: readonly Id[]): Promise<void> {
+  const revisions = await db.revisions.where('artifactId').equals(artifactId).toArray();
+  await scrubSnapshotRows(revisions, imageIds);
+}
+
+async function scrubSnapshotRows(
+  revisions: ArtifactRevision[],
+  imageIds: readonly Id[],
+): Promise<void> {
+  const scrubbed = new Set(imageIds);
+  for (const revision of revisions) {
+    // Snapshot images are scrubbed in place; the row is parsed on load
+    // everywhere else (parseRevisionRow), so only the two fields this
+    // function touches are read here.
+    const snapshot = revision.snapshot as {
+      imageIds?: Id[];
+      coverImageId?: Id | null;
+    } | null;
+    if (snapshot === null) continue;
+    const inList = (snapshot.imageIds ?? []).some((id) => scrubbed.has(id));
+    const isCover = snapshot.coverImageId !== undefined && snapshot.coverImageId !== null && scrubbed.has(snapshot.coverImageId);
+    if (!inList && !isCover) continue;
+    await db.revisions.put({
+      ...revision,
+      snapshot: {
+        ...snapshot,
+        ...(inList ? { imageIds: (snapshot.imageIds ?? []).filter((id) => !scrubbed.has(id)) } : {}),
+        ...(isCover ? { coverImageId: null } : {}),
+      } as unknown as Artifact,
+    });
+  }
 }
 
 /**

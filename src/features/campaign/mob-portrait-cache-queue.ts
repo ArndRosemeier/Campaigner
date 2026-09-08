@@ -137,8 +137,10 @@ async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<Ens
  * generation. Deliberately outside the `pendingGenerations` single-flight
  * (an explicit rare user action; the unconditional republish converges
  * last-writer-wins, and an overlapping normal generation converges on the
- * fresh row through its own put-if-absent). The caller's local covers are
- * detached separately and re-cloned from the new slot by the normal enqueue.
+ * fresh row through its own put-if-absent). The caller's imaged covers are
+ * REPLACED delete-after-replace by the regen jobs the entry enqueues
+ * (force-cloned from the new slot) — never detached first, so a dropped
+ * queue leaves every old portrait intact.
  */
 export async function regenerateCanonicalMobPortrait(
   options: EnsureCanonicalPortrait,
@@ -158,7 +160,7 @@ interface CanonicalInputs {
 
 /** Shared input load: settings + chunk + canonical-name checks (no image
  * budget spent). Loud on every failure (AGENTS rule 1): regen validates
- * BEFORE detaching, so a throw here leaves the old covers intact. */
+ * BEFORE enqueueing, so a throw here leaves the old covers intact. */
 async function loadCanonicalInputs(options: EnsureCanonicalPortrait): Promise<CanonicalInputs> {
   const settings = await getSettings();
   if (!settings.imagesEnabled) {

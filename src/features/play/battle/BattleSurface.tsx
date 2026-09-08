@@ -1425,8 +1425,10 @@ export function BattleSurface(): JSX.Element {
    * with the SAME confirm + canonical-republish semantics as the editor
    * section — canonical citations republish fresh bytes to the global slot
    * with the loud shared-consequence toast, flavored covers stay local-only.
-   * A cover-less target at Confirm time (a cover landed elsewhere in the
-   * window) falls back to a fresh generate instead of detaching nothing. */
+   * Delete-after-replace (docs/11 D5 preservation rule): the old cover stays
+   * until the fresh one commits — a failed or dropped regen keeps the old
+   * portrait. A cover-less target at Confirm time falls back to a fresh
+   * generate instead of replacing nothing. */
   async function confirmRegenerateTokenPortrait(target: SingleMobPortraitTarget): Promise<void> {
     try {
       const result = await regenerateSingleMobPortrait(target);
@@ -2943,8 +2945,8 @@ function SelectionCard({
                   <AlertDialogHeader>
                     <AlertDialogTitle>Regenerate portrait?</AlertDialogTitle>
                     <AlertDialogDescription data-testid="token-portrait-regen-copy">
-                      Existing cover is replaced — &quot;{portraitAction.name}&quot;. Portrait shows
-                      initials until the new art lands.
+                      Existing cover is replaced — &quot;{portraitAction.name}&quot;. The current art
+                      stays until the new art lands — if generation fails, nothing changes.
                     </AlertDialogDescription>
                   </AlertDialogHeader>
                   <AlertDialogFooter>
