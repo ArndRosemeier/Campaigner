@@ -401,6 +401,106 @@ artifact, gallery nodes for NPCs and treasure.
 
 ---
 
+## M3-E — Campaign export v2 with dependency manifest
+
+An export carries everything needed to resume the campaign elsewhere:
+the campaign row, artifacts + revisions, modules, battles, runs,
+deliverables, referenced images, plus a `dependencies` manifest describing
+everything the export cites but does NOT carry.
+
+### Scope: carried vs excluded (owner-confirmed)
+
+| Carried | Excluded (never in the file) |
+|---|---|
+| Campaign row, artifacts + revisions | `mobPortraits` cache (regenerable shared blobs) |
+| Modules, battles, runs, deliverables | Embeddings (regenerable vectors) |
+| Referenced image blobs (zip) / metadata refs (plain JSON) | `pdfFiles` bytes (original PDFs stay local) |
+| `dependencies` manifest + `missingImages` note | Personas, settings |
+| | Rulebooks/chunks themselves — the manifest replaces them |
+
+### Format v1 → v2
+
+`CampaignExport.version` is `1 | 2` (`EXPORT_FORMAT_VERSION = 2`,
+`src/lib/exportImport.ts`). New writes are v2; every v2 field
+(`modules`/`battles`/`runs`/`deliverables`/`dependencies`/`missingImages`)
+is optional, so v1 files still parse unchanged. v1 imports demote
+module-owned artifacts to campaign level when their module is not in the
+file (v1 never exported modules) — the only silent-looking migration, stated
+here instead of hidden in code.
+
+### The manifest (`collectDependencies`, `src/domain/exportDependencies.ts`)
+
+Pure builder over the exported artifacts + runs with the library reads
+injected (`DependencyLibrary` maps — the
+`resolveMonsterEntry`/`MonsterLookups` precedent): encounter
+`source.type === 'rulebook'` entries join chunk → book; run
+`pinnedChunkIds` become advisory entries (pins are grounding context, never
+hard stats); encounter `npc-ref` entries pointing outside the exported set
+become unmet-library entries (`global` = shared-library NPC, `missing` =
+deleted row, `not-exported` = campaign NPC outside a selection export).
+
+Per citation: `{artifactId, artifactName, kind, monsterName, bookTitle,
+system, creatureName, chunkType, contentHash, citedChunkId}` (+ `status`:
+`resolved` | `missing-chunk` | `missing-book`). Per book: `{title, system,
+origin, filename?, pageCount, pack{sourceId, sourceRef?, attemptedRefs?,
+entriesImported, itemsImported?, sectionsImported?} | null, chunkCount,
+citedChunkIds[]}` (`chunkCount` = the book's total chunks in the source
+library — how much is NOT carried).
+
+### L0/L1/L2 identity contract
+
+- **L0 — content identity**: `contentHash` (SHA-256 of the chunk text).
+  Verifiable with no library at all; two databases agree a citation is
+  satisfiable iff a local statblock chunk hashes equal.
+- **L1 — logical identity**: `(system, bookTitle, creatureName)`
+  (`creatureName` = `chunk.headingPath[0]`, falling back to the roster
+  `monsterName` — the same fallback the resolve origin label uses).
+  Resolves against an EQUIVALENT book: a re-ingest under a new row id still
+  satisfies the citation.
+- **L2 — row identity**: `citedChunkId` (plus the source book row).
+  Source-DB-only, carried for audit — never expected to match elsewhere.
+
+Every citation carries all three levels; the per-book rollup carries L1+L2
+plus the pack provenance needed to re-fetch the same upstream source.
+
+### Images: metadata refs + the loud missing-binary note
+
+Plain JSON lists image metadata refs with `dataBase64: null` (binaries ride
+the zip as `images/<id>.<ext>`, or inline with `images: true`). The sweep
+covers artifact galleries/covers incl. revision snapshots (M3-A) plus
+encounter `mapImageId` and deliverable `coverImageId` (M3-E). Known gap:
+battle-board `mapImageId`s are not swept separately (in practice they repeat
+the encounter's map image, which IS swept) — stated, not hidden.
+
+A referenced id with no image row is never silently dropped: it lands on
+`missingImages` with every referrer named (`artifact:<id>`,
+`artifact:<id>:map`, `revision:<id>`, `deliverable:<id>:cover`). The import
+restore loop's plain-JSON skip (`bytes === undefined → continue`) now
+operates on these explicitly-modeled null refs; the manifest field itself is
+the loud surface slice B (abort-by-default on missing deps) reports from —
+this slice only WRITES the honest manifest.
+
+### Import: re-id with reference rewriting
+
+One rw transaction over all eight tables (array form past Dexie's
+five-table variadic cap). Modules re-id first; artifacts follow the module
+map; battle tokens/`encounterArtifactId`, run result/target artifacts and
+deliverable outline nodes follow the artifact map (unknown ids survive
+verbatim for selection exports). `dependencies`/`missingImages` are
+zod-validated metadata, not imported.
+
+### Acceptance
+
+- Golden manifest: a Monster-Core encounter cites `{bookTitle,
+  contentHash, …}` with the pack provenance rollup; run pins land as
+  advisories.
+- Whole-campaign round-trip restores modules/battles/runs/deliverables with
+  references rewritten to the new ids; images restore from zip/inline blobs.
+- v1 files import unchanged; `tests/backup.test.ts` stays green (untouched).
+- A dangling image ref appears on `missingImages` with its referrers named.
+
+---
+
 ## Suggested order & scope guard
 
 A → B → C → D (C depends on nothing from A/B except cover thumbnails and the
