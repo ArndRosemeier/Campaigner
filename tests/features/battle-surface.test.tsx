@@ -2284,6 +2284,140 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     expect(Math.abs((dropped.y * CONTENT_H - 36) % 72)).toBeLessThan(1e-6);
   });
 
+  it('gives effect resize handles a 44px touch target while the visible dot stays small', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const effectId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        effects: [{ id: effectId, shape: 'disc', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
+      });
+      await flushAsyncUpdates();
+    });
+    // GM view, unlocked board: all four edge handles render (veil parity).
+    for (const edge of ['n', 's', 'e', 'w'] as const) {
+      const handle = screen.getByTestId(`effect-handle-${edge}`);
+      // The 44px (size-11) transparent hit pad lives on the button itself…
+      expect(handle.className).toContain('size-11');
+      // …with the visible affordance unchanged at 12px (size-3) inside.
+      const dot = handle.querySelector('span');
+      if (dot === null) throw new Error(`effect handle ${edge} lost its visible dot`);
+      expect(dot.className).toContain('size-3');
+    }
+  });
+
+  it('drags an effect handle with a live preview and commits the final size exactly once', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const effectId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const effectEl = screen.getByTestId('battle-effect');
+    const handle = screen.getByTestId('effect-handle-e');
+    const beforeWidth = effectEl.style.width;
+    const beforeLeft = effectEl.style.left;
+    // The 1-cell marker spans 72px centered at 0.3: its east rim sits 36px
+    // right of center. Dragging one full cell (72px) further out lands the
+    // half-span at 1.5 cells → symmetric size 3, center fixed.
+    const rimX = 0.3 * BOARD_W + 36;
+    const midY = CONTENT_TOP + 0.3 * CONTENT_H;
+    fireEvent.pointerDown(handle, { pointerId: 11, clientX: rimX, clientY: midY });
+    fireEvent.pointerMove(handle, { pointerId: 11, clientX: rimX + 72, clientY: midY });
+    await flushAsyncUpdates();
+    // The LOCAL marker previews the grown size with zero writes mid-gesture.
+    expect(effectEl.style.width).not.toBe(beforeWidth);
+    expect(effectEl.style.left).toBe(beforeLeft);
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    // Release: exactly one commit carrying the final size; center untouched.
+    fireEvent.pointerUp(handle, { pointerId: 11 });
+    await flushAsyncUpdates();
+    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(isBoardGestureActive()).toBe(false);
+    const after = await currentBattle(moduleId);
+    const resized = after.board.effects.find((entry) => entry.id === effectId);
+    if (resized === undefined) throw new Error('effect vanished');
+    expect(resized.sizeCells).toBe(3);
+    expect(resized.x).toBe(0.3);
+    expect(resized.y).toBe(0.3);
+  });
+
+  it('cancelling an effect resize commits nothing and closes the gesture', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const effectId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        effects: [{ id: effectId, shape: 'disc', x: 0.3, y: 0.3, sizeCells: 1, color: '#ffe600', label: '' }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const storedWidth = screen.getByTestId('battle-effect').style.width;
+    const handle = screen.getByTestId('effect-handle-e');
+    const rimX = 0.3 * BOARD_W + 36;
+    const midY = CONTENT_TOP + 0.3 * CONTENT_H;
+    fireEvent.pointerDown(handle, { pointerId: 12, clientX: rimX, clientY: midY });
+    fireEvent.pointerMove(handle, { pointerId: 12, clientX: rimX + 72, clientY: midY });
+    await flushAsyncUpdates();
+    expect(isBoardGestureActive()).toBe(true);
+    fireEvent.pointerCancel(handle, { pointerId: 12 });
+    await flushAsyncUpdates();
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    expect(isBoardGestureActive()).toBe(false);
+    const after = await currentBattle(moduleId);
+    expect(after.board.effects.find((entry) => entry.id === effectId)?.sizeCells).toBe(1);
+    // The preview is gone: the marker renders its stored size again.
+    expect(screen.getByTestId('battle-effect').style.width).toBe(storedWidth);
+  });
+
+  it('scenery lock and player-safe hide the effect handles and pin the size', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const effectId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        sceneryMovementLocked: true,
+        effects: [{ id: effectId, shape: 'square', x: 0.3, y: 0.3, sizeCells: 1, color: '#ff0000', label: '' }],
+      });
+      await flushAsyncUpdates();
+    });
+    // Locked: no handles to grab — the veil gating, identically.
+    expect(screen.queryByTestId('effect-handle-e')).toBeNull();
+    vi.mocked(saveBattleBoard).mockClear();
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    // Player view: still no handles (board material renders, affordances do not).
+    expect(screen.getByTestId('battle-effect')).toBeInTheDocument();
+    expect(screen.queryByTestId('effect-handle-e')).toBeNull();
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+  });
+
   it('resizes and deletes the selected effect from the rail (GM view only)', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
@@ -2309,6 +2443,8 @@ describe('effect markers (D7 — geometric forms, encounter-resume arc)', () => 
     await user.click(screen.getByTestId('shrink-effect'));
     await flushAsyncUpdates();
     expect((await currentBattle(moduleId)).board.effects[0]?.sizeCells).toBe(1);
+    // The floor pins: Shrink stays disabled at one cell.
+    expect(screen.getByTestId('shrink-effect')).toBeDisabled();
     await user.click(screen.getByTestId('delete-effect'));
     await flushAsyncUpdates();
     expect((await currentBattle(moduleId)).board.effects).toHaveLength(0);

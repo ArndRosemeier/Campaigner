@@ -52,6 +52,9 @@ export const STAGING_GROUND_CELLS = 3;
 export const VEIL_DEFAULT_CELLS = 2;
 export const VEIL_MIN_CELLS = 1;
 
+/** Effect markers share the 1-cell floor (symmetric resize, `battle/effect`). */
+export const EFFECT_MIN_CELLS = 1;
+
 export const GRID_SIZE_MIN = 16;
 export const GRID_SIZE_MAX = 128;
 export const GRID_SIZE_DEFAULT = 72;
@@ -109,7 +112,7 @@ export const battleEffectSchema = z.object({
   x: z.number(),
   y: z.number(),
   /** Diameter (disc) / side (square) in grid cells — layout-anchored. */
-  sizeCells: z.number().int().min(1),
+  sizeCells: z.number().int().min(EFFECT_MIN_CELLS),
   /** Fill color; one of TOKEN_STAMP_COLORS. */
   color: z.string(),
   /** Optional caption. */

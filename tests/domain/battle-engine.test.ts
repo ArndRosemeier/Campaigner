@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  EFFECT_MIN_CELLS,
   STAGING_GROUND_CELLS,
   TOKEN_SIZE_DEFAULT,
   VEIL_DEFAULT_CELLS,
   type BattleBoard,
+  type BattleEffect,
   type BattleToken,
   type BattleVeil,
   type FighterStatsLookup,
@@ -46,6 +48,7 @@ import {
   veilCellPx,
   veilSpanNorm,
 } from '@/domain/battle/veil';
+import { resizeEffectFromEdge } from '@/domain/battle/effect';
 import {
   snapAxisToGrid,
   snapAxisToLayoutGrid,
@@ -388,6 +391,65 @@ describe('veils', () => {
     expect(
       portraitCoveredByVeil({ ...token, shape: 'circle', color: '#ff0000' }, covering, 64, cellPx, boardPx, boardPx),
     ).toBe(false);
+  });
+});
+
+describe('effect edge resize', () => {
+  const boardPx = 720;
+  const cellPx = 72;
+
+  function effect(overrides: Partial<BattleEffect> = {}): BattleEffect {
+    return {
+      id: newId(),
+      shape: 'disc',
+      x: 0.5,
+      y: 0.5,
+      sizeCells: 2,
+      color: '#ff0000',
+      label: '',
+      ...overrides,
+    };
+  }
+
+  it('grows symmetrically from any edge handle with the center fixed', () => {
+    const base = effect();
+    // A 2-cell effect centered at 0.5 spans 0.4..0.6 (cell = 0.1). Dragging
+    // the east handle to 0.75 (half-span 0.25 = 2.5 cells) quantizes to 5
+    // cells; the center never moves.
+    const east = resizeEffectFromEdge(base, 'e', { x: 0.75, y: 0.5 }, boardPx, boardPx, cellPx);
+    expect(east.sizeCells).toBe(5);
+    expect(east.x).toBe(base.x);
+    expect(east.y).toBe(base.y);
+    // Every handle grows the SAME span: north to 0.25 (half-span 0.25) is
+    // also 5 cells — symmetric, unlike the veil's opposite-edge pinning.
+    const north = resizeEffectFromEdge(base, 'n', { x: 0.5, y: 0.25 }, boardPx, boardPx, cellPx);
+    expect(north.sizeCells).toBe(5);
+    expect(north.x).toBe(base.x);
+    expect(north.y).toBe(base.y);
+    const west = resizeEffectFromEdge(base, 'w', { x: 0.25, y: 0.5 }, boardPx, boardPx, cellPx);
+    expect(west.sizeCells).toBe(5);
+  });
+
+  it('clamps at one cell and quantizes to whole cells', () => {
+    const base = effect();
+    // Dragging the east handle onto the center collapses below one cell —
+    // the floor holds and the center still never moves.
+    const collapsed = resizeEffectFromEdge(base, 'e', { x: 0.5, y: 0.5 }, boardPx, boardPx, cellPx);
+    expect(collapsed.sizeCells).toBe(EFFECT_MIN_CELLS);
+    expect(collapsed.x).toBe(base.x);
+    // Half-cell distances round to the nearest whole cell: half-span 0.14
+    // (1.4 cells) → 3 cells.
+    const quantized = resizeEffectFromEdge(base, 's', { x: 0.5, y: 0.64 }, boardPx, boardPx, cellPx);
+    expect(quantized.sizeCells).toBe(3);
+  });
+
+  it('fails loudly on non-finite pointers and bad geometry', () => {
+    const base = effect();
+    expect(() =>
+      resizeEffectFromEdge(base, 'e', { x: Number.NaN, y: 0.5 }, boardPx, boardPx, cellPx),
+    ).toThrow();
+    expect(() => resizeEffectFromEdge(base, 'e', { x: 0.75, y: 0.5 }, 0, boardPx, cellPx)).toThrow();
+    expect(() => resizeEffectFromEdge(base, 'e', { x: 0.75, y: 0.5 }, boardPx, boardPx, -cellPx)).toThrow();
   });
 });
 

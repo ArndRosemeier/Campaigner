@@ -163,6 +163,10 @@ Constants ported: `STAGING_GROUND_CELLS = 3`, `VEIL_DEFAULT_CELLS = 2`,
   `activeIndex` adjustment, order splicing, next-turn cycling.
 - `veil.ts` — cell metrics, edge resize (center-preserving, cell-quantized),
   portrait-covered-by-veils test.
+- `effect.ts` (veil-parity arc) — SYMMETRIC edge resize for effect markers
+  (`resizeEffectFromEdge`: the single `sizeCells` span grows from every
+  handle with the center fixed, cell-quantized via `veilSpanNorm`, min
+  `EFFECT_MIN_CELLS`).
 - `gridSnap.ts` + `gestureGate.ts` — snapping and the two module-level drag
   gates (copied verbatim; ~53 LOC, zero deps).
 
@@ -385,7 +389,15 @@ could see.*
   commit on release). Selected markers grow/shrink (cell-quantized, min one
   cell) and delete from the rail; scenery lock gates their moves like veils;
   the fill renders at ~70% transparency and the marker is board material in
-  BOTH views (D8); the stage snapshot captures and restores them.
+  BOTH views (D8); the stage snapshot captures and restores them. Amended
+  2026-09-08 (veil-parity arc): *markers gain the veil's four n/e/s/w edge
+  handles (12px dot in a 44px transparent pad, hidden while scenery is
+  locked or in player view) — but DRAG, not the veil's click-to-resize: the
+  handle drag previews the symmetric cell-quantized size live
+  (`resizeEffectFromEdge`, center fixed) with zero writes mid-gesture and
+  exactly one commit on release; a tap or a return-to-start-size drag
+  commits nothing, cancel commits nothing. The rail Grow/Shrink buttons stay
+  as the discrete-step (accessibility) path, Shrink disabled at one cell.*
 - Stage: **⚑ Set stage** (confirm) captures the snapshot; **↻ Reset**
   restores geometry, clears initiative, resets NPC instance HP to artifact
   max, re-spawns missing PCs at the staging ground, stays live.

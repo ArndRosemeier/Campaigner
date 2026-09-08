@@ -23,8 +23,9 @@ import {
 
 import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id, StatBlock } from '@/domain';
 import { CANONICAL_ROOM_MARKERS } from '@/domain';
-import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, VEIL_DEFAULT_CELLS } from '@/domain/battle';
+import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CELLS, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
+import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
 import { modulePath } from '@/app/routes';
 import {
   activeInitiativeTokenId,
@@ -95,7 +96,8 @@ import { cn } from '@/lib/utils';
  * Interactions: drag with a local live position + a single repo commit on
  * release (8px SCREEN-space tap threshold — client px, so the tap window does
  * not scale with zoom); pan from the letterbox, the map image, or the content
- * frame; wheel/button/pinch pan-zoom; veil add/resize;
+ * frame; wheel/button/pinch pan-zoom; veil add/resize; effect edge-handle
+ * drag-resize (symmetric, single commit on release) + rail Grow/Shrink;
  * stage set/reset; gated initiative reconcile; HP floats writing to the
  * token (NPC) or the pc artifact (PC).
  *
@@ -149,6 +151,24 @@ export function BattleSurface(): JSX.Element {
   // abort paths cancel the frame (no stale lift after release).
   const pendingDragRef = useRef<LiveDrag | null>(null);
   const dragFrameRef = useRef<number | null>(null);
+  // Effect edge-resize gesture (veil-parity arc): the WHOLE gesture lives in
+  // this ref (base snapshot + latest preview), mirrored to
+  // effectResizePreview for rendering. Synchronous null-out on release/cancel
+  // is the double-finish guard — state alone would still read stale in the
+  // bubbled board-level release. Zero Dexie writes until the single commit.
+  const effectResizeRef = useRef<{
+    base: BattleEffect;
+    edge: EffectEdge;
+    fromSizeCells: number;
+    sizeCells: number;
+    movedPx: number;
+    startClientX: number;
+    startClientY: number;
+  } | null>(null);
+  const [effectResizePreview, setEffectResizePreview] = useState<{
+    effectId: BattleEffect['id'];
+    sizeCells: number;
+  } | null>(null);
   const [selectedTokenId, setSelectedTokenId] = useState<BattleTokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
   const [selectedEffectId, setSelectedEffectId] = useState<BattleEffect['id'] | null>(null);
@@ -373,16 +393,27 @@ export function BattleSurface(): JSX.Element {
   }, [battle, liveDrag]);
 
   // Effect markers (D7): the same live-render contract — and NO player-safe
-  // filter: effects are showpieces, board material in BOTH views.
+  // filter: effects are showpieces, board material in BOTH views. An active
+  // edge-resize previews its cell-quantized size locally (persisted exactly
+  // once on release); a move-drag previews position instead — the two
+  // gestures never co-occur (both begin a board gesture; handles stop
+  // propagation so a resize never starts a move).
   const displayedEffects = useMemo(() => {
     if (battle === undefined) return [];
     const drag = liveDrag;
-    if (drag?.tokenId.startsWith('effect:') !== true) return battle.board.effects;
-    const effectId = drag.tokenId.slice('effect:'.length);
-    return battle.board.effects.map((effect) =>
-      effect.id === effectId ? { ...effect, x: drag.x, y: drag.y } : effect,
-    );
-  }, [battle, liveDrag]);
+    if (drag?.tokenId.startsWith('effect:') === true) {
+      const effectId = drag.tokenId.slice('effect:'.length);
+      return battle.board.effects.map((effect) =>
+        effect.id === effectId ? { ...effect, x: drag.x, y: drag.y } : effect,
+      );
+    }
+    if (effectResizePreview !== null) {
+      return battle.board.effects.map((effect) =>
+        effect.id === effectResizePreview.effectId ? { ...effect, sizeCells: effectResizePreview.sizeCells } : effect,
+      );
+    }
+    return battle.board.effects;
+  }, [battle, liveDrag, effectResizePreview]);
 
   const artifactById = useMemo(() => new Map(artifacts.map((entry) => [entry.id, entry])), [artifacts]);
   const lightboxToken = displayedTokens.find((token) => token.id === lightboxTokenId) ?? null;
@@ -510,6 +541,9 @@ export function BattleSurface(): JSX.Element {
         abandonLiveDrag();
         endBoardGesture();
       }
+      // An effect edge-resize in flight dies the same way: no size was
+      // chosen, so unwind it with NO commit rather than strand the gesture.
+      cancelEffectResize();
       return;
     }
     const target = event.target as HTMLElement;
@@ -896,6 +930,101 @@ export function BattleSurface(): JSX.Element {
     }));
   }
 
+  // --- Effect edge-resize gesture (veil-parity arc): drag a handle, preview
+  // the symmetric cell-quantized size live, commit EXACTLY once on release —
+  // the veil/token move contract (zero writes mid-gesture). A tap (below the
+  // 8px screen-space threshold) or a drag that lands back on the start size
+  // commits nothing; the rail Grow/Shrink buttons own discrete steps.
+  // Scenery lock + player-safe gate identically to veils: the handles never
+  // mount there, and the start path re-checks so a stale node cannot resize.
+
+  function startEffectResize(
+    effect: BattleEffect,
+    edge: EffectEdge,
+    event: React.PointerEvent<HTMLElement>,
+  ): void {
+    if (playerSafe || battle?.board.sceneryMovementLocked === true) return;
+    event.stopPropagation();
+    if (typeof event.currentTarget.setPointerCapture === 'function') {
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Same rule as the token drag capture failure: without the stream a
+        // release never arrives, so start no gesture rather than strand one.
+        return;
+      }
+    }
+    beginBoardGesture();
+    effectResizeRef.current = {
+      base: effect,
+      edge,
+      fromSizeCells: effect.sizeCells,
+      sizeCells: effect.sizeCells,
+      movedPx: 0,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+    };
+    setEffectResizePreview({ effectId: effect.id, sizeCells: effect.sizeCells });
+    setSelectedEffectId(effect.id);
+    setSelectedTokenId(null);
+    setSelectedVeilId(null);
+  }
+
+  function previewEffectResize(event: React.PointerEvent<HTMLElement>): void {
+    const resize = effectResizeRef.current;
+    if (resize === null) return;
+    const at = boardPointFromEvent(event);
+    try {
+      const resized = resizeEffectFromEdge(
+        resize.base,
+        resize.edge,
+        at,
+        contentSize.w,
+        contentSize.h,
+        cellWidthPx,
+        cellHeightPx,
+      );
+      resize.movedPx = Math.max(
+        resize.movedPx,
+        Math.hypot(event.clientX - resize.startClientX, event.clientY - resize.startClientY),
+      );
+      resize.sizeCells = resized.sizeCells;
+      setEffectResizePreview({ effectId: resize.base.id, sizeCells: resized.sizeCells });
+    } catch (error) {
+      // Loud, then unwind: a mid-gesture geometry failure must never leave a
+      // half-open gesture suppressing reconcile — abort with no commit.
+      cancelEffectResize();
+      toastError('Could not resize the effect', error);
+    }
+  }
+
+  function finishEffectResize(): void {
+    const resize = effectResizeRef.current;
+    effectResizeRef.current = null;
+    setEffectResizePreview(null);
+    if (resize === null) return;
+    // Paired with the begin in startEffectResize (same rule as the moves).
+    endBoardGesture();
+    if (resize.movedPx < DRAG_THRESHOLD_PX) return;
+    if (resize.sizeCells === resize.fromSizeCells) return;
+    const finalSize = resize.sizeCells;
+    const effectId = resize.base.id;
+    void commit((board) => ({
+      ...board,
+      effects: board.effects.map((entry) =>
+        entry.id === effectId ? { ...entry, sizeCells: finalSize } : entry,
+      ),
+    }));
+  }
+
+  /** Abort path: drop the preview with NO commit (cancel, pinch takeover). */
+  function cancelEffectResize(): void {
+    if (effectResizeRef.current === null) return;
+    effectResizeRef.current = null;
+    setEffectResizePreview(null);
+    endBoardGesture();
+  }
+
   // --- Actions ---------------------------------------------------------------
 
   function enableInitiative(): void {
@@ -953,7 +1082,7 @@ export function BattleSurface(): JSX.Element {
       ...board,
       effects: board.effects.map((effect) =>
         effect.id === effectId
-          ? { ...effect, sizeCells: Math.max(1, effect.sizeCells + delta) }
+          ? { ...effect, sizeCells: Math.max(EFFECT_MIN_CELLS, effect.sizeCells + delta) }
           : effect,
       ),
     }));
@@ -1515,11 +1644,18 @@ export function BattleSurface(): JSX.Element {
                   selected={effect.id === selectedEffectId}
                   dragging={liveDrag?.tokenId === `effect:${effect.id}`}
                   draggable={!playerSafe && !board.sceneryMovementLocked}
+                  resizable={!playerSafe && !board.sceneryMovementLocked}
                   onPointerDown={(event) => {
                     startEffectDrag(event, effect);
                   }}
                   onPointerMove={moveEffectDrag}
                   onPointerUp={finishEffectDrag}
+                  onResizeStart={(edge, event) => {
+                    startEffectResize(effect, edge, event);
+                  }}
+                  onResizeMove={previewEffectResize}
+                  onResizeEnd={finishEffectResize}
+                  onResizeCancel={cancelEffectResize}
                 />
               ))}
               {/* Tokens — covered/hidden are REMOVED in player view, never dimmed */}
@@ -2162,9 +2298,14 @@ interface EffectViewProps {
   selected: boolean;
   dragging: boolean;
   draggable: boolean;
+  resizable: boolean;
   onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
   onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onResizeStart: (edge: EffectEdge, event: React.PointerEvent<HTMLElement>) => void;
+  onResizeMove: (event: React.PointerEvent<HTMLElement>) => void;
+  onResizeEnd: (event: React.PointerEvent<HTMLElement>) => void;
+  onResizeCancel: (event: React.PointerEvent<HTMLElement>) => void;
 }
 
 /**
@@ -2176,6 +2317,13 @@ interface EffectViewProps {
  * Board material: it renders in BOTH GM and player views (the showpiece is
  * FOR the table); the optional label carries no stat text, so the
  * player-safe DOM contract holds.
+ *
+ * Edge handles (veil-parity arc): the same 4 n/s/e/w affordance as
+ * `VeilView` — a 12px dot inside a 44px transparent hit pad — but DRAG, not
+ * click-to-resize: the handle drag previews the symmetric cell-quantized
+ * size locally (`resizeEffectFromEdge`: center fixed, every handle grows
+ * the same span) and commits exactly once on release. The rail Grow/Shrink
+ * buttons stay as the discrete-step (accessibility) path.
  */
 function EffectView({
   effect,
@@ -2185,13 +2333,24 @@ function EffectView({
   selected,
   dragging,
   draggable,
+  resizable,
   onPointerDown,
   onPointerMove,
   onPointerUp,
+  onResizeStart,
+  onResizeMove,
+  onResizeEnd,
+  onResizeCancel,
 }: EffectViewProps): JSX.Element | null {
   if (content.w === 0 || content.h === 0) return null;
   const widthPct = ((effect.sizeCells * cellWidthPx) / content.w) * 100;
   const heightPct = ((effect.sizeCells * cellHeightPx) / content.h) * 100;
+  const handles: { edge: EffectEdge; className: string }[] = [
+    { edge: 'n', className: 'left-1/2 top-0 -translate-x-1/2 -translate-y-1/2' },
+    { edge: 's', className: 'left-1/2 bottom-0 -translate-x-1/2 translate-y-1/2' },
+    { edge: 'w', className: 'left-0 top-1/2 -translate-y-1/2 -translate-x-1/2' },
+    { edge: 'e', className: 'right-0 top-1/2 -translate-y-1/2 translate-x-1/2' },
+  ];
   return (
     <div
       className={cn(
@@ -2221,6 +2380,31 @@ function EffectView({
           {effect.label}
         </span>
       )}
+      {resizable &&
+        handles.map((handle) => (
+          <button
+            key={handle.edge}
+            type="button"
+            aria-label={`Resize effect ${handle.edge}`}
+            // The visible dot stays 12px, but the hit target is a 44px
+            // (size-11) transparent pad around it — the sanctioned
+            // veil-handle pattern: coarse pointers get a finger-size
+            // target with no visual change.
+            className={cn(
+              'absolute flex size-11 touch-none items-center justify-center',
+              handle.className,
+            )}
+            data-testid={`effect-handle-${handle.edge}`}
+            onPointerDown={(event) => {
+              onResizeStart(handle.edge, event);
+            }}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeEnd}
+            onPointerCancel={onResizeCancel}
+          >
+            <span aria-hidden className="size-3 rounded-full border border-zinc-900 bg-amber-400" />
+          </button>
+        ))}
     </div>
   );
 }
