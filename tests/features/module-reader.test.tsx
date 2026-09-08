@@ -962,4 +962,22 @@ describe('ModuleReaderPage', () => {
     expect(retrySpineMock).toHaveBeenCalledWith(failed.id, expect.anything());
     await flushAsyncUpdates();
   }, 20_000);
+
+  it('bounds the entity rail and keeps the document as the flexing pane', async () => {
+    const { campaignId, moduleId } = await seedReaderModule();
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    await screen.findAllByTestId('entity-row', {}, { timeout: 10_000 });
+    // jsdom cannot measure layout: pin the classes that keep the batch
+    // toolbar from sizing the rail (flex min-width:auto).
+    const aside = screen.getByTestId('entity-panel');
+    for (const token of ['w-80', 'shrink-0', 'min-w-0']) {
+      expect(aside.className.split(/\s+/)).toContain(token);
+    }
+    // The document stays the flexing pane — the rail never steals its width.
+    const article = document.querySelector('[data-testid="module-reader"] article');
+    if (article?.parentElement == null) throw new Error('reader document pane missing');
+    expect(article.parentElement.className.split(/\s+/)).toContain('flex-1');
+    await flushAsyncUpdates();
+  }, 20_000);
 });

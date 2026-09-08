@@ -1000,3 +1000,86 @@ describe('EntityPanel — normalization state (fix-01)', () => {
     expect(after?.parts[0]?.markdown).toContain('[[Guard Mira]]');
   }, 20_000);
 });
+
+describe('EntityPanel — bounded reader rail', () => {
+  beforeEach(clearDatabase);
+  afterEach(cleanup);
+
+  /**
+   * One unresolved stub per batchable kind — the toolbar's widest state
+   * (one "Generate N <kind>" button per kind). Kinds are RECORDED BY THE
+   * GENERATOR, mirroring moduleFixture.
+   */
+  function manyKindsFixture(campaignId: Id): Module {
+    const base = moduleFixture(campaignId);
+    if (base.spine === null) throw new Error('fixture spine missing');
+    return moduleSchema.parse({
+      ...base,
+      spine: {
+        ...base.spine,
+        premise:
+          '[[Sir Kael]] entered [[The Undercroft]] during [[The Ember Rite]] ' +
+          'while [[The Ashen Compact]] read [[The Tide Omen]].',
+      },
+      entityKinds: [
+        { name: 'Sir Kael', kind: 'npc', absorbed: [] },
+        { name: 'The Undercroft', kind: 'location', absorbed: [] },
+        { name: 'The Ember Rite', kind: 'event', absorbed: [] },
+        { name: 'The Ashen Compact', kind: 'faction', absorbed: [] },
+        { name: 'The Tide Omen', kind: 'note', absorbed: [] },
+      ],
+      entityNamesNormalized: true,
+    });
+  }
+
+  it('keeps its fixed width with many batch buttons — the toolbar wraps inside the rail', async () => {
+    const campaign = await createCampaign({ name: 'Rail', system: 'dnd5e' });
+    render(
+      <EntityPanel
+        module={manyKindsFixture(campaign.id)}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    // Five batch buttons — the toolbar's widest state.
+    expect(screen.getAllByTestId(/batch-/)).toHaveLength(5);
+
+    // jsdom cannot measure layout: pin the classes that bound the rail so
+    // the toolbar's nowrap buttons cannot size it (flex min-width:auto).
+    const aside = screen.getByTestId('entity-panel');
+    for (const token of ['w-80', 'shrink-0', 'min-w-0']) {
+      expect(aside.className.split(/\s+/)).toContain(token);
+    }
+    // The toolbar wraps instead of forcing the rail wider.
+    const toolbar = aside.querySelector('.flex-wrap');
+    if (toolbar === null) throw new Error('entity toolbar lost its flex-wrap');
+    expect(toolbar.className.split(/\s+/)).toContain('flex-wrap');
+  });
+
+  it('collapse toggle still hides and restores the entity lists', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Rail', system: 'dnd5e' });
+    render(
+      <EntityPanel
+        module={moduleFixture(campaign.id)}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    expect(screen.getAllByTestId('entity-row').length).toBeGreaterThan(0);
+    const toggle = screen.getByRole('button', { name: /entities/i });
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await user.click(toggle);
+    expect(screen.queryByTestId('entity-row')).not.toBeInTheDocument();
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await user.click(toggle);
+    expect(screen.getAllByTestId('entity-row').length).toBeGreaterThan(0);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+  });
+});

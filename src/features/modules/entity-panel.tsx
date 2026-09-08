@@ -386,7 +386,12 @@ export function EntityPanel({
 
   return (
     <aside
-      className="flex h-full flex-col border-l bg-card"
+      // Bounded rail: the batch toolbar holds one nowrap button per stub
+      // kind, so an unbounded flex item would size by its widest button
+      // (flex min-width:auto) and invade the document. w-80 fits a
+      // name + kind badge + ×count row; shrink-0 keeps the DOCUMENT as
+      // the flexing pane; min-w-0 lets toolbar labels wrap inside.
+      className="flex h-full w-80 min-w-0 shrink-0 flex-col border-l bg-card"
       data-testid="entity-panel"
       aria-label="Module entities"
     >

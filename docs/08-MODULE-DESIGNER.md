@@ -79,7 +79,9 @@ editor header as a chip input next to tags ("also known as").
 The module is **front and center**: a single scrollable document view at the
 middle pane's full width (no prose max-width cap; comfortable padding, the
 type scale unchanged), large type, parts as chapters (H1 = part title with
-level band badge), spine premise as an intro section. Sticky mini-ToC on the left
+level band badge), spine premise as an intro section. The entity rail on the
+right is width-bounded (`w-80 shrink-0 min-w-0`) so its batch toolbar wraps
+inside instead of sizing the rail and invading the document. Sticky mini-ToC on the left
 (part titles, click to scroll) with a **search box on top**: matches are
 located in the rendered document; next/previous (and Enter/Shift+Enter)
 cycle through them, scrolling the active match into view and flashing a
