@@ -49,6 +49,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D12 | **Asymmetric per-room budget loop (owner-specified)**: each complex room carries `targetLevel` (additive, optional; defaults to the encounter's parsed levelHint) and the assigned creatures' levels are summed against a documented band — **too easy ⇒ ship silently (owner: fine)**; **too hard ⇒ lower that room's targetLevel a step (floor 1) and retry through the encounter brief's EXISTING single repair turn** (budget issues join the issue list like coverage/source issues); **after the bounded retry still over ⇒ LOUD advisory** persisted on the step output AND `data.budgetAdvisory` on the artifact — never silent, never a failed run. The final (possibly lowered) targetLevel persists on the room, visible and owner-editable. dnd5e band = our own documented approximation (verbatim rationale below, mirroring the treasure-ladder licensing stance, docs/12 §13.2/§14); pf2e ships NO numbers — GM Core verbatim from retrieved excerpts when present, else the always-on loud advisory. The in-place Smith content fill runs the same loop over a RECONCILED partition (see below). |
 | D13 | **The play path is stored on the layout** — `encounterLayoutSchema.path: z.array(z.uuid()).optional()`, a permutation of the room ids refined by the shared layout schema. The Cartographer brief's room order IS the path (stored explicitly — `packAttempt` ROTATES `brief.rooms`, so the array order cannot be trusted), rotated so the entry room is first: **first path room = spawn room**. Legacy complexes get `path` backfilled as their room-array order (spawn first if derivable) by the v17 migration; the surface falls back to array order when absent. The rail's veiled-room set resolves per ROOM (`veil.id` for the primary group, `veil.roomId` for every group veil), so a room reads veiled until its last group veil lifts and "Reveal next room" reveal-alls the room. |
 | D15 | **Auto-promote on second-module use** (owner-ratified, 10 D12): an encounter roster or battle token that cites another module's npc/mob artifact promotes it to campaign level with a loud toast — at run-engine finalize (both remap sites), the editor encounter save, the top of `seedBattleFromEncounter` / `spawnRosterInstance` (before identity freezes), and bestiary `spawnMobArtifactIntoModule` (second-module spawn promotes/shared instead of moving). No separate core state — every path funnels through `adoptIntoCampaign`. |
+| D17 | **The encounter map has a STYLE MODE — architectural vs. natural site — and OUTDOORS the encounter's own prose is the truth** (owner-ratified): WHO HOLDS GROUND TRUTH. Dungeons: the layout IS the truth — the schematic-faithful contract (walls/corridors/keys/veils; keep-structure prompt + the stone/wood/dirt materials line) stays byte-identical. Outdoors: our geometry encodes ONLY spawn positions — the schematic renders a placement-only overlay (soft organic spawn patches over the mob-cluster cells + the entrance marker; NO region boundary stroke, NO wall geometry) and the stylize prompt is rebuilt from the brief's own prose (theme + terrain + summary), with NO materials line, NO keep-walls clause, and NO terrain bans (an island in a lava lake or a murder-clown tent stays paintable). The usability hard-bans (no title/legend/grid/text/characters; no white/pale boxes) and the entrance marker stay verbatim; the entrance clause softens to "a visible approach path at the marked spot" (marker mechanics unchanged). Mode derivation: the brief's `environment: 'outdoor'` OR the persisted `locationKind: 'wilderness'` ⇒ natural, else architectural — and the owner's editor override (`mapMode` on the encounter data, additive optional, 'auto' stores nothing) beats both. See "Natural-site mode" below. |
 | D14 | **The user is the judge; regenerate is the correction; NO VLM verification** (owner-directed removal, 2026-09-08): "Nope. Stop the verification altogether. Let the user be the judge with a regenerate option. No need to waste model calls here. Things do not need to be verified in a brittle way. Just have a way to easily regenerate." The verify step (the 5a8f8f2/42db-era machinery: the coarse-grid cell contract, the `arena-verdict` structural check, thresholds, drift overlays, the dedicated verify model) is DELETED — model calls are not spent on brittle self-grading. The manual run pauses at pick; **"Regenerate candidates"** re-runs the stylize step only (same brief, same layout — room keys and geometry untouched) and pauses at pick again. Regenerating the LAYOUT (fresh keys/geometry) stays the separate existing affordance. Old run rows carrying verify steps heal at the run-row parse boundary. |
 | D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). **D10 amendment (locationKind, owner-ratified)**: encounters classify themselves — the encounter persona's EXISTING draft call gains a bounded `locationKind` (`'dungeon' | 'building' | 'wilderness' | 'other'`, persisted additively on the encounter artifact, owner-correctable in the editor, no extra LLM call), and the preset resolves per encounter: **explicit per-run choice > the encounter's own `locationKind` (`'dungeon'` → Dungeon tier, `'building'`/`'wilderness'` → Standard) > the Settings fallback** for unclassified (`'other'`) rows. The persona-panel Preset select gains **Auto** as its default (self-classification is the norm; Standard/Dungeon remain explicit overrides). See "D10 amendment — per-encounter locationKind" below. |
 
@@ -329,17 +330,28 @@ mode: run row per state change, event emitter for streaming, autonomy via
 - `layout` is **pure code** (next section): the LLM never emits coordinates.
   A bounded retry ladder (re-pack with jitter, max 3 attempts, shrinking room
   size classes) ends in a failed run — never a placeholder layout.
-- `stylize` prompt contract: style guidance from the brief (medium, palette,
-  biome, era) + the binding instruction "keep walls, openings and overall
-  structure exactly as in the reference image; no text, no labels, no grid
-  lines, no numbers, no tokens/minis, no watermark" + the anti-hallucination
-  negatives (owner-observed 2026-09-08: a jungle map came back with white
-  rectangles baked into the floors — the image model read the schematic's
-  pale room fills as geometry to preserve): no white/pale boxes,
-  rectangles, plaques, discs, signposts or other label-like markers apart
-  from the entrance triangle; room floors are painted as continuous natural
-  terrain with no discrete light-colored sub-rectangles. `negative` and
-  `styleNotes` mirror the Illustrator contract (07 §M3-A).
+- `stylize` prompt contract — TWO mode contracts (natural-site mode, D17):
+  - **Architectural (dungeon — the default, byte-identical to the pre-mode
+    contract)**: style guidance from the brief (medium, palette, biome, era)
+    + the binding instruction "keep walls, openings and overall structure
+    exactly as in the reference image; no text, no labels, no grid lines, no
+    numbers, no tokens/minis, no watermark" + the anti-hallucination
+    negatives (owner-observed 2026-09-08: a jungle map came back with white
+    rectangles baked into the floors — the image model read the schematic's
+    pale room fills as geometry to preserve): no white/pale boxes,
+    rectangles, plaques, discs, signposts or other label-like markers apart
+    from the entrance triangle; room floors are painted as continuous natural
+    terrain with no discrete light-colored sub-rectangles. `negative` and
+    `styleNotes` mirror the Illustrator contract (07 §M3-A).
+  - **Natural site (outdoors — prose-led)**: the encounter's own prose leads
+    (theme + `terrain` + `summary`, then `styleNotes`); the reference image
+    is explained as placement-only (patches = where creatures gather, the
+    triangle = the approach); the materials line and the keep-walls clause
+    are OMITTED entirely and there are NO terrain bans (no "no rectangles",
+    no "no structures" — an island in a lava lake or a murder-clown tent
+    stays paintable). The usability hard-bans above keep VERBATIM in both
+    modes, and the entrance clause softens to "a visible approach path at
+    the marked spot" (the marker mechanics are unchanged).
 - **No verify step (D14)**: the former `verify` bullet set — the SHAPE-AWARE
   coarse-grid contract for complexes, the `arena-verdict` structural check
   for single arenas (the 5a8f8f2 fix for the 7/7 auto-run blocker), the 12%
@@ -394,9 +406,16 @@ mode: run row per state change, event emitter for streaming, autonomy via
   one-cell cover margin (clamped to the board), first group per room keeping
   `id = room.id`, every group carrying `roomId`. Correct under D6 because
   cell metrics are layout-anchored on the surface.
-- `renderSchematic(layout, cellPx)` — canvas: walls dark, floor light, doors
-  as gaps, subtle per-room fill; **cell px = 96** (e.g. 24×18 → 2304×1728,
-  inside the 4096 map cap). Returns a data URL; nothing stored.
+- `renderSchematic(layout, cellPx, factory, mode)` — canvas: walls dark,
+  floor light, doors as gaps, subtle per-room fill; **cell px = 96** (e.g.
+  24×18 → 2304×1728, inside the 4096 map cap). Returns a data URL; nothing
+  stored. `mode` (D17 natural-site mode) picks the contract: `'architectural'`
+  (default — legacy callers and pre-mode runs keep the exact bytes) renders
+  the room/wall schematic; `'natural'` renders the placement-only overlay —
+  one soft organic moss patch per room over the mob-cluster cells
+  (`mobsRect`, drawn as a deterministic union of jittered circles, never a
+  rectangle) + the canonical entrance triangle with NO wall gap and NO
+  landing pad, over the same neutral base; corridors paint nothing.
 
 Aspect options in the run dialog: **4:3 (24×18, default)**, 16:9 (28×16),
 1:1 (20×20). Aspect selection is a genuine user preference, persisted in
@@ -1032,6 +1051,86 @@ complexes also gain the under-budget migration note on `budgetAdvisory`
 (shown verbatim in the editor): their rooms carry no per-room targets until
 the battlemap is regenerated — each room is roughly 1/N of the whole and
 under-budget until then.
+
+## Natural-site mode (owner-ratified)
+
+Owner-diagnosed: a forest encounter rendered as "a strange rectangular stone
+structure surrounded by forest". Root cause — the room designer (the
+single-arena room contract) fired for ALL encounters, and the stylize prompt
+was architectural unconditionally: the schematic's single room rect reads as
+walls, and the prompt's materials line ("desaturated stone, wood, dirt")
+plus the keep-walls preserve-clause told the image model to keep them. The
+owner-ratified principle is **WHO HOLDS GROUND TRUTH**:
+
+- **Dungeons**: the layout IS the truth — walls, corridors, keys and veils
+  are real structure. The schematic-faithful contract is **byte-identical**
+  to the pre-mode behavior (same schematic pixels vocabulary, same prompt
+  clauses, pinned by tests).
+- **Outdoors**: the encounter's own prose is the truth; our geometry encodes
+  only spawn positions. The contract becomes **minimal, not inverted** — no
+  terrain bans of any kind (no "no rectangles", no "no structures": an
+  island in a lava lake or a murder-clown tent stays paintable) and the
+  prose palette is fully open.
+
+### The two contracts
+
+- **Schematic** (`renderSchematic` `mode`): `'architectural'` (default)
+  paints the room/wall schematic exactly as before. `'natural'` paints ONLY
+  the placement overlay: one soft organic patch per room over the mob
+  cluster (`mobsRect` — the cells `placeMonsters` scatters into), drawn as a
+  deterministic union of jittered circles (two passes — translucent fringe +
+  denser core — one fill each, so overlaps never seam; NO `Math.random`,
+  same layout ⇒ same bytes), plus the canonical entrance triangle with no
+  wall gap and no landing pad. No region boundary stroke, no wall geometry,
+  no corridor fills — nothing readable as architecture survives the
+  reference.
+- **Stylize prompt**: natural mode rebuilds it from the encounter's own
+  words — `theme` + `terrain` + `summary` (the parsed brief's real prose
+  fields) lead, `styleNotes` keeps its slot, and ONE clause explains the
+  reference as placement-only (patches = where creatures gather; triangle =
+  the approach). OMITTED entirely: the stone/wood/dirt materials line and
+  the keep-walls/openings/structure clause. KEPT verbatim: the usability
+  hard-bans (no title/legend/grid/text/characters/tokens; no white or pale
+  boxes/rectangles/plaques/discs/signposts) — they are the anti-hallucination
+  floor, not a style opinion. The entrance clause softens to "a visible
+  approach path at the marked spot"; the marker mechanics (one triangle,
+  canonical hue, keep it) are unchanged.
+- **Brief prompt**: the Cartographer's reply contract already lists
+  `environment` ('dungeon' | 'outdoor') — one added line tells it to set the
+  field honestly from the site's own nature (outdoor in the open,
+  dungeon only inside an enclosed built complex).
+
+### Mode derivation and the owner override
+
+`resolveEncounterMapMode` (`src/domain/encounterMap/schema.ts`, the pure
+derivation beside `resolveEncounterPreset`):
+
+1. **Owner override** — `mapMode: 'architectural' | 'natural'` on the
+   encounter data (additive + optional; legacy rows parse to undefined = no
+   override, no Dexie bump). The encounter editor's **Map style** select
+   (beside Location kind / Site shape) writes it: Auto stores nothing.
+   A forest dungeon (ruin in the woods) can be forced architectural; an
+   open cave classified 'dungeon' can be forced natural. The override beats
+   every derived signal.
+2. **Derived** — `'natural'` when EITHER signal says outdoors: the run's
+   brief `environment === 'outdoor'` OR the persisted `locationKind ===
+   'wilderness'`. The union is deliberate: an outdoor regeneration of a
+   mis-classified row follows the fresh brief; an outdoor row re-briefed
+   indoors stays natural until re-classified.
+3. **Everything else** — `'architectural'`: dungeon is the default, and
+   there is no silent third mode.
+
+The derivation re-runs at every consumption from the EFFECTIVE brief prose
+(`effectiveEncounterBrief`): the brief step stamps only the run facts (the
+target's `mapMode` override + persisted `locationKind` as
+`mapModeOverride`/`mapLocationKind` on the step output), so an owner-edited
+brief re-classifies the map with it. Pre-mode run rows carry neither fact
+and derive architectural — their behavior is byte-identical. Runs never
+stamp `mapMode` on the artifact: it stays owner-owned (unset = derive), so
+a re-classification re-derives. Seeding, veils, tokens and the layout
+geometry are untouched by the mode — the battle plays identically either
+way (D6/D11 hold); the mode changes only what the schematic paints and what
+the stylize prompt says.
 
 ## Implementation record
 

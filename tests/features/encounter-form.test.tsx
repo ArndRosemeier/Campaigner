@@ -497,6 +497,86 @@ function twoRoomData(): EncounterArtifactData {
   };
 }
 
+describe('encounter form map style override (docs/11 natural-site mode)', () => {
+  beforeEach(clearDatabase);
+
+  function singleData(overrides: Partial<EncounterArtifactData> = {}): EncounterArtifactData {
+    return {
+      difficulty: 'hard',
+      levelHint: '4',
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+      layout: null,
+      ...overrides,
+    };
+  }
+
+  it('defaults to Auto (the field stays unset = derive from the site classification)', async () => {
+    const user = userEvent.setup();
+    let latest: EncounterArtifactData | null = null;
+    render(
+      <StatefulEncounterFormSwitch initial={singleData()} onChange={(next) => { latest = next; }} />,
+    );
+    const trigger = screen.getByRole('combobox', { name: 'Map style' });
+    expect(trigger).toHaveTextContent('Auto (from site)');
+    await user.click(trigger);
+    await user.click(await screen.findByRole('option', { name: 'Natural site' }));
+    await waitFor(() => {
+      expect(latest?.mapMode).toBe('natural');
+    });
+    await user.click(screen.getByRole('combobox', { name: 'Map style' }));
+    await user.click(await screen.findByRole('option', { name: 'Dungeon (architectural)' }));
+    await waitFor(() => {
+      expect(latest?.mapMode).toBe('architectural');
+    });
+    // Back to Auto: the owner clears the override (derive again).
+    await user.click(screen.getByRole('combobox', { name: 'Map style' }));
+    await user.click(await screen.findByRole('option', { name: 'Auto (from site)' }));
+    await waitFor(() => {
+      expect(latest?.mapMode).toBeUndefined();
+    });
+  });
+
+  it('writes the forced modes through the controlled harness', async () => {
+    const user = userEvent.setup();
+    render(<StatefulEncounterFormSwitch initial={singleData({ mapMode: 'natural' })} onChange={() => undefined} />);
+    expect(screen.getByRole('combobox', { name: 'Map style' })).toHaveTextContent('Natural site');
+    await user.click(screen.getByRole('combobox', { name: 'Map style' }));
+    await user.click(await screen.findByRole('option', { name: 'Dungeon (architectural)' }));
+    expect(screen.getByRole('combobox', { name: 'Map style' })).toHaveTextContent('Dungeon');
+  });
+});
+
+/** Controlled harness variant whose onChange is passed explicitly (the
+ * stateful ones above own their state; this one reports every patch). */
+function StatefulEncounterFormSwitch({
+  initial,
+  onChange,
+}: {
+  initial: EncounterArtifactData;
+  onChange: (data: EncounterArtifactData) => void;
+}) {
+  const [data, setData] = useState(initial);
+  return (
+    <EncounterForm
+      data={data}
+      campaignArtifacts={[]}
+      campaignSystem="dnd5e"
+      onChange={(next) => {
+        setData(next);
+        onChange(next);
+      }}
+    />
+  );
+}
+
 describe('encounter form room keys + mob treasure (owner-ratified arc)', () => {
   beforeEach(clearDatabase);
 

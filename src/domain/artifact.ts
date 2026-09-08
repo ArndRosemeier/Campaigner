@@ -6,6 +6,7 @@ import { statBlockSchema } from '@/domain/statblock';
 import {
   encounterLayoutSchema,
   encounterLocationKindSchema,
+  encounterMapModeSchema,
   encounterPresetSchema,
   encounterSiteShapeSchema,
   spawnFirstPath,
@@ -339,6 +340,18 @@ const encounterDataShape = z.object({
    * additive M5-C pattern).
    */
   locationKind: encounterLocationKindSchema.default('other'),
+  /**
+   * The map's STYLE MODE (docs/11 natural-site mode): 'architectural' forces
+   * the dungeon map contract (schematic-faithful walls, keep-structure
+   * prompt), 'natural' forces the placement-only natural-site contract —
+   * regardless of the brief's `environment` or the `locationKind`
+   * classification. `undefined` = derive
+   * (`resolveEncounterMapMode`: brief `environment: 'outdoor'` OR
+   * `locationKind: 'wilderness'` ⇒ natural, else architectural) — the
+   * editor's "Auto" option. Additive + optional: legacy rows parse without
+   * a Dexie bump; runs never stamp it, so a re-classification re-derives.
+   */
+  mapMode: encounterMapModeSchema.optional(),
   /**
    * The encounter's SHAPE (docs/11 D11): 'single' = one arena (one room, no
    * corridors, no veils at seed), 'complex' = a dungeon (multi-room,

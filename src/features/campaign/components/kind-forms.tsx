@@ -590,6 +590,42 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
               : 'The battlemap on file fixes this shape — regenerate the map as the other shape first.'}
           </span>
         </Field>
+        {/* Natural-site mode (docs/11): the map contract is derivable from
+            the encounter's own classification (outdoor/wilderness ⇒ the
+            natural-site placement contract; dungeon/building ⇒ the
+            architectural dungeon contract), and the owner can force either
+            way — a ruin in the woods plays architectural, an open cave plays
+            natural. 'auto' stores nothing (the field stays unset = derive). */}
+        <Field label="Map style">
+          <Select
+            value={data.mapMode ?? 'auto'}
+            items={{ auto: 'Auto (from site)', natural: 'Natural site', architectural: 'Dungeon (architectural)' }}
+            onValueChange={(value) => {
+              if (value === 'natural' || value === 'architectural') {
+                patch({ mapMode: value });
+              } else if (value === 'auto') {
+                patch({ mapMode: undefined });
+              }
+            }}
+          >
+            <SelectTrigger aria-label="Map style" className="h-7 text-sm pointer-coarse:text-base">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="auto">Auto (from site)</SelectItem>
+              <SelectItem value="natural">Natural site</SelectItem>
+              <SelectItem value="architectural">Dungeon (architectural)</SelectItem>
+            </SelectContent>
+          </Select>
+          <span className="text-[11px] font-normal text-muted-foreground">
+            How the automatic battlemap treats this site. Auto follows the
+            encounter's own classification: outdoor/wilderness maps as a
+            natural site (open terrain led by the encounter's description,
+            only spawn zones marked), dungeon/building as architectural
+            (walls and structure). Force the other way for a ruin in the
+            woods or an open cave.
+          </span>
+        </Field>
       </div>
       {layout !== null && (
         <RoomKeysEditor

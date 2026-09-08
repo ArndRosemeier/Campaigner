@@ -6,6 +6,7 @@ import type {
   Campaign,
   EncounterLayout,
   EncounterMapAspect,
+  EncounterMapMode,
   EncounterPreset,
   Id,
   MonsterEntry,
@@ -26,6 +27,7 @@ import {
   newId,
   packRooms,
   renderSchematic,
+  resolveEncounterMapMode,
   resolveEncounterPreset,
   schematicCellPx,
 } from '@/domain';
@@ -2463,6 +2465,7 @@ export class RunEngine {
     parsed: EncounterGeneratorBrief;
     aspect: EncounterMapAspect;
     preset: EncounterPreset;
+    mapMode: EncounterMapMode;
     statblockChunkIds: Id[];
     rosterChunkByName: Record<string, Id>;
   } {    const step = steps.find((candidate) => candidate.name === 'brief');
@@ -2474,6 +2477,8 @@ export class RunEngine {
       parsed?: unknown;
       aspect?: unknown;
       preset?: unknown;
+      mapModeOverride?: unknown;
+      mapLocationKind?: unknown;
       statblockChunkIds?: unknown;
       rosterChunkByName?: unknown;
     };
@@ -2492,6 +2497,23 @@ export class RunEngine {
       // Runs from before the preset existed read back as 'standard' — the
       // exact geometry they generated (docs/11 D10 default).
       preset: value.preset === 'dungeon' ? 'dungeon' : 'standard',
+      // Natural-site mode (docs/11): derived from the EFFECTIVE brief prose
+      // (an owner-edited environment re-classifies the map) over the run
+      // facts stamped at brief time (the target's owner override + persisted
+      // locationKind). Pre-mode runs carry neither fact → the architectural
+      // default, byte-identical to the pre-mode behavior.
+      mapMode: resolveEncounterMapMode({
+        override: value.mapModeOverride === 'architectural' || value.mapModeOverride === 'natural'
+          ? value.mapModeOverride
+          : undefined,
+        briefEnvironment: parsed.data.environment,
+        locationKind: value.mapLocationKind === 'dungeon' ||
+            value.mapLocationKind === 'building' ||
+            value.mapLocationKind === 'wilderness' ||
+            value.mapLocationKind === 'other'
+          ? value.mapLocationKind
+          : undefined,
+      }),
       statblockChunkIds: Array.isArray(value.statblockChunkIds)
         ? value.statblockChunkIds.filter((id): id is Id => typeof id === 'string')
         : [],
@@ -2598,6 +2620,10 @@ export class RunEngine {
       preset === 'dungeon'
         ? 'Preset: Dungeon — design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel).'
         : 'Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party\'s way in.',
+      // Natural-site mode (docs/11): the brief's `environment` classifies the
+      // map contract — one honest line (the field was listed but never
+      // explained); when it says outdoor, the map is prose-led natural-site.
+      'Environment: set "environment" honestly from the site\'s own nature — "outdoor" when the encounter plays in the open (forest, swamp, coast, road, cavern mouth), "dungeon" only when it plays inside an enclosed built complex of halls and corridors.',
       rosterContract,
       context.length === 0 ? null : `Context: ${JSON.stringify(context)}`,
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
@@ -2872,6 +2898,14 @@ export class RunEngine {
     // The budget loop's advisory (docs/11 D12): persisted on the step output
     // (finalize copies it onto the artifact) and surfaced on the notice.
     const budgetAdvisory = evaluated.advisory;
+    // Natural-site mode (docs/11): the target's map facts stamp with the
+    // brief — the OWNER override and the persisted locationKind are
+    // run-row facts, while the mode itself re-derives at every consumption
+    // from the EFFECTIVE brief prose (`effectiveEncounterBrief`), so an
+    // owner-edited brief re-classifies the map with it. Null = fresh run
+    // (derive from the brief's `environment` alone).
+    const mapModeOverride = target?.kind === 'encounter' ? (target.data.mapMode ?? null) : null;
+    const mapLocationKind = target?.kind === 'encounter' ? target.data.locationKind : null;
     return {
       step: this.finishStep(
         steps[stepIndex],
@@ -2880,6 +2914,8 @@ export class RunEngine {
             parsed,
             aspect,
             preset,
+            mapModeOverride,
+            mapLocationKind,
             statblockChunkIds: retrieval.statblockChunkIds,
             rosterChunkByName: retrieval.rosterChunkByName,
             ...(budgetAdvisory === null ? {} : { budgetAdvisory }),
@@ -2948,7 +2984,10 @@ export class RunEngine {
     steps: RunStep[],
   ): { step: RunStep } {
     const layout = this.effectiveEncounterLayout(steps);
-    const schematic = encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
+    // Natural-site mode (docs/11): 'natural' renders the placement-only
+    // overlay; 'architectural' keeps the room/wall schematic byte-identical.
+    const { mapMode } = this.effectiveEncounterBrief(steps);
+    const schematic = encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout), undefined, mapMode);
     this.encounterSchematics.set(runId, schematic);
     return {
       step: this.finishStep(steps[stepIndex], {
@@ -2968,8 +3007,11 @@ export class RunEngine {
     const settings = await getSettings();
     if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
     const layout = this.effectiveEncounterLayout(steps);
-    const { parsed } = this.effectiveEncounterBrief(steps);
-    const schematic = this.encounterSchematics.get(runId) ?? encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout));
+    const { parsed, mapMode } = this.effectiveEncounterBrief(steps);
+    const natural = mapMode === 'natural';
+    const schematic =
+      this.encounterSchematics.get(runId) ??
+      encounterRunAdapters.renderSchematic(layout, schematicCellPx(layout), undefined, mapMode);
     this.encounterSchematics.set(runId, schematic);
 
     // Entrance marker (entrance/exit spawn zones, doc 11): the SCHEMATIC
@@ -2978,6 +3020,9 @@ export class RunEngine {
     // only, nothing is ever detected or read back (D7; marker-path deletion
     // record in docs/11). Declared only when the layout carries an entrance
     // AND a free canonical hue exists (rooms consume the palette in order).
+    // Natural-site mode softens ONLY the clause wording (the overlay paints
+    // no wall gap — the marker is a spot on open ground); the marker
+    // mechanics (one triangle, canonical hue, keep it) are unchanged.
     const spawnLayoutRoom = layout.rooms.find((room) => room.spawn);
     const entranceConfig =
       spawnLayoutRoom?.entrance !== undefined
@@ -2986,17 +3031,40 @@ export class RunEngine {
     const entranceClause =
       spawnLayoutRoom === undefined || entranceConfig === null
         ? null
-        : `Entrance marker: The party enters the map through a single open gap in the entry room's outer wall. On the floor just inside that gap the reference image shows exactly one solid neon ${entranceConfig.colorName} triangle with a thick black outline, pointing into the room — keep it. The entrance triangle never has a disc or a plaque.`;
+        : natural
+          ? `Entrance marker: the reference image shows exactly one solid neon ${entranceConfig.colorName} triangle with a thick black outline at the party's approach — keep it, and paint a visible approach path at the marked spot (the way the party walks in). The entrance triangle never has a disc or a plaque.`
+          : `Entrance marker: The party enters the map through a single open gap in the entry room's outer wall. On the floor just inside that gap the reference image shows exactly one solid neon ${entranceConfig.colorName} triangle with a thick black outline, pointing into the room — keep it. The entrance triangle never has a disc or a plaque.`;
 
-    const prompt = [
-      `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
-      parsed.styleNotes,
-      'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
-      entranceClause,
-      'Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.',
-      'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures. No white or pale boxes, rectangles, plaques, discs, signposts, or other markers or label-like geometry apart from the entrance triangle: paint every room floor as continuous natural terrain with no discrete light-colored sub-rectangles.',
-      parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
-    ].filter((part) => part !== null && part !== '').join(' ');
+    // The usability hard-bans are the shared contract tail (docs/11): they
+    // pin byte-identical in BOTH modes — the anti-hallucination negatives
+    // (owner-observed white-rectangle failure) never soften.
+    const usabilityBans =
+      'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures. No white or pale boxes, rectangles, plaques, discs, signposts, or other markers or label-like geometry apart from the entrance triangle: paint every room floor as continuous natural terrain with no discrete light-colored sub-rectangles.';
+    const prompt = natural
+      ? [
+          // Natural-site contract (docs/11): the encounter's own prose is the
+          // truth — theme + terrain + summary lead, the reference image only
+          // marks placement, and there is NO materials line and NO
+          // keep-walls/structure clause (no terrain bans either: an island
+          // in a lava lake or a murder-clown tent stays paintable).
+          `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
+          parsed.terrain === '' ? null : `Site: ${parsed.terrain}.`,
+          `Scene: ${parsed.summary}`,
+          parsed.styleNotes,
+          'This site is open natural terrain: the reference image only marks placement — its soft darker patches show where the encounter\'s creatures gather and its single neon triangle marks the party\'s approach — so shape the ground itself from the scene description above.',
+          entranceClause,
+          usabilityBans,
+          parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
+        ].filter((part) => part !== null && part !== '').join(' ')
+      : [
+          `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
+          parsed.styleNotes,
+          'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
+          entranceClause,
+          'Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.',
+          usabilityBans,
+          parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
+        ].filter((part) => part !== null && part !== '').join(' ');
     const generated = await encounterRunAdapters.generateImages(prompt, input.unattended === true ? 1 : 2, {
       model: settings.imageModel,
       signal,

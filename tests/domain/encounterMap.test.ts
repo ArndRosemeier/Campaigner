@@ -889,3 +889,150 @@ describe('encounter map layout engine', () => {
 
   });
 });
+
+describe('natural-site placement overlay (docs/11 natural-site mode)', () => {
+  /** Recorder context: every canvas call lands in `calls` with the fill
+   * style snapshotted at call time — the pins read semantics, not pixels. */
+  function recorderContext() {
+    const calls: { method: string; args: unknown[]; fillStyle: unknown }[] = [];
+    const record = (method: string) => (...args: unknown[]) => {
+      calls.push({ method, args, fillStyle: (context as { fillStyle?: string }).fillStyle ?? '' });
+    };
+    const context = {
+      fillStyle: '',
+      strokeStyle: '',
+      lineWidth: 1,
+      beginPath: record('beginPath'),
+      moveTo: record('moveTo'),
+      lineTo: record('lineTo'),
+      arc: record('arc'),
+      closePath: record('closePath'),
+      fill: record('fill'),
+      stroke: record('stroke'),
+      fillRect: record('fillRect'),
+      strokeRect: record('strokeRect'),
+    };
+    return { context, calls };
+  }
+
+  function renderWith(
+    layout: EncounterLayout,
+    mode: 'architectural' | 'natural',
+  ): ReturnType<typeof recorderContext>['calls'] {
+    const { context, calls } = recorderContext();
+    const canvas = document.createElement('canvas');
+    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+    vi.spyOn(canvas, 'toDataURL').mockReturnValue('data:image/png;base64,mode');
+    renderSchematic(layout, 10, (width, height) => {
+      canvas.width = width;
+      canvas.height = height;
+      return canvas;
+    }, mode);
+    return calls;
+  }
+
+  /** One room (mobsRect 4×4 at (2,2)) with a north entrance on its outer
+   * wall — the same shape the dungeon entrance test pins. */
+  function outdoorLayout(): EncounterLayout {
+    return {
+      gridW: 12,
+      gridH: 12,
+      theme: 'mossy riverbank',
+      rooms: [
+        {
+          id: ROOM_A,
+          name: 'Riverbank',
+          rects: [{ x: 1, y: 1, w: 6, h: 6 }],
+          mobsRect: { x: 2, y: 2, w: 4, h: 4 },
+          description: '',
+          monsterIndexes: [],
+          spawn: true,
+          entrance: { x: 1, y: 1, side: 'north' },
+          key: '',
+          keyTreasure: '',
+        },
+      ],
+      corridors: [],
+    };
+  }
+
+  it('paints only the placement overlay: patches + marker, no wall stroke, no door vocabulary', () => {
+    const calls = renderWith(outdoorLayout(), 'natural');
+    // NO architecture: no wall/room stroke anywhere, and the only fillRect
+    // is the neutral base coat (no corridor greys, no wall-gap openings, no
+    // landing pads).
+    expect(calls.filter((call) => call.method === 'strokeRect')).toHaveLength(0);
+    const fillRects = calls.filter((call) => call.method === 'fillRect');
+    expect(fillRects).toHaveLength(1);
+    expect(fillRects[0]?.fillStyle).toBe('#111827');
+    expect(calls.some((call) => call.fillStyle === '#d1d5db')).toBe(false);
+    // The placement patches: 16 cluster cells × two passes (halo + core) of
+    // ONE union fill each, in muted moss — never pale, never grey.
+    const arcs = calls.filter((call) => call.method === 'arc');
+    expect(arcs).toHaveLength(32);
+    const patchFills = calls.filter(
+      (call) => call.method === 'fill' && (call.fillStyle === 'rgba(90, 107, 68, 0.35)' || call.fillStyle === 'rgba(90, 107, 68, 0.9)'),
+    );
+    expect(patchFills).toHaveLength(2);
+    // Every patch circle sits over the mob cluster cells (mobsRect at
+    // cellPx 10: x ∈ [20, 60), y ∈ [20, 60), jittered ≤ ±0.35 cells).
+    for (const call of arcs) {
+      const [cx, cy] = call.args as [number, number, number];
+      expect(cx).toBeGreaterThan(18);
+      expect(cx).toBeLessThan(62);
+      expect(cy).toBeGreaterThan(18);
+      expect(cy).toBeLessThan(62);
+    }
+    // Organic on purpose: the jittered radii are not uniform (a plain
+    // rectangle-shaped patch would read as architecture).
+    const radii = new Set(arcs.map((call) => call.args[2]));
+    expect(radii.size).toBeGreaterThan(1);
+  });
+
+  it('paints the same canonical entrance triangle with no wall gap around it', () => {
+    const calls = renderWith(outdoorLayout(), 'natural');
+    // The dungeon pin's exact triangle geometry: tip (15,18), base
+    // (12,12.8)–(18,12.8), hue = palette entry past one room (cyan).
+    const moveTo = calls.filter((call) => call.method === 'moveTo').map((call) => call.args);
+    expect(moveTo).toContainEqual([15, 18]);
+    const lineTo = calls.filter((call) => call.method === 'lineTo').map((call) => call.args);
+    expect(lineTo).toContainEqual([12, 12.8]);
+    expect(lineTo).toContainEqual([18, 12.8]);
+    const triangle = calls.find((call) => call.method === 'fill' && call.fillStyle === 'hsl(180, 100%, 50%)');
+    expect(triangle).toBeDefined();
+    // And NOTHING else fills #d1d5db — no wall gap, no landing pad.
+    expect(calls.some((call) => call.fillStyle === '#d1d5db')).toBe(false);
+  });
+
+  it('renders deterministically (same layout → same overlay bytes)', () => {
+    const first = renderWith(outdoorLayout(), 'natural');
+    const second = renderWith(outdoorLayout(), 'natural');
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+  });
+
+  it('leaves the architectural mode byte-identical: walls, corridors, strokeRect all paint', () => {
+    const layout = outdoorLayout();
+    const { context, calls } = recorderContext();
+    const canvas = document.createElement('canvas');
+    vi.spyOn(canvas, 'getContext').mockReturnValue(context as unknown as CanvasRenderingContext2D);
+    vi.spyOn(canvas, 'toDataURL').mockReturnValue('data:image/png;base64,mode');
+    const factory = (width: number, height: number) => {
+      canvas.width = width;
+      canvas.height = height;
+      return canvas;
+    };
+    // The pre-mode call shape (no mode argument) and the explicit
+    // 'architectural' call produce the identical call sequence — the
+    // dungeon contract is untouched by the mode addition.
+    renderSchematic(layout, 10, factory);
+    const defaulted = JSON.stringify(calls);
+    calls.length = 0;
+    renderSchematic(layout, 10, factory, 'architectural');
+    expect(JSON.stringify(calls)).toBe(defaulted);
+    // The architectural vocabulary is present: wall strokes, room fills,
+    // door-gap greys — and NO organic patch arcs anywhere.
+    expect(calls.filter((call) => call.method === 'strokeRect').length).toBeGreaterThan(0);
+    expect(calls.some((call) => call.fillStyle === '#d1d5db')).toBe(true);
+    expect(calls.filter((call) => call.method === 'arc')).toHaveLength(0);
+  });
+});

@@ -2,6 +2,7 @@ import {
   cellKeyOf,
   entranceSideDelta,
   type EncounterLayout,
+  type EncounterMapMode,
   type LayoutRect,
 } from '@/domain/encounterMap/schema';
 
@@ -74,13 +75,21 @@ export function schematicCellPx(layout: Pick<EncounterLayout, 'gridW' | 'gridH'>
 /**
  * Renders the validated structure before any image model sees it. Geometry is
  * always read from layout JSON; pixels are output only and never authoritative.
+ *
+ * `mode` picks the contract (docs/11 natural-site mode): 'architectural' — the
+ * room/wall schematic, byte-identical to the pre-mode renderer; 'natural' —
+ * the placement-only overlay (`renderNaturalPlacement`). The dungeon contract
+ * is the default: legacy callers and every pre-mode run keep their exact
+ * bytes.
  */
 export function renderSchematic(
   layout: EncounterLayout,
   cellPx = 96,
   factory: CanvasFactory = browserCanvas,
+  mode: EncounterMapMode = 'architectural',
 ): SchematicResult {
   if (!Number.isInteger(cellPx) || cellPx < 1) throw new Error('cellPx must be a positive integer');
+  if (mode === 'natural') return renderNaturalPlacement(layout, cellPx, factory);
   const width = layout.gridW * cellPx;
   const height = layout.gridH * cellPx;
   const canvas = factory(width, height);
@@ -108,6 +117,103 @@ export function renderSchematic(
   drawEntrance(context, layout, cellPx);
 
   return { dataUrl: canvas.toDataURL('image/png'), width, height };
+}
+
+/** Natural-overlay ground: the same neutral base as the dungeon schematic —
+ * the overlay is a placement reference, and the outdoor stylize prompt tells
+ * the image model the reference marks placement only. */
+const PLACEMENT_BASE = '#111827';
+/** Muted moss spawn patches — organic terrain shading, never pale (the
+ * stylize contract bans pale marker-like geometry), never a hue the
+ * materials line would name (that line is omitted in this mode). */
+const PATCH_HALO = 'rgba(90, 107, 68, 0.35)';
+const PATCH_CORE = 'rgba(90, 107, 68, 0.9)';
+
+/**
+ * Natural-site mode (docs/11): the placement overlay — the outdoor
+ * counterpart of the room/wall schematic. Outdoors the encounter's own prose
+ * is the truth and the layout geometry encodes only spawn positions, so the
+ * canvas paints NOTHING readable as architecture: no region boundary stroke,
+ * no wall geometry, no corridor fills. What it paints instead:
+ * - one soft organic patch per room over the mob-cluster cells (the room's
+ *   `mobsRect` — the same area `placeMonsters` scatters into), drawn as a
+ *   deterministic union of jittered circles: organic on purpose, never a
+ *   rectangle (the stylize ban on discrete sub-rectangles must survive the
+ *   reference image);
+ * - the canonical entrance triangle — marker mechanics unchanged (same
+ *   palette hue contract as the dungeon schematic) with NO wall gap and NO
+ *   landing pad: outdoors the entrance is a spot on open ground, and the
+ *   stylize prompt asks the image model for an approach path at that spot.
+ */
+function renderNaturalPlacement(
+  layout: EncounterLayout,
+  cellPx: number,
+  factory: CanvasFactory,
+): SchematicResult {
+  const width = layout.gridW * cellPx;
+  const height = layout.gridH * cellPx;
+  const canvas = factory(width, height);
+  const context = canvas.getContext('2d');
+  if (context === null) throw new Error('Canvas 2D context is unavailable');
+
+  context.fillStyle = PLACEMENT_BASE;
+  context.fillRect(0, 0, width, height);
+
+  for (const room of layout.rooms) paintSpawnPatch(context, room.mobsRect, cellPx);
+  const spawnRoom = layout.rooms.find((room) => room.spawn);
+  const entrance = spawnRoom?.entrance;
+  if (spawnRoom !== undefined && entrance !== undefined) {
+    paintEntranceTriangle(context, entrance, cellPx, layout.rooms.length);
+  }
+
+  return { dataUrl: canvas.toDataURL('image/png'), width, height };
+}
+
+/**
+ * Deterministic per-cell jitter (fractal hash, [0,1)): no `Math.random` —
+ * the same layout always renders the same overlay, pixel for pixel.
+ */
+function placementJitter(x: number, y: number, salt: number): number {
+  const n = Math.sin(x * 127.1 + y * 311.7 + salt * 74.7) * 43758.5453;
+  return n - Math.floor(n);
+}
+
+/** One soft organic patch: every cell of the mob cluster contributes a
+ * jittered circle — a translucent fringe pass plus a denser core pass, each
+ * a SINGLE fill of the whole circle set (nonzero winding), so overlapping
+ * circles merge into one clumpy patch with no double-darkened seams. */
+function paintSpawnPatch(
+  context: CanvasRenderingContext2D,
+  rect: LayoutRect,
+  cellPx: number,
+): void {
+  const fringes: { cx: number; cy: number; r: number }[] = [];
+  const cores: { cx: number; cy: number; r: number }[] = [];
+  for (let y = rect.y; y < rect.y + rect.h; y += 1) {
+    for (let x = rect.x; x < rect.x + rect.w; x += 1) {
+      const cx = (x + 0.5 + (placementJitter(x, y, 1) - 0.5) * 0.3) * cellPx;
+      const cy = (y + 0.5 + (placementJitter(x, y, 2) - 0.5) * 0.3) * cellPx;
+      cores.push({ cx, cy, r: (0.42 + placementJitter(x, y, 3) * 0.16) * cellPx });
+      fringes.push({ cx, cy, r: (0.62 + placementJitter(x, y, 4) * 0.2) * cellPx });
+    }
+  }
+  fillCircleUnion(context, fringes, PATCH_HALO);
+  fillCircleUnion(context, cores, PATCH_CORE);
+}
+
+function fillCircleUnion(
+  context: CanvasRenderingContext2D,
+  circles: readonly { cx: number; cy: number; r: number }[],
+  style: string,
+): void {
+  if (circles.length === 0) return;
+  context.fillStyle = style;
+  context.beginPath();
+  for (const circle of circles) {
+    context.moveTo(circle.cx + circle.r, circle.cy);
+    context.arc(circle.cx, circle.cy, circle.r, 0, Math.PI * 2);
+  }
+  context.fill();
 }
 
 /**
@@ -173,8 +279,26 @@ function drawEntrance(
     context.fillRect(outward.x * cellPx, outward.y * cellPx, cellPx, cellPx);
   }
 
-  const marker = entranceMarkerConfig(layout.rooms.length);
+  paintEntranceTriangle(context, entrance, cellPx, layout.rooms.length);
+}
+
+/**
+ * The canonical marker triangle itself (docs/11): one solid neon triangle
+ * pointing inward at the entrance cell, palette hue = one past the room
+ * count (never colliding with a room label); with all ten hues taken no
+ * triangle is painted (the geometry stays authoritative). Shared by both
+ * map modes — the natural-site overlay paints the SAME marker with no wall
+ * gap and no landing pad around it.
+ */
+function paintEntranceTriangle(
+  context: CanvasRenderingContext2D,
+  entrance: { x: number; y: number; side: 'north' | 'south' | 'west' | 'east' },
+  cellPx: number,
+  roomCount: number,
+): void {
+  const marker = entranceMarkerConfig(roomCount);
   if (marker === null) return;
+  const [dx, dy] = entranceSideDelta(entrance.side);
   const center = { x: (entrance.x + 0.5) * cellPx, y: (entrance.y + 0.5) * cellPx };
   // Inward = opposite of the outward side; perpendicular for the base corners.
   const inward = { x: -dx, y: -dy };

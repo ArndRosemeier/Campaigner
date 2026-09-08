@@ -45,6 +45,52 @@ export const encounterSiteShapeSchema = z.enum(['single', 'complex']);
 export type EncounterSiteShape = z.infer<typeof encounterSiteShapeSchema>;
 
 /**
+ * The encounter map's STYLE MODE (docs/11 natural-site mode, owner-ratified):
+ * who holds ground truth for the rendered map. `'architectural'` — the layout
+ * IS the truth: the schematic paints walls/corridors and the stylize prompt
+ * preserves walls, openings and structure (the dungeon contract,
+ * byte-identical to the pre-natural-site behavior). `'natural'` — the
+ * encounter's own prose is the truth: the schematic encodes ONLY spawn
+ * positions (soft organic patches + the entrance marker) and the stylize
+ * prompt is prose-led (no materials line, no keep-walls clause; the usability
+ * hard-bans stay). `undefined` on the artifact = derive (see
+ * `resolveEncounterMapMode`); the owner's editor override wins over every
+ * derived signal.
+ */
+export const encounterMapModeSchema = z.enum(['architectural', 'natural']);
+export type EncounterMapMode = z.infer<typeof encounterMapModeSchema>;
+
+/**
+ * The Cartographer brief's `environment` classification ('dungeon' |
+ * 'outdoor') — declared here so the pure mode derivation never imports llm.
+ */
+export type EncounterBriefEnvironment = 'dungeon' | 'outdoor';
+
+/**
+ * The natural-site mode resolution (docs/11 natural-site mode):
+ *
+ * 1. **Owner override** (`mapMode` on the encounter artifact, editor) — a
+ *    forest dungeon (ruin in the woods) can be forced `'architectural'` and
+ *    an open cave forced `'natural'`; it beats every derived signal.
+ * 2. Derived — `'natural'` when EITHER signal says outdoors: the run's brief
+ *    `environment === 'outdoor'` OR the persisted `locationKind ===
+ *    'wilderness'`. The union is deliberate (an outdoor regeneration of a
+ *    mis-classified row follows the fresh brief; an outdoor row re-briefed
+ *    indoors stays natural until re-classified).
+ * 3. Everything else — `'architectural'`, byte-identical to the pre-mode
+ *    behavior (dungeon is the default; there is no silent third mode).
+ */
+export function resolveEncounterMapMode(input: {
+  override: EncounterMapMode | null | undefined;
+  briefEnvironment: EncounterBriefEnvironment | null | undefined;
+  locationKind: EncounterLocationKind | null | undefined;
+}): EncounterMapMode {
+  if (input.override === 'architectural' || input.override === 'natural') return input.override;
+  if (input.briefEnvironment === 'outdoor' || input.locationKind === 'wilderness') return 'natural';
+  return 'architectural';
+}
+
+/**
  * The path order for a room-id list: the given order with `spawnId` moved to
  * the FRONT when present (derivable) — the first path room is where the
  * party starts. The Cartographer brief's room order IS the path

@@ -1005,6 +1005,161 @@ describe('Encounter Cartographer run', () => {
     });
   });
 
+  describe('natural-site mode (docs/11: outdoor maps are prose-led)', () => {
+    /** An outdoor variant of the fixture: the Cartographer classifies the
+     * site honestly and writes site prose the prompt can lead with. */
+    const OUTDOOR_BRIEF = {
+      ...BRIEF,
+      environment: 'outdoor',
+      theme: 'mossy riverbank ambush',
+      terrain: 'mossy riverbank thick with reeds',
+      summary: 'Cultists hold a reed-choked riverbank at a fallen gate.',
+    };
+
+    function expectSharedBans(prompt: string): void {
+      for (const ban of [
+        'no title banner',
+        'no compass rose',
+        'no map legend',
+        'no scale bar',
+        'no grid lines',
+        'no text labels',
+        'no characters',
+        'no monsters',
+        'no tokens',
+        'no miniatures',
+        'white or pale boxes',
+        'no discrete light-colored sub-rectangles',
+      ]) {
+        expect(prompt.toLowerCase()).toContain(ban);
+      }
+    }
+
+    it('rebuilds the prompt from the encounter prose and drops the architectural clauses', async () => {
+      const { campaign, cartographer } = await setup();
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(OUTDOOR_BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer);
+      const runId = await runEngine.startRun(runInput);
+      await approveUntilPick(runId, runInput);
+
+      // The placement overlay is the schematic the image model references.
+      expect(vi.mocked(encounterRunAdapters.renderSchematic).mock.calls[0]?.[3]).toBe('natural');
+
+      const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
+      // Prose-led: theme + terrain + summary lead the prompt…
+      expect(prompt).toContain('Theme: mossy riverbank ambush');
+      expect(prompt).toContain('Site: mossy riverbank thick with reeds.');
+      expect(prompt).toContain('Scene: Cultists hold a reed-choked riverbank at a fallen gate.');
+      expect(prompt).toContain(OUTDOOR_BRIEF.styleNotes);
+      // …with NO architectural contract: no materials line, no keep-walls.
+      expect(prompt).not.toContain('Environment materials');
+      expect(prompt).not.toContain('Keep walls, openings');
+      expect(prompt).not.toContain("open gap in the entry room's outer wall");
+      // The reference is explained as placement-only, the entrance clause
+      // softens to the approach path (marker mechanics unchanged)…
+      expect(prompt).toContain('only marks placement');
+      expect(prompt).toContain('visible approach path at the marked spot');
+      expect(prompt).toContain('solid neon cyan triangle');
+      // …and the usability hard-bans stay verbatim.
+      expectSharedBans(prompt);
+      expect(prompt).toContain(`Avoid: ${OUTDOOR_BRIEF.negative}`);
+    });
+
+    it('keeps the dungeon contract byte-identical for a dungeon brief', async () => {
+      const { campaign, cartographer } = await setup();
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer);
+      const runId = await runEngine.startRun(runInput);
+      await approveUntilPick(runId, runInput);
+
+      expect(vi.mocked(encounterRunAdapters.renderSchematic).mock.calls[0]?.[3]).toBe('architectural');
+
+      const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
+      // The pre-mode architectural prompt, clause for clause.
+      expect(prompt).toContain(
+        'Environment materials: desaturated stone, wood, dirt. Water is dark navy, never cyan. Fungus is olive. Metal is bronze or rust, never yellow.',
+      );
+      expect(prompt).toContain('Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.');
+      expect(prompt).toContain(
+        "Entrance marker: The party enters the map through a single open gap in the entry room's outer wall",
+      );
+      expectSharedBans(prompt);
+    });
+
+    it('stamps the target owner override and locationKind so the override flips the mode', async () => {
+      const { campaign, cartographer } = await setup();
+      // A ruin in the woods: the run classifies outdoor AND the persisted
+      // row says wilderness — the owner's architectural override wins.
+      const forestRuin = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Ruin in the Woods',
+        body: 'Keep this prose.',
+        data: {
+          difficulty: 'hard', levelHint: '4',
+          monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' } }],
+          terrain: 'old terrain', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard',
+          locationKind: 'wilderness', mapMode: 'architectural', siteShape: 'single', budgetAdvisory: '',
+        },
+      });
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(OUTDOOR_BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer, forestRuin.id);
+      const runId = await runEngine.startRun(runInput);
+      await approveUntilPick(runId, runInput);
+
+      // The override rode the brief step output and wins the derivation.
+      const briefStep = (await getRun(runId))?.steps.find((step) => step.name === 'brief');
+      expect(briefStep?.output).toMatchObject({ mapModeOverride: 'architectural', mapLocationKind: 'wilderness' });
+      expect(vi.mocked(encounterRunAdapters.renderSchematic).mock.calls[0]?.[3]).toBe('architectural');
+      const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
+      expect(prompt).toContain('Environment materials');
+      expect(prompt).toContain('Keep walls, openings');
+    });
+
+    it('forces a natural-site map for a dungeon-classified open cave (override the other way)', async () => {
+      const { campaign, cartographer } = await setup();
+      const openCave = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Open Cave Mouth',
+        body: 'Keep this prose.',
+        data: {
+          difficulty: 'hard', levelHint: '4',
+          monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: '', source: { type: 'none' } }],
+          terrain: 'old terrain', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard',
+          locationKind: 'dungeon', mapMode: 'natural', siteShape: 'single', budgetAdvisory: '',
+        },
+      });
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer, openCave.id);
+      const runId = await runEngine.startRun(runInput);
+      await approveUntilPick(runId, runInput);
+
+      expect(vi.mocked(encounterRunAdapters.renderSchematic).mock.calls[0]?.[3]).toBe('natural');
+      const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
+      expect(prompt).not.toContain('Environment materials');
+      expect(prompt).not.toContain('Keep walls, openings');
+      expect(prompt).toContain('only marks placement');
+      expectSharedBans(prompt);
+    });
+
+    it('tells the Cartographer to set environment honestly from the site nature', async () => {
+      const { campaign, cartographer } = await setup();
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      await runEngine.startRun(input(campaign, cartographer));
+      await waitFor(() => {
+        expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+      });
+      const briefContent =
+        chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+      expect(briefContent).toContain('Environment: set "environment" honestly from the site');
+      expect(briefContent).toContain('"outdoor"');
+      expect(briefContent).toContain('"dungeon" only when it plays inside an enclosed built complex');
+    });
+  });
+
   describe('dungeon preset (docs/11 D10)', () => {
     it('persists the preset, biases the brief contract, generates the x2 layout and stamps the artifact', async () => {
       const { campaign, cartographer } = await setup();
