@@ -40,7 +40,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D2 | **Two autonomies**: interactive runs use the run-engine autonomy (manual/review pause at the checkpoints below; map pick always pauses, M3-A rule). **Unattended auto runs** (module generation) never pause: one stylize candidate, no pick gate — the `entity-image-queue` precedent (08 §M4-C). Any failure fails that encounter loudly; the batch continues. |
 | D3 | Rooms are **unions of rectangles** (1 rect = plain, 2–3 rects = L/T shapes). Every room carries a **mob sub-rectangle** (`mobsRect`) inscribed in the union — it is both the mob placement area and the room's veil footprint. |
 | D4 | **One veil per room**, kind `fog`, exactly `mobsRect`. Corridors stay open (GM can add fog manually). |
-| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below.* |
+| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below. Amended 2026-09-08: uncited entries (`inline` / `none`) gain on-demand creature artifacts + local portraits ("Create creature + portrait", per entry and batch-all); invented covers stay local-only, never the global cache. |
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. Amended 2026-09-08 (D14): the vision check that "only flagged drift for human review" is GONE entirely — no pixel is read back anywhere, and the human is the judge at pick. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
@@ -106,6 +106,21 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   the appearance/body."). Failures report loud per mob (`{name, message}`
   style, `entity-batch.ts` pattern); skip-if-imaged guard (existing queue
   behavior) — no re-generation of mobs that have covers.
+- **On-demand invented creatures (2026-09-08)**: uncited roster entries
+  (`inline` / `none` — model-invented mobs with no bestiary citation) get a
+  per-entry and batch-all **"Create creature + portrait"** action in the
+  same editor section (05-UI). It materializes a REAL `npc` artifact per
+  entry name (`db/mobArtifacts.materializeInventedCreatureArtifact`:
+  roster name, appearance seeded from the entry's notes/treasure text, the
+  inline block when present else null, summary noting the encounter;
+  scoped to the encounter's `moduleId` when module-owned else
+  campaign-level so `deleteModule` cascade/keep disposes them together —
+  and the roster entry is NOT rewritten, so battleSeed spawn paths stay
+  identical), then flows through the EXISTING portrait queue as a
+  LOCAL-only job (no `chunkId`: prompt grounded on the artifact's own
+  content, never the cache). With zero rulebook entries the batch stays
+  enabled as **"Create creatures + portraits"**. GM-only (editor surface);
+  materialize/generation failures surface loudly, never placeholders.
 
 ### Global portrait cache (slice A — owner-ratified)
 
@@ -149,7 +164,11 @@ shared-blob image row.
 - **Firewall.** Every cache entry point gates on
   `cacheKeyForMonsterSource`: `source.type === 'rulebook'` with a defined
   `chunkId`. npc-ref / inline / none rows and marker-less module NPCs
-  (entity queue) never touch the seam — pinned by tests.
+  (entity queue) never touch the seam — pinned by tests. On-demand
+  invented-creature artifacts carry no `monsterChunkId` marker and their
+  portrait jobs carry no `chunkId`, so both the materialize and the
+  generate stay structurally off-seam (covers LOCAL ONLY) — pinned by
+  tests.
 
 ## Pipeline (run-engine steps)
 

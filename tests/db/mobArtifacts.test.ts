@@ -6,7 +6,7 @@ import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createModule } from '@/db/moduleRepo';
-import { findMobArtifactByChunk, getOrCreateMobArtifact, spawnMobArtifactIntoModule } from '@/db/mobArtifacts';
+import { findMobArtifactByChunk, getOrCreateMobArtifact, inventedCreatureAppearance, inventedCreatureMarker, materializeInventedCreatureArtifact, spawnMobArtifactIntoModule } from '@/db/mobArtifacts';
 import { createRulebook } from '@/db/rulebookRepo';
 import { createModule as createModuleSchema, encounterDataSchema, monsterSourceSchema, newId, npcDataSchema, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
 import { db } from '@/db/db';
@@ -240,6 +240,156 @@ describe('spawnMobArtifactIntoModule', () => {
   });
 });
 
+/**
+ * On-demand invented creatures (docs/11 D5 amendment): an uncited roster
+ * entry (inline / none) materializes a REAL npc artifact — roster name,
+ * appearance from notes/treasure, the inline block or null, summary noting
+ * the encounter — scoped to the encounter's module when module-owned, else
+ * campaign-level. Never a mob artifact (no monsterChunkId marker: no chunk
+ * exists, so the canonical cache firewall holds structurally), and the
+ * roster entry is NOT rewritten (battleSeed spawn paths stay identical).
+ */
+describe('materializeInventedCreatureArtifact', () => {
+  const encounterId = 'encounter-for-invented';
+
+  function oozeBlock() {
+    return statBlockSchema.parse({
+      system: 'dnd5e',
+      level: '2',
+      size: 'Medium',
+      creatureType: 'ooze',
+      ac: 8,
+      acNote: '',
+      hp: 45,
+      hpFormula: '6d10 + 12',
+      speed: '20 ft.',
+      abilities: { str: 14, dex: 6, con: 16, int: 1, wis: 6, cha: 1 },
+      saves: '',
+      skills: '',
+      senses: 'blindsight 60 ft.',
+      languages: '',
+      traits: [],
+      actions: [],
+      reactions: [],
+      legendary: [],
+      extras: {},
+    });
+  }
+
+  function baseOptions(overrides: Record<string, unknown> = {}) {
+    return {
+      campaignId,
+      encounterId,
+      encounterName: 'Ooze Warren',
+      moduleId: null,
+      name: 'Gloom Ooze',
+      notes: 'drips gloom, hates torchlight',
+      treasure: 'a swallowed silver ring',
+      statBlock: oozeBlock(),
+      ...overrides,
+    } as Parameters<typeof materializeInventedCreatureArtifact>[0];
+  }
+
+  it('creates an npc named for the roster entry: seeded appearance, inline block, encounter summary, no mob marker', async () => {
+    const id = await materializeInventedCreatureArtifact(baseOptions());
+    const created = await getArtifact(id);
+    if (created?.kind !== 'npc') throw new Error('not an npc');
+    expect(created.name).toBe('Gloom Ooze');
+    expect(created.moduleId).toBeNull();
+    expect(created.data.appearance).toBe(
+      'drips gloom, hates torchlight\n\nCarries:\na swallowed silver ring',
+    );
+    expect(created.data.personality).toBe('');
+    expect(created.data.statBlock).toMatchObject({ hp: 45, creatureType: 'ooze' });
+    // No mob marker — there is no chunk, so the cache firewall holds
+    // structurally (nothing here can produce a cacheKeyForMonsterSource).
+    expect(created.data.monsterChunkId).toBeUndefined();
+    expect(created.summary).toContain('Ooze Warren');
+    expect(created.summary).toContain(inventedCreatureMarker(encounterId));
+  });
+
+  it('a name-only entry materializes statless with notes-only appearance', async () => {
+    const id = await materializeInventedCreatureArtifact(
+      baseOptions({ name: 'Whisper Wisp', notes: 'barely a rumor', treasure: '  ', statBlock: null }),
+    );
+    const created = await getArtifact(id);
+    if (created?.kind !== 'npc') throw new Error('not an npc');
+    expect(created.data.statBlock).toBeNull();
+    expect(created.data.appearance).toBe('barely a rumor');
+  });
+
+  it('seeds appearance from entry text without placeholder prose', () => {
+    expect(inventedCreatureAppearance('tall shadow', 'a brass key')).toBe(
+      'tall shadow\n\nCarries:\na brass key',
+    );
+    expect(inventedCreatureAppearance('', '')).toBe('');
+    expect(inventedCreatureAppearance('  ', '')).toBe('');
+  });
+
+  it('places the creature in the encounter module when module-owned (cascade disposes them together)', async () => {
+    const vault = await createModule(
+      createModuleSchema({ campaignId, title: 'The Sunless Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const id = await materializeInventedCreatureArtifact(baseOptions({ moduleId: vault.id }));
+    expect((await getArtifact(id))?.moduleId).toBe(vault.id);
+  });
+
+  it('fails loudly on a dangling encounter moduleId (no stray campaign creature)', async () => {
+    await expect(
+      materializeInventedCreatureArtifact(baseOptions({ moduleId: newId() })),
+    ).rejects.toThrow('no longer exists');
+    expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
+  });
+
+  it('fails loudly on an empty roster name (no unnamed artifact)', async () => {
+    await expect(materializeInventedCreatureArtifact(baseOptions({ name: '   ' }))).rejects.toThrow(
+      'empty name',
+    );
+  });
+
+  it('is idempotent per encounter+name: reuses the marked row, never duplicates', async () => {
+    const first = await materializeInventedCreatureArtifact(baseOptions());
+    const second = await materializeInventedCreatureArtifact(baseOptions());
+    expect(second).toBe(first);
+    const cache = new Map<string, string>();
+    const viaCache = await materializeInventedCreatureArtifact({ ...baseOptions(), cache });
+    expect(viaCache).toBe(first);
+    expect(
+      (await listArtifactsByCampaign(campaignId)).filter((artifact) => artifact.kind === 'npc'),
+    ).toHaveLength(1);
+  });
+
+  it('fills a statless twin with the inline block but never overwrites existing stats or appearance', async () => {
+    const first = await materializeInventedCreatureArtifact(
+      baseOptions({ notes: 'first notes', statBlock: null }),
+    );
+    const second = await materializeInventedCreatureArtifact(
+      baseOptions({ notes: 'edited notes must survive', statBlock: oozeBlock() }),
+    );
+    expect(second).toBe(first);
+    const reused = await getArtifact(first);
+    if (reused?.kind !== 'npc') throw new Error('not an npc');
+    expect(reused.data.statBlock).toMatchObject({ hp: 45 });
+    expect(reused.data.appearance).toBe('first notes\n\nCarries:\na swallowed silver ring');
+  });
+
+  it('does not steal a same-named real NPC (no encounter marker): creates its own row', async () => {
+    const { createArtifact } = await import('@/db/artifactRepo');
+    await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Gloom Ooze',
+      data: { appearance: 'the real Vex', personality: 'bold', statBlock: null },
+    });
+    const id = await materializeInventedCreatureArtifact(baseOptions());
+    const created = await getArtifact(id);
+    if (created?.kind !== 'npc') throw new Error('not an npc');
+    expect(created.summary).toContain(inventedCreatureMarker(encounterId));
+    expect(
+      (await listArtifactsByCampaign(campaignId)).filter((artifact) => artifact.kind === 'npc'),
+    ).toHaveLength(2);
+  });
+});
 /**
  * Race window pin (F5): the scan + create run in ONE rw transaction, so
  * concurrent get-or-creates for the same chunk serialize on it and converge

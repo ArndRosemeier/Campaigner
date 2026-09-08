@@ -35,6 +35,7 @@ import {
 } from '@/domain';
 import {
   enqueueArtifactPortrait,
+  enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
   useMobPortraitQueue,
 } from '@/features/campaign/mob-portrait-queue';
@@ -470,6 +471,33 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
     expect(await db.mobPortraits.count()).toBe(0);
     const after = await getAnyArtifact(npc.id);
     expect(after?.coverImageId).not.toBeNull();
+  });
+
+  it('invented creatures (inline/none) stay LOCAL ONLY: no populate, no overwrite, no read', async () => {
+    const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
+    const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
+    // Populate the cache so a stray read or overwrite would be observable.
+    await ensureCanonicalMobPortrait({ chunkId, campaignId });
+    const entry = await getMobPortraitCacheEntry(chunkId);
+    expect(entry).toBeDefined();
+    generateImagesMock.mockClear();
+
+    const encounter = await addEncounter(campaignId, [
+      { name: 'Gloom Ooze', count: 1, source: { type: 'inline', statBlock: testStatBlock() } },
+      { name: 'Whisper Wisp', count: 1, source: { type: 'none' } },
+    ]);
+
+    const tables = await transactionTablesDuring(async () => {
+      const result = await enqueueInventedCreaturePortraits(encounter, campaignId);
+      expect(result.enqueued).toBe(2);
+      await drainMobQueue();
+    });
+    // Two local generations (grounded on the entries' own content), zero
+    // cache traffic: neither the materialize nor the worker opens the seam.
+    expect(generateImagesMock).toHaveBeenCalledTimes(2);
+    expect(tables).not.toContain('mobPortraits');
+    expect(await db.mobPortraits.count()).toBe(1);
+    expect((await getMobPortraitCacheEntry(chunkId))?.imageId).toBe(entry?.imageId);
   });
 
   it('gates every source shape: only rulebook-with-chunkId produces a key', () => {

@@ -3,7 +3,7 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getAnyArtifact, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
-import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
+import { getOrCreateMobArtifact, materializeInventedCreatureArtifact } from '@/db/mobArtifacts';
 import {
   canonicalCreatureName,
   cloneCachedPortraitToArtifact,
@@ -283,4 +283,81 @@ export function enqueueArtifactPortrait(artifact: AnyArtifact, campaignId: Id): 
       name: artifact.name,
     },
   ]);
+}
+
+export interface InventedCreatureBatchResult {
+  /** On-demand npc artifacts materialized (created or reused) for uncited entries. */
+  created: number;
+  /** Cover-less invented creatures enqueued for local generation. */
+  enqueued: number;
+  /** Creature names whose invented artifact already carries an image. */
+  alreadyImaged: string[];
+}
+
+/**
+ * The on-demand invented-creature batch (docs/11 D5 amendment): for the
+ * encounter's uncited roster entries (`inline` / `none` — model-invented
+ * mobs with no bestiary citation), materializes ONE npc artifact per entry
+ * name and enqueues a LOCAL portrait job per cover-less creature.
+ *
+ * Local-only by construction: the job carries NO chunkId, so the worker
+ * grounds the prompt on the artifact's own content (appearance seeded from
+ * the entry's notes/treasure) and can never reach the global `mobPortraits`
+ * cache — neither read nor write (the canonical-cache firewall,
+ * `db/mobPortraitCache`). A failed materialize throws loudly (no silent
+ * skip, no placeholder); a failed generation lands on the queue's loud
+ * per-mob failure path like every other job.
+ *
+ * Pass `entryIndexes` for the per-entry action (a single roster row);
+ * omit it for batch-all. npc-ref entries already have artifacts and
+ * rulebook entries belong to `enqueueMobPortraits` — both are skipped.
+ */
+export async function enqueueInventedCreaturePortraits(
+  encounter: AnyArtifact & { kind: 'encounter' },
+  campaignId: Id,
+  entryIndexes?: readonly number[],
+): Promise<InventedCreatureBatchResult> {
+  const only = entryIndexes === undefined ? undefined : new Set(entryIndexes);
+  const materialized = new Map<string, Id>();
+  const seenArtifacts = new Set<Id>();
+  const jobs: MobPortraitJob[] = [];
+  const alreadyImaged: string[] = [];
+  let created = 0;
+  for (const [index, entry] of encounter.data.monsters.entries()) {
+    if (only !== undefined && !only.has(index)) continue;
+    if (entry.source.type !== 'inline' && entry.source.type !== 'none') continue;
+    const artifactId = await materializeInventedCreatureArtifact({
+      campaignId,
+      encounterId: encounter.id,
+      encounterName: encounter.name,
+      moduleId: encounter.moduleId,
+      name: entry.name,
+      notes: entry.notes,
+      treasure: entry.treasure,
+      statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
+      cache: materialized,
+    });
+    created += 1;
+    // One portrait per creature kind, not per roster entry.
+    if (seenArtifacts.has(artifactId)) continue;
+    seenArtifacts.add(artifactId);
+    const artifact = await getAnyArtifact(artifactId);
+    if (artifact === undefined) {
+      throw new Error(
+        `Create creature portraits: the artifact for "${entry.name}" no longer exists — re-run the action to restore it`,
+      );
+    }
+    if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
+      alreadyImaged.push(entry.name);
+      continue;
+    }
+    jobs.push({
+      campaignId,
+      encounterId: encounter.id,
+      artifactId,
+      name: entry.name,
+    });
+  }
+  useMobPortraitQueue.getState().enqueue(jobs);
+  return { created, enqueued: jobs.length, alreadyImaged };
 }

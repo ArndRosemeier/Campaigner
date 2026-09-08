@@ -1,13 +1,15 @@
-import type { Id, MonsterSource, NpcArtifact } from '@/domain';
+import type { Id, MonsterSource, NpcArtifact, StatBlock } from '@/domain';
 import { moduleTagFor } from '@/domain/module';
 import {
   createArtifact,
   getArtifact,
   listArtifactsByCampaign,
   stampModuleOwnership,
+  updateArtifact,
   type RevisionMeta,
 } from '@/db/artifactRepo';
 import { db } from '@/db/db';
+import { getModule } from '@/db/moduleRepo';
 import { fillCoverFromCache } from '@/db/mobPortraitCache';
 
 /**
@@ -123,7 +125,6 @@ export interface SpawnResult {
   /** false = the artifact already lived in this module (no revision churn). */
   stamped: boolean;
 }
-
 /**
  * Bestiary-roster spawn (owner-ratified single placement): get-or-create the
  * campaign's mob artifact for `chunkId` and put it into `moduleId` via
@@ -153,4 +154,129 @@ export async function spawnMobArtifactIntoModule(
   }
   await stampModuleOwnership(artifactId, moduleId, moduleTagFor(moduleTitle), meta);
   return { artifactId, stamped: true };
+}
+
+/**
+ * The machine marker stamped into an on-demand invented creature's summary:
+ * `materializeInventedCreatureArtifact` reuses (never duplicates) the
+ * artifact carrying this encounter's marker under the roster name, so the
+ * per-entry "Create creature + portrait" action stays idempotent across
+ * clicks and the batch-all collapses duplicate roster names onto one row.
+ */
+export function inventedCreatureMarker(encounterId: Id): string {
+  return `[encounter-creature:${encounterId}]`;
+}
+
+/** Appearance seeding for an invented creature: roster notes, then the
+ * pocket-treasure checklist the token card would carry — the only
+ * description an uncited roster entry has. Both empty ⇒ '' (no
+ * placeholder prose; the portrait prompt still grounds on name+summary). */
+export function inventedCreatureAppearance(notes: string, treasure: string): string {
+  const parts: string[] = [];
+  if (notes.trim() !== '') parts.push(notes.trim());
+  if (treasure.trim() !== '') parts.push(`Carries:\n${treasure.trim()}`);
+  return parts.join('\n\n');
+}
+
+export interface InventedCreatureMaterialize {
+  campaignId: Id;
+  encounterId: Id;
+  encounterName: string;
+  /**
+   * The encounter's moduleId (null when campaign-level): the creature is
+   * created in the SAME scope so `deleteModule`'s cascade/keep disposes them
+   * together — a module-owned encounter's creature must not survive as a
+   * campaign stray under cascade, nor strand under keep. A dangling moduleId
+   * fails loudly (ownership-boundary existence check, docs/18 §3).
+   */
+  moduleId: Id | null;
+  /** Roster name — the artifact's name, verbatim (trimmed). */
+  name: string;
+  /** Roster entry notes → appearance seed. */
+  notes: string;
+  /** Roster entry treasure → appearance seed. */
+  treasure: string;
+  /** The inline stat block when the entry has one, else null. */
+  statBlock: StatBlock | null;
+  meta?: RevisionMeta;
+  /** Batch dedupe: roster-name (per encounter) → artifact, mirroring
+   * `materializeMonsterNpc`'s one-entity-per-name collapse. */
+  cache?: Map<string, Id>;
+}
+
+/**
+ * On-demand creature for an uncited roster entry (inline / none sources —
+ * model-invented mobs with no bestiary citation and no mob artifact):
+ * a REAL campaign- (or module-) scoped `npc` artifact named for the roster
+ * entry, appearance seeded from its notes/treasure text, the inline block
+ * when present else null, summary noting the encounter it was created for.
+ *
+ * Deliberately NOT a mob artifact: no `monsterChunkId` marker (there is no
+ * chunk), so the canonical portrait cache firewall holds structurally —
+ * nothing about this row can ever produce a `cacheKeyForMonsterSource`.
+ * The roster entry itself is NOT rewritten to npc-ref: battleSeed's spawn
+ * paths stay byte-identical (inline still freezes per-instance rows,
+ * name-only stays statless); this only adds an image-able artifact + cover.
+ *
+ * Reuse (never duplicate): an npc of the exact name (case-insensitive,
+ * trimmed) already carrying this encounter's marker is linked instead — a
+ * statless twin receives the inline block as a revisioned user save; an
+ * existing stat block or user-edited appearance is never overwritten. An
+ * empty name is a loud error — never an unnamed artifact (AGENTS rule 1).
+ */
+export async function materializeInventedCreatureArtifact(
+  options: InventedCreatureMaterialize,
+): Promise<Id> {
+  const trimmedName = options.name.trim();
+  if (trimmedName === '') {
+    throw new Error('invented creature: a monster to materialize has an empty name');
+  }
+  if (options.moduleId !== null) {
+    const module = await getModule(options.moduleId);
+    if (module === undefined) {
+      throw new Error(
+        `invented creature: module ${options.moduleId} no longer exists — re-anchor the encounter before creating its creatures`,
+      );
+    }
+  }
+  const key = `${options.encounterId}:${trimmedName.toLowerCase()}`;
+  const cached = options.cache?.get(key);
+  if (cached !== undefined) return cached;
+  const marker = inventedCreatureMarker(options.encounterId);
+
+  const existing = (await listArtifactsByCampaign(options.campaignId)).find(
+    (artifact): artifact is NpcArtifact =>
+      artifact.kind === 'npc' &&
+      artifact.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
+      artifact.summary.includes(marker),
+  );
+  if (existing !== undefined) {
+    if (existing.data.statBlock === null && options.statBlock !== null) {
+      await updateArtifact(
+        existing.id,
+        { data: { ...existing.data, statBlock: options.statBlock } },
+        options.meta ?? { source: 'user' },
+      );
+    }
+    options.cache?.set(key, existing.id);
+    return existing.id;
+  }
+
+  const created = await createArtifact(
+    {
+      campaignId: options.campaignId,
+      ...(options.moduleId === null ? {} : { moduleId: options.moduleId }),
+      kind: 'npc',
+      name: trimmedName,
+      summary: `On-demand creature created for encounter "${options.encounterName.trim() === '' ? 'Untitled encounter' : options.encounterName.trim()}" ${marker}`,
+      data: {
+        appearance: inventedCreatureAppearance(options.notes, options.treasure),
+        personality: '',
+        statBlock: options.statBlock,
+      },
+    },
+    options.meta ?? { source: 'user' },
+  );
+  options.cache?.set(key, created.id);
+  return created.id;
 }
