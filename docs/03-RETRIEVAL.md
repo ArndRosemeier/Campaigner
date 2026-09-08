@@ -61,7 +61,11 @@ async function searchRules(query: string, opts?: SearchOptions): Promise<SearchH
 
 Reciprocal Rank Fusion: `score(chunk) = Σ 1/(60 + rank_i)` over the keyword
 ranking and semantic ranking. Mark `source` accordingly. If embeddings are
-disabled, return keyword results directly with `source:'keyword'`.
+disabled, return keyword results directly with `source:'keyword'`. After
+fusion/scoring (both paths uniformly), exact-heading promotion applies: chunks
+whose LAST heading element matches the query (case-insensitive, trimmed) rank
+first on exact match, then on starts-with; all else keeps fused order, stably
+— so the literal "Fireball" chunk outranks chunks that merely mention it.
 
 ## Failure behavior
 

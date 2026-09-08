@@ -306,6 +306,180 @@ describe('searchRules (hybrid with embeddings enabled)', () => {
   });
 });
 
+describe('searchRules exact-heading promotion', () => {
+  /**
+   * Seeds the owner-observed "fireball" scenario: one literal "Fireball"
+   * chunk plus several related chunks that merely mention the word (repeated
+   * for term frequency, so MiniSearch alone can rank them ahead of it).
+   */
+  async function seedFireballBook(): Promise<{ bookId: Id; exact: RuleChunk }> {
+    const bookId = await seedBook();
+    const exact = await makeChunk(
+      bookId,
+      'A bright streak flashes from your pointing finger. This is the Fireball spell, a 3rd-level evocation.',
+      { headingPath: ['Spells', 'Fireball'] },
+    );
+    const headings = [
+      'Elemental Adept',
+      'Sculpt Spells',
+      'Fire Resistance',
+      'Delayed Blast',
+      'Flammable Objects',
+    ];
+    const related = await Promise.all(
+      headings.map((heading, index) =>
+        makeChunk(
+          bookId,
+          `${heading} lore: fireball fireball fireball fireball fireball relates to rule ${index}.`,
+          { headingPath: ['Rules', heading] },
+        ),
+      ),
+    );
+    await putChunks([exact, ...related]);
+    return { bookId, exact };
+  }
+
+  it('ranks the exact-heading chunk FIRST in keyword-only mode', async () => {
+    const { bookId, exact } = await seedFireballBook();
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('fireball', { bookIds: [bookId] });
+
+    expect(hits.length).toBeGreaterThan(1);
+    expect(hits[0]?.chunk.id).toBe(exact.id);
+    for (const hit of hits) {
+      expect(hit.source).toBe('keyword');
+    }
+  });
+
+  it('matches the last heading case-insensitively after trimming', async () => {
+    const { bookId, exact } = await seedFireballBook();
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('  FIREBALL  ', { bookIds: [bookId] });
+
+    expect(hits.length).toBeGreaterThan(1);
+    expect(hits[0]?.chunk.id).toBe(exact.id);
+  });
+
+  it('ranks the exact-heading chunk FIRST in fused mode even when semantic demotes it', async () => {
+    const { bookId, exact } = await seedFireballBook();
+    await enableEmbeddings();
+    // Hostile semantic ranking: every related mention aligns with the query
+    // vector while the exact chunk is orthogonal, so fusion alone buries it.
+    const vectorFor = (text: string): number[] => {
+      if (text.includes('bright streak')) return [0, 1, 0, 0];
+      if (text.toLowerCase().includes('fireball')) return [1, 0, 0, 0];
+      return [0, 0, 1, 0];
+    };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_url: unknown, init?: { body?: string }) => {
+        const body = JSON.parse(init?.body ?? '{}') as { input?: string[] };
+        const inputs = body.input ?? [];
+        return new Response(
+          JSON.stringify({
+            data: inputs.map((text, index) => ({ index, embedding: vectorFor(text) })),
+          }),
+          { status: 200 },
+        );
+      }),
+    );
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('fireball', { bookIds: [bookId] });
+
+    expect(hits.length).toBeGreaterThan(1);
+    expect(hits[0]?.chunk.id).toBe(exact.id);
+  });
+
+  it('orders exact before starts-with before the rest', async () => {
+    const bookId = await seedBook();
+    const exact = await makeChunk(bookId, 'Open flame rules for campfires and torches.', {
+      headingPath: ['Rules', 'Fire'],
+    });
+    const prefix = await makeChunk(
+      bookId,
+      'Fireball fireball fireball fireball fireball spell text.',
+      { headingPath: ['Spells', 'Fireball'] },
+    );
+    const other = await makeChunk(
+      bookId,
+      'fire fire fire fire fire safety notes for the campsite.',
+      { headingPath: ['Rules', 'Campfire Safety'] },
+    );
+    // Hostile insertion order: promotion, not recency, must decide.
+    await putChunks([other, prefix, exact]);
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('fire', { bookIds: [bookId] });
+
+    expect(hits.map((hit) => hit.chunk.id)).toEqual([exact.id, prefix.id, other.id]);
+  });
+
+  it('keeps existing relative order for ties within a tier (stable)', async () => {
+    const bookId = await seedBook();
+    const exactA = await makeChunk(bookId, 'Fireball spell details, first copy.', {
+      headingPath: ['Spells', 'Fireball'],
+    });
+    const exactB = await makeChunk(
+      bookId,
+      'Fireball spell details, second copy with extra fireball fireball mentions.',
+      { headingPath: ['Lore', 'Fireball'] },
+    );
+    const otherA = await makeChunk(
+      bookId,
+      'Sculpt Spells lore: fireball fireball fireball fireball.',
+      { headingPath: ['Rules', 'Sculpt Spells'] },
+    );
+    const otherB = await makeChunk(bookId, 'A short fireball mention here.', {
+      headingPath: ['Rules', 'Elemental Adept'],
+    });
+    await putChunks([otherA, exactA, otherB, exactB]);
+    const { searchRules, searchKeyword } = await import('@/search');
+
+    // The keyword ranking is the pre-promotion oracle for the keyword-only
+    // path: scores derive monotonically from it, so each tier must preserve it.
+    const keywordOrder = (await searchKeyword('fireball', { bookIds: [bookId] }, 100)).map(
+      (hit) => hit.chunk.id,
+    );
+    const hits = await searchRules('fireball', { bookIds: [bookId] });
+
+    const isExact = (hit: SearchHit): boolean =>
+      hit.chunk.headingPath[hit.chunk.headingPath.length - 1]?.trim().toLowerCase() ===
+      'fireball';
+    const exactIds = hits.filter(isExact).map((hit) => hit.chunk.id);
+    const restIds = hits.filter((hit) => !isExact(hit)).map((hit) => hit.chunk.id);
+    expect(exactIds.length).toBe(2);
+    expect(restIds.length).toBe(2);
+    expect(exactIds).toEqual(keywordOrder.filter((id) => exactIds.includes(id)));
+    expect(restIds).toEqual(keywordOrder.filter((id) => restIds.includes(id)));
+    // And the exact tier as a whole still outranks the rest.
+    expect(hits.map((hit) => hit.chunk.id)).toEqual([...exactIds, ...restIds]);
+  });
+
+  it('matches multi-word queries against the full last-heading string', async () => {
+    const bookId = await seedBook();
+    const exact = await makeChunk(
+      bookId,
+      'A beam of crackling energy streaks toward a creature. Details of the delayed blast fireball follow.',
+      { headingPath: ['Spells', 'Delayed Blast Fireball'] },
+    );
+    const partial = await makeChunk(
+      bookId,
+      'delayed blast fireball delayed blast fireball related metamagic notes.',
+      { headingPath: ['Rules', 'Delayed Blast'] },
+    );
+    await putChunks([partial, exact]);
+    const { searchRules } = await import('@/search');
+
+    const hits = await searchRules('delayed blast fireball', { bookIds: [bookId] });
+
+    expect(hits.length).toBeGreaterThan(0);
+    expect(hits[0]?.chunk.id).toBe(exact.id);
+  });
+});
+
 describe('searchRules system filter (campaign-scoped citable pool)', () => {
   it('never lists a chunk of another game system when `system` is set — pack books included', async () => {
     const dnd5eBook = await seedBook();

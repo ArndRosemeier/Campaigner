@@ -68,11 +68,14 @@ export async function searchRules(query: string, opts: SearchOptions = {}): Prom
   const keywordHits = await searchKeyword(trimmed, filter, PREFILTER_KEYWORD_HITS);
 
   if (!(await embeddingsActive())) {
-    return keywordHits.slice(0, limit).map(({ chunk, rank }) => ({
-      chunk,
-      score: 1 / (RRF_K + rank),
-      source: 'keyword',
-    }));
+    return promoteHeadingMatches(
+      keywordHits.map(({ chunk, rank }) => ({
+        chunk,
+        score: 1 / (RRF_K + rank),
+        source: 'keyword' as const,
+      })),
+      trimmed,
+    ).slice(0, limit);
   }
 
   const semantic = await tryEmbeddings(async () => {
@@ -92,14 +95,17 @@ export async function searchRules(query: string, opts: SearchOptions = {}): Prom
   });
   if (semantic === null) {
     // Embedding failure (notified once): keyword-only fallback.
-    return keywordHits.slice(0, limit).map(({ chunk, rank }) => ({
-      chunk,
-      score: 1 / (RRF_K + rank),
-      source: 'keyword',
-    }));
+    return promoteHeadingMatches(
+      keywordHits.map(({ chunk, rank }) => ({
+        chunk,
+        score: 1 / (RRF_K + rank),
+        source: 'keyword' as const,
+      })),
+      trimmed,
+    ).slice(0, limit);
   }
 
-  return fuse(keywordHits, semantic).slice(0, limit);
+  return promoteHeadingMatches(fuse(keywordHits, semantic), trimmed).slice(0, limit);
 }
 
 interface SemanticHit {
@@ -156,6 +162,34 @@ function fuse(
   }));
   fused.sort((a, b) => b.score - a.score);
   return fused;
+}
+
+/**
+ * Exact-heading promotion (post-fusion, so it covers keyword-only AND hybrid
+ * paths uniformly): MiniSearch (`prefix: true, fuzzy: 0.2`, `headingJoined`
+ * boost 2) lets every merely-mentioning chunk crowd out the literal heading,
+ * and RRF fusion can demote it further. Chunks whose LAST heading element
+ * matches the query outrank all of it — exact match (case-insensitive,
+ * trimmed) first, then starts-with — while everything else keeps fused order.
+ * The sort is stable: ties within a tier keep their existing relative order.
+ * Multi-word queries match against the full last-heading string; no token
+ * games.
+ */
+function promoteHeadingMatches(hits: SearchHit[], query: string): SearchHit[] {
+  const normalized = query.trim().toLowerCase();
+  if (normalized === '') return hits;
+  const tierOf = (hit: SearchHit): number => {
+    const segments = hit.chunk.headingPath;
+    const last = segments.length > 0 ? segments[segments.length - 1]?.trim().toLowerCase() : undefined;
+    if (last === undefined || last === '') return 2;
+    if (last === normalized) return 0;
+    if (last.startsWith(normalized)) return 1;
+    return 2;
+  };
+  return hits
+    .map((hit, index) => ({ hit, index, tier: tierOf(hit) }))
+    .sort((a, b) => a.tier - b.tier || a.index - b.index)
+    .map((entry) => entry.hit);
 }
 
 /**
