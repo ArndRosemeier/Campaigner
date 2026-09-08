@@ -79,6 +79,7 @@ import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
+import { ZoomableImage } from '@/features/images/zoomable-image';
 import {
   enqueueSingleMobPortrait,
   regenerateSingleMobPortrait,
@@ -3063,17 +3064,29 @@ function TokenLightbox({ token, artifact, onClose }: TokenLightboxProps): JSX.El
     >
       <DialogContent
         data-testid="token-lightbox"
-        className="flex max-h-[92dvh] w-auto max-w-[92dvw] flex-col items-center gap-3 sm:max-w-[92dvw]"
+        className="flex h-dvh w-dvw max-w-none items-center justify-center rounded-none border-0 bg-black p-0 sm:max-w-none"
       >
-        <DialogTitle data-testid="token-lightbox-name">{token.label}</DialogTitle>
+        <DialogTitle className="sr-only" data-testid="token-lightbox-name">{token.label}</DialogTitle>
         <DialogDescription className="sr-only">Fullscreen token portrait — image and name only</DialogDescription>
-        {url !== null ? (
-          <img
-            src={url}
-            alt=""
-            className="max-h-[70dvh] w-auto max-w-full rounded-lg object-contain"
-            data-testid="token-lightbox-portrait"
-            draggable={false}
+        <Button
+          variant="secondary"
+          size="icon-sm"
+          aria-label="Close full screen image"
+          className="absolute top-3 right-3 z-10"
+          onClick={onClose}
+          data-testid="token-lightbox-close"
+        >
+          <XIcon aria-hidden />
+        </Button>
+        {/* Same fill contract as the module peek fullscreen viewer: the img
+            box IS the viewport (h-dvh w-dvw) with object-contain — caps only
+            ever shrink, so the old max-h-[70dvh] rendered generated portraits
+            at natural size, half the screen. */}
+        {url !== null && coverImageId !== null ? (
+          <ZoomableImage
+            imageId={coverImageId}
+            className="h-dvh w-dvw max-h-[100dvh] max-w-[100dvw] border-0"
+            onCloseRequest={onClose}
           />
         ) : (
           <span

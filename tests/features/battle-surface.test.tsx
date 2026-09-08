@@ -1337,7 +1337,7 @@ describe('token portrait lightbox', () => {
     const lightbox = screen.getByTestId('token-lightbox');
     expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Serren');
     expect(within(lightbox).getByTestId('token-lightbox-initials')).toHaveTextContent('S');
-    expect(within(lightbox).queryByTestId('token-lightbox-portrait')).toBeNull();
+    expect(within(lightbox).queryByTestId('zoomable-image')).toBeNull();
     await flushAsyncUpdates();
   });
 
@@ -1424,8 +1424,11 @@ describe('token portrait lightbox', () => {
     await tapTokenEl('Troll', moduleId);
     const lightbox = screen.getByTestId('token-lightbox');
     expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Troll');
-    expect(within(lightbox).getByTestId('token-lightbox-portrait')).toBeInTheDocument();
-    // Player-safe DOM contract holds with the lightbox mounted.
+    expect(within(lightbox).getByTestId('zoomable-image')).toBeInTheDocument();
+    // True fullscreen (peek-modal fill contract): the dialog box IS the
+    // viewport, not a capped card — generated portraits upscale to fill.
+    expect(lightbox.className).toContain('h-dvh');
+    expect(lightbox.className).toContain('w-dvw');
     const surface = screen.getByTestId('battle-surface');
     expect(surface.textContent).not.toContain('AC');
     expect(surface.textContent).not.toContain('Hit Dice');
@@ -1545,12 +1548,12 @@ describe('sidebar portrait fullscreen', () => {
     // The lightbox's own useImageUrl resolves a tick after mount (null while
     // loading), so wait for the image — the same art the sidebar showed.
     await waitFor(() => {
-      expect(screen.getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+      expect(screen.getByTestId('zoomable-image')).toBeInTheDocument();
     });
     const lightbox = screen.getByTestId('token-lightbox');
     // The SAME lightbox the board tokens use: image + name only, never stats.
     expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Troll');
-    expect(within(lightbox).getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+    expect(within(lightbox).getByTestId('zoomable-image')).toBeInTheDocument();
     expect(within(lightbox).queryByTestId('selection-card-statblock')).toBeNull();
     expect(lightbox.textContent).not.toContain('AC');
     // Esc dismisses and focus returns to the sidebar portrait button, so the
@@ -1588,11 +1591,11 @@ describe('sidebar portrait fullscreen', () => {
     // The lightbox's own useImageUrl resolves a tick after mount (null while
     // loading), so wait for the image — the same art the sidebar showed.
     await waitFor(() => {
-      expect(screen.getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+      expect(screen.getByTestId('zoomable-image')).toBeInTheDocument();
     });
     const lightbox = screen.getByTestId('token-lightbox');
     expect(within(lightbox).getByTestId('token-lightbox-name')).toHaveTextContent('Troll');
-    expect(within(lightbox).getByTestId('token-lightbox-portrait')).toBeInTheDocument();
+    expect(within(lightbox).getByTestId('zoomable-image')).toBeInTheDocument();
     // Player-safe DOM contract holds with the sidebar-opened lightbox mounted.
     const surface = screen.getByTestId('battle-surface');
     expect(surface.textContent).not.toContain('AC');
