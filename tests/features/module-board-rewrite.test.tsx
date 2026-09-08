@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { canvasPath } from '@/app/routes';
+import { boardPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import {
@@ -17,17 +17,17 @@ import {
 } from '@/domain';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
-import { useCanvasStore } from '@/features/modules/canvas/canvasStore';
-import { useStagedRewritesStore } from '@/features/modules/canvas/stagedRewrites';
+import { useBoardStore } from '@/features/modules/board/boardStore';
+import { useStagedRewritesStore } from '@/features/modules/board/stagedRewrites';
 
 /**
- * Canvas rewrite + staged rewrites through the UI (08-MODULE-DESIGNER
- * §Module canvas): the rewrite dialog (instruction + per-run prior-modules
+ * Board rewrite + staged rewrites through the UI (08-MODULE-DESIGNER
+ * §Module board): the rewrite dialog (instruction + per-run prior-modules
  * override), the engine seam (runParts subset — rewritePart semantics
  * WITHOUT the swallow-all catch, so ModuleBusyError surfaces loudly), the
  * ghost preview (rAF-throttled tokens — partial text never touches the row),
  * "Show previous", Apply through the ONE part-text save path (edited:true +
- * promote scan), Discard restoring the old text, and the canvas Stop button.
+ * promote scan), Discard restoring the old text, and the board Stop button.
  * The LLM engine itself is mocked at `runParts` (its internals — floor
  * gates, normalization — are pinned by tests/llm/moduleGen-*); the streaming
  * emitter stays real.
@@ -126,26 +126,26 @@ beforeEach(async () => {
   // Module-level session stores: reset so one test's staging/zoom never
   // leaks into the next (the page's own reset is keyed by module id).
   useStagedRewritesStore.setState({ byNodeKey: {} });
-  useCanvasStore.getState().resetFor('reset');
+  useBoardStore.getState().resetFor('reset');
   await seedModule();
 });
 
-describe('canvas rewrite + staging', () => {
+describe('board rewrite + staging', () => {
   it('rewrites: ghost preview → proposed framing → apply lands edited:true through the save path', async () => {
     const user = userEvent.setup();
     mockEngineRun();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('canvas-part-0', {}, { timeout: 10_000 });
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('canvas-part-rewrite-0'));
-    const dialog = await screen.findByTestId('canvas-rewrite-dialog');
+    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    const dialog = await screen.findByTestId('board-rewrite-dialog');
     await user.type(within(dialog).getByLabelText('Optional instruction'), 'make it rain');
     // The prior-modules toggle defaults to the ROW's flag (false here).
-    expect(within(dialog).getByTestId('canvas-rewrite-prior-modules')).toHaveAttribute(
+    expect(within(dialog).getByTestId('board-rewrite-prior-modules')).toHaveAttribute(
       'aria-checked',
       'false',
     );
-    await user.click(within(dialog).getByTestId('canvas-rewrite-confirm'));
+    await user.click(within(dialog).getByTestId('board-rewrite-confirm'));
     // Drain the click's async continuation (engine mock + row write +
     // staging) inside act — otherwise liveQuery updates leak.
     await flushAsyncUpdates();
@@ -163,28 +163,28 @@ describe('canvas rewrite + staging', () => {
     // Streaming ghost preview (rAF-throttled): partial text on the card while
     // the proposal is still being written.
     await waitFor(() => {
-      expect(within(screen.getByTestId('canvas-part-0')).getByTestId('canvas-part-staged')).toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-0')).getByTestId('board-part-staged')).toBeInTheDocument();
     });
     await waitFor(
       () => {
-        expect(screen.getByTestId('canvas-part-staged-text')).toHaveTextContent(/rewritten text/);
+        expect(screen.getByTestId('board-part-staged-text')).toHaveTextContent(/rewritten text/);
       },
       { timeout: 5_000 },
     );
-    expect(screen.getByTestId('canvas-part-staged')).toHaveAttribute('data-staged-status', 'proposed');
+    expect(screen.getByTestId('board-part-staged')).toHaveAttribute('data-staged-status', 'proposed');
 
     // The engine landed: the complete new text renders AS-IS (no diff view),
     // with Show previous for the old text.
     await waitFor(() => {
-      expect(screen.getByTestId('canvas-part-show-previous')).toBeInTheDocument();
+      expect(screen.getByTestId('board-part-show-previous')).toBeInTheDocument();
     });
-    expect(screen.getByTestId('canvas-part-staged-text')).toHaveTextContent('brand-new rewritten text');
-    await user.click(screen.getByTestId('canvas-part-show-previous'));
-    expect(screen.getByTestId('canvas-part-staged-text')).toHaveTextContent('old gate bargain');
-    await user.click(screen.getByTestId('canvas-part-show-previous'));
+    expect(screen.getByTestId('board-part-staged-text')).toHaveTextContent('brand-new rewritten text');
+    await user.click(screen.getByTestId('board-part-show-previous'));
+    expect(screen.getByTestId('board-part-staged-text')).toHaveTextContent('old gate bargain');
+    await user.click(screen.getByTestId('board-part-show-previous'));
 
     // Apply: THE one part-text save path (edited:true) + promote scan fired.
-    await user.click(screen.getByTestId('canvas-part-apply'));
+    await user.click(screen.getByTestId('board-part-apply'));
     await waitFor(() => {
       expect(promoteSpy).toHaveBeenCalledWith(world.moduleId, [NEW_TEXT]);
     });
@@ -198,7 +198,7 @@ describe('canvas rewrite + staging', () => {
     expect(toastSuccessMock).toHaveBeenCalledWith('Rewrite applied');
     // Staging dropped: the card renders canonical content again.
     await waitFor(() => {
-      expect(within(screen.getByTestId('canvas-part-0')).queryByTestId('canvas-part-staged')).not.toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-0')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
     });
     await flushAsyncUpdates();
   }, 30_000);
@@ -206,16 +206,16 @@ describe('canvas rewrite + staging', () => {
   it('discard restores the previous text through the save path and drops the staging', async () => {
     const user = userEvent.setup();
     mockEngineRun();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('canvas-part-0', {}, { timeout: 10_000 });
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('canvas-part-rewrite-0'));
-    await user.click(await screen.findByTestId('canvas-rewrite-confirm'));
+    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    await user.click(await screen.findByTestId('board-rewrite-confirm'));
     await waitFor(() => {
-      expect(screen.getByTestId('canvas-part-discard')).toBeInTheDocument();
+      expect(screen.getByTestId('board-part-discard')).toBeInTheDocument();
     });
 
-    await user.click(screen.getByTestId('canvas-part-discard'));
+    await user.click(screen.getByTestId('board-part-discard'));
     await waitFor(async () => {
       const row = await getModule(world.moduleId);
       const part = row?.parts.find((entry) => entry.planIndex === 0);
@@ -226,7 +226,7 @@ describe('canvas rewrite + staging', () => {
     // restored text too (it is a part-text write like any other).
     expect(promoteSpy).toHaveBeenCalledWith(world.moduleId, [OLD_TEXT]);
     await waitFor(() => {
-      expect(within(screen.getByTestId('canvas-part-0')).queryByTestId('canvas-part-staged')).not.toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-0')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
     });
     await flushAsyncUpdates();
   }, 30_000);
@@ -238,11 +238,11 @@ describe('canvas rewrite + staging', () => {
     const { ModuleBusyError } = await import('@/llm/moduleGen');
     const busyError = new ModuleBusyError(world.moduleId);
     runPartsMock.mockRejectedValue(busyError);
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('canvas-part-0', {}, { timeout: 10_000 });
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('canvas-part-rewrite-0'));
-    await user.click(await screen.findByTestId('canvas-rewrite-confirm'));
+    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    await user.click(await screen.findByTestId('board-rewrite-confirm'));
 
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
@@ -252,7 +252,7 @@ describe('canvas rewrite + staging', () => {
     });
     // No staging left behind on failure.
     await waitFor(() => {
-      expect(within(screen.getByTestId('canvas-part-0')).queryByTestId('canvas-part-staged')).not.toBeInTheDocument();
+      expect(within(screen.getByTestId('board-part-0')).queryByTestId('board-part-staged')).not.toBeInTheDocument();
     });
     await flushAsyncUpdates();
   }, 30_000);
@@ -262,18 +262,18 @@ describe('canvas rewrite + staging', () => {
     await clearDatabase();
     await seedModule({ includePriorModules: true });
     mockEngineRun();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
-    const partCard = await screen.findByTestId('canvas-part-0', {}, { timeout: 10_000 });
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
 
-    await user.click(within(partCard).getByTestId('canvas-part-rewrite-0'));
-    const dialog = await screen.findByTestId('canvas-rewrite-dialog');
-    expect(within(dialog).getByTestId('canvas-rewrite-prior-modules')).toHaveAttribute(
+    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    const dialog = await screen.findByTestId('board-rewrite-dialog');
+    expect(within(dialog).getByTestId('board-rewrite-prior-modules')).toHaveAttribute(
       'aria-checked',
       'true',
     );
     // Turn it OFF for this run only — the row keeps its flag.
-    await user.click(within(dialog).getByTestId('canvas-rewrite-prior-modules'));
-    await user.click(within(dialog).getByTestId('canvas-rewrite-confirm'));
+    await user.click(within(dialog).getByTestId('board-rewrite-prior-modules'));
+    await user.click(within(dialog).getByTestId('board-rewrite-confirm'));
     await flushAsyncUpdates();
 
     await waitFor(() => {
@@ -288,14 +288,14 @@ describe('canvas rewrite + staging', () => {
     const user = userEvent.setup();
     await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
     runPartsMock.mockImplementation(() => new Promise(() => undefined));
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
-    await screen.findByTestId('canvas-part-0', {}, { timeout: 10_000 });
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
 
-    const stop = await screen.findByTestId('canvas-stop');
+    const stop = await screen.findByTestId('board-stop');
     await user.click(stop);
     expect(cancelModuleGenMock).toHaveBeenCalledWith(world.moduleId);
     // While busy, rewrite affordances are disabled.
-    expect(screen.getByTestId('canvas-part-rewrite-0')).toBeDisabled();
+    expect(screen.getByTestId('board-part-rewrite-0')).toBeDisabled();
     await flushAsyncUpdates();
   }, 30_000);
 });

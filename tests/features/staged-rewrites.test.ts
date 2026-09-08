@@ -3,11 +3,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import {
   useStagedRewritesStore,
   stagedRewriteFor,
-} from '@/features/modules/canvas/stagedRewrites';
+} from '@/features/modules/board/stagedRewrites';
 
 /**
- * Staged canvas rewrites — store lifecycle (08-MODULE-DESIGNER §Module
- * canvas): proposed → (ghost → complete) → applied → dropped, plus the
+ * Staged board rewrites — store lifecycle (08-MODULE-DESIGNER §Module
+ * board): proposed → (ghost → complete) → applied → dropped, plus the
  * failed-apply revert and the discard drop. The store is strictly
  * session-only: nothing may ever reach localStorage (owner decision — the
  * staging model is "read new as-is, old only until the decision").

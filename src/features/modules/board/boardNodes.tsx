@@ -9,12 +9,12 @@ import type { AnyArtifact, Id } from '@/domain';
 import { CANVAS_PREMISE_NODE_KEY, planIndexFromCanvasNodeKey } from '@/domain';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { cn } from '@/lib/utils';
-import { CANVAS_LOD_FULL_ABOVE, useCanvasStore, type PartCardSlice, type PriorCardSlice } from './canvasStore';
-import { useStagedRewritesStore, type StagedRewrite } from '@/features/modules/canvas/stagedRewrites';
+import { BOARD_LOD_FULL_ABOVE, useBoardStore, type PartCardSlice, type PriorCardSlice } from './boardStore';
+import { useStagedRewritesStore, type StagedRewrite } from '@/features/modules/board/stagedRewrites';
 import { Button } from '@/components/ui/button';
 
 /**
- * Whole-module canvas cards (08-MODULE-DESIGNER §Module canvas): TEXT-ONLY
+ * Whole-module board cards (08-MODULE-DESIGNER §Module board): TEXT-ONLY
  * v1 — premise/part cards for the current module and read-only text groups
  * for prior modules. No entity cards, no phantom cards, no artifact detail
  * cards: wiki chips render inline through the shared `WikiMarkdown` but stay
@@ -24,43 +24,43 @@ import { Button } from '@/components/ui/button';
  * Cards are memoized and read their content from per-node store slices, so a
  * change to one part re-renders one card. React Flow owns ALL viewport
  * gestures (pan/zoom/pinch/drag): cards mount plain buttons only, scrollable
- * bodies carry `nowheel` (wheel scrolls the card, never the canvas) and no
+ * bodies carry `nowheel` (wheel scrolls the card, never the board) and no
  * component here ever arms a second pointer-gesture path.
  */
 
-/** The wiki-chip resolution pool shared by every card on the canvas. */
-export interface CanvasPoolContextValue {
+/** The wiki-chip resolution pool shared by every card on the board. */
+export interface BoardPoolContextValue {
   /** Campaign artifacts + global library — the reader's resolution pool. */
   pool: readonly AnyArtifact[];
   /** The CURRENT module's id: its own entities win tier-0 in its cards. */
   moduleId: Id;
 }
 
-const CanvasPoolContext = createContext<CanvasPoolContextValue | null>(null);
+const BoardPoolContext = createContext<BoardPoolContextValue | null>(null);
 
-export function CanvasPoolProvider({
+export function BoardPoolProvider({
   value,
   children,
 }: {
-  value: CanvasPoolContextValue;
+  value: BoardPoolContextValue;
   children: ReactNode;
 }): JSX.Element {
-  return <CanvasPoolContext.Provider value={value}>{children}</CanvasPoolContext.Provider>;
+  return <BoardPoolContext.Provider value={value}>{children}</BoardPoolContext.Provider>;
 }
 
 /** Hooks-order-safe pool read: called unconditionally, throws when absent. */
-function useCanvasPool(): CanvasPoolContextValue {
-  const value = useContext(CanvasPoolContext);
+function useBoardPool(): BoardPoolContextValue {
+  const value = useContext(BoardPoolContext);
   if (value === null) {
     // AGENTS rule 1: a card rendered outside the provider is a bug, never a
     // silent degradation to an empty pool.
-    throw new Error('Canvas card rendered outside CanvasPoolProvider');
+    throw new Error('Board card rendered outside BoardPoolProvider');
   }
   return value;
 }
 
 /** Page-level actions the cards can trigger (all plain buttons, `nodrag`). */
-export interface CanvasActionsContextValue {
+export interface BoardActionsContextValue {
   /** Opens the rewrite dialog for this part. */
   onRewrite: (planIndex: number, nodeKey: string) => void;
   /** Applies the staged rewrite through the ONE part-text save path. */
@@ -69,27 +69,27 @@ export interface CanvasActionsContextValue {
   onDiscardStaged: (nodeKey: string) => void;
 }
 
-const CanvasActionsContext = createContext<CanvasActionsContextValue | null>(null);
+const BoardActionsContext = createContext<BoardActionsContextValue | null>(null);
 
-export function CanvasActionsProvider({
+export function BoardActionsProvider({
   value,
   children,
 }: {
-  value: CanvasActionsContextValue;
+  value: BoardActionsContextValue;
   children: ReactNode;
 }): JSX.Element {
-  return <CanvasActionsContext.Provider value={value}>{children}</CanvasActionsContext.Provider>;
+  return <BoardActionsContext.Provider value={value}>{children}</BoardActionsContext.Provider>;
 }
 
-function useCanvasActions(): CanvasActionsContextValue {
-  const value = useContext(CanvasActionsContext);
+function useBoardActions(): BoardActionsContextValue {
+  const value = useContext(BoardActionsContext);
   if (value === null) {
-    throw new Error('Canvas card rendered outside CanvasActionsProvider');
+    throw new Error('Board card rendered outside BoardActionsProvider');
   }
   return value;
 }
 
-export const CANVAS_CARD_BODY_CLASS =
+export const BOARD_CARD_BODY_CLASS =
   'nowheel max-h-[360px] overflow-y-auto overscroll-contain px-3 pb-3';
 
 const CARD_CLASS = 'w-[420px] rounded-lg border bg-card text-card-foreground shadow-sm';
@@ -99,7 +99,7 @@ const HEADER_CLASS = 'flex items-center gap-2 border-b px-3 py-2';
 const BODY_TEXT_CLASS = 'prose-module text-sm leading-relaxed';
 
 /**
- * Edge anchors for the derived continuity edges. Invisible (the canvas is
+ * Edge anchors for the derived continuity edges. Invisible (the board is
  * TEXT-ONLY v1 — no connect affordances; `nodesConnectable` is false), but
  * structurally present: React Flow anchors an edge at its endpoints'
  * handles, so a node without them draws no edges.
@@ -118,16 +118,16 @@ function CardHandles(): JSX.Element {
 export const PremiseCardNode = memo(function PremiseCardNode({
   id,
 }: NodeProps): JSX.Element | null {
-  const slice = useCanvasStore((state) =>
+  const slice = useBoardStore((state) =>
     id === CANVAS_PREMISE_NODE_KEY ? state.content.premise : undefined,
   );
-  const detailed = useCanvasStore((state) => state.zoom >= CANVAS_LOD_FULL_ABOVE);
-  const { pool, moduleId } = useCanvasPool();
+  const detailed = useBoardStore((state) => state.zoom >= BOARD_LOD_FULL_ABOVE);
+  const { pool, moduleId } = useBoardPool();
   if (slice === undefined || slice === null) return null;
   return (
     <div
       className={CARD_CLASS}
-      data-testid="canvas-premise-card"
+      data-testid="board-premise-card"
       data-lod={detailed ? 'full' : 'skeleton'}
     >
       <div className={HEADER_CLASS}>
@@ -138,7 +138,7 @@ export const PremiseCardNode = memo(function PremiseCardNode({
       </div>
       <CardHandles />
       {detailed && (
-        <div className={cn(CANVAS_CARD_BODY_CLASS, BODY_TEXT_CLASS)} data-testid="canvas-premise-body">
+        <div className={cn(BOARD_CARD_BODY_CLASS, BODY_TEXT_CLASS)} data-testid="board-premise-body">
           <WikiMarkdown value={slice.premise} artifacts={pool} moduleId={moduleId} />
         </div>
       )}
@@ -149,18 +149,18 @@ export const PremiseCardNode = memo(function PremiseCardNode({
 // --- Part card ----------------------------------------------------------------
 
 export const PartCardNode = memo(function PartCardNode({ id }: NodeProps): JSX.Element | null {
-  const slice = useCanvasStore((state) => state.content.parts[id]);
-  const busy = useCanvasStore((state) => state.content.moduleStatus === 'generating');
+  const slice = useBoardStore((state) => state.content.parts[id]);
+  const busy = useBoardStore((state) => state.content.moduleStatus === 'generating');
   const staged = useStagedRewritesStore((state) => state.byNodeKey[id]);
-  const detailed = useCanvasStore((state) => state.zoom >= CANVAS_LOD_FULL_ABOVE);
-  const { pool } = useCanvasPool();
-  const actions = useCanvasActions();
+  const detailed = useBoardStore((state) => state.zoom >= BOARD_LOD_FULL_ABOVE);
+  const { pool } = useBoardPool();
+  const actions = useBoardActions();
   const planIndex = planIndexFromCanvasNodeKey(id);
   if (slice === undefined || planIndex === null) return null;
   return (
     <div
       className={CARD_CLASS}
-      data-testid={`canvas-part-${String(planIndex)}`}
+      data-testid={`board-part-${String(planIndex)}`}
       data-lod={detailed ? 'full' : 'skeleton'}
     >
       <CardHandles />
@@ -181,7 +181,7 @@ export const PartCardNode = memo(function PartCardNode({ id }: NodeProps): JSX.E
             size="icon-sm"
             className="nodrag ml-auto shrink-0"
             aria-label={`Rewrite ${slice.title}`}
-            data-testid={`canvas-part-rewrite-${String(planIndex)}`}
+            data-testid={`board-part-rewrite-${String(planIndex)}`}
             disabled={busy}
             onClick={() => {
               actions.onRewrite(planIndex, id);
@@ -210,7 +210,7 @@ function PartCardBody({
 }): JSX.Element {
   if (slice.status === 'ready') {
     return (
-      <div className={cn(CANVAS_CARD_BODY_CLASS, BODY_TEXT_CLASS)} data-testid="canvas-part-body">
+      <div className={cn(BOARD_CARD_BODY_CLASS, BODY_TEXT_CLASS)} data-testid="board-part-body">
         <WikiMarkdown value={slice.markdown} artifacts={pool} moduleId={slice.moduleId} />
       </div>
     );
@@ -219,7 +219,7 @@ function PartCardBody({
     return (
       <div
         className="flex items-start gap-2 px-3 pb-3 pt-2 text-sm text-destructive"
-        data-testid="canvas-part-failed"
+        data-testid="board-part-failed"
         role="alert"
       >
         <TriangleAlertIcon aria-hidden className="mt-0.5 size-4 shrink-0" />
@@ -231,7 +231,7 @@ function PartCardBody({
     return (
       <div
         className="flex items-center gap-2 px-3 pb-3 pt-2 text-sm text-muted-foreground"
-        data-testid="canvas-part-generating"
+        data-testid="board-part-generating"
         aria-live="polite"
       >
         <LoaderCircleIcon aria-hidden className="size-4 animate-spin" />
@@ -242,7 +242,7 @@ function PartCardBody({
   return (
     <div
       className="px-3 pb-3 pt-2 text-sm text-muted-foreground"
-      data-testid="canvas-part-pending"
+      data-testid="board-part-pending"
     >
       Not written yet — it generates after the previous parts.
     </div>
@@ -265,7 +265,7 @@ function StagedPartBody({
   moduleId: Id;
   pool: readonly AnyArtifact[];
 }): JSX.Element {
-  const actions = useCanvasActions();
+  const actions = useBoardActions();
   const [showPrevious, setShowPrevious] = useState(false);
   const streaming = staged.newMarkdown === '';
   const text = showPrevious
@@ -274,7 +274,7 @@ function StagedPartBody({
   return (
     <div
       className="nowheel max-h-[360px] overflow-y-auto overscroll-contain border-x-2 border-amber-500/60 bg-amber-500/5 px-3 pb-3"
-      data-testid="canvas-part-staged"
+      data-testid="board-part-staged"
       data-staged-status={staged.status}
     >
       <div className="flex items-center gap-1.5 pb-1 pt-2 text-xs text-amber-700 dark:text-amber-400">
@@ -287,7 +287,7 @@ function StagedPartBody({
             variant="ghost"
             size="xs"
             className="nodrag ml-auto"
-            data-testid="canvas-part-show-previous"
+            data-testid="board-part-show-previous"
             onClick={() => {
               setShowPrevious((previous) => !previous);
             }}
@@ -296,7 +296,7 @@ function StagedPartBody({
           </Button>
         )}
       </div>
-      <div className={BODY_TEXT_CLASS} data-testid="canvas-part-staged-text">
+      <div className={BODY_TEXT_CLASS} data-testid="board-part-staged-text">
         <WikiMarkdown
           value={text === '' ? '*…*' : text}
           artifacts={pool}
@@ -308,7 +308,7 @@ function StagedPartBody({
           <Button
             size="xs"
             className="nodrag"
-            data-testid="canvas-part-apply"
+            data-testid="board-part-apply"
             disabled={staged.status === 'applied'}
             onClick={() => {
               actions.onApplyStaged(staged.nodeKey);
@@ -320,7 +320,7 @@ function StagedPartBody({
             variant="outline"
             size="xs"
             className="nodrag"
-            data-testid="canvas-part-discard"
+            data-testid="board-part-discard"
             disabled={staged.status === 'applied'}
             onClick={() => {
               actions.onDiscardStaged(staged.nodeKey);
@@ -369,14 +369,14 @@ function PartStatusPill({ status }: { status: PartCardSlice['status'] }): JSX.El
 export const PriorModuleCardNode = memo(function PriorModuleCardNode({
   id,
 }: NodeProps): JSX.Element | null {
-  const slice = useCanvasStore((state) => state.content.priors[id]);
-  const detailed = useCanvasStore((state) => state.zoom >= CANVAS_LOD_FULL_ABOVE);
-  const { pool } = useCanvasPool();
+  const slice = useBoardStore((state) => state.content.priors[id]);
+  const detailed = useBoardStore((state) => state.zoom >= BOARD_LOD_FULL_ABOVE);
+  const { pool } = useBoardPool();
   if (slice === undefined) return null;
   return (
     <div
       className={cn(CARD_CLASS, 'opacity-90')}
-      data-testid={`canvas-prior-${slice.moduleId}`}
+      data-testid={`board-prior-${slice.moduleId}`}
       data-lod={detailed ? 'full' : 'skeleton'}
     >
       <div className={HEADER_CLASS}>
@@ -409,7 +409,7 @@ function PriorCardBody({
   pool: readonly AnyArtifact[];
 }): JSX.Element {
   return (
-    <div className={CANVAS_CARD_BODY_CLASS} data-testid="canvas-prior-body">
+    <div className={BOARD_CARD_BODY_CLASS} data-testid="board-prior-body">
       {slice.premise !== '' && (
         <div className={BODY_TEXT_CLASS}>
           <WikiMarkdown value={slice.premise} artifacts={pool} moduleId={slice.moduleId} />
@@ -432,7 +432,7 @@ function PriorCardBody({
  * and created exactly once per module load — React Flow warns (and re-mounts
  * nodes) when the object identity churns.
  */
-export const canvasNodeTypes: NodeTypes = {
+export const boardNodeTypes: NodeTypes = {
   premise: PremiseCardNode,
   part: PartCardNode,
   prior: PriorModuleCardNode,

@@ -8,8 +8,8 @@ import {
 } from '@/domain';
 
 /**
- * Whole-module canvas session store (08-MODULE-DESIGNER §Module canvas):
- * the card CONTENT slices the canvas node components subscribe to, plus the
+ * Whole-module board session store (08-MODULE-DESIGNER §Module board):
+ * the card CONTENT slices the board node components subscribe to, plus the
  * zoom mirror the LOD switch reads. Strictly SESSION state — the module row
  * is the source of truth (parts/premise/status via the module repo, node
  * positions via the row's `canvas` field); nothing here is persisted
@@ -23,7 +23,7 @@ import {
  */
 
 /** Zoom threshold between the full markdown card and the skeleton card. */
-export const CANVAS_LOD_FULL_ABOVE = 0.6;
+export const BOARD_LOD_FULL_ABOVE = 0.6;
 
 /** The premise card of the CURRENT module. */
 export interface PremiseCardSlice {
@@ -58,10 +58,10 @@ export interface PriorCardSlice {
   parts: { planIndex: number; title: string; markdown: string }[];
 }
 
-export interface CanvasContent {
-  /** null = the module has no spine yet (the canvas has nothing to render). */
+export interface BoardContent {
+  /** null = the module has no spine yet (the board has nothing to render). */
   premise: PremiseCardSlice | null;
-  /** Keyed by the stable canvas node key (`part-<planIndex>`). */
+  /** Keyed by the stable board node key (`part-<planIndex>`). */
   parts: Record<string, PartCardSlice>;
   /** Keyed by `prior-<moduleId>`. */
   priors: Record<string, PriorCardSlice>;
@@ -69,7 +69,7 @@ export interface CanvasContent {
   moduleStatus: Module['status'];
 }
 
-export interface CanvasContentInput {
+export interface BoardContentInput {
   moduleId: Id;
   moduleTitle: string;
   moduleStatus: Module['status'];
@@ -79,25 +79,25 @@ export interface CanvasContentInput {
   priors: PriorCardSlice[];
 }
 
-interface ModuleCanvasState {
+interface ModuleBoardState {
   /** The module whose content this store holds (reset guard on navigation). */
   ownerId: Id | null;
-  content: CanvasContent;
+  content: BoardContent;
   /**
    * Viewport zoom mirror (React Flow stays the viewport gesture owner) —
    * the LOD switch reads this. Node components subscribe to the derived
-   * BOOLEAN (`zoom >= CANVAS_LOD_FULL_ABOVE`), so panning re-renders
+   * BOOLEAN (`zoom >= BOARD_LOD_FULL_ABOVE`), so panning re-renders
    * nothing and zooming re-renders a card only at the threshold flip.
    */
   zoom: number;
   resetFor: (moduleId: Id) => void;
-  syncContent: (input: CanvasContentInput) => void;
+  syncContent: (input: BoardContentInput) => void;
   setZoom: (zoom: number) => void;
 }
 
-const EMPTY_CONTENT: CanvasContent = { premise: null, parts: {}, priors: {}, moduleStatus: 'draft' };
+const EMPTY_CONTENT: BoardContent = { premise: null, parts: {}, priors: {}, moduleStatus: 'draft' };
 
-export const useCanvasStore = create<ModuleCanvasState>((set) => ({
+export const useBoardStore = create<ModuleBoardState>((set) => ({
   ownerId: null,
   content: EMPTY_CONTENT,
   zoom: 1,
@@ -150,7 +150,7 @@ export const useCanvasStore = create<ModuleCanvasState>((set) => ({
   },
 }));
 
-function buildContent(input: CanvasContentInput): CanvasContent {
+function buildContent(input: BoardContentInput): BoardContent {
   const priors: Record<string, PriorCardSlice> = {};
   for (const prior of input.priors) {
     priors[canvasPriorModuleNodeKey(prior.moduleId)] = prior;

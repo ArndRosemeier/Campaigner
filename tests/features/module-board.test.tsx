@@ -5,7 +5,7 @@ import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { canvasPath } from '@/app/routes';
+import { boardPath } from '@/app/routes';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { getModule, saveModule } from '@/db/moduleRepo';
@@ -22,18 +22,18 @@ import {
 } from '@/domain';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
-import { useCanvasStore } from '@/features/modules/canvas/canvasStore';
+import { useBoardStore } from '@/features/modules/board/boardStore';
 import {
   deriveContinuityEdges,
-  CANVAS_CONTINUITY_EDGE_CAP,
-} from '@/features/modules/canvas/canvasEdges';
+  BOARD_CONTINUITY_EDGE_CAP,
+} from '@/features/modules/board/boardEdges';
 import {
-  resolveCanvasNodePositions,
-  seedCanvasNodePositions,
-} from '@/features/modules/canvas/canvasLayout';
+  resolveBoardNodePositions,
+  seedBoardNodePositions,
+} from '@/features/modules/board/boardLayout';
 
 /**
- * Whole-module canvas — SUBSTRATE (08-MODULE-DESIGNER §Module canvas,
+ * Whole-module board — SUBSTRATE (08-MODULE-DESIGNER §Module board,
  * commit 1): cards render the plan×part JOIN, prior modules render as
  * read-only text groups in createdAt ASC order with per-module chip
  * resolution, LOD switches at the zoom threshold, node keys are stable, and
@@ -100,7 +100,7 @@ interface World {
 }
 
 /** Seeds two prior modules + the current module with shared wiki-names. */
-async function seedCanvasWorld(): Promise<World> {
+async function seedBoardWorld(): Promise<World> {
   const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
   // Same NAME in two scopes: module-owned (prior module A) vs campaign-owned
   // (created LAST, so within the campaign tier it wins on updatedAt).
@@ -219,29 +219,29 @@ beforeEach(() => {
 
 beforeEach(async () => {
   await clearDatabase();
-  useCanvasStore.getState().resetFor('reset');
+  useBoardStore.getState().resetFor('reset');
   seq = 0;
   globalThis.ResizeObserver = FiringResizeObserver;
 });
 
-describe('module canvas substrate', () => {
+describe('module board substrate', () => {
   it('renders premise + part cards (plan×part JOIN) and prior groups in createdAt ASC order', async () => {
-    const world = await seedCanvasWorld();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    const world = await seedBoardWorld();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
 
-    const premiseCard = await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
+    const premiseCard = await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     expect(premiseCard).toHaveTextContent(MODULE_TITLE);
-    expect(screen.getByTestId('canvas-premise-body')).toHaveTextContent('drowned relic');
+    expect(screen.getByTestId('board-premise-body')).toHaveTextContent('drowned relic');
 
-    const part0 = screen.getByTestId('canvas-part-0');
+    const part0 = screen.getByTestId('board-part-0');
     expect(part0).toHaveTextContent('Part 1 plan');
     expect(part0).toHaveTextContent('Levels 1');
-    expect(within(part0).getByTestId('canvas-part-body')).toHaveTextContent('Keeper Ilse');
-    expect(screen.getByTestId('canvas-part-1')).toHaveTextContent('Part 2 plan');
+    expect(within(part0).getByTestId('board-part-body')).toHaveTextContent('Keeper Ilse');
+    expect(screen.getByTestId('board-part-1')).toHaveTextContent('Part 2 plan');
 
     // Prior groups: ASC by createdAt — A (1000) before B (2000) in the DOM.
-    const priorA = screen.getByTestId(`canvas-prior-${world.priorAId}`);
-    const priorB = screen.getByTestId(`canvas-prior-${world.priorBId}`);
+    const priorA = screen.getByTestId(`board-prior-${world.priorAId}`);
+    const priorB = screen.getByTestId(`board-prior-${world.priorBId}`);
     expect(priorA).toHaveTextContent('Ashes of the Ford');
     expect(priorB).toHaveTextContent('Saltmarsh Smoke');
     expect(
@@ -250,10 +250,10 @@ describe('module canvas substrate', () => {
   });
 
   it('resolves wiki chips with each module’s OWN tier-0 context', async () => {
-    const world = await seedCanvasWorld();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    const world = await seedBoardWorld();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
 
-    await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     // Module A owns "Ember Key": inside A's group the chip resolves to the
     // module-owned row (tier-0 beats the newer campaign-level row).
     const chipInA = withinPrior(world.priorAId, 'Ember Key');
@@ -265,14 +265,14 @@ describe('module canvas substrate', () => {
   });
 
   it('keeps prior groups read-only: chips are inert (no peek modal, no stub popover)', async () => {
-    const world = await seedCanvasWorld();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    const world = await seedBoardWorld();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
 
-    await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     const chipInA = withinPrior(world.priorAId, 'Ember Key');
     fireEvent.click(chipInA);
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
-    // The current module's chips are equally inert on the canvas (TEXT-ONLY
+    // The current module's chips are equally inert on the board (TEXT-ONLY
     // v1: entity actions are deferred).
     const currentChips = screen.getAllByTestId('wiki-chip');
     for (const chip of currentChips) {
@@ -282,30 +282,30 @@ describe('module canvas substrate', () => {
   });
 
   it('switches between full markdown and skeleton cards at the LOD zoom threshold', async () => {
-    const world = await seedCanvasWorld();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    const world = await seedBoardWorld();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
 
-    await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
-    expect(screen.getByTestId('canvas-premise-card')).toHaveAttribute('data-lod', 'full');
-    expect(screen.getByTestId('canvas-part-0')).toHaveAttribute('data-lod', 'full');
-    expect(within(screen.getByTestId('canvas-part-0')).getByTestId('canvas-part-body')).toBeInTheDocument();
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
+    expect(screen.getByTestId('board-premise-card')).toHaveAttribute('data-lod', 'full');
+    expect(screen.getByTestId('board-part-0')).toHaveAttribute('data-lod', 'full');
+    expect(within(screen.getByTestId('board-part-0')).getByTestId('board-part-body')).toBeInTheDocument();
 
     actSetZoom(0.4);
-    expect(screen.getByTestId('canvas-premise-card')).toHaveAttribute('data-lod', 'skeleton');
-    expect(screen.getByTestId('canvas-part-0')).toHaveAttribute('data-lod', 'skeleton');
-    expect(screen.queryByTestId('canvas-part-body')).not.toBeInTheDocument();
+    expect(screen.getByTestId('board-premise-card')).toHaveAttribute('data-lod', 'skeleton');
+    expect(screen.getByTestId('board-part-0')).toHaveAttribute('data-lod', 'skeleton');
+    expect(screen.queryByTestId('board-part-body')).not.toBeInTheDocument();
     // The skeleton keeps title/band/status.
-    expect(screen.getByTestId('canvas-part-0')).toHaveTextContent('Part 1 plan');
+    expect(screen.getByTestId('board-part-0')).toHaveTextContent('Part 1 plan');
 
     actSetZoom(1);
-    expect(within(screen.getByTestId('canvas-part-0')).getByTestId('canvas-part-body')).toBeInTheDocument();
+    expect(within(screen.getByTestId('board-part-0')).getByTestId('board-part-body')).toBeInTheDocument();
   });
 
   it('uses the stable node keys (premise, part-<planIndex>, prior-<moduleId>)', async () => {
-    const world = await seedCanvasWorld();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    const world = await seedBoardWorld();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
 
-    await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     const nodeIds = [...document.querySelectorAll('.react-flow__node')].map(
       (element) => element.getAttribute('data-id'),
     );
@@ -317,9 +317,9 @@ describe('module canvas substrate', () => {
   });
 
   it('round-trips the layout through patchModule (drags persist, reload honors the row)', async () => {
-    const world = await seedCanvasWorld();
-    const view = renderAppAt(canvasPath(world.campaignId, world.moduleId));
-    await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
+    const world = await seedBoardWorld();
+    const view = renderAppAt(boardPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
 
     // Drag part-0 by (+80, +40) — React Flow owns the gesture (d3-drag on
     // the node wrapper); the debounced persist lands through patchModule.
@@ -334,7 +334,7 @@ describe('module canvas substrate', () => {
       async () => {
         const row = await getModule(world.moduleId);
         if (row === undefined) throw new Error('module row vanished');
-        if (row.canvas === null) throw new Error('canvas layout not persisted yet');
+        if (row.canvas === null) throw new Error('board layout not persisted yet');
         const part0 = row.canvas.nodes.find((node) => node.key === canvasPartNodeKey(0));
         if (part0 === undefined) throw new Error('part-0 position not persisted yet');
         // Seed x (spine column) + 80px drag, y (row 1) + 40px drag.
@@ -347,8 +347,8 @@ describe('module canvas substrate', () => {
     // The persisted layout wins on the next mount (reload semantics).
     await flushAsyncUpdates();
     view.unmount();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
-    await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     const persisted = await getModule(world.moduleId);
     expect(persisted?.canvas?.zoom).toBeTypeOf('number');
     const nodeElement2 = document.querySelector<HTMLElement>('.react-flow__node[data-id="part-0"]');
@@ -357,11 +357,11 @@ describe('module canvas substrate', () => {
   });
 
   it('draws continuity edges for names shared between prior groups and the current module', async () => {
-    const world = await seedCanvasWorld();
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    const world = await seedBoardWorld();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
     // "Ember Key" appears in both prior groups AND the current module's parts
     // → at least one prior→current edge.
-    await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 });
+    await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 });
     await waitFor(
       () => {
         expect(document.querySelectorAll('.react-flow__edge').length).toBeGreaterThan(0);
@@ -373,9 +373,9 @@ describe('module canvas substrate', () => {
 
 // --- pure layout + edges ------------------------------------------------------
 
-describe('canvas layout seeds', () => {
+describe('board layout seeds', () => {
   it('seeds deterministic positions and lets persisted positions win', () => {
-    const seeds = seedCanvasNodePositions({ planCount: 2, priorModuleIds: ['a', 'b'] });
+    const seeds = seedBoardNodePositions({ planCount: 2, priorModuleIds: ['a', 'b'] });
     expect(seeds[CANVAS_PREMISE_NODE_KEY]).toBeDefined();
     expect(seeds[canvasPartNodeKey(0)]).toBeDefined();
     expect(seeds[canvasPriorModuleNodeKey('b')]).toBeDefined();
@@ -384,7 +384,7 @@ describe('canvas layout seeds', () => {
     const premiseSeedX = seeds[CANVAS_PREMISE_NODE_KEY]?.x ?? 0;
     expect(priorSeedX).toBeLessThan(premiseSeedX);
 
-    const persisted = resolveCanvasNodePositions(
+    const persisted = resolveBoardNodePositions(
       [{ key: canvasPartNodeKey(1), x: -50, y: 700 }],
       seeds,
     );
@@ -470,7 +470,7 @@ describe('deriveContinuityEdges', () => {
       priorModules: priors as unknown as Module[],
       pool: [],
     });
-    expect(capped.edges).toHaveLength(CANVAS_CONTINUITY_EDGE_CAP);
+    expect(capped.edges).toHaveLength(BOARD_CONTINUITY_EDGE_CAP);
     expect(capped.truncated).toBe(2);
   });
 });
@@ -478,7 +478,7 @@ describe('deriveContinuityEdges', () => {
 // --- helpers --------------------------------------------------------------------
 
 function withinPrior(priorModuleId: Id, name: string): HTMLElement {
-  const group = screen.getByTestId(`canvas-prior-${priorModuleId}`);
+  const group = screen.getByTestId(`board-prior-${priorModuleId}`);
   const chip = [...group.querySelectorAll<HTMLElement>('[data-testid="wiki-chip"]')].find(
     (element) => element.getAttribute('data-wiki-name') === name,
   );
@@ -488,7 +488,7 @@ function withinPrior(priorModuleId: Id, name: string): HTMLElement {
 
 function actSetZoom(zoom: number): void {
   act(() => {
-    useCanvasStore.getState().setZoom(zoom);
+    useBoardStore.getState().setZoom(zoom);
   });
 }
 

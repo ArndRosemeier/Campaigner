@@ -32,41 +32,43 @@ import { toastError, toastSuccess } from '@/lib/toast';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModule, useModules } from '@/features/modules/hooks';
 import {
-  CanvasActionsProvider,
-  CanvasPoolProvider,
-  canvasNodeTypes,
-  type CanvasActionsContextValue,
-  type CanvasPoolContextValue,
-} from '@/features/modules/canvas/canvasNodes';
-import { RewritePartDialog } from '@/features/modules/canvas/rewriteDialog';
-import { useStagedRewritesStore } from '@/features/modules/canvas/stagedRewrites';
+  BoardActionsProvider,
+  BoardPoolProvider,
+  boardNodeTypes,
+  type BoardActionsContextValue,
+  type BoardPoolContextValue,
+} from '@/features/modules/board/boardNodes';
+import { RewritePartDialog } from '@/features/modules/board/rewriteDialog';
+import { useStagedRewritesStore } from '@/features/modules/board/stagedRewrites';
 import {
-  CANVAS_NODE_WIDTH,
-  resolveCanvasNodePositions,
-  seedCanvasNodePositions,
-} from '@/features/modules/canvas/canvasLayout';
-import { deriveContinuityEdges } from '@/features/modules/canvas/canvasEdges';
-import { useCanvasStore, type PartCardSlice } from '@/features/modules/canvas/canvasStore';
+  BOARD_NODE_WIDTH,
+  resolveBoardNodePositions,
+  seedBoardNodePositions,
+} from '@/features/modules/board/boardLayout';
+import { deriveContinuityEdges } from '@/features/modules/board/boardEdges';
+import { useBoardStore, type PartCardSlice } from '@/features/modules/board/boardStore';
 
 /**
- * Whole-module canvas (08-MODULE-DESIGNER §Module canvas): the entire module
- * — premise card + one card per part — on a React Flow canvas, with every
+ * Whole-module board (08-MODULE-DESIGNER §Module board): the entire module
+ * — premise card + one card per part — on a React Flow board (the module's
+ * spatial overview), with every
  * prior module of the campaign present as a read-only text group. React Flow
  * owns ALL viewport gestures (pan/zoom/pinch/drag); cards mount plain
  * buttons only. Drags and the viewport persist through the module row's
- * `canvas` field (debounced single `patchModule` transaction), so the layout
+ * `canvas` field (persisted layout schema — debounced single `patchModule`
+ * transaction), so the layout
  * rides backup/export and survives reloads. Continuity edges (prior group →
  * current card sharing a canonical wiki-name) are derived, capped, and the
  * cap is surfaced — never a silent drop.
  */
 
-const CANVAS_PERSIST_DEBOUNCE_MS = 600;
+const BOARD_PERSIST_DEBOUNCE_MS = 600;
 
-type CanvasFlowNode = Node<Record<string, never>>;
+type BoardFlowNode = Node<Record<string, never>>;
 
 const EMPTY_NODE_DATA: Record<string, never> = {};
 
-export function ModuleCanvasPage(): JSX.Element {
+export function BoardPage(): JSX.Element {
   const { campaignId = '', moduleId = '' } = useParams<{
     campaignId: string;
     moduleId: string;
@@ -88,8 +90,8 @@ export function ModuleCanvasPage(): JSX.Element {
   }, [modules, moduleId]);
 
   // The reader's resolution pool (campaign + global library) — prior groups
-  // pass it with THEIR OWN module id as the tier-0 context (canvasNodes).
-  const poolValue = useMemo<CanvasPoolContextValue | undefined>(() => {
+  // pass it with THEIR OWN module id as the tier-0 context (boardNodes).
+  const poolValue = useMemo<BoardPoolContextValue | undefined>(() => {
     if (artifacts === undefined || globalArtifacts === undefined) return undefined;
     return { pool: [...artifacts, ...globalArtifacts], moduleId };
   }, [artifacts, globalArtifacts, moduleId]);
@@ -217,7 +219,7 @@ export function ModuleCanvasPage(): JSX.Element {
     [moduleId],
   );
 
-  const canvasActions = useMemo<CanvasActionsContextValue>(
+  const boardActions = useMemo<BoardActionsContextValue>(
     () => ({
       onRewrite: (planIndex, nodeKey) => {
         setRewriteTarget({ planIndex, nodeKey });
@@ -232,8 +234,8 @@ export function ModuleCanvasPage(): JSX.Element {
     [applyStaged, discardStaged],
   );
 
-  const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
-  const nodesRef = useRef<CanvasFlowNode[]>([]);
+  const [nodes, setNodes] = useState<BoardFlowNode[]>([]);
+  const nodesRef = useRef<BoardFlowNode[]>([]);
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, zoom: 1 });
   const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -242,7 +244,7 @@ export function ModuleCanvasPage(): JSX.Element {
   // --- content sync ----------------------------------------------------------
   useEffect(() => {
     if (module === null || module === undefined) return;
-    const store = useCanvasStore.getState();
+    const store = useBoardStore.getState();
     if (store.ownerId !== moduleId) store.resetFor(moduleId);
     store.syncContent({
       moduleId,
@@ -267,11 +269,11 @@ export function ModuleCanvasPage(): JSX.Element {
     [nodeKeys, priorModules],
   );
   const positions = useMemo(() => {
-    const seeds = seedCanvasNodePositions({
+    const seeds = seedBoardNodePositions({
       planCount: module?.spine?.partPlan.length ?? 0,
       priorModuleIds: priorModules.map((prior) => prior.id),
     });
-    return resolveCanvasNodePositions(module?.canvas?.nodes ?? null, seeds);
+    return resolveBoardNodePositions(module?.canvas?.nodes ?? null, seeds);
   }, [module, priorModules]);
 
   // Cross-module navigation reuses this page instance (same route, new
@@ -292,7 +294,7 @@ export function ModuleCanvasPage(): JSX.Element {
           type: nodeTypeFor(key),
           position,
           data: EMPTY_NODE_DATA,
-        } satisfies CanvasFlowNode;
+        } satisfies BoardFlowNode;
       });
       const unchanged =
         next.length === previous.length && next.every((node, index) => previous[index] === node);
@@ -314,7 +316,7 @@ export function ModuleCanvasPage(): JSX.Element {
     try {
       await patchModule(moduleId, { canvas });
     } catch (error) {
-      toastError('Could not save the canvas layout', error);
+      toastError('Could not save the board layout', error);
     }
   }, [moduleId]);
 
@@ -323,7 +325,7 @@ export function ModuleCanvasPage(): JSX.Element {
     persistTimer.current = setTimeout(() => {
       persistTimer.current = null;
       void persistLayout();
-    }, CANVAS_PERSIST_DEBOUNCE_MS);
+    }, BOARD_PERSIST_DEBOUNCE_MS);
   }, [persistLayout]);
 
   // A pending debounced write flushes on unmount — a drag followed by an
@@ -339,7 +341,7 @@ export function ModuleCanvasPage(): JSX.Element {
   }, [persistLayout]);
 
   const onNodesChange = useCallback(
-    (changes: NodeChange<CanvasFlowNode>[]) => {
+    (changes: NodeChange<BoardFlowNode>[]) => {
       setNodes((previous) => applyNodeChanges(changes, previous));
       if (changes.some((change) => change.type === 'position')) schedulePersist();
     },
@@ -348,7 +350,7 @@ export function ModuleCanvasPage(): JSX.Element {
 
   const onMove = useCallback((_event: unknown, viewport: Viewport): void => {
     viewportRef.current = viewport;
-    useCanvasStore.getState().setZoom(Math.round(viewport.zoom * 1000) / 1000);
+    useBoardStore.getState().setZoom(Math.round(viewport.zoom * 1000) / 1000);
   }, []);
 
   const onMoveEnd = useCallback(
@@ -360,7 +362,7 @@ export function ModuleCanvasPage(): JSX.Element {
   );
 
   // --- deep link (#node-<key>, optional) --------------------------------------
-  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<CanvasFlowNode> | null>(null);
+  const [flowInstance, setFlowInstance] = useState<ReactFlowInstance<BoardFlowNode> | null>(null);
   useEffect(() => {
     if (flowInstance === null) return;
     const match = /^#node-(.+)$/.exec(location.hash);
@@ -369,7 +371,7 @@ export function ModuleCanvasPage(): JSX.Element {
     const node = nodesRef.current.find((candidate) => candidate.id === key);
     if (node === undefined) return;
     void flowInstance.setCenter(
-      node.position.x + CANVAS_NODE_WIDTH / 2,
+      node.position.x + BOARD_NODE_WIDTH / 2,
       node.position.y + 180,
       { zoom: Math.max(flowInstance.getZoom(), 0.75), duration: 0 },
     );
@@ -405,24 +407,24 @@ export function ModuleCanvasPage(): JSX.Element {
     return <p className="p-6 text-sm text-muted-foreground">Loading…</p>;
   }
   if (campaign === null) {
-    return <MissingCanvas message="This campaign does not exist (it may have been deleted)." campaignId={campaignId} />;
+    return <MissingBoard message="This campaign does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   if (module === null) {
-    return <MissingCanvas message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
+    return <MissingBoard message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   const currentModule: Module = module;
   const currentCampaign: Campaign = campaign;
   const busy = currentModule.status === 'generating';
 
   return (
-    <div className="relative h-full min-h-0" data-testid="module-canvas">
-      <CanvasActionsProvider value={canvasActions}>
-      <CanvasPoolProvider value={poolValue}>
-        <ReactFlow<CanvasFlowNode>
+    <div className="relative h-full min-h-0" data-testid="module-board">
+      <BoardActionsProvider value={boardActions}>
+      <BoardPoolProvider value={poolValue}>
+        <ReactFlow<BoardFlowNode>
           key={moduleId}
           nodes={nodes}
           edges={edges}
-          nodeTypes={canvasNodeTypes}
+          nodeTypes={boardNodeTypes}
           onNodesChange={onNodesChange}
           onMove={onMove}
           onMoveEnd={onMoveEnd}
@@ -442,7 +444,7 @@ export function ModuleCanvasPage(): JSX.Element {
           <Panel position="top-left">
             <div
               className="flex flex-wrap items-center gap-2 rounded-lg border bg-card/95 px-3 py-2 shadow-sm backdrop-blur"
-              data-testid="canvas-header"
+              data-testid="board-header"
             >
               <Button
                 variant="ghost"
@@ -461,12 +463,12 @@ export function ModuleCanvasPage(): JSX.Element {
                     generating
                   </Badge>
                   {/* cancelModuleGen is the ONE module-forge stop path (the
-                      dock's Stop all composes it too); the canvas honours the
+                      dock's Stop all composes it too); the board honours the
                       same one-generation-per-module serialization. */}
                   <Button
                     variant="outline"
                     size="xs"
-                    data-testid="canvas-stop"
+                    data-testid="board-stop"
                     onClick={() => {
                       cancelModuleGen(currentModule.id);
                     }}
@@ -479,7 +481,7 @@ export function ModuleCanvasPage(): JSX.Element {
                 <Badge variant="secondary">{currentModule.status}</Badge>
               )}
               {derivation.truncated > 0 && (
-                <span className="text-xs text-muted-foreground" data-testid="canvas-edges-truncated">
+                <span className="text-xs text-muted-foreground" data-testid="board-edges-truncated">
                   +{String(derivation.truncated)} more shared-name continuities not drawn
                 </span>
               )}
@@ -493,8 +495,8 @@ export function ModuleCanvasPage(): JSX.Element {
             </Panel>
           )}
         </ReactFlow>
-      </CanvasPoolProvider>
-      </CanvasActionsProvider>
+      </BoardPoolProvider>
+      </BoardActionsProvider>
       {rewriteTarget !== null && (
         <RewritePartDialog
           module={currentModule}
@@ -519,11 +521,11 @@ export function ModuleCanvasPage(): JSX.Element {
 
 // --- helpers -------------------------------------------------------------------
 
-function nodeTypeFor(key: string): CanvasFlowNode['type'] {
+function nodeTypeFor(key: string): BoardFlowNode['type'] {
   if (key === CANVAS_PREMISE_NODE_KEY) return 'premise';
   if (planIndexFromCanvasNodeKey(key) !== null) return 'part';
   if (key.startsWith('prior-')) return 'prior';
-  throw new Error(`Unknown canvas node key: ${key}`);
+  throw new Error(`Unknown board node key: ${key}`);
 }
 
 /** The plan×part JOIN per part node key (title/band from the plan, the rest
@@ -566,7 +568,7 @@ function priorSlicesFor(priorModules: readonly Module[]) {
   }));
 }
 
-function MissingCanvas({ message, campaignId }: { message: string; campaignId: string }): JSX.Element {
+function MissingBoard({ message, campaignId }: { message: string; campaignId: string }): JSX.Element {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
       <p className="text-sm text-muted-foreground">{message}</p>

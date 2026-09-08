@@ -1,8 +1,8 @@
 import { create } from 'zustand';
 
 /**
- * Staged canvas rewrites (08-MODULE-DESIGNER §Module canvas, owner decision):
- * the decision layer for per-part rewrites on the canvas. NO DIFFS and no
+ * Staged board rewrites (08-MODULE-DESIGNER §Module board, owner decision):
+ * the decision layer for per-part rewrites on the board. NO DIFFS and no
  * side-by-side view — the rewritten text renders on the card AS-IS with a
  * clear "proposed" framing, the previous text stays readable on demand via
  * the card's "Show previous" toggle, and the owner decides with Apply or
@@ -17,7 +17,7 @@ import { create } from 'zustand';
  *
  * Flow: `stageProposal` when the rewrite starts (captures the OLD text and
  * the module row stays the engine's business) → `appendGhost` streams tokens
- * into the ghost preview (rAF-throttled by the canvas page — partial text
+ * into the ghost preview (rAF-throttled by the board page — partial text
  * never touches the module row) → `finishProposal` when the engine's ready
  * write landed (newMarkdown = the complete text) → the owner either Applys
  * (markApplied → the save path lands the text with edited:true → drop) or
@@ -28,7 +28,7 @@ import { create } from 'zustand';
 export type StagedRewriteStatus = 'proposed' | 'applied';
 
 export interface StagedRewrite {
-  /** The canvas node key (`part-<planIndex>`). */
+  /** The board node key (`part-<planIndex>`). */
   nodeKey: string;
   planIndex: number;
   /** The text the part had before the rewrite — "Show previous" reads this. */

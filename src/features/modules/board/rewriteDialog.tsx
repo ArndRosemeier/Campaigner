@@ -16,8 +16,8 @@ import { Switch } from '@/components/ui/switch';
 import type { Module } from '@/domain';
 
 /**
- * Per-part "Rewrite…" dialog on the canvas (08-MODULE-DESIGNER §Module
- * canvas): an optional steering instruction plus the opt-in prior-modules
+ * Per-part "Rewrite…" dialog on the board (08-MODULE-DESIGNER §Module
+ * board): an optional steering instruction plus the opt-in prior-modules
  * toggle, defaulting to the module row's own `includePriorModules` flag (the
  * flag is overridden FOR THIS RUN only — the row is untouched). The prior-
  * modules context itself is the engine's verbatim `priorModulesContext`
@@ -30,7 +30,7 @@ export function RewritePartDialog({
   onClose,
 }: {
   module: Module;
-  /** The part to rewrite: plan index + its stable canvas node key. */
+  /** The part to rewrite: plan index + its stable board node key. */
   target: { planIndex: number; nodeKey: string };
   onConfirm: (instruction: string, includePriorModules: boolean) => void;
   onClose: () => void;
@@ -45,7 +45,7 @@ export function RewritePartDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent data-testid="canvas-rewrite-dialog">
+      <DialogContent data-testid="board-rewrite-dialog">
         <DialogHeader>
           <DialogTitle>Rewrite part {String(target.planIndex + 1)}</DialogTitle>
           <DialogDescription>
@@ -67,9 +67,9 @@ export function RewritePartDialog({
           </p>
         )}
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="canvas-rewrite-instruction">Optional instruction</Label>
+          <Label htmlFor="board-rewrite-instruction">Optional instruction</Label>
           <Input
-            id="canvas-rewrite-instruction"
+            id="board-rewrite-instruction"
             placeholder='e.g. "make the villain a child"'
             value={instruction}
             onChange={(event) => {
@@ -79,14 +79,14 @@ export function RewritePartDialog({
         </div>
         <div className="flex items-center gap-2">
           <Switch
-            id="canvas-rewrite-prior-modules"
+            id="board-rewrite-prior-modules"
             checked={includePriorModules}
             onCheckedChange={setIncludePriorModules}
             aria-label="Include previous modules in the rewrite context"
-            data-testid="canvas-rewrite-prior-modules"
+            data-testid="board-rewrite-prior-modules"
           />
           <Label
-            htmlFor="canvas-rewrite-prior-modules"
+            htmlFor="board-rewrite-prior-modules"
             className="text-xs text-muted-foreground"
           >
             Continue from previous modules (settled history)
@@ -97,7 +97,7 @@ export function RewritePartDialog({
             Cancel
           </Button>
           <Button
-            data-testid="canvas-rewrite-confirm"
+            data-testid="board-rewrite-confirm"
             onClick={() => {
               onConfirm(instruction.trim(), includePriorModules);
             }}

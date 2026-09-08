@@ -6,7 +6,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import {
   ROUTES,
-  canvasPath,
+  boardPath,
   deliverablesPath,
   graphPath,
   workspacePath,
@@ -102,7 +102,7 @@ async function seedSmokeWorld(): Promise<{ campaignId: string; moduleId: string 
     }),
   ]);
 
-  // One generated module (spine + one ready part) — the canvas route sweep
+  // One generated module (spine + one ready part) — the board route sweep
   // and the reader both need a real module row.
   const moduleDraft = createModule({
     campaignId: campaign.id,
@@ -301,11 +301,11 @@ describe('route smoke sweep', () => {
     );
   });
 
-  it('module canvas route mounts with cards and the attribution badge', async () => {
-    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+  it('module board route mounts with cards and the attribution badge', async () => {
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
 
-    expect(await screen.findByTestId('canvas-premise-card', {}, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByTestId('canvas-part-0')).toBeInTheDocument();
+    expect(await screen.findByTestId('board-premise-card', {}, { timeout: 10_000 })).toBeInTheDocument();
+    expect(screen.getByTestId('board-part-0')).toBeInTheDocument();
     // React Flow attribution: rendered by default, never hidden.
     expect(document.querySelector('.react-flow__attribution')).not.toBeNull();
   });

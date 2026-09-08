@@ -15,7 +15,7 @@ import {
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { artifactPath, battlePath, canvasPath, modulesPath } from '@/app/routes';
+import { artifactPath, battlePath, boardPath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -411,17 +411,18 @@ export function ModuleReaderPage(): JSX.Element {
                 <SwordsIcon aria-hidden data-icon="inline-start" />
                 Battle table
               </Button>
-              {/* Whole-module canvas (08 §Module canvas): the second module
-                  child surface, beside the battle table entry. */}
+              {/* Whole-module board (08 §Module board) — the module's
+                  spatial overview: the second module child surface, beside
+                  the battle table entry. */}
               <Button
                 variant="outline"
                 size="xs"
-                data-testid="canvas-header-link"
-                render={<Link to={canvasPath(campaignId, moduleId)} />}
+                data-testid="board-header-link"
+                render={<Link to={boardPath(campaignId, moduleId)} />}
                 nativeButton={false}
               >
                 <NetworkIcon aria-hidden data-icon="inline-start" />
-                Canvas
+                Board
               </Button>
               <Button
                 variant="ghost"

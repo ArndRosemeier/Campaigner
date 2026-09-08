@@ -9,18 +9,18 @@ import {
 import { buildWikiGraph, type WikiGraphMention } from '@/domain/wikiGraph';
 
 /**
- * Canvas continuity edges (08-MODULE-DESIGNER §Module canvas): a prior
+ * Board continuity edges (08-MODULE-DESIGNER §Module board): a prior
  * module's text group connects to the CURRENT module's premise/part card
  * when both texts mention the same canonical wiki-name — derived from
  * `buildWikiGraph`'s per-document mentions, so resolution follows exactly
  * the reader's pool + per-module tier-0 conventions (13-WIKI-GRAPH). Pure.
  *
  * The derivation is CAPPED and the cap is surfaced (never silent): a long
- * campaign can share dozens of names, and a canvas buried under edges is
+ * campaign can share dozens of names, and a board buried under edges is
  * noise, not information — the page renders a "+N more" honesty note.
  */
 
-export interface CanvasContinuityEdge {
+export interface BoardContinuityEdge {
   /** Stable edge id: `<source>|<target>`. */
   id: string;
   /** Prior module's text-group node key. */
@@ -34,13 +34,13 @@ export interface CanvasContinuityEdge {
 }
 
 export interface ContinuityDerivation {
-  edges: CanvasContinuityEdge[];
+  edges: BoardContinuityEdge[];
   /** How many ranked edges were dropped behind the cap. */
   truncated: number;
 }
 
 /** Maximum drawn continuity edges (most-mentioned first, deterministic). */
-export const CANVAS_CONTINUITY_EDGE_CAP = 12;
+export const BOARD_CONTINUITY_EDGE_CAP = 12;
 
 /** Builds the derived wiki graph with NO node cap (edges own the honesty cap). */
 const UNCAPPED = Number.MAX_SAFE_INTEGER;
@@ -97,7 +97,7 @@ export function deriveContinuityEdges(input: {
       a.names.join(',').localeCompare(b.names.join(',')) ||
       idA.localeCompare(idB),
   );
-  const kept = ranked.slice(0, CANVAS_CONTINUITY_EDGE_CAP);
+  const kept = ranked.slice(0, BOARD_CONTINUITY_EDGE_CAP);
   return {
     edges: kept.map(([id, entry]) => ({
       id,
