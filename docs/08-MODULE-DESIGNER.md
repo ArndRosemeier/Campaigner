@@ -187,15 +187,20 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
   combat, social, exploration, discovery, and recovery according to the story
   and the group's enjoyment. Let the fiction and pacing decide the exact
   structure rather than filling a quota mechanically.
-- As a soft planning guideline, aim for roughly **1–4 encounters per level**
-  across the module. This is advice, not a requirement: create fewer when
-  tension, travel, investigation, or character moments need room; create more
-  only when the adventure supports that pace. An encounter may be combat,
-  social conflict, exploration, hazard, negotiation, chase, puzzle, or another
-  scene with meaningful risk and player agency. Place encounters deliberately
-  in the parts where they make narrative and gameplay sense, vary their type
-  and intensity, and reserve climactic encounters for an earned escalation.
-  Never pad the module with repetitive or disposable encounters.
+- REQUIREMENT — encounter floor: name at least **one distinct encounter per
+  level** of the module's range (levels X–Y → at least N distinct encounters
+  across the module), with each part naming at least as many encounters as
+  the levels its band covers. An encounter may be combat, social conflict,
+  exploration, hazard, negotiation, chase, puzzle, or another scene with
+  meaningful risk and player agency. Place encounters deliberately in the
+  parts where they make narrative and gameplay sense, vary their type and
+  intensity — include at least one outright combat, one hazard or chase, and
+  one social conflict where someone must come out worse — and reserve
+  climactic encounters for an earned escalation. Never pad the module with
+  repetitive or disposable encounters. The kind mix is directed, not gated:
+  no encounter-type signal exists in the pipeline to count from (a kind
+  quota is a follow-up slice), but the COUNT is hard (see the floor gate
+  below) — the 4× ceiling stays advisory and never fails.
 - Introduce as many locations, NPCs, factions, notes, and encounters as the
   story needs — you are not required to detail any of them in the spine. Give
   every planned encounter a distinctive, stable name, declare it as
@@ -203,7 +208,7 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
   wiki-link (`[[Encounter Name]]`) so it can be resolved into an encounter
   artifact later.
 - Reuse existing campaign entities by their exact names when they fit; do not
-  invent duplicates to satisfy the soft encounter guideline.
+  invent duplicates to fill out the encounter floor.
 
 Output zod `ModuleSpineSchema` (premise, themes, partPlan with all four
 fields; partPlan length 1..20) **plus `entities: [{ name, kind }]`** — the
@@ -214,6 +219,11 @@ spine loudly — no client-side heuristic ever decides a type).
 `responseFormat:'json'`, same invalid-JSON-retry-once policy as personas;
 second failure → module `status:'failed'` + errorMessage (loud, per AGENTS
 rule 1).
+
+**Spine encounter gate:** after the spine saves, zero `kind: "encounter"`
+records trigger ONE repair retry on the escalated model (a corrected spine
+that names encounters); a second zero-encounter record fails the spine
+loudly — a zero-encounter draft never parks on the checkpoint.
 
 **Checkpoint (default): the spine is shown for approval** — editable premise
 textarea and part-plan table (edit titles/synopses/bands, add/remove/reorder
@@ -245,8 +255,33 @@ For part i, the user message contains:
      parts and the campaign index,
    - target length by sizeDial: sketch ≈ 400–700 words, standard ≈ 800–1500,
      detailed ≈ 1500–2500 (soft targets, stated in the prompt),
+   - REQUIREMENT — this part's encounter share (stated with the concrete
+     number): name at least as many distinct encounters as the levels the
+     part's band covers, as `[[Encounter Name]]` wiki-links; encounters
+     named in other parts do not count toward this part's share,
    - no stat blocks in the prose — mechanics belong to linked entities;
      reference DCs/checks inline where natural.
+
+**Encounter-floor gate (hard):** after the parts loop AND the
+name-normalization pass, but BEFORE the ready write, `runParts` counts the
+floor on the normalized canonicals (`countModuleEncounters` — pure: the set
+of lowercased `extractWikiLinks(moduleDocumentText)` targets whose recorded
+kind is `"encounter"` against levelCount, allocated per band with
+`levelsInLevelBand`; bands `1`, `2-3`, `2–3`, `2 - 3` parse, unparseable = 1;
+reuse counts; the 4× ceiling stays advisory and never fails high;
+sizeDial-independent). Each deficient part in the run's scope gets ONE
+repair rewrite via the `rewritePart` engine (`generatePart`) on the
+escalated model — hand-edited parts are never touched (they fail loud
+instead) — then the pass re-normalizes and recounts. A full run owns the
+whole-module total; a subset run (single-part rewrite/retry) owns only its
+parts' band shares. Still short →
+module `status:'failed'` with an `errorMessage` naming the deficient part
+titles/bands + `toastError`; good parts are preserved (no rollback — parts
+are individually regenerable, and a failed repair restores the pre-repair
+prose) and the post-generation automation is
+SKIPPED on every tail (`approveSpineAndRun`, `generateMissingParts`, the
+`autoApproveSpine` tails). Batch entity generation alone can never satisfy
+the floor: the count reads prose wiki-links, not artifact records.
 
 Output is **plain markdown — no JSON, no zod** for the prose itself. Empty or
 <100-char output = failure (retry once, then part `status:'failed'`). Strip a
@@ -483,7 +518,10 @@ has `autoApproveSpine`). A single-part rewrite NEVER triggers it. Semantics:
   dismissible with Esc.
 - Killing the network mid-pass-1 yields a failed part with a Retry button and
   a completed rest-of-module; nothing silently placeholders (AGENTS rule 1).
-- No numeric entity quotas exist anywhere in the new UI.
+- ~~No numeric entity quotas exist anywhere in the new UI.~~ Struck:
+  the encounter floor is a hard numeric quota — a module whose document
+  names fewer distinct encounters than its level count (allocated per band)
+  fails loudly instead of shipping ready (see the floor gate above).
 
 ## Non-goals
 

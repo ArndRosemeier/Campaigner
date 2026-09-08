@@ -89,10 +89,12 @@ const VALID_SPINE = {
     },
   ],
   // 08 §M4-C: the model declares each entity's kind when it invents the name.
+  // The encounter record keeps the pass-0 spine gate quiet (08 §M4-B).
   entities: [
     { name: 'Warden Bellamy', kind: 'npc' },
     { name: 'The Drowned Cathedral', kind: 'location' },
     { name: 'The Tide Cult', kind: 'faction' },
+    { name: 'The Bells Below', kind: 'encounter' },
   ],
 };
 
@@ -102,6 +104,7 @@ const SELF_NORMALIZATION = {
     { name: 'Warden Bellamy', canonical: 'Warden Bellamy', kind: 'npc' },
     { name: 'The Drowned Cathedral', canonical: 'The Drowned Cathedral', kind: 'location' },
     { name: 'The Tide Cult', canonical: 'The Tide Cult', kind: 'faction' },
+    { name: 'The Bells Below', canonical: 'The Bells Below', kind: 'encounter' },
   ],
 };
 
@@ -121,6 +124,22 @@ function partWithNames(marker: string, names: string[]): ChatResult {
     modelUsed: 'test-model',
     fallback: null,
   };
+}
+
+/** A normalization reply mapping every listed name to itself with its kind. */
+function normalizationReply(entries: { name: string; kind: string }[]): ChatResult {
+  return {
+    text: JSON.stringify({
+      entities: entries.map((entry) => ({ name: entry.name, canonical: entry.name, kind: entry.kind })),
+    }),
+    modelUsed: 'test-model',
+    fallback: null,
+  };
+}
+
+/** Shorthand for an all-encounter normalization reply. */
+function encounterReply(...names: string[]): ChatResult {
+  return normalizationReply(names.map((name) => ({ name, kind: 'encounter' })));
 }
 
 async function seedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
@@ -381,9 +400,12 @@ describe('runParts', () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
     chatMock
-      .mockResolvedValueOnce(partMarkdown('PART-ONE'))
-      .mockResolvedValueOnce(partMarkdown('PART-TWO'))
-      .mockResolvedValueOnce(partMarkdown('PART-THREE'));
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Ember Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      // The post-parts normalization pass maps the three encounters (08 §M4-B
+      // floor gate counts on these canonicals).
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
 
     const finished = await runParts(moduleId, campaign);
 
@@ -398,7 +420,7 @@ describe('runParts', () => {
       expect(part?.markdown).toContain(marker);
     }
 
-    expect(chatMock).toHaveBeenCalledTimes(3);
+    expect(chatMock).toHaveBeenCalledTimes(4);
     // Calls happen in plan order, one per part.
     expect(userPromptOf(0)).toContain('Write part 1: "The Sunken Quarter"');
     expect(userPromptOf(1)).toContain('Write part 2: "The Drowned Cathedral"');
@@ -406,19 +428,27 @@ describe('runParts', () => {
     // Part 0 has no predecessor; the word target comes from the size dial.
     expect(userPromptOf(0)).not.toContain('Full markdown of the previous part');
     expect(userPromptOf(0)).toContain('800–1500 words');
+    // Every part prompt states its encounter share (08 §M4-B REQUIREMENT).
+    expect(userPromptOf(0)).toContain('encounter floor for this part');
     // Continuity = the FINAL markdown of the previous part.
     expect(userPromptOf(1)).toContain('Full markdown of the previous part');
     expect(userPromptOf(1)).toContain('PART-ONE');
     expect(userPromptOf(2)).toContain('PART-TWO');
   }, 20000);
 
-  it('continues past a failed part and still lands the module on ready', async () => {
+  it('repairs a failed part against the floor and still lands the module on ready', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
     chatMock
-      .mockResolvedValueOnce(partMarkdown('PART-ONE'))
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Ember Trial']))
       .mockRejectedValueOnce(new Error('provider exploded mid-part'))
-      .mockResolvedValueOnce(partMarkdown('PART-THREE'));
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      // First normalization: only the two landed parts name encounters.
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Bell Trial'))
+      // The floor gate's ONE repair rewrite for the failed part.
+      .mockResolvedValueOnce(partWithNames('PART-TWO-REPAIRED', ['Flood Trial']))
+      // Second normalization after the repair.
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
 
     const finished = await runParts(moduleId, campaign);
 
@@ -426,11 +456,14 @@ describe('runParts', () => {
     const [one, two, three] = finished.parts;
     expect(one?.status).toBe('ready');
     expect(one?.markdown).toContain('PART-ONE');
-    expect(two?.status).toBe('failed');
-    expect(two?.errorMessage).toBe('provider exploded mid-part');
-    expect(two?.markdown).toBe('');
+    expect(two?.status).toBe('ready');
+    expect(two?.markdown).toContain('PART-TWO-REPAIRED');
     expect(three?.status).toBe('ready');
     expect(three?.markdown).toContain('PART-THREE');
+    // Bounded repair: 3 part calls + 1 normalization + 1 repair + 1
+    // re-normalization — exactly one rewrite for the deficient part.
+    expect(chatMock).toHaveBeenCalledTimes(6);
+    expect(userMessagesOf(4)).toContain('Encounter floor repair');
     // The immediate predecessor of part 3 is failed, so its prompt carries no
     // continuity section at all (the impl never falls back to an earlier part).
     expect(userPromptOf(2)).not.toContain('Full markdown of the previous part');
@@ -443,11 +476,12 @@ describe('runParts', () => {
     await seedSpine(moduleId);
     chatMock
       .mockResolvedValueOnce({ text: 'The bell rings at midnight.', modelUsed: 'test-model', fallback: null }) // 27 chars: too short
-      .mockResolvedValueOnce(partMarkdown('PART-ONE-RETRY'));
+      .mockResolvedValueOnce(partWithNames('PART-ONE-RETRY', ['Ember Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial'));
 
     const finished = await runParts(moduleId, campaign, { planIndexes: [0] });
 
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(chatMock).toHaveBeenCalledTimes(3);
     expect(userMessagesOf(1)).toContain('Your previous reply was too short');
     const part = finished.parts.find((entry) => entry.planIndex === 0);
     expect(part?.status).toBe('ready');
@@ -455,20 +489,29 @@ describe('runParts', () => {
     expect(finished.status).toBe('ready');
   }, 20000);
 
-  it('fails the part when the retry is also too short, without sinking the module', async () => {
+  it('fails the module loudly when the floor repair also comes up short', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
+    // Every prose call is too short: the initial write AND the floor repair.
     chatMock.mockResolvedValue({ text: 'The bell rings at midnight.', modelUsed: 'test-model', fallback: null });
 
     const finished = await runParts(moduleId, campaign, { planIndexes: [0] });
 
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    // 2 initial (short + short retry → part failed, no names → no
+    // normalization call) + 2 repair (short + short retry → still failed).
+    expect(chatMock).toHaveBeenCalledTimes(4);
     const part = finished.parts.find((entry) => entry.planIndex === 0);
     expect(part?.status).toBe('failed');
     expect(part?.errorMessage).toContain('too short');
     expect(part?.markdown).toBe('');
-    expect(finished.status).toBe('ready');
-    expect(toastErrorMock).not.toHaveBeenCalled();
+    // The gate fails the module LOUDLY — never ready, parts named.
+    expect(finished.status).toBe('failed');
+    expect(finished.errorMessage).toContain('Encounter floor not met');
+    expect(finished.errorMessage).toContain('The Sunken Quarter');
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Module generation failed: encounter floor not met',
+      expect.any(Error),
+    );
   }, 20000);
 });
 
@@ -476,15 +519,16 @@ describe('generateMissingParts', () => {
   it('only generates the parts that are not ready yet', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
-    await seedReadyPart(moduleId, 0, partMarkdown('PART-ONE-ORIGINAL'));
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE-ORIGINAL', ['Ember Trial']));
     chatMock
-      .mockResolvedValueOnce(partMarkdown('PART-TWO'))
-      .mockResolvedValueOnce(partMarkdown('PART-THREE'));
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
 
     await generateMissingParts(moduleId, campaign);
 
     // Part 0 was ready and is never re-called.
-    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(chatMock).toHaveBeenCalledTimes(3);
     expect(userPromptOf(0)).toContain('Write part 2:');
     expect(userPromptOf(0)).not.toContain('Write part 1:');
     expect(userPromptOf(1)).toContain('Write part 3:');
@@ -514,13 +558,16 @@ describe('rewritePart', () => {
   it('passes the instruction, reuses the predecessor text, overwrites, resets edited', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
-    await seedReadyPart(moduleId, 0, partMarkdown('PART-ONE-ORIGINAL'));
-    await seedReadyPart(moduleId, 1, partMarkdown('PART-TWO-OLD'), { edited: true });
-    chatMock.mockResolvedValueOnce(partMarkdown('PART-TWO-NEW'));
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE-ORIGINAL', ['Ember Trial']));
+    await seedReadyPart(moduleId, 1, partWithNames('PART-TWO-OLD', ['Flood Trial']), { edited: true });
+    await seedReadyPart(moduleId, 2, partWithNames('PART-THREE-ORIGINAL', ['Bell Trial']));
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-TWO-NEW', ['Flood Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
 
     await rewritePart(moduleId, campaign, 1, 'Foreshadow the bell tower more heavily.');
 
-    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).toHaveBeenCalledTimes(2);
     const prompt = userPromptOf(0);
     expect(prompt).toContain(
       'Additional instruction from the GM: Foreshadow the bell tower more heavily.',
@@ -874,28 +921,48 @@ describe('entity name normalization (fix-01)', () => {
     expect(chatMock).toHaveBeenCalledTimes(2);
   }, 20000);
 
-  it('runParts normalizes prose-invented names after the run; a failure keeps the module ready and toasts', async () => {
+  it('normalization failure plus an encounter shortfall fails the module loudly (both recorded)', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);
     chatMock
       .mockResolvedValueOnce(partWithNames('PART-ONE', ['Kael']))
       .mockResolvedValueOnce(partWithNames('PART-TWO', ['The Undercroft']))
       .mockResolvedValueOnce(partWithNames('PART-THREE', []))
+      // The normalization pass fails twice (call + retry) — and the prose
+      // names no encounters, so the floor gate cannot pass either.
+      .mockRejectedValueOnce(new Error('normalization provider down'))
+      .mockRejectedValueOnce(new Error('normalization provider down'))
+      // The floor repair rewrites each deficient part once — the provider is
+      // still down, so every repair fails on its part row.
+      .mockRejectedValueOnce(new Error('normalization provider down'))
+      .mockRejectedValueOnce(new Error('normalization provider down'))
       .mockRejectedValueOnce(new Error('normalization provider down'));
 
     const finished = await runParts(moduleId, campaign);
 
-    // Three part calls + one normalization call.
-    expect(chatMock).toHaveBeenCalledTimes(4);
-    expect(finished.status).toBe('ready');
+    // 3 part calls + 1 normalization attempt (a transport error fails the
+    // pass outright — only invalid replies retry) + exactly ONE repair
+    // attempt per deficient part (3) + 1 re-normalization attempt: the
+    // repair is bounded, then the module fails loudly.
+    expect(chatMock).toHaveBeenCalledTimes(8);
+    expect(finished.status).toBe('failed');
+    expect(finished.errorMessage).toContain('Encounter floor not met');
+    // Good parts are preserved: the failed repairs restored the pre-repair
+    // prose (no rollback of content — the parts stay retryable).
     expect(finished.parts.every((part) => part.status === 'ready')).toBe(true);
-    // The failure is recorded on the row and toasted, but does NOT sink the
-    // finished run — and batch generation stays gated.
+    expect(finished.parts[0]?.markdown).toContain('PART-ONE');
+    // The normalization failure stays recorded on the row (loud, retryable
+    // in the panel) — the floor message says the count used stale kinds.
     const after = await getModule(moduleId);
     expect(after?.entityNamesNormalized).toBe(false);
     expect(after?.entityNormalizationError).toContain('normalization provider down');
+    expect(finished.errorMessage).toContain('last recorded kinds');
     expect(toastErrorMock).toHaveBeenCalledWith(
       'Entity name normalization failed — retry from the entity panel',
+      expect.any(Error),
+    );
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Module generation failed: encounter floor not met',
       expect.any(Error),
     );
   }, 20000);

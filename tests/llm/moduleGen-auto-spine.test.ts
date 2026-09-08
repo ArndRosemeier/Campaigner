@@ -52,7 +52,7 @@ const chatMock = vi.mocked(chat);
 
 const TEST_MODEL = 'test/fixture-model';
 
-/** Spine with `entities: []` so the pass-0 normalization call is skipped. */
+/** Spine with one encounter record so the pass-0 floor gate stays quiet. */
 const AUTO_SPINE = {
   premise: 'A bell tower that answers questions asked at midnight, at a price.',
   themes: ['curiosity', 'debt'],
@@ -70,14 +70,31 @@ const AUTO_SPINE = {
       levelUpTrigger: 'The tower falls silent.',
     },
   ],
-  entities: [],
+  entities: [{ name: 'The Midnight Inquiry', kind: 'encounter' }],
 };
 
-/** Part prose well above the 100-char floor, deliberately without wiki-links
- * (so the post-parts normalization pass makes no model call). */
-function partMarkdown(marker: string): ChatResult {
+/** The spine-entity normalization reply: the record maps to itself. */
+const AUTO_NORMALIZATION = {
+  entities: [{ name: 'The Midnight Inquiry', canonical: 'The Midnight Inquiry', kind: 'encounter' }],
+};
+
+/** Part prose well above the 100-char floor, naming one distinct encounter
+ * (the 08 §M4-B floor gate counts prose wiki-links on normalized canonicals,
+ * so the post-parts normalization pass makes exactly one model call). */
+function partMarkdown(marker: string, encounter: string): ChatResult {
   return {
-    text: `${marker}: The tower door opens onto a spiral stair that counts its own steps aloud. `.repeat(4),
+    text: `${marker}: The tower door opens onto a spiral stair that counts its own steps aloud. `.repeat(4) + ` Trial faced: [[${encounter}]].`,
+    modelUsed: 'test-model',
+    fallback: null,
+  };
+}
+
+/** Normalization reply mapping prose encounters to kind encounter. */
+function encounterNormalization(...names: string[]): ChatResult {
+  return {
+    text: JSON.stringify({
+      entities: names.map((name) => ({ name, canonical: name, kind: 'encounter' })),
+    }),
     modelUsed: 'test-model',
     fallback: null,
   };
@@ -98,7 +115,10 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null }) // pass 0
-      .mockResolvedValue(partMarkdown('part')); // every pass-1 call
+      .mockResolvedValueOnce({ text: JSON.stringify(AUTO_NORMALIZATION), modelUsed: 'test-model', fallback: null }) // spine entities
+      .mockResolvedValueOnce(partMarkdown('part-one', 'First Trial')) // pass 1
+      .mockResolvedValueOnce(partMarkdown('part-two', 'Second Trial'))
+      .mockResolvedValueOnce(encounterNormalization('First Trial', 'Second Trial')); // post-parts entities
 
     const moduleId = await createModuleAndRun(campaign, {
       campaignId: campaign.id,
@@ -126,13 +146,16 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
     // The unattended tail fires the post-generation automation exactly once.
     expect(runModulePostGenerationMock).toHaveBeenCalledTimes(1);
     expect(runModulePostGenerationMock).toHaveBeenCalledWith(moduleId, campaign);
-    // 1 spine call + 2 part calls — no checkpoint in between.
-    expect(chatMock).toHaveBeenCalledTimes(3);
+    // 1 spine call + 1 spine normalization + 2 part calls + 1 post-parts
+    // normalization — the floor gate passes, so no repair calls.
+    expect(chatMock).toHaveBeenCalledTimes(5);
   }, 20000);
 
   it('stops at the spine checkpoint when the flag is off (default)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    chatMock.mockResolvedValue({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null });
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({ text: JSON.stringify(AUTO_NORMALIZATION), modelUsed: 'test-model', fallback: null });
 
     const moduleId = await createModuleAndRun(campaign, {
       campaignId: campaign.id,
@@ -172,7 +195,10 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
 
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null }) // retried pass 0
-      .mockResolvedValue(partMarkdown('retry')); // pass 1
+      .mockResolvedValueOnce({ text: JSON.stringify(AUTO_NORMALIZATION), modelUsed: 'test-model', fallback: null }) // spine entities
+      .mockResolvedValueOnce(partMarkdown('retry-one', 'First Trial')) // pass 1
+      .mockResolvedValueOnce(partMarkdown('retry-two', 'Second Trial'))
+      .mockResolvedValueOnce(encounterNormalization('First Trial', 'Second Trial')); // post-parts entities
 
     await retrySpine(saved.id, campaign);
 

@@ -1074,7 +1074,10 @@ data model, run-engine threading, UI, docs); the gate at completion is
   and re-derives placement.
 - Module generation with encounters: encounter stubs become full encounters
   with maps unattended; a failing encounter reports loudly and does not stop
-  the queue; retry re-runs only the failed job.
+  the queue; retry re-runs only the failed job. The module itself ships under
+  a hard encounter floor (docs/08 §M4-B): at least one distinct named
+  encounter per level, allocated per part band — counted from the prose
+  wiki-links, never from generated artifacts.
 - An uploaded-map encounter (no layout) behaves exactly as today.
 - Room keys & mob treasure (D9): a generated brief's room keys persist on
   the finalized layout rooms through packing rotation and the staging

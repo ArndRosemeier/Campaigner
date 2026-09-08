@@ -1,5 +1,5 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
-import { createModule, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
+import { createModule, entityKindFor, moduleDocumentText, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
 import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
@@ -271,31 +271,82 @@ export async function runSpine(
     // artifacts BEFORE storage — the glossary the checkpoint approves is
     // canonical from the start. A normalization failure fails the spine
     // loudly (same policy as the spine reply itself).
-    const artifacts = await listArtifactsByCampaign(campaign.id);
-    const artifactNames = artifacts.map((artifact) => artifact.name);
-    const spineNames = entityKinds.map((entry) => entry.name);
-    let normalizedKinds: ModuleEntityKind[] = [];
-    if (spineNames.length > 0) {
-      const verdicts = await normalizationCall(
-        normalizationMessages(
-          spineNames.map((name) => ({
-            name,
-            context: surroundingParagraphs(spine.premise, name, NORMALIZE_CONTEXT_CAP),
-          })),
+    const normalizeAndSave = async (
+      nextSpine: ModuleSpine,
+      nextKinds: ModuleEntityKind[],
+    ): Promise<Module> => {
+      const artifacts = await listArtifactsByCampaign(campaign.id);
+      const artifactNames = artifacts.map((artifact) => artifact.name);
+      const spineNames = nextKinds.map((entry) => entry.name);
+      let normalizedKinds: ModuleEntityKind[] = [];
+      if (spineNames.length > 0) {
+        const verdicts = await normalizationCall(
+          normalizationMessages(
+            spineNames.map((name) => ({
+              name,
+              context: surroundingParagraphs(nextSpine.premise, name, NORMALIZE_CONTEXT_CAP),
+            })),
+            artifactNames,
+            nextSpine.premise,
+          ),
+          settings.defaultChatModel,
+          spineNames,
           artifactNames,
-          spine.premise,
-        ),
-        settings.defaultChatModel,
-        spineNames,
-        artifactNames,
+        );
+        normalizedKinds = canonicalEntityRecords(verdicts);
+      }
+      const saved = await patchModule(moduleId, {
+        spine: nextSpine,
+        entityKinds: normalizedKinds,
+        status: 'draft',
+        errorMessage: '',
+      });
+      // LINKS hook: the generated premise may reuse another module's entities
+      // by exact name — a second-module use promotes them to shared campaign
+      // ownership before the checkpoint approves the spine.
+      await promoteSecondModuleUses(moduleId, [nextSpine.premise]);
+      return saved;
+    };
+    let saved = await normalizeAndSave(spine, entityKinds);
+    // Encounter-floor spine gate (08 §M4-B): a spine declaring zero encounter
+    // records gets ONE repair retry on the escalated model — a corrected spine
+    // that names encounters. A second zero-encounter record fails the spine
+    // loudly (never a silent zero-encounter draft).
+    if (!saved.entityKinds.some((entry) => entry.kind === 'encounter')) {
+      const levelCount = saved.levelMax - saved.levelMin + 1;
+      const { text: retryRaw } = await chat(
+        [
+          ...messages,
+          {
+            role: 'user',
+            content:
+              `Your spine declares no encounters, but the module requires at least one distinct encounter per level ` +
+              `(levels ${String(saved.levelMin)}–${String(saved.levelMax)} → at least ${String(levelCount)} encounters). ` +
+              `Reply with corrected JSON only (same schema): keep the premise, themes and part plan, and declare every planned encounter ` +
+              `in entities with kind "encounter", each under a distinctive, stable name.`,
+          },
+        ],
+        {
+          // Floor repair escalates to the fallback model: a missing encounter
+          // plan is usually a capability weakness of the first-try model.
+          model: repairModel(settings.defaultChatModel, settings),
+          temperature: 0.8,
+          reasoningEffort: settings.defaultReasoningEffort,
+          responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
+          signal: controller.signal,
+          ...streamHandlers,
+        },
       );
-      normalizedKinds = canonicalEntityRecords(verdicts);
+      const retrySpine = parseSpine(retryRaw);
+      const retryKinds = parseSpineEntities(retryRaw);
+      saved = await normalizeAndSave(retrySpine, retryKinds);
+      if (!saved.entityKinds.some((entry) => entry.kind === 'encounter')) {
+        throw new Error(
+          'The spine declares no encounters after the repair retry — ' +
+            'a module needs at least one encounter record per level. Retry the spine draft.',
+        );
+      }
     }
-    const saved = await patchModule(moduleId, { spine, entityKinds: normalizedKinds, status: 'draft', errorMessage: '' });
-    // LINKS hook: the generated premise may reuse another module's entities
-    // by exact name — a second-module use promotes them to shared campaign
-    // ownership before the checkpoint approves the spine.
-    await promoteSecondModuleUses(moduleId, [spine.premise]);
     return saved;
   } catch (error) {
     await failModule(moduleId, error, controller.signal);
@@ -477,9 +528,15 @@ async function spineMessages(
       '- Every level in the range must be covered by exactly one part.',
       '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up).',
       '- Think like an experienced GM designing for real players: prioritize fun, meaningful choices, varied pacing, memorable moments, clear stakes, and challenges that are exciting without feeling arbitrary or hopeless. Balance combat, social, exploration, discovery, and recovery according to the story and the group’s enjoyment. Let the fiction and pacing decide the exact structure rather than filling a quota mechanically.',
-      '- As a soft planning guideline, aim for roughly 1–4 encounters per level across the module. This is advice, not a requirement: create fewer when tension, travel, investigation, or character moments need room; create more only when the adventure supports that pace. An encounter may be combat, social conflict, exploration, hazard, negotiation, chase, puzzle, or another scene with meaningful risk and player agency. Place encounters deliberately in the parts where they make narrative and gameplay sense, vary their type and intensity, and reserve climactic encounters for an earned escalation. Never pad the module with repetitive or disposable encounters.',
+      '- REQUIREMENT — encounter floor: name at least one distinct encounter per level of this module\'s range ' +
+        `(levels ${module.levelMin}–${module.levelMax} → at least ${levelCount} distinct encounters across the module), ` +
+        'with each part naming at least as many encounters as the levels its band covers. ' +
+        'An encounter may be combat, social conflict, exploration, hazard, negotiation, chase, puzzle, or another scene with meaningful risk and player agency. ' +
+        'Place encounters deliberately in the parts where they make narrative and gameplay sense, vary their type and intensity ' +
+        '— include at least one outright combat, one hazard or chase, and one social conflict where someone must come out worse — ' +
+        'and reserve climactic encounters for an earned escalation. Never pad the module with repetitive or disposable encounters.',
       '- Introduce as many locations, NPCs, factions, notes, and encounters as the story needs — you are not required to detail any of them in the spine. Give every planned encounter a distinctive, stable name and declare it with kind "encounter" in entities when introduced. When the module references an encounter in prose, use a wiki-link ([[Encounter Name]]) so it can be resolved into an encounter artifact later.',
-      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a social/non-combat occasion — same shape as a location), "faction" (an organization or group), "encounter" (a named combat, challenge, or tactical set piece), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title. Reuse existing campaign entities by their exact names when they fit; do not invent duplicates to satisfy the soft encounter guideline.',
+      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a social/non-combat occasion — same shape as a location), "faction" (an organization or group), "encounter" (a named combat, challenge, or tactical set piece), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title. Reuse existing campaign entities by their exact names when they fit; do not invent duplicates to fill out the encounter floor.',
       '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
     ].join('\n'),
     extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
@@ -518,6 +575,119 @@ async function failModule(moduleId: Id, error: unknown, signal: AbortSignal): Pr
   }
   const message = errorMessage(error);
   await patchModule(moduleId, { status: 'failed', errorMessage: message });
+}
+
+// --- Encounter floor (hard, 08 §M4-B) ------------------------------------------
+
+/**
+ * Levels covered by one part's levelBand (`1`, `2-3`, `2–3`, `2 - 3` — hyphen,
+ * en/em dash, optional spaces); anything unparseable counts as 1 level, never
+ * 0 (an unreadable band must not zero out the part's quota).
+ */
+export function levelsInLevelBand(levelBand: string): number {
+  const match = /^\s*(\d{1,2})\s*(?:[-–—]\s*(\d{1,2}))?\s*$/.exec(levelBand);
+  if (match === null) return 1;
+  const from = Number(match[1]);
+  const to = match[2] === undefined ? from : Number(match[2]);
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return 1;
+  return Math.max(1, Math.abs(to - from) + 1);
+}
+
+/** One part's share of the encounter floor. */
+export interface PartEncounterCount {
+  planIndex: number;
+  title: string;
+  levelBand: string;
+  /** Levels the band covers = encounters this part's markdown must name. */
+  required: number;
+  /** Distinct canonical encounters named in this part's markdown. */
+  found: number;
+}
+
+/** The whole-module encounter floor report (pure — see `countModuleEncounters`). */
+export interface EncounterFloorReport {
+  /** Distinct canonical encounters named in the whole document text. */
+  found: number;
+  /** levelMax − levelMin + 1. */
+  required: number;
+  perPart: PartEncounterCount[];
+  /** Parts naming fewer encounters than their band covers. */
+  deficient: PartEncounterCount[];
+}
+
+/**
+ * Distinct canonical encounter names in one markdown text: the set of
+ * lowercased `extractWikiLinks` targets whose recorded
+ * `entityKindFor(entityKinds, name)` is `'encounter'` (post-normalization
+ * canonicals — aliases already rewrote to `[[canonical|display]]`, so
+ * variants fold onto the canonical; existing-campaign reuse counts because
+ * the record exists either way). Records alone never count: an encounter
+ * entity with no `[[link]]` in the text contributes nothing.
+ */
+function encounterNamesIn(
+  markdown: string,
+  entityKinds: readonly ModuleEntityKind[],
+): Set<string> {
+  const names = new Set<string>();
+  for (const link of extractWikiLinks(markdown)) {
+    if (entityKindFor(entityKinds, link.name) !== 'encounter') continue;
+    names.add(link.name.trim().toLowerCase());
+  }
+  return names;
+}
+
+/**
+ * Counts the module's encounter floor (pure): the whole-document distinct
+ * encounter set against levelCount, allocated per band — each part's
+ * markdown must name at least `levelsInLevelBand` encounters. A part with no
+ * written row counts 0. sizeDial-independent; the 4× ceiling stays advisory
+ * and is never counted here (over-quota never fails).
+ */
+export function countModuleEncounters(module: Module): EncounterFloorReport {
+  const required = Math.max(1, module.levelMax - module.levelMin + 1);
+  const perPart: PartEncounterCount[] = (module.spine?.partPlan ?? []).map((plan, planIndex) => {
+    const part = module.parts.find((entry) => entry.planIndex === planIndex);
+    const found = part === undefined ? 0 : encounterNamesIn(part.markdown, module.entityKinds).size;
+    return {
+      planIndex,
+      title: plan.title,
+      levelBand: plan.levelBand,
+      required: levelsInLevelBand(plan.levelBand),
+      found,
+    };
+  });
+  const found = encounterNamesIn(moduleDocumentText(module), module.entityKinds).size;
+  const deficient = perPart.filter((entry) => entry.found < entry.required);
+  return { found, required, perPart, deficient };
+}
+
+/** Loud failure copy for the floor gate — names every deficient part. */
+export function encounterFloorMessage(report: EncounterFloorReport): string {
+  const base =
+    `Encounter floor not met: the module needs ${String(report.required)} distinct named ` +
+    `encounters for its level range but the document names ${String(report.found)}.`;
+  if (report.deficient.length > 0) {
+    const parts = report.deficient
+      .map(
+        (entry) =>
+          `"${entry.title}" (band ${entry.levelBand}): needs ${String(entry.required)}, names ${String(entry.found)}`,
+      )
+      .join('; ');
+    return `${base} Deficient parts: ${parts}.`;
+  }
+  return `${base} Every part meets its band quota but names repeat across parts — add distinct encounters.`;
+}
+
+/**
+ * Throws when the module is short of its encounter floor (total distinct OR
+ * any band allocation). The runParts gate catches the report itself for the
+ * repair pass; this is the fail-loud verdict shared by the gate and tests.
+ */
+export function assertEncounterFloor(module: Module): void {
+  const report = countModuleEncounters(module);
+  if (report.found < report.required || report.deficient.length > 0) {
+    throw new Error(encounterFloorMessage(report));
+  }
 }
 
 // --- Pass 1 — parts ----------------------------------------------------------
@@ -622,16 +792,123 @@ export async function runParts(
       progress.update(jobId, { progress: index / total });
     }
 
-    const result = await patchModule(moduleId, { status: 'ready', errorMessage: '' });
     progress.update(jobId, { progress: 1, detail: 'Normalizing entity names…' });
     // Entity name normalization (fix-01): one call after the parts land —
     // canonical names, kinds, link rewrites and aliases. A failure is
-    // recorded on the module row (loud, batch gated, Retry in the panel) but
-    // must NOT fail the completed run — there is nothing safe to fall back to.
-    await normalizeModuleEntityNames(moduleId).catch((error: unknown) => {
+    // recorded on the module row (loud, batch gated, Retry in the panel).
+    const recordNormalizationFailure = (error: unknown): void => {
       toastError('Entity name normalization failed — retry from the entity panel', error);
+    };
+    await normalizeModuleEntityNames(moduleId).catch(recordNormalizationFailure);
+    // Encounter-floor gate (08 §M4-B): counted on the NORMALIZED canonicals,
+    // before the ready write — a short module is never shipped as ready.
+    // Each deficient part in this run's scope gets ONE repair rewrite (the
+    // rewritePart engine on the escalated model — see the repairModel
+    // rationale on partCall); hand-edited parts are NOT touched (their text
+    // changes only on explicit consent — they fail loud instead). Then
+    // re-normalize, recount, and fail the module loudly when still short.
+    // Good parts are preserved (no rollback — parts are individually
+    // regenerable); callers skip the post-generation automation on failure.
+    const scope = new Set(planIndexes);
+    // A full run owns the whole-module total; a subset run (single-part
+    // rewrite/retry) owns only its parts' band shares — it can neither fix
+    // nor answer for the rest of the module.
+    const isFullRun = (module: Module): boolean =>
+      module.spine?.partPlan.every((_, index) => scope.has(index)) ?? false;
+    const inScopeTargets = (module: Module): PartEncounterCount[] => {
+      const report = countModuleEncounters(module);
+      const deficient = report.deficient.filter((entry) => scope.has(entry.planIndex));
+      if (deficient.length > 0) return deficient;
+      // Full run whose bands are met but whose total repeats across parts:
+      // every in-scope part must add DISTINCT encounters.
+      if (isFullRun(module) && report.found < report.required) {
+        return report.perPart.filter((entry) => scope.has(entry.planIndex));
+      }
+      return [];
+    };
+    const isFloorBlocking = (module: Module): boolean => {
+      const report = countModuleEncounters(module);
+      if (isFullRun(module)) return report.found < report.required || report.deficient.length > 0;
+      return report.deficient.some((entry) => scope.has(entry.planIndex));
+    };
+    let gated = await requireModule(moduleId);
+    const repairTargets = inScopeTargets(gated).filter((target) => {
+      const part = gated.parts.find((entry) => entry.planIndex === target.planIndex);
+      return part?.edited !== true;
     });
-    return result;
+    if (repairTargets.length > 0) {
+      progress.update(jobId, { progress: 1, detail: 'Repairing encounter shortfall…' });
+      const floorRepairModel = repairModel(settings.defaultChatModel, settings);
+      for (const target of repairTargets) {
+        if (controller.signal.aborted) {
+          throw new DOMException('Module generation was cancelled', 'AbortError');
+        }
+        const current = await requireModule(moduleId);
+        if (current.spine === null) throw new Error('The spine was removed mid-generation');
+        try {
+          await generatePart(moduleId, current, target.planIndex, campaign, floorRepairModel, {
+            signal: controller.signal,
+            extraInstruction:
+              `Encounter floor repair: this part covers levels ${target.levelBand} ` +
+              `(${String(target.required)} level(s)) and must name at least ${String(target.required)} ` +
+              `distinct encounter(s) in its markdown as [[Encounter Name]] wiki-links — scenes with meaningful risk ` +
+              `and player agency (combat, hazard, chase, social conflict, or another tactical set piece). ` +
+              `It currently names ${String(target.found)}. Add the missing encounters; keep the part's story, ` +
+              `characters and continuity intact. Encounters already named in other parts do not count toward this part's share.`,
+            onToken: undefined,
+            onReasoning: undefined,
+            onActivity: undefined,
+            onEmbeddingProgress: undefined,
+          });
+        } catch (error) {
+          if (isCancel(error, controller.signal)) throw error;
+          // A failed repair must not destroy the part's pre-repair prose:
+          // restore the snapshot when the repair left nothing behind (and no
+          // newer hand-edit landed meanwhile). The recount below still fails
+          // the module loudly with the part named — the user retries the
+          // part itself.
+          const snapshot = current.parts.find((entry) => entry.planIndex === target.planIndex);
+          const live = (await getModule(moduleId))?.parts.find(
+            (entry) => entry.planIndex === target.planIndex,
+          );
+          if (
+            snapshot !== undefined &&
+            live?.markdown === '' &&
+            !(live.edited && !snapshot.edited)
+          ) {
+            const restored = (await requireModule(moduleId)).parts.filter(
+              (entry) => entry.planIndex !== target.planIndex,
+            );
+            restored.push(snapshot);
+            restored.sort((a, b) => a.planIndex - b.planIndex);
+            await patchModule(moduleId, { parts: restored });
+          }
+        }
+      }
+      progress.update(jobId, { progress: 1, detail: 'Normalizing entity names…' });
+      await normalizeModuleEntityNames(moduleId).catch(recordNormalizationFailure);
+      gated = await requireModule(moduleId);
+    }
+    const floorReport = countModuleEncounters(gated);
+    if (isFloorBlocking(gated)) {
+      let floorMessage = encounterFloorMessage(floorReport);
+      if (!gated.entityNamesNormalized) {
+        floorMessage +=
+          ' Entity name normalization did not succeed for the current text, so the count uses the last recorded kinds — retry normalization from the entity panel if this looks wrong.';
+      }
+      const editedDeficient = floorReport.deficient.filter((entry) =>
+        gated.parts.some((part) => part.planIndex === entry.planIndex && part.edited),
+      );
+      if (editedDeficient.length > 0) {
+        floorMessage +=
+          ` Hand-edited part(s) ${editedDeficient.map((entry) => `"${entry.title}"`).join(', ')} ` +
+          `were left untouched — add the missing [[encounter]] links by hand or rewrite.`;
+      }
+      toastError('Module generation failed: encounter floor not met', new Error(floorMessage));
+      await patchModule(moduleId, { status: 'failed', errorMessage: floorMessage });
+      return (await getModule(moduleId)) ?? gated;
+    }
+    return await patchModule(moduleId, { status: 'ready', errorMessage: '' });
   } catch (error) {
     if (isCancel(error, controller.signal)) {
       // Parts already written stay; the interrupted part keeps its slot
@@ -811,6 +1088,7 @@ async function partCall(
       '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters. Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
       '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token — write [[Halmund]]s Haus, not [[Halmunds]] Haus (English genitive: [[Halmund]]\'s tower). Never bake roles or titles into the token — write [[Halmund|the guard Halmund]], not [[Guard Halmund]]. Use [[Name|display]] whenever the surface text must differ from the canonical name. The same rules apply in any language.',
       `- Target length for this part: ${MODULE_SIZE_WORD_TARGETS[module.sizeDial]} (soft target).`,
+      `- REQUIREMENT — encounter floor for this part (levels ${plan.levelBand}: ${String(levelsInLevelBand(plan.levelBand))} level(s)): name at least ${String(levelsInLevelBand(plan.levelBand))} distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, each a scene with meaningful risk and player agency — combat, hazard, chase, social conflict, or another tactical set piece. Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.`,
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
     ].join('\n'),
     options.extraInstruction === '' ? null : `Additional instruction from the GM: ${options.extraInstruction}`,
@@ -1173,7 +1451,10 @@ export function normalizePartMarkdown(raw: string): string {
  * spine checkpoint (`autoApproveSpine`) — the unattended tail of the flow.
  */
 async function runAutomatedParts(moduleId: Id, campaign: Campaign): Promise<void> {
-  await runParts(moduleId, campaign).catch(() => undefined);
+  const finished = await runParts(moduleId, campaign).catch(() => undefined);
+  // The encounter-floor gate (or a cancel) can leave the module short of
+  // ready — automation follows a COMPLETED parts pass only.
+  if (finished?.status !== 'ready') return;
   // Post-generation automation (opt-in, module row) — fired by the engine
   // because this path has no user interaction to trigger it. The
   // orchestrator is idempotent, loud on its own, and never imports this
@@ -1194,7 +1475,10 @@ export async function approveSpineAndRun(
   await patchModule(moduleId, { spine });
   // LINKS hook: a user-edited spine may link another module's entities.
   await promoteSecondModuleUses(moduleId, [spine.premise]);
-  await runParts(moduleId, campaign).catch(() => undefined);
+  const finished = await runParts(moduleId, campaign).catch(() => undefined);
+  // A floor-gated (or cancelled) parts pass leaves the module short of
+  // ready — the automation follows a COMPLETED pass only.
+  if (finished?.status !== 'ready') return;
   void runModulePostGeneration(moduleId, campaign);
 }
 
@@ -1231,7 +1515,10 @@ export async function generateMissingParts(moduleId: Id, campaign: Campaign): Pr
       return part?.status !== 'ready';
     });
   if (indexes.length === 0) return;
-  await runParts(moduleId, campaign, { planIndexes: indexes }).catch(() => undefined);
+  const finished = await runParts(moduleId, campaign, { planIndexes: indexes }).catch(() => undefined);
+  // A floor-gated (or cancelled) parts pass leaves the module short of
+  // ready — the automation follows a COMPLETED pass only.
+  if (finished?.status !== 'ready') return;
   void runModulePostGeneration(moduleId, campaign);
 }
 

@@ -210,17 +210,37 @@ describe('escape debris in module parts', () => {
       }),
     );
     await patchModule(saved.id, { spine: moduleSpineSchema.parse(VALID_SPINE) });
+    const encounterVerdict = {
+      text: JSON.stringify({
+        entities: [{ name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    };
     chatMock
-      .mockResolvedValueOnce({ text: partMarkdown('PART-ONE'), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: `${partMarkdown('PART-ONE')} Trial faced: [[Ember Trial]].`, modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce({
         text: `${partMarkdown('PART-TWO')} The chapel stands by the Flussm?fcndung.`,
         modelUsed: 'test-model',
         fallback: null,
-      });
+      })
+      .mockResolvedValueOnce(encounterVerdict) // post-parts normalization
+      // The floor gate's ONE repair rewrite for the debris-failed part comes
+      // back with debris again — the part stays failed, the module fails loud.
+      .mockResolvedValueOnce({
+        text: `${partMarkdown('PART-TWO-REPAIR')} The chapel stands by the Flussm?fcndung.`,
+        modelUsed: 'test-model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce(encounterVerdict); // re-normalization
 
     const finished = await runParts(saved.id, campaign, { planIndexes: [0, 1] });
 
-    expect(finished.status).toBe('ready');
+    // The encounter floor cannot pass with the debris part missing — the
+    // module fails LOUDLY naming the part instead of shipping ready.
+    expect(finished.status).toBe('failed');
+    expect(finished.errorMessage).toContain('Encounter floor not met');
+    expect(finished.errorMessage).toContain('The Drowned Cathedral');
     const [one, two] = finished.parts;
     expect(one?.status).toBe('ready');
     expect(one?.markdown).toContain('PART-ONE');
