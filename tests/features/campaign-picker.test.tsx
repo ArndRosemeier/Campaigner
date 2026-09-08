@@ -3,7 +3,13 @@ import 'fake-indexeddb/auto';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('sonner', () => ({
+  toast: { error: vi.fn(), success: vi.fn(), info: vi.fn(), loading: vi.fn() },
+}));
+
+import { toast } from 'sonner';
 
 import { ROUTES } from '@/app/routes';
 import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
@@ -233,6 +239,72 @@ describe('CampaignPickerPage import dependencies', () => {
     // Abort-before-tx: the source campaign stands alone.
     expect(await listCampaigns()).toHaveLength(1);
   });
+
+/**
+ * Import-failure toasts (error-humanization arc): every failure toast
+ * carries MITIGATION, not just cause — and never a raw JSON dump. The
+ * dep-summary DIALOG already covers missing deps (above); these pins cover
+ * the toast paths (unparseable bytes, schema rejects).
+ */
+describe('CampaignPickerPage import failure toasts', () => {
+  const toastErrorMock = vi.mocked(toast.error);
+
+  beforeEach(clearDatabase);
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  function uploadFile(name: string, text: string, type: string): void {
+    renderPicker();
+    const input = screen.getByTestId('import-input');
+    Object.defineProperty(input, 'files', {
+      value: [new File([text], name, { type })],
+    });
+    fireEvent.change(input);
+  }
+
+  it('unparseable bytes toast the cause PLUS the version mitigation', async () => {
+    // The seam logs the full raw error to the console (one click away in
+    // devtools) — mocked here per the no-console-noise test rule, and the
+    // assertion below pins that the log happened.
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    uploadFile('dep.json', 'this is not json{{{', 'application/json');
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalled();
+    });
+    const [title, options] = toastErrorMock.mock.calls[0] as [
+      string,
+      { description?: string },
+    ];
+    expect(title).toBe('Import failed — is this a Campaigner export?');
+    expect(options.description).toContain('same version');
+    // A SyntaxError is not Zod-shaped: no console dump, cause + mitigation.
+    expect(consoleSpy).not.toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
+  it('schema rejects toast a grouped summary, never raw JSON', async () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    uploadFile('dep.json', '{"format":"nope"}', 'application/json');
+
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalled();
+    });
+    const [title, options] = toastErrorMock.mock.calls[0] as [
+      string,
+      { description?: string },
+    ];
+    expect(title).toBe('Import failed — is this a Campaigner export?');
+    const description = options.description ?? '';
+    expect(description).toContain('same version');
+    expect(description).not.toContain('"code"');
+    // The full raw ZodError went to the console, not the toast.
+    expect(consoleSpy).toHaveBeenCalledTimes(1);
+    consoleSpy.mockRestore();
+  });
+});
 
   it('Import anyway lands the campaign with `missing ref` encounters', async () => {
     const user = userEvent.setup();

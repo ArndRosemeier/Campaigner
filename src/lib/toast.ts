@@ -1,11 +1,30 @@
 import { toast } from 'sonner';
 
+import { humanizeZodIssues, zodIssuesOf } from '@/lib/zodErrorSummary';
+
 /**
  * The single toast seam (00-OVERVIEW global conventions): errors shown to
  * users go through here, never through ad-hoc `sonner` calls in features.
+ *
+ * Humanize-at-the-seam rule (05-UI §Error surfaces): a ZodError's `.message`
+ * IS the raw `[{code,path,message}...]` array, so it is NEVER rendered
+ * verbatim — the description carries the counted/grouped/capped summary
+ * instead, and the full raw error goes to the console (one click away in
+ * devtools, never megabytes in the toast). The leading `message` title is
+ * untouched: only the description is humanized, so every existing caller's
+ * copy reads exactly as before.
  */
+function errorDescription(error: unknown): string | undefined {
+  const issues = zodIssuesOf(error);
+  if (issues !== null) {
+    console.error(error);
+    return humanizeZodIssues(issues);
+  }
+  return error instanceof Error ? error.message : undefined;
+}
+
 export function toastError(message: string, error?: unknown): void {
-  const detail = error instanceof Error ? error.message : undefined;
+  const detail = errorDescription(error);
   if (detail === undefined) {
     toast.error(message);
   } else {
@@ -20,7 +39,7 @@ export function toastError(message: string, error?: unknown): void {
  * until the user dismisses them (00-OVERVIEW "No silent fallbacks").
  */
 export function toastErrorPersistent(message: string, error?: unknown): void {
-  const detail = error instanceof Error ? error.message : undefined;
+  const detail = errorDescription(error);
   if (detail === undefined) {
     toast.error(message, { duration: Infinity });
   } else {

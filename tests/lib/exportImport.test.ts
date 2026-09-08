@@ -22,6 +22,7 @@ import {
   ruleChunkSchema,
   statBlockSchema,
   stampNewEntity,
+  type DependencyAnalysis,
   type StatBlock,
 } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
@@ -36,6 +37,7 @@ import {
   MissingDependenciesError,
   parseExport,
   parseExportTolerant,
+  withImportMitigation,
 } from '@/lib/exportImport';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { db } from '@/db/db';
@@ -1262,5 +1264,101 @@ describe('import retired-row tolerance', () => {
     expect(result.createdArtifacts).toBe(1);
     expect(result.skippedRetired).toBe(1);
     expect(result.skippedNames).toEqual(['Session 3']);
+  });
+});
+
+/**
+ * Import-failure readability (error-humanization arc): the
+ * `MissingDependenciesError` message itself reads as STEPS (it surfaces in
+ * non-dialog contexts too — any `importExport`/`importZip` caller), and
+ * `withImportMitigation` guarantees no import toast states just a cause.
+ */
+describe('import failure readability', () => {
+  /** Minimal blocking-citation shape: the error reads only verdict + L1 title. */
+  interface FakeBlockingCitation {
+    citation: { bookTitle?: string };
+    verdict: 'present' | 'version-drift' | 'missing';
+    fuzzyHints: string[];
+  }
+
+  function fakeAnalysis(
+    overrides: {
+      citations?: FakeBlockingCitation[];
+      unmetLibraryRefs?: DependencyAnalysis['unmetLibraryRefs'];
+      blockingCitations?: number;
+    } = {},
+  ): DependencyAnalysis {
+    return {
+      citations: [],
+      books: [],
+      unmetLibraryRefs: [],
+      pinnedMissing: [],
+      clean: false,
+      blockingCitations: 0,
+      ...overrides,
+    } as unknown as DependencyAnalysis;
+  }
+
+  it('MissingDependenciesError reads as numbered steps naming the missing titles', () => {
+    const error = new MissingDependenciesError(
+      fakeAnalysis({
+        blockingCitations: 2,
+        citations: [
+          {
+            citation: { bookTitle: 'Monster Core' },
+            verdict: 'missing',
+            fuzzyHints: [],
+          },
+          {
+            citation: { bookTitle: 'Monster Core' },
+            verdict: 'version-drift',
+            fuzzyHints: [],
+          },
+        ],
+      }),
+    );
+    expect(error.message).toContain('1.');
+    expect(error.message).toContain('Import bestiary pack');
+    expect(error.message).toContain('Monster Core');
+    expect(error.message).toContain('2.');
+    expect(error.message).toContain('missing ref');
+    // Titles dedupe — one install target, not two.
+    expect(error.message.match(/Monster Core/g)).toHaveLength(1);
+  });
+
+  it('MissingDependenciesError steps survive an untitled gap (unmet NPC refs)', () => {
+    const error = new MissingDependenciesError(
+      fakeAnalysis({
+        unmetLibraryRefs: [
+          {
+            artifactId: '11111111-1111-4111-8111-111111111111',
+            artifactName: 'Goblin ambush',
+            kind: 'encounter',
+            monsterName: 'Grimm',
+            npcArtifactId: '22222222-2222-4222-8222-222222222222',
+            status: 'not-exported',
+          },
+        ],
+      }),
+    );
+    expect(error.message).toContain('NPC');
+    expect(error.message).toContain('1.');
+    expect(error.message).toContain('2.');
+  });
+
+  it('withImportMitigation passes Zod-shaped and deps errors through, mitigates the rest', async () => {
+    const { z } = await import('zod');
+    const parsed = z.object({ name: z.string() }).safeParse({});
+    if (parsed.success) throw new Error('fixture should fail validation');
+    expect(withImportMitigation(parsed.error)).toBe(parsed.error);
+
+    const deps = new MissingDependenciesError(fakeAnalysis());
+    expect(withImportMitigation(deps)).toBe(deps);
+
+    const plain = new Error('Not a Campaigner zip export (manifest missing)');
+    const wrapped = withImportMitigation(plain);
+    expect(wrapped).not.toBe(plain);
+    expect(wrapped.message).toContain('Not a Campaigner zip export (manifest missing)');
+    expect(wrapped.message).toContain('same version');
   });
 });

@@ -31,6 +31,7 @@ import {
 } from '@/domain';
 import { listRevisions } from '@/db/artifactRepo';
 import { bytesFromBase64 } from '@/lib/base64';
+import { zodIssuesOf } from '@/lib/zodErrorSummary';
 import { db } from '@/db/db';
 
 /**
@@ -356,6 +357,13 @@ export interface ImportOptions {
  * abort-policy refuses an import with unmet dependencies. Carries the full
  * `DependencyAnalysis` so the picker can render the dep-summary dialog
  * instead of a bare toast. Never thrown for `import-anyway` imports.
+ *
+ * The message itself reads as STEPS (not a paragraph) because it also
+ * surfaces in non-dialog contexts (any `importExport`/`importZip` caller
+ * outside the picker): 1. the Rules install surface naming the missing
+ * book titles from the blocking citations' L1 identity (the same titles
+ * the dialog lists — never invented), 2. retry, or the import-anyway
+ * consequence.
  */
 export class MissingDependenciesError extends Error {
   readonly analysis: DependencyAnalysis;
@@ -374,14 +382,43 @@ export class MissingDependenciesError extends Error {
         `${String(unmet)} NPC ${unmet === 1 ? 'reference points' : 'references point'} outside the export`,
       );
     }
+    const titles = [
+      ...new Set(
+        analysis.citations
+          .filter((entry) => entry.verdict !== 'present')
+          .map((entry) => entry.citation.bookTitle)
+          .filter((title): title is string => title !== undefined),
+      ),
+    ];
+    const install =
+      titles.length > 0 ? ` and install: ${titles.join(', ')}` : ' the listed book(s)';
     super(
       `Import needs rulebook content missing from this library (${parts.join('; ')}). ` +
-        `Install the listed book(s) in Rules (“Import bestiary pack”, or re-import the rulebook PDF), ` +
-        `then import again — or import anyway and the encounters will show ‘missing ref’ until then.`,
+        `1. In Rules, choose “Import bestiary pack” (or re-import the rulebook PDF)${install}. ` +
+        `2. Import this file again. ` +
+        `Or import anyway — the encounters land with ‘missing ref’ markers until the content is installed.`,
     );
     this.name = 'MissingDependenciesError';
     this.analysis = analysis;
   }
+}
+
+/**
+ * Mitigation for import-failure toasts that carry no mitigation of their
+ * own. Zod-shaped failures pass through untouched (the toast seam
+ * humanizes them AND appends the version-skew mitigation) and
+ * `MissingDependenciesError` passes through untouched (its message is
+ * already steps, and the picker shows the dialog instead of a toast) —
+ * every other import failure gets the version-skew mitigation appended so
+ * no import toast ever states just a cause.
+ */
+export function withImportMitigation(error: unknown): Error {
+  if (zodIssuesOf(error) !== null) return error as Error;
+  if (error instanceof MissingDependenciesError) return error;
+  const cause = error instanceof Error ? error.message : String(error);
+  return new Error(
+    `${cause} Update this instance (or the exporting one) to the same version, re-export, and try again.`,
+  );
 }
 
 /** Zod-validates a parsed export payload at the boundary (loud, never lenient). */

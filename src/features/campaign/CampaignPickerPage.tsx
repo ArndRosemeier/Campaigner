@@ -65,6 +65,7 @@ import {
   MissingDependenciesError,
   parseExportTolerant,
   parseZipExport,
+  withImportMitigation,
   type DependencyPolicy,
 } from '@/lib/exportImport';
 import { groupCitationsByArtifact, type DependencyAnalysis } from '@/domain';
@@ -133,7 +134,11 @@ export function CampaignPickerPage(): JSX.Element {
         ? { kind: 'zip', bytes: new Uint8Array(await file.arrayBuffer()) }
         : { kind: 'json', raw: JSON.parse(await file.text()) as unknown };
     } catch (error) {
-      toastError('Import failed — is this a Campaigner export?', error);
+      // Every import-failure toast carries MITIGATION, not just cause:
+      // Zod-shaped failures ride through untouched (the toast seam
+      // humanizes them and appends the version-skew mitigation); anything
+      // else gets the mitigation appended by `withImportMitigation`.
+      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
       return;
     }
     let analysis: DependencyAnalysis;
@@ -147,7 +152,7 @@ export function CampaignPickerPage(): JSX.Element {
           : parseExportTolerant(payload.raw).export.dependencies;
       analysis = await checkImportDependencies(manifest);
     } catch (error) {
-      toastError('Import failed — is this a Campaigner export?', error);
+      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
       return;
     }
     if (!analysis.clean) {
@@ -163,7 +168,7 @@ export function CampaignPickerPage(): JSX.Element {
         setPendingDeps({ analysis: error.analysis, payload });
         return;
       }
-      toastError('Import failed — is this a Campaigner export?', error);
+      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
     }
   }
 
@@ -175,7 +180,7 @@ export function CampaignPickerPage(): JSX.Element {
       await attemptImport(pending.payload, 'import-anyway');
       setPendingDeps(null);
     } catch (error) {
-      toastError('Import failed — is this a Campaigner export?', error);
+      toastError('Import failed — is this a Campaigner export?', withImportMitigation(error));
     } finally {
       setDepsWorking(false);
     }
