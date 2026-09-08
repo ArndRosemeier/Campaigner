@@ -51,6 +51,11 @@ import { ensureCanonicalMobPortrait, regenerateCanonicalMobPortrait } from '@/fe
  * and publish into the global slot; every later campaign clones the bytes
  * instead of generating. Flavored citations generate locally and never touch
  * the cache — neither read nor write.
+ *
+ * Single-mob entry points (battle surface selection card, docs/11 D5): the
+ * same queue and the same regen phases for ONE already-resolved target
+ * (`enqueueSingleMobPortrait` / `regenerateSingleMobPortrait`) — no second
+ * pipeline, no second detach path.
  */
 
 export interface MobPortraitJob {
@@ -404,6 +409,105 @@ export function enqueueArtifactPortrait(artifact: AnyArtifact, campaignId: Id): 
       name: artifact.name,
     },
   ]);
+}
+
+/**
+ * A single rulebook-cited mob, resolved by a caller that already holds the
+ * identity (the battle surface's selection card resolves its token →
+ * mob artifact via `data.monsterChunkId`, preferring the provenance
+ * encounter's roster entry name for the canonical-vs-flavor citation and
+ * falling back to the artifact name).
+ */
+export interface SingleMobPortraitTarget {
+  campaignId: Id;
+  /** The mob artifact to illustrate (npc with a `monsterChunkId` marker). */
+  artifactId: Id;
+  /** The cited stat-block chunk — grounds the prompt, stat-exempt. */
+  chunkId: Id;
+  /** The citing name (roster entry or artifact name) for the
+   * canonical-vs-flavor citation check the worker performs. */
+  name: string;
+}
+
+/**
+ * The battle-card "Generate portrait" action: ONE chunk-grounded job through
+ * the SAME queue as the editor batch — same dock group shape, same
+ * artifact-keyed dedupe, same skip-if-imaged worker branch, same loud
+ * per-mob failure path. Silent at enqueue time exactly like the batch (the
+ * app-wide progress dock carries the feedback).
+ */
+export function enqueueSingleMobPortrait(target: SingleMobPortraitTarget): void {
+  const name = target.name.trim();
+  if (name === '') {
+    throw new Error('mob portrait: the citing name is empty — name the creature before generating');
+  }
+  useMobPortraitQueue.getState().enqueue([
+    {
+      campaignId: target.campaignId,
+      artifactId: target.artifactId,
+      name,
+      chunkId: target.chunkId,
+    },
+  ]);
+}
+
+export interface SingleMobPortraitRegenResult {
+  /** False when the cover landed elsewhere between the card read and Confirm
+   * (the worker's skip branch would no-op) — the caller replays the
+   * already-generated toast instead of detaching nothing. */
+  regenerated: boolean;
+  /** True when the citation is canonical and the global slot now carries
+   * fresh bytes (the caller owes the loud shared-consequence toast). */
+  republishedCanonical: boolean;
+}
+
+/**
+ * The battle-card "Regenerate portrait" action — the single-mob flavor of
+ * `regenerateMobPortraits` (docs/18: detach-then-enqueue is the one way).
+ * Same four phases on ONE target: resolve + validate with NO side effects
+ * (unknown artifact / unreadable chunk throw loud with the old cover
+ * intact), republish the canonical slot with FRESH bytes first for canonical
+ * citations (flavored citations stay local-only), detach the imaged covers,
+ * then enqueue normally (canonical clones the NEW slot bytes, flavored
+ * generates locally).
+ */
+export async function regenerateSingleMobPortrait(
+  target: SingleMobPortraitTarget,
+): Promise<SingleMobPortraitRegenResult> {
+  const name = target.name.trim();
+  if (name === '') {
+    throw new Error('mob portrait: the citing name is empty — name the creature before regenerating');
+  }
+  const artifact = await getAnyArtifact(target.artifactId);
+  if (artifact === undefined) {
+    throw new Error(
+      `Regenerate mob portrait: the artifact for "${name}" no longer exists — re-run the encounter content to restore it`,
+    );
+  }
+  if (artifact.coverImageId === null && artifact.imageIds.length === 0) {
+    return { regenerated: false, republishedCanonical: false };
+  }
+  const chunk = (await getChunksByIds([target.chunkId]))[0];
+  if (chunk === undefined) {
+    throw new Error(
+      `Regenerate mob portrait: the stat-block chunk for "${name}" no longer exists — kept the existing cover`,
+    );
+  }
+  const canonical = canonicalCreatureName(chunk);
+  const isCanonical = canonical !== null && isCanonicalCitation(canonical, name);
+  if (isCanonical) {
+    await regenerateCanonicalMobPortrait({ chunkId: target.chunkId, campaignId: target.campaignId });
+  }
+  await detachArtifactCovers(target.artifactId, name);
+  useMobPortraitQueue.getState().enqueue([
+    {
+      campaignId: target.campaignId,
+      artifactId: target.artifactId,
+      name,
+      chunkId: target.chunkId,
+    },
+  ]);
+  return { regenerated: true, republishedCanonical: isCanonical };
 }
 
 export interface InventedCreatureBatchResult {

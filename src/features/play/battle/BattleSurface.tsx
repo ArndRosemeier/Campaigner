@@ -8,6 +8,7 @@ import {
   EyeIcon,
   EyeOffIcon,
   FlagIcon,
+  ImageIcon,
   LockIcon,
   LockOpenIcon,
   MinusIcon,
@@ -76,18 +77,33 @@ import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
+import {
+  enqueueSingleMobPortrait,
+  regenerateSingleMobPortrait,
+  type SingleMobPortraitTarget,
+} from '@/features/campaign/mob-portrait-queue';
 import { runBattle } from '@/features/play/run-battle';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { DiceRoller } from '@/features/dice/DiceRoller';
 import type { DiceRollResult, RollIntent } from '@/features/dice/types';
 import { useBattleState } from './use-battle';
 import { InitiativeSidebar } from './initiative-sidebar';
 import { SpawnPicker } from './SpawnPicker';
 import { Button } from '@/components/ui/button';
-import { toastError } from '@/lib/toast';
+import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 /**
@@ -500,6 +516,36 @@ export function BattleSurface(): JSX.Element {
         : null
     : null;
   const selectedEffect = battle?.board.effects.find((effect) => effect.id === selectedEffectId) ?? null;
+  // Battle-card portrait target (docs/11 D5): the selected token's mob
+  // artifact resolved two ways — the artifact's own `monsterChunkId` marker
+  // (the identity battleSeed froze onto the token's artifactId) plus the
+  // provenance encounter's roster entry (chunkId/mobArtifactId match) for the
+  // citing name behind the canonical-vs-flavor check, falling back to the
+  // artifact name. Null (NO action, never a dead button) when player-safe
+  // (portrait generation is a GM action everywhere), when the token has no
+  // artifact, or when its mob has NO rulebook chunk: PCs, real NPCs
+  // (npc-ref), inline synthetics and statless rows stay imageless here —
+  // their portraits are managed in the editor section, never on this card.
+  const selectedPortrait: { target: SingleMobPortraitTarget; hasImage: boolean } | null = useMemo(() => {
+    if (playerSafe || selectedToken === null || selectedArtifact?.kind !== 'npc') return null;
+    const chunkId = selectedArtifact.data.monsterChunkId;
+    if (chunkId === undefined) return null;
+    const roster =
+      encounterArtifact !== 'loading' && encounterArtifact?.kind === 'encounter'
+        ? encounterArtifact.data.monsters
+        : null;
+    const rosterName = roster?.find(
+      (entry) =>
+        entry.source.type === 'rulebook' &&
+        (entry.source.mobArtifactId === selectedArtifact.id || entry.source.chunkId === chunkId),
+    )?.name;
+    const name = (rosterName ?? selectedArtifact.name).trim();
+    if (name === '') return null;
+    return {
+      target: { campaignId, artifactId: selectedArtifact.id, chunkId, name },
+      hasImage: selectedArtifact.coverImageId !== null || selectedArtifact.imageIds.length > 0,
+    };
+  }, [playerSafe, selectedToken, selectedArtifact, encounterArtifact, campaignId]);
 
   function boardPointFromEvent(event: { clientX: number; clientY: number }): { x: number; y: number } {
     // Convert against the CONTENT element's post-transform rect: it bakes the
@@ -1304,6 +1350,44 @@ export function BattleSurface(): JSX.Element {
     setSelectedTokenId(null);
   }
 
+  /** Battle-card "Generate portrait": one chunk-grounded job through the SAME
+   * mob-portrait queue as the editor batch (same dock/dedupe/skip/confirm
+   * behavior). Silent at enqueue exactly like the batch — the app-wide
+   * progress dock carries the feedback; failures land on the queue's loud
+   * per-mob path. */
+  function handleGenerateTokenPortrait(target: SingleMobPortraitTarget): void {
+    try {
+      enqueueSingleMobPortrait(target);
+    } catch (error) {
+      toastError('Could not start portrait generation', error);
+    }
+  }
+
+  /** Battle-card "Regenerate portrait" confirm: the single-mob regen phases
+   * with the SAME confirm + canonical-republish semantics as the editor
+   * section — canonical citations republish fresh bytes to the global slot
+   * with the loud shared-consequence toast, flavored covers stay local-only.
+   * A cover-less target at Confirm time (a cover landed elsewhere in the
+   * window) falls back to a fresh generate instead of detaching nothing. */
+  async function confirmRegenerateTokenPortrait(target: SingleMobPortraitTarget): Promise<void> {
+    try {
+      const result = await regenerateSingleMobPortrait(target);
+      if (!result.regenerated) {
+        enqueueSingleMobPortrait(target);
+        toastInfo(`"${target.name}" has no cover yet — enqueued a fresh portrait instead`);
+        return;
+      }
+      toastSuccess(`Regenerating portrait for "${target.name}" — the existing cover is replaced`);
+      if (result.republishedCanonical) {
+        toastSuccess(
+          `Shared portrait republished for "${target.name}" — future portraits in every campaign use the new art; existing covers elsewhere keep theirs`,
+        );
+      }
+    } catch (error) {
+      toastError(`Could not regenerate a portrait for "${target.name}"`, error);
+    }
+  }
+
   async function liftBattle(): Promise<void> {
     if (battle !== undefined) {
       await saveBattleBoard(battle.id, { ...battle.board, live: false }).catch((error: unknown) => {
@@ -1907,6 +1991,18 @@ export function BattleSurface(): JSX.Element {
               stats={stats}
               statBlock={selectedStatBlock}
               playerSafe={playerSafe}
+              portraitAction={
+                selectedPortrait === null
+                  ? null
+                  : { name: selectedPortrait.target.name, hasImage: selectedPortrait.hasImage }
+              }
+              onGeneratePortrait={() => {
+                if (selectedPortrait !== null) handleGenerateTokenPortrait(selectedPortrait.target);
+              }}
+              onRegeneratePortrait={() => {
+                if (selectedPortrait === null) return Promise.resolve();
+                return confirmRegenerateTokenPortrait(selectedPortrait.target);
+              }}
               onOpenPortrait={() => {
                 setLightboxTokenId(selectedToken.id);
               }}
@@ -2532,6 +2628,19 @@ interface SelectionCardProps {
   stats: FighterStatsLookup;
   statBlock: StatBlock | null;
   playerSafe: boolean;
+  /** Battle-card mob portrait action (docs/11 D5): null hides it — no chunk,
+   * no button. Non-null carries the citing name + whether the mob artifact
+   * already has a cover (Generate vs Regenerate label). GM-only by
+   * construction: it renders inside the token-controls block, which never
+   * mounts in player-safe mode. */
+  portraitAction: { name: string; hasImage: boolean } | null;
+  /** Enqueues one chunk-grounded portrait job (silent — the progress dock
+   * carries it, same as the editor batch). Never rejects. */
+  onGeneratePortrait: () => void;
+  /** Runs the single-mob regen phases with the editor's confirm semantics
+   * (canonical republish toast included) and toasts every outcome — never
+   * rejects, so the card's busy flag is safe to clear unconditionally. */
+  onRegeneratePortrait: () => Promise<void>;
   /** Opens the fullscreen token portrait for this token (the TokenLightbox
    * at the surface root — image + name only, in both modes). The card
    * attaches it to the portrait image only; the initials fallback for
@@ -2563,6 +2672,15 @@ interface SelectionCardProps {
  * Damage / Heal roller buttons, and the piece floats (scale, visibility,
  * remove). Constant ± steppers are gone — the dice roller's own ± modifier
  * steppers cover fixed amounts.
+ *
+ * The same GM-only block carries the mob portrait action for rulebook-cited
+ * mobs (docs/11 D5): no cover yet → "Generate portrait" (one chunk-grounded
+ * job through the existing mob-portrait queue); cover present →
+ * "Regenerate portrait" behind the editor's confirm (canonical citations
+ * republish the shared slot with the loud shared-consequence toast,
+ * flavored covers stay local-only). The portrait IMAGE stays a pure
+ * lightbox button — the action is a separate explicit button, never an
+ * overload of the portrait click.
  */
 function SelectionCard({
   token,
@@ -2570,6 +2688,9 @@ function SelectionCard({
   stats,
   statBlock,
   playerSafe,
+  portraitAction,
+  onGeneratePortrait,
+  onRegeneratePortrait,
   onOpenPortrait,
   onRollHp,
   onToggleVisibility,
@@ -2577,6 +2698,8 @@ function SelectionCard({
   onRemove,
 }: SelectionCardProps): JSX.Element {
   const [cardOpen, setCardOpen] = useState(false);
+  const [portraitRegenOpen, setPortraitRegenOpen] = useState(false);
+  const [portraitBusy, setPortraitBusy] = useState(false);
   // Same art path as TokenView/the artifact cards: useImageUrl over the
   // artifact's coverImageId — no new image plumbing.
   const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
@@ -2692,6 +2815,91 @@ function SelectionCard({
               </Button>
             )}
           </div>
+          {/* Mob portrait action (docs/11 D5, GM-only): rulebook-cited mobs
+              only — portraitAction is null for every chunk-less token, so no
+              dead affordance ever renders. */}
+          {portraitAction !== null && (
+            <>
+              {portraitAction.hasImage ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="min-h-11 w-full"
+                  data-testid="regenerate-token-portrait"
+                  disabled={portraitBusy}
+                  onClick={() => {
+                    setPortraitRegenOpen(true);
+                  }}
+                >
+                  <RotateCcwIcon aria-hidden data-icon="inline-start" />
+                  {portraitBusy ? 'Regenerating…' : 'Regenerate portrait'}
+                </Button>
+              ) : (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="min-h-11 w-full"
+                  data-testid="generate-token-portrait"
+                  disabled={portraitBusy}
+                  onClick={() => {
+                    onGeneratePortrait();
+                  }}
+                >
+                  <ImageIcon aria-hidden data-icon="inline-start" />
+                  Generate portrait
+                </Button>
+              )}
+              <AlertDialog
+                open={portraitRegenOpen}
+                onOpenChange={(next) => {
+                  // Silent dismiss (Esc/backdrop): clears the pending regen
+                  // with no toast — the explicit Cancel below replays the
+                  // already-has-portrait toast, mirroring the editor section.
+                  if (!next) setPortraitRegenOpen(false);
+                }}
+              >
+                <AlertDialogContent data-testid="token-portrait-regen-dialog">
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Regenerate portrait?</AlertDialogTitle>
+                    <AlertDialogDescription data-testid="token-portrait-regen-copy">
+                      Existing cover is replaced — &quot;{portraitAction.name}&quot;. Portrait shows
+                      initials until the new art lands.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel
+                      data-testid="token-portrait-regen-cancel"
+                      onClick={() => {
+                        setPortraitRegenOpen(false);
+                        toastInfo(`"${portraitAction.name}" already has a portrait`);
+                      }}
+                    >
+                      Cancel
+                    </AlertDialogCancel>
+                    <AlertDialogAction
+                      data-testid="token-portrait-regen-confirm"
+                      onClick={() => {
+                        void (async () => {
+                          setPortraitRegenOpen(false);
+                          setPortraitBusy(true);
+                          try {
+                            // Never rejects by contract (every outcome toasts
+                            // inside the handler) — the busy flag clears
+                            // unconditionally below.
+                            await onRegeneratePortrait();
+                          } finally {
+                            setPortraitBusy(false);
+                          }
+                        })();
+                      }}
+                    >
+                      Regenerate
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </>
+          )}
         </div>
       )}
       {/* Mob treasure (owner-ratified): frozen GM-only checklist text from

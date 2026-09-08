@@ -153,6 +153,20 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   always; a canonical citation regenerates by REPUBLISH (below) — a plain
   re-enqueue would clone identical bytes, a no-op regen.
 
+- **Battle-card trigger (2026-09-09)**: the battle surface's selection card
+  offers per-token **Generate portrait** (cover-less) / **Regenerate
+  portrait** (imaged, same confirm) for rulebook-cited mobs, GM-only —
+  `enqueueSingleMobPortrait` / `regenerateSingleMobPortrait`
+  (`src/features/campaign/mob-portrait-queue.ts`): the SAME queue, dock,
+  dedupe, skip, and canonical-republish semantics as the editor batch — no
+  second pipeline, no second detach path (docs/18). The token resolves to
+  its mob artifact via `data.monsterChunkId`; the citing name comes from the
+  provenance encounter's roster entry (chunkId/mobArtifactId match, artifact
+  name fallback). Chunk-less tokens (PCs, real NPCs, inline synthetics,
+  statless rows) show NO action — no dead affordance — and player-safe view
+  never mounts it. The card's portrait image stays a pure lightbox button;
+  the action is a separate explicit button.
+
 ### Content identity at citation birth (chunk-hash-fallback, owner-observed false 'missing ref')
 
 Import keeps cited `chunkId`s as-is (source-instance uuids) but runtime
