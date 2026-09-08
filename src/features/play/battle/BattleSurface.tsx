@@ -51,6 +51,21 @@ import {
   initiativeDragEpoch,
   subscribeInitiativeDragEpoch,
 } from '@/domain/battle/gestureGate';
+import {
+  armMoveGesture,
+  armPanGesture,
+  armResizeGesture,
+  armTapGesture,
+  GESTURE_TAP_THRESHOLD_PX,
+  idleGesture,
+  isGestureActive,
+  isGestureOwner,
+  isGestureTap,
+  promoteToPinch,
+  resetGesture,
+  trackGestureMove,
+  type GestureState,
+} from '@/domain/battle/gestureMachine';
 import { artifactRepo } from '@/db';
 import {
   resetBattleToStage,
@@ -93,13 +108,25 @@ import { cn } from '@/lib/utils';
  *   the fullscreen portrait lightbox (image + name only, Esc/tap-outside
  *   to close). GM taps stay select-only so the rail stays usable.
  *
- * Interactions: drag with a local live position + a single repo commit on
- * release (8px SCREEN-space tap threshold — client px, so the tap window does
- * not scale with zoom); pan from the letterbox, the map image, or the content
- * frame; wheel/button/pinch pan-zoom; veil add/resize; effect edge-handle
- * drag-resize (symmetric, single commit on release) + rail Grow/Shrink;
- * stage set/reset; gated initiative reconcile; HP floats writing to the
- * token (NPC) or the pc artifact (PC).
+ * Interactions (one-gesture-machine): ONE gesture ref
+ * (`domain/battle/gestureMachine`: idle|armed|active ×
+ * token|veil|effect|effectResize|pan|pinch|tap) plus ONE set of board-level
+ * pointer handlers as the sole capture owner — pieces render
+ * `data-gesture-grab` / `data-gesture-resize` hit areas and never own a
+ * stream. Token/veil/effect moves share one start path; veil and effect
+ * handles share the ONE resize gesture (drag, live preview, zero
+ * mid-gesture writes, a single release commit); the rail Grow/Shrink
+ * buttons stay as the discrete-step path. Drags commit with a local live
+ * position + a single repo commit on release (8px SCREEN-space tap
+ * threshold — client px, so the tap window does not scale with zoom);
+ * player-safe presses fold into the machine as taps (release below the
+ * threshold opens the portrait); pan from the letterbox, the map image, or
+ * the content frame; wheel/button/pinch pan-zoom; stage set/reset; gated
+ * initiative reconcile (the gate is a boolean the machine drives — no
+ * counters, no throwing ends); HP floats writing to the token (NPC) or the
+ * pc artifact (PC). Native HTML5 dragstart is suppressed on the board (the
+ * ghost source of the native forbidden cursor) and an active grab always
+ * carries cursor-grabbing.
  *
  * Frames (the bug family this file guards against): the pan/zoom transform
  * lives on the background wrapper and the aspect-fitted CONTENT div inside it
@@ -117,7 +144,8 @@ const ENTRANCE_ROTATION = { north: 0, east: 90, south: 180, west: 270 } as const
 
 const ZOOM_MIN = 0.35;
 const ZOOM_MAX = 4;
-const DRAG_THRESHOLD_PX = 8;
+// The tap/drag threshold lives in the gesture machine (single source) —
+const DRAG_THRESHOLD_PX = GESTURE_TAP_THRESHOLD_PX;
 
 /** Damage/heal clamp shared by both HP owners. */
 function clampHp(value: number, maxHp: number): number {
@@ -151,23 +179,20 @@ export function BattleSurface(): JSX.Element {
   // abort paths cancel the frame (no stale lift after release).
   const pendingDragRef = useRef<LiveDrag | null>(null);
   const dragFrameRef = useRef<number | null>(null);
-  // Effect edge-resize gesture (veil-parity arc): the WHOLE gesture lives in
-  // this ref (base snapshot + latest preview), mirrored to
-  // effectResizePreview for rendering. Synchronous null-out on release/cancel
-  // is the double-finish guard — state alone would still read stale in the
-  // bubbled board-level release. Zero Dexie writes until the single commit.
-  const effectResizeRef = useRef<{
-    base: BattleEffect;
-    edge: EffectEdge;
-    fromSizeCells: number;
-    sizeCells: number;
-    movedPx: number;
-    startClientX: number;
-    startClientY: number;
-  } | null>(null);
+  // Resize previews are RENDER mirrors only — ownership truth (base snapshot,
+  // edge, owning pointer) lives in the gesture machine, so a release finds
+  // the snapshot synchronously even when state still reads stale. Zero Dexie
+  // writes until the single release commit, for veils exactly like effects.
   const [effectResizePreview, setEffectResizePreview] = useState<{
     effectId: BattleEffect['id'];
     sizeCells: number;
+  } | null>(null);
+  const [veilResizePreview, setVeilResizePreview] = useState<{
+    veilId: BattleVeil['id'];
+    x: number;
+    y: number;
+    widthCells: number;
+    heightCells: number;
   } | null>(null);
   const [selectedTokenId, setSelectedTokenId] = useState<BattleTokenId | null>(null);
   const [selectedVeilId, setSelectedVeilId] = useState<BattleVeil['id'] | null>(null);
@@ -199,19 +224,18 @@ export function BattleSurface(): JSX.Element {
   const contentRef = useRef<HTMLDivElement | null>(null);
   const [contentSize, setContentSize] = useState({ w: 0, h: 0 });
   const openedLiveRef = useRef(false);
-  const panRef = useRef<{ pointerId: number; startX: number; startY: number; originX: number; originY: number } | null>(null);
+  // THE gesture machine (one-gesture-machine rebuild): the single ownership
+  // truth for every pointer stream on this board — phase/kind/owning
+  // pointerId/origin plus the in-flight move/resize snapshots. Pieces render
+  // `data-gesture-grab` / `data-gesture-resize` hit areas and never own a
+  // stream; the board-level handlers below (+ capture loss, blur, unmount)
+  // are the sole capture owner. Replaces the old liveDrag/effectResizeRef/
+  // playerTapRef/panRef containers and the gestureGate depth counters.
+  const gestureRef = useRef<GestureState>(idleGesture());
+  // Every board-seen pointer id — pinch pairing counts THESE, never the
+  // machine (the machine holds at most one owner; pinch is multi-pointer).
   const pinchRef = useRef<Map<number, { x: number; y: number }>>(new Map());
   const pinchBaseRef = useRef<{ distance: number; zoom: number } | null>(null);
-  // Player-safe tap tracker: player-safe mode builds no live drag (moving
-  // pieces stays GM-only), so the tap-vs-drag threshold for opening the
-  // fullscreen portrait is tracked here instead — down origin + the max
-  // screen-space distance seen on the token's own move stream.
-  const playerTapRef = useRef<{
-    tokenId: BattleTokenId;
-    movedPx: number;
-    startClientX: number;
-    startClientY: number;
-  } | null>(null);
 
   const { battle, stats, coveredTokenIds, artifacts } = useBattleState(
     campaignId,
@@ -249,13 +273,29 @@ export function BattleSurface(): JSX.Element {
   );
 
   // A coalesced drag frame must never fire after unmount (stale setState on
-  // an unmounted surface).
-  useEffect(() => () => {
-    if (dragFrameRef.current !== null) {
-      cancelAnimationFrame(dragFrameRef.current);
-      dragFrameRef.current = null;
-    }
-    pendingDragRef.current = null;
+  // an unmounted surface) — and a gesture in flight at blur/unmount time
+  // resets to idle with the module gate balanced (an unmounted surface must
+  // never strand reconcile suppression). Cancel-abandon semantics: no commit.
+  useEffect(() => {
+    const resetInFlightGesture = (): void => {
+      if (dragFrameRef.current !== null) {
+        cancelAnimationFrame(dragFrameRef.current);
+        dragFrameRef.current = null;
+      }
+      pendingDragRef.current = null;
+      gestureRef.current = resetGesture();
+      setLiveDrag(null);
+      setEffectResizePreview(null);
+      setVeilResizePreview(null);
+      pinchRef.current.clear();
+      pinchBaseRef.current = null;
+      endBoardGesture();
+    };
+    window.addEventListener('blur', resetInFlightGesture);
+    return () => {
+      window.removeEventListener('blur', resetInFlightGesture);
+      resetInFlightGesture();
+    };
   }, []);
 
   // Track the board's pixel size (coverage + snapping need real px). The
@@ -381,16 +421,33 @@ export function BattleSurface(): JSX.Element {
   }, [battle, liveDrag, coveredTokenIds, playerSafe]);
 
   // Same live-render contract as displayedTokens: a dragged veil follows the
-  // pointer in local state (persisted exactly once on release).
+  // pointer in local state (persisted exactly once on release). An active
+  // handle-drag previews its cell-quantized geometry instead — the two
+  // gestures never co-occur (one machine, one owner).
   const displayedVeils = useMemo(() => {
     if (battle === undefined) return [];
     const drag = liveDrag;
-    if (drag?.tokenId.startsWith('veil:') !== true) return battle.board.veils;
-    const veilId = drag.tokenId.slice('veil:'.length);
-    return battle.board.veils.map((veil) =>
-      veil.id === veilId ? { ...veil, x: drag.x, y: drag.y } : veil,
-    );
-  }, [battle, liveDrag]);
+    if (drag?.tokenId.startsWith('veil:') === true) {
+      const veilId = drag.tokenId.slice('veil:'.length);
+      return battle.board.veils.map((veil) =>
+        veil.id === veilId ? { ...veil, x: drag.x, y: drag.y } : veil,
+      );
+    }
+    if (veilResizePreview !== null) {
+      return battle.board.veils.map((veil) =>
+        veil.id === veilResizePreview.veilId
+          ? {
+            ...veil,
+            x: veilResizePreview.x,
+            y: veilResizePreview.y,
+            widthCells: veilResizePreview.widthCells,
+            heightCells: veilResizePreview.heightCells,
+          }
+          : veil,
+      );
+    }
+    return battle.board.veils;
+  }, [battle, liveDrag, veilResizePreview]);
 
   // Effect markers (D7): the same live-render contract — and NO player-safe
   // filter: effects are showpieces, board material in BOTH views. An active
@@ -522,51 +579,141 @@ export function BattleSurface(): JSX.Element {
     setLiveDrag(null);
   }
 
-  // --- Pointer handling ------------------------------------------------------
+  // --- Pointer handling: ONE machine, board-owned streams -------------------
+  // Pieces render hit areas (`data-gesture-grab` / `data-gesture-resize`)
+  // and never own a stream; these board-level handlers (+ capture loss,
+  // blur, unmount) are the sole capture owner. Every transition consults
+  // gestureRef: arming while busy is ignored (never an overwrite),
+  // moves/ups/cancels from a foreign pointerId are ignored
+  // (pointerId-checked), and every terminal path resets to idle with an
+  // idempotent gate end — imbalance resolves to a reset, never a throw, so
+  // cross-consuming finishes (S1/R1) cannot double-commit.
+
+  /** Board-level capture for the owning pointer — loud abort when it fails. */
+  function acquireBoardCapture(pointerId: number): boolean {
+    const element = boardRef.current;
+    if (element === null || typeof element.setPointerCapture !== 'function') return true;
+    try {
+      element.setPointerCapture(pointerId);
+      return true;
+    } catch (error) {
+      // Capture failure at birth (S5): without the stream a release never
+      // arrives — start no gesture rather than strand one. No live state,
+      // no commit, gate balanced (the arming caller opened it).
+      gestureRef.current = resetGesture();
+      endBoardGesture();
+      toastError('Could not grab the piece — the pointer stream was lost', error);
+      return false;
+    }
+  }
+
+  /** Total reset: abandon everything in flight with ZERO commits. */
+  function abandonGesture(): void {
+    abandonLiveDrag();
+    setEffectResizePreview(null);
+    setVeilResizePreview(null);
+    gestureRef.current = resetGesture();
+    pinchRef.current.clear();
+    pinchBaseRef.current = null;
+    // Idempotent by contract — safe even when this gesture opened no gate
+    // (pan/tap), which is exactly what makes cancel-vs-release races and
+    // cross-consumed finishes unthrowable.
+    endBoardGesture();
+  }
+
+  /** Second-finger promotion: pinch takes over, the piece stream dies. */
+  function promotePinchFromPiece(): void {
+    // The piece's pointer stream is dead and its release will never arrive:
+    // abandon with NO commit (no drop point was chosen) and close the gate
+    // so reconcile resumes — otherwise the piece strands lifted.
+    abandonLiveDrag();
+    setEffectResizePreview(null);
+    setVeilResizePreview(null);
+    gestureRef.current = promoteToPinch();
+    endBoardGesture();
+    pinchBaseRef.current = null;
+  }
 
   function onBoardPointerDown(event: React.PointerEvent<HTMLDivElement>): void {
-    // Two fingers → pinch; one finger on any non-piece surface → pan: the
-    // letterbox background, the map image itself, or the content frame (the
-    // map is the background layer — M5-D amendment; before it, a drag on the
-    // map did nothing). Token/veil pointerdowns stop propagation, so pieces
-    // never reach this handler.
-    pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (pinchRef.current.size === 2) {
-      panRef.current = null;
-      if ((pendingDragRef.current ?? liveDrag) !== null) {
-        // Second finger mid-drag → pinch/rotation takes over the gesture: the
-        // piece's pointer stream is dead and its release will never arrive.
-        // Abandon the drag with NO commit (no drop point was chosen) and close
-        // the gesture so reconcile resumes — otherwise liveDrag strands.
-        abandonLiveDrag();
-        endBoardGesture();
+    const pointerId = event.pointerId;
+    pinchRef.current.set(pointerId, { x: event.clientX, y: event.clientY });
+    // A live gesture is NEVER overwritten (S2/R4): a second pointerdown only
+    // ever promotes to pinch — and only from the background (a second grab
+    // on a piece is ignored entirely, never an overwrite). The owner's
+    // stream keeps running untouched either way.
+    if (isGestureActive(gestureRef.current)) {
+      if (gestureRef.current.pointerId === pointerId) return;
+      const busyTarget = event.target instanceof Element ? event.target : null;
+      const onBackground =
+        event.target === event.currentTarget ||
+        (busyTarget instanceof HTMLElement &&
+          (busyTarget.dataset.boardBackground === 'true' || busyTarget.dataset.boardContent === 'true'));
+      if (!onBackground) {
+        // Second grab mid-gesture: ignored AND dropped from pinch tracking
+        // so it can never promote or finish anything later.
+        pinchRef.current.delete(pointerId);
+      } else if (gestureRef.current.kind !== 'pinch' && pinchRef.current.size >= 2) {
+        promotePinchFromPiece();
       }
-      // An effect edge-resize in flight dies the same way: no size was
-      // chosen, so unwind it with NO commit rather than strand the gesture.
-      cancelEffectResize();
       return;
     }
-    const target = event.target as HTMLElement;
+    const target = event.target instanceof Element ? event.target : null;
+    const resizeHandle = target?.closest('[data-gesture-resize]') ?? null;
+    if (resizeHandle !== null) {
+      const spec = resizeHandle.getAttribute('data-gesture-resize') ?? '';
+      const [piece, id, edge] = spec.split(':');
+      if ((piece === 'veil' || piece === 'effect') && id !== undefined && id !== '' && edge !== undefined && edge !== '') {
+        startResizeGesture(piece, id, edge, event);
+        return;
+      }
+      throw new Error('Malformed gesture resize target — the handle is missing its piece id or edge');
+    }
+    const grabNode = target?.closest('[data-gesture-grab]') ?? null;
+    if (grabNode !== null) {
+      const spec = grabNode.getAttribute('data-gesture-grab') ?? '';
+      const [piece, id] = spec.split(':');
+      if ((piece === 'token' || piece === 'veil' || piece === 'effect') && id !== undefined && id !== '') {
+        startMoveGesture(piece, id, event);
+        return;
+      }
+      throw new Error('Malformed gesture grab target — the piece is missing its kind or id');
+    }
+    // Background → pan: the letterbox, the map image, or the content frame
+    // (a drag on the map pans exactly like the letterbox — M5-D amendment).
     if (
       event.target === event.currentTarget ||
-      target.dataset.boardBackground === 'true' ||
-      target.dataset.boardContent === 'true'
+      (target instanceof HTMLElement &&
+        (target.dataset.boardBackground === 'true' || target.dataset.boardContent === 'true'))
     ) {
-      panRef.current = {
-        pointerId: event.pointerId,
-        startX: event.clientX,
-        startY: event.clientY,
-        originX: pan.x,
-        originY: pan.y,
-      };
+      const armed = armPanGesture(gestureRef.current, {
+        kind: 'pan',
+        pointerId,
+        origin: { clientX: event.clientX, clientY: event.clientY },
+        panOrigin: { x: pan.x, y: pan.y },
+      });
+      if (armed === null) return;
+      gestureRef.current = armed;
+      acquireBoardCapture(pointerId);
+      return;
     }
+    // Unknown node inside the board div: un-armable — drop it from pinch
+    // tracking so it can never promote a pinch by itself.
+    pinchRef.current.delete(pointerId);
   }
 
   function onBoardPointerMove(event: React.PointerEvent<HTMLDivElement>): void {
     if (pinchRef.current.has(event.pointerId)) {
       pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
     }
-    if (pinchRef.current.size === 2) {
+    if (pinchRef.current.size >= 2) {
+      // Two fingers: pinch owns the stream now. A live piece gesture dies
+      // here exactly like the down-path promotion (no commit, gate closed).
+      if (isGestureActive(gestureRef.current) && gestureRef.current.kind !== 'pinch') {
+        promotePinchFromPiece();
+      } else if (!isGestureActive(gestureRef.current)) {
+        gestureRef.current = promoteToPinch();
+        pinchBaseRef.current = null;
+      }
       const points = [...pinchRef.current.values()];
       const first = points[0];
       const second = points[1];
@@ -581,448 +728,452 @@ export function BattleSurface(): JSX.Element {
       }
       return;
     }
-    // Drag fallback: the token/veil/effect move handlers live on the piece
-    // node, so a fast drag that leaves the node (or a node remount mid-drag)
-    // stops that stream and the piece "snaps back". Moves bubble to the
-    // board, so keep following the active drag here — same math, same state.
-    const boardDrag = pendingDragRef.current ?? liveDrag;
-    if (boardDrag !== null) {
-      const at = boardPointFromEvent(event);
-      const movedPx = Math.max(
-        boardDrag.movedPx,
-        Math.hypot(event.clientX - boardDrag.startClientX, event.clientY - boardDrag.startClientY),
-      );
-      queueLiveDrag({ ...boardDrag, x: at.x, y: at.y, movedPx });
+    // PointerId-checked moves (R3): only the owner's stream advances the
+    // machine — every other pointer is ignored, never folded in.
+    const owned = gestureRef.current;
+    if (!isGestureOwner(owned, event.pointerId)) return;
+    const at = boardPointFromEvent(event);
+    const next = trackGestureMove(owned, event.pointerId, event.clientX, event.clientY, at);
+    gestureRef.current = next;
+    if (next.kind === 'pan') {
+      const origin = next.panOrigin;
+      if (origin !== null) {
+        setPan({ x: origin.x + (event.clientX - next.startClientX), y: origin.y + (event.clientY - next.startClientY) });
+      }
       return;
     }
-    const panning = panRef.current;
-    if (panning !== null && panning.pointerId === event.pointerId) {
-      setPan({ x: panning.originX + (event.clientX - panning.startX), y: panning.originY + (event.clientY - panning.startY) });
+    if (next.kind === 'tap' || next.kind === 'pinch') return;
+    if (next.kind === 'effectResize') {
+      previewResizeGesture(next, at);
+      return;
+    }
+    followMoveDrag(next, at);
+  }
+
+  /** Mirror the owned move into the coalesced live-drag frame. */
+  function followMoveDrag(gesture: GestureState, at: { x: number; y: number }): void {
+    const targetId = gesture.targetId;
+    if (gesture.kind !== 'token' && gesture.kind !== 'veil' && gesture.kind !== 'effect') return;
+    if (targetId === null) return;
+    const dragKey = gesture.kind === 'token' ? targetId : `${gesture.kind}:${targetId}`;
+    // Race-proof anchor: the queued frame wins, then rendered state, then
+    // the machine's arm-time snapshot — a move landing before the arm's
+    // setLiveDrag renders must still track, never strand on stale state.
+    const queued = pendingDragRef.current ?? liveDrag;
+    const anchor =
+      queued !== null && queued.tokenId === dragKey
+        ? queued
+        : {
+          tokenId: dragKey,
+          x: gesture.currentBoard?.x ?? at.x,
+          y: gesture.currentBoard?.y ?? at.y,
+          movedPx: gesture.movedPx,
+          startClientX: gesture.startClientX,
+          startClientY: gesture.startClientY,
+        };
+    queueLiveDrag({ ...anchor, x: at.x, y: at.y, movedPx: gesture.movedPx });
+  }
+
+  /** Mirror the owned resize into its preview state — ZERO Dexie writes. */
+  function previewResizeGesture(gesture: GestureState, at: { x: number; y: number }): void {
+    const base = gesture.resizeBase;
+    const edge = gesture.edge;
+    const piece = gesture.resizePiece;
+    if (base === null || edge === null || piece === null) return;
+    try {
+      if (piece === 'effect' && 'sizeCells' in base) {
+        const resized = resizeEffectFromEdge(
+          base,
+          edge as EffectEdge,
+          at,
+          contentSize.w,
+          contentSize.h,
+          cellWidthPx,
+          cellHeightPx,
+        );
+        setEffectResizePreview({ effectId: base.id, sizeCells: resized.sizeCells });
+      } else if (piece === 'veil' && !('sizeCells' in base)) {
+        const resized = resizeVeilFromEdge(
+          base,
+          edge as VeilEdge,
+          at,
+          contentSize.w,
+          contentSize.h,
+          cellWidthPx,
+          cellHeightPx,
+        );
+        setVeilResizePreview({
+          veilId: base.id,
+          x: resized.x,
+          y: resized.y,
+          widthCells: resized.widthCells,
+          heightCells: resized.heightCells,
+        });
+      }
+    } catch (error) {
+      // Loud, then unwind: a mid-gesture geometry failure must never leave a
+      // half-open gesture suppressing reconcile — abandon with no commit.
+      abandonGesture();
+      toastError('Could not resize the piece', error);
     }
   }
 
   function onBoardPointerUp(event: React.PointerEvent<HTMLDivElement>): void {
-    // Release fallback (pairs with the move fallback above): a drag released
-    // off its piece node never fires that node's own pointerup, which used
-    // to leak liveDrag (the piece stayed lifted / snapped back on next
-    // render). Finish it here with identical semantics — one commit, tap
-    // selects. Piece pointerups stop propagation, so this only fires for
-    // releases the piece node missed. Releases ON a piece bubble through
-    // the piece's own pointerup first — those own their finish, so only
-    // step in when the release landed off-piece (avoids a double commit).
-    const releaseTarget = event.target as Element | null;
-    const releasedOnPiece =
-      releaseTarget !== null &&
-      releaseTarget.closest(
-        '[data-token-label],[data-testid="battle-veil"],[data-testid="battle-effect"]',
-      ) !== null;
-    const releasedDrag = pendingDragRef.current ?? liveDrag;
-    if (releasedDrag !== null && !releasedOnPiece) {
-      if (releasedDrag.tokenId.startsWith('veil:')) finishVeilDrag();
-      else if (releasedDrag.tokenId.startsWith('effect:')) finishEffectDrag();
-      else finishTokenDrag();
-    }
-    // Player-safe off-piece release (pairs with the fallback above): a tap
-    // that started on a token but lifted off its node still opens the
-    // portrait when below the threshold — and the tracker is always
-    // consumed here so a stray release never leaks into the next gesture.
-    // Releases ON a piece bubble through the token's own pointerup first,
-    // which already consumed the tracker, so this only fires off-piece.
-    const playerTap = playerTapRef.current;
-    playerTapRef.current = null;
-    if (playerTap !== null && !releasedOnPiece && playerTap.movedPx < DRAG_THRESHOLD_PX) {
-      setSelectedTokenId(playerTap.tokenId);
-      setSelectedVeilId(null);
-      setLightboxTokenId(playerTap.tokenId);
-    }
-    // Background tap (down→up within the screen-space threshold) clears the
-    // selection — tapping empty board is a deselect, not just a no-op pan.
-    // Pan gestures (≥ threshold) keep it. Token/veil pointerdowns stop
-    // propagation, so panRef is only set from the background.
-    const down = panRef.current;
-    if (
-      down !== null &&
-      down.pointerId === event.pointerId &&
-      Math.hypot(event.clientX - down.startX, event.clientY - down.startY) < DRAG_THRESHOLD_PX
-    ) {
-      setSelectedTokenId(null);
-      setSelectedVeilId(null);
-      setSelectedEffectId(null);
-      setSelectedKeyRoomId(null);
-    }
-    pinchRef.current.delete(event.pointerId);
+    const pointerId = event.pointerId;
+    pinchRef.current.delete(pointerId);
     if (pinchRef.current.size < 2) pinchBaseRef.current = null;
-    panRef.current = null;
+    const gesture = gestureRef.current;
+    // Pinch bookkeeping: when the second-to-last finger lifts, the pinch is
+    // over. The abandoned piece pointer's own release lands here too —
+    // consumed, never a commit.
+    if (gesture.kind === 'pinch') {
+      if (pinchRef.current.size < 2) gestureRef.current = resetGesture();
+      return;
+    }
+    // Only the owner finishes (S1/R1): a release the machine does not own —
+    // a second pointer, a stray release, or an already-finished gesture —
+    // is ignored, so one release commits exactly once and the gate ends once.
+    if (!isGestureOwner(gesture, pointerId)) return;
+    if (gesture.kind === 'pan') {
+      gestureRef.current = resetGesture();
+      // Background tap (down→up within the screen-space threshold) clears
+      // the selection — tapping empty board is a deselect, not a pan. Pan
+      // gestures (≥ threshold) keep it.
+      if (Math.hypot(event.clientX - gesture.startClientX, event.clientY - gesture.startClientY) < DRAG_THRESHOLD_PX) {
+        setSelectedTokenId(null);
+        setSelectedVeilId(null);
+        setSelectedEffectId(null);
+        setSelectedKeyRoomId(null);
+      }
+      return;
+    }
+    if (gesture.kind === 'tap') {
+      const targetId = gesture.targetId;
+      gestureRef.current = resetGesture();
+      // Player-safe release (no gate was opened): below the tap threshold it
+      // opens the fullscreen portrait (image + name only); a drag never does.
+      if (targetId !== null && isGestureTap(gesture)) {
+        setSelectedTokenId(targetId);
+        setSelectedVeilId(null);
+        setLightboxTokenId(targetId);
+      }
+      return;
+    }
+    if (gesture.kind === 'effectResize') {
+      finishResizeGesture(gesture);
+      return;
+    }
+    finishMoveGesture(gesture);
   }
 
   function onBoardPointerCancel(event: React.PointerEvent<HTMLDivElement>): void {
-    // Cancellation is NOT a release: the pointer stream died (the OS stole
-    // it, a rotation gesture took over) — there is no drop point and no tap,
-    // so the live drag is abandoned with NO commit. Piece nodes keep their
-    // own onPointerCancel → finish* handlers (intact by contract); a cancel
-    // that lands ON a piece bubbles through the piece's finish first, so this
-    // only steps in off-piece — otherwise the gesture would end twice, and
-    // the gate throws on unbalanced ends. Pinch/pan/tap trackers are always
-    // consumed so a dead pointer never leaks into the next gesture.
-    const cancelTarget = event.target as Element | null;
-    const cancelledOnPiece =
-      cancelTarget !== null &&
-      cancelTarget.closest(
-        '[data-token-label],[data-testid="battle-veil"],[data-testid="battle-effect"]',
-      ) !== null;
-    if ((pendingDragRef.current ?? liveDrag) !== null && !cancelledOnPiece) {
-      abandonLiveDrag();
-      endBoardGesture();
-    }
-    playerTapRef.current = null;
-    pinchRef.current.delete(event.pointerId);
+    const pointerId = event.pointerId;
+    pinchRef.current.delete(pointerId);
     if (pinchRef.current.size < 2) pinchBaseRef.current = null;
-    panRef.current = null;
-  }
-
-  function startTokenDrag(event: React.PointerEvent<HTMLDivElement>, token: BattleToken): void {
-    event.stopPropagation();
-    if (playerSafe) {
-      // Player-safe tap: selection ONLY — the name+image+HP card (the M5-D
-      // token-tap contract). No capture, no live drag, no commit: moving
-      // pieces stays GM-only. The tap-vs-drag threshold for the fullscreen
-      // portrait is tracked in playerTapRef and decided on release — a drag
-      // must never open it.
-      setSelectedTokenId(token.id);
-      setSelectedVeilId(null);
-      playerTapRef.current = {
-        tokenId: token.id,
-        movedPx: 0,
-        startClientX: event.clientX,
-        startClientY: event.clientY,
-      };
+    if (gestureRef.current.kind === 'pinch') {
+      if (pinchRef.current.size < 2) gestureRef.current = resetGesture();
       return;
     }
-    // Pointer capture keeps the move/up stream on THIS token even when the
-    // DOM under the cursor changes mid-drag (a live Dexie emission replacing
-    // the token node, or the cursor crossing an overlay edge) — without it a
-    // re-rendered node swallows the stream and the mob "snaps back". jsdom
-    // (tests) lacks the API; the board-level move/up fallback owns release
-    // there. The gesture opens BEFORE the capture attempt so a failed capture
-    // can unwind it below (the gate throws on unbalanced ends).
-    beginBoardGesture();
-    const downTarget = event.target as Element | null;
-    const pieceNode = downTarget?.closest('[data-token-label]');
-    const element =
-      pieceNode instanceof HTMLElement ? pieceNode : event.currentTarget;
-    if (typeof element.setPointerCapture === 'function') {
-      try {
-        element.setPointerCapture(event.pointerId);
-      } catch {
-        // Pointer capture can fail (already released, gesture stolen): the
-        // pointer stream is gone, so dragging on would strand liveDrag with a
-        // release that never arrives. Abort instead — no live drag, gesture
-        // closed — rather than dragging without capture.
-        abandonLiveDrag();
-        endBoardGesture();
+    // Cancellation is NEVER a release (S7 — the old incoherence, where veil/
+    // effect cancels committed while token cancels abandoned): the pointer
+    // stream died — the OS stole it, a rotation gesture took over — so there
+    // is no drop point and no tap. Abandon with NO commit everywhere (moves
+    // AND resizes alike), and the gate balances idempotently.
+    if (!isGestureOwner(gestureRef.current, pointerId)) return;
+    abandonGesture();
+  }
+
+  function onBoardLostPointerCapture(event: React.PointerEvent<HTMLDivElement>): void {
+    // Capture loss without this reset stranded gestures (S4): the owned
+    // stream is gone, so abandon with no commit — same as cancel.
+    if (!isGestureActive(gestureRef.current)) return;
+    if (gestureRef.current.kind === 'pinch') {
+      gestureRef.current = resetGesture();
+      return;
+    }
+    if (gestureRef.current.pointerId !== null && event.pointerId !== gestureRef.current.pointerId) return;
+    abandonGesture();
+  }
+
+  // --- Unified move gestures (token/veil/effect share ONE path) ----------------
+  // One startMoveDrag for every piece kind: gate checks run BEFORE arming
+  // (a forbidden grab never arms and never degrades into a pan), then the
+  // machine arms, the gate opens, capture is acquired loudly, and the live
+  // position mirrors into the coalesced frame. Tap = release below the
+  // screen-space threshold (select / portrait, never a commit).
+
+  function startMoveGesture(
+    piece: 'token' | 'veil' | 'effect',
+    id: string,
+    event: React.PointerEvent<HTMLDivElement>,
+  ): void {
+    if (battle === undefined) return;
+    // Gates BEFORE arming (S6): a forbidden grab never arms — and never
+    // falls through to pan either (a grab must not silently become a pan).
+    const sceneryLocked = battle.board.sceneryMovementLocked;
+    if (piece === 'token' && playerSafe) {
+      // Player-safe tap (the M5-D token-tap contract): selection + portrait
+      // threshold tracking, folded into the machine as the `tap` kind — no
+      // capture, no gate, no commit: moving pieces stays GM-only.
+      const token = battle.board.tokens.find((entry) => entry.id === id);
+      if (token === undefined) {
+        toastError('Could not select the token — it left the board');
         return;
       }
-    }
-    setLiveDrag({
-      tokenId: token.id,
-      x: token.x,
-      y: token.y,
-      movedPx: 0,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-    });
-  }
-
-  function moveTokenDrag(event: React.PointerEvent<HTMLDivElement>): void {
-    const drag = pendingDragRef.current ?? liveDrag;
-    if (drag === null) {
-      // Player-safe tap tracking (no live drag exists in that mode): fold
-      // the move into the tap's screen-space distance so a drag fails the
-      // tap threshold on release and never opens the portrait.
-      const tap = playerTapRef.current;
-      if (tap !== null) {
-        tap.movedPx = Math.max(
-          tap.movedPx,
-          Math.hypot(event.clientX - tap.startClientX, event.clientY - tap.startClientY),
-        );
-      }
-      return;
-    }
-    const at = boardPointFromEvent(event);
-    // Screen-space threshold: client px from the down origin, so the 8px tap
-    // window is zoom-invariant (a board-frame distance would shrink/grow it
-    // with zoom — micro-drags when zoomed in, dead taps when zoomed out).
-    const movedPx = Math.max(
-      drag.movedPx,
-      Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
-    );
-    queueLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
-  }
-
-  function finishTokenDrag(): void {
-    const drag = takePendingDrag();
-    if (drag === null) {
-      // Player-safe release (no gesture was begun, so none ends here): a
-      // release below the tap threshold opens the fullscreen portrait
-      // (image + name only); a drag never does.
-      const tap = playerTapRef.current;
-      playerTapRef.current = null;
-      if (tap !== null && tap.movedPx < DRAG_THRESHOLD_PX) {
-        setSelectedTokenId(tap.tokenId);
-        setSelectedVeilId(null);
-        setLightboxTokenId(tap.tokenId);
-      }
-      return;
-    }
-    setLiveDrag(null);
-    // Paired with the begin in startTokenDrag — a pointerup without a begun
-    // gesture (player-safe tap, stray release) must not end one (that path
-    // returns above, before any gesture begins).
-    endBoardGesture();
-    if (drag.movedPx < DRAG_THRESHOLD_PX) {
-      // Tap: select (player-safe tap shows name/image/HP only). GM taps
-      // stay select-only — the fullscreen portrait is a player-safe (mob
-      // view) surface; a modal here would bury the GM rail (HP steppers,
-      // visibility, scale) behind inert until dismissed.
-      setSelectedTokenId(drag.tokenId);
+      const armed = armTapGesture(gestureRef.current, {
+        kind: 'tap',
+        pointerId: event.pointerId,
+        origin: { clientX: event.clientX, clientY: event.clientY },
+        targetId: id,
+      });
+      if (armed === null) return;
+      gestureRef.current = armed;
+      setSelectedTokenId(id);
       setSelectedVeilId(null);
       return;
     }
-    const span = tokenSpanCells(
-      battle?.board.tokens.find((entry) => entry.id === drag.tokenId)?.scale ?? 1,
-    );
-    const snapped = snapPoint(drag.x, drag.y, { x: span, y: span });
-    void commit((board) => ({
-      ...board,
-      tokens: board.tokens.map((token) => (token.id === drag.tokenId ? { ...token, x: snapped.x, y: snapped.y } : token)),
-    }));
-  }
-
-  function startVeilDrag(event: React.PointerEvent<HTMLDivElement>, veil: BattleVeil): void {
-    if (playerSafe || battle?.board.sceneryMovementLocked === true) return;
-    event.stopPropagation();
-    if (typeof event.currentTarget.setPointerCapture === 'function') {
-      event.currentTarget.setPointerCapture(event.pointerId);
+    if (piece !== 'token' && (playerSafe || sceneryLocked)) {
+      // Player view: affordances are hidden (visibly disabled) — silent.
+      // GM + scenery lock: LOUD no-op so the lock reads as the reason.
+      if (!playerSafe && sceneryLocked) {
+        toastError('Scenery is locked — unlock it to move pieces');
+      }
+      return;
     }
+    const position =
+      piece === 'token'
+        ? battle.board.tokens.find((entry) => entry.id === id)
+        : piece === 'veil'
+          ? battle.board.veils.find((entry) => entry.id === id)
+          : battle.board.effects.find((entry) => entry.id === id);
+    if (position === undefined) {
+      toastError('Could not grab the piece — it left the board');
+      return;
+    }
+    // Pointer capture keeps the move/up stream on the BOARD even when the
+    // DOM under the cursor changes mid-drag (a live Dexie emission replacing
+    // the piece node, or the cursor crossing an overlay edge). The gesture
+    // opens BEFORE the capture attempt so a failed capture unwinds it loudly
+    // instead of dragging without a stream.
+    const armed = armMoveGesture(gestureRef.current, {
+      kind: piece,
+      pointerId: event.pointerId,
+      origin: { clientX: event.clientX, clientY: event.clientY },
+      targetId: id,
+    });
+    if (armed === null) return;
+    gestureRef.current = { ...armed, currentBoard: { x: position.x, y: position.y } };
     beginBoardGesture();
+    if (!acquireBoardCapture(event.pointerId)) return;
+    const dragKey = piece === 'token' ? id : `${piece}:${id}`;
     setLiveDrag({
-      tokenId: `veil:${veil.id}`,
-      x: veil.x,
-      y: veil.y,
+      tokenId: dragKey,
+      x: position.x,
+      y: position.y,
       movedPx: 0,
       startClientX: event.clientX,
       startClientY: event.clientY,
     });
-    setSelectedVeilId(veil.id);
-    setSelectedTokenId(null);
+    // Veil/effect taps select at arm (their finish only commits past the
+    // threshold); token taps select at release.
+    if (piece === 'veil') {
+      setSelectedVeilId(id);
+      setSelectedTokenId(null);
+    } else if (piece === 'effect') {
+      setSelectedEffectId(id);
+      setSelectedTokenId(null);
+      setSelectedVeilId(null);
+    }
   }
 
-  function moveVeilDrag(event: React.PointerEvent<HTMLDivElement>): void {
-    const drag = pendingDragRef.current ?? liveDrag;
-    if (drag?.tokenId.startsWith('veil:') !== true) return;
-    const at = boardPointFromEvent(event);
-    // Screen-space threshold, same as tokens (see moveTokenDrag).
-    const movedPx = Math.max(
-      drag.movedPx,
-      Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
-    );
-    queueLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
-  }
-
-  function finishVeilDrag(): void {
+  /** Owner release of a piece move: tap selects, drag commits exactly once. */
+  function finishMoveGesture(gesture: GestureState): void {
+    const kind = gesture.kind;
+    const targetId = gesture.targetId;
     const drag = takePendingDrag();
+    // Reset FIRST: the machine is idle before any commit/select work, so a
+    // re-entrant release finds idle and no-ops instead of double-committing.
+    gestureRef.current = resetGesture();
     setLiveDrag(null);
-    if (drag?.tokenId.startsWith('veil:') !== true) return;
-    // Paired with the begin in startVeilDrag (same rule as finishTokenDrag).
     endBoardGesture();
-    const veilId = drag.tokenId.slice('veil:'.length);
-    if (drag.movedPx < DRAG_THRESHOLD_PX) return;
-    // VEIL/TOKEN PARITY (pinned by test): veils snap on drop exactly like
-    // tokens — the center quantizes to a widthCells×heightCells grid block,
-    // which lands the veil's EDGES on cell boundaries and matches the
-    // cell-quantized resize math (resizeVeilFromEdge). An unsnapped commit
-    // was the inconsistency, not a choice.
-    const veil = battle?.board.veils.find((entry) => entry.id === veilId);
-    const snapped = snapPoint(drag.x, drag.y, {
-      x: veil?.widthCells ?? 1,
-      y: veil?.heightCells ?? 1,
-    });
-    void commit((board) => ({
-      ...board,
-      veils: board.veils.map((veil) => (veil.id === veilId ? { ...veil, x: snapped.x, y: snapped.y } : veil)),
-    }));
+    if (kind !== 'token' && kind !== 'veil' && kind !== 'effect') return;
+    if (targetId === null || drag === null) return;
+    if (isGestureTap(gesture)) {
+      // Tap: select. GM taps stay select-only (the rail must stay usable);
+      // veil/effect selection already happened at arm.
+      if (kind === 'token') {
+        setSelectedTokenId(targetId);
+        setSelectedVeilId(null);
+      }
+      return;
+    }
+    commitMoveDrop(kind, targetId, drag);
   }
 
-  function resizeVeil(veil: BattleVeil, edge: VeilEdge, event: React.PointerEvent<HTMLDivElement>): void {
-    event.stopPropagation();
-    const at = boardPointFromEvent(event);
-    try {
-      const resized = resizeVeilFromEdge(
-        veil,
-        edge,
-        at,
-        contentSize.w,
-        contentSize.h,
-        cellWidthPx,
-        cellHeightPx,
+  /** The single release commit for a dragged piece (cell-snap by span). */
+  function commitMoveDrop(kind: 'token' | 'veil' | 'effect', targetId: string, drag: LiveDrag): void {
+    if (battle === undefined) return;
+    if (kind === 'token') {
+      const span = tokenSpanCells(
+        battle.board.tokens.find((entry) => entry.id === targetId)?.scale ?? 1,
       );
+      const snapped = snapPoint(drag.x, drag.y, { x: span, y: span });
       void commit((board) => ({
         ...board,
-        veils: board.veils.map((entry) => (entry.id === veil.id ? resized : entry)),
+        tokens: board.tokens.map((token) => (token.id === targetId ? { ...token, x: snapped.x, y: snapped.y } : token)),
       }));
-    } catch (error) {
-      toastError('Could not resize the veil', error);
+      return;
     }
-  }
-
-  // --- Effect-marker gestures (D7): the veil drag contract, keyed 'effect:' —
-  // scenery lock gates the move exactly like veils/stamps; rendering stays in
-  // BOTH views (no playerSafe gate on the pointer handlers' visual result).
-
-  function startEffectDrag(event: React.PointerEvent<HTMLDivElement>, effect: BattleEffect): void {
-    if (playerSafe || battle?.board.sceneryMovementLocked === true) return;
-    event.stopPropagation();
-    if (typeof event.currentTarget.setPointerCapture === 'function') {
-      event.currentTarget.setPointerCapture(event.pointerId);
+    if (kind === 'veil') {
+      // VEIL/TOKEN PARITY (pinned by test): veils snap on drop exactly like
+      // tokens — the center quantizes to a widthCells×heightCells grid block,
+      // which lands the veil's EDGES on cell boundaries and matches the
+      // cell-quantized resize math. An unsnapped commit was the
+      // inconsistency, not a choice.
+      const veil = battle.board.veils.find((entry) => entry.id === targetId);
+      const snapped = snapPoint(drag.x, drag.y, {
+        x: veil?.widthCells ?? 1,
+        y: veil?.heightCells ?? 1,
+      });
+      void commit((board) => ({
+        ...board,
+        veils: board.veils.map((entry) => (entry.id === targetId ? { ...entry, x: snapped.x, y: snapped.y } : entry)),
+      }));
+      return;
     }
-    beginBoardGesture();
-    setLiveDrag({
-      tokenId: `effect:${effect.id}`,
-      x: effect.x,
-      y: effect.y,
-      movedPx: 0,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-    });
-    setSelectedEffectId(effect.id);
-    setSelectedTokenId(null);
-    setSelectedVeilId(null);
-  }
-
-  function moveEffectDrag(event: React.PointerEvent<HTMLDivElement>): void {
-    const drag = pendingDragRef.current ?? liveDrag;
-    if (drag?.tokenId.startsWith('effect:') !== true) return;
-    const at = boardPointFromEvent(event);
-    const movedPx = Math.max(
-      drag.movedPx,
-      Math.hypot(event.clientX - drag.startClientX, event.clientY - drag.startClientY),
-    );
-    queueLiveDrag({ ...drag, x: at.x, y: at.y, movedPx });
-  }
-
-  function finishEffectDrag(): void {
-    const drag = takePendingDrag();
-    setLiveDrag(null);
-    if (drag?.tokenId.startsWith('effect:') !== true) return;
-    endBoardGesture();
-    const effectId = drag.tokenId.slice('effect:'.length);
-    if (drag.movedPx < DRAG_THRESHOLD_PX) return;
     // Same drop rule as veils/tokens: the center quantizes to the effect's
-    // own sizeCells span, so its edges land on cell boundaries (D7:
-    // geometry is layout-anchored, never screen pixels).
-    const effect = battle?.board.effects.find((entry) => entry.id === effectId);
+    // own sizeCells span, so its edges land on cell boundaries (geometry is
+    // layout-anchored, never screen pixels).
+    const effect = battle.board.effects.find((entry) => entry.id === targetId);
     const snapped = snapPoint(drag.x, drag.y, { x: effect?.sizeCells ?? 1, y: effect?.sizeCells ?? 1 });
     void commit((board) => ({
       ...board,
       effects: board.effects.map((entry) =>
-        entry.id === effectId ? { ...entry, x: snapped.x, y: snapped.y } : entry,
+        entry.id === targetId ? { ...entry, x: snapped.x, y: snapped.y } : entry,
       ),
     }));
   }
 
-  // --- Effect edge-resize gesture (veil-parity arc): drag a handle, preview
-  // the symmetric cell-quantized size live, commit EXACTLY once on release —
-  // the veil/token move contract (zero writes mid-gesture). A tap (below the
-  // 8px screen-space threshold) or a drag that lands back on the start size
-  // commits nothing; the rail Grow/Shrink buttons own discrete steps.
-  // Scenery lock + player-safe gate identically to veils: the handles never
-  // mount there, and the start path re-checks so a stale node cannot resize.
+  // --- The ONE resize gesture (veil + effect handles share it) -----------------
+  // Drag, live preview, zero mid-gesture writes, a single release commit —
+  // the effect-resize semantics won, and the veil click-step onClick path is
+  // deleted (the discrete-step replacement for effects is the rail
+  // Grow/Shrink buttons). Scenery lock + player-safe gate before arming
+  // exactly like moves: the handles never mount there, and the start path
+  // re-checks so a stale node cannot resize.
 
-  function startEffectResize(
-    effect: BattleEffect,
-    edge: EffectEdge,
-    event: React.PointerEvent<HTMLElement>,
+  function startResizeGesture(
+    piece: 'veil' | 'effect',
+    id: string,
+    edge: string,
+    event: React.PointerEvent<HTMLDivElement>,
   ): void {
-    if (playerSafe || battle?.board.sceneryMovementLocked === true) return;
-    event.stopPropagation();
-    if (typeof event.currentTarget.setPointerCapture === 'function') {
-      try {
-        event.currentTarget.setPointerCapture(event.pointerId);
-      } catch {
-        // Same rule as the token drag capture failure: without the stream a
-        // release never arrives, so start no gesture rather than strand one.
-        return;
+    if (battle === undefined) return;
+    // Same before-arm gating as moves (S6): handles never mount while
+    // locked or in player view — a stale node no-ops instead of arming.
+    const sceneryLocked = battle.board.sceneryMovementLocked;
+    if (playerSafe || sceneryLocked) {
+      if (!playerSafe && sceneryLocked) {
+        toastError('Scenery is locked — unlock it to resize pieces');
       }
+      return;
     }
-    beginBoardGesture();
-    effectResizeRef.current = {
-      base: effect,
+    const base =
+      piece === 'veil'
+        ? battle.board.veils.find((entry) => entry.id === id)
+        : battle.board.effects.find((entry) => entry.id === id);
+    if (base === undefined) {
+      toastError('Could not resize the piece — it left the board');
+      return;
+    }
+    const armed = armResizeGesture(gestureRef.current, {
+      kind: 'effectResize',
+      pointerId: event.pointerId,
+      origin: { clientX: event.clientX, clientY: event.clientY },
       edge,
-      fromSizeCells: effect.sizeCells,
-      sizeCells: effect.sizeCells,
-      movedPx: 0,
-      startClientX: event.clientX,
-      startClientY: event.clientY,
-    };
-    setEffectResizePreview({ effectId: effect.id, sizeCells: effect.sizeCells });
-    setSelectedEffectId(effect.id);
-    setSelectedTokenId(null);
-    setSelectedVeilId(null);
-  }
-
-  function previewEffectResize(event: React.PointerEvent<HTMLElement>): void {
-    const resize = effectResizeRef.current;
-    if (resize === null) return;
-    const at = boardPointFromEvent(event);
-    try {
-      const resized = resizeEffectFromEdge(
-        resize.base,
-        resize.edge,
-        at,
-        contentSize.w,
-        contentSize.h,
-        cellWidthPx,
-        cellHeightPx,
-      );
-      resize.movedPx = Math.max(
-        resize.movedPx,
-        Math.hypot(event.clientX - resize.startClientX, event.clientY - resize.startClientY),
-      );
-      resize.sizeCells = resized.sizeCells;
-      setEffectResizePreview({ effectId: resize.base.id, sizeCells: resized.sizeCells });
-    } catch (error) {
-      // Loud, then unwind: a mid-gesture geometry failure must never leave a
-      // half-open gesture suppressing reconcile — abort with no commit.
-      cancelEffectResize();
-      toastError('Could not resize the effect', error);
+      resizePiece: piece,
+      resizeBase: base,
+      fromSizeCells: piece === 'effect' && 'sizeCells' in base ? base.sizeCells : 0,
+    });
+    if (armed === null) return;
+    gestureRef.current = armed;
+    beginBoardGesture();
+    if (!acquireBoardCapture(event.pointerId)) return;
+    if (piece === 'effect' && 'sizeCells' in base) {
+      setEffectResizePreview({ effectId: id, sizeCells: base.sizeCells });
+      setSelectedEffectId(id);
+      setSelectedVeilId(null);
+    } else if (piece === 'veil' && !('sizeCells' in base)) {
+      setVeilResizePreview({
+        veilId: id,
+        x: base.x,
+        y: base.y,
+        widthCells: base.widthCells,
+        heightCells: base.heightCells,
+      });
+      setSelectedVeilId(id);
     }
+    setSelectedTokenId(null);
   }
 
-  function finishEffectResize(): void {
-    const resize = effectResizeRef.current;
-    effectResizeRef.current = null;
+  /** Owner release of the ONE resize gesture: a single commit, or nothing. */
+  function finishResizeGesture(gesture: GestureState): void {
+    const base = gesture.resizeBase;
+    const edge = gesture.edge;
+    const resizeTarget = gesture.resizePiece;
+    const at = gesture.currentBoard;
+    gestureRef.current = resetGesture();
     setEffectResizePreview(null);
-    if (resize === null) return;
-    // Paired with the begin in startEffectResize (same rule as the moves).
+    setVeilResizePreview(null);
     endBoardGesture();
-    if (resize.movedPx < DRAG_THRESHOLD_PX) return;
-    if (resize.sizeCells === resize.fromSizeCells) return;
-    const finalSize = resize.sizeCells;
-    const effectId = resize.base.id;
-    void commit((board) => ({
-      ...board,
-      effects: board.effects.map((entry) =>
-        entry.id === effectId ? { ...entry, sizeCells: finalSize } : entry,
-      ),
-    }));
-  }
-
-  /** Abort path: drop the preview with NO commit (cancel, pinch takeover). */
-  function cancelEffectResize(): void {
-    if (effectResizeRef.current === null) return;
-    effectResizeRef.current = null;
-    setEffectResizePreview(null);
-    endBoardGesture();
+    if (base === null || edge === null || resizeTarget === null) return;
+    // A tap or a drag that never reached the threshold commits nothing; the
+    // rail Grow/Shrink buttons own discrete steps.
+    if (at === null || isGestureTap(gesture)) return;
+    try {
+      if (resizeTarget === 'effect' && 'sizeCells' in base) {
+        const resized = resizeEffectFromEdge(
+          base,
+          edge as EffectEdge,
+          at,
+          contentSize.w,
+          contentSize.h,
+          cellWidthPx,
+          cellHeightPx,
+        );
+        if (resized.sizeCells === gesture.fromSizeCells) return;
+        const finalSize = resized.sizeCells;
+        const effectId = base.id;
+        void commit((board) => ({
+          ...board,
+          effects: board.effects.map((entry) =>
+            entry.id === effectId ? { ...entry, sizeCells: finalSize } : entry,
+          ),
+        }));
+      } else if (resizeTarget === 'veil' && !('sizeCells' in base)) {
+        const resized = resizeVeilFromEdge(
+          base,
+          edge as VeilEdge,
+          at,
+          contentSize.w,
+          contentSize.h,
+          cellWidthPx,
+          cellHeightPx,
+        );
+        if (
+          resized.x === base.x && resized.y === base.y &&
+          resized.widthCells === base.widthCells && resized.heightCells === base.heightCells
+        ) return;
+        const finalVeil = resized;
+        const veilId = base.id;
+        void commit((board) => ({
+          ...board,
+          veils: board.veils.map((entry) => (entry.id === veilId ? finalVeil : entry)),
+        }));
+      }
+    } catch (error) {
+      toastError('Could not resize the piece', error);
+    }
   }
 
   // --- Actions ---------------------------------------------------------------
@@ -1498,6 +1649,16 @@ export function BattleSurface(): JSX.Element {
           onPointerMove={onBoardPointerMove}
           onPointerUp={onBoardPointerUp}
           onPointerCancel={onBoardPointerCancel}
+          onLostPointerCapture={onBoardLostPointerCapture}
+          onDragStart={(event) => {
+            // Forbidden-cursor fix: the browser-native HTML5 drag (from
+            // selectable text or imageless drags) is the ghost source — it
+            // fights pointer capture and paints the native forbidden cursor.
+            // The board owns every stream via pointer events; native drags
+            // never start here.
+            event.preventDefault();
+          }}
+          style={liveDrag !== null || effectResizePreview !== null || veilResizePreview !== null ? { cursor: 'grabbing' } : undefined}
           onWheel={(event) => {
             if (!event.ctrlKey && Math.abs(event.deltaY) < 2) return;
             setZoom((current) => clampZoom(current * (event.deltaY > 0 ? 0.9 : 1.1)));
@@ -1630,16 +1791,8 @@ export function BattleSurface(): JSX.Element {
                   cellWidthPx={cellWidthPx}
                   cellHeightPx={cellHeightPx}
                   selected={veil.id === selectedVeilId}
-                  dragging={liveDrag?.tokenId === `veil:${veil.id}`}
+                  dragging={liveDrag?.tokenId === `veil:${veil.id}` || veilResizePreview?.veilId === veil.id}
                   resizable={!playerSafe && !board.sceneryMovementLocked}
-                  onPointerDown={(event) => {
-                    startVeilDrag(event, veil);
-                  }}
-                  onPointerMove={moveVeilDrag}
-                  onPointerUp={finishVeilDrag}
-                  onResize={(edge, event) => {
-                    resizeVeil(veil, edge, event);
-                  }}
                 />
               ))}
               {/* Effect markers (D7) — board material in BOTH views, under
@@ -1652,20 +1805,9 @@ export function BattleSurface(): JSX.Element {
                   cellWidthPx={cellWidthPx}
                   cellHeightPx={cellHeightPx}
                   selected={effect.id === selectedEffectId}
-                  dragging={liveDrag?.tokenId === `effect:${effect.id}`}
+                  dragging={liveDrag?.tokenId === `effect:${effect.id}` || effectResizePreview?.effectId === effect.id}
                   draggable={!playerSafe && !board.sceneryMovementLocked}
                   resizable={!playerSafe && !board.sceneryMovementLocked}
-                  onPointerDown={(event) => {
-                    startEffectDrag(event, effect);
-                  }}
-                  onPointerMove={moveEffectDrag}
-                  onPointerUp={finishEffectDrag}
-                  onResizeStart={(edge, event) => {
-                    startEffectResize(effect, edge, event);
-                  }}
-                  onResizeMove={previewEffectResize}
-                  onResizeEnd={finishEffectResize}
-                  onResizeCancel={cancelEffectResize}
                 />
               ))}
               {/* Tokens — covered/hidden are REMOVED in player view, never dimmed */}
@@ -1681,11 +1823,6 @@ export function BattleSurface(): JSX.Element {
                   isActiveTurn={token.id === turnTokenId}
                   dragging={liveDrag?.tokenId === token.id}
                   playerSafe={playerSafe}
-                  onPointerDown={(event) => {
-                    startTokenDrag(event, token);
-                  }}
-                  onPointerMove={moveTokenDrag}
-                  onPointerUp={finishTokenDrag}
                 />
               ))}
             </div>
@@ -2095,9 +2232,6 @@ interface TokenViewProps {
   isActiveTurn: boolean;
   dragging: boolean;
   playerSafe: boolean;
-  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
 /** One token: portrait art or deterministic initials, HP meter, downed
@@ -2115,9 +2249,6 @@ function TokenView({
   isActiveTurn,
   dragging,
   playerSafe,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
 }: TokenViewProps): JSX.Element | null {
   const coverImageId = artifact !== undefined && 'coverImageId' in artifact ? artifact.coverImageId : null;
   const url = useImageUrl(coverImageId);
@@ -2144,15 +2275,16 @@ function TokenView({
       className={cn(
         'absolute -translate-x-1/2 -translate-y-1/2 touch-none',
         dragging && 'z-20 opacity-90',
-        playerSafe ? 'cursor-default' : 'cursor-grab',
+        // An active grab is always visually owned (forbidden-cursor fix);
+        // exactly one cursor utility applies at a time.
+        dragging ? 'cursor-grabbing' : undefined,
+        !dragging && (playerSafe ? 'cursor-default' : 'cursor-grab'),
       )}
       style={{ left: `${String(token.x * 100)}%`, top: `${String(token.y * 100)}%`, width: `${String(widthPct)}%`, height: `${String(heightPct)}%` }}
       data-testid="battle-token"
       data-token-label={token.label}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      // Hit area only — the board owns the stream (one-gesture-machine).
+      data-gesture-grab={`token:${token.id}`}
     >
       <div
         className={cn(
@@ -2216,10 +2348,6 @@ interface VeilViewProps {
   selected: boolean;
   dragging: boolean;
   resizable: boolean;
-  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onResize: (edge: VeilEdge, event: React.PointerEvent<HTMLDivElement>) => void;
 }
 
 /**
@@ -2239,10 +2367,6 @@ function VeilView({
   selected,
   dragging,
   resizable,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
-  onResize,
 }: VeilViewProps): JSX.Element | null {
   if (content.w === 0 || content.h === 0) return null;
   const widthPct = ((veil.widthCells * cellWidthPx) / content.w) * 100;
@@ -2260,7 +2384,8 @@ function VeilView({
         veil.kind === 'fog' ? 'bg-zinc-200/10' : 'bg-black/10',
         (selected || dragging) && 'ring-2 ring-amber-400',
         dragging && 'z-20',
-        !resizable && 'cursor-default',
+        dragging ? 'cursor-grabbing' : undefined,
+        !dragging && !resizable && 'cursor-default',
       )}
       style={{
         left: `${String(veil.x * 100)}%`,
@@ -2270,10 +2395,8 @@ function VeilView({
       }}
       data-testid="battle-veil"
       data-veil-kind={veil.kind}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      // Hit area only — the board owns the stream (one-gesture-machine).
+      data-gesture-grab={`veil:${veil.id}`}
     >
       {resizable &&
         handles.map((handle) => (
@@ -2282,19 +2405,18 @@ function VeilView({
             type="button"
             aria-label={`Resize veil ${handle.edge}`}
             // T2a: the visible dot stays 12px, but the hit target is a 44px
-            // (size-11) transparent pad around it — same click-to-resize
-            // discrete steps via onResize, no drag/commit changes.
+            // (size-11) transparent pad around it. DRAG-resize now (the old
+            // click-to-resize committed mid-gesture per click): the handle
+            // drag previews the cell-quantized geometry live with zero
+            // writes and commits exactly once on release — the effect
+            // semantics. Hit area only: the board owns the stream via
+            // data-gesture-resize, this button carries no pointer handlers.
             className={cn(
               'absolute flex size-11 touch-none items-center justify-center',
               handle.className,
             )}
             data-testid={`veil-handle-${handle.edge}`}
-            onPointerDown={(event) => {
-              event.stopPropagation();
-            }}
-            onClick={(event) => {
-              onResize(handle.edge, event as unknown as React.PointerEvent<HTMLDivElement>);
-            }}
+            data-gesture-resize={`veil:${veil.id}:${handle.edge}`}
           >
             <span aria-hidden className="size-3 rounded-full border border-zinc-900 bg-amber-400" />
           </button>
@@ -2312,13 +2434,6 @@ interface EffectViewProps {
   dragging: boolean;
   draggable: boolean;
   resizable: boolean;
-  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => void;
-  onResizeStart: (edge: EffectEdge, event: React.PointerEvent<HTMLElement>) => void;
-  onResizeMove: (event: React.PointerEvent<HTMLElement>) => void;
-  onResizeEnd: (event: React.PointerEvent<HTMLElement>) => void;
-  onResizeCancel: (event: React.PointerEvent<HTMLElement>) => void;
 }
 
 /**
@@ -2347,13 +2462,6 @@ function EffectView({
   dragging,
   draggable,
   resizable,
-  onPointerDown,
-  onPointerMove,
-  onPointerUp,
-  onResizeStart,
-  onResizeMove,
-  onResizeEnd,
-  onResizeCancel,
 }: EffectViewProps): JSX.Element | null {
   if (content.w === 0 || content.h === 0) return null;
   const widthPct = ((effect.sizeCells * cellWidthPx) / content.w) * 100;
@@ -2371,7 +2479,8 @@ function EffectView({
         effect.shape === 'disc' ? 'rounded-full' : 'rounded-sm',
         (selected || dragging) && 'ring-2 ring-amber-400',
         dragging && 'z-20',
-        draggable ? 'cursor-grab' : 'cursor-default',
+        dragging ? 'cursor-grabbing' : undefined,
+        !dragging && (draggable ? 'cursor-grab' : 'cursor-default'),
       )}
       style={{
         left: `${String(effect.x * 100)}%`,
@@ -2383,10 +2492,8 @@ function EffectView({
       }}
       data-testid="battle-effect"
       data-effect-shape={effect.shape}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={onPointerUp}
+      // Hit area only — the board owns the stream (one-gesture-machine).
+      data-gesture-grab={`effect:${effect.id}`}
     >
       {effect.label.length > 0 && (
         <span className="pointer-events-none absolute inset-x-0 top-1/2 -translate-y-1/2 text-center text-[10px] font-medium text-zinc-100 drop-shadow-[0_1px_1px_rgba(0,0,0,0.9)]">
@@ -2402,18 +2509,15 @@ function EffectView({
             // The visible dot stays 12px, but the hit target is a 44px
             // (size-11) transparent pad around it — the sanctioned
             // veil-handle pattern: coarse pointers get a finger-size
-            // target with no visual change.
+            // target with no visual change. Hit area only: the board owns
+            // the stream via data-gesture-resize, this button carries no
+            // pointer handlers.
             className={cn(
               'absolute flex size-11 touch-none items-center justify-center',
               handle.className,
             )}
             data-testid={`effect-handle-${handle.edge}`}
-            onPointerDown={(event) => {
-              onResizeStart(handle.edge, event);
-            }}
-            onPointerMove={onResizeMove}
-            onPointerUp={onResizeEnd}
-            onPointerCancel={onResizeCancel}
+            data-gesture-resize={`effect:${effect.id}:${handle.edge}`}
           >
             <span aria-hidden className="size-3 rounded-full border border-zinc-900 bg-amber-400" />
           </button>

@@ -354,6 +354,19 @@ could see.*
 
 - Drag (≥8px threshold): live local position with grid snapping, single repo
   commit on release; tap = select; scenery lock rejects stamp/veil moves.
+  Amended 2026-09-08 (one-gesture-machine rebuild): *ONE gesture state
+  machine owns every board stream (`domain/battle/gestureMachine`:
+  idle|armed|active × token|veil|effect|effectResize|pan|pinch|tap, a single
+  ref) with ONE set of board-level pointer handlers as the sole capture
+  owner — pieces render hit areas, never streams. A release the machine
+  does not own is ignored (one release commits exactly once);
+  cancel/capture-loss/blur/unmount always abandon with zero commits (cancel
+  never commits — the old veil/effect cancel-committed); second-pointerdown
+  never overwrites (background second finger promotes to pinch with
+  abandon-no-commit, piece second grab ignored); moves are pointerId-checked;
+  scenery/player-safe gates run before arming (a forbidden grab no-ops,
+  never a silent pan). Native dragstart is suppressed on the board and an
+  active grab carries cursor-grabbing.*
   Amended 2026-09-06 by 0275d27: *the live-local-position contract covers
   veils exactly like tokens — a dragged veil follows the pointer in local
   state (zero Dexie writes mid-drag) and persists exactly once on release —
@@ -376,19 +389,23 @@ could see.*
   while the map image loads); before this, a drag on the map was a dead
   zone. The same pan gesture semantics hold: a ≥8px screen-space drag pans
   and keeps the selection, a sub-threshold tap deselects; token/veil
-  pointerdowns still stop propagation (pieces never start a pan), the
-  resize handles still stop propagation, and the pinch pairing still clears
-  pan state when a second finger lands.* Amended 2026-09-06 (parking lot,
+  pointerdowns mark their targets via data attributes and own no stream
+  (the board owns every stream — the old piece-level stopPropagation and
+  the piece-level move/up handlers are gone), the
+  resize handles are board-owned hit areas, and a background second finger
+  promotes to pinch with abandon-no-commit while a piece second grab is
+  ignored.* Amended 2026-09-06 (parking lot,
   not scheduled): *the coarse-pointer screen-space art overlay — "portrait
   tokens render in a screen-space overlay so art stays crisp" — is DROPPED
   from the spec; the shipped surface renders tokens in the transformed
   frame with no overlay layer. See the parking lot below.*
 - Veils: add veil/fog, resize from n/e/s/w handles (hidden while scenery is
-  locked). Amended 2026-09-06 by fba12b7: *the shipped resize is
-  CLICK-to-resize — tapping an n/e/s/w handle (a 12px target) quantizes the
-  touched edge to the grid, center-preserving (resizeVeilFromEdge).
-  Drag-resize is deferred to the tablet-hardening pass (see 05-UI
-  §Tablet).*
+  locked). Amended 2026-09-08 (one-gesture-machine rebuild): *the
+  CLICK-to-resize path (fba12b7) is DELETED — veil handles are drag-resize
+  now, sharing the ONE resize gesture with effect handles: the handle drag
+  previews the cell-quantized geometry live (`resizeVeilFromEdge`, opposite
+  edge pinned) with zero writes mid-gesture and exactly one commit on
+  release; a tap commits nothing.*
 - Effect markers (D8, added 2026-09-06 by the encounter-resume arc):
   **Disc**/**Square** toolbar stamps — a geometric form spawns at the board
   center one cell across in the first stamp color, then drags with the veil
@@ -399,12 +416,15 @@ could see.*
   BOTH views (D8); the stage snapshot captures and restores them. Amended
   2026-09-08 (veil-parity arc): *markers gain the veil's four n/e/s/w edge
   handles (12px dot in a 44px transparent pad, hidden while scenery is
-  locked or in player view) — but DRAG, not the veil's click-to-resize: the
+  locked or in player view) — but DRAG, not click: the
   handle drag previews the symmetric cell-quantized size live
   (`resizeEffectFromEdge`, center fixed) with zero writes mid-gesture and
   exactly one commit on release; a tap or a return-to-start-size drag
   commits nothing, cancel commits nothing. The rail Grow/Shrink buttons stay
-  as the discrete-step (accessibility) path, Shrink disabled at one cell.*
+  as the discrete-step (accessibility) path, Shrink disabled at one cell.
+  Amended 2026-09-08 (one-gesture-machine rebuild): *veil and effect
+  handles share the ONE `effectResize` machine kind (the payload
+  discriminates) with one board-owned start/preview/finish path.*
 - Stage: **⚑ Set stage** (confirm) captures the snapshot; **↻ Reset**
   restores geometry, clears initiative, resets NPC instance HP to artifact
   max, re-spawns missing PCs at the staging ground, stays live.
@@ -419,7 +439,9 @@ could see.*
   happened; a deleted seeding encounter reads loud, never blank).*
 - Initiative: enable → every visible fighter rolls (d20 + frozen bonus; PCs
   and NPCs alike); reconcile-on-change (reveal → auto-roll, cover/hide →
-  prune) suppressed during sidebar reorder drags via the gesture gate;
+  prune) suppressed while a board gesture is in flight via the gesture gate
+  — a boolean the machine drives (no depth counters, no throwing ends:
+  imbalance resolves to a recoverable reset, never a crash);
   drag-to-reorder; **>>>** next turn with the floating turn marker.
 - Damage/heal: token float controls with quick ± steppers (Damage −10/−5/−1,
   Heal +1/+5/+10, every control ≥44px) that apply the delta directly (clamped

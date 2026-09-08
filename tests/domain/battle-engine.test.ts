@@ -578,36 +578,47 @@ describe('scrub & stage reset', () => {
 });
 
 describe('gesture gates', () => {
-  it('counts nested board gestures and throws on unbalanced end', () => {
+  it('projects the board gesture phase as a boolean — unbalanced ends reset, never throw', () => {
+    expect(isBoardGestureActive()).toBe(false);
+    // An end with no begin is a recoverable reset, not a crash.
+    endBoardGesture();
     expect(isBoardGestureActive()).toBe(false);
     beginBoardGesture();
+    expect(isBoardGestureActive()).toBe(true);
+    // A re-begin while active stays active (one machine, one gesture — the
+    // old nested depth counter is gone).
     beginBoardGesture();
     expect(isBoardGestureActive()).toBe(true);
     endBoardGesture();
+    expect(isBoardGestureActive()).toBe(false);
+    // Double finish: the second end finds idle and no-ops (the old throw is
+    // gone — imbalance resolves to a reset).
     endBoardGesture();
     expect(isBoardGestureActive()).toBe(false);
-    expect(() => {
-      endBoardGesture();
-    }).toThrow();
   });
 
-  it('bumps the initiative drag epoch when the last drag ends and notifies listeners', () => {
+  it('bumps the initiative drag epoch when the drag ends and notifies listeners', () => {
+    const start = initiativeDragEpoch();
     const epochs: number[] = [];
     const unsubscribe = subscribeInitiativeDragEpoch(() => {
       epochs.push(initiativeDragEpoch());
     });
+    // Unbalanced end: recoverable no-op — no epoch, no listeners, no throw.
+    endInitiativeDrag();
+    expect(isInitiativeDragging()).toBe(false);
+    expect(epochs).toEqual([]);
     beginInitiativeDrag();
     expect(isInitiativeDragging()).toBe(true);
+    // A second begin shares the one drag (no nesting) — still no epoch yet.
     beginInitiativeDrag();
-    endInitiativeDrag();
     expect(isInitiativeDragging()).toBe(true);
     expect(epochs).toEqual([]);
     endInitiativeDrag();
     expect(isInitiativeDragging()).toBe(false);
-    expect(epochs).toEqual([1]);
-    expect(() => {
-      endInitiativeDrag();
-    }).toThrow();
+    expect(epochs).toEqual([start + 1]);
+    // Double finish no-ops: no second epoch, no throw.
+    endInitiativeDrag();
+    expect(epochs).toEqual([start + 1]);
     unsubscribe();
   });
 });

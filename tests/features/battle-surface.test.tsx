@@ -614,7 +614,7 @@ describe('veil presentation', () => {
     expectTint(screen.getByTestId('battle-veil'));
   });
 
-  it('gives veil resize handles a 44px touch target while the visible dot stays small (T2a)', async () => {
+  it('gives veil resize handles a 44px touch target and drag-resizes with one commit (T2a/T2b unified)', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -638,22 +638,37 @@ describe('veil presentation', () => {
       if (dot === null) throw new Error(`veil handle ${edge} lost its visible dot`);
       expect(dot.className).toContain('size-3');
     }
-    // Click-to-resize still commits through the discrete-step path: click the
-    // east handle one cell outward of its edge and the veil grows exactly one
-    // cell wider (opposite edge pinned).
+    // Drag-resize (one-gesture-machine — the click-to-resize path is
+    // deleted): the east handle drags one cell outward with a live preview,
+    // zero writes mid-gesture, and exactly one commit on release carrying
+    // the final geometry (opposite edge pinned).
     vi.mocked(saveBattleBoard).mockClear();
-    const before = (await currentBattle(moduleId)).board.veils[0];
-    if (before === undefined) throw new Error('veil missing');
-    const eastEdgeX = (before.x + (before.widthCells * 72) / BOARD_W / 2) * BOARD_W + 72;
-    fireEvent.click(screen.getByTestId('veil-handle-e'), {
-      clientX: eastEdgeX,
-      clientY: CONTENT_TOP + before.y * CONTENT_H,
-    });
+    const veilEl = screen.getByTestId('battle-veil');
+    const beforeWidth = veilEl.style.width;
+    const handle = screen.getByTestId('veil-handle-e');
+    // The 2-cell veil spans 144px centered at 0.3: its east rim sits 72px
+    // right of center. Dragging one full cell (72px) further out lands the
+    // span at 3 cells, west edge pinned, center shifted to 0.345.
+    const rimX = 0.3 * BOARD_W + 72;
+    const midY = CONTENT_TOP + 0.3 * CONTENT_H;
+    fireEvent.pointerDown(handle, { pointerId: 13, clientX: rimX, clientY: midY });
+    fireEvent.pointerMove(handle, { pointerId: 13, clientX: rimX + 72, clientY: midY });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalled();
+    // The LOCAL veil previews the grown size with zero writes mid-gesture.
+    expect(Number.parseFloat(veilEl.style.width)).toBeCloseTo(27, 9);
+    expect(veilEl.style.width).not.toBe(beforeWidth);
+    expect(saveBattleBoard).not.toHaveBeenCalled();
+    // Release: exactly one commit; height untouched, gate balanced.
+    fireEvent.pointerUp(handle, { pointerId: 13 });
+    await flushAsyncUpdates();
+    expect(saveBattleBoard).toHaveBeenCalledTimes(1);
+    expect(isBoardGestureActive()).toBe(false);
     const after = (await currentBattle(moduleId)).board.veils[0];
     if (after === undefined) throw new Error('veil vanished');
-    expect(after.widthCells).toBe(before.widthCells + 1);
+    expect(after.widthCells).toBe(3);
+    expect(after.heightCells).toBe(2);
+    expect(after.x).toBeCloseTo(0.345, 9);
+    expect(after.y).toBe(0.3);
   });
 });
 
@@ -858,7 +873,7 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     expect(after.board.tokens.find((token) => token.label === 'Serren')?.x).toBe(pcToken.x);
   });
 
-  it('keeps the veil onPointerCancel → finish path intact (a dragged veil still commits on cancel)', async () => {
+  it('abandons a dragged veil on cancel with no commit — cancel never commits (S7)', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -880,18 +895,19 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     fireEvent.pointerDown(veilEl, { pointerId: 9, clientX: cx(0.3), clientY: cy(0.3) });
     fireEvent.pointerMove(veilEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
     await flushAsyncUpdates();
-    // Cancel ON the veil still runs the veil's own finish (commit when past
-    // the threshold); the board cancel handler stands down so the gesture
-    // ends exactly once (an unbalanced end would throw through the dispatch).
+    // Cancel is NEVER a release: the stream died, so there is no drop point
+    // and no tap — the drag abandons with zero commits (the old veil path
+    // committed here; the machine unifies every piece on abandon) and the
+    // gate balances without throwing.
     fireEvent.pointerCancel(veilEl, { pointerId: 9 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
-    expect(after.board.veils.find((entry) => entry.id === veilId)?.x).not.toBe(0.3);
+    expect(after.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
   });
 
-  it('keeps the effect onPointerCancel → finish path intact (a dragged effect still commits on cancel)', async () => {
+  it('abandons a dragged effect on cancel with no commit — cancel never commits (S7)', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -913,14 +929,15 @@ describe('board touch robustness (batch B — drag-state hardening)', () => {
     fireEvent.pointerDown(effectEl, { pointerId: 7, clientX: cx(0.3), clientY: cy(0.3) });
     fireEvent.pointerMove(effectEl, { pointerId: 7, clientX: cx(0.55), clientY: cy(0.62) });
     await flushAsyncUpdates();
-    // Same contract as veils: the effect's own finish owns an on-piece
-    // cancel, and the board stands down (exactly one gesture end).
+    // Same unified contract as veils and tokens: an on-piece cancel
+    // abandons with zero commits (the old effect path committed here) and
+    // the gate balances without throwing.
     fireEvent.pointerCancel(effectEl, { pointerId: 7 });
     await flushAsyncUpdates();
-    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
     expect(isBoardGestureActive()).toBe(false);
     const after = await currentBattle(moduleId);
-    expect(after.board.effects.find((entry) => entry.id === effectId)?.x).not.toBe(0.3);
+    expect(after.board.effects.find((entry) => entry.id === effectId)?.x).toBe(0.3);
   });
 });
 
@@ -3163,4 +3180,211 @@ describe('site shape on the surface (docs/11 D11)', () => {
     expect(battle.board.stagingGround?.y).toBeCloseTo((spawn.mobsRect.y + spawn.mobsRect.h / 2) / layout.gridH, 9);
   });
 
-});;
+});
+
+describe('one-gesture-machine (unified board gesture layer)', () => {
+  it('commits exactly once when the release lands on another piece — no cross-consuming finish (S1/R1)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const veilId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    const battle = await currentBattle(moduleId);
+    const pcToken = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (pcToken === undefined) throw new Error('pc token missing');
+    const tokenEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Serren');
+    if (tokenEl === undefined) throw new Error('serren element missing');
+    vi.mocked(saveBattleBoard).mockClear();
+    // Drag the token, but release ON the veil node: one board owner means
+    // one finish — the veil never consumes the token's release (the old
+    // cross-consuming double finish committed twice / threw).
+    fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
+    fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    fireEvent.pointerUp(screen.getByTestId('battle-veil'), { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(isBoardGestureActive()).toBe(false);
+    const after = await currentBattle(moduleId);
+    expect(after.board.tokens.find((token) => token.label === 'Serren')?.x).not.toBe(pcToken.x);
+    // The veil never moved — its own gesture never armed.
+    expect(after.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
+  });
+
+  it('ignores a second pointerdown on another piece mid-drag — no overwrite (S2/R4)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const veilId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    const battle = await currentBattle(moduleId);
+    const pcToken = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (pcToken === undefined) throw new Error('pc token missing');
+    const tokenEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Serren');
+    if (tokenEl === undefined) throw new Error('serren element missing');
+    const veilEl = screen.getByTestId('battle-veil');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    vi.mocked(saveBattleBoard).mockClear();
+    // Finger 1 drags the token well past the threshold…
+    fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
+    fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    // …then finger 2 grabs the veil: ignored, never an overwrite — the veil
+    // does not even select (selection happens at arm, and arming is refused).
+    fireEvent.pointerDown(veilEl, { pointerId: 2, clientX: cx(0.3), clientY: cy(0.3) });
+    expect(screen.queryByTestId('delete-veil')).toBeNull();
+    // Finger 2's moves never fold into the owner's stream (R3)…
+    fireEvent.pointerMove(veilEl, { pointerId: 2, clientX: cx(0.1), clientY: cy(0.15) });
+    // …so finger 1's release still commits finger 1's drop, exactly once.
+    fireEvent.pointerUp(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    fireEvent.pointerUp(veilEl, { pointerId: 2, clientX: cx(0.1), clientY: cy(0.15) });
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(isBoardGestureActive()).toBe(false);
+    const after = await currentBattle(moduleId);
+    const moved = after.board.tokens.find((token) => token.label === 'Serren');
+    if (moved === undefined) throw new Error('token vanished');
+    // Finger 1's zone (0.62), not finger 2's corner (0.1): no hijack.
+    expect(moved.x).toBeGreaterThan(0.5);
+    expect(after.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
+  });
+
+  it('evaluates the scenery lock BEFORE arming: a locked grab no-ops loudly — no commit, no pan — and works after unlock (S6)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    const veilId = newId();
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        sceneryMovementLocked: true,
+        veils: [{ id: veilId, kind: 'veil', x: 0.3, y: 0.3, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    vi.mocked(saveBattleBoard).mockClear();
+    const veilEl = screen.getByTestId('battle-veil');
+    const cx = (fx: number): number => contentRect.left + fx * contentRect.width;
+    const cy = (fy: number): number => contentRect.top + fy * contentRect.height;
+    // A grab on locked scenery arms nothing (the gate never opens) and —
+    // the S6 fix — never degrades into a pan: the board transform is
+    // untouched, nothing commits, nothing selects.
+    fireEvent.pointerDown(veilEl, { pointerId: 9, clientX: cx(0.3), clientY: cy(0.3) });
+    expect(isBoardGestureActive()).toBe(false);
+    fireEvent.pointerMove(veilEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
+    fireEvent.pointerUp(veilEl, { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(isBoardGestureActive()).toBe(false);
+    const locked = await currentBattle(moduleId);
+    expect(locked.board.veils.find((entry) => entry.id === veilId)?.x).toBe(0.3);
+    const background = screen.getByTestId('battle-board').querySelector('[data-board-background]');
+    expect(background?.getAttribute('style')).toContain('translate(0px, 0px) scale(1)');
+    // Unlock: the same grab now arms and commits (grab-after-lock works).
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('toggle-scenery-lock'));
+    await flushAsyncUpdates();
+    vi.mocked(saveBattleBoard).mockClear();
+    fireEvent.pointerDown(screen.getByTestId('battle-veil'), { pointerId: 9, clientX: cx(0.3), clientY: cy(0.3) });
+    fireEvent.pointerMove(screen.getByTestId('battle-veil'), { pointerId: 9, clientX: cx(0.55), clientY: cy(0.62) });
+    fireEvent.pointerUp(screen.getByTestId('battle-veil'), { pointerId: 9 });
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(isBoardGestureActive()).toBe(false);
+    const after = await currentBattle(moduleId);
+    expect(after.board.veils.find((entry) => entry.id === veilId)?.x).not.toBe(0.3);
+  });
+
+  it('resets to idle on capture loss with no commit — and the next grab works (S4)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const pcToken = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (pcToken === undefined) throw new Error('pc token missing');
+    const tokenEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Serren');
+    if (tokenEl === undefined) throw new Error('serren element missing');
+    const board = screen.getByTestId('battle-board');
+    vi.mocked(saveBattleBoard).mockClear();
+    fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
+    fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    await flushAsyncUpdates();
+    // The owned stream dies mid-drag: abandon with no commit (the old code
+    // had no lostpointercapture path and stranded the gesture).
+    fireEvent.lostPointerCapture(board, { pointerId: 1 });
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).not.toHaveBeenCalled();
+    expect(isBoardGestureActive()).toBe(false);
+    const stranded = await currentBattle(moduleId);
+    expect(stranded.board.tokens.find((token) => token.label === 'Serren')?.x).toBe(pcToken.x);
+    // The machine is idle again: a fresh grab arms and commits normally.
+    fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
+    fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    fireEvent.pointerUp(tokenEl, { pointerId: 1 });
+    await flushAsyncUpdates();
+    expect(vi.mocked(saveBattleBoard)).toHaveBeenCalledTimes(1);
+    expect(isBoardGestureActive()).toBe(false);
+  });
+
+  it('carries no forbidden-cursor sources and always owns the active grab visually', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const surface = screen.getByTestId('battle-surface');
+    // Zero native-drag ghosts (the browser-native forbidden-cursor source)…
+    expect(surface.querySelectorAll('[draggable="true"]').length).toBe(0);
+    // …and zero not-allowed cursors anywhere on the surface.
+    expect(surface.querySelectorAll('[class*="not-allowed"]').length).toBe(0);
+    // Native HTML5 dragstart is suppressed at the board root.
+    expect(fireEvent.dragStart(screen.getByTestId('battle-board'))).toBe(false);
+    // An active grab is always visually owned: the dragged piece carries
+    // cursor-grabbing while the stream is live…
+    const battle = await currentBattle(moduleId);
+    const pcToken = battle.board.tokens.find((token) => token.label === 'Serren');
+    if (pcToken === undefined) throw new Error('pc token missing');
+    const tokenEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Serren');
+    if (tokenEl === undefined) throw new Error('serren element missing');
+    fireEvent.pointerDown(tokenEl, { pointerId: 1, clientX: pcToken.x * BOARD_W, clientY: pcToken.y * BOARD_H });
+    fireEvent.pointerMove(tokenEl, { pointerId: 1, clientX: 0.62 * BOARD_W, clientY: 0.58 * BOARD_H });
+    await flushAsyncUpdates();
+    await flushDragFrames();
+    expect(tokenEl.className).toContain('cursor-grabbing');
+    // …and the cursor is handed back on release.
+    fireEvent.pointerUp(tokenEl, { pointerId: 1 });
+    await flushAsyncUpdates();
+    expect(tokenEl.className).toContain('cursor-grab');
+    expect(tokenEl.className).not.toContain('cursor-grabbing');
+  });
+});
