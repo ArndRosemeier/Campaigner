@@ -52,7 +52,8 @@ const chatMock = vi.mocked(chat);
 
 const TEST_MODEL = 'test/fixture-model';
 
-/** Spine with one encounter record so the pass-0 floor gate stays quiet. */
+/** Spine with declared encounters so the pass-0 gates stay quiet (08 §M4-B:
+ * wants + kind on every encounter, mix covered). */
 const AUTO_SPINE = {
   premise: 'A bell tower that answers questions asked at midnight, at a price.',
   themes: ['curiosity', 'debt'],
@@ -70,30 +71,47 @@ const AUTO_SPINE = {
       levelUpTrigger: 'The tower falls silent.',
     },
   ],
-  entities: [{ name: 'The Midnight Inquiry', kind: 'encounter' }],
+  entities: [
+    { name: 'The Midnight Inquiry', kind: 'encounter', wants: ['ask the midnight question', 'withhold the price'], conflictKind: 'combat' },
+    { name: 'The Stair Toll', kind: 'encounter', wants: ['climb the stair', 'count every step aloud'], conflictKind: 'hazard' },
+    { name: 'The Debtors Audience', kind: 'encounter', wants: ['name the debt', 'deny the debt'], conflictKind: 'social' },
+  ],
 };
 
-/** The spine-entity normalization reply: the record maps to itself. */
+/** The spine-entity normalization reply: the records map to themselves. */
 const AUTO_NORMALIZATION = {
-  entities: [{ name: 'The Midnight Inquiry', canonical: 'The Midnight Inquiry', kind: 'encounter' }],
+  entities: [
+    { name: 'The Midnight Inquiry', canonical: 'The Midnight Inquiry', kind: 'encounter' },
+    { name: 'The Stair Toll', canonical: 'The Stair Toll', kind: 'encounter' },
+    { name: 'The Debtors Audience', canonical: 'The Debtors Audience', kind: 'encounter' },
+  ],
 };
 
-/** Part prose well above the 100-char floor, naming one distinct encounter
+/** Part prose well above the 100-char floor, naming distinct encounters
  * (the 08 §M4-B floor gate counts prose wiki-links on normalized canonicals,
  * so the post-parts normalization pass makes exactly one model call). */
-function partMarkdown(marker: string, encounter: string): ChatResult {
+function partMarkdown(marker: string, ...encounters: string[]): ChatResult {
+  const links = encounters.length === 0 ? '' : ` Trials faced: ${encounters.map((encounter) => `[[${encounter}]]`).join(', ')}.`;
   return {
-    text: `${marker}: The tower door opens onto a spiral stair that counts its own steps aloud. `.repeat(4) + ` Trial faced: [[${encounter}]].`,
+    text: `${marker}: The tower door opens onto a spiral stair that counts its own steps aloud. `.repeat(4) + links,
     modelUsed: 'test-model',
     fallback: null,
   };
 }
 
-/** Normalization reply mapping prose encounters to kind encounter. */
+/** Declared wants + kind per prose encounter (08 §M4-B: post-parts verdicts
+ * author declarations; the trio covers the gated mix). */
+const AUTO_DECLARATIONS: Record<string, { wants: string[]; conflictKind: string }> = {
+  'First Trial': { wants: ['ask the first question', 'withhold the price'], conflictKind: 'combat' },
+  'Second Trial': { wants: ['climb the stair', 'count the steps aloud'], conflictKind: 'hazard' },
+  'Third Trial': { wants: ['name the debt', 'deny the debt'], conflictKind: 'social' },
+};
+
+/** Normalization reply mapping prose encounters to declared encounters. */
 function encounterNormalization(...names: string[]): ChatResult {
   return {
     text: JSON.stringify({
-      entities: names.map((name) => ({ name, canonical: name, kind: 'encounter' })),
+      entities: names.map((name) => ({ name, canonical: name, kind: 'encounter', ...AUTO_DECLARATIONS[name] })),
     }),
     modelUsed: 'test-model',
     fallback: null,
@@ -116,9 +134,9 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null }) // pass 0
       .mockResolvedValueOnce({ text: JSON.stringify(AUTO_NORMALIZATION), modelUsed: 'test-model', fallback: null }) // spine entities
-      .mockResolvedValueOnce(partMarkdown('part-one', 'First Trial')) // pass 1
-      .mockResolvedValueOnce(partMarkdown('part-two', 'Second Trial'))
-      .mockResolvedValueOnce(encounterNormalization('First Trial', 'Second Trial')); // post-parts entities
+      .mockResolvedValueOnce(partMarkdown('part-one', 'First Trial', 'Second Trial')) // pass 1
+      .mockResolvedValueOnce(partMarkdown('part-two', 'Third Trial'))
+      .mockResolvedValueOnce(encounterNormalization('First Trial', 'Second Trial', 'Third Trial')); // post-parts entities
 
     const moduleId = await createModuleAndRun(campaign, {
       campaignId: campaign.id,
@@ -196,9 +214,9 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null }) // retried pass 0
       .mockResolvedValueOnce({ text: JSON.stringify(AUTO_NORMALIZATION), modelUsed: 'test-model', fallback: null }) // spine entities
-      .mockResolvedValueOnce(partMarkdown('retry-one', 'First Trial')) // pass 1
-      .mockResolvedValueOnce(partMarkdown('retry-two', 'Second Trial'))
-      .mockResolvedValueOnce(encounterNormalization('First Trial', 'Second Trial')); // post-parts entities
+      .mockResolvedValueOnce(partMarkdown('retry-one', 'First Trial', 'Second Trial')) // pass 1
+      .mockResolvedValueOnce(partMarkdown('retry-two', 'Third Trial'))
+      .mockResolvedValueOnce(encounterNormalization('First Trial', 'Second Trial', 'Third Trial')); // post-parts entities
 
     await retrySpine(saved.id, campaign);
 

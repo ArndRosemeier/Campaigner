@@ -90,6 +90,23 @@ export const ENTITY_KINDS = ['npc', 'location', 'event', 'faction', 'note', 'enc
 
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
+/**
+ * Structural conflict vocabulary (08 §M4-B): the declared kind of a planned
+ * encounter scene. Authored by the generator on the entity record — never
+ * inferred by a classifier at a gate. Shared with the Encounter Smith
+ * (docs/11 §conflict-kind vocabulary).
+ */
+export const ENCOUNTER_CONFLICT_KINDS = [
+  'combat',
+  'hazard',
+  'chase',
+  'social',
+  'puzzle',
+  'exploration',
+] as const;
+
+export type EncounterConflictKind = (typeof ENCOUNTER_CONFLICT_KINDS)[number];
+
 /** One model-recorded entity type: a wiki-link name and its kind. */
 export const moduleEntityKindSchema = z.object({
   /** The name as first written in the module text (wiki-link form). For
@@ -99,6 +116,16 @@ export const moduleEntityKindSchema = z.object({
   /** fix-01: variant names this canonical entry absorbed (checkpoint
    * display only; the panel folds via rewritten links). Empty otherwise. */
   absorbed: z.array(z.string()).default([]),
+  /**
+   * Structural conflict declarations (08 §M4-B): for `kind: "encounter"`
+   * records, the two mutually exclusive wants driving the scene
+   * (`wants: [a, b]` — if both sides could plausibly agree, it is not an
+   * encounter yet) and the declared `conflictKind`. Non-encounter records
+   * leave both at their defaults; old rows parse via the defaults (no
+   * migration — parse-on-read).
+   */
+  wants: z.array(z.string()).max(2).default([]),
+  conflictKind: z.enum(ENCOUNTER_CONFLICT_KINDS).nullable().default(null),
 });
 
 export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;

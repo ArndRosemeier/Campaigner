@@ -314,11 +314,12 @@ describe('v7 → v8 migration', () => {
     expect(module?.entityRewriteProposals).toBeNull();
 
     // The upgraded row validates against the current module schema (whose
-    // entityKinds records now carry `absorbed`).
+    // entityKinds records now carry `absorbed` plus the structural conflict
+    // declarations, all defaulted — parse-on-read, no migration).
     const { moduleSchema } = await import('@/domain');
     const parsed = moduleSchema.parse(module);
     expect(parsed.entityNamesNormalized).toBe(false);
-    expect(parsed.entityKinds).toEqual([{ name: 'Kael', kind: 'npc', absorbed: [] }]);
+    expect(parsed.entityKinds).toEqual([{ name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null }]);
 
     await db.delete();
   }, 20000);

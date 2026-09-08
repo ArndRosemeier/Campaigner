@@ -686,6 +686,33 @@ a seed after a replace picks up the new board copy.
 - Encounters produced here are module-owned (`moduleId`, M6-B semantics) and
   battle-ready via the module view's Run battle.
 
+## Conflict-kind vocabulary (shared with the Module Designer)
+
+The module pipeline declares every planned encounter's scene kind on its
+entity record (`conflictKind` — 08 §M4-B), using this vocabulary — the shared
+scene-kind language between the module planner (which declares with it) and
+encounter production (which builds to it), so the plan and the artifact mean
+the same thing:
+
+- **combat** — the scene is decided by fighting (a Smith encounter proper).
+- **hazard** — the scene is decided against an environment, trap, or
+  affliction (no opposing want — the "want" pair names what the party risks
+  against what the hazard threatens).
+- **chase** — the scene is decided by pursuit or escape; counts with hazard
+  for the declared mix (hazard-or-chase).
+- **social** — the scene is decided by leverage, and someone must come out
+  worse (a negotiation that could end with everyone satisfied is not an
+  encounter — see 08 §M4-B incompatible wants).
+- **puzzle** — the scene is decided by deduction or mechanism; allowed,
+  never satisfies the gated mix.
+- **exploration** — the scene is decided by discovery under pressure;
+  allowed, never satisfies the gated mix.
+
+The mix gate counts the planner's declarations (plus post-parts verdicts
+for prose-invented scenes), never a classifier over prose — the signal is
+authored. Single source of the enum: `ENCOUNTER_CONFLICT_KINDS`
+(`src/domain/module.ts`).
+
 ## Cost & latency (per encounter, indicative)
 
 Manual run: 1–2 chat calls (brief, optional repair) + 2 image calls

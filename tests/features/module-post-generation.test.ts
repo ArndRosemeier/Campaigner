@@ -94,7 +94,7 @@ async function seedModule(
   const module = moduleOverrides(base, {
     status: 'ready',
     entityNamesNormalized: true,
-    entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [] }],
+    entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null }],
     spine: moduleSpineSchema.parse({
       premise: 'The gate of [[Ember Crypt]] opens at dusk.',
       themes: [],

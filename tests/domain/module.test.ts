@@ -41,6 +41,12 @@ describe('moduleSchema.entityKinds', () => {
     expect(record.absorbed).toEqual([]);
   });
 
+  it('defaults conflict declarations empty so pre-slice rows parse (no migration)', () => {
+    const record = moduleEntityKindSchema.parse({ name: 'Ember Trial', kind: 'encounter' });
+    expect(record.wants).toEqual([]);
+    expect(record.conflictKind).toBeNull();
+  });
+
   it('rejects records with empty names on a full row', () => {
     const module = createModule({
       campaignId: '00000000-0000-4000-8000-0000000000c1',
@@ -94,8 +100,8 @@ describe('moduleSchema.includePriorModules', () => {
 
 describe('entityKindFor', () => {
   const records: ModuleEntityKind[] = [
-    { name: 'Harbormaster Ilse', kind: 'npc', absorbed: [] },
-    { name: 'The Undercroft', kind: 'location', absorbed: [] },
+    { name: 'Harbormaster Ilse', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
+    { name: 'The Undercroft', kind: 'location', absorbed: [], wants: [], conflictKind: null },
   ];
 
   it('matches case-insensitively and trims', () => {

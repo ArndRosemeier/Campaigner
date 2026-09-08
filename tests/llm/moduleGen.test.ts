@@ -89,12 +89,15 @@ const VALID_SPINE = {
     },
   ],
   // 08 §M4-C: the model declares each entity's kind when it invents the name.
-  // The encounter record keeps the pass-0 spine gate quiet (08 §M4-B).
+  // The declared encounters (wants + kind each, mix covered) keep the
+  // pass-0 spine gate quiet (08 §M4-B).
   entities: [
     { name: 'Warden Bellamy', kind: 'npc' },
     { name: 'The Drowned Cathedral', kind: 'location' },
     { name: 'The Tide Cult', kind: 'faction' },
-    { name: 'The Bells Below', kind: 'encounter' },
+    { name: 'The Bells Below', kind: 'encounter', wants: ['ring the drowned bell', 'keep the bell silent'], conflictKind: 'combat' },
+    { name: 'The Flooded Nave', kind: 'encounter', wants: ['cross the drowned nave', 'hold the waters back'], conflictKind: 'hazard' },
+    { name: 'The Wardens Confession', kind: 'encounter', wants: ['name the guilty warden', 'protect the wardens name'], conflictKind: 'social' },
   ],
 };
 
@@ -105,6 +108,8 @@ const SELF_NORMALIZATION = {
     { name: 'The Drowned Cathedral', canonical: 'The Drowned Cathedral', kind: 'location' },
     { name: 'The Tide Cult', canonical: 'The Tide Cult', kind: 'faction' },
     { name: 'The Bells Below', canonical: 'The Bells Below', kind: 'encounter' },
+    { name: 'The Flooded Nave', canonical: 'The Flooded Nave', kind: 'encounter' },
+    { name: 'The Wardens Confession', canonical: 'The Wardens Confession', kind: 'encounter' },
   ],
 };
 
@@ -127,19 +132,33 @@ function partWithNames(marker: string, names: string[]): ChatResult {
 }
 
 /** A normalization reply mapping every listed name to itself with its kind. */
-function normalizationReply(entries: { name: string; kind: string }[]): ChatResult {
+function normalizationReply(entries: { name: string; kind: string; wants?: string[]; conflictKind?: string }[]): ChatResult {
   return {
     text: JSON.stringify({
-      entities: entries.map((entry) => ({ name: entry.name, canonical: entry.name, kind: entry.kind })),
+      entities: entries.map((entry) => ({
+        name: entry.name,
+        canonical: entry.name,
+        kind: entry.kind,
+        ...(entry.wants !== undefined ? { wants: entry.wants } : {}),
+        ...(entry.conflictKind !== undefined ? { conflictKind: entry.conflictKind } : {}),
+      })),
     }),
     modelUsed: 'test-model',
     fallback: null,
   };
 }
 
-/** Shorthand for an all-encounter normalization reply. */
+/** Declared wants + kind per prose-invented trial (08 §M4-B: post-parts
+ * verdicts author declarations; the trio covers the gated mix). */
+const TRIAL_DECLARATIONS: Record<string, { wants: string[]; conflictKind: string }> = {
+  'Ember Trial': { wants: ['seize the ember', 'quench the ember'], conflictKind: 'combat' },
+  'Flood Trial': { wants: ['cross the flood', 'hold the waters back'], conflictKind: 'hazard' },
+  'Bell Trial': { wants: ['ring the bell', 'silence the bell'], conflictKind: 'social' },
+};
+
+/** Shorthand for an all-encounter normalization reply (declared, mix-covering). */
 function encounterReply(...names: string[]): ChatResult {
-  return normalizationReply(names.map((name) => ({ name, kind: 'encounter' })));
+  return normalizationReply(names.map((name) => ({ name, kind: 'encounter', ...TRIAL_DECLARATIONS[name] })));
 }
 
 async function seedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
@@ -305,7 +324,7 @@ describe('runSpine', () => {
     expect(finished.spine?.partPlan).toHaveLength(3);
     // The normalized, canonical entity kinds land on the module row (fix-01).
     expect(finished.entityKinds).toEqual(
-      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
+      VALID_SPINE.entities.map((entity) => ({ wants: [], conflictKind: null, ...entity, absorbed: [] })),
     );
 
     expect(chatMock).toHaveBeenCalledTimes(2);
@@ -361,7 +380,7 @@ describe('entity kinds — spine record (08 §M4-C)', () => {
   it('parseSpineEntities reads the model-declared entity list', () => {
     const raw = JSON.stringify(VALID_SPINE);
     expect(parseSpineEntities(raw)).toEqual(
-      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
+      VALID_SPINE.entities.map((entity) => ({ wants: [], conflictKind: null, ...entity, absorbed: [] })),
     );
   });
 
@@ -390,7 +409,7 @@ describe('entity kinds — spine record (08 §M4-C)', () => {
     expect(userMessagesOf(1)).toContain('Your previous reply was invalid JSON');
     expect(finished.status).toBe('draft');
     expect(finished.entityKinds).toEqual(
-      VALID_SPINE.entities.map((entity) => ({ ...entity, absorbed: [] })),
+      VALID_SPINE.entities.map((entity) => ({ wants: [], conflictKind: null, ...entity, absorbed: [] })),
     );
   }, 20000);
 });
@@ -834,7 +853,7 @@ describe('entity name normalization (fix-01)', () => {
     expect(after?.entityNormalizationError).toBe('');
     // REPLACED, not merged: one canonical record carrying the absorbed variants.
     expect(after?.entityKinds).toEqual([
-      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'] },
+      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'], wants: [], conflictKind: null },
     ]);
     // Generated part: link targets rewritten, display text preserved.
     const part = after?.parts.find((entry) => entry.planIndex === 0);

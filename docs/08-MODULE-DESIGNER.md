@@ -190,17 +190,24 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
 - REQUIREMENT — encounter floor: name at least **one distinct encounter per
   level** of the module's range (levels X–Y → at least N distinct encounters
   across the module), with each part naming at least as many encounters as
-  the levels its band covers. An encounter may be combat, social conflict,
-  exploration, hazard, negotiation, chase, puzzle, or another scene with
-  meaningful risk and player agency. Place encounters deliberately in the
-  parts where they make narrative and gameplay sense, vary their type and
-  intensity — include at least one outright combat, one hazard or chase, and
-  one social conflict where someone must come out worse — and reserve
-  climactic encounters for an earned escalation. Never pad the module with
-  repetitive or disposable encounters. The kind mix is directed, not gated:
-  no encounter-type signal exists in the pipeline to count from (a kind
-  quota is a follow-up slice), but the COUNT is hard (see the floor gate
-  below) — the 4× ceiling stays advisory and never fails.
+  the levels its band covers. Every planned encounter declares its conflict
+  STRUCTURALLY on its entity record: exactly **two mutually exclusive wants**
+  (`wants: [a, b]` — if both sides could plausibly agree, it is not an
+  encounter yet) and one **conflict kind** (combat, hazard, chase, social,
+  puzzle, or exploration — the vocabulary shared with the Encounter Smith,
+  docs/11). Place encounters deliberately in the parts where they make
+  narrative and gameplay sense, vary their kind and intensity — the declared
+  mix MUST include at least one outright combat, one hazard-or-chase, and one
+  social conflict where someone must come out worse (the mix is GATED from
+  these declarations at generation time — counted, never classified — so
+  declare kinds honestly) — and reserve climactic encounters for an earned
+  escalation. Never pad the module with repetitive or disposable encounters.
+  The 4× ceiling stays advisory and never fails.
+- Structural conflict governs HOW scenes resolve, never what they feel like:
+  no tone, register, or subject matter is restricted — murder clown and
+  grieving revenge both clear every gate. The planner prompt carries banned
+  resolutions (generic + the module tone's entry, see the tone dial below):
+  prohibitions on outcomes, never on mood.
 - Introduce as many locations, NPCs, factions, notes, and encounters as the
   story needs — you are not required to detail any of them in the spine. Give
   every planned encounter a distinctive, stable name, declare it as
@@ -211,19 +218,23 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
   invent duplicates to fill out the encounter floor.
 
 Output zod `ModuleSpineSchema` (premise, themes, partPlan with all four
-fields; partPlan length 1..20) **plus `entities: [{ name, kind }]`** — the
-model declares each entity's kind (npc/location/event/faction/note) when it
-invents the name; the record is stored as `module.entityKinds` and drives
+fields; partPlan length 1..20) **plus `entities: [{ name, kind, wants,
+conflictKind }]`** — the model declares each entity's kind
+(npc/location/event/faction/note/encounter) when it invents the name, and
+every encounter ALSO declares its two mutually exclusive wants and one
+conflict kind; the record is stored as `module.entityKinds` and drives
 chip preselects and batch buckets (a missing/incomplete list fails the
-spine loudly — no client-side heuristic ever decides a type).
+spine loudly — no client-side heuristic ever decides a type; an encounter
+missing its wants pair or kind fails the same way, never defaulted).
 `responseFormat:'json'`, same invalid-JSON-retry-once policy as personas;
 second failure → module `status:'failed'` + errorMessage (loud, per AGENTS
 rule 1).
 
 **Spine encounter gate:** after the spine saves, zero `kind: "encounter"`
-records trigger ONE repair retry on the escalated model (a corrected spine
-that names encounters); a second zero-encounter record fails the spine
-loudly — a zero-encounter draft never parks on the checkpoint.
+records OR a declared mix missing combat / hazard-or-chase / social trigger
+ONE repair retry on the escalated model (a corrected spine that declares
+encounters with wants + kinds); a second defective record fails the spine
+loudly — a zero-encounter or mix-broken draft never parks on the checkpoint.
 
 **Checkpoint (default): the spine is shown for approval** — editable premise
 textarea and part-plan table (edit titles/synopses/bands, add/remove/reorder
@@ -259,6 +270,14 @@ For part i, the user message contains:
      number): name at least as many distinct encounters as the levels the
      part's band covers, as `[[Encounter Name]]` wiki-links; encounters
      named in other parts do not count toward this part's share,
+    - the planner's declared encounters (names, opposed wants, kinds) ride
+      the prompt as the conflict brief: stage each in its declared kind,
+      keep the opposed wants irreconcilable inside the part (negotiation
+      may cost, never dissolve the opposition),
+    - REQUIREMENT — no clean resolution on non-finale parts: end with a
+      cost, a revelation, or a new pressure — never with every side
+      satisfied. Satisfaction is rationed to the finale, at full price
+      (every want met is paid for visibly),
    - no stat blocks in the prose — mechanics belong to linked entities;
      reference DCs/checks inline where natural.
 
@@ -269,12 +288,18 @@ of lowercased `extractWikiLinks(moduleDocumentText)` targets whose recorded
 kind is `"encounter"` against levelCount, allocated per band with
 `levelsInLevelBand`; bands `1`, `2-3`, `2–3`, `2 - 3` parse, unparseable = 1;
 reuse counts; the 4× ceiling stays advisory and never fails high;
-sizeDial-independent). Each deficient part in the run's scope gets ONE
+sizeDial-independent). The pass ALSO checks the declared mix on the records
+(`assertEncounterMix` — pure: the AUTHOR declarations, never a classifier;
+an encounter record with no declared kind fails loudly instead of
+defaulting). Each deficient part in the run's scope gets ONE
 repair rewrite via the `rewritePart` engine (`generatePart`) on the
-escalated model — hand-edited parts are never touched (they fail loud
+escalated model — the repair carries the honor-declarations and
+no-clean-resolution rules (finale-aware: the closing part may satisfy at
+full price) — hand-edited parts are never touched (they fail loud
 instead) — then the pass re-normalizes and recounts. A full run owns the
-whole-module total; a subset run (single-part rewrite/retry) owns only its
-parts' band shares. Still short →
+whole-module total AND the mix; a subset run (single-part rewrite/retry)
+owns only its parts' band shares (the mix is a whole-module property).
+Still short →
 module `status:'failed'` with an `errorMessage` naming the deficient part
 titles/bands + `toastError`; good parts are preserved (no rollback — parts
 are individually regenerable, and a failed repair restores the pre-repair
@@ -310,6 +335,43 @@ Per-part **"Rewrite…"** button (also for successful parts): optional user
 instruction appended, regenerates just that part with the same context recipe
 (prior part = current text of part i−1). Overwrites the part's markdown —
 confirm dialog when the part was hand-edited since generation.
+
+### Tone dial (banned resolutions)
+
+`tone` stays free text (dialog input, may be `''`). When it names one of
+the canonical values below (case-insensitive), the planner prompt carries
+that value's banned resolutions IN ADDITION to the generic bans; an
+unlisted tone gets the generic bans only. Every ban prohibits an OUTCOME —
+never register, mood, or subject matter. The prose palette stays fully
+open: murder clown and grieving revenge both clear every gate.
+
+Generic bans (every module): both sides leave with their wants fully met;
+the opposing side abandons its want because the party argues well or asks
+earnestly; a compromise that divides the difference with no cost to anyone;
+a hidden third option that satisfies every side at once.
+
+- heroic: the confrontation is won by a bystander sacrifice the party never
+  chose; the villain yields the moment the party demonstrates superior
+  resolve.
+- hopeful: every loss is undone before the part ends; a bleak outcome is
+  reversed by a last-moment turn that costs no one.
+- whimsical: the conflict dissolves because it was all a misunderstanding
+  with no remaining consequences; a trickster rewinds events so the party's
+  choices leave no trace.
+- mystery: the culprit confesses the whole scheme unprompted; the final
+  clue arrives from nowhere instead of from the investigation.
+- intrigue: every faction honors its bargain with no betrayal priced in; a
+  divided loyalty is settled by exposition rather than by what is
+  sacrificed.
+- horror: the threat is fully explained and dismantled with nothing unknown
+  left standing; everyone escapes the scene without loss.
+- tragedy: a doomed stand is rescued by an intervention nobody earned; the
+  price of the outcome lands on someone uninvolved instead of on whoever
+  chose it.
+
+Single source: `MODULE_TONE_BANS` / `MODULE_TONE_GENERIC_BANS`
+(`src/llm/moduleGen.ts`) — the prompt renders from the constant, this
+section documents it.
 
 ### Creation UI
 

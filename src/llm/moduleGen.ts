@@ -1,5 +1,5 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
-import { createModule, entityKindFor, moduleDocumentText, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS } from '@/domain';
+import { createModule, ENCOUNTER_CONFLICT_KINDS, entityKindFor, moduleDocumentText, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS, type EncounterConflictKind } from '@/domain';
 import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
@@ -293,7 +293,10 @@ export async function runSpine(
           spineNames,
           artifactNames,
         );
-        normalizedKinds = canonicalEntityRecords(verdicts);
+        // Spine-time verdicts map names only (the planner authored the
+        // wants/kind declarations on nextKinds) — carry them over code-side
+        // onto the canonical records, never re-inferred.
+        normalizedKinds = canonicalEntityRecords(verdicts, nextKinds);
       }
       const saved = await patchModule(moduleId, {
         spine: nextSpine,
@@ -308,11 +311,22 @@ export async function runSpine(
       return saved;
     };
     let saved = await normalizeAndSave(spine, entityKinds);
-    // Encounter-floor spine gate (08 §M4-B): a spine declaring zero encounter
-    // records gets ONE repair retry on the escalated model — a corrected spine
-    // that names encounters. A second zero-encounter record fails the spine
-    // loudly (never a silent zero-encounter draft).
-    if (!saved.entityKinds.some((entry) => entry.kind === 'encounter')) {
+    // Encounter spine gate (08 §M4-B): zero encounter records OR an unmet
+    // declared mix gets ONE repair retry on the escalated model — a
+    // corrected spine that declares encounters with wants + kinds. A second
+    // defective record fails the spine loudly (never a silent draft).
+    const spineEncounterDefect = (module: Module): string | null => {
+      if (!module.entityKinds.some((entry) => entry.kind === 'encounter')) {
+        return 'declares no encounters';
+      }
+      try {
+        assertEncounterMix(module.entityKinds);
+        return null;
+      } catch (error) {
+        return errorMessage(error);
+      }
+    };
+    if (spineEncounterDefect(saved) !== null) {
       const levelCount = saved.levelMax - saved.levelMin + 1;
       const { text: retryRaw } = await chat(
         [
@@ -320,10 +334,12 @@ export async function runSpine(
           {
             role: 'user',
             content:
-              `Your spine declares no encounters, but the module requires at least one distinct encounter per level ` +
+              `Your spine ${spineEncounterDefect(saved) ?? 'declares no encounters'}, but the module requires at least one distinct encounter per level ` +
               `(levels ${String(saved.levelMin)}–${String(saved.levelMax)} → at least ${String(levelCount)} encounters). ` +
               `Reply with corrected JSON only (same schema): keep the premise, themes and part plan, and declare every planned encounter ` +
-              `in entities with kind "encounter", each under a distinctive, stable name.`,
+              `in entities with kind "encounter", each under a distinctive, stable name — each with exactly the two mutually exclusive wants driving the scene ` +
+              `and one conflict kind (combat, hazard, chase, social, puzzle, or exploration). The declared mix must include ` +
+              `at least one outright combat, one hazard-or-chase, and one social conflict where someone must come out worse.`,
           },
         ],
         {
@@ -340,10 +356,11 @@ export async function runSpine(
       const retrySpine = parseSpine(retryRaw);
       const retryKinds = parseSpineEntities(retryRaw);
       saved = await normalizeAndSave(retrySpine, retryKinds);
-      if (!saved.entityKinds.some((entry) => entry.kind === 'encounter')) {
+      const retryDefect = spineEncounterDefect(saved);
+      if (retryDefect !== null) {
         throw new Error(
-          'The spine declares no encounters after the repair retry — ' +
-            'a module needs at least one encounter record per level. Retry the spine draft.',
+          `The spine still ${retryDefect} after the repair retry — ` +
+            'a module needs declared encounters (two wants + conflict kind each) with a combat, a hazard-or-chase and a social conflict in the mix. Retry the spine draft.',
         );
       }
     }
@@ -382,9 +399,78 @@ const spineReplySchema = z.object({
  * §M4-C): the model declares each entity's kind when it invents the name —
  * a missing/incomplete list is a validation error (retry-once, then the
  * spine fails loudly; never a silent default).
+ *
+ * Structural conflict declarations (08 §M4-B): every `kind: "encounter"`
+ * entry must declare exactly two mutually exclusive wants (`wants: [a, b]`)
+ * and one `conflictKind` — an incomplete declaration is a validation error
+ * on the same retry-once path, never a defaulted kind.
  */
 export function parseSpineEntities(raw: string): ModuleEntityKind[] {
-  return entityKindsReplySchema.parse(parseJsonReply(raw)).entities;
+  const entities = entityKindsReplySchema.parse(parseJsonReply(raw)).entities;
+  const defects: string[] = [];
+  for (const entry of entities) {
+    if (entry.kind !== 'encounter') continue;
+    if (entry.wants.filter((want) => want.trim() !== '').length !== 2) {
+      defects.push(`"${entry.name}" declares ${String(entry.wants.length)} wants instead of the two mutually exclusive wants driving the scene`);
+    }
+    if (entry.conflictKind === null) {
+      defects.push(`"${entry.name}" declares no conflict kind (one of ${ENCOUNTER_CONFLICT_KINDS.join(', ')})`);
+    }
+  }
+  if (defects.length > 0) {
+    throw new Error(`the spine's encounter declarations are incomplete: ${defects.join('; ')}`);
+  }
+  return entities;
+}
+
+/**
+ * Banned resolutions per module tone (08 §M4-B tone dial): prohibitions on
+ * HOW scenes resolve, never on register or mood — the prose palette stays
+ * fully open (murder clown and grieving revenge both clear every gate).
+ * The planner prompt renders the generic bans plus the module tone's entry;
+ * an unlisted (free-text) tone gets the generic bans only.
+ */
+export const MODULE_TONE_GENERIC_BANS: readonly string[] = [
+  'Both sides leave with their wants fully met.',
+  'The opposing side abandons its want because the party argues well or asks earnestly.',
+  'A compromise that divides the difference with no cost to anyone.',
+  'A hidden third option that satisfies every side at once.',
+];
+
+export const MODULE_TONE_BANS: Readonly<Record<string, readonly string[]>> = {
+  heroic: [
+    'The confrontation is won by a bystander sacrifice the party never chose.',
+    'The villain yields the moment the party demonstrates superior resolve.',
+  ],
+  hopeful: [
+    'Every loss is undone before the part ends.',
+    'A bleak outcome is reversed by a last-moment turn that costs no one.',
+  ],
+  whimsical: [
+    'The conflict dissolves because it was all a misunderstanding with no remaining consequences.',
+    'A trickster rewinds events so the party’s choices leave no trace.',
+  ],
+  mystery: [
+    'The culprit confesses the whole scheme unprompted.',
+    'The final clue arrives from nowhere instead of from the investigation.',
+  ],
+  intrigue: [
+    'Every faction honors its bargain with no betrayal priced in.',
+    'A divided loyalty is settled by exposition rather than by what is sacrificed.',
+  ],
+  horror: [
+    'The threat is fully explained and dismantled with nothing unknown left standing.',
+    'Everyone escapes the scene without loss.',
+  ],
+  tragedy: [
+    'A doomed stand is rescued by an intervention nobody earned.',
+    'The price of the outcome lands on someone uninvolved instead of on whoever chose it.',
+  ],
+};
+
+/** The tone entry's bans for a free-text module tone (exact match, case-insensitive). */
+export function toneBansFor(tone: string): readonly string[] | null {
+  return MODULE_TONE_BANS[tone.trim().toLowerCase()] ?? null;
 }
 
 // --- Prior-module continuity (opt-in) -----------------------------------------
@@ -516,6 +602,9 @@ async function spineMessages(
   const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
 
   const levelCount = module.levelMax - module.levelMin + 1;
+  // Tone dial teeth (08 §M4-B): bans on HOW scenes resolve, never on
+  // register or mood — the prose palette stays fully open.
+  const toneBans = [...MODULE_TONE_GENERIC_BANS, ...(toneBansFor(module.tone) ?? [])];
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
     `Module concept: ${module.concept}`,
@@ -531,16 +620,20 @@ async function spineMessages(
       '- REQUIREMENT — encounter floor: name at least one distinct encounter per level of this module\'s range ' +
         `(levels ${module.levelMin}–${module.levelMax} → at least ${levelCount} distinct encounters across the module), ` +
         'with each part naming at least as many encounters as the levels its band covers. ' +
-        'An encounter may be combat, social conflict, exploration, hazard, negotiation, chase, puzzle, or another scene with meaningful risk and player agency. ' +
-        'Place encounters deliberately in the parts where they make narrative and gameplay sense, vary their type and intensity ' +
-        '— include at least one outright combat, one hazard or chase, and one social conflict where someone must come out worse — ' +
+        'Every planned encounter declares its conflict STRUCTURALLY: exactly two mutually exclusive wants — if both sides could plausibly agree, it is not an encounter yet — ' +
+        'and one conflict kind: combat, hazard, chase, social, puzzle, or exploration. ' +
+        'Place encounters deliberately in the parts where they make narrative and gameplay sense, vary their kind and intensity ' +
+        '— the declared mix MUST include at least one outright combat, one hazard-or-chase, and one social conflict where someone must come out worse ' +
+        '(the mix is gated from these declarations at generation time, so declare kinds honestly) — ' +
         'and reserve climactic encounters for an earned escalation. Never pad the module with repetitive or disposable encounters.',
-      '- Introduce as many locations, NPCs, factions, notes, and encounters as the story needs — you are not required to detail any of them in the spine. Give every planned encounter a distinctive, stable name and declare it with kind "encounter" in entities when introduced. When the module references an encounter in prose, use a wiki-link ([[Encounter Name]]) so it can be resolved into an encounter artifact later.',
+      '- Structural conflict governs HOW scenes resolve, never what they feel like: no tone, register, or subject matter is restricted by these requirements. ' +
+        `Never resolve a scene by any of these banned resolutions: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
+      '- Introduce as many locations, NPCs, factions, notes, and encounters as the story needs — you are not required to detail any of them in the spine. Give every planned encounter a distinctive, stable name and declare it with kind "encounter" in entities when introduced, WITH its "wants" pair (the two irreconcilable wants) and its "conflictKind". When the module references an encounter in prose, use a wiki-link ([[Encounter Name]]) so it can be resolved into an encounter artifact later.',
       '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a social/non-combat occasion — same shape as a location), "faction" (an organization or group), "encounter" (a named combat, challenge, or tactical set piece), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title. Reuse existing campaign entities by their exact names when they fit; do not invent duplicates to fill out the encounter floor.',
       '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
     ].join('\n'),
     extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
-    'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter" }] } — partPlan length 1..20, one entity entry per named entity.',
+    'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter", "wants": [string, string], "conflictKind": "combat" | "hazard" | "chase" | "social" | "puzzle" | "exploration" | null }] } — partPlan length 1..20, one entity entry per named entity; every "encounter" entry MUST carry exactly the two mutually exclusive wants and a non-null conflictKind; every other kind leaves "wants" [] and "conflictKind" null.',
   ]
     .filter((part) => part !== null)
     .join('\n\n');
@@ -687,6 +780,78 @@ export function assertEncounterFloor(module: Module): void {
   const report = countModuleEncounters(module);
   if (report.found < report.required || report.deficient.length > 0) {
     throw new Error(encounterFloorMessage(report));
+  }
+}
+
+/** The declared-mix report (pure): counts AUTHOR declarations, never prose. */
+export interface EncounterMixReport {
+  /** Encounter records considered. */
+  total: number;
+  combat: number;
+  hazardOrChase: number;
+  social: number;
+  /** Other declared kinds (puzzle, exploration) — allowed, never satisfying. */
+  other: number;
+  /** Encounter names with NO declared kind — always a loud defect, never a default. */
+  undeclared: string[];
+  /** Mix groups still missing: subset of 'combat' | 'hazard-or-chase' | 'social'. */
+  missing: string[];
+}
+
+/**
+ * Counts the encounter mix from the records' DECLARED `conflictKind`
+ * (08 §M4-B): the planner authors the signal on the spine record (post-parts
+ * verdicts author it for prose-invented scenes); the gate counts those
+ * declarations — no classifier ever guesses a kind from prose.
+ */
+export function encounterMixReport(entityKinds: readonly ModuleEntityKind[]): EncounterMixReport {
+  let combat = 0;
+  let hazardOrChase = 0;
+  let social = 0;
+  let other = 0;
+  const undeclared: string[] = [];
+  let total = 0;
+  for (const entry of entityKinds) {
+    if (entry.kind !== 'encounter') continue;
+    total += 1;
+    const kind: EncounterConflictKind | null = entry.conflictKind;
+    if (kind === null) {
+      undeclared.push(entry.name);
+      continue;
+    }
+    if (kind === 'combat') combat += 1;
+    else if (kind === 'hazard' || kind === 'chase') hazardOrChase += 1;
+    else if (kind === 'social') social += 1;
+    else other += 1;
+  }
+  const missing: string[] = [];
+  if (combat < 1) missing.push('combat');
+  if (hazardOrChase < 1) missing.push('hazard-or-chase');
+  if (social < 1) missing.push('social');
+  return { total, combat, hazardOrChase, social, other, undeclared, missing };
+}
+
+/** Loud failure copy for the mix gate — names undeclared records and missing groups. */
+export function encounterMixMessage(report: EncounterMixReport): string {
+  const parts: string[] = [];
+  if (report.undeclared.length > 0) {
+    parts.push(`encounter(s) with no declared conflict kind: ${report.undeclared.map((name) => `"${name}"`).join(', ')}`);
+  }
+  if (report.missing.length > 0) {
+    parts.push(`declared mix is missing ${report.missing.join(', ')} (needs at least one outright combat, one hazard-or-chase, and one social conflict where someone must come out worse)`);
+  }
+  return `Encounter mix not met: ${parts.join('; ')}.`;
+}
+
+/**
+ * Throws when the declared mix is short (unmet groups) or undeclared (an
+ * encounter record with no kind — loud, never defaulted). The spine gate
+ * repairs once, then fails loudly; the parts gate fails loudly outright.
+ */
+export function assertEncounterMix(entityKinds: readonly ModuleEntityKind[]): void {
+  const report = encounterMixReport(entityKinds);
+  if (report.undeclared.length > 0 || report.missing.length > 0) {
+    throw new Error(encounterMixMessage(report));
   }
 }
 
@@ -845,6 +1010,10 @@ export async function runParts(
         }
         const current = await requireModule(moduleId);
         if (current.spine === null) throw new Error('The spine was removed mid-generation');
+        // Satisfaction is rationed to the finale: the repair carries the
+        // no-clean-resolution rule everywhere else, full-price satisfaction
+        // on the closing part.
+        const repairIsFinale = target.planIndex === current.spine.partPlan.length - 1;
         try {
           await generatePart(moduleId, current, target.planIndex, campaign, floorRepairModel, {
             signal: controller.signal,
@@ -854,7 +1023,11 @@ export async function runParts(
               `distinct encounter(s) in its markdown as [[Encounter Name]] wiki-links — scenes with meaningful risk ` +
               `and player agency (combat, hazard, chase, social conflict, or another tactical set piece). ` +
               `It currently names ${String(target.found)}. Add the missing encounters; keep the part's story, ` +
-              `characters and continuity intact. Encounters already named in other parts do not count toward this part's share.`,
+              `characters and continuity intact. Encounters already named in other parts do not count toward this part's share. ` +
+              `Honor declared encounters (declared kind, irreconcilable opposed wants — negotiation may cost, never dissolve the opposition), ` +
+              (repairIsFinale
+                ? `and this is the FINALE: satisfaction is allowed at full price — every want met is paid for visibly.`
+                : `and end the part with a cost, a revelation, or a new pressure — never with every side satisfied.`),
             onToken: undefined,
             onReasoning: undefined,
             onActivity: undefined,
@@ -890,8 +1063,27 @@ export async function runParts(
       gated = await requireModule(moduleId);
     }
     const floorReport = countModuleEncounters(gated);
-    if (isFloorBlocking(gated)) {
-      let floorMessage = encounterFloorMessage(floorReport);
+    // The declared mix is gated from the records (08 §M4-B): authored
+    // declarations, never a classifier — an undeclared kind fails loudly
+    // instead of defaulting. The spine gate already enforced the mix at plan
+    // time; a parts-time failure means the prose drifted from the plan. The
+    // mix is a whole-module property, so only full runs own it — a subset
+    // run (single-part rewrite/retry) owns its bands' shares, like the
+    // count itself.
+    let mixDefect: string | null = null;
+    if (isFullRun(gated)) {
+      try {
+        assertEncounterMix(gated.entityKinds);
+      } catch (error) {
+        mixDefect = errorMessage(error);
+      }
+    }
+    if (isFloorBlocking(gated) || mixDefect !== null) {
+      // When only the mix failed, the count copy must not claim a shortfall.
+      let floorMessage = isFloorBlocking(gated)
+        ? encounterFloorMessage(floorReport)
+        : 'Encounter floor met, but the declared mix drifted from the plan.';
+      if (mixDefect !== null) floorMessage += ` ${mixDefect}`;
       if (!gated.entityNamesNormalized) {
         floorMessage +=
           ' Entity name normalization did not succeed for the current text, so the count uses the last recorded kinds — retry normalization from the entity panel if this looks wrong.';
@@ -904,7 +1096,12 @@ export async function runParts(
           ` Hand-edited part(s) ${editedDeficient.map((entry) => `"${entry.title}"`).join(', ')} ` +
           `were left untouched — add the missing [[encounter]] links by hand or rewrite.`;
       }
-      toastError('Module generation failed: encounter floor not met', new Error(floorMessage));
+      toastError(
+        isFloorBlocking(gated)
+          ? 'Module generation failed: encounter floor not met'
+          : 'Module generation failed: encounter mix not met',
+        new Error(floorMessage),
+      );
       await patchModule(moduleId, { status: 'failed', errorMessage: floorMessage });
       return (await getModule(moduleId)) ?? gated;
     }
@@ -1064,6 +1261,19 @@ async function partCall(
     campaignNames.length === 0
       ? null
       : `Existing campaign entities (reuse by exact name where they fit):\n${campaignNames.join('\n')}`;
+  // Structural conflict brief (08 §M4-B): the planner's declared encounters
+  // with their irreconcilable wants and kinds — the prose must honor them.
+  const declaredEncounters = module.entityKinds.filter((entry) => entry.kind === 'encounter');
+  const conflictBrief =
+    declaredEncounters.length === 0
+      ? null
+      : `Declared encounters (honor each declaration — scene kind, opposed wants, irreconcilability):\n${declaredEncounters
+          .map((entry) => {
+            const wants = entry.wants.filter((want) => want.trim() !== '');
+            return `- [[${entry.name}]] (${entry.conflictKind ?? 'undeclared kind'}): ${wants.length === 2 ? `"${wants[0] ?? ''}" vs "${wants[1] ?? ''}"` : 'wants undeclared'}`;
+          })
+          .join('\n')}`;
+  const isFinale = planIndex === spine.partPlan.length - 1;
   const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
 
   const instruction = [
@@ -1089,6 +1299,11 @@ async function partCall(
       '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token — write [[Halmund]]s Haus, not [[Halmunds]] Haus (English genitive: [[Halmund]]\'s tower). Never bake roles or titles into the token — write [[Halmund|the guard Halmund]], not [[Guard Halmund]]. Use [[Name|display]] whenever the surface text must differ from the canonical name. The same rules apply in any language.',
       `- Target length for this part: ${MODULE_SIZE_WORD_TARGETS[module.sizeDial]} (soft target).`,
       `- REQUIREMENT — encounter floor for this part (levels ${plan.levelBand}: ${String(levelsInLevelBand(plan.levelBand))} level(s)): name at least ${String(levelsInLevelBand(plan.levelBand))} distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, each a scene with meaningful risk and player agency — combat, hazard, chase, social conflict, or another tactical set piece. Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.`,
+      conflictBrief,
+      '- REQUIREMENT — honor the declared encounters above: stage each in its declared conflict kind (a declared combat is fought, a declared social conflict costs someone), keep the opposed wants irreconcilable inside this part — negotiation may cost, never dissolve the opposition — and never resolve a scene by a banned resolution (both sides fully met; the other side talked out of its want; a costless split of the difference; a hidden third option satisfying everyone).',
+      isFinale
+        ? '- This is the FINALE: satisfaction is allowed here, at full price — every want met must be paid for visibly in loss, consequence, or foregone alternative.'
+        : '- REQUIREMENT — no clean resolution: end this part with a cost, a revelation, or a new pressure — never with every side satisfied. Satisfaction is rationed to the finale.',
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
     ].join('\n'),
     options.extraInstruction === '' ? null : `Additional instruction from the GM: ${options.extraInstruction}`,
@@ -1155,6 +1370,7 @@ function normalizationMessages(
   requests: readonly { name: string; context: string }[],
   artifactNames: readonly string[],
   premise: string,
+  options: { requireEncounterDeclarations?: boolean } = {},
 ): ChatMessage[] {
   const lines = requests.map((request) => {
     const context = request.context.replaceAll('\n', ' ').trim();
@@ -1175,9 +1391,12 @@ function normalizationMessages(
       '- Merge only when confident the names refer to the same entity (same person, place, organization, or thing). A role or title attached to the same person ("Guard Halmund" / "Harbormaster Ilse") maps onto the person\'s canonical name; similar names for different beings never merge.',
       '- A name that exactly matches an existing artifact\'s name maps to itself.',
       '- "kind" describes the canonical entity: "npc" = a person or creature the party meets; "location" = a place; "event" = a social/non-combat occasion (same shape as a location); "faction" = an organization or group; "encounter" = a named combat or tactical set piece; "note" = anything else (items, rumors, mysteries, plot devices).',
+      options.requireEncounterDeclarations === true
+        ? '- Every "encounter" entry ALSO declares its conflict structurally from the prose you wrote: "wants" = exactly the two mutually exclusive wants driving the scene (if both sides could plausibly agree, it is not an encounter), "conflictKind" = one of combat, hazard, chase, social, puzzle, exploration. Non-encounter entries leave "wants" [] and "conflictKind" null.'
+        : '- Leave "wants" [] and "conflictKind" null on every entry (name mapping only — the planner authored the encounter declarations separately).',
     ].join('\n'),
     'Entities:\n' + lines.join('\n'),
-    'Reply with ONLY a JSON object: { "entities": [{ "name": string, "canonical": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter" }] } — one entry per listed entity.',
+    'Reply with ONLY a JSON object: { "entities": [{ "name": string, "canonical": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter", "wants": [string, string], "conflictKind": "combat" | "hazard" | "chase" | "social" | "puzzle" | "exploration" | null }] } — one entry per listed entity.',
   ]
     .filter((part) => part !== null)
     .join('\n\n');
@@ -1204,6 +1423,7 @@ async function normalizationCall(
   model: string,
   names: readonly string[],
   artifactNames: readonly string[],
+  options: { requireEncounterDeclarations?: boolean } = {},
 ): Promise<NormalizationEntry[]> {
   const settings = await getSettings();
   const base = {
@@ -1214,7 +1434,7 @@ async function normalizationCall(
   };
   const run = (raw: string): NormalizationEntry[] => {
     const parsed = normalizationReplySchema.parse(parseJsonReply(raw)).entities;
-    const violations = validateNormalizationReply(names, parsed, artifactNames);
+    const violations = validateNormalizationReply(names, parsed, artifactNames, options);
     if (violations.length > 0) {
       throw new Error(`the normalization reply violated its contract: ${violations.join('; ')}`);
     }
@@ -1295,10 +1515,15 @@ export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
         names.map((name) => ({ name, context: surroundingParagraphs(text, name, NORMALIZE_CONTEXT_CAP) })),
         artifactNames,
         module.spine?.premise ?? '',
+        // Post-parts verdicts read prose, so every encounter verdict authors
+        // its own wants + conflict kind (08 §M4-B); a missing declaration is
+        // a loud recorded failure, never a defaulted kind.
+        { requireEncounterDeclarations: true },
       ),
       settings.defaultChatModel,
       names,
       artifactNames,
+      { requireEncounterDeclarations: true },
     );
   } catch (error) {
     const message = errorMessage(error);

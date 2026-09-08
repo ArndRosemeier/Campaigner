@@ -1,6 +1,12 @@
 import { z } from 'zod';
 
-import { ENTITY_KINDS, type EntityKind, type ModuleEntityKind } from '@/domain/module';
+import {
+  ENCOUNTER_CONFLICT_KINDS,
+  ENTITY_KINDS,
+  type EncounterConflictKind,
+  type EntityKind,
+  type ModuleEntityKind,
+} from '@/domain/module';
 
 /**
  * Entity name normalization (fix-01): the model — which wrote the module text
@@ -18,6 +24,15 @@ export interface NormalizationEntry {
   canonical: string;
   /** The canonical entity's kind (same contract as the kind classification). */
   kind: EntityKind;
+  /**
+   * Structural conflict declarations (08 §M4-B): for `kind: "encounter"`
+   * verdicts on module prose, the two mutually exclusive wants and the
+   * declared conflict kind — authored by the model that wrote the text, from
+   * that text. Spine-time verdicts (name mapping only) leave both absent and
+   * the caller fills them from the planner's declarations.
+   */
+  wants?: string[] | undefined;
+  conflictKind?: EncounterConflictKind | null | undefined;
 }
 
 /** The normalization call's JSON reply contract. */
@@ -27,6 +42,8 @@ export const normalizationReplySchema = z.object({
       name: z.string(),
       canonical: z.string(),
       kind: z.enum(ENTITY_KINDS),
+      wants: z.array(z.string()).max(2).default([]),
+      conflictKind: z.enum(ENCOUNTER_CONFLICT_KINDS).nullable().default(null),
     }),
   ),
 });
@@ -48,6 +65,7 @@ export function validateNormalizationReply(
   names: readonly string[],
   entries: readonly NormalizationEntry[],
   artifactNames: readonly string[],
+  options: { requireEncounterDeclarations?: boolean } = {},
 ): string[] {
   const violations = new Set<string>();
 
@@ -102,6 +120,29 @@ export function validateNormalizationReply(
     }
   }
 
+  // Structural conflict declarations (08 §M4-B): opt-in per caller. The
+  // spine-time call maps names only (the planner already declared wants/kind
+  // on the spine records, carried over code-side); the post-parts call reads
+  // prose, so every encounter verdict must author its own declarations —
+  // a missing pair/kind is a violation (retry once, then loud), never a
+  // defaulted kind.
+  if (options.requireEncounterDeclarations === true) {
+    for (const entry of entries) {
+      if (entry.kind !== 'encounter') continue;
+      const wants = (entry.wants ?? []).filter((want) => want.trim() !== '');
+      if (wants.length !== 2) {
+        violations.add(
+          `"${entry.name}" is an encounter but declares ${String(wants.length)} wants — declare exactly the two mutually exclusive wants driving the scene`,
+        );
+      }
+      if (entry.conflictKind === undefined || entry.conflictKind === null) {
+        violations.add(
+          `"${entry.name}" is an encounter but declares no conflict kind — declare one of ${ENCOUNTER_CONFLICT_KINDS.join(', ')}`,
+        );
+      }
+    }
+  }
+
   return [...violations];
 }
 
@@ -112,28 +153,89 @@ export function validateNormalizationReply(
  * the canonical entity's own entry's kind when it is listed, else the first
  * variant's kind (the reply describes the canonical entity). `absorbed`
  * carries the variant names a canonical folded, for the checkpoint display.
+ *
+ * Structural conflict declarations ride the same rule: a verdict's own
+ * non-empty `wants` / non-null `conflictKind` (canonical's own entry, else
+ * the first variant carrying one) win; the optional `declarations` fallback
+ * (the planner's spine records, matched case-insensitively by canonical name
+ * then by absorbed variant) fills the gaps the verdict left empty. The
+ * fallback is code-side carry-over, never a classifier.
  */
-export function canonicalEntityRecords(entries: readonly NormalizationEntry[]): ModuleEntityKind[] {
+export function canonicalEntityRecords(
+  entries: readonly NormalizationEntry[],
+  declarations: readonly ModuleEntityKind[] = [],
+): ModuleEntityKind[] {
   const entryBySelf = new Map<string, NormalizationEntry>();
   for (const entry of entries) {
     if (entry.name.trim().toLowerCase() === entry.canonical.trim().toLowerCase()) {
       entryBySelf.set(entry.name.trim().toLowerCase(), entry);
     }
   }
+  const declaredByName = new Map<string, ModuleEntityKind>();
+  for (const declared of declarations) {
+    declaredByName.set(declared.name.trim().toLowerCase(), declared);
+    for (const variant of declared.absorbed) {
+      if (!declaredByName.has(variant.trim().toLowerCase())) {
+        declaredByName.set(variant.trim().toLowerCase(), declared);
+      }
+    }
+  }
 
   const records = new Map<string, ModuleEntityKind>();
+  const verdictsByCanonical = new Map<string, NormalizationEntry[]>();
   for (const entry of entries) {
     const key = entry.canonical.trim().toLowerCase();
     if (key === '') continue;
     let record = records.get(key);
     if (record === undefined) {
-      record = { name: entry.canonical, kind: entry.kind, absorbed: [] };
+      record = { name: entry.canonical, kind: entry.kind, absorbed: [], wants: [], conflictKind: null };
       records.set(key, record);
     }
     const own = entryBySelf.get(key);
     if (own !== undefined) record.kind = own.kind;
     if (entry.name.trim().toLowerCase() !== key) {
       record.absorbed = [...record.absorbed, entry.name];
+    }
+    const bucket = verdictsByCanonical.get(key);
+    if (bucket === undefined) verdictsByCanonical.set(key, [entry]);
+    else bucket.push(entry);
+  }
+  // Verdict's own declarations (canonical's own entry first, else the first
+  // variant carrying one) — mirroring the kind rule above.
+  const nonBlank = (wants: readonly string[] | undefined): string[] =>
+    (wants ?? []).filter((want) => want.trim() !== '');
+  for (const [key, record] of records) {
+    const bucket = verdictsByCanonical.get(key) ?? [];
+    const own = entryBySelf.get(key);
+    const ownWants = nonBlank(own?.wants);
+    if (ownWants.length > 0) {
+      record.wants = ownWants;
+    } else {
+      const variantWants = bucket.map((verdict) => nonBlank(verdict.wants)).find((wants) => wants.length > 0);
+      if (variantWants !== undefined) record.wants = variantWants;
+    }
+    const ownKind: EncounterConflictKind | null = own?.conflictKind ?? null;
+    if (ownKind !== null) {
+      record.conflictKind = ownKind;
+    } else {
+      const variantKind: EncounterConflictKind | null =
+        bucket.map((verdict) => verdict.conflictKind ?? null).find((kind) => kind !== null) ?? null;
+      if (variantKind !== null) record.conflictKind = variantKind;
+    }
+  }
+  // Planner carry-over: fill declarations the verdict left empty.
+  if (declaredByName.size > 0) {
+    for (const record of records.values()) {
+      const declared =
+        declaredByName.get(record.name.trim().toLowerCase()) ??
+        record.absorbed
+          .map((variant) => declaredByName.get(variant.trim().toLowerCase()))
+          .find((found) => found !== undefined);
+      if (declared === undefined) continue;
+      if (record.wants.length === 0 && declared.wants.length > 0) record.wants = [...declared.wants];
+      if (record.conflictKind === null && declared.conflictKind !== null) {
+        record.conflictKind = declared.conflictKind;
+      }
     }
   }
   return [...records.values()];

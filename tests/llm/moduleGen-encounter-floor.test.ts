@@ -84,10 +84,16 @@ function partReply(marker: string, ...names: string[]): ChatResult {
 }
 
 /** A normalization reply mapping every listed name to itself. */
-function normReply(entries: { name: string; kind: string }[]): ChatResult {
+function normReply(entries: { name: string; kind: string; wants?: string[]; conflictKind?: string | null }[]): ChatResult {
   return {
     text: JSON.stringify({
-      entities: entries.map((entry) => ({ name: entry.name, canonical: entry.name, kind: entry.kind })),
+      entities: entries.map((entry) => ({
+        name: entry.name,
+        canonical: entry.name,
+        kind: entry.kind,
+        ...(entry.wants !== undefined ? { wants: entry.wants } : {}),
+        ...(entry.conflictKind !== undefined ? { conflictKind: entry.conflictKind } : {}),
+      })),
     }),
     modelUsed: 'test-model',
     fallback: null,
@@ -144,7 +150,19 @@ function floorModule(options: {
   };
 }
 
-const encounterKind = (name: string): ModuleEntityKind => ({ name, kind: 'encounter', absorbed: [] });
+const encounterKind = (name: string): ModuleEntityKind => ({ name, kind: 'encounter', absorbed: [], wants: [], conflictKind: null });
+
+/** A fully declared spine encounter (08 §M4-B structural conflict). */
+const declaredEncounter = (
+  name: string,
+  conflictKind: 'combat' | 'hazard' | 'chase' | 'social' | 'puzzle' | 'exploration',
+  wants: [string, string],
+): { name: string; kind: string; wants: string[]; conflictKind: string } => ({
+  name,
+  kind: 'encounter',
+  wants: [...wants],
+  conflictKind,
+});
 
 describe('levelsInLevelBand', () => {
   it.each([
@@ -223,7 +241,7 @@ describe('countModuleEncounters (pure)', () => {
   it('folds aliases onto the canonical (post-normalization targets)', () => {
     const module = floorModule({
       parts: [{ planIndex: 0, names: ['Halmund|Guard Halmund'] }],
-      entityKinds: [{ name: 'Halmund', kind: 'encounter', absorbed: ['Guard Halmund'] }],
+      entityKinds: [{ name: 'Halmund', kind: 'encounter', absorbed: ['Guard Halmund'], wants: [], conflictKind: null }],
     });
     // The rewritten token [[Halmund|Guard Halmund]] targets the canonical.
     expect(countModuleEncounters(module).found).toBe(1);
@@ -232,7 +250,7 @@ describe('countModuleEncounters (pure)', () => {
   it('ignores variant spellings with no canonical record', () => {
     const module = floorModule({
       parts: [{ planIndex: 0, names: ['Guard Halmund'] }],
-      entityKinds: [{ name: 'Halmund', kind: 'encounter', absorbed: [] }],
+      entityKinds: [{ name: 'Halmund', kind: 'encounter', absorbed: [], wants: [], conflictKind: null }],
     });
     expect(countModuleEncounters(module).found).toBe(0);
   });
@@ -333,7 +351,7 @@ describe('encounter floor gates (mocked chat)', () => {
     { title: 'The Drowned Cathedral', levelBand: '2', synopsis: 'Descent.', levelUpTrigger: 'Falls.' },
   ];
 
-  function spineWith(entities: { name: string; kind: string }[]): object {
+  function spineWith(entities: { name: string; kind: string; wants?: string[]; conflictKind?: string | null }[]): object {
     return {
       premise: 'A harbor town raised its bell to warn of the drownings.',
       themes: ['duty'],
@@ -342,11 +360,22 @@ describe('encounter floor gates (mocked chat)', () => {
     };
   }
 
+  /** Three declared encounters covering the gated mix (combat + hazard + social). */
+  const MIX_SPINE = [
+    declaredEncounter('Ember Trial', 'combat', ['seize the bell', 'keep the bell silent']),
+    declaredEncounter('Flood Trial', 'hazard', ['cross the drowned nave', 'hold the waters back']),
+    declaredEncounter('Bell Trial', 'social', ['name the guilty warden', 'protect the wardens name']),
+  ];
+
   it('spine prompt states the REQUIREMENT (never "advice, not a requirement")', async () => {
     const { campaign, moduleId } = await seedModule(1, 2);
     chatMock
-      .mockResolvedValueOnce({ text: JSON.stringify(spineWith([{ name: 'The Bells Below', kind: 'encounter' }])), modelUsed: 'test-model', fallback: null })
-      .mockResolvedValueOnce(normReply([{ name: 'The Bells Below', kind: 'encounter' }]));
+      .mockResolvedValueOnce({ text: JSON.stringify(spineWith(MIX_SPINE)), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce(normReply([
+        { name: 'Ember Trial', kind: 'encounter' },
+        { name: 'Flood Trial', kind: 'encounter' },
+        { name: 'Bell Trial', kind: 'encounter' },
+      ]));
 
     await runSpine(moduleId, campaign);
 
@@ -362,14 +391,16 @@ describe('encounter floor gates (mocked chat)', () => {
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(spineWith([{ name: 'Warden Bellamy', kind: 'npc' }])), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce(normReply([{ name: 'Warden Bellamy', kind: 'npc' }]))
-      // The repair retry names an encounter.
+      // The repair retry declares encounters WITH wants + kinds (mix covered).
       .mockResolvedValueOnce({ text: JSON.stringify(spineWith([
         { name: 'Warden Bellamy', kind: 'npc' },
-        { name: 'The Bells Below', kind: 'encounter' },
+        ...MIX_SPINE,
       ])), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce(normReply([
         { name: 'Warden Bellamy', kind: 'npc' },
-        { name: 'The Bells Below', kind: 'encounter' },
+        { name: 'Ember Trial', kind: 'encounter' },
+        { name: 'Flood Trial', kind: 'encounter' },
+        { name: 'Bell Trial', kind: 'encounter' },
       ]));
 
     const finished = await runSpine(moduleId, campaign);
@@ -443,12 +474,14 @@ describe('encounter floor gates (mocked chat)', () => {
       .mockResolvedValueOnce(partReply('PART-TWO')) // no encounters
       // No links → the first normalization makes no model call. The gate's
       // ONE repair per deficient part adds the missing encounters…
-      .mockResolvedValueOnce(partReply('PART-ONE-FIXED', 'Ember Trial'))
+      .mockResolvedValueOnce(partReply('PART-ONE-FIXED', 'Ember Trial', 'Bell Trial'))
       .mockResolvedValueOnce(partReply('PART-TWO-FIXED', 'Flood Trial'))
-      // …which the re-normalization records.
+      // …which the re-normalization records WITH declarations (post-parts
+      // verdicts author wants + kind; the mix needs combat + hazard + social).
       .mockResolvedValueOnce(normReply([
-        { name: 'Ember Trial', kind: 'encounter' },
-        { name: 'Flood Trial', kind: 'encounter' },
+        { name: 'Ember Trial', kind: 'encounter', wants: ['seize the bell', 'keep the bell silent'], conflictKind: 'combat' },
+        { name: 'Bell Trial', kind: 'encounter', wants: ['name the guilty warden', 'protect the wardens name'], conflictKind: 'social' },
+        { name: 'Flood Trial', kind: 'encounter', wants: ['cross the drowned nave', 'hold the waters back'], conflictKind: 'hazard' },
       ]));
 
     const finished = await runParts(moduleId, campaign);
@@ -457,8 +490,9 @@ describe('encounter floor gates (mocked chat)', () => {
     expect(finished.status).toBe('ready');
     expect(finished.errorMessage).toBe('');
     expect(finished.entityKinds).toEqual([
-      { name: 'Ember Trial', kind: 'encounter', absorbed: [] },
-      { name: 'Flood Trial', kind: 'encounter', absorbed: [] },
+      { name: 'Ember Trial', kind: 'encounter', absorbed: [], wants: ['seize the bell', 'keep the bell silent'], conflictKind: 'combat' },
+      { name: 'Bell Trial', kind: 'encounter', absorbed: [], wants: ['name the guilty warden', 'protect the wardens name'], conflictKind: 'social' },
+      { name: 'Flood Trial', kind: 'encounter', absorbed: [], wants: ['cross the drowned nave', 'hold the waters back'], conflictKind: 'hazard' },
     ]);
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 20000);
@@ -474,7 +508,7 @@ describe('encounter floor gates (mocked chat)', () => {
         themes: [],
         partPlan: SPINE_PLAN,
       }),
-      entityKinds: [{ name: 'Ember Trial', kind: 'encounter', absorbed: [] }],
+      entityKinds: [{ name: 'Ember Trial', kind: 'encounter', absorbed: [], wants: [], conflictKind: null }],
     });
     chatMock
       .mockResolvedValueOnce(partReply('PART-ONE', 'Kael'))
@@ -540,13 +574,15 @@ describe('encounter floor gates (mocked chat)', () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const spine = spineWith([
       { name: 'Warden Bellamy', kind: 'npc' },
-      { name: 'The Bells Below', kind: 'encounter' },
+      ...MIX_SPINE,
     ]);
     chatMock
       .mockResolvedValueOnce({ text: JSON.stringify(spine), modelUsed: 'test-model', fallback: null })
       .mockResolvedValueOnce(normReply([
         { name: 'Warden Bellamy', kind: 'npc' },
-        { name: 'The Bells Below', kind: 'encounter' },
+        { name: 'Ember Trial', kind: 'encounter' },
+        { name: 'Flood Trial', kind: 'encounter' },
+        { name: 'Bell Trial', kind: 'encounter' },
       ]))
       .mockResolvedValue(partReply('PART')); // parts + repairs: no encounters
 

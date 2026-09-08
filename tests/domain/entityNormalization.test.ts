@@ -93,7 +93,7 @@ describe('canonicalEntityRecords', () => {
       entry('Halmund', 'Halmund', 'npc'),
     ]);
     expect(records).toEqual([
-      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'] },
+      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'], wants: [], conflictKind: null },
     ]);
   });
 
@@ -111,7 +111,7 @@ describe('canonicalEntityRecords', () => {
       entry('Segele', 'Seggel', 'location'),
     ]);
     expect(records).toEqual([
-      { name: 'Seggel', kind: 'location', absorbed: ['the Seggel', 'Segele'] },
+      { name: 'Seggel', kind: 'location', absorbed: ['the Seggel', 'Segele'], wants: [], conflictKind: null },
     ]);
   });
 
@@ -121,8 +121,8 @@ describe('canonicalEntityRecords', () => {
       entry('Seggel', 'Seggel', 'location'),
     ]);
     expect(records).toEqual([
-      { name: 'Halmund', kind: 'npc', absorbed: [] },
-      { name: 'Seggel', kind: 'location', absorbed: [] },
+      { name: 'Halmund', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
+      { name: 'Seggel', kind: 'location', absorbed: [], wants: [], conflictKind: null },
     ]);
   });
 });

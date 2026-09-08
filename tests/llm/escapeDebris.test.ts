@@ -212,7 +212,7 @@ describe('escape debris in module parts', () => {
     await patchModule(saved.id, { spine: moduleSpineSchema.parse(VALID_SPINE) });
     const encounterVerdict = {
       text: JSON.stringify({
-        entities: [{ name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter' }],
+        entities: [{ name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter', wants: ['seize the ember', 'quench the ember'], conflictKind: 'combat' }],
       }),
       modelUsed: 'test-model',
       fallback: null,
