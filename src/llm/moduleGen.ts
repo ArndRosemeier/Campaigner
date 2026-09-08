@@ -578,10 +578,12 @@ export function priorModulesContext(
  * Loads the campaign's other modules for the opt-in continuity context. The
  * flag off short-circuits to [] (previous behavior, byte-for-byte); a failed
  * read propagates — an opted-in run must not silently generate without the
- * context it promised (AGENTS rule 1).
+ * context it promised (AGENTS rule 1). `override` (canvas rewrite dialog)
+ * wins over the row flag when set.
  */
-async function priorModulesOf(module: Module): Promise<Module[]> {
-  if (!module.includePriorModules) return [];
+async function priorModulesOf(module: Module, override?: boolean): Promise<Module[]> {
+  const enabled = override ?? module.includePriorModules;
+  if (!enabled) return [];
   const modules = await listModulesByCampaign(module.campaignId);
   return modules.filter((candidate) => candidate.id !== module.id);
 }
@@ -862,6 +864,12 @@ export interface PartsRunOptions {
   planIndexes?: readonly number[] | undefined;
   /** Optional user instruction appended to a single-part rewrite. */
   extraInstruction?: string | undefined;
+  /**
+   * Per-run override of the module row's `includePriorModules` flag (canvas
+   * rewrite dialog). Undefined = read the row (all existing callers —
+   * byte-for-byte behavior).
+   */
+  includePriorModules?: boolean | undefined;
 }
 
 /**
@@ -930,6 +938,7 @@ export async function runParts(
           {
             signal: controller.signal,
             extraInstruction: options.extraInstruction ?? '',
+            includePriorModules: options.includePriorModules,
             onToken: (delta) => {
               moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta });
               partReporter.onToken(delta);
@@ -1202,6 +1211,8 @@ export async function generatePart(
 interface PartCallOptions {
   signal: AbortSignal;
   extraInstruction: string;
+  /** Per-run override of the row's includePriorModules flag (undefined = row). */
+  includePriorModules?: boolean | undefined;
   onToken: ((delta: string) => void) | undefined;
   /** Liveness probe from the chat stream (see streamDetailReporter). */
   onActivity?: ((activity: ChatStreamActivity) => void) | undefined;
@@ -1274,7 +1285,10 @@ async function partCall(
           })
           .join('\n')}`;
   const isFinale = planIndex === spine.partPlan.length - 1;
-  const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
+  const priorContext = priorModulesContext(
+    await priorModulesOf(module, options.includePriorModules),
+    campaignCastContext(artifacts),
+  );
 
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,

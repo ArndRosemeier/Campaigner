@@ -607,6 +607,13 @@ parse-on-read defaults (the v7/v13/v15/v17 precedent) — no index changes, no
 upgrade function. Campaigns additionally parse on read (`getCampaign` /
 `listCampaigns`) so pre-cover rows surface `null`, never `undefined`.
 
+No version bump for the whole-module canvas (canvas arc): the module row
+gains `canvas` — `{ nodes: { key, x, y }[], zoom, pan: { x, y } } | null`,
+additive `.default(null)` with parse-on-read (same precedent). Node keys are
+STABLE: `'premise'`, `'part-<planIndex>'` (planIndex is IDENTITY — never
+renumbered) and `'prior-<moduleId>'`. The layout rides `patchModule`
+(backup/export follow); there is no localStorage copy and no new table.
+
 ## Repository layer
 
 For each table create a module in `/src/db` (e.g. `artifactRepo.ts`) exposing

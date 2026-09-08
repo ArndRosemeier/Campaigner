@@ -1,4 +1,4 @@
-import type { Id, Module, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
+import type { Id, Module, ModulePart, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
 import { moduleSchema } from '@/domain';
 import { db } from '@/db/db';
 import { deleteArtifact, listArtifactsByModule } from '@/db/artifactRepo';
@@ -79,6 +79,42 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
       throw new Error('Cannot save a part plan on a module without a spine');
     }
     return saveModule({ ...current, spine: { ...current.spine, partPlan } });
+  });
+}
+
+/**
+ * THE one part-text save path (18-ARCHITECTURE §2.3): writes ONE part's
+ * markdown onto the module row with `status: 'ready'` + `edited: true`.
+ * The row is re-read INSIDE the transaction, so a parts write that landed
+ * concurrently (another part's save, a generation finishing) can never be
+ * lost to a stale snapshot — the patch carries only the changed part.
+ * Every part-text write funnels through this (reader hand edits, canvas
+ * rewrite Apply/Discard); part bodies live on the MODULE ROW — there is no
+ * artifact revision for part markdown.
+ */
+export async function patchModulePartText(
+  id: Id,
+  planIndex: number,
+  markdown: string,
+): Promise<Module> {
+  return db.transaction('rw', db.modules, async () => {
+    const current = await db.modules.get(id);
+    if (current === undefined) throw new NotFoundError('Module', id);
+    const module = moduleSchema.parse(current);
+    const nextPart: ModulePart = {
+      planIndex,
+      markdown,
+      status: 'ready',
+      errorMessage: '',
+      edited: true,
+    };
+    const exists = module.parts.some((part) => part.planIndex === planIndex);
+    const parts = exists
+      ? module.parts.map((part) =>
+          part.planIndex === planIndex ? nextPart : part,
+        )
+      : [...module.parts, nextPart].sort((a, b) => a.planIndex - b.planIndex);
+    return saveModule({ ...module, parts });
   });
 }
 

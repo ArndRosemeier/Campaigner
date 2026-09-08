@@ -604,6 +604,92 @@ has `autoApproveSpine`). A single-part rewrite NEVER triggers it. Semantics:
 
 ---
 
+## Module canvas (v1 — whole module on a canvas with LLM refinement)
+
+The whole module — and the campaign's settled history — on one canvas, beside
+the reader: `/c/:campaignId/m/:moduleId/canvas` (full-viewport module child
+route, the battle-table precedent), entered from the reader header
+(**Canvas**) and from the modules list row. Spec lives here; the screen text
+is docs/05 §Module canvas; implementation in
+`src/features/modules/canvas/`.
+
+**TEXT-ONLY v1 scope (owner decision):** the current module renders a
+premise card and one card per part; every PRIOR module renders as a
+read-only text group (premise + parts). Everything is prose through the
+shared `WikiMarkdown` — NO entity cards, NO phantom cards, NO artifact
+detail cards, and wiki chips are INERT on the canvas (no peek modal, no stub
+popover — entity actions are deferred to a later arc). Ambiguity ⚠ and
+unresolved-dashed chip markers are the renderer's own; each prior group
+resolves with its module's OWN tier-0 context over the campaign + global
+pool, so a module-owned entity beats a same-named shared row only inside its
+own group.
+
+- **Cards are the reader's JOIN**: `spine.partPlan[planIndex] ×
+  parts[planIndex]` — title/band from the plan, body/status/edited from the
+  part. H1 is never stored; the card renders the plan title as the heading,
+  exactly like the reader. Prior groups list only the parts that have text.
+- **React Flow owns the viewport** (`@xyflow/react` 12.x; the attribution
+  badge stays): pan/zoom/pinch/drag are React Flow gestures — cards mount
+  plain buttons only, scrollable bodies carry `nowheel`, and nothing on the
+  canvas arms a second pointer-gesture path (the battle gesture machine is
+  board-scoped; the canvas never touches it).
+- **Node keys are STABLE**: `'premise'`, `'part-<planIndex>'` — planIndex is
+  IDENTITY (never renumbered; deliverable seeding and the encounter floor's
+  band allocation depend on it) — and `'prior-<moduleId>'`. One parse site:
+  `planIndexFromCanvasNodeKey` (`src/domain/module.ts`).
+- **Layout persistence**: the module row's `canvas` field (`nodes/zoom/pan`,
+  additive nullable — docs/01) holds dragged positions and the viewport;
+  writes go through `patchModule` debounced at 600ms (one rw transaction;
+  pending write flushes on unmount). The layout rides backup/export with the
+  row; NO localStorage, NO Dexie version. Fresh layouts seed deterministic
+  positions from the `lib/graphLayout` row discipline (prior modules in a
+  left column, the current spine to its right).
+- **LOD**: full markdown at zoom ≥ 0.6 (`CANVAS_LOD_FULL_ABOVE`); below, a
+  title/band/status skeleton. Node content lives in per-node store slices
+  (`canvasStore`, value-diffed on sync) so one part changing re-renders one
+  card — React Flow re-renders all nodes if node objects churn.
+- **Continuity edges**: a prior group connects to the current premise/part
+  card when both texts mention the same canonical wiki-name — derived by
+  `deriveContinuityEdges` from `buildWikiGraph`'s per-document mentions
+  (reader-pool resolution, per-module tier-0 context), capped at 12 edges
+  (most-mentioned first) with a visible "+N more … not drawn" note. Edges
+  merge per (prior group, current card) pair with the shared names as the
+  label; render if it clarifies, never if it buries the text.
+- **Per-part Rewrite**: the card header's button (ready parts only, disabled
+  while the module generates) opens a dialog with an optional steering
+  instruction and a per-run **Continue from previous modules** toggle
+  defaulting to the row's `includePriorModules` — the engine reads the
+  per-run override (`PartsRunOptions.includePriorModules`), the row is
+  untouched; the prior-modules context itself is the engine's verbatim
+  `priorModulesContext` (4k/8k/24k caps are load-bearing).
+- **The rewrite runs THE engine**: `runParts` with `planIndexes: [i]` — the
+  same subset semantics as the reader's `rewritePart` (floor gates own their
+  bands, name normalization included) — minus its swallow-all catch, so
+  `ModuleBusyError` surfaces LOUDLY (one generation per module; the canvas
+  header carries the same Stop affordance, `cancelModuleGen`). Failure
+  surfaces via `part.status`/`errorMessage` rendering on the card.
+- **Staged rewrites (owner decision — no diffs)**: the rewrite result is
+  staged on the card, in memory only (`stagedRewrites` zustand store — NO
+  persistence, dies on reload). While proposed, the card renders the NEW
+  text as-is framed as a proposal — never a diff view (the owner expects
+  huge diffs); a streaming ghost preview (rAF-throttled tokens into the
+  store) shows partial text while the engine writes, and partial text never
+  touches the module row. **Show previous** flips the card to the old text
+  on demand. **Apply** lands the new text through THE one part-text save
+  path (`saveModulePartText` → `patchModulePartText`: row re-read inside the
+  transaction, `status: 'ready'`, `edited: true`, post-save
+  `promoteSecondModuleUses`) — after apply, the old text is gone.
+  **Discard** restores the old text through the same save path (the engine
+  had already written its text to the row). A failed apply reverts the
+  staging to proposed with a loud toast.
+- **One part-text save path (seam)**: `features/modules/partText.ts` — the
+  reader's hand edit, the canvas Apply and the canvas Discard all funnel
+  through `saveModulePartText`; the row re-read inside the write makes a
+  concurrent parts write (another save, a finishing generation) loss-free.
+  Never route a part-text write anywhere else.
+
+---
+
 ## M4-D — Integration & retirement
 
 - **Deliverable seeding**: "Seed from module" on the Deliverable builder maps

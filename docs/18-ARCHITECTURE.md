@@ -149,7 +149,9 @@ column.
 | Surface an error | `lib/toast.ts` (`toastError`/`toastErrorPersistent`), a failed run row with `errorMessage`, or the global boundary (`app/GlobalErrorBoundary` + `lib/globalErrors.installGlobalErrorHandlers`) — HUMANIZE-AT-THE-SEAM: a ZodError's `.message` is the raw `[{code,path,message}...]` array, so it is never rendered verbatim; the seam formats it via `lib/zodErrorSummary` (counted, grouped by table, first 3 + "and N more", version-skew mitigation; names never invented — issues carry no input values), keeps the leading title untouched (plain-Error copy passes byte-identical), and logs the full raw error to the console (one click away, never megabytes in the toast). Import failures append the same mitigation via `lib/exportImport.withImportMitigation`; `MissingDependenciesError.message` itself reads as numbered steps | `console.error` only (AGENTS 2); rendering `error.message` of a ZodError-shaped failure into a toast description |
 | Long-running progress | `lib/progress.useProgressStore` + the app-wide `<ProgressDock/>`; queue jobs report via `dockGroup` | a disabled button or a "Generating…" label (00-OVERVIEW, binding) |
 | Wiki-link handling | `lib/wikilinks.ts` (extract/strip/rewrite/resolve/count; `WIKI_LINK_PATTERN`) + `lib/remark-wikilinks.ts` → `WikiMarkdown` | a private `\[\[...\]\]` regex |
-| Hand-edit module part text (find/replace) | `features/modules/part-text-editor.PartTextEditor` (toolbar over the `editDraft` string; pure `findDraftMatches`/`replaceDraftMatch`/`replaceAllDraftMatches`, same non-overlapping loop semantics as `reader-search.findMatches`) committing through `savePartEdit` → `patchModuleTextPart` (module-row `parts` write, `edited: true` + toast + auto-promote; arms the rewrite overwrite confirm) | artifact revisions for part markdown (there are none — parts live on the module row); a second save path around `savePartEdit` |
+| Write part text on the module row (ONE save path) | `features/modules/partText.saveModulePartText` → `moduleRepo.patchModulePartText` (row re-read INSIDE the rw tx — a concurrent parts write can't be lost; `status: 'ready'`, `edited: true`) + the post-save `promoteSecondModuleUses` scan. Callers: the reader's `savePartEdit` (PartTextEditor hand edits), the canvas rewrite's Apply and Discard | a stale-snapshot `parts` array written through plain `patchModule` (lost-update on concurrent saves); a part-text write that skips the promote scan; artifact revisions for part markdown (there are none — parts live on the module row) |
+| Canvas the whole module (viewport, layout, LOD) | `features/modules/canvas/` on `@xyflow/react` (attribution rendered): React Flow is THE viewport gesture owner (pan/zoom/pinch/drag — cards mount plain buttons only, scrollable bodies `nowheel`); node positions + viewport persist via the module row's `canvas` field (`patchModule`, debounced 600ms, unmount flush — rides backup/export); content slices in `canvasStore` are value-diffed per node (node objects must stay stable — React Flow re-renders ALL nodes when node objects churn); node keys via `domain/module` (`premise`, `part-<planIndex>`, `prior-<id>`); continuity edges via `canvasEdges.deriveContinuityEdges` over `buildWikiGraph` mentions, capped + surfaced | custom pointer handlers on canvas nodes (a second gesture-arming path — battle-machine rules apply to the board only, but the canvas must never arm its own); localStorage layout copies; a second node-key format |
+| Canvas per-part rewrite + staging | `features/modules/canvas/stagedRewrites` (zustand, SESSION-only) + the page's rewrite flow: engine = `runParts` subset (`planIndexes: [i]`) — floor gates own their bands, normalization included — WITHOUT `rewritePart`'s swallow-all catch so `ModuleBusyError` surfaces loudly (ONE generation per module); ghost tokens (`moduleGenEvents` part-token) buffer into the store rAF-throttled — partial text never touches the module row; Apply/Discard land through `features/modules/partText.saveModulePartText` | queueing or silently dropping a busy rewrite; persisting staging anywhere; a diff view (owner decision: new text renders as-is, Show previous on demand) |
 | Markdown → plain text | `lib/markdown.markdownToText` | a second strip-regex |
 | PDF viewing | `lib/pdfRuntime.openPdfDocument` + `copyBytes` (worker-safe byte copies); retained book bytes via `pdfRepo` (`&bookId` unique) | re-parsing PDFs from user files |
 | Encounter preset resolution | `domain/encounterMap/schema.resolveEncounterPreset(preset, locationKind)` | branching on `locationKind` directly |
@@ -277,10 +279,28 @@ column.
   `scrollIntoView` / Web Animations — stubbed in `tests/setup.ts`.
 - **Module part bodies live on the MODULE ROW, not in artifacts.**
   `Module.parts[i].markdown` is the only copy — there is no `updateArtifact`
-  revision for part text, so hand edits persist via `patchModule` on the
-  module row (`patchModuleTextPart`: `status: 'ready'`, `edited: true`) and
-  the revision story is the `edited` flag + the rewrite-overwrite confirm.
+  revision for part text, so every human-adopted part-text write goes through
+  `features/modules/partText.saveModulePartText` (module-row write re-read
+  inside the tx, `status: 'ready'`, `edited: true`, post-save promote scan)
+  and the revision story is the `edited` flag + the rewrite-overwrite confirm.
   Never route a part-text write through the artifact revision seam.
+- **`planIndex` is IDENTITY, never an index to renumber.** Canvas node keys
+  (`part-<planIndex>`), deliverable seeding and the encounter floor's band
+  allocation all key off it; `spine.partPlan` edits reorder CONTENT, never
+  identities. The canvas' node-key format has exactly one parse site
+  (`planIndexFromCanvasNodeKey`).
+- **One generation per module — also on the canvas.** The canvas rewrite runs
+  the same `runParts` subset as the reader's rewrite, so the module-level
+  controller guard applies: a busy module fails the second request with
+  `ModuleBusyError`, and the canvas surfaces it LOUDLY (never queues, never
+  swallows — which is why the canvas calls the engine without
+  `rewritePart`'s swallow-all catch).
+- **Canvas rewrites stage in memory only.** The staged-rewrite store
+  (`features/modules/canvas/stagedRewrites`) is session-only by owner
+  decision: no diffs, the new text renders as-is with Show previous for the
+  old text, and a reload mid-proposal leaves the engine-written text on the
+  row (`edited: false`) with the staging gone — documented, do not invent
+  persistence.
 - **The battle board is a FROZEN COPY of the encounter map; Open battle never
   reseeds.** Seeding copies `mapImageId` + `mapLayout` onto the board, and
   from then on the two evolve independently: regenerate swaps the

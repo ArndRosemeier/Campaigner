@@ -330,7 +330,12 @@ describe('ModuleReaderPage', () => {
       },
       { timeout: 10_000 },
     );
-    expect(toastSuccessMock).toHaveBeenCalledWith('Part saved');
+    // The toast follows the row write's awaited promote scan, so it can land
+    // AFTER the row poll under CPU contention — wait for it, never assert
+    // synchronously.
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith('Part saved');
+    });
 
     // The reader leaves edit mode and renders the saved text again.
     expect(await screen.findByTestId('part-body', {}, { timeout: 5_000 })).toBeInTheDocument();
@@ -435,7 +440,10 @@ describe('ModuleReaderPage', () => {
       },
       { timeout: 10_000 },
     );
-    expect(toastSuccessMock).toHaveBeenCalledWith('Part saved');
+    // Same race as above: the toast follows the awaited promote scan.
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith('Part saved');
+    });
     expect(await screen.findByTestId('part-body', {}, { timeout: 5_000 })).toBeInTheDocument();
 
     // The hand-edit flow never touches generation (no regression pins).

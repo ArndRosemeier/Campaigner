@@ -3,6 +3,7 @@ import { create } from 'zustand';
 import {
   canvasPriorModuleNodeKey,
   type Id,
+  type Module,
   type ModulePartStatus,
 } from '@/domain';
 
@@ -64,11 +65,14 @@ export interface CanvasContent {
   parts: Record<string, PartCardSlice>;
   /** Keyed by `prior-<moduleId>`. */
   priors: Record<string, PriorCardSlice>;
+  /** The module row's status (generation busy state for card actions). */
+  moduleStatus: Module['status'];
 }
 
 export interface CanvasContentInput {
   moduleId: Id;
   moduleTitle: string;
+  moduleStatus: Module['status'];
   premise: string | null;
   /** Complete next slice per part node key (the caller derives the JOIN). */
   parts: Record<string, PartCardSlice>;
@@ -91,7 +95,7 @@ interface ModuleCanvasState {
   setZoom: (zoom: number) => void;
 }
 
-const EMPTY_CONTENT: CanvasContent = { premise: null, parts: {}, priors: {} };
+const EMPTY_CONTENT: CanvasContent = { premise: null, parts: {}, priors: {}, moduleStatus: 'draft' };
 
 export const useCanvasStore = create<ModuleCanvasState>((set) => ({
   ownerId: null,
@@ -115,6 +119,7 @@ export const useCanvasStore = create<ModuleCanvasState>((set) => ({
       const parts: Record<string, PartCardSlice> = {};
       let changed =
         premise !== state.content.premise ||
+        state.content.moduleStatus !== input.moduleStatus ||
         Object.keys(state.content.parts).length !== Object.keys(input.parts).length ||
         Object.keys(state.content.priors).length !== input.priors.length;
       for (const [key, next] of Object.entries(input.parts)) {
@@ -137,7 +142,7 @@ export const useCanvasStore = create<ModuleCanvasState>((set) => ({
           changed = true;
         }
       }
-      return changed ? { content: { premise, parts, priors } } : state;
+      return changed ? { content: { premise, parts, priors, moduleStatus: input.moduleStatus } } : state;
     });
   },
   setZoom: (zoom) => {
@@ -157,6 +162,7 @@ function buildContent(input: CanvasContentInput): CanvasContent {
         : { moduleTitle: input.moduleTitle, premise: input.premise },
     parts: { ...input.parts },
     priors,
+    moduleStatus: input.moduleStatus,
   };
 }
 

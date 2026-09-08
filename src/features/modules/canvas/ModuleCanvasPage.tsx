@@ -11,7 +11,7 @@ import {
   applyNodeChanges,
 } from '@xyflow/react';
 import type { Edge, Node, NodeChange, ReactFlowInstance, Viewport } from '@xyflow/react';
-import { ArrowLeftIcon, LoaderCircleIcon } from 'lucide-react';
+import { ArrowLeftIcon, BanIcon, LoaderCircleIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -21,18 +21,25 @@ import {
   canvasPartNodeKey,
   canvasPriorModuleNodeKey,
   planIndexFromCanvasNodeKey,
+  type Campaign,
   type Module,
   type ModuleCanvas,
 } from '@/domain';
-import { patchModule } from '@/db/moduleRepo';
+import { getModule, patchModule } from '@/db/moduleRepo';
+import { saveModulePartText } from '@/features/modules/partText';
+import { cancelModuleGen, moduleGenEvents, ModuleBusyError, runParts } from '@/llm/moduleGen';
+import { toastError, toastSuccess } from '@/lib/toast';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModule, useModules } from '@/features/modules/hooks';
-import { toastError } from '@/lib/toast';
 import {
+  CanvasActionsProvider,
   CanvasPoolProvider,
   canvasNodeTypes,
+  type CanvasActionsContextValue,
   type CanvasPoolContextValue,
 } from '@/features/modules/canvas/canvasNodes';
+import { RewritePartDialog } from '@/features/modules/canvas/rewriteDialog';
+import { useStagedRewritesStore } from '@/features/modules/canvas/stagedRewrites';
 import {
   CANVAS_NODE_WIDTH,
   resolveCanvasNodePositions,
@@ -87,6 +94,144 @@ export function ModuleCanvasPage(): JSX.Element {
     return { pool: [...artifacts, ...globalArtifacts], moduleId };
   }, [artifacts, globalArtifacts, moduleId]);
 
+  // --- staged rewrites + rewrite flow -----------------------------------------
+  const [rewriteTarget, setRewriteTarget] = useState<{ planIndex: number; nodeKey: string } | null>(
+    null,
+  );
+  /** Ghost buffers: moduleGenEvents part-token deltas land here and flush to
+   * the staging store once per animation frame (rAF-throttle — partial text
+   * never touches the module row, and the store only sees per-frame batches). */
+  const ghostBuffers = useRef<Map<string, string>>(new Map());
+  const ghostRaf = useRef<number | null>(null);
+  const flushGhosts = useCallback((): void => {
+    ghostRaf.current = null;
+    const staging = useStagedRewritesStore.getState();
+    for (const [nodeKey, buffer] of ghostBuffers.current) {
+      staging.appendGhost(nodeKey, buffer);
+    }
+    ghostBuffers.current.clear();
+  }, []);
+  useEffect(() => {
+    return moduleGenEvents.on((event) => {
+      if (event.moduleId !== moduleId || event.kind !== 'part-token') return;
+      const nodeKey = canvasPartNodeKey(event.planIndex);
+      if (useStagedRewritesStore.getState().byNodeKey[nodeKey] === undefined) return;
+      const buffer = ghostBuffers.current.get(nodeKey);
+      ghostBuffers.current.set(nodeKey, (buffer ?? '') + event.delta);
+      ghostRaf.current ??= requestAnimationFrame(flushGhosts);
+    });
+  }, [moduleId, flushGhosts]);
+  useEffect(() => {
+    return () => {
+      if (ghostRaf.current !== null) cancelAnimationFrame(ghostRaf.current);
+      ghostRaf.current = null;
+      ghostBuffers.current.clear();
+    };
+  }, [moduleId]);
+
+  /**
+   * Runs the rewrite through THE rewrite engine (`runParts` subset — the
+   * exact `rewritePart` semantics without its swallow-all catch, so a busy
+   * module surfaces LOUDLY instead of queueing silently; floor gates own
+   * their bands inside the subset run, normalization included). The engine
+   * writes the part row itself (generating → ready/failed); staging captures
+   * the old text before the run and frames the new one for the decision.
+   */
+  const runRewrite = useCallback(
+    async (
+      campaign: Campaign,
+      planIndex: number,
+      nodeKey: string,
+      instruction: string,
+      includePriorModules: boolean,
+    ): Promise<void> => {
+      const current = await getModule(moduleId);
+      if (current === undefined) throw new Error('Module no longer exists');
+      const previous = current.parts.find((part) => part.planIndex === planIndex);
+      useStagedRewritesStore.getState().stageProposal({
+        nodeKey,
+        planIndex,
+        oldMarkdown: previous?.markdown ?? '',
+      });
+      try {
+        await runParts(moduleId, campaign, {
+          planIndexes: [planIndex],
+          extraInstruction: instruction,
+          includePriorModules,
+        });
+        const finished = await getModule(moduleId);
+        const finishedPart = finished?.parts.find((part) => part.planIndex === planIndex);
+        if (finishedPart?.status === 'ready' && finishedPart.markdown !== '') {
+          useStagedRewritesStore.getState().finishProposal(nodeKey, finishedPart.markdown);
+        } else {
+          // Cancelled or failed run: the part row carries the truth (pending
+          // slot / failed card); staging has nothing to decide on.
+          useStagedRewritesStore.getState().drop(nodeKey);
+        }
+      } catch (error) {
+        useStagedRewritesStore.getState().drop(nodeKey);
+        if (error instanceof ModuleBusyError) {
+          // ONE generation per module — surface busy LOUDLY, never queue.
+          toastError(
+            'A generation is already running for this module — wait for it or stop it first',
+            error,
+          );
+        }
+        // Other failures are owned by the engine (failModule toasts; the part
+        // card renders part.status/errorMessage).
+      }
+    },
+    [moduleId],
+  );
+
+  const applyStaged = useCallback(
+    async (nodeKey: string): Promise<void> => {
+      const entry = useStagedRewritesStore.getState().byNodeKey[nodeKey];
+      if (entry === undefined) return;
+      useStagedRewritesStore.getState().markApplied(nodeKey);
+      try {
+        await saveModulePartText(moduleId, entry.planIndex, entry.newMarkdown);
+        useStagedRewritesStore.getState().drop(nodeKey);
+        toastSuccess('Rewrite applied');
+      } catch (error) {
+        useStagedRewritesStore.getState().revertToProposed(nodeKey);
+        toastError('Could not apply the rewrite', error);
+      }
+    },
+    [moduleId],
+  );
+
+  const discardStaged = useCallback(
+    async (nodeKey: string): Promise<void> => {
+      const entry = useStagedRewritesStore.getState().byNodeKey[nodeKey];
+      if (entry === undefined) return;
+      try {
+        // The engine already wrote its text to the row; discarding restores
+        // the previous text through THE one save path.
+        await saveModulePartText(moduleId, entry.planIndex, entry.oldMarkdown);
+        useStagedRewritesStore.getState().drop(nodeKey);
+      } catch (error) {
+        toastError('Could not restore the previous part text', error);
+      }
+    },
+    [moduleId],
+  );
+
+  const canvasActions = useMemo<CanvasActionsContextValue>(
+    () => ({
+      onRewrite: (planIndex, nodeKey) => {
+        setRewriteTarget({ planIndex, nodeKey });
+      },
+      onApplyStaged: (nodeKey) => {
+        void applyStaged(nodeKey);
+      },
+      onDiscardStaged: (nodeKey) => {
+        void discardStaged(nodeKey);
+      },
+    }),
+    [applyStaged, discardStaged],
+  );
+
   const [nodes, setNodes] = useState<CanvasFlowNode[]>([]);
   const nodesRef = useRef<CanvasFlowNode[]>([]);
   const viewportRef = useRef<Viewport>({ x: 0, y: 0, zoom: 1 });
@@ -102,6 +247,7 @@ export function ModuleCanvasPage(): JSX.Element {
     store.syncContent({
       moduleId,
       moduleTitle: module.title,
+      moduleStatus: module.status,
       premise: module.spine?.premise ?? null,
       parts: partSlicesFor(module),
       priors: priorSlicesFor(priorModules),
@@ -265,10 +411,12 @@ export function ModuleCanvasPage(): JSX.Element {
     return <MissingCanvas message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   const currentModule: Module = module;
+  const currentCampaign: Campaign = campaign;
   const busy = currentModule.status === 'generating';
 
   return (
     <div className="relative h-full min-h-0" data-testid="module-canvas">
+      <CanvasActionsProvider value={canvasActions}>
       <CanvasPoolProvider value={poolValue}>
         <ReactFlow<CanvasFlowNode>
           key={moduleId}
@@ -307,10 +455,26 @@ export function ModuleCanvasPage(): JSX.Element {
               </Button>
               <span className="font-heading text-sm font-semibold">{currentModule.title}</span>
               {busy ? (
-                <Badge variant="secondary">
-                  <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
-                  generating
-                </Badge>
+                <>
+                  <Badge variant="secondary">
+                    <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                    generating
+                  </Badge>
+                  {/* cancelModuleGen is the ONE module-forge stop path (the
+                      dock's Stop all composes it too); the canvas honours the
+                      same one-generation-per-module serialization. */}
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    data-testid="canvas-stop"
+                    onClick={() => {
+                      cancelModuleGen(currentModule.id);
+                    }}
+                  >
+                    <BanIcon aria-hidden data-icon="inline-start" />
+                    Stop
+                  </Button>
+                </>
               ) : (
                 <Badge variant="secondary">{currentModule.status}</Badge>
               )}
@@ -330,6 +494,25 @@ export function ModuleCanvasPage(): JSX.Element {
           )}
         </ReactFlow>
       </CanvasPoolProvider>
+      </CanvasActionsProvider>
+      {rewriteTarget !== null && (
+        <RewritePartDialog
+          module={currentModule}
+          target={rewriteTarget}
+          onConfirm={(instruction, includePriorModules) => {
+            const target = rewriteTarget;
+            setRewriteTarget(null);
+            void runRewrite(currentCampaign, target.planIndex, target.nodeKey, instruction, includePriorModules).catch(
+              (error: unknown) => {
+                toastError('Could not run the rewrite', error);
+              },
+            );
+          }}
+          onClose={() => {
+            setRewriteTarget(null);
+          }}
+        />
+      )}
     </div>
   );
 }
