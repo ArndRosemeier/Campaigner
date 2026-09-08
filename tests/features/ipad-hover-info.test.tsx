@@ -52,7 +52,7 @@ import { clearDatabase } from '../db/helpers';
  *
  * Half 3: tree rows hit 44px on coarse pointers; workspace minima drop to
  * 200/360/280 (840 total — the default 22/48/30 layout clears every floor
- * at 1024px iPad landscape; the orientation gate blocks <~960px) and the
+ * at 1024px iPad landscape; narrower viewports render ungated) and the
  * persona pane is collapsible. Only WorkspacePage consumes the minima
  * (generic ResizablePanel, no other caller) — the numbers are pinned in
  * docs/05-UI.md, not assertable in jsdom (no layout), so the test pins the

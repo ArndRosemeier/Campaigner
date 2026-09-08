@@ -4,7 +4,6 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OrientationGate } from '@/app/layout/orientation-gate';
 import { InstallHint } from '@/app/layout/install-hint';
 import {
   dismissInstallHint,
@@ -18,9 +17,10 @@ import {
 import { clearDatabase } from './db/helpers';
 
 /**
- * Tablet/PWA shell (05-UI.md §Tablet): the CSS-only orientation gates are
- * present, the install-hint logic reacts to pointer/standalone state, and
- * the storage-persistence probe respects the platform's feature detection.
+ * Tablet/PWA shell (05-UI.md §Tablet): no orientation gate (owner decision
+ * 2026-09-09 — the landscape layout renders at any viewport width); the
+ * install-hint logic reacts to pointer/standalone state, and the
+ * storage-persistence probe respects the platform's feature detection.
  */
 
 beforeEach(async () => {
@@ -33,14 +33,6 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-});
-
-describe('orientation gate', () => {
-  it('renders both hard-block overlays (media queries decide visibility in CSS)', () => {
-    render(<OrientationGate />);
-    expect(screen.getByTestId('orientation-gate-rotate')).toBeInTheDocument();
-    expect(screen.getByTestId('orientation-gate-narrow')).toBeInTheDocument();
-  });
 });
 
 describe('device capabilities', () => {

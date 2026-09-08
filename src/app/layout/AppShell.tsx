@@ -10,7 +10,6 @@ import { useUiScaleSync } from '@/app/theme/uiScale';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { Toaster } from '@/components/ui/sonner';
 import { InstallHint } from '@/app/layout/install-hint';
-import { OrientationGate } from '@/app/layout/orientation-gate';
 import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { failRunningRuns } from '@/db/runRepo';
@@ -38,8 +37,9 @@ import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
  * indicator when the ProgressDock is empty). The dock and the Toaster carry
  * their own bottom offsets — they apply exactly once (fixed layers ignore
  * this frame padding), so this must stay a plain frame pad, never a
- * dock-sized spacer. The OrientationGate hard-blocks portrait/narrow
- * viewports, and the one-time install hint explains home-screen installation.
+ * dock-sized spacer. Portrait and narrow viewports are NOT gated (owner
+ * decision 2026-09-09): the landscape layout simply renders at whatever
+ * width the viewport offers — cramped portrait works, just narrowly.
  */
 export function AppShell(): JSX.Element {
   useThemeSync();
@@ -116,7 +116,6 @@ export function AppShell(): JSX.Element {
         className="flex h-dvh flex-col pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]"
         data-testid="app-shell"
       >
-        <OrientationGate />
         <InstallHint />
         <TopBar />
         <CampaignBar />

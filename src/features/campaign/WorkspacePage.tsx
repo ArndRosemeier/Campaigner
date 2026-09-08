@@ -20,9 +20,9 @@ const PANEL_IDS = ['tree', 'editor', 'persona'] as const;
 /**
  * Three-pane workspace (05-UI §Workspace): campaign tree · artifact editor ·
  * persona panel, as resizable panes. The pixel minimums (200/360/280 px, 840
- * total) fit the narrowest allowed viewport (a 1024px iPad landscape with the
- * default 22/48/30 layout clears every floor; the orientation gate blocks
- * anything under ~960px). The persona pane is collapsible so cramped screens
+ * total) fit a 1024px iPad landscape with the
+ * default 22/48/30 layout clearing every floor; narrower viewports render
+ * ungated. The persona pane is collapsible so cramped screens
  * can reclaim it by dragging; the tree and editor never collapse — losing the
  * tree strands touch users without row actions.
  *
