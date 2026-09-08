@@ -63,7 +63,7 @@ import {
   importExport,
   importZip,
   MissingDependenciesError,
-  parseExport,
+  parseExportTolerant,
   parseZipExport,
   type DependencyPolicy,
 } from '@/lib/exportImport';
@@ -71,7 +71,7 @@ import { groupCitationsByArtifact, type DependencyAnalysis } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { useNavigate as useNav } from 'react-router-dom';
 import { formatDate } from '@/lib/format';
-import { toastError, toastSuccess } from '@/lib/toast';
+import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
  * A file waiting on the dependency decision: the raw payload is stashed so
@@ -113,6 +113,14 @@ export function CampaignPickerPage(): JSX.Element {
         ? await importZip(payload.bytes, { dependencyPolicy: policy })
         : await importExport(payload.raw, {}, { dependencyPolicy: policy });
     toastSuccess(`Imported ${result.createdArtifacts} artifact(s) as a new campaign`);
+    if (result.skippedRetired > 0) {
+      // Retired-row tolerance (M2 import rules): the skip is never silent —
+      // the count and the skipped record names ride alongside success.
+      const names = result.skippedNames.length > 0 ? `: ${result.skippedNames.join(', ')}` : '';
+      toastInfo(
+        `Import skipped ${result.skippedRetired} retired session record(s) from an older version${names}`,
+      );
+    }
     importedNavigate(workspacePath(result.campaignId));
   }
 
@@ -130,10 +138,13 @@ export function CampaignPickerPage(): JSX.Element {
     }
     let analysis: DependencyAnalysis;
     try {
+      // Tolerant parse: legacy exports may carry retired session rows that
+      // the strict boundary rejects — their citations leave with them, so
+      // the dep check only ever sees landing content.
       const manifest =
         payload.kind === 'zip'
-          ? parseExport(parseZipExport(payload.bytes).manifest).dependencies
-          : parseExport(payload.raw).dependencies;
+          ? parseExportTolerant(parseZipExport(payload.bytes).manifest).export.dependencies
+          : parseExportTolerant(payload.raw).export.dependencies;
       analysis = await checkImportDependencies(manifest);
     } catch (error) {
       toastError('Import failed — is this a Campaigner export?', error);

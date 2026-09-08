@@ -327,6 +327,16 @@ function sanitize(name: string): string {
 export interface ImportResult {
   campaignId: Id;
   createdArtifacts: number;
+  /**
+   * Retired-row tolerance (M2 import rules): how many retired/version-drift
+   * rows `parseExportTolerant` skipped to land this import (session artifacts
+   * with their revision snapshots, session-anchored pre-v11 battles). Zero on
+   * current-shape exports. The picker surfaces a loud toast naming
+   * `skippedNames` whenever this is nonzero — skips are never silent.
+   */
+  skippedRetired: number;
+  /** Names of the skipped retired artifacts (battles carry no names). */
+  skippedNames: string[];
 }
 
 /** Dependency policy for `importExport`/`importZip` (07-MILESTONE-3 M3-E
@@ -483,6 +493,14 @@ function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id
  * BEFORE the transaction opens (nothing to roll back). Rulebook chunkIds
  * are KEPT as-is either way, so encounters that land without their content
  * resolve to the existing `missing ref` markers — truthful, never healed.
+ * Skipped retired rows never trip this check: their citations leave with
+ * them (`parseExportTolerant` filters the manifest).
+ *
+ * Retired-row tolerance (M2 import rules): legacy exports carrying retired
+ * `session` artifacts or session-anchored pre-v11 battles (or live rows that
+ * fail ONLY on version-drift grounds) import the surviving rows and report
+ * `{ skippedRetired, skippedNames }` — the picker toasts the count loudly.
+ * Genuinely corrupt rows abort via the original aggregated ZodError.
  *
  * The whole import is ONE rw transaction over the eight touched tables (the
  * same contract as backup.ts's restore, array form past Dexie's five-table
@@ -495,7 +513,7 @@ export async function importExport(
   files: Record<string, Uint8Array> = {},
   options: ImportOptions = {},
 ): Promise<ImportResult> {
-  const parsed = parseExport(raw);
+  const { export: parsed, skippedRetired, skippedNames } = parseExportTolerant(raw);
 
   if (options.dependencyPolicy !== 'import-anyway') {
     const analysis = await checkImportDependencies(parsed.dependencies);
@@ -691,7 +709,7 @@ export async function importExport(
       }
     },
   );
-  return { campaignId: newCampaignId, createdArtifacts: created };
+  return { campaignId: newCampaignId, createdArtifacts: created, skippedRetired, skippedNames };
 }
 
 /**
@@ -707,19 +725,19 @@ export async function importZip(
   return importExport(manifest, files, options);
 }
 
+const artifactWithRevisionsSchema = artifactSchema.and(
+  z.object({
+    revisions: z.array(artifactRevisionSchema),
+  }),
+);
+
 const exportSchema = z.object({
   format: z.literal('campaigner-export'),
   /** v1 files predate the M3-E tables/manifest; every new field is optional. */
   version: z.union([z.literal(1), z.literal(2)]),
   exportedAt: z.number(),
   campaign: campaignSchema.nullable(),
-  artifacts: z.array(
-    artifactSchema.and(
-      z.object({
-        revisions: z.array(artifactRevisionSchema),
-      }),
-    ),
-  ),
+  artifacts: z.array(artifactWithRevisionsSchema),
   /** Image bundle (M3-A); absent or empty in older/plain exports. */
   images: z.array(
     z.object({
@@ -756,4 +774,295 @@ export function downloadBlob(blob: Blob, filename: string): void {
   window.setTimeout(() => {
     URL.revokeObjectURL(url);
   }, 1000);
+}
+
+// --- Retired-row tolerance (06-MILESTONES M2 import rules) --------------------
+//
+// Owner-observed: an export written by an older build (which still knew the
+// retired `session` artifact kind and session-anchored battles) fails a fresh
+// import with one aggregated ZodError — `buildCampaignExport` reads raw Dexie
+// rows with no kind filter, and `parseExport`'s schemas no longer accept the
+// removed discriminator. Same-code rows cannot exist at home (repo reads parse
+// on the source side), so every tolerance case below is version skew by
+// construction.
+//
+// Policy (mirrors the v11 upgrade precedent, db.ts — sessions + their
+// revisions deleted, battles cleared): unparseable RETIRED-kind rows are
+// SKIPPED-WITH-COUNT, never silent and never abort-the-world; genuinely
+// CORRUPT rows of live kinds still abort loudly via the original aggregated
+// error. The retired-vs-corrupt discriminator is exact and schema-driven:
+//
+// - RETIRED (skip): top-level `kind === 'session'` — the ONLY value the kind
+//   enum ever dropped (the complete historic enumeration lives in
+//   `normalizeLegacyProducesKind`, domain/persona.ts). The artifact's revision
+//   snapshots ride with it. Pre-v11 battle rows (a string `sessionId`, no
+//   valid `moduleId`) — v11 cleared battles because live state cannot be
+//   truthfully re-anchored from retired sessions.
+// - DRIFT (skip): a live-kind entry that fails ONLY on version-drift grounds —
+//   (a) `custom` issues at `data` (the three encounter siteShape invariants)
+//   or `data.layout` (stale generated geometry: spawn-room count,
+//   overlap/bounds, corridors, entrances) — the only custom validators in the
+//   artifact union — or (b) `invalid_type`/`invalid_value` issues whose raw
+//   value is explicit `null` on a defaulted field (pre-default writers stored
+//   null where current schemas carry `.default(...)`), VERIFIED by re-parsing
+//   a probe with those nulls removed and stale layouts neutralized. Anything
+//   else failing in the probe (empty name, bad roster, dangling types) means
+//   the row is corrupt, not drifted.
+// - CORRUPT (abort): everything else — the original aggregated ZodError
+//   throws unchanged, so no silent fallback laundering is possible.
+//
+// Skipped rows' dependency citations leave with them: the returned manifest
+// drops citations/unmet-refs pointing at skipped artifact ids, so the
+// slice-B abort-by-default check never fires on content that is not landing.
+
+export interface TolerantExport {
+  export: z.infer<typeof exportSchema>;
+  /** Count of skipped retired/drift rows (session artifacts + pre-v11 battles). */
+  skippedRetired: number;
+  /** Names of the skipped retired artifacts (battles carry no names). */
+  skippedNames: string[];
+  /** Original ids of the skipped artifacts (re-id map + dep filtering). */
+  skippedArtifactIds: Id[];
+}
+
+/**
+ * Tolerant import boundary: strict `exportSchema` first (current-shape files
+ * parse value-identical, zero skips); on failure, per-row classification that
+ * skips retired/drift rows with a count and rethrows the ORIGINAL aggregated
+ * error for genuinely corrupt rows. The reassembled export is strict-parsed
+ * before return, so downstream code keeps the same zod guarantee.
+ */
+export function parseExportTolerant(raw: unknown): TolerantExport {
+  const direct = exportSchema.safeParse(raw);
+  if (direct.success) {
+    return { export: direct.data, skippedRetired: 0, skippedNames: [], skippedArtifactIds: [] };
+  }
+  const originalError = direct.error;
+  const shell = tolerantShellSchema.safeParse(raw);
+  if (!shell.success) {
+    // Not even the shell parses (bad format marker, corrupt tables outside
+    // artifacts/battles) — the original error is the loud surface.
+    throw originalError;
+  }
+
+  const keptArtifacts: z.infer<typeof artifactWithRevisionsSchema>[] = [];
+  const skippedNames: string[] = [];
+  const skippedArtifactIds: Id[] = [];
+  let skippedRetired = 0;
+  for (const row of shell.data.artifacts) {
+    const parsed = artifactWithRevisionsSchema.safeParse(row);
+    if (parsed.success) {
+      keptArtifacts.push(parsed.data);
+      continue;
+    }
+    const verdict = classifySkippedArtifact(row, parsed.error);
+    if (verdict === null) throw originalError;
+    skippedRetired += 1;
+    skippedNames.push(verdict.name);
+    skippedArtifactIds.push(verdict.id);
+  }
+
+  const keptBattles: z.infer<typeof battleSchema>[] = [];
+  for (const row of shell.data.battles ?? []) {
+    const parsed = battleSchema.safeParse(row);
+    if (parsed.success) {
+      keptBattles.push(parsed.data);
+      continue;
+    }
+    if (!isRetiredBattleRow(row)) throw originalError;
+    skippedRetired += 1;
+  }
+
+  const reassembled = {
+    ...shell.data,
+    artifacts: keptArtifacts,
+    battles: shell.data.battles === undefined ? undefined : keptBattles,
+    dependencies:
+      shell.data.dependencies === undefined || skippedArtifactIds.length === 0
+        ? shell.data.dependencies
+        : {
+            ...shell.data.dependencies,
+            citations: shell.data.dependencies.citations.filter(
+              (citation) => !skippedArtifactIds.includes(citation.artifactId),
+            ),
+            unmetLibraryRefs: shell.data.dependencies.unmetLibraryRefs.filter(
+              (ref) => !skippedArtifactIds.includes(ref.artifactId),
+            ),
+          },
+  };
+  // Final strict parse: the tolerance stage can only REMOVE rows, never widen
+  // the schema — downstream keeps the exact `exportSchema` guarantee.
+  return {
+    export: exportSchema.parse(reassembled),
+    skippedRetired,
+    skippedNames,
+    skippedArtifactIds,
+  };
+}
+
+/** The export shell with artifacts/battles held as unknown for per-row triage. */
+const tolerantShellSchema = z.object({
+  format: z.literal('campaigner-export'),
+  version: z.union([z.literal(1), z.literal(2)]),
+  exportedAt: z.number(),
+  campaign: campaignSchema.nullable(),
+  artifacts: z.array(z.unknown()),
+  images: z
+    .array(
+      z.object({
+        id: z.uuid(),
+        mimeType: z.string().min(1),
+        width: z.number().int().positive(),
+        height: z.number().int().positive(),
+        prompt: z.string(),
+        model: z.string(),
+        source: z.enum(['generated', 'uploaded']),
+        createdAt: z.number(),
+        updatedAt: z.number(),
+        dataBase64: z.string().nullable(),
+      }),
+    )
+    .optional(),
+  modules: z.array(moduleSchema).optional(),
+  battles: z.array(z.unknown()).optional(),
+  runs: z.array(personaRunSchema).optional(),
+  deliverables: z.array(deliverableSchema).optional(),
+  dependencies: exportDependenciesSchema.optional(),
+  missingImages: z.array(exportMissingImageSchema).optional(),
+});
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+/** Pre-v11 battle shape: session-anchored, no module — un-re-anchorable (v11). */
+function isRetiredBattleRow(row: unknown): boolean {
+  if (!isRecord(row)) return false;
+  return typeof row.sessionId === 'string' && typeof row.moduleId !== 'string';
+}
+
+interface SkippedArtifact {
+  id: Id;
+  name: string;
+}
+
+/**
+ * Classifies a failed artifact entry: retired/drift skip descriptor, or null
+ * for genuinely corrupt rows (the caller rethrows the original error).
+ */
+function classifySkippedArtifact(row: unknown, error: z.ZodError): SkippedArtifact | null {
+  if (!isRecord(row)) return null;
+  const id = typeof row.id === 'string' ? row.id : '(unknown id)';
+  const name = typeof row.name === 'string' && row.name !== '' ? row.name : '(unnamed)';
+  // Retired: the only kind the enum ever dropped (v11 deleted these rows).
+  // Any other bad kind ('map', null, …) is corruption, caught by the issue
+  // loop below — 'session' is the complete historic enumeration.
+  if (row.kind === 'session') return { id, name };
+  // Drift probe below: every issue must be layout/shape-custom or an
+  // explicit null, and the neutralized probe must parse clean.
+  const issues = error.issues;
+  if (issues.length === 0) return null;
+  for (const issue of issues) {
+    if (issue.code === 'custom' && isLayoutShapePath(issue.path)) continue;
+    if (
+      (issue.code === 'invalid_type' || issue.code === 'invalid_value') &&
+      isExplicitNullAtPath(row, issue.path)
+    ) {
+      continue;
+    }
+    return null;
+  }
+  const probe = cloneJson(row);
+  for (const issue of issues) {
+    if (issue.code === 'custom') neutralizeLayoutAtPath(probe, issue.path);
+    else deleteAtPath(probe, issue.path);
+  }
+  const reparsed = artifactWithRevisionsSchema.safeParse(probe);
+  if (!reparsed.success) return null;
+  return { id, name };
+}
+
+/**
+ * Entry-relative custom-issue paths that are version drift: `data` (the three
+ * encounter siteShape invariants) and `data.layout` (stale generated
+ * geometry) — the only custom validators in the artifact union — including
+ * inside revision snapshots (historical copies drift identically). Any other
+ * custom path is corruption.
+ */
+function isLayoutShapePath(path: readonly PropertyKey[]): boolean {
+  const stripped = stripSnapshotPrefix(path);
+  if (stripped === null) return false;
+  return (
+    (stripped.length === 1 && stripped[0] === 'data') ||
+    (stripped.length === 2 && stripped[0] === 'data' && stripped[1] === 'layout')
+  );
+}
+
+/** Strips an optional `revisions[i].snapshot` prefix from an entry-relative path. */
+function stripSnapshotPrefix(path: readonly PropertyKey[]): readonly PropertyKey[] | null {
+  if (path[0] === 'data') return path;
+  if (
+    path.length >= 3 &&
+    path[0] === 'revisions' &&
+    typeof path[1] === 'number' &&
+    path[2] === 'snapshot'
+  ) {
+    return path.slice(3);
+  }
+  return null;
+}
+
+/** True when the raw row holds an explicit null object-field at the path. */
+function isExplicitNullAtPath(row: Record<string, unknown>, path: readonly PropertyKey[]): boolean {
+  const parent = parentAtPath(row, path);
+  const key = path[path.length - 1];
+  if (parent === null || key === undefined) return false;
+  // Array holes are corruption, not drift — only record fields qualify.
+  if (Array.isArray(parent)) return false;
+  return parent[key as string] === null;
+}
+
+function parentAtPath(
+  root: unknown,
+  path: readonly PropertyKey[],
+): Record<string, unknown> | unknown[] | null {
+  let node: unknown = root;
+  for (const segment of path.slice(0, -1)) {
+    if (!isRecord(node) && !Array.isArray(node)) return null;
+    node = (node as Record<string | number, unknown>)[segment as string];
+  }
+  return isRecord(node) || Array.isArray(node) ? node : null;
+}
+
+function deleteAtPath(root: Record<string, unknown>, path: readonly PropertyKey[]): void {
+  const parent = parentAtPath(root, path);
+  const key = path[path.length - 1];
+  if (parent === null || Array.isArray(parent) || key === undefined) return;
+  Reflect.deleteProperty(parent, key);
+}
+
+/** Neutralizes the stale layout enclosing a custom-issue path (probe only). */
+function neutralizeLayoutAtPath(root: Record<string, unknown>, path: readonly PropertyKey[]): void {
+  const dataPath = layoutDataPath(path);
+  if (dataPath === null) return;
+  let node: unknown = root;
+  for (const segment of dataPath) {
+    if (!isRecord(node)) return;
+    node = node[segment as string];
+  }
+  if (!isRecord(node)) return;
+  node.layout = null;
+  delete node.siteShape;
+}
+
+/** Resolves the enclosing `data` object path for a layout custom-issue path. */
+function layoutDataPath(path: readonly PropertyKey[]): readonly PropertyKey[] | null {
+  const stripped = stripSnapshotPrefix(path);
+  if (stripped?.[0] !== 'data') return null;
+  const prefixLength = path.length - stripped.length;
+  return [...path.slice(0, prefixLength), 'data'];
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

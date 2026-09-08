@@ -79,6 +79,18 @@ Run `pnpm lint && pnpm typecheck && pnpm test` before every commit.
   dialog on L0-miss (per-book match levels + citing encounters, resolve path
   via Rules); Abort never enters the transaction, Import-anyway lands
   `missing ref` encounters plus the campaign banner.
+- Import survives legacy rows (owner-observed export-then-fresh-import
+  ZodError): retired content is SKIPPED-WITH-COUNT, never silent and never
+  abort-the-world — `parseExportTolerant` drops unparseable retired-kind rows
+  (the `session` kind + their revision snapshots, session-anchored pre-v11
+  battles — the v11 upgrade precedent) and live-kind rows that fail ONLY on
+  version-drift grounds (stale generated layout geometry, explicit nulls
+  where current schemas carry defaults), and reports
+  `{skippedRetired, skippedNames}` toasted loudly alongside success
+  ("Import skipped N retired session record(s) from an older version").
+  Genuinely corrupt live-kind rows still abort via the original aggregated
+  ZodError; skipped rows' dependency citations leave with them so the
+  abort-by-default check only ever sees landing content.
 
 ## Non-goals (never in scope unless the user says so)
 

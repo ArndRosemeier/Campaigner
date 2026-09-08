@@ -34,6 +34,8 @@ import {
   importExport,
   importZip,
   MissingDependenciesError,
+  parseExport,
+  parseExportTolerant,
 } from '@/lib/exportImport';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 import { db } from '@/db/db';
@@ -803,5 +805,462 @@ describe('import dependency enforcement', () => {
     expect(byId.get(ghostCover)).toEqual([`deliverable:${deliverables[0]?.id}:cover`]);
     // The manifest still builds — missing binaries never break the export.
     expect(exported.dependencies).toBeDefined();
+  });
+});
+
+/**
+ * Retired-row import tolerance (06-MILESTONES M2 import rules): an export
+ * written by an older build rides retired `session` artifacts (with their
+ * revision snapshots) and session-anchored pre-v11 battles into a fresh
+ * import whose schemas no longer accept them. Those rows are SKIPPED-WITH-
+ * COUNT (the v11 upgrade precedent: sessions + revisions deleted, battles
+ * cleared) and reported — never silent, never abort-the-world. Live-kind
+ * rows that fail ONLY on version-drift grounds (stale generated layout
+ * geometry, explicit nulls where current schemas carry defaults) skip the
+ * same way; genuinely corrupt rows still abort via the original ZodError.
+ */
+describe('import retired-row tolerance', () => {
+  beforeEach(clearDatabase);
+
+  let roomCounter = 0;
+
+  function distinctRoom(over: Record<string, unknown> = {}): Record<string, unknown> {
+    const i = roomCounter++;
+    const x = (i % 4) * 12;
+    const y = Math.floor(i / 4) * 12;
+    return {
+      id: newId(),
+      name: `Room ${String(i)}`,
+      rects: [{ x, y, w: 12, h: 12 }],
+      mobsRect: { x: x + 1, y: y + 1, w: 4, h: 4 },
+      description: '',
+      monsterIndexes: [],
+      spawn: true,
+      ...over,
+    };
+  }
+
+  function distinctLayout(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      gridW: 48,
+      gridH: 48,
+      theme: 'cave',
+      rooms: [distinctRoom()],
+      corridors: [],
+      ...over,
+    };
+  }
+
+  function legacyEncounterData(over: Record<string, unknown> = {}): Record<string, unknown> {
+    return {
+      difficulty: 'medium',
+      levelHint: '1',
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+      ...over,
+    };
+  }
+
+  function sessionRow(campaignId: string, over: Record<string, unknown> = {}): Record<string, unknown> {
+    const stamp = Date.now();
+    const id = newId();
+    const base = {
+      id,
+      campaignId,
+      moduleId: null,
+      kind: 'session',
+      name: 'Session 12',
+      tags: [],
+      aliases: [],
+      summary: '',
+      body: 'Recap body.',
+      links: [],
+      currentRevision: 2,
+      imageIds: [],
+      coverImageId: null,
+      data: {
+        sessionNumber: '12',
+        recap: '',
+        prep: [],
+        openThreads: [],
+        scenes: [],
+        log: '',
+      },
+      createdAt: stamp,
+      updatedAt: stamp,
+      ...over,
+    };
+    const revision = (n: number): Record<string, unknown> => ({
+      id: newId(),
+      artifactId: id,
+      revision: n,
+      snapshot: { ...base, currentRevision: n },
+      source: 'user',
+      runId: null,
+      createdAt: stamp,
+      updatedAt: stamp,
+    });
+    return { ...base, revisions: [revision(1), revision(2)] };
+  }
+
+  it('skips retired session rows with their revisions and reports the count', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    const note = await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Keep' });
+    await updateArtifact(note.id, { body: 'Edited.' });
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: Record<string, unknown>[];
+    };
+    exported.artifacts.push(sessionRow(campaign.id));
+
+    // The strict boundary still rejects the legacy file (no silent widening).
+    expect(() => parseExport(exported)).toThrow();
+    // Current-shape files stay zero-skip.
+    expect(parseExportTolerant(JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id)))).skippedRetired).toBe(0);
+
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(1);
+    expect(result.skippedRetired).toBe(1);
+    expect(result.skippedNames).toEqual(['Session 12']);
+
+    const imported = await db.artifacts.where('campaignId').equals(result.campaignId).toArray();
+    expect(imported).toHaveLength(1);
+    expect(imported[0]?.name).toBe('Keep');
+    expect(imported[0]?.body).toBe('Edited.');
+    const revisions = await listRevisions(imported[0]?.id ?? newId());
+    expect(revisions).toHaveLength(2);
+    // The session's own revision snapshots rode the skip — nothing landed.
+    expect(await db.revisions.where('artifactId').equals((exported.artifacts[1] as { id: string }).id).count()).toBe(0);
+  });
+
+  it('skips single-shape encounters with stale multi-room layouts', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Arena',
+      data: legacyEncounterData({ layout: distinctLayout() }),
+    } as never);
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: { data: { siteShape: string; layout: { rooms: Record<string, unknown>[] } } }[];
+    };
+    // Legacy file: a persisted single shape carrying two rooms.
+    exported.artifacts[0]?.data.layout.rooms.push({ ...distinctRoom(), spawn: false });
+
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(0);
+    expect(result.skippedRetired).toBe(1);
+    expect(result.skippedNames).toEqual(['Arena']);
+    expect(await db.artifacts.where('campaignId').equals(result.campaignId).count()).toBe(0);
+  });
+
+  it('skips layouts with no spawn room', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Spawnless',
+      data: legacyEncounterData({
+        siteShape: 'complex',
+        layout: distinctLayout({ rooms: [distinctRoom(), { ...distinctRoom(), spawn: false }] }),
+      }),
+    } as never);
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: { data: { layout: { rooms: { spawn: boolean }[] } } }[];
+    };
+    for (const rm of exported.artifacts[0]?.data.layout.rooms ?? []) rm.spawn = false;
+
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(0);
+    expect(result.skippedRetired).toBe(1);
+    expect(result.skippedNames).toEqual(['Spawnless']);
+  });
+
+  it('skips layouts with overlapping rooms', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Overlapped',
+      data: legacyEncounterData({
+        siteShape: 'complex',
+        layout: distinctLayout({ rooms: [distinctRoom(), { ...distinctRoom(), spawn: false }] }),
+      }),
+    } as never);
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: { data: { layout: { rooms: { rects: unknown; mobsRect: unknown }[] } } }[];
+    };
+    const rooms = exported.artifacts[0]?.data.layout.rooms;
+    if (rooms?.[1] && rooms[0]) {
+      rooms[1].rects = rooms[0].rects;
+      rooms[1].mobsRect = rooms[0].mobsRect;
+    }
+
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(0);
+    expect(result.skippedRetired).toBe(1);
+    expect(result.skippedNames).toEqual(['Overlapped']);
+  });
+
+  it('skips session-anchored pre-v11 battles without losing the module', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    await saveModuleRow(
+      buildModule({ campaignId: campaign.id, title: 'The Warren', concept: 'goblins', levelMin: 1, levelMax: 3, tone: '', sizeDial: 'standard' }),
+    );
+    await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Keep' });
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      battles: Record<string, unknown>[];
+    };
+    const stamp = Date.now();
+    // The exact pre-v11 shape: session-anchored, no moduleId (v11 cleared
+    // battles because live state cannot be re-anchored from retired sessions).
+    exported.battles = [
+      {
+        id: newId(),
+        campaignId: campaign.id,
+        sessionId: newId(),
+        encounterArtifactId: null,
+        reseed: null,
+        seedFighters: [],
+        board: {
+          mapImageId: null, mapLayout: null, live: false, everLive: false, tokens: [], veils: [],
+          effects: [], gridSize: null, tokenSize: 64, sceneryMovementLocked: false,
+          initiativeEnabled: false, initiativeOrder: [], activeIndex: 0, stage: null,
+          stagingGround: null, entrance: null,
+        },
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+    ];
+
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(1);
+    expect(result.skippedRetired).toBe(1);
+    expect(result.skippedNames).toEqual([]);
+    expect(await listModulesByCampaign(result.campaignId)).toHaveLength(1);
+    expect(await db.battles.where('campaignId').equals(result.campaignId).count()).toBe(0);
+  });
+
+  it('skips rows with explicit nulls where current schemas carry defaults', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Nullish' });
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Nullish fight',
+      data: legacyEncounterData(),
+    } as never);
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: { name: string; aliases: unknown; imageIds: unknown; data: Record<string, unknown> }[];
+    };
+    const noteRow = exported.artifacts.find((row) => row.name === 'Nullish');
+    if (noteRow) {
+      noteRow.aliases = null;
+      noteRow.imageIds = null;
+    }
+    const encounterRow = exported.artifacts.find((row) => row.name === 'Nullish fight');
+    if (encounterRow) {
+      encounterRow.data.preset = null;
+      encounterRow.data.locationKind = null;
+      encounterRow.data.budgetAdvisory = null;
+    }
+
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(0);
+    expect(result.skippedRetired).toBe(2);
+    expect(result.skippedNames).toEqual(expect.arrayContaining(['Nullish', 'Nullish fight']));
+  });
+
+  it('still aborts loudly on genuinely corrupt live-kind rows', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Grimm' });
+    const base = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: [Record<string, unknown>, ...Record<string, unknown>[]];
+      battles: Record<string, unknown>[];
+    };
+
+    // Empty name on a live kind: corruption, not drift.
+    const emptyName = structuredClone(base);
+    emptyName.artifacts[0].name = '';
+    await expect(importExport(emptyName)).rejects.toThrow();
+
+    // Never-valid kind ('map' was never in the enum): corruption, not drift.
+    const badKind = structuredClone(base);
+    badKind.artifacts[0].kind = 'map';
+    await expect(importExport(badKind)).rejects.toThrow();
+
+    // Corrupt roster entry (non-positive count) with a VALID layout: the
+    // layout probe cannot launder a corrupt row.
+    const badRoster = structuredClone(base);
+    badRoster.artifacts[0].kind = 'encounter';
+    (badRoster.artifacts[0] as { data: Record<string, unknown> }).data = legacyEncounterData({
+      monsters: [
+        { name: 'Goblin', count: 0, notes: '', treasure: '', source: { type: 'custom' } },
+      ],
+    });
+    await expect(importExport(badRoster)).rejects.toThrow();
+
+    // Battle with neither moduleId nor sessionId: no git-proven legacy shape.
+    const stamp = Date.now();
+    const badBattle = structuredClone(base);
+    badBattle.battles = [
+      {
+        id: newId(),
+        campaignId: campaign.id,
+        encounterArtifactId: null,
+        reseed: null,
+        seedFighters: [],
+        board: {
+          mapImageId: null, mapLayout: null, live: false, everLive: false, tokens: [], veils: [],
+          effects: [], gridSize: null, tokenSize: 64, sceneryMovementLocked: false,
+          initiativeEnabled: false, initiativeOrder: [], activeIndex: 0, stage: null,
+          stagingGround: null, entrance: null,
+        },
+        createdAt: stamp,
+        updatedAt: stamp,
+      },
+    ];
+    await expect(importExport(badBattle)).rejects.toThrow();
+
+    // Abort-before-tx still holds: nothing landed from any attempt.
+    expect(await listCampaigns()).toHaveLength(1);
+  });
+
+  it('skipped rows take their dependency citations with them (no dep abort)', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Keep' });
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: Record<string, unknown>[];
+      dependencies?: {
+        citations: Record<string, unknown>[];
+        books: Record<string, unknown>[];
+        pinnedChunks: Record<string, unknown>[];
+        unmetLibraryRefs: Record<string, unknown>[];
+      };
+    };
+    const sessionId = newId();
+    exported.artifacts.push(sessionRow(campaign.id, { id: sessionId, name: 'Session 9' }));
+    const chunkId = newId();
+    // Hand-crafted legacy manifest: the retired session cites a rulebook the
+    // local library does not have, plus an unmet NPC ref on the same row.
+    exported.dependencies = {
+      citations: [
+        {
+          artifactId: sessionId,
+          artifactName: 'Session 9',
+          kind: 'session',
+          monsterName: 'Goblin Warrior',
+          citedChunkId: chunkId,
+          chunkType: 'statblock',
+          status: 'resolved',
+          bookTitle: 'Ghost Book',
+          system: 'pathfinder2e',
+          creatureName: 'Goblin Warrior',
+        },
+      ],
+      books: [
+        {
+          title: 'Ghost Book',
+          system: 'pathfinder2e',
+          origin: 'pdf',
+          pageCount: 100,
+          pack: null,
+          chunkCount: 50,
+          citedChunkIds: [chunkId],
+        },
+      ],
+      pinnedChunks: [],
+      unmetLibraryRefs: [
+        {
+          artifactId: sessionId,
+          artifactName: 'Session 9',
+          kind: 'session',
+          monsterName: 'Old friend',
+          npcArtifactId: newId(),
+          status: 'missing',
+        },
+      ],
+    };
+
+    // Default policy: no MissingDependenciesError — the skipped row's
+    // citations left with it.
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(1);
+    expect(result.skippedRetired).toBe(1);
+    expect(result.skippedNames).toEqual(['Session 9']);
+  });
+
+  it('a live row citing a missing book still aborts after a skip in the same file', async () => {
+    const campaign = await createCampaign({ name: 'Old', system: 'pathfinder2e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Goblin ambush',
+      data: legacyEncounterData({
+        monsters: [
+          { name: 'Goblin Warrior', count: 2, notes: '', treasure: '', source: { type: 'rulebook', chunkId: newId() } },
+        ],
+      }),
+    } as never);
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as {
+      artifacts: Record<string, unknown>[];
+      dependencies?: {
+        citations: Record<string, unknown>[];
+        books: Record<string, unknown>[];
+        pinnedChunks: Record<string, unknown>[];
+        unmetLibraryRefs: Record<string, unknown>[];
+      };
+    };
+    exported.artifacts.push(sessionRow(campaign.id, { name: 'Session 3' }));
+    const chunkId = (encounter.data.monsters[0] as { source: { chunkId: string } }).source.chunkId;
+    exported.dependencies = {
+      citations: [
+        {
+          artifactId: encounter.id,
+          artifactName: 'Goblin ambush',
+          kind: 'encounter',
+          monsterName: 'Goblin Warrior',
+          citedChunkId: chunkId,
+          chunkType: 'statblock',
+          status: 'resolved',
+          bookTitle: 'Ghost Book',
+          system: 'pathfinder2e',
+          creatureName: 'Goblin Warrior',
+        },
+      ],
+      books: [
+        {
+          title: 'Ghost Book',
+          system: 'pathfinder2e',
+          origin: 'pdf',
+          pageCount: 100,
+          pack: null,
+          chunkCount: 50,
+          citedChunkIds: [chunkId],
+        },
+      ],
+      pinnedChunks: [],
+      unmetLibraryRefs: [],
+    };
+
+    // The LIVE encounter's missing citation still aborts (slice B intact) —
+    // the session skip does not confuse the check. Zero rows written.
+    const campaignsBefore = await listCampaigns();
+    await expect(importExport(exported)).rejects.toBeInstanceOf(MissingDependenciesError);
+    expect(await listCampaigns()).toHaveLength(campaignsBefore.length);
+
+    // Import-anyway lands the live encounter and still reports the skip.
+    const result = await importExport(exported, {}, { dependencyPolicy: 'import-anyway' });
+    expect(result.createdArtifacts).toBe(1);
+    expect(result.skippedRetired).toBe(1);
+    expect(result.skippedNames).toEqual(['Session 3']);
   });
 });
