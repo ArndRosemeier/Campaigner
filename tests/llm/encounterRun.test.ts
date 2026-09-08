@@ -54,10 +54,21 @@ vi.mock('@/search', async (importOriginal) => {
   return { ...(actual as object), searchRules: vi.fn() };
 });
 
+// Fill-grade draw (docs/11 D12 amendment): mocked so the in-place fill's
+// expectation-derived packing and verdicts are deterministic.
+import type * as domainArtifact from '@/domain/artifact';
+
+vi.mock('@/domain/artifact', async (importOriginal) => {
+  const actual = await importOriginal<typeof domainArtifact>();
+  return { ...actual, drawFillGrade: vi.fn(actual.drawFillGrade) };
+});
+
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 const { searchRules } = await import('@/search');
 const searchRulesMock = vi.mocked(searchRules);
+const { drawFillGrade } = await import('@/domain/artifact');
+const drawFillGradeMock = vi.mocked(drawFillGrade);
 
 const TROLL_TEXT = 'Troll, regenerates unless burned.';
 
@@ -393,6 +404,8 @@ describe('encounter runs (M3-B)', () => {
     await clearDatabase();
     chatMock.mockReset();
     searchRulesMock.mockReset();
+    drawFillGradeMock.mockReset();
+    drawFillGradeMock.mockReturnValue(70);
   });
 
   it('cites rulebook chunks and materializes inline stat blocks into NPC artifacts (fix-02)', async () => {
@@ -1614,19 +1627,115 @@ describe('encounter runs (M3-B)', () => {
       });
       const artifact = await getArtifact(stub.id);
       if (artifact?.kind !== 'encounter') return;
-      // Reconciliation: Troll is preserved by name on its room (remapped to
-      // the new index 0), the new Ogre is appended round-robin to the FIRST
-      // room, and the gone Cultist's assignment is dropped.
+      // Reconciliation (fill-grade packing): Troll is preserved by name on
+      // its room (remapped to the new index 0); the fresh Ogre (10 levels)
+      // packs into the EMPTY Yard — the room still under its expectation —
+      // instead of topping up the already-full Gatehouse (the old
+      // round-robin put it in the first room), and the gone Cultist's
+      // assignment is dropped.
       const rooms = artifact.data.layout?.rooms ?? [];
-      expect(rooms[0]?.monsterIndexes).toEqual([0, 1]);
-      expect(rooms[1]?.monsterIndexes).toEqual([]);
-      // The budget loop covers in-place fills: the Gatehouse (Troll 5 + Ogre
-      // 10 = 15) overruns the level-5 band of 7, so its target steps down
-      // (5 → 4) and the LOUD advisory persists on the artifact.
-      expect(rooms[0]?.targetLevel).toBe(4);
-      expect(rooms[1]?.targetLevel).toBe(5);
+      expect(rooms[0]?.monsterIndexes).toEqual([0]);
+      expect(rooms[1]?.monsterIndexes).toEqual([1]);
+      // The budget loop covers in-place fills: the Yard (Ogre 10) overruns
+      // the level-5 band of 7, so its target steps down (5 → 4) and the
+      // LOUD advisory persists on the artifact; the Gatehouse (Troll 5)
+      // sits within its band at the drawn 70% expectation (4.9 − 1 margin).
+      expect(rooms[0]?.targetLevel).toBe(5);
+      expect(rooms[1]?.targetLevel).toBe(4);
       expect(artifact.data.budgetAdvisory).toContain('ships over its challenge budget');
-      expect(artifact.data.budgetAdvisory).toContain('Gatehouse');
+      expect(artifact.data.budgetAdvisory).toContain('Yard');
+      // The legacy complex drew (and persisted) its fill grade at this fill.
+      expect(artifact.data.fillGrade).toBe(70);
+    });
+
+    it('reports a room left empty by packing as a loud empty verdict (docs/11 D12 amendment)', async () => {
+      const { campaign, persona, trollChunkId } = await seed();
+      const { db } = await import('@/db/db');
+      const chunk = await db.chunks.get(trollChunkId);
+      searchRulesMock.mockResolvedValue(
+        chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+      );
+      const roomIdA = '00000000-0000-4000-8000-0000000000c1';
+      const roomIdB = '00000000-0000-4000-8000-0000000000c2';
+      const stub = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Thin Dungeon',
+        tags: [],
+        summary: '',
+        body: '',
+        data: {
+          difficulty: 'deadly',
+          levelHint: '5',
+          monsters: [{ name: 'Troll', count: 1, notes: '', treasure: '', source: { type: 'rulebook', chunkId: trollChunkId } }],
+          terrain: '',
+          tactics: '',
+          treasure: '',
+          mapImageId: null,
+          preset: 'standard',
+          locationKind: 'other',
+          siteShape: 'complex',
+          budgetAdvisory: '',
+          layout: {
+            gridW: 24,
+            gridH: 18,
+            theme: 'Ford',
+            path: [roomIdA, roomIdB],
+            rooms: [
+              {
+                id: roomIdA,
+                name: 'Gatehouse',
+                rects: [{ x: 0, y: 0, w: 8, h: 6 }],
+                mobsRect: { x: 1, y: 1, w: 6, h: 4 },
+                description: '',
+                monsterIndexes: [0],
+                spawn: true,
+                key: '',
+                keyTreasure: '',
+              },
+              {
+                id: roomIdB,
+                name: 'Yard',
+                rects: [{ x: 10, y: 0, w: 8, h: 6 }],
+                mobsRect: { x: 11, y: 1, w: 6, h: 4 },
+                description: '',
+                monsterIndexes: [0],
+                spawn: false,
+                key: '',
+                keyTreasure: '',
+              },
+            ],
+            corridors: [],
+          },
+        },
+      });
+      chatMock.mockResolvedValue({
+        text: JSON.stringify({ ...DRAFT, monsters: [{ name: 'Troll', count: 1, notes: '', sourceChunkIndex: 0 }] }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+      const runId = await runEngine.startRun({
+        campaign,
+        persona,
+        brief: 'Refill the thin dungeon',
+        autonomy: 'auto',
+        pinnedChunkIds: [],
+        targetArtifactId: stub.id,
+      });
+      await vi.waitFor(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact(stub.id);
+      if (artifact?.kind !== 'encounter') return;
+      // The one-fight roster packs into its best-fit room; the other room is
+      // left empty by packing — a LEGIT outcome reported loudly, never
+      // silently (the old round-robin would have spread the fight thin).
+      const rooms = artifact.data.layout?.rooms ?? [];
+      expect(rooms[0]?.monsterIndexes).toEqual([0]);
+      expect(rooms[1]?.monsterIndexes).toEqual([]);
+      expect(artifact.data.budgetAdvisory).toContain('ships empty');
+      expect(artifact.data.budgetAdvisory).toContain('Yard');
+      expect(artifact.data.budgetAdvisory).toContain('shipped 0, expected ~4.9 creature-levels (≈2 creatures)');
     });
   });
 });

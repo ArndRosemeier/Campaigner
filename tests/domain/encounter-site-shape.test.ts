@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   encounterDataSchema,
   LEGACY_COMPLEX_BUDGET_NOTE,
+  drawFillGrade,
   type EncounterArtifactData,
 } from '@/domain';
 import { encounterLayoutSchema, spawnFirstPath } from '@/domain/encounterMap/schema';
@@ -209,9 +210,52 @@ describe('spawnFirstPath', () => {
   });
 });
 
-describe('legacy complex budget note (docs/11 D12)', () => {
-  it('is a non-empty owner-facing sentence', () => {
+describe('legacy complex budget note (docs/11 D12, amended by the fill-grade arc)', () => {
+  it('is a non-empty owner-facing sentence naming the draw-once refill', () => {
     expect(LEGACY_COMPLEX_BUDGET_NOTE.length).toBeGreaterThan(20);
     expect(LEGACY_COMPLEX_BUDGET_NOTE).toContain('under-budget');
+    expect(LEGACY_COMPLEX_BUDGET_NOTE).toContain('fill grade');
+  });
+});
+
+describe('fillGrade field (docs/11 D12 amendment — additive optional, no Dexie bump)', () => {
+  const baseData = {
+    difficulty: 'hard',
+    levelHint: '4',
+    monsters: [],
+    terrain: '',
+    tactics: '',
+    treasure: '',
+    mapImageId: null,
+    preset: 'standard' as const,
+    locationKind: 'dungeon' as const,
+    siteShape: 'complex' as const,
+    budgetAdvisory: '',
+    layout: null,
+  };
+
+  it('parses legacy rows with the field absent and validates the range on read', () => {
+    const absent = encounterDataSchema.parse({ ...baseData });
+    expect(absent.fillGrade).toBeUndefined();
+    expect(encounterDataSchema.parse({ ...baseData, fillGrade: 70 }).fillGrade).toBe(70);
+    expect(encounterDataSchema.parse({ ...baseData, fillGrade: 0 }).fillGrade).toBe(0);
+    // Out-of-range or fractional values fail the boundary loudly.
+    expect(() => encounterDataSchema.parse({ ...baseData, fillGrade: 101 })).toThrow();
+    expect(() => encounterDataSchema.parse({ ...baseData, fillGrade: -1 })).toThrow();
+    expect(() => encounterDataSchema.parse({ ...baseData, fillGrade: 70.5 })).toThrow();
+  });
+
+  it('draws integers inside the documented 30–100 range (draw-once source)', () => {
+    let seed = 7;
+    const random = (): number => {
+      seed = (seed * 1103515245 + 12345) % 2147483648;
+      return seed / 2147483648;
+    };
+    for (let index = 0; index < 500; index += 1) {
+      const draw = drawFillGrade(random);
+      expect(Number.isInteger(draw)).toBe(true);
+      expect(draw).toBeGreaterThanOrEqual(30);
+      expect(draw).toBeLessThanOrEqual(100);
+    }
   });
 });

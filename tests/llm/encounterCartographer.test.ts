@@ -28,9 +28,21 @@ vi.mock('@/search', async (importOriginal) => {
   return { ...(actual as object), searchRules: vi.fn() };
 });
 
+// Fill-grade draw (docs/11 D12 amendment): mocked so run-engine assertions
+// against the expectation-derived verdicts are deterministic. The default
+// implementation stays attached — tests that care pin an exact value.
+import type * as domainArtifact from '@/domain/artifact';
+
+vi.mock('@/domain/artifact', async (importOriginal) => {
+  const actual = await importOriginal<typeof domainArtifact>();
+  return { ...actual, drawFillGrade: vi.fn(actual.drawFillGrade) };
+});
+
 const chatMock = vi.mocked(chat);
 const { searchRules } = await import('@/search');
 const searchRulesMock = vi.mocked(searchRules);
+const { drawFillGrade } = await import('@/domain/artifact');
+const drawFillGradeMock = vi.mocked(drawFillGrade);
 
 function waitForRun(assertion: () => void | Promise<void>) {
   return waitFor(assertion, { timeout: 15000 });
@@ -58,6 +70,36 @@ const BRIEF = {
   monsters: [{ name: 'Ash Cultist', count: 2, notes: '', treasure: 'Robes: 2 gp, an ash charm', statBlock: INLINE_STATBLOCK }],
   rooms: [
     { name: 'Entry', description: 'Broken doors', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [], key: 'Cracked doors hang off one hinge.', keyTreasure: 'Fallen banner: 15 gp' },
+  ],
+  entryRoomIndex: 0,
+};
+
+/** A full 4-room dungeon brief (docs/11 D12 amendment tests) — every room
+ * carries its targetLevel and a real fight at the fill-grade expectation. */
+const COMPLEX_BRIEF = {
+  name: 'Ash Temple Undercroft',
+  summary: 'A four-room crypt under the ash temple.',
+  body: '# Ash Temple\nFour rooms of cultists.',
+  difficulty: 'hard',
+  levelHint: '4',
+  terrain: 'crypt stone',
+  tactics: 'hold the lines',
+  treasure: 'cult hoard',
+  theme: 'ash-choked crypt',
+  styleNotes: 'inked fantasy map',
+  negative: 'text, labels, tokens',
+  environment: 'dungeon',
+  monsters: [
+    { name: 'Ash Cultist', count: 2, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level: '2' } },
+    { name: 'Crypt Ghoul', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level: '4' } },
+    { name: 'Bone Acolyte', count: 2, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level: '2' } },
+    { name: 'Ash Priest', count: 1, notes: '', treasure: '', statBlock: { ...INLINE_STATBLOCK, level: '4' } },
+  ],
+  rooms: [
+    { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
+    { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
+    { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [2], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
+    { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [3], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
   ],
   entryRoomIndex: 0,
 };
@@ -196,6 +238,8 @@ beforeEach(async () => {
   chatMock.mockReset();
   searchRulesMock.mockReset();
   searchRulesMock.mockResolvedValue([]);
+  drawFillGradeMock.mockReset();
+  drawFillGradeMock.mockReturnValue(70);
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 2304, height: 1728 });
   vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['one']), new Blob(['two'])], costUsd: 0.02, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
   vi.spyOn(encounterRunAdapters, 'normalizeImageAspect').mockImplementation((blob) => Promise.resolve({ blob, width: 1200, height: 900, action: 'none' }));
@@ -1313,6 +1357,315 @@ describe('Encounter Cartographer run', () => {
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
       expect(artifact.data.budgetAdvisory).toContain('not deterministically budget-checked');
       expect(artifact.data.layout?.rooms[0]?.targetLevel).toBe(4);
+    });
+  });
+
+  describe('fillGrade stocking (docs/11 D12 amendment)', () => {
+    /** A sparse complex: two rooms stocked, two left empty (coverage holds). */
+    function sparseComplexBrief(): typeof COMPLEX_BRIEF {
+      return {
+        ...COMPLEX_BRIEF,
+        monsters: COMPLEX_BRIEF.monsters.slice(0, 2),
+        rooms: [
+          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
+        ],
+      };
+    }
+
+    it('carries the roster sizing seam and the per-room stocking numbers in the fresh brief prompt', async () => {
+      const { campaign, cartographer } = await setup();
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = {
+        ...input(campaign, cartographer),
+        brief: 'A level 5 dungeon under the ash temple',
+        encounterPreset: 'dungeon' as const,
+      };
+      const runId = await runEngine.startRun(runInput);
+      await waitFor(() => {
+        expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+      });
+      const briefContent =
+        chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+      // The fresh-brief roster sizing seam (docs/11 D12 amendment).
+      expect(briefContent).toContain('A complex of N rooms needs roughly one fight per room — size the roster for N fights');
+      // Stocking numbers from the drawn fill grade (mocked 70) at the
+      // parsed party level: 70% of the level-5 band (7) ≈ 4.9 levels ≈ 2.
+      expect(briefContent).toContain('fill grade is 70%');
+      expect(briefContent).toContain('roughly 4.9 creature-levels (≈2 creatures)');
+
+      // A single-arena outcome DISCARDS the draw — nothing persists.
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact((await getRun(runId))?.resultArtifactId ?? newId());
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(artifact.data.fillGrade).toBeUndefined();
+    });
+
+    it('repairs a sparse fresh complex brief through the EXISTING repair turn (empty rooms)', async () => {
+      const { campaign, cartographer } = await setup();
+      chatMock
+        .mockResolvedValueOnce({ text: JSON.stringify(sparseComplexBrief()), modelUsed: 'test-model', fallback: null })
+        .mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer);
+      const runId = await runEngine.startRun(runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+
+      // The inverted asymmetry: an EMPTY complex room is a repairable issue.
+      expect(chatMock).toHaveBeenCalledTimes(2);
+      const repairTurn = (chatMock.mock.calls[1]?.[0] ?? []).at(-1);
+      expect(repairTurn?.role).toBe('user');
+      expect(repairTurn?.content).toContain('with NO creatures');
+      expect(repairTurn?.content).toContain('Ritual Chamber');
+      expect(repairTurn?.content).toContain('Sanctum');
+      expect(repairTurn?.content).toContain('shipped 0, expected ~4.2 creature-levels (≈2 creatures)');
+
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const run = await getRun(runId);
+      const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      // The repaired complex ships clean, every room stocked, fill grade
+      // stamped (the complex layout materialized with the field absent).
+      expect(artifact.data.budgetAdvisory).toBe('');
+      expect(artifact.data.layout?.rooms.map((room) => room.monsterIndexes.length)).toEqual([1, 1, 1, 1]);
+      expect(artifact.data.fillGrade).toBe(70);
+    });
+
+    it('expands a pinned one-fight roster for a complex and draws the legacy row\'s fill grade once', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const target = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Sparse Dungeon',
+        body: 'Existing prose.',
+        links: [],
+        data: {
+          difficulty: 'old', levelHint: '4',
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          terrain: '', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
+        },
+      });
+      if (target.kind !== 'encounter') throw new Error('encounter target missing');
+      // The pinned prefix stays verbatim; three appended goblins stock the
+      // rooms the one-fight pin would have left empty.
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        ...COMPLEX_BRIEF,
+        monsters: [
+          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+        ],
+        rooms: [
+          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [2], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [3], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer, target.id);
+      const runId = await runEngine.startRun(runInput);
+      await waitFor(() => {
+        expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+      });
+      const briefContent =
+        chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
+      // The expansion permission and the drawn expectation are in the prompt.
+      expect(briefContent).toContain('you MAY append more entries');
+      expect(briefContent).toContain('fill grade is 70%');
+      expect(briefContent).toContain('Tomb Ogre');
+
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact(target.id);
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      // The merged roster: the pinned entry byte-identical (identity,
+      // treasure preserved), the appended entries materialized as rulebook
+      // citations exactly like the fresh-encounter birth path.
+      expect(artifact.data.monsters).toHaveLength(4);
+      expect(artifact.data.monsters[0]).toEqual(target.data.monsters[0]);
+      for (const index of [1, 2, 3]) {
+        expect(artifact.data.monsters[index]?.source).toEqual({
+          type: 'rulebook',
+          chunkId: goblinChunkId,
+          mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId),
+          contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
+          creatureName: 'Goblin Boss',
+        });
+      }
+      // packRooms may ROTATE the rooms array — resolve by name, never by position.
+      const roomByName = new Map((artifact.data.layout?.rooms ?? []).map((room) => [room.name, room]));
+      expect(roomByName.get('Entry')?.monsterIndexes).toEqual([0]);
+      expect(roomByName.get('Ossuary')?.monsterIndexes).toEqual([1]);
+      expect(roomByName.get('Ritual Chamber')?.monsterIndexes).toEqual([2]);
+      expect(roomByName.get('Sanctum')?.monsterIndexes).toEqual([3]);
+      // The layout re-stamped the shape; the legacy row drew its fill grade
+      // ONCE at the first regen that materialized a complex (draw-on-first-
+      // regen), and the under-stocked appended rooms ship a LOUD advisory.
+      expect(artifact.data.siteShape).toBe('complex');
+      expect(artifact.data.fillGrade).toBe(70);
+      expect(artifact.data.budgetAdvisory).toContain('ships under its expected challenge');
+    });
+
+    it('keeps the draw-once stability across regens and the owner-set precedence', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const roster = [0, 1, 2, 3].map((index) => ({
+        name: `Crypt Thing ${String(index)}`,
+        count: 1,
+        notes: '',
+        treasure: '',
+        source: { type: 'rulebook' as const, chunkId: goblinChunkId },
+      }));
+      const target = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Crypt Complex',
+        body: 'Existing prose.',
+        links: [],
+        data: {
+          difficulty: 'old', levelHint: '4',
+          monsters: roster,
+          terrain: '', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
+        },
+      });
+      if (target.kind !== 'encounter') throw new Error('encounter target missing');
+      const briefReply = { text: JSON.stringify({
+        ...COMPLEX_BRIEF,
+        monsters: roster.map((entry) => ({ name: entry.name, count: entry.count, notes: '', treasure: '' })),
+      }), modelUsed: 'test-model', fallback: null };
+
+      // First regen: the legacy row draws 70 (the mocked default).
+      chatMock.mockResolvedValueOnce(briefReply);
+      const firstInput = input(campaign, cartographer, target.id);
+      const firstRun = await runEngine.startRun(firstInput);
+      const firstCandidates = await approveUntilPick(firstRun, firstInput);
+      await runEngine.editStep(firstRun, await pickIndexOf(firstRun), { keep: [firstCandidates[0]] }, firstInput);
+      await waitForRun(async () => {
+        expect((await getRun(firstRun))?.status).toBe('completed');
+      });
+      const drawn = await getArtifact(target.id);
+      if (drawn?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(drawn.data.fillGrade).toBe(70);
+
+      // Second regen: the draw source now returns 55 — the persisted 70
+      // wins (draw-once; a value on the row is never redrawn).
+      drawFillGradeMock.mockReturnValue(55);
+      chatMock.mockResolvedValueOnce(briefReply);
+      const secondRun = await runEngine.startRun(firstInput);
+      const secondCandidates = await approveUntilPick(secondRun, firstInput);
+      await runEngine.editStep(secondRun, await pickIndexOf(secondRun), { keep: [secondCandidates[0]] }, firstInput);
+      await waitForRun(async () => {
+        expect((await getRun(secondRun))?.status).toBe('completed');
+      });
+      const stable = await getArtifact(target.id);
+      if (stable?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(stable.data.fillGrade).toBe(70);
+
+      // Owner precedence: a row the owner set to 40 keeps 40 verbatim and
+      // the brief prompt is written against the OWNER value.
+      const owned = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Owner-Tuned Crypt',
+        body: 'Existing prose.',
+        links: [],
+        data: {
+          difficulty: 'old', levelHint: '4',
+          monsters: roster,
+          terrain: '', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
+          fillGrade: 40,
+        },
+      });
+      if (owned.kind !== 'encounter') throw new Error('encounter target missing');
+      chatMock.mockResolvedValueOnce(briefReply);
+      const ownedInput = input(campaign, cartographer, owned.id);
+      const callsBefore = chatMock.mock.calls.length;
+      const ownedRun = await runEngine.startRun(ownedInput);
+      await waitFor(() => {
+        expect(chatMock.mock.calls.length).toBeGreaterThan(callsBefore);
+      });
+      const ownedContent =
+        chatMock.mock.calls.at(-1)?.[0].find((message) => message.role === 'user')?.content ?? '';
+      expect(ownedContent).toContain('fill grade is 40%');
+      expect(ownedContent).not.toContain('fill grade is 70%');
+      expect(ownedContent).not.toContain('fill grade is 55%');
+      const ownedCandidates = await approveUntilPick(ownedRun, ownedInput);
+      await runEngine.editStep(ownedRun, await pickIndexOf(ownedRun), { keep: [ownedCandidates[0]] }, ownedInput);
+      await waitForRun(async () => {
+        expect((await getRun(ownedRun))?.status).toBe('completed');
+      });
+      const kept = await getArtifact(owned.id);
+      if (kept?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(kept.data.fillGrade).toBe(40);
+    });
+
+    it('rejects an over-cap expansion loudly (the bounded roster seam)', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const target = await createArtifact({
+        campaignId: campaign.id,
+        kind: 'encounter',
+        name: 'Cap Dungeon',
+        body: 'Existing prose.',
+        links: [],
+        data: {
+          difficulty: 'old', levelHint: '4',
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          terrain: '', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'single', budgetAdvisory: '',
+        },
+      });
+      if (target.kind !== 'encounter') throw new Error('encounter target missing');
+      // 4 + 10 + 10 = 24 creature-levels against a cap of 3×4.2 + 4.9 + 2
+      // = 19.5 (the rooms' expected shares at their targetLevels + headroom)
+      // — the expansion overshoots its rooms' expected shares.
+      chatMock.mockResolvedValue({ text: JSON.stringify({
+        ...COMPLEX_BRIEF,
+        monsters: [
+          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '' },
+          { name: 'Goblin Boss', count: 10, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 10, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+        ],
+        rooms: [
+          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [2], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer, target.id);
+      const runId = await runEngine.startRun(runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      const step = (await getRun(runId))?.steps[0];
+      expect(step?.status).toBe('rejected');
+      expect(rejectionIssues(step ?? { output: null })).toEqual([
+        'monsters: the expanded roster sums to 24 creature-levels — over the complex\'s stocking cap of 19.5 (the rooms\' expected shares + 2). Trim the roster so every room fits its band.',
+      ]);
+      // Nothing persisted over the cap.
+      const untouched = await getArtifact(target.id);
+      if (untouched?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(untouched.data.layout).toBeNull();
     });
   });
 });

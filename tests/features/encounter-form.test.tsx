@@ -462,6 +462,56 @@ describe('encounter form site shape, path reorder and target levels (docs/11 D11
   });
 });
 
+describe('encounter form fill grade (docs/11 D12 amendment)', () => {
+  beforeEach(clearDatabase);
+
+  function FillGradeHarness({ initial }: { initial: EncounterArtifactData }) {
+    const [data, setData] = useState(initial);
+    return <EncounterForm data={data} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={setData} />;
+  }
+
+  it('offers the fill-grade input for complexes only (empty = drawn once)', () => {
+    const { unmount } = render(<FillGradeHarness initial={twoRoomData()} />);
+    const input = screen.getByRole('spinbutton', { name: 'Fill grade' });
+    expect(input).toHaveValue(null);
+    expect(screen.getByText(/Left empty, the first map generation draws one/)).toBeInTheDocument();
+    unmount();
+    // A single arena has no rooms to stock — no field, honest copy.
+    render(<EncounterForm data={singleComplexFree()} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={vi_noop()} />);
+    expect(screen.queryByRole('spinbutton', { name: 'Fill grade' })).not.toBeInTheDocument();
+  });
+
+  it('writes an owner-set fill grade and clears back to auto (the field unsets)', async () => {
+    const user = userEvent.setup();
+    render(<FillGradeHarness initial={twoRoomData()} />);
+    const input = screen.getByRole('spinbutton', { name: 'Fill grade' });
+    await user.type(input, '65');
+    expect(input).toHaveValue(65);
+    // The stateful harness re-rendered with the typed value — clear it back
+    // to unset (auto) and the field empties again.
+    await user.clear(input);
+    expect(input).toHaveValue(null);
+  });
+
+  /** A single-site fixture without a layout (the field must be absent). */
+  function singleComplexFree(): EncounterArtifactData {
+    return {
+      difficulty: 'hard',
+      levelHint: '4',
+      monsters: [],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+      layout: null,
+    };
+  }
+});
+
 /** A complex two-room fixture (Entry spawn first, Sanctum second). */
 function twoRoomData(): EncounterArtifactData {
   return {

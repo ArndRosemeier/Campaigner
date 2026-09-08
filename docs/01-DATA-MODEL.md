@@ -208,6 +208,22 @@ Deriving the preset from layout dimensions would be ambiguous, so it is
 persisted, never inferred. No battle-level field exists: the board is a
 pure function of the layout, and the finer grid rides `cols/rows`.
 
+### Encounter fill grade (fill-grade arc, doc 11 D12 amendment)
+
+`EncounterArtifactData` adds `fillGrade?: number` — additive optional
+integer 0–100, no Dexie bump (legacy rows parse with the field absent =
+undrawn). It records the share of a standard single-encounter threat budget
+each room of a COMPLEX should carry: the deterministic input behind
+`expectedRoomThreat`'s per-room expectation (`src/llm/roomBudget.ts`), the
+brief prompt's stocking numbers, the Cartographer's bounded roster-expansion
+cap, and the in-place fill's nearest-band packing. Draw-once by
+`drawFillGrade` (documented weighted distribution, `src/domain/artifact.ts`)
+when a complex layout first materializes with the field absent — fresh
+Cartographer birth, a legacy row's first map regeneration, or an in-place
+fill of a legacy complex; a value on the row (owner-set or a previous draw)
+is never redrawn. Inert on single sites; pf2e computes no numbers from it
+(Paizo licensing).
+
 ### ArtifactRevision
 
 Full snapshot per revision (simple, storage is cheap for text).

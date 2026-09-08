@@ -46,7 +46,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
 | D9 | **Room keys & mob treasure are GM-only text that travels with its structure** (owner-ratified, 2026-09-07): every layout room carries additive `key`/`keyTreasure` (persisted ON the room — `packRooms` rotates brief rooms, so a parallel roomId-keyed array would orphan), every roster entry carries additive `treasure` (persisted ON the entry — the editor removes roster rows, so an index-keyed array would orphan). The encounter editor edits them; battle seed freezes roster `treasure` onto each token (frozen-copy precedent, initiativeBonus); the battle surface renders GM-only key markers at room staging points + a rail key card + a GM-only token-treasure block — none of which mounts in player view (M5-D contract, 09 amendment). Map regeneration replaces room keys with the fresh brief's (accepted, stated in UI copy and the prompt clause). |
 | D11 | **Encounters have a SHAPE — `siteShape: 'single' \| 'complex'` on the encounter data, additive default `'single'`** (owner-ratified, 2026-09-08): editor labels **"Encounter" (single)** and **"Dungeon" (complex)**. A single site is one arena — `rooms.length === 1`, `corridors: []`, veils for its spawn groups at seed (group-veil policy: the spawn-room exemption is gone), start position = the entrance cell when present else the room's mobsRect center, no room discovery beyond the spawn groups. A complex is a dungeon — multi-room, one board, sequential play along the path, GM-only Path rail + "Reveal next room" as an ADVISORY aid (no locks, no initiative resets; the latecomer auto-roll stays an editable aid; reveal-all — one press lifts EVERY group veil of the next veiled room, resolving per room via `veil.id` AND `veil.roomId`, so no room reads revealed while its mobs stay covered). The derived default: `locationKind === 'dungeon'` ⇒ complex, else single — materialized for legacy rows by `normalizeEncounterShapeData` (parse-on-read) AND the v17 backfill. Hard invariants refine on the ARTIFACT data (single ⇒ 1 room & no corridors; complex ⇒ >1 room); the stricter generation dichotomy — a brief commits to 1 room or 4–10, never 2–3 — is a repairable brief-boundary issue. See "Site shape, per-room challenge and the path" below. |
-| D12 | **Asymmetric per-room budget loop (owner-specified)**: each complex room carries `targetLevel` (additive, optional; defaults to the encounter's parsed levelHint) and the assigned creatures' levels are summed against a documented band — **too easy ⇒ ship silently (owner: fine)**; **too hard ⇒ lower that room's targetLevel a step (floor 1) and retry through the encounter brief's EXISTING single repair turn** (budget issues join the issue list like coverage/source issues); **after the bounded retry still over ⇒ LOUD advisory** persisted on the step output AND `data.budgetAdvisory` on the artifact — never silent, never a failed run. The final (possibly lowered) targetLevel persists on the room, visible and owner-editable. dnd5e band = our own documented approximation (verbatim rationale below, mirroring the treasure-ladder licensing stance, docs/12 §13.2/§14); pf2e ships NO numbers — GM Core verbatim from retrieved excerpts when present, else the always-on loud advisory. The in-place Smith content fill runs the same loop over a RECONCILED partition (see below). |
+| D12 | **Asymmetric per-room budget loop (owner-specified)**: each complex room carries `targetLevel` (additive, optional; defaults to the encounter's parsed levelHint) and the assigned creatures' levels are summed against a documented band — **too easy ⇒ ship silently (owner: fine)**; **too hard ⇒ lower that room's targetLevel a step (floor 1) and retry through the encounter brief's EXISTING single repair turn** (budget issues join the issue list like coverage/source issues); **after the bounded retry still over ⇒ LOUD advisory** persisted on the step output AND `data.budgetAdvisory` on the artifact — never silent, never a failed run. The final (possibly lowered) targetLevel persists on the room, visible and owner-editable. dnd5e band = our own documented approximation (verbatim rationale below, mirroring the treasure-ladder licensing stance, docs/12 §13.2/§14); pf2e ships NO numbers — GM Core verbatim from retrieved excerpts when present, else the always-on loud advisory. The in-place Smith content fill runs the same loop over a RECONCILED partition (see below). **Amended (fill-grade arc, owner-ratified): a COMPLEX inverts the asymmetry — every room stocks a real fight against a drawn `fillGrade` expectation ('empty' repairable, 'under' loud); the "no lower bound" call now holds for SINGLE arenas only, the roster is sized at the real seam (prompt + bounded map-queue expansion), and the in-place fill packs by nearest-band fit. See "D12 amendment — fillGrade stocking" below.** |
 | D13 | **The play path is stored on the layout** — `encounterLayoutSchema.path: z.array(z.uuid()).optional()`, a permutation of the room ids refined by the shared layout schema. The Cartographer brief's room order IS the path (stored explicitly — `packAttempt` ROTATES `brief.rooms`, so the array order cannot be trusted), rotated so the entry room is first: **first path room = spawn room**. Legacy complexes get `path` backfilled as their room-array order (spawn first if derivable) by the v17 migration; the surface falls back to array order when absent. The rail's veiled-room set resolves per ROOM (`veil.id` for the primary group, `veil.roomId` for every group veil), so a room reads veiled until its last group veil lifts and "Reveal next room" reveal-alls the room. |
 | D15 | **Auto-promote on second-module use** (owner-ratified, 10 D12): an encounter roster or battle token that cites another module's npc/mob artifact promotes it to campaign level with a loud toast — at run-engine finalize (both remap sites), the editor encounter save, the top of `seedBattleFromEncounter` / `spawnRosterInstance` (before identity freezes), and bestiary `spawnMobArtifactIntoModule` (second-module spawn promotes/shared instead of moving). No separate core state — every path funnels through `adoptIntoCampaign`. |
 | D17 | **The encounter map has a STYLE MODE — architectural vs. natural site — and OUTDOORS the encounter's own prose is the truth** (owner-ratified): WHO HOLDS GROUND TRUTH. Dungeons: the layout IS the truth — the schematic-faithful contract (walls/corridors/keys/veils; keep-structure prompt + the stone/wood/dirt materials line) stays byte-identical. Outdoors: our geometry encodes ONLY spawn positions — the schematic renders a placement-only overlay (soft organic spawn patches over the mob-cluster cells + the entrance marker; NO region boundary stroke, NO wall geometry) and the stylize prompt is rebuilt from the brief's own prose (theme + terrain + summary), with NO materials line, NO keep-walls clause, and NO terrain bans (an island in a lava lake or a murder-clown tent stays paintable). The usability hard-bans (no title/legend/grid/text/characters; no white/pale boxes) and the entrance marker stay verbatim; the entrance clause softens to "a visible approach path at the marked spot" (marker mechanics unchanged). Mode derivation: the brief's `environment: 'outdoor'` OR the persisted `locationKind: 'wilderness'` ⇒ natural, else architectural — and the owner's editor override (`mapMode` on the encounter data, additive optional, 'auto' stores nothing) beats both. See "Natural-site mode" below. |
@@ -958,10 +958,12 @@ editor → deletion → docs.
   restated numerically from it. A room tuned for target level T is over
   budget when its assigned creatures' levels (CR) sum to MORE than T + 2
   (`ROOM_BUDGET_OVER_MARGIN`) — roughly a hard single fight's worth of
-  creature levels; there is NO lower bound (a quiet room ships silently, per
-  the owner's asymmetric call). This mirrors the treasure-ladder licensing
-  stance (docs/12 §13.2/§14), and this document IS the shipped
-  approximation.**
+  creature levels. The band is UPPER-only by itself; the lower side is the
+  fill-grade expectation below — for SINGLE arenas there is still NO lower
+  bound (a quiet room ships silently, per the owner's asymmetric call), and
+  complexes derive one from `fillGrade` (the amendment below). This mirrors
+  the treasure-ladder licensing stance (docs/12 §13.2/§14), and this
+  document IS the shipped approximation.**
 - **pf2e — verbatim from retrieved chunks when present, else loud advisory**:
   creature budgets are Paizo's (GM Core). Campaigner ships NO numeric pf2e
   budget; the prompt directs the model to the retrieved GM Core excerpts
@@ -991,7 +993,93 @@ editor → deletion → docs.
   then runs — no repair turn exists at finalize, so over rooms get the
   deterministic tail only (step-down + advisory). Room CAPACITY is not
   re-derived; an overfull room still fails loudly at seed (layout
-  validation).
+  validation). **Amended (fill-grade arc): step (2) is now nearest-band
+  packing when per-room expectations exist — see the amendment below.**
+
+### D12 amendment — fillGrade stocking (owner-ratified; per-room lower bound for complexes)
+
+Owner-observed root cause: multi-room dungeons shipped ~one-encounter-empty —
+the Smith sizes a ONE-fight roster (it never sees rooms), the auto-map queue
+pinned that roster VERBATIM into the Cartographer's 4–10-room brief,
+`checkRoomBudget` was upper-bound-only (zero-creature rooms read 'ok'), the
+in-place fill round-robined the regenerated roster one entry per room, and a
+digit-free `levelHint` left rooms 'unverified' (advisory-only). The arc fixes
+the chain at five seams; the "no lower bound" call of D12 is AMENDED for
+complexes only — a single arena keeps "a quiet room is a feature" byte-identical.
+
+- **The field**: `encounterDataSchema.fillGrade` — additive optional integer
+  0–100, NO Dexie bump (parse-on-read keeps legacy rows absent = undrawn).
+  Meaning: the share of a STANDARD SINGLE-ENCOUNTER threat budget each room
+  of a complex should carry. **Draw-once**: `drawFillGrade()` (pure, seeded-RNG
+  injectable) draws from a documented distribution — ~70% of draws land in
+  the 55–90 center, ~10% light (45–55), ~10% breather (30–45), ~10% spike
+  (90–100); no draw plans a room near zero. Invoked only when a complex
+  layout first materializes with the field ABSENT: the run's brief step draws
+  a candidate (so the prompt can carry real numbers and the expansion cap)
+  and the finalize STAMPS it — a fresh Cartographer birth, a legacy row's
+  first map regen, or an in-place refill of a legacy complex. A value on the
+  row — owner-set or an earlier draw — is NEVER redrawn (the mapMode
+  precedence); a single-arena outcome discards the draw; the editor shows a
+  complex-only "Fill grade" number input next to Location kind (empty =
+  drawn once; an owner value always wins).
+- **The expectation**: `expectedRoomThreat(fillGrade, targetLevel, system)`
+  (`src/llm/roomBudget.ts`, pure) — a room at target level T expects
+  `fillGrade/100 × (T + 2)` creature-levels (the SAME band constants the
+  'over' verdict uses, so the expectation can never exceed the band) plus an
+  approximate mob count against the reference creature (roughly half the
+  room's target level; a full band ≈ 2–4 creatures). pf2e returns null — the
+  numbers are our dnd5e-family approximation and applying them to Paizo's
+  budgets would fabricate licensed numbers (docs/12 §13.2/§14 stance); pf2e
+  complexes keep the always-on advisory and the verbatim roster pin.
+- **The lower verdicts** (`checkRoomBudget` gains `complex`/`fillGrade`/
+  `system`): a complex room with ZERO creature instances is the **'empty'**
+  verdict — a REPAIRABLE issue on fresh complex briefs (it joins the
+  brief's EXISTING single repair turn exactly like an 'over' room); a
+  complex room summing to less than `expected − ROOM_BUDGET_UNDER_MARGIN`
+  (1 creature-level of slack, documented) is the **'under'** verdict —
+  advisory-only. Both produce LOUD `budgetAdvisory` entries naming the room
+  and its expected-vs-shipped ("shipped 0, expected ~4.9 creature-levels
+  (≈2 creatures)"). No expectation ⇒ no lower verdict (no fillGrade yet,
+  fillGrade 0 = owner-sanctioned empty room, pf2e, or a single arena).
+- **targetLevel REQUIRED for complexes**: the brief contract's superRefine —
+  a 4–10-room brief where any room omits `targetLevel` is a named schema
+  issue that rides the existing one-repair turn, then rejects loudly (a
+  digit-free levelHint can no longer leave rooms 'unverified'). Single
+  arenas stay optional; the artifact-data read path keeps the hint-stamp
+  fallback for legacy rows. The schema check is bounded to valid complex
+  shapes (4–10 rooms) so a 2–3-room reply still fails with the D11
+  site-shape message.
+- **Roster sizing at the real seam**: the fresh Cartographer brief prompt
+  now says "a complex of N rooms needs roughly one fight per room — size the
+  roster for N fights", carries the per-room stocking numbers
+  (`fillGradeStockingFor` — null for pf2e or a digit-free level, never an
+  invented number), and the qualitative "each room must ALONE challenge the
+  party" clause stays verbatim. **MAP-QUEUE PATH (the dominant flow)**: a
+  complex brief may EXPAND the pinned roster — the target's entries stay the
+  first N byte-identical (same order/names/counts/treasure; their persisted
+  stat sources, mob artifacts and content identity survive untouched), and
+  appended entries (each citing `sourceChunkIndex`/`sourceName`/inline
+  `statBlock` — checked like fresh citations) stock the rooms the pin would
+  have left empty. Bounded: the whole complex may total at most the SUM of
+  its rooms' expected shares + `ROOM_BUDGET_OVER_MARGIN` — an over-cap
+  roster is a repairable issue, never a silent accept. The verbatim pin is
+  byte-identical for single arenas and pf2e. The merged roster persists at
+  map finalize (the appended entries materialize through the SAME
+  source-resolution birth path as a fresh Cartographer encounter).
+- **Reconcile packing (D12 semantics change)**: `reconcileRoomAssignments`
+  step (2) now packs unclaimed entries by NEAREST-BAND FIT when per-room
+  expectations exist — biggest-threat-first, each entry into the room whose
+  remaining headroom it brings nearest its band (`min |expected − shipped −
+  threat|`, ties to the lowest room index), preferring rooms still UNDER
+  their expectation so a fitted room is never topped up while another waits
+  for its fight; only when every room is at/over its expectation may an
+  entry overflow the least-wrong room. The old round-robin remains the
+  documented fallback when expectations are absent (pf2e, pre-expectation
+  callers). A room left EMPTY by packing is a legitimate outcome — the
+  budget loop reports it as the loud 'empty' verdict, never silently.
+- **LEGACY_COMPLEX_BUDGET_NOTE** (the v17 migration note on legacy complex
+  rows) now says the next map generation draws the dungeon's fill grade and
+  re-checks every room against it.
 
 ### D13 — the stored path
 

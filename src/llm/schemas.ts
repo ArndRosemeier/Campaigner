@@ -301,6 +301,25 @@ export const encounterGeneratorBriefSchema = z
     if (brief.entryRoomIndex >= brief.rooms.length) {
       context.addIssue({ code: 'custom', path: ['entryRoomIndex'], message: 'entry room index is outside rooms' });
     }
+    // D12 amendment (fill-grade arc): a DUNGEON COMPLEX requires every room
+    // to carry an explicit targetLevel — the party level that room alone
+    // should challenge. A digit-free levelHint used to leave complex rooms
+    // 'unverified' (advisory-only); now the missing field is a named schema
+    // issue that rides the brief's EXISTING one-repair turn, then rejects
+    // loudly. Single arenas stay optional (stampTargetLevels fills from the
+    // level hint when present). Bounded to the VALID complex shapes (4–10):
+    // a 2–3-room reply is still the D11 site-shape issue named one level up.
+    if (brief.rooms.length > 3) {
+      for (const [roomIndex, room] of brief.rooms.entries()) {
+        if (room.targetLevel === undefined) {
+          context.addIssue({
+            code: 'custom',
+            path: ['rooms', roomIndex, 'targetLevel'],
+            message: 'a dungeon complex requires every room to carry a targetLevel (the party level this room alone should challenge)',
+          });
+        }
+      }
+    }
     for (const [roomIndex, room] of brief.rooms.entries()) {
       if (room.targetLevel !== undefined && room.targetLevel < 1) {
         context.addIssue({ code: 'custom', path: ['rooms', roomIndex, 'targetLevel'], message: 'target level must be at least 1' });

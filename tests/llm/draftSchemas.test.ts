@@ -116,9 +116,11 @@ describe('draft schema coercions', () => {
       treasure: 'y',
       theme: 'gate',
       monsters: [{ name: 'Goblin Boss', count: 2, notes: '', sourceName: 'goblin boss' }],
+      // A complex carries a targetLevel on EVERY room (docs/11 D12
+      // amendment — the fill-grade arc made it required for complexes).
       rooms: [
-        { name: 'Entry', monsterIndexes: [] },
-        { name: 'Yard', monsterIndexes: [0] },
+        { name: 'Entry', monsterIndexes: [], targetLevel: 3 },
+        { name: 'Yard', monsterIndexes: [0], targetLevel: 3 },
       ],
       entryRoomIndex: 0,
     });
@@ -207,5 +209,71 @@ describe('draft schema minimum content', () => {
       false,
     );
     expect(encounterGeneratorBriefSchema.safeParse(base).success).toBe(true);
+  });
+});
+
+/**
+ * D12 amendment (fill-grade arc): a DUNGEON COMPLEX requires every room to
+ * carry an explicit targetLevel — the party level that room alone should
+ * challenge. A missing field is a named schema issue that rides the brief's
+ * EXISTING one-repair turn, then rejects loudly; a digit-free levelHint can
+ * no longer leave complex rooms silently 'unverified'. Single arenas stay
+ * optional.
+ */
+describe('encounter brief targetLevel requirement for complexes (docs/11 D12 amendment)', () => {
+  const complexBase = {
+    name: 'Goblin Gate',
+    summary: 'S',
+    body: 'B',
+    difficulty: 'medium',
+    levelHint: 'mid', // digit-free: the stamp fallback cannot save the rooms
+    terrain: 't',
+    tactics: 'x',
+    treasure: 'y',
+    theme: 'gate',
+    monsters: [{ name: 'Goblin Boss', count: 2, notes: '' }],
+    entryRoomIndex: 0,
+  };
+
+  it('rejects a complex whose rooms miss a targetLevel (named issue, repairable)', () => {
+    const result = encounterGeneratorBriefSchema.safeParse({
+      ...complexBase,
+      rooms: [
+        { name: 'Entry', monsterIndexes: [0], targetLevel: 3 },
+        { name: 'Yard', monsterIndexes: [] },
+        { name: 'Shrine', monsterIndexes: [], targetLevel: 2 },
+        { name: 'Crypt', monsterIndexes: [] },
+      ],
+    });
+    expect(result.success).toBe(false);
+    if (!result.success) {
+      expect(result.error.issues.map((issue) => issue.path.join('.'))).toContain(
+        'rooms.1.targetLevel',
+      );
+      expect(result.error.issues.map((issue) => issue.message)).toContain(
+        'a dungeon complex requires every room to carry a targetLevel (the party level this room alone should challenge)',
+      );
+    }
+  });
+
+  it('accepts a complex whose every room carries a targetLevel', () => {
+    const result = encounterGeneratorBriefSchema.safeParse({
+      ...complexBase,
+      rooms: [
+        { name: 'Entry', monsterIndexes: [0], targetLevel: 3 },
+        { name: 'Yard', monsterIndexes: [], targetLevel: 2 },
+        { name: 'Shrine', monsterIndexes: [], targetLevel: 2 },
+        { name: 'Crypt', monsterIndexes: [], targetLevel: 4 },
+      ],
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it('keeps targetLevel optional for a single arena', () => {
+    const result = encounterGeneratorBriefSchema.safeParse({
+      ...complexBase,
+      rooms: [{ name: 'Entry', monsterIndexes: [0] }],
+    });
+    expect(result.success).toBe(true);
   });
 });

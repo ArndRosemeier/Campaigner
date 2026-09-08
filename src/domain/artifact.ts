@@ -303,14 +303,69 @@ export interface EncounterShapeDataLike {
 }
 
 /**
- * The migration note (docs/11 D12) the v17 upgrade writes onto encounter
- * rows it maps to 'complex' (legacy multi-room layouts): their rooms carry
- * no per-room challenge targets, so each is roughly 1/N of the whole and
- * may be under-budget until the battlemap is regenerated. The editor shows
- * it verbatim via the room-keys/budget advisory block.
+ * The migration note (docs/11 D12, amended by the fill-grade arc) the v17
+ * upgrade writes onto encounter rows it maps to 'complex' (legacy multi-room
+ * layouts): their rooms carry no per-room challenge targets, so each is
+ * roughly 1/N of the whole and may be under-budget. The FIRST battlemap
+ * regeneration draws the row's `fillGrade` (draw-once; an owner-set value
+ * always wins) and re-checks every room against its expected share. The
+ * editor shows it verbatim via the room-keys/budget advisory block.
  */
 export const LEGACY_COMPLEX_BUDGET_NOTE =
-  'This encounter was written before per-room challenge budgets: each room is roughly 1/N of the whole encounter\'s strength and may be under-budget until the battlemap is regenerated.';
+  'This encounter was written before per-room challenge budgets: each room is roughly 1/N of the whole encounter\'s strength and may be under-budget until the battlemap is regenerated. The next map generation draws this dungeon\'s fill grade (the per-room stocking share) and re-checks every room against it.';
+
+// --- Fill grade (docs/11 D12 amendment — per-room stocking) ------------------
+
+/** Valid `fillGrade` range: a percentage of a room's standard threat budget. */
+export const FILL_GRADE_MIN = 0;
+export const FILL_GRADE_MAX = 100;
+
+/**
+ * The draw distribution for `drawFillGrade` (docs/11 D12 amendment,
+ * owner-ratified shape): most complexes are solid fights — ~70% of draws
+ * land in the 55–90 center; ~10% draw a light room (45–55) bridging toward
+ * the tail; ~10% draw a breather room (30–45); ~10% draw a spike (90–100).
+ * The full range is therefore 30–100, and no draw ever plans a room at or
+ * near zero — a complex of real fights is the default shape. Documented in
+ * docs/11 and pinned by distribution tests (seeded RNG injection).
+ */
+export const FILL_GRADE_DRAW_WEIGHTS = [
+  { weight: 0.1, min: 30, max: 45 }, // breather tail
+  { weight: 0.1, min: 45, max: 55 }, // light
+  { weight: 0.7, min: 55, max: 90 }, // center — most of the mass
+  { weight: 0.1, min: 90, max: 100 }, // spike
+] as const;
+
+/**
+ * Draws one `fillGrade` — the share of a standard single-encounter threat
+ * budget each room of a complex should carry. PURE: the randomness is
+ * injected (`random` is a Math.random-compatible source) so the
+ * distribution is testable with a seeded RNG.
+ *
+ * Draw-once discipline (docs/11 D12 amendment): invoked only when a complex
+ * layout first materializes with the field ABSENT — a value on the row
+ * (owner-set or an earlier draw) is never redrawn, and a single-arena
+ * outcome discards the draw (nothing persists).
+ */
+export function drawFillGrade(random: () => number = Math.random): number {
+  const roll = random();
+  if (!(roll >= 0 && roll < 1)) {
+    throw new Error(`drawFillGrade: the random source produced ${String(roll)} — expected a value in [0, 1)`);
+  }
+  let cursor = 0;
+  for (const bucket of FILL_GRADE_DRAW_WEIGHTS) {
+    cursor += bucket.weight;
+    if (roll < cursor) {
+      const span = bucket.max - bucket.min + 1;
+      return bucket.min + Math.floor(random() * span);
+    }
+  }
+  // The weights sum to 1, so this is unreachable — a floating-point guard
+  // that keeps the function total (the last bucket's upper edge).
+  const last = FILL_GRADE_DRAW_WEIGHTS[FILL_GRADE_DRAW_WEIGHTS.length - 1];
+  if (last === undefined) throw new Error('drawFillGrade: no draw buckets configured');
+  return last.max;
+}
 
 const encounterDataShape = z.object({
   /** e.g. 'medium', 'deadly', or free text. */
@@ -369,6 +424,24 @@ const encounterDataShape = z.object({
    * ~1/N-strength rooms. '' = no advisory.
    */
   budgetAdvisory: z.string().default(''),
+  /**
+   * Per-room stocking share (docs/11 D12 amendment): the percentage of a
+   * standard single-encounter threat budget each room of a COMPLEX should
+   * carry — the deterministic lower bound behind `checkRoomBudget`'s
+   * 'empty'/'under' verdicts and the Cartographer's roster sizing. Integer
+   * 0–100. Additive + optional, NO Dexie bump: legacy rows parse with the
+   * field absent; the value is DRAWN ONCE (`drawFillGrade`) when a complex
+   * layout first materializes with the field absent, and an owner-set value
+   * always wins (never redrawn — the mapMode-precedence pattern). Inert on
+   * single sites (a quiet room is a feature there) and on pf2e (no numbers
+   * ship — Paizo licensing); the field itself stays system-neutral.
+   */
+  fillGrade: z
+    .number()
+    .int()
+    .min(FILL_GRADE_MIN)
+    .max(FILL_GRADE_MAX)
+    .optional(),
 });
 
 export const encounterDataSchema = z.preprocess(

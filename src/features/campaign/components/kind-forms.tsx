@@ -562,6 +562,39 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
             personas classify this themselves and you can correct it here.
           </span>
         </Field>
+        {/* Fill grade (docs/11 D12 amendment): the per-room stocking share a
+            complex is written against — complex-only (a single arena has no
+            rooms to stock). Empty = draw-once at the next map materialization;
+            an owner-set value always wins and is never redrawn. */}
+        {data.siteShape === 'complex' && (
+          <Field label="Fill grade">
+            <Input
+              type="number"
+              min={0}
+              max={100}
+              step={1}
+              value={data.fillGrade ?? ''}
+              placeholder="Auto (drawn once)"
+              aria-label="Fill grade"
+              className="h-7 text-sm pointer-coarse:text-base"
+              onChange={(event) => {
+                const raw = event.target.value;
+                if (raw.trim() === '') {
+                  patch({ fillGrade: undefined });
+                  return;
+                }
+                const parsed = Number(raw);
+                if (!Number.isFinite(parsed)) return;
+                patch({ fillGrade: Math.min(100, Math.max(0, Math.round(parsed))) });
+              }}
+            />
+            <span className="text-[11px] font-normal text-muted-foreground">
+              How much of a standard fight's threat each dungeon room should carry, 0–100.
+              Left empty, the first map generation draws one (most dungeons 55–90, some
+              lighter, some spikier) and keeps it; a value set here always wins.
+            </span>
+          </Field>
+        )}
         <Field label="Site shape">
           <Select
             value={data.siteShape}

@@ -24,6 +24,7 @@ import {
   encounterLocationKindSchema,
   entranceMarkerConfig,
   moduleDocumentText,
+  drawFillGrade,
   newId,
   packRooms,
   renderSchematic,
@@ -65,7 +66,10 @@ import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounter
 import { roomKeyGuidanceFor, treasureGuidanceFor } from '@/llm/treasureGuidance';
 import {
   PF2E_BUDGET_ADVISORY,
+  ROOM_BUDGET_OVER_MARGIN,
   checkRoomBudget,
+  expectedRoomThreat,
+  fillGradeStockingFor,
   reconcileRoomAssignments,
   resolveBriefMonsterLevels,
   resolveEntryLevels,
@@ -937,17 +941,20 @@ function encounterCoverageIssues(brief: EncounterGeneratorBrief, rosterLength: n
  * returns the schema issues (path + message) so they reach the model's repair
  * turn and the user's review card instead of dying in a bare `null`.
  *
- * `dropInlineStats` (regenerate mode): the roster is replaced verbatim from
- * the target encounter right after validation, stat sources included, so
- * embedded `statBlock`/`sourceChunkIndex`/`sourceName` fields carry no
- * information and are stripped before the schema runs — the model echoing a
- * stub block there must not fail the map over data the contract discards.
- * Fresh runs keep strict validation: their inline stat blocks become the
- * artifact's source data.
+ * `stripStatFieldCount` (regenerate mode): the roster's first N entries are
+ * the PINNED prefix copied verbatim from the target encounter right after
+ * validation, stat sources included, so embedded
+ * `statBlock`/`sourceChunkIndex`/`sourceName` fields on those entries carry
+ * no information and are stripped before the schema runs — the model echoing
+ * a stub block there must not fail the map over data the contract discards.
+ * Entries BEYOND the prefix (a complex's bounded expansion, docs/11 D12
+ * amendment) keep their fields: their citations/stat blocks are the real
+ * sources finalize will persist. Fresh runs keep strict validation: their
+ * inline stat blocks become the artifact's source data.
  */
 function parseEncounterBrief(
   raw: string,
-  opts: { dropInlineStats?: boolean } = {},
+  opts: { stripStatFieldCount?: number } = {},
 ): { brief: EncounterGeneratorBrief; issues: [] } | { brief: null; issues: string[] } {
   let json: unknown;
   try {
@@ -955,12 +962,13 @@ function parseEncounterBrief(
   } catch (error) {
     return { brief: null, issues: [parseErrorSummary(error)] };
   }
-  if (opts.dropInlineStats === true && json !== null && typeof json === 'object' && Array.isArray((json as { monsters?: unknown }).monsters)) {
+  const stripCount = opts.stripStatFieldCount;
+  if (stripCount !== undefined && stripCount > 0 && json !== null && typeof json === 'object' && Array.isArray((json as { monsters?: unknown }).monsters)) {
     const record = json as { monsters: unknown[] };
     // The strip drops only stat-source fields: mob `treasure` is data the
     // contract keeps (the roster contract asks for it verbatim).
-    record.monsters = record.monsters.map((monster) =>
-      monster !== null && typeof monster === 'object'
+    record.monsters = record.monsters.map((monster, index) =>
+      index < stripCount && monster !== null && typeof monster === 'object'
         ? {
             name: (monster as { name?: unknown }).name,
             count: (monster as { count?: unknown }).count,
@@ -2468,6 +2476,10 @@ export class RunEngine {
     mapMode: EncounterMapMode;
     statblockChunkIds: Id[];
     rosterChunkByName: Record<string, Id>;
+    /** The run's fill grade (docs/11 D12 amendment) — the value the brief
+     * step drew or read off the target. Undefined on pre-arc runs; finalize
+     * draws a fallback for a complex that materializes without one. */
+    fillGrade: number | undefined;
   } {    const step = steps.find((candidate) => candidate.name === 'brief');
     const effective = step?.userEdit ?? step?.output;
     if (effective === null || effective === undefined || typeof effective !== 'object') {
@@ -2481,6 +2493,7 @@ export class RunEngine {
       mapLocationKind?: unknown;
       statblockChunkIds?: unknown;
       rosterChunkByName?: unknown;
+      fillGrade?: unknown;
     };
     const parsed = encounterGeneratorBriefSchema.safeParse(value.parsed);
     if (!parsed.success) {
@@ -2518,6 +2531,15 @@ export class RunEngine {
         ? value.statblockChunkIds.filter((id): id is Id => typeof id === 'string')
         : [],
       rosterChunkByName: sanitizeChunkByName(value.rosterChunkByName),
+      // Step outputs are plain JSON: the fill grade is re-checked instead of
+      // trusted (an out-of-range/garbage value reads as absent, and finalize
+      // draws a fallback — never a silent wrong number).
+      fillGrade: typeof value.fillGrade === 'number' &&
+          Number.isInteger(value.fillGrade) &&
+          value.fillGrade >= 0 &&
+          value.fillGrade <= 100
+        ? value.fillGrade
+        : undefined,
     };
   }
 
@@ -2578,25 +2600,67 @@ export class RunEngine {
           'Generate its content first (artifact editor → "Generate with AI") or add monsters manually.',
       );
     }
+    // Roster sources are only checked for fresh encounters: a regenerate run
+    // replaces the roster with the target's verbatim entries below.
+    // Asymmetric per-room budget loop (docs/11 D12): the lookups the level
+    // resolution needs — every chunk the brief could cite (stat-block pool +
+    // roster name index) plus, for regenerate runs, the target's own roster
+    // sources. pf2e runs replace the numeric check with the loud verbatim
+    // advisory (no Paizo numbers ship — roomBudget.ts).
+    const budgetMode = roomBudgetMode(input.campaign.system);
+    // Fill grade (docs/11 D12 amendment, draw-once): a value on the target
+    // row (owner-set or a previous draw) ALWAYS wins; a fresh run or a
+    // legacy target without one draws a candidate here so the brief prompt
+    // can carry concrete per-room numbers and the complex expansion cap.
+    // The draw PERSISTS only when a complex layout materializes with the
+    // field absent (finalize); a single-arena outcome discards it.
+    const targetFillGrade = target?.kind === 'encounter' ? target.data.fillGrade : undefined;
+    const fillGrade = targetFillGrade ?? drawFillGrade();
+    // The level the rooms' targetLevels will default to (stampTargetLevels):
+    // the target's own hint on a regenerate, the run brief's text for a
+    // fresh encounter. Without a digit there is no honest number to render.
+    const promptLevel = target?.kind === 'encounter'
+      ? parseRosterTargetLevel(target.data.levelHint)
+      : parseRosterTargetLevel(input.brief);
     // Regenerate mode keeps the roster verbatim INCLUDING mob treasure: a
     // map run replaces layout + room keys, never the encounter-scoped
     // treasure authored on the entries (owner-ratified D1 extension).
+    // AMENDED (docs/11 D12, fill-grade arc): a multi-room COMPLEX may
+    // EXPAND the pinned roster — the target's entries stay the first N
+    // (verbatim, sources preserved) and appended entries stock the rooms
+    // the pin would have left empty; bounded by the rooms' expected shares
+    // (budget-checked in evaluate). A single arena keeps the exact pin.
     const rosterContract = targetRoster !== undefined
-      ? `Regeneration target roster — reply with these EXACT entries, same order, same names, counts and treasure (name/count/notes/treasure; emit null for sourceChunkIndex, sourceName and statBlock — the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
-          targetRoster.map((monster) => ({
-            name: monster.name,
-            count: monster.count,
-            notes: monster.notes,
-            treasure: monster.treasure,
-          })),
-        )}`
+      ? [
+          `Regeneration target roster — keep these EXACT entries as the first ${String(targetRoster.length)} entries of your reply, same order, same names, counts and treasure (name/count/notes/treasure; emit null for sourceChunkIndex, sourceName and statBlock — the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
+            targetRoster.map((monster) => ({
+              name: monster.name,
+              count: monster.count,
+              notes: monster.notes,
+              treasure: monster.treasure,
+            })),
+          )}`,
+          ...(preset === 'dungeon'
+            ? [
+                'If you design a multi-room complex, you MAY append more entries after those to stock the complex — every room needs a real fight, so size the roster for one fight per room. Every appended entry must cite a source (sourceChunkIndex, sourceName or a complete inline statBlock). The whole complex must total at most (number of rooms × the per-room expected creature-levels above) + ' +
+                  `${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels.`,
+              ]
+            : []),
+        ].join('\n')
       : 'Design a concrete monster roster appropriate to the requested difficulty.';
     const monsterFieldSpec = targetRoster !== undefined
-      ? 'monsters [{name,count,notes,treasure}] (the target roster copied verbatim)'
+      ? preset === 'dungeon'
+        ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (the target roster first, verbatim; optional appended entries stock a complex)'
+        : 'monsters [{name,count,notes,treasure}] (the target roster copied verbatim)'
       : 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}]';
     const inlineStatHint = targetRoster === undefined && retrieval.statblockChunkIds.length === 0
       ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
       : null;
+    // Per-room stocking numbers (docs/11 D12 amendment): the fill-grade
+    // share as concrete creature-levels at the level the rooms default to.
+    // Null for pf2e (no Paizo numbers) or a digit-free level — the
+    // qualitative clause still applies, never an invented number.
+    const stockingNumbers = fillGradeStockingFor(fillGrade, promptLevel, input.campaign.system);
     // 15-GRAPH-RETRIEVAL (D2 = general grounding only): the encounter brief
     // renders the derived campaign-grounding section after the brief line;
     // the citable stat-block search and the pack roster above stay
@@ -2616,10 +2680,12 @@ export class RunEngine {
       // (exactly 1 room, no corridors) or a real dungeon complex (4–10
       // rooms) — 2–3-room briefs are repair-rejected at this boundary. The
       // Dungeon preset clause extends the D10 bias with the per-room
-      // challenge contract.
+      // challenge contract, and the roster sizing seam (fill-grade arc):
+      // a complex of N rooms needs roughly one fight per room.
       preset === 'dungeon'
-        ? 'Preset: Dungeon — design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel).'
+        ? 'Preset: Dungeon — design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel). A complex of N rooms needs roughly one fight per room — size the roster for N fights, and every room stocks a real fight (a complex room with no creatures is a repairable defect).'
         : 'Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party\'s way in.',
+      stockingNumbers,
       // Natural-site mode (docs/11): the brief's `environment` classifies the
       // map contract — one honest line (the field was listed but never
       // explained); when it says outdoor, the map is prose-led natural-site.
@@ -2670,8 +2736,8 @@ export class RunEngine {
     // resolution needs — every chunk the brief could cite (stat-block pool +
     // roster name index) plus, for regenerate runs, the target's own roster
     // sources. pf2e runs replace the numeric check with the loud verbatim
-    // advisory (no Paizo numbers ship — roomBudget.ts).
-    const budgetMode = roomBudgetMode(input.campaign.system);
+    // advisory (no Paizo numbers ship — roomBudget.ts). The budget mode is
+    // resolved above (the roster contract and stocking numbers branch on it).
     const budgetChunkIds = [
       ...new Set([...retrieval.statblockChunkIds, ...Object.values(retrieval.rosterChunkByName)]),
     ];
@@ -2692,21 +2758,22 @@ export class RunEngine {
     };
     /**
      * Budget verdicts for a stamped brief. Fresh runs resolve each monster's
-     * level through its citation/inline source; regenerate runs resolve
-     * through the TARGET roster's persisted sources (the brief's roster is
-     * verbatim-target and carries no sources of its own).
+     * level through its citation/inline source; regenerate runs resolve the
+     * PINNED prefix through the TARGET roster's persisted sources (the
+     * prefix carries no sources of its own — they are stripped) and any
+     * EXPANDED entry through its own citation/inline source. The rooms are
+     * judged as a complex whenever the brief carries more than one: the
+     * fill-grade lower verdicts ('empty'/'under') apply to complex rooms
+     * only (docs/11 D12 amendment).
      */
     const budgetVerdicts = async (
       brief: EncounterGeneratorBrief,
     ): Promise<ReturnType<typeof checkRoomBudget>[]> => {
-      const freshLevels =
-        targetRoster === undefined
-          ? resolveBriefMonsterLevels(brief.monsters, {
-              chunkById,
-              rosterChunkByName: retrieval.rosterChunkByName,
-              statblockChunkIds: retrieval.statblockChunkIds,
-            })
-          : undefined;
+      const briefLevels = resolveBriefMonsterLevels(brief.monsters, {
+        chunkById,
+        rosterChunkByName: retrieval.rosterChunkByName,
+        statblockChunkIds: retrieval.statblockChunkIds,
+      });
       const entryLevels =
         targetRoster === undefined
           ? undefined
@@ -2718,13 +2785,20 @@ export class RunEngine {
                 return artifact.data.statBlock;
               },
             });
+      const levelFor = (monsterIndex: number): string | undefined => {
+        if (targetRoster !== undefined && monsterIndex < targetRoster.length) {
+          return entryLevels?.[monsterIndex];
+        }
+        return briefLevels[monsterIndex];
+      };
+      const isComplex = brief.rooms.length > 1;
       const creatures = brief.rooms.map((room) =>
         room.monsterIndexes.map((monsterIndex) => {
           const monster = brief.monsters[monsterIndex];
           return {
             name: monster?.name ?? `roster entry ${String(monsterIndex)}`,
             count: monster?.count ?? 0,
-            level: targetRoster === undefined ? freshLevels?.[monsterIndex] : entryLevels?.[monsterIndex],
+            level: levelFor(monsterIndex),
           };
         }),
       );
@@ -2734,14 +2808,23 @@ export class RunEngine {
           roomName: room.name,
           targetLevel: room.targetLevel,
           creatures: creatures[roomIndex] ?? [],
+          fillGrade,
+          complex: isComplex,
+          system: input.campaign.system,
         }),
       );
     };
+    /** Creature-level label matching the budget loop's advisory style. */
+    const formatLevels = (sum: number): string =>
+      Number.isInteger(sum) ? String(sum) : sum.toFixed(1);
     /**
      * Shape + budget evaluation. `final` marks the post-repair pass: the
      * bounded retry has been spent, so an over-budget room ships with its
      * target lowered one step (floor 1) and the LOUD advisory instead of
-     * re-triggering repair — never a failed run.
+     * re-triggering repair — never a failed run. `expansionActive` marks a
+     * regenerate reply that kept the pinned prefix AND appended entries (a
+     * complex's bounded expansion) — its merged roster is what finalize
+     * persists.
      */
     const evaluate = async (
       reply: string,
@@ -2750,32 +2833,20 @@ export class RunEngine {
       brief: EncounterGeneratorBrief | null;
       issues: string[];
       advisory: string | null;
+      expansionActive: boolean;
     }> => {
-      const result = parseEncounterBrief(reply, { dropInlineStats: targetRoster !== undefined });
-      if (result.brief === null) return { ...result, advisory: null };
+      const result = parseEncounterBrief(
+        reply,
+        targetRoster === undefined ? {} : { stripStatFieldCount: targetRoster.length },
+      );
+      if (result.brief === null) return { ...result, advisory: null, expansionActive: false };
       const brief = result.brief;
-      if (targetRoster !== undefined) {
-        if (brief.monsters.length !== targetRoster.length) {
-          return {
-            brief: null,
-            advisory: null,
-            issues: [
-              `monsters: the target roster has exactly ${String(targetRoster.length)} entries — copy it verbatim in the same order (your reply listed ${String(brief.monsters.length)})`,
-            ],
-          };
-        }
-        const coverage = encounterCoverageIssues(brief, targetRoster.length);
-        if (coverage.length > 0) return { brief: null, issues: coverage, advisory: null };
-      } else {
-        const sourceIssues = encounterSourceIssues(
-          brief.monsters,
-          retrieval.statblockChunkIds,
-          retrieval.rosterChunkByName,
-        );
-        if (sourceIssues.length > 0) return { brief: null, issues: sourceIssues, advisory: null };
-        const coverage = encounterCoverageIssues(brief, brief.monsters.length);
-        if (coverage.length > 0) return { brief: null, issues: coverage, advisory: null };
-      }
+      const isComplex = brief.rooms.length > 1;
+      // Bounded roster expansion (docs/11 D12 amendment): a COMPLEX brief on
+      // a numeric-band system may keep the pinned prefix and append entries
+      // to stock its rooms. pf2e (no numbers → no cap to compute) and
+      // single arenas keep the exact verbatim pin.
+      const expansion = targetRoster !== undefined && isComplex && budgetMode === 'band';
       // Site-shape dichotomy (docs/11 D11): 1 room (single arena) or 4–10
       // rooms (complex). 2–3 rooms are a repairable issue — the prompt
       // states the exact shape contract.
@@ -2783,41 +2854,141 @@ export class RunEngine {
         return {
           brief: null,
           advisory: null,
+          expansionActive: false,
           issues: [
             `rooms: an encounter is either a single arena (exactly 1 room) or a dungeon complex (4–10 rooms) — your reply listed ${String(brief.rooms.length)} rooms`,
           ],
         };
       }
-      const stamped = stampTargetLevels(brief);
+      if (targetRoster !== undefined) {
+        if (expansion) {
+          if (brief.monsters.length < targetRoster.length) {
+            return {
+              brief: null,
+              advisory: null,
+              expansionActive: false,
+              issues: [
+                `monsters: keep the target roster's ${String(targetRoster.length)} entries as the FIRST entries of your reply, same order (your reply listed ${String(brief.monsters.length)})`,
+              ],
+            };
+          }
+        } else if (brief.monsters.length !== targetRoster.length) {
+          return {
+            brief: null,
+            advisory: null,
+            expansionActive: false,
+            issues: [
+              `monsters: the target roster has exactly ${String(targetRoster.length)} entries — copy it verbatim in the same order (your reply listed ${String(brief.monsters.length)})`,
+            ],
+          };
+        }
+      } else {
+        const sourceIssues = encounterSourceIssues(
+          brief.monsters,
+          retrieval.statblockChunkIds,
+          retrieval.rosterChunkByName,
+        );
+        if (sourceIssues.length > 0) {
+          return { brief: null, issues: sourceIssues, advisory: null, expansionActive: false };
+        }
+      }
+      // The target's own values win over any model drift on the pinned
+      // prefix (as before); an expanded entry keeps the model's values — its
+      // citations are what finalize resolves and persists.
+      const corrected: EncounterGeneratorBrief = expansion
+          ? {
+              ...brief,
+              monsters: brief.monsters.map((monster, index) => {
+                const pinned = index < targetRoster.length ? targetRoster[index] : undefined;
+                return pinned === undefined
+                  ? monster
+                  : {
+                      name: pinned.name,
+                      count: pinned.count,
+                      notes: pinned.notes,
+                      treasure: pinned.treasure,
+                    };
+              }),
+            }
+          : brief;
+      if (expansion) {
+        const expandedEntries = corrected.monsters.slice(targetRoster.length);
+        const sourceIssues = encounterSourceIssues(
+          expandedEntries,
+          retrieval.statblockChunkIds,
+          retrieval.rosterChunkByName,
+        );
+        if (sourceIssues.length > 0) {
+          return { brief: null, issues: sourceIssues, advisory: null, expansionActive: false };
+        }
+      }
+      const coverage = encounterCoverageIssues(corrected, corrected.monsters.length);
+      if (coverage.length > 0) {
+        return { brief: null, issues: coverage, advisory: null, expansionActive: false };
+      }
+      const stamped = stampTargetLevels(corrected);
       if (budgetMode === 'verbatim') {
         // pf2e: no numeric budget ships (Paizo licensing) — the advisory is
         // the deterministic, always-loud replacement.
-        return { brief: stamped, issues: [], advisory: PF2E_BUDGET_ADVISORY };
+        return { brief: stamped, issues: [], advisory: PF2E_BUDGET_ADVISORY, expansionActive: false };
       }
       const verdicts = await budgetVerdicts(stamped);
+      if (expansion) {
+        // The expansion cap (docs/11 D12 amendment): the whole complex may
+        // carry at most the SUM of its rooms' expected shares plus the
+        // band's documented headroom — an oversized roster is a repairable
+        // issue, never a silent accept.
+        const expectedTotal = stamped.rooms.reduce((total, room) => {
+          if (room.targetLevel === undefined) return total;
+          const expectation = expectedRoomThreat(fillGrade, room.targetLevel, input.campaign.system);
+          return total + (expectation?.expectedLevels ?? 0);
+        }, 0);
+        const cap = expectedTotal + ROOM_BUDGET_OVER_MARGIN;
+        const shipped = verdicts.reduce((total, verdict) => total + verdict.sumLevels, 0);
+        if (shipped > cap) {
+          return {
+            brief: null,
+            advisory: null,
+            expansionActive: false,
+            issues: [
+              `monsters: the expanded roster sums to ${formatLevels(shipped)} creature-levels — over the complex's stocking cap of ${formatLevels(cap)} (the rooms' expected shares + ${String(ROOM_BUDGET_OVER_MARGIN)}). Trim the roster so every room fits its band.`,
+            ],
+          };
+        }
+      }
+      // The lower verdicts (fill-grade arc): 'empty' is repairable on fresh
+      // complex briefs (the inverted asymmetry — complexes must stock every
+      // room), 'under' is advisory-only; single arenas keep the original
+      // asymmetric call (no lower verdicts exist for them).
       const unverified = verdicts.filter((verdict) => verdict.status === 'unverified');
-      const over = verdicts.filter((verdict) => verdict.status === 'over');
-      if (over.length === 0) {
-        const advisories = unverified
+      const under = verdicts.filter((verdict) => verdict.status === 'under');
+      const repairable = verdicts.filter(
+        (verdict) => verdict.status === 'over' || verdict.status === 'empty',
+      );
+      if (repairable.length === 0) {
+        const advisories = [...unverified, ...under]
           .map((verdict) => verdict.advisory)
           .filter((advisory): advisory is string => advisory !== null);
         return {
           brief: stamped,
           issues: [],
           advisory: advisories.length === 0 ? null : advisories.join(' '),
+          expansionActive: expansion,
         };
       }
       if (!final) {
         return {
           brief: null,
           advisory: null,
-          issues: over.map((verdict) => verdict.issue ?? '').filter((issue) => issue !== ''),
+          expansionActive: false,
+          issues: repairable.map((verdict) => verdict.issue ?? '').filter((issue) => issue !== ''),
         };
       }
       // Final pass: lower each over-budget room a step (floor 1) — the
-      // documented loop's deterministic tail — and ship the loud advisory.
+      // documented loop's deterministic tail — and ship the loud advisory
+      // (over, empty and under rooms alike).
       const loweredTargets = new Map<number, number>(
-        over.flatMap((verdict) =>
+        repairable.flatMap((verdict) =>
           verdict.loweredTargetLevel === null
             ? []
             : [[verdict.roomIndex, verdict.loweredTargetLevel]],
@@ -2839,6 +3010,7 @@ export class RunEngine {
         brief: finalBrief,
         issues: [],
         advisory: advisories.length === 0 ? null : advisories.join(' '),
+        expansionActive: expansion,
       };
     };
     const first = await chat(messages, chatOptions);
@@ -2881,10 +3053,13 @@ export class RunEngine {
       return { step, runStatus: 'needs_review' };
     }
     let parsed: EncounterGeneratorBrief = evaluated.brief;
-    if (targetRoster !== undefined) {
-      // Regenerate mode replaces the roster with the target's verbatim
-      // entries — mob treasure included (the brief was told to copy it
-      // verbatim; the target's own values win over any model drift).
+    if (targetRoster !== undefined && !evaluated.expansionActive) {
+      // Regenerate mode (verbatim pin) replaces the roster with the target's
+      // verbatim entries — mob treasure included (the brief was told to copy
+      // it verbatim; the target's own values win over any model drift). An
+      // EXPANDED complex roster keeps the merged entries: the corrected
+      // prefix already carries the target's verbatim values (evaluate), and
+      // the appended entries are what finalize resolves and persists.
       parsed = {
         ...parsed,
         monsters: targetRoster.map((monster) => ({
@@ -2918,6 +3093,10 @@ export class RunEngine {
             mapLocationKind,
             statblockChunkIds: retrieval.statblockChunkIds,
             rosterChunkByName: retrieval.rosterChunkByName,
+            // The run's fill grade (docs/11 D12 amendment): the value the
+            // brief was written against — finalize stamps it when a complex
+            // materializes with the field absent (draw-once).
+            fillGrade,
             ...(budgetAdvisory === null ? {} : { budgetAdvisory }),
           },
           fallback,
@@ -3173,7 +3352,8 @@ export class RunEngine {
     steps: RunStep[],
     input: StartRunInput,
   ): Promise<{ step: RunStep; artifactId: Id }> {
-    const { parsed, statblockChunkIds, rosterChunkByName } = this.effectiveEncounterBrief(steps);
+    const { parsed, statblockChunkIds, rosterChunkByName, fillGrade: briefFillGrade } =
+      this.effectiveEncounterBrief(steps);
     const pick = steps.find((step) => step.name === 'pick');
     const selected = (pick?.userEdit as { keep?: Id[] } | null | undefined)?.keep?.[0];
     if (selected === undefined) throw new Error('Encounter finalize has no selected battlemap');
@@ -3214,6 +3394,25 @@ export class RunEngine {
       // here. History keeps the old id via revision snapshots (writeRevision
       // clones the whole row, `data.mapImageId` included).
       const previousMapImageId = target.data.mapImageId;
+      // Complex expansion (docs/11 D12 amendment): a brief that kept the
+      // pinned prefix and appended entries persists the MERGED roster — the
+      // target's own entries stay byte-identical (identity, mob artifact,
+      // treasure survive) and the appended entries materialize their fresh
+      // sources exactly like the fresh-encounter birth path below.
+      const expandedMonsters =
+        parsed.monsters.length > target.data.monsters.length
+          ? [
+              ...target.data.monsters,
+              ...await this.materializeBriefRoster(
+                parsed.monsters.slice(target.data.monsters.length),
+                input.campaign.id,
+                runId,
+                statblockChunkIds,
+                rosterChunkByName,
+                new Map<Id, Id>(),
+              ),
+            ]
+          : target.data.monsters;
       // The re-anchor + content write commit as ONE attach-seam
       // transaction: a crash between the two used to strand a
       // library-scoped unreferenced image while the artifact kept the old
@@ -3232,6 +3431,10 @@ export class RunEngine {
         ...(target.coverImageId == null ? {} : { coverImageId: target.coverImageId }),
         data: {
           ...target.data,
+          // Complex expansion: the appended entries join the persisted
+          // roster; the pinned prefix is untouched (equal length keeps the
+          // target's own array byte-identical).
+          monsters: expandedMonsters,
           layout,
           mapImageId: selected,
           // The run's preset is authoritative for the map it just produced
@@ -3244,6 +3447,15 @@ export class RunEngine {
           // And the run's own budget verdict (docs/11 D12) replaces the
           // target's stale advisory — the fresh layout was just checked.
           budgetAdvisory: this.encounterBudgetAdvisory(steps),
+          // Fill grade (docs/11 D12 amendment): the row's value always wins
+          // (never redrawn — owner precedence). Absent + a complex layout
+          // stamps the run's drawn value — the legacy row's draw-on-first-
+          // regen; a single-arena result never carries one.
+          ...(target.data.fillGrade !== undefined
+            ? { fillGrade: target.data.fillGrade }
+            : layout.rooms.length > 1
+              ? { fillGrade: briefFillGrade ?? drawFillGrade() }
+              : {}),
         },
         meta: { source: 'persona', runId },
         // Refchecked prune of the replaced map (no-op while a live board or
@@ -3279,38 +3491,14 @@ export class RunEngine {
       // stays the source of truth). The entry stamps mobArtifactId so
       // seeding pins shared token identity + the portrait path.
       const mobArtifacts = new Map<Id, Id>();
-      const monsters: MonsterEntry[] = [];
-      for (const monster of parsed.monsters) {
-        // M-B (§7) resolution precedence: cited excerpt index → cited
-        // roster name → inline stat block → none.
-        const chunkId = resolveEncounterMonsterSource(monster, statblockChunkIds, rosterChunkByName);
-        if (chunkId === undefined) {
-          monsters.push({
-            name: monster.name,
-            count: monster.count,
-            notes: monster.notes,
-            treasure: monster.treasure,
-            source: monster.statBlock !== undefined
-              ? { type: 'inline' as const, statBlock: monster.statBlock }
-              : { type: 'none' as const },
-          });
-          continue;
-        }
-        const mobArtifactId = await getOrCreateMobArtifact(
-          input.campaign.id,
-          chunkId,
-          monster.name,
-          { source: 'persona', runId },
-          mobArtifacts,
-        );
-        monsters.push({
-          name: monster.name,
-          count: monster.count,
-          notes: monster.notes,
-          treasure: monster.treasure,
-          source: await rulebookSourceFor(chunkId, monster.name, mobArtifactId),
-        });
-      }
+      const monsters = await this.materializeBriefRoster(
+        parsed.monsters,
+        input.campaign.id,
+        runId,
+        statblockChunkIds,
+        rosterChunkByName,
+        mobArtifacts,
+      );
       // Auto-promote on second-module use (ROSTER hook): a freshly drafted
       // encounter placed in a module shares any other-module roster
       // artifacts campaign-wide before the encounter row is created.
@@ -3346,12 +3534,78 @@ export class RunEngine {
           // enforces 1-or-4–10; the persisted field records the outcome.
           siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
           budgetAdvisory: this.encounterBudgetAdvisory(steps),
+          // Fill grade (docs/11 D12 amendment): a complex layout
+          // materializing for the FIRST time stamps the value the brief was
+          // written against (drawn at the brief step; a pre-arc resumed run
+          // without one draws here). A single-arena outcome discards the
+          // draw — the field is a dungeon-stocking share.
+          ...(layout.rooms.length > 1
+            ? { fillGrade: briefFillGrade ?? drawFillGrade() }
+            : {}),
         },
       }, { source: 'persona', runId });
       artifactId = artifact.id;
     }
     await updateRun(runId, { resultArtifactId: artifactId });
     return { step: this.finishStep(steps[stepIndex], { artifactId }), artifactId };
+  }
+
+  /**
+   * Materializes a brief's roster entries into persisted `MonsterEntry`
+   * sources — the M-B §7 precedence: cited excerpt index → cited roster
+   * name → inline stat block → none; a rulebook citation gets the ONE
+   * campaign mob artifact per chunk and full content identity. Shared by
+   * the fresh-encounter finalize and the complex expansion tail of a
+   * regenerate finalize (docs/11 D12 amendment) so both birth paths stamp
+   * sources identically.
+   */
+  private async materializeBriefRoster(
+    monsters: readonly {
+      name: string;
+      count: number;
+      notes: string;
+      treasure: string;
+      sourceChunkIndex?: number | undefined;
+      sourceName?: string | undefined;
+      statBlock?: StatBlock | undefined;
+    }[],
+    campaignId: Id,
+    runId: Id,
+    statblockChunkIds: readonly Id[],
+    rosterChunkByName: Readonly<Record<string, Id>>,
+    mobArtifacts: Map<Id, Id>,
+  ): Promise<MonsterEntry[]> {
+    const entries: MonsterEntry[] = [];
+    for (const monster of monsters) {
+      const chunkId = resolveEncounterMonsterSource(monster, statblockChunkIds, rosterChunkByName);
+      if (chunkId === undefined) {
+        entries.push({
+          name: monster.name,
+          count: monster.count,
+          notes: monster.notes,
+          treasure: monster.treasure,
+          source: monster.statBlock !== undefined
+            ? { type: 'inline' as const, statBlock: monster.statBlock }
+            : { type: 'none' as const },
+        });
+        continue;
+      }
+      const mobArtifactId = await getOrCreateMobArtifact(
+        campaignId,
+        chunkId,
+        monster.name,
+        { source: 'persona', runId },
+        mobArtifacts,
+      );
+      entries.push({
+        name: monster.name,
+        count: monster.count,
+        notes: monster.notes,
+        treasure: monster.treasure,
+        source: await rulebookSourceFor(chunkId, monster.name, mobArtifactId),
+      });
+    }
+    return entries;
   }
 
   /**
@@ -3726,41 +3980,34 @@ export class RunEngine {
         target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
           ? target.aliases
           : [...target.aliases, modelAlias];
-      // In-place fill reconciliation (docs/11 D12): `data.monsters` is the
-      // NEW roster while the target's layout stays byte-identical — without
-      // re-partitioning, `room.monsterIndexes` dangle/shift/skip against the
-      // new roster (loud seed failure or silent wrong-room seeding). The
-      // exact rules live in roomBudget.reconcileRoomAssignments: preserve by
-      // name-match, append new entries round-robin, drop gone ones.
+      // In-place fill reconciliation (docs/11 D12; packing amended by the
+      // fill-grade arc): `data.monsters` is the NEW roster while the
+      // target's layout stays byte-identical — without re-partitioning,
+      // `room.monsterIndexes` dangle/shift/skip against the new roster
+      // (loud seed failure or silent wrong-room seeding). The exact rules
+      // live in roomBudget.reconcileRoomAssignments: preserve by name-match,
+      // then pack the unclaimed by nearest-band fit when per-room
+      // expectations exist (round-robin fallback without them), drop gone
+      // ones. A room left empty by packing is a legit loud 'empty' verdict.
       const targetLayout = target.data.layout;
       let reconciledLayout = targetLayout;
       let budgetAdvisory = '';
+      let fillGradeToPersist: number | undefined = target.data.fillGrade;
       if (targetLayout !== null) {
-        const assignments = reconcileRoomAssignments(
-          targetLayout.rooms,
-          target.data.monsters,
-          data.monsters,
-        );
-        reconciledLayout = {
-          ...targetLayout,
-          rooms: targetLayout.rooms.map((room, roomIndex) => ({
-            ...room,
-            monsterIndexes: assignments[roomIndex]?.monsterIndexes ?? [],
-          })),
-        };
-        // The same asymmetric budget check covers in-place fills. There is
-        // no repair turn at finalize (the draft is not re-rolled here), so
-        // over-budget rooms get the loop's deterministic tail only: the
-        // target lowered a step (floor 1) and the LOUD advisory persisted —
-        // never silent, never a failed run.
+        const isComplex = targetLayout.rooms.length > 1;
+        // Fill grade (docs/11 D12 amendment): the row's value always wins;
+        // a legacy complex without one draws NOW (draw-once at the refill —
+        // the second ratified draw site) so the packing and the budget
+        // check run against a real expectation.
+        const fillGrade = isComplex ? (target.data.fillGrade ?? drawFillGrade()) : undefined;
+        if (isComplex && fillGrade !== undefined) fillGradeToPersist = fillGrade;
         const hintLevel = parseRosterTargetLevel(asString(draft.levelHint));
-        const stampedRooms = reconciledLayout.rooms.map((room) => ({
+        const stampedRooms = targetLayout.rooms.map((room) => ({
           ...room,
           ...(room.targetLevel === undefined && hintLevel !== undefined
             ? { targetLevel: hintLevel }
             : {}),
         }));
-        reconciledLayout = { ...reconciledLayout, rooms: stampedRooms };
         const chunkIds = [
           ...new Set(
             data.monsters.flatMap((monster) =>
@@ -3778,7 +4025,39 @@ export class RunEngine {
             return artifact.data.statBlock;
           },
         });
-        const verdicts = stampedRooms.map((room, roomIndex) =>
+        const assignments = reconcileRoomAssignments(
+          stampedRooms,
+          target.data.monsters,
+          data.monsters,
+          {
+            levels,
+            ...(fillGrade === undefined
+              ? {}
+              : {
+                  expectedLevels: stampedRooms.map(
+                    (room) =>
+                      room.targetLevel === undefined
+                        ? undefined
+                        : expectedRoomThreat(fillGrade, room.targetLevel, input.campaign.system)
+                          ?.expectedLevels,
+                  ),
+                }),
+          },
+        );
+        reconciledLayout = {
+          ...targetLayout,
+          rooms: stampedRooms.map((room, roomIndex) => ({
+            ...room,
+            monsterIndexes: assignments[roomIndex]?.monsterIndexes ?? [],
+          })),
+        };
+        // The same budget loop covers in-place fills. There is no repair
+        // turn at finalize (the draft is not re-rolled here), so every
+        // non-ok verdict gets the loop's deterministic tail only: over rooms
+        // step their target down (floor 1), and 'empty'/'under' rooms ship
+        // with the LOUD advisory persisted — never silent, never a failed
+        // run.
+        const verdicts = reconciledLayout.rooms.map((room, roomIndex) =>
           checkRoomBudget({
             roomIndex,
             roomName: room.name,
@@ -3791,6 +4070,9 @@ export class RunEngine {
                 level: levels[monsterIndex],
               };
             }),
+            ...(fillGrade === undefined ? {} : { fillGrade }),
+            complex: isComplex,
+            system: input.campaign.system,
           }),
         );
         const lowered = new Map<number, number>(
@@ -3839,6 +4121,9 @@ export class RunEngine {
             // still holds (docs/11 D11).
             siteShape: target.data.siteShape,
             budgetAdvisory,
+            // The fill grade persists: the row's own value (owner-set or an
+            // earlier draw) or the one just drawn for a legacy complex.
+            ...(fillGradeToPersist === undefined ? {} : { fillGrade: fillGradeToPersist }),
           }),
         },
         { source: 'persona', runId },
