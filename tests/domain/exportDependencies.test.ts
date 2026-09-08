@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest';
 
 import {
   analyzeDependencies,
+  artifactSchema,
+  collectDependencies,
   groupCitationsByArtifact,
   ruleChunkSchema,
   rulebookSchema,
   statBlockSchema,
   stampNewEntity,
+  type Artifact,
+  type DependencyLibrary,
   type ExportBookDep,
   type ExportCitation,
   type ExportDependencies,
@@ -245,5 +249,116 @@ describe('analyzeDependencies', () => {
       'Goblin Archer',
       'Goblin Warrior',
     ]);
+  });
+});
+
+/**
+ * Manifest-stamp carry (chunk-hash-fallback follow-up): `collectDependencies`
+ * stamps a dangling entry's own content identity onto its `missing-chunk`
+ * citation, so re-exporting a healed-but-dangling campaign writes a manifest
+ * a second-generation import clears at L0 instead of aborting on.
+ */
+describe('collectDependencies missing-chunk stamp carry', () => {
+  function rulebookEntry(chunkId: string, stamp: Record<string, unknown> = {}): unknown {
+    return {
+      name: 'Goblin Warrior',
+      count: 1,
+      notes: '',
+      source: { type: 'rulebook', chunkId, ...stamp },
+    };
+  }
+
+  function encounterWith(monsters: unknown[]): Artifact {
+    return artifactSchema.parse({
+      ...stampNewEntity(),
+      campaignId: stampNewEntity().id,
+      kind: 'encounter',
+      name: 'Goblin ambush',
+      tags: [],
+      summary: '',
+      body: '',
+      links: [],
+      currentRevision: 1,
+      data: {
+        difficulty: 'medium',
+        levelHint: '1',
+        monsters,
+        terrain: '',
+        tactics: '',
+        treasure: '',
+      },
+    });
+  }
+
+  function emptyLibrary(): DependencyLibrary {
+    return {
+      chunksById: new Map(),
+      booksById: new Map(),
+      artifactsById: new Map(),
+      chunkCountsByBookId: new Map(),
+    };
+  }
+
+  it('re-export after heal: a stamped dangling entry exports its hash and analyzes L0-present (no abort)', () => {
+    const danglingId = stampNewEntity().id;
+    const healed = encounterWith([
+      rulebookEntry(danglingId, { contentHash: HASH_A, creatureName: 'Goblin Warrior' }),
+    ]);
+    const exported = collectDependencies([healed], [], emptyLibrary());
+    expect(exported.citations).toHaveLength(1);
+    // Honest status (the chunk WAS missing here) WITH the entry's stamp.
+    expect(exported.citations[0]).toMatchObject({
+      citedChunkId: danglingId,
+      status: 'missing-chunk',
+      contentHash: HASH_A,
+      creatureName: 'Goblin Warrior',
+    });
+    // Second-generation import: a byte-identical install clears L0.
+    const local = book();
+    const localChunk = chunk(local.id);
+    const analysis = analyzeDependencies(exported, {
+      chunksByHash: new Map([[HASH_A, [localChunk]]]),
+      books: [local],
+    });
+    expect(analysis.citations[0]?.verdict).toBe('present');
+    expect(analysis.clean).toBe(true);
+    expect(analysis.blockingCitations).toBe(0);
+  });
+
+  it('chunk data wins over a stale entry stamp (no silent override)', () => {
+    const local = book();
+    const localChunk = chunk(local.id, { contentHash: HASH_A });
+    const staleStamp = encounterWith([
+      rulebookEntry(localChunk.id, { contentHash: HASH_B, creatureName: 'Stale Name' }),
+    ]);
+    const exported = collectDependencies(
+      [staleStamp],
+      [],
+      {
+        ...emptyLibrary(),
+        chunksById: new Map([[localChunk.id, localChunk]]),
+        booksById: new Map([[local.id, local]]),
+        chunkCountsByBookId: new Map([[local.id, 1]]),
+      },
+    );
+    expect(exported.citations[0]).toMatchObject({
+      status: 'resolved',
+      contentHash: HASH_A,
+      creatureName: 'Goblin Warrior',
+    });
+  });
+
+  it('a stamp-less dangling entry stays a plain missing citation (no behavior change)', () => {
+    const danglingId = stampNewEntity().id;
+    const unstamped = encounterWith([rulebookEntry(danglingId)]);
+    const exported = collectDependencies([unstamped], [], emptyLibrary());
+    expect(exported.citations).toHaveLength(1);
+    expect(exported.citations[0]?.status).toBe('missing-chunk');
+    expect(exported.citations[0]?.contentHash).toBeUndefined();
+    expect(exported.citations[0]?.creatureName).toBeUndefined();
+    const analysis = analyzeDependencies(exported, { chunksByHash: new Map(), books: [] });
+    expect(analysis.citations[0]?.verdict).toBe('missing');
+    expect(analysis.clean).toBe(false);
+    expect(analysis.blockingCitations).toBe(1);
   });
 });

@@ -460,6 +460,13 @@ export function collectDependencies(
       if (entry.source.type === 'rulebook') {
         const chunk = library.chunksById.get(entry.source.chunkId);
         if (chunk === undefined) {
+          // Dangling citation: the chunk is gone locally, but the entry's
+          // own content-identity stamp (chunk-hash-fallback arc) still
+          // identifies the bytes — carry it so a later import can clear L0
+          // against a byte-identical install (`analyzeDependencies` reads
+          // `contentHash`, never `status`). The status stays honestly
+          // `missing-chunk`: the chunk WAS missing here; the stamp is the
+          // fallback source ONLY on a chunk-join miss (chunk data wins below).
           citations.push({
             artifactId: artifact.id,
             artifactName: artifact.name,
@@ -468,6 +475,12 @@ export function collectDependencies(
             citedChunkId: entry.source.chunkId,
             chunkType: 'statblock',
             status: 'missing-chunk',
+            ...(entry.source.contentHash === undefined
+              ? {}
+              : { contentHash: entry.source.contentHash }),
+            ...(entry.source.creatureName === undefined
+              ? {}
+              : { creatureName: entry.source.creatureName }),
           });
           continue;
         }

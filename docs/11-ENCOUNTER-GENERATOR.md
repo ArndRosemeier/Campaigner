@@ -185,6 +185,7 @@ Rulebook citations now resolve by CONTENT identity, not just source uuid:
   import L0 rule). A hit resolves stats + origin from the LOCAL chunk
   exactly as a uuid hit (pack creature label / PDF page label from the local
   row). A miss stays 'missing ref' unchanged.
+- **Re-export carries dangling stamps (residual closed)**: `collectDependencies` writes a `missing-chunk` citation WITH the entry's own `contentHash`/`creatureName` when the chunk join misses (chunk data wins when present — the stamp is fallback-only), so re-exporting a healed-but-dangling campaign produces a manifest a second-generation import clears at L0 instead of aborting on.
 - **L1 explicitly deferred**: a same-creature chunk under a NEW hash
   (revised printing) still resolves 'missing ref' — the import dep dialog
   already reports that drift (`version-drift`), and the resolver stays
