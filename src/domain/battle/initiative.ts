@@ -104,9 +104,50 @@ export function visibleFighterTokenIds(
 }
 
 /**
+ * Token ids of GM initiative members (token-lifecycle arc): every visible
+ * fighter PLUS covered (veiled) NPC fighters — the GM sees everything under
+ * their own veils, so veiled mobs roll and hold order with a veiled marker
+ * instead of starving the GM sidebar. Covered PCs stay excluded (a PC is
+ * never coverage-hidden — see use-battle — but the kind check pins it even
+ * if that ever changes). Hidden (visible: false) tokens stay excluded in
+ * BOTH views — they surface through the GM-only Hidden group instead.
+ *
+ * The playerSafe computation stays on `visibleFighterTokenIds` (byte-identical
+ * to before this arc: covered excluded, no leak).
+ */
+export function gmFighterTokenIds(
+  board: BattleBoard,
+  stats: FighterStatsLookup,
+  coveredTokenIds: ReadonlySet<BattleTokenId>,
+): BattleTokenId[] {
+  const ids: BattleTokenId[] = [];
+  for (const token of board.tokens) {
+    if (!token.visible) {
+      continue;
+    }
+    if (token.artifactId === null) {
+      continue;
+    }
+    const fighter = stats(token.artifactId);
+    if (fighter === undefined) {
+      continue;
+    }
+    if (coveredTokenIds.has(token.id) && fighter.kind !== 'npc') {
+      continue;
+    }
+    ids.push(token.id);
+  }
+  return ids;
+}
+
+/**
  * Drop hidden or veiled fighters from initiative order and clear their
  * rolls; revealing them again re-enters them via the caller's auto-roll.
  * `activeIndex` follows the active token to its new position.
+ *
+ * This is the PLAYERSAFE computation — byte-identical to before the
+ * token-lifecycle arc (covered excluded, no leak). The GM path rides
+ * `pruneInitiativeToGmFighters` below, which keeps veiled NPCs.
  */
 export function pruneInitiativeToVisibleFighters(
   board: BattleBoard,
@@ -124,6 +165,43 @@ export function pruneInitiativeToVisibleFighters(
     return { ...token, initiativeRoll: null, initiativeBonus: null };
   });
   const initiativeOrder = board.initiativeOrder.filter((id) => visibleIds.has(id));
+  const orderChanged =
+    initiativeOrder.length !== board.initiativeOrder.length ||
+    initiativeOrder.some((id, index) => id !== board.initiativeOrder[index]);
+  const tokensChanged = tokens.some((token, index) => token !== board.tokens[index]);
+  if (!tokensChanged && !orderChanged) {
+    return board;
+  }
+  return {
+    ...board,
+    tokens,
+    initiativeOrder,
+    activeIndex: adjustActiveIndexForOrder(initiativeOrder, board.initiativeOrder, board.activeIndex),
+  };
+}
+
+/**
+ * GM initiative prune (token-lifecycle arc): hidden tokens and covered PCs
+ * drop out (rolls cleared); covered (veiled) NPC fighters KEEP their order
+ * and rolls. Revealing/unveiling re-enters pruned fighters via the caller's
+ * auto-roll. `activeIndex` follows the active token to its new position.
+ */
+export function pruneInitiativeToGmFighters(
+  board: BattleBoard,
+  stats: FighterStatsLookup,
+  coveredTokenIds: ReadonlySet<BattleTokenId>,
+): BattleBoard {
+  const memberIds = new Set(gmFighterTokenIds(board, stats, coveredTokenIds));
+  const tokens = board.tokens.map((token) => {
+    if (memberIds.has(token.id)) {
+      return token;
+    }
+    if (token.initiativeRoll === null && token.initiativeBonus === null) {
+      return token;
+    }
+    return { ...token, initiativeRoll: null, initiativeBonus: null };
+  });
+  const initiativeOrder = board.initiativeOrder.filter((id) => memberIds.has(id));
   const orderChanged =
     initiativeOrder.length !== board.initiativeOrder.length ||
     initiativeOrder.some((id, index) => id !== board.initiativeOrder[index]);

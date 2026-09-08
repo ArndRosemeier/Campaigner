@@ -550,8 +550,11 @@ For an encounter with `layout !== null`:
    too (no exemption).
 3. Place each roster instance on a free cell of its room's `mobsRect`
    (`placeMonsters`), `visible: true` — the group's veil removes it from the DOM
-   and initiative (the existing player-safe mechanic; **reveal = GM lifts the
-   veil**, and reconcile already auto-rolls revealed fighters).
+   and initiative (the player-safe mechanic, byte-identical since the
+   token-lifecycle arc; **reveal = GM lifts the veil**, and reconcile already
+   auto-rolls revealed fighters). The GM order additionally keeps veiled NPCs
+   with a veiled badge (GM honesty — the GM sidebar no longer starves under
+   default-on group veils).
 4. Spawn PCs in the spawn room's `mobsRect` instead of the default center.
 
 Roster entries without stats keep today's loud statless path, placed in their

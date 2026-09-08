@@ -35,8 +35,10 @@ import {
   adjustActiveIndexForOrder,
   clearTokenInitiative,
   compareInitiativeTokens,
+  gmFighterTokenIds,
   initiativeTotal,
   nextTurn,
+  pruneInitiativeToGmFighters,
   pruneInitiativeToVisibleFighters,
   rollTokenInitiative,
   sortInitiativeOrder,
@@ -342,6 +344,63 @@ describe('initiative', () => {
     const cleared = clearTokenInitiative(tokens);
     expect(cleared[0]?.initiativeRoll).toBeNull();
     expect(cleared[0]?.initiativeBonus).toBeNull();
+  });
+
+  it('lists veiled NPCs as GM members while the player-safe set excludes them (byte-identical)', () => {
+    const open = npcToken({ label: 'Open goblin' });
+    const veiledNpc = npcToken({ label: 'Veiled goblin' });
+    const veiledPc = pcToken({ label: 'Veiled pc' });
+    const hidden = npcToken({ label: 'Hidden goblin', visible: false });
+    const statless = pcToken({ label: 'Statless', artifactId: newId() });
+    const stamp = npcToken({ label: 'Stamp', artifactId: null, shape: 'circle', color: '#ff0000' });
+    const board: BattleBoard = {
+      ...emptyBoard(),
+      tokens: [open, veiledNpc, veiledPc, hidden, statless, stamp],
+    };
+    const covered = new Set([veiledNpc.id, veiledPc.id]);
+    // Player-safe: covered out, hidden/statless/stamps out — exactly the old rule.
+    expect(visibleFighterTokenIds(board, stats, covered)).toEqual([open.id]);
+    // GM: the veiled NPC joins; the veiled PC stays out (kind pin), and
+    // hidden/statless/stamps stay out in both views.
+    expect(gmFighterTokenIds(board, stats, covered)).toEqual([open.id, veiledNpc.id]);
+    // No coverage at all: both sets agree.
+    expect(gmFighterTokenIds(board, stats, new Set())).toEqual([open.id, veiledNpc.id, veiledPc.id]);
+  });
+
+  it('GM prune keeps veiled NPC order and rolls; hidden and covered PCs still drop', () => {
+    const open = npcToken({ label: 'Open', initiativeRoll: 10, initiativeBonus: 2 });
+    const veiled = npcToken({ label: 'Veiled', initiativeRoll: 15, initiativeBonus: 2 });
+    const hidden = npcToken({ label: 'Hidden', visible: false, initiativeRoll: 18, initiativeBonus: 2 });
+    const coveredPc = pcToken({ label: 'Covered pc', initiativeRoll: 12, initiativeBonus: 3 });
+    const board: BattleBoard = {
+      ...emptyBoard(),
+      initiativeEnabled: true,
+      tokens: [open, veiled, hidden, coveredPc],
+      initiativeOrder: [open.id, veiled.id, hidden.id, coveredPc.id],
+      activeIndex: 1,
+    };
+    const coveredIds = new Set([veiled.id, coveredPc.id]);
+    const next = pruneInitiativeToGmFighters(board, stats, coveredIds);
+    expect(next.initiativeOrder).toEqual([open.id, veiled.id]);
+    // The veiled NPC keeps its frozen roll; the pruned lose theirs.
+    expect(next.tokens.find((token) => token.id === veiled.id)?.initiativeRoll).toBe(15);
+    expect(next.tokens.find((token) => token.id === hidden.id)?.initiativeRoll).toBeNull();
+    expect(next.tokens.find((token) => token.id === coveredPc.id)?.initiativeBonus).toBeNull();
+    // Active token (veiled) stayed in the order → index follows it.
+    expect(next.activeIndex).toBe(1);
+    // The player-safe prune on the same board still drops the veiled NPC.
+    expect(pruneInitiativeToVisibleFighters(board, stats, coveredIds).initiativeOrder).toEqual([open.id]);
+  });
+
+  it('GM prune keeps the board identity when nothing changes', () => {
+    const fighter = npcToken({ initiativeRoll: 10, initiativeBonus: 2 });
+    const board: BattleBoard = {
+      ...emptyBoard(),
+      initiativeEnabled: true,
+      tokens: [fighter],
+      initiativeOrder: [fighter.id],
+    };
+    expect(pruneInitiativeToGmFighters(board, stats, new Set([fighter.id]))).toBe(board);
   });
 });
 

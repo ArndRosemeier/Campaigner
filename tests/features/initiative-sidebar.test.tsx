@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
 import type { Battle } from '@/domain';
@@ -205,5 +205,78 @@ describe('InitiativeSidebar move buttons', () => {
     const first = entries[0];
     if (first === undefined) throw new Error('first initiative entry missing');
     expect(within(first).getByText('Serren')).toBeInTheDocument();
+  });
+
+  it('marks veiled order members with a badge only when the covered set is passed (GM view)', () => {
+    const { battle, ids } = seedBattle();
+    // GM view: the covered member carries the badge, the open one does not.
+    renderSidebar(battle, { veiledTokenIds: new Set([ids[1]]) });
+    const entries = screen.getAllByTestId('initiative-entry');
+    expect(entries).toHaveLength(3);
+    const openRow = entries[0];
+    const veiledRow = entries[1];
+    if (openRow === undefined || veiledRow === undefined) throw new Error('initiative rows missing');
+    expect(within(veiledRow).getByTestId('veiled-marker')).toHaveTextContent('veiled');
+    expect(within(openRow).queryByTestId('veiled-marker')).toBeNull();
+    cleanup();
+    // Player-safe view: no covered set passes, so no badge ever leaks.
+    renderSidebar(battle);
+    expect(screen.queryByTestId('veiled-marker')).toBeNull();
+  });
+});
+
+describe('InitiativeSidebar Hidden group (token-lifecycle arc)', () => {
+  it('lists hidden tokens with one Unhide per row and calls back per token', async () => {
+    const { battle } = seedBattle();
+    const hidden = battle.board.tokens.slice(0, 2).map((token) => ({ ...token, visible: false }));
+    const onUnhide = vi.fn();
+    renderSidebar(battle, { hiddenTokens: hidden, onUnhide });
+    expect(screen.getByTestId('hidden-group')).toHaveTextContent('Hidden (2)');
+    expect(screen.getAllByTestId('hidden-entry')).toHaveLength(2);
+    const user = userEvent.setup();
+    await user.click(screen.getByLabelText('Unhide Troll'));
+    expect(onUnhide).toHaveBeenCalledTimes(1);
+    expect(onUnhide).toHaveBeenCalledWith(hidden[1]?.id);
+  });
+
+  it('renders no Hidden group without hidden tokens, without onUnhide, or when initiative is off', () => {
+    const { battle } = seedBattle();
+    // No props at all (player-safe view): no group.
+    renderSidebar(battle);
+    expect(screen.queryByTestId('hidden-group')).toBeNull();
+    cleanup();
+    // Hidden tokens but no callback: no group (never a dead button).
+    const hidden = battle.board.tokens.slice(0, 1).map((token) => ({ ...token, visible: false }));
+    renderSidebar(battle, { hiddenTokens: hidden });
+    expect(screen.queryByTestId('hidden-group')).toBeNull();
+    cleanup();
+    // Initiative off with no hidden: sidebar stays null (pre-existing contract).
+    const { container } = render(
+      <InitiativeSidebar
+        battle={battleSchema.parse({ ...battle, board: { ...battle.board, initiativeEnabled: false } })}
+        onReorder={vi.fn()}
+        onNextTurn={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    expect(container).toBeEmptyDOMElement();
+  });
+
+  it('renders the Hidden group alone when initiative is off but hidden tokens wait (unhide path survives)', () => {
+    const { battle } = seedBattle();
+    const hidden = battle.board.tokens.slice(0, 1).map((token) => ({ ...token, visible: false }));
+    const onUnhide = vi.fn();
+    render(
+      <InitiativeSidebar
+        battle={battleSchema.parse({ ...battle, board: { ...battle.board, initiativeEnabled: false } })}
+        onReorder={vi.fn()}
+        onNextTurn={vi.fn()}
+        onClose={vi.fn()}
+        hiddenTokens={hidden}
+        onUnhide={onUnhide}
+      />,
+    );
+    expect(screen.getByTestId('hidden-group')).toHaveTextContent('Hidden (1)');
+    expect(screen.queryByTestId('initiative-entry')).toBeNull();
   });
 });

@@ -30,7 +30,9 @@ import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
 import { modulePath } from '@/app/routes';
 import {
   activeInitiativeTokenId,
+  gmFighterTokenIds,
   nextTurn,
+  pruneInitiativeToGmFighters,
   pruneInitiativeToVisibleFighters,
   rollTokenInitiative,
   sortInitiativeOrder,
@@ -118,7 +120,11 @@ import { cn } from '@/lib/utils';
  *   dimmed) and pruned from initiative — that IS the hiding mechanic; PCs
  *   and other tokens are never coverage-hidden and render above the veil.
  *   `visible: false` tokens are removed in both views. The GM view sees
- *   everything under its own veils.
+ *   everything under its own veils — and veiled NPCs roll and hold GM
+ *   initiative with a veiled marker (token-lifecycle arc), while the
+ *   player-safe order still prunes them. Hidden tokens surface to the GM
+ *   through the sidebar's Hidden group (unhide per row); players get no
+ *   Hidden group.
  * - Token tap shows name + image + HP only (full inspection happens back on
  *   the GM view, never here); in player-safe (mob) view the tap also opens
  *   the fullscreen portrait lightbox (image + name only, Esc/tap-outside
@@ -392,7 +398,7 @@ export function BattleSurface(): JSX.Element {
 
   // --- Initiative reconcile (gated) -----------------------------------------
   // Effect logic separated so the render body stays a pure function of state.
-  useInitiativeReconcile(battle, stats, coveredTokenIds, commit);
+  useInitiativeReconcile(battle, stats, coveredTokenIds, commit, playerSafe);
 
   const mapLayout = battle?.board.mapLayout ?? null;
   const cellWidthPx =
@@ -1227,14 +1233,18 @@ export function BattleSurface(): JSX.Element {
   function enableInitiative(): void {
     if (battle === undefined) return;
     const statsLookup: FighterStatsLookup = stats;
-    const visibleIds = visibleFighterTokenIds(battle.board, statsLookup, coveredTokenIds);
+    // GM honesty (token-lifecycle arc): the enable button is GM-only, so the
+    // roll covers visible fighters PLUS veiled NPCs (they hold order with a
+    // veiled marker). Player-safe reconcile/prune stays on the visible-only
+    // computation — no leak.
+    const memberIds = gmFighterTokenIds(battle.board, statsLookup, coveredTokenIds);
     let tokens = battle.board.tokens;
-    for (const id of visibleIds) {
+    for (const id of memberIds) {
       const token = tokens.find((entry) => entry.id === id);
       if (token === undefined) continue;
       tokens = tokens.map((entry) => (entry.id === id ? rollTokenInitiative(entry, statsLookup) : entry));
     }
-    const order = sortInitiativeOrder(visibleIds, tokens);
+    const order = sortInitiativeOrder(memberIds, tokens);
     void commit((board) => ({ ...board, initiativeEnabled: true, initiativeOrder: order, activeIndex: 0, tokens }));
   }
 
@@ -1334,20 +1344,67 @@ export function BattleSurface(): JSX.Element {
     }
   }
 
-  async function removeToken(token: BattleToken): Promise<void> {
-    if (battle === undefined) return;
+  /**
+   * Fighter kind behind a token (token-lifecycle arc): the artifact's kind
+   * wins when the artifact is present; otherwise the fighter-stats lookup
+   * (seed-chain derivation — seedFighters rows and npc-ref artifacts both
+   * resolve through it). Stamps/statless tokens resolve null. NEVER bare
+   * artifactId presence — a present artifactId alone says nothing about
+   * whose HP owns the token.
+   */
+  function fighterKindOf(token: BattleToken): 'pc' | 'npc' | null {
     if (token.artifactId !== null) {
       const artifact = artifactById.get(token.artifactId);
-      // Fighter tokens only leave via their artifact (or scrub below when it
-      // is a seed token with no artifact backing).
-      if (artifact !== undefined) return;
+      if (artifact?.kind === 'pc' || artifact?.kind === 'npc') {
+        return artifact.kind;
+      }
+      const fighter = stats(token.artifactId);
+      if (fighter !== undefined) {
+        return fighter.kind;
+      }
     }
-    await commit((board) => ({
-      ...board,
-      tokens: board.tokens.filter((entry) => entry.id !== token.id),
-      initiativeOrder: board.initiativeOrder.filter((id) => id !== token.id),
-    }));
+    return null;
+  }
+
+  /**
+   * Board-token removal (token-lifecycle arc): NPC-backed tokens (artifact
+   * kind npc, or stats kind npc when the artifact row is gone) are removable
+   * — the commit drops the BOARD TOKEN plus its initiative entry, deselects,
+   * and toasts loud naming the mob. PC-backed tokens keep the existing
+   * protection (their HP lives on the artifact — removing the token would
+   * orphan it; loud refusal instead). Stamps/statless tokens keep the old
+   * silent removal path.
+   *
+   * Removal touches the BOARD TOKEN ONLY — artifacts, roster rows, and
+   * portraits are never deleted here (no artifactRepo/portrait/image writes).
+   */
+  async function removeToken(token: BattleToken): Promise<void> {
+    if (battle === undefined) return;
+    const kind = fighterKindOf(token);
+    if (kind === 'pc') {
+      toastError(
+        `Cannot remove “${token.label}” from the board — PC HP lives on the artifact; delete the PC artifact itself to remove them`,
+      );
+      return;
+    }
+    await commit((board) => {
+      const initiativeOrder = board.initiativeOrder.filter((id) => id !== token.id);
+      const activeId = board.initiativeOrder[board.activeIndex];
+      const activeIndex =
+        activeId === undefined || activeId === token.id
+          ? Math.min(board.activeIndex, Math.max(initiativeOrder.length - 1, 0))
+          : Math.max(0, initiativeOrder.indexOf(activeId));
+      return {
+        ...board,
+        tokens: board.tokens.filter((entry) => entry.id !== token.id),
+        initiativeOrder,
+        activeIndex,
+      };
+    });
     setSelectedTokenId(null);
+    if (kind === 'npc') {
+      toastSuccess(`Removed “${token.label}” from the battle — the mob artifact, roster row, and portrait are untouched`);
+    }
   }
 
   /** Battle-card "Generate portrait": one chunk-grounded job through the SAME
@@ -1963,6 +2020,20 @@ export function BattleSurface(): JSX.Element {
           <InitiativeSidebar
             battle={battle}
             canReorder={!playerSafe}
+            hiddenTokens={!playerSafe ? battle.board.tokens.filter((token) => !token.visible) : undefined}
+            onUnhide={
+              !playerSafe
+                ? (tokenId) => {
+                    void commit((current) => ({
+                      ...current,
+                      tokens: current.tokens.map((entry) =>
+                        entry.id === tokenId ? { ...entry, visible: true } : entry,
+                      ),
+                    }));
+                  }
+                : undefined
+            }
+            veiledTokenIds={!playerSafe ? coveredTokenIds : undefined}
             onReorder={(order) => {
               void commit((current) => ({
                 ...current,
@@ -2029,11 +2100,11 @@ export function BattleSurface(): JSX.Element {
                 }));
               }}
               onRemove={
-                selectedToken.artifactId === null || artifactById.get(selectedToken.artifactId) === undefined
-                  ? () => {
+                fighterKindOf(selectedToken) === 'pc'
+                  ? undefined
+                  : () => {
                       void removeToken(selectedToken);
                     }
-                  : undefined
               }
             />
           )}
@@ -2223,7 +2294,8 @@ export function BattleSurface(): JSX.Element {
           )}
           {!board.initiativeEnabled && !playerSafe && (
             <p className="text-xs text-zinc-500">
-              Enable initiative to roll every visible fighter (d20 + frozen bonus) and cycle turns.
+              Enable initiative to roll every visible fighter plus veiled mobs (d20 + frozen bonus) and cycle
+              turns. Players see only revealed fighters.
             </p>
           )}
         </div>
@@ -2265,21 +2337,29 @@ function clampZoom(value: number): number {
 }
 
 /** Initiative reconcile effect: prune covered/hidden, auto-roll newcomers —
- * suppressed while a drag is in flight, re-run when the gate's epoch bumps. */
+ * suppressed while a drag is in flight, re-run when the gate's epoch bumps.
+ * GM honesty (token-lifecycle arc): in GM view covered (veiled) NPCs roll
+ * and hold order (prune + roll run on the GM member set); in playerSafe the
+ * computation is byte-identical to before (covered excluded, no leak). */
 function useInitiativeReconcile(
   battle: Battle | undefined,
   stats: FighterStatsLookup,
   coveredTokenIds: ReadonlySet<BattleTokenId>,
   commit: (mutate: (board: Battle['board']) => Battle['board']) => Promise<void>,
+  playerSafe: boolean,
 ): void {
   useEffect(() => {
     if (battle?.board.initiativeEnabled !== true) return;
     if (isInitiativeDragging() || isBoardGestureActive()) return;
     const board = battle.board;
-    const pruned = pruneInitiativeToVisibleFighters(board, stats, coveredTokenIds);
-    const visibleIds = visibleFighterTokenIds(pruned, stats, coveredTokenIds);
+    const pruned = playerSafe
+      ? pruneInitiativeToVisibleFighters(board, stats, coveredTokenIds)
+      : pruneInitiativeToGmFighters(board, stats, coveredTokenIds);
+    const memberIds = playerSafe
+      ? visibleFighterTokenIds(pruned, stats, coveredTokenIds)
+      : gmFighterTokenIds(pruned, stats, coveredTokenIds);
     const inOrder = new Set(pruned.initiativeOrder);
-    const newcomers = visibleIds.filter((id) => !inOrder.has(id));
+    const newcomers = memberIds.filter((id) => !inOrder.has(id));
     if (newcomers.length === 0) {
       if (pruned !== board) void commit(() => pruned);
       return;
@@ -2294,7 +2374,7 @@ function useInitiativeReconcile(
     void commit((current) => ({ ...current, tokens, initiativeOrder: order }));
     // `battle.board` identity changes on every commit; the reconcile is
     // idempotent (prune + newcomers), and the epoch re-runs it after drags.
-  }, [battle, coveredTokenIds, stats, commit]);
+  }, [battle, coveredTokenIds, stats, commit, playerSafe]);
 }
 
 /** The battlemap layer: object-fit cover so the normalized grid matches.

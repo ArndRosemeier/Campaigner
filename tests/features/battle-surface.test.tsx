@@ -6,6 +6,7 @@ import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { toastError, toastSuccess } from '@/lib/toast';
 import { db } from '@/db/db';
 import {
   ensureBattle,
@@ -14,6 +15,7 @@ import {
   saveBattleStage,
 } from '@/db/battleRepo';
 import type * as battleRepoModule from '@/db/battleRepo';
+import type * as toastModule from '@/lib/toast';
 import type { Battle, EncounterLayout, StatBlock } from '@/domain';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
@@ -32,6 +34,19 @@ import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 vi.mock('@/db/battleRepo', async (importOriginal) => {
   const actual = await importOriginal<typeof battleRepoModule>();
   return { ...actual, saveBattleBoard: vi.fn(actual.saveBattleBoard) };
+});
+
+// Observe loud user feedback (removal toasts) without rendering a Toaster:
+// the wrappers call through to the real implementation AND record calls.
+vi.mock('@/lib/toast', async (importOriginal) => {
+  const actual = await importOriginal<typeof toastModule>();
+  return {
+    ...actual,
+    toastError: vi.fn(actual.toastError),
+    toastErrorPersistent: vi.fn(actual.toastErrorPersistent),
+    toastInfo: vi.fn(actual.toastInfo),
+    toastSuccess: vi.fn(actual.toastSuccess),
+  };
 });
 
 // Stub the dice roller (its own engine/UX is covered by dice-roller tests):
@@ -2076,7 +2091,162 @@ describe('initiative', () => {
     expect(screen.getAllByTestId('initiative-move-up').length).toBeGreaterThan(0);
   });
 
-  it('prunes a fogged monster from initiative and restores it with an auto-roll when revealed', async () => {
+  it('keeps a fogged monster in GM initiative with a veiled marker; player-safe prunes it and the GM re-rolls it back', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('toggle-initiative'));
+    await flushAsyncUpdates();
+    let battle = await currentBattle(moduleId);
+    expect(battle.board.initiativeOrder).toHaveLength(3);
+    expect(screen.queryByTestId('veiled-marker')).toBeNull();
+
+    // Fog over the troll → the GM KEEPS it in the order with a veiled badge
+    // (GM honesty: the GM sees everything under their own veils), and the GM
+    // board still shows the troll above the fog.
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    await act(async () => {
+      await saveBattleBoard(battle.id, {
+        ...battle.board,
+        veils: [{ id: newId(), kind: 'fog', x: troll.x, y: troll.y, widthCells: 2, heightCells: 2 }],
+      });
+      await flushAsyncUpdates();
+    });
+    battle = await currentBattle(moduleId);
+    expect(battle.board.initiativeOrder).toHaveLength(3);
+    await waitFor(() => {
+      const labels = screen.queryAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
+      expect(labels).toContain('Troll');
+      expect(labels).toContain('Serren');
+    });
+    const trollRow = screen
+      .getAllByTestId('initiative-entry')
+      .find((el) => el.textContent.includes('Troll'));
+    if (trollRow === undefined) throw new Error('troll initiative row missing');
+    expect(within(trollRow).getByTestId('veiled-marker')).toHaveTextContent('veiled');
+
+    // Player-safe view: the fogged troll prunes from the shared order (the
+    // player-safe computation is byte-identical to the old visible-only rule
+    // — no leak), with no badge and no Hidden group anywhere.
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    battle = await currentBattle(moduleId);
+    expect(battle.board.initiativeOrder).toHaveLength(2);
+    expect(screen.getAllByTestId('initiative-entry')).toHaveLength(2);
+    expect(screen.queryByTestId('veiled-marker')).toBeNull();
+    expect(screen.queryByTestId('hidden-group')).toBeNull();
+
+    // Back to GM: the veiled troll re-enters with a fresh auto-roll + badge.
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    battle = await currentBattle(moduleId);
+    expect(battle.board.initiativeOrder).toHaveLength(3);
+    const rolled = battle.board.tokens.find((token) => token.label === 'Troll');
+    expect(rolled?.initiativeRoll).not.toBeNull();
+    await waitFor(() => {
+      expect(screen.getAllByTestId('veiled-marker')).toHaveLength(1);
+    });
+
+    // Lift the fog → still 3, badge gone.
+    await act(async () => {
+      await saveBattleBoard(battle.id, { ...battle.board, veils: [] });
+      await flushAsyncUpdates();
+    });
+    battle = await currentBattle(moduleId);
+    expect(battle.board.initiativeOrder).toHaveLength(3);
+    await waitFor(() => {
+      expect(screen.queryByTestId('veiled-marker')).toBeNull();
+    });
+  });
+});
+
+describe('token removal (token-lifecycle arc)', () => {
+  async function tapToken(label: string, moduleId: string): Promise<void> {
+    const battle = await currentBattle(moduleId);
+    const token = battle.board.tokens.find((entry) => entry.label === label);
+    if (token === undefined) throw new Error(`${label} missing`);
+    const el = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === label);
+    if (el === undefined) throw new Error(`${label} element missing`);
+    fireEvent.pointerDown(el, { pointerId: 2, clientX: token.x * BOARD_W, clientY: CONTENT_TOP + token.y * CONTENT_H });
+    fireEvent.pointerUp(el, { pointerId: 2 });
+    await flushAsyncUpdates();
+  }
+
+  it('removes an NPC-backed mob token with a loud toast; artifact, roster row, and portrait survive', async () => {
+    const { moduleId, encounterId, npcId } = await seedStandardBattle();
+    // Portrait art on the mob artifact (the removal must not detach it).
+    const image = await createImage({
+      campaignId,
+      blob: new Blob(['fake-png-bytes'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 64,
+      height: 64,
+      prompt: 'troll portrait',
+      model: 'google/gemini-2.5-flash-image',
+      source: 'generated',
+    });
+    await updateArtifact(npcId, { coverImageId: image.id });
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    // Initiative on so the removal must also drop the order entry.
+    await user.click(screen.getByTestId('toggle-initiative'));
+    await flushAsyncUpdates();
+    let battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    expect(battle.board.initiativeOrder).toContain(troll.id);
+
+    vi.clearAllMocks();
+    await tapToken('Troll', moduleId);
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    await user.click(screen.getByLabelText('Remove token'));
+    await flushAsyncUpdates();
+
+    // Board token gone, initiative entry gone, card deselected — with a loud
+    // toast naming the mob.
+    battle = await currentBattle(moduleId);
+    expect(battle.board.tokens.some((token) => token.label === 'Troll')).toBe(false);
+    expect(battle.board.initiativeOrder).not.toContain(troll.id);
+    expect(screen.queryByTestId('selection-card')).toBeNull();
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining('Troll'));
+    // Artifact, roster row, and portrait are NEVER deleted by board removal.
+    const artifact = await actDrained(() => getAnyArtifact(npcId));
+    if (artifact?.kind !== 'npc') throw new Error('mob artifact missing after removal');
+    expect(artifact.coverImageId).toBe(image.id);
+    expect(await actDrained(() => db.images.get(image.id))).not.toBeUndefined();
+    const encounter = await actDrained(() => getAnyArtifact(encounterId));
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing after removal');
+    expect(encounter.data.monsters).toHaveLength(1);
+  });
+
+  it('refuses PC-backed tokens: no Remove affordance and the token stays', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    vi.clearAllMocks();
+    await tapToken('Serren', moduleId);
+    expect(screen.getByTestId('selection-card')).toBeInTheDocument();
+    // PC HP lives on the artifact — the card offers no removal at all.
+    expect(screen.queryByLabelText('Remove token')).toBeNull();
+    expect(toastError).not.toHaveBeenCalled();
+    const battle = await currentBattle(moduleId);
+    expect(battle.board.tokens.some((token) => token.label === 'Serren')).toBe(true);
+  });
+});
+
+describe('Hidden group (token-lifecycle arc)', () => {
+  it('lists hidden tokens for the GM; Unhide returns them to the board with a fresh initiative roll', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -2088,36 +2258,78 @@ describe('initiative', () => {
     let battle = await currentBattle(moduleId);
     expect(battle.board.initiativeOrder).toHaveLength(3);
 
-    // Fog over the troll → removed from the board AND the order.
+    // The eye toggle hides the troll: off the board DOM AND out of the order.
     const troll = battle.board.tokens.find((token) => token.label === 'Troll');
     if (troll === undefined) throw new Error('troll missing');
     await act(async () => {
       await saveBattleBoard(battle.id, {
         ...battle.board,
-        veils: [{ id: newId(), kind: 'fog', x: troll.x, y: troll.y, widthCells: 2, heightCells: 2 }],
+        tokens: battle.board.tokens.map((token) =>
+          token.id === troll.id ? { ...token, visible: false } : token,
+        ),
       });
       await flushAsyncUpdates();
     });
     battle = await currentBattle(moduleId);
     expect(battle.board.initiativeOrder).toHaveLength(2);
-    // The order prunes, but GM view still SEES the fogged troll on the board
-    // (M5-D amendment: coverage removal from the DOM is player-view-only);
-    // the PC tokens remain too.
+    await waitFor(() => {
+      const labels = screen.queryAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
+      expect(labels).not.toContain('Troll');
+    });
+    // The trap door is gone: the GM-only Hidden group names it with Unhide.
+    expect(screen.getByTestId('hidden-group')).toHaveTextContent('Hidden (1)');
+    expect(screen.getByLabelText('Unhide Troll')).toBeInTheDocument();
+
+    await user.click(screen.getByLabelText('Unhide Troll'));
+    await flushAsyncUpdates();
+    battle = await currentBattle(moduleId);
+    expect(battle.board.tokens.find((token) => token.label === 'Troll')?.visible).toBe(true);
+    // Unhide re-enters via the existing newcomer auto-roll.
+    expect(battle.board.initiativeOrder).toHaveLength(3);
+    expect(battle.board.tokens.find((token) => token.label === 'Troll')?.initiativeRoll).not.toBeNull();
     await waitFor(() => {
       const labels = screen.queryAllByTestId('battle-token').map((el) => el.getAttribute('data-token-label'));
       expect(labels).toContain('Troll');
-      expect(labels).toContain('Serren');
+      expect(screen.queryByTestId('hidden-group')).toBeNull();
     });
+  });
 
-    // Lift the fog → back on the board with a fresh auto-roll.
+  it('shows no Hidden group in player-safe view — hidden fighters stay secret', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('toggle-initiative'));
+    await flushAsyncUpdates();
+    let battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
     await act(async () => {
-      await saveBattleBoard(battle.id, { ...battle.board, veils: [] });
+      await saveBattleBoard(battle.id, {
+        ...battle.board,
+        tokens: battle.board.tokens.map((token) =>
+          token.id === troll.id ? { ...token, visible: false } : token,
+        ),
+      });
       await flushAsyncUpdates();
     });
+    await waitFor(() => {
+      expect(screen.getByTestId('hidden-group')).toBeInTheDocument();
+    });
+    // Player-safe: the group vanishes (and the pruned order stays pruned).
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('hidden-group')).toBeNull();
     battle = await currentBattle(moduleId);
-    expect(battle.board.initiativeOrder).toHaveLength(3);
-    const rolled = battle.board.tokens.find((token) => token.label === 'Troll');
-    expect(rolled?.initiativeRoll).not.toBeNull();
+    expect(battle.board.initiativeOrder).toHaveLength(2);
+    // Back to GM: the group returns.
+    await user.click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    await waitFor(() => {
+      expect(screen.getByTestId('hidden-group')).toHaveTextContent('Hidden (1)');
+    });
   });
 });
 
