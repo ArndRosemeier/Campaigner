@@ -237,12 +237,14 @@ describe('ModuleReaderPage', () => {
     const article = document.querySelector('article');
     if (article === null) throw new Error('reader article missing');
     // Owner directive: the middle pane must use its full width — the cap is
-    // gone, comfortable padding and the type scale stay.
+    // gone, comfortable padding and the type scale stay. The body size is
+    // rem-based (0.9375rem = 15px at scale 1) so the in-app UI scale
+    // (--ui-scale root multiplier) reaches the module text.
     expect(article.className).not.toContain('max-w-[70ch]');
     expect(article.className).not.toContain('mx-auto');
     expect(article.className).toContain('px-8');
     expect(article.className).toContain('py-10');
-    expect(article.className).toContain('text-[15px]');
+    expect(article.className).toContain('text-[0.9375rem]');
     await flushAsyncUpdates();
   });
 

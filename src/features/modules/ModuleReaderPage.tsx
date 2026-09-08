@@ -362,7 +362,7 @@ export function ModuleReaderPage(): JSX.Element {
 
       {/* Document */}
       <div ref={documentRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
-        <article className="px-8 py-10 text-[15px] leading-relaxed">
+        <article className="px-8 py-10 text-[0.9375rem] leading-relaxed">
           <header className="mb-8 border-b pb-4">
             <ModuleTitleInput module={module} />
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
