@@ -1278,12 +1278,17 @@ describe('token portrait lightbox', () => {
     });
     await tapTokenEl('Troll', moduleId);
     // Select-only: the card + controls mount, but no modal buries the rail
-    // (a modal marks the background inert, which would hide the HP steppers
-    // from both the GM and the accessibility tree until dismissed).
+    // (a modal marks the background inert, which would hide the Damage/Heal
+    // buttons from both the GM and the accessibility tree until dismissed).
     expect(screen.queryByTestId('token-lightbox')).toBeNull();
     expect(screen.getByTestId('selection-card')).toBeInTheDocument();
     expect(screen.getByTestId('token-controls')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Damage 10' })).toBeInTheDocument();
+    expect(screen.getByTestId('roll-damage')).toBeInTheDocument();
+    expect(screen.getByTestId('roll-heal')).toBeInTheDocument();
+    // Constant ± steppers are gone — fixed amounts go through the roller's
+    // own ± modifier steppers.
+    expect(screen.queryByRole('button', { name: 'Damage 10' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Heal 10' })).toBeNull();
     await flushAsyncUpdates();
   });
 
@@ -1741,12 +1746,12 @@ describe('content-frame pointer conversion', () => {
     expect(miraAfter?.y).toBe(miraBefore.y);
     // Tap selected Mira instead of committing a drag.
     expect(screen.getByTestId('token-controls')).toBeInTheDocument();
-    expect(screen.getByTestId('token-controls').textContent).toContain('Mira');
+    expect(screen.getByTestId('selection-card').textContent).toContain('Mira');
   });
 });
 
 describe('HP ownership split writes', () => {
-  it('damages the NPC onto the token instance and the PC onto the artifact', async () => {
+  it('rolls damage onto the NPC token instance and the PC artifact (steppers gone — the roller is the only HP path)', async () => {
     const { moduleId, npcId } = await seedStandardBattle();
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -1768,32 +1773,64 @@ describe('HP ownership split writes', () => {
 
     const user = userEvent.setup();
 
-    // NPC damage: token instance HP changes; the artifact never does.
+    // NPC damage via the roller (stub settles 7): token instance HP changes;
+    // the artifact never does.
     await selectByLabel('Troll');
-    await user.click(screen.getByRole('button', { name: 'Damage 10' }));
+    await user.click(screen.getByTestId('roll-damage'));
+    await user.click(screen.getByTestId('stub-apply-roll'));
     await waitFor(() => {
-      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 74 / 84');
+      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 77 / 84');
     });
     let battle = await currentBattle(moduleId);
-    expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(74);
+    expect(battle.board.tokens.find((token) => token.label === 'Troll')?.currentHp).toBe(77);
     // HP writes re-fire the artifacts live query on the timed queue — the
     // raw read is actDrained so the emission stays inside act (docs/08).
     const artifacts = await actDrained(() => listArtifactsByCampaign(campaignId));
     const trollArtifact = artifacts.find((artifact) => artifact.id === npcId);
     expect(trollArtifact?.kind === 'npc' && 'currentHp' in trollArtifact.data).toBe(false);
 
-    // PC damage: the pc artifact's currentHp changes (persists across battles).
+    // PC damage via the roller: the pc artifact's currentHp changes
+    // (persists across battles).
     await selectByLabel('Serren');
-    await user.click(screen.getByRole('button', { name: 'Damage 5' }));
+    await user.click(screen.getByTestId('roll-damage'));
+    await user.click(screen.getByTestId('stub-apply-roll'));
     await waitFor(() => {
-      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 15 / 20 (persists)');
+      expect(screen.getByTestId('token-hp')).toHaveTextContent('HP 13 / 20 (persists)');
     });
     const refreshed = await actDrained(() => listArtifactsByCampaign(campaignId));
     const serren = refreshed.find((artifact) => artifact.kind === 'pc' && artifact.name === 'Serren');
     if (serren?.kind !== 'pc') throw new Error('serren missing');
-    expect(serren.data.currentHp).toBe(15);
+    expect(serren.data.currentHp).toBe(13);
     battle = await currentBattle(moduleId);
     expect(battle.board.tokens.find((token) => token.label === 'Serren')?.currentHp).toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('mounts Damage/Heal directly below the name, above the lengthy description', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const battle = await currentBattle(moduleId);
+    const troll = battle.board.tokens.find((token) => token.label === 'Troll');
+    if (troll === undefined) throw new Error('troll missing');
+    const trollEl = screen
+      .getAllByTestId('battle-token')
+      .find((element) => element.getAttribute('data-token-label') === 'Troll');
+    if (trollEl === undefined) throw new Error('troll element missing');
+    fireEvent.pointerDown(trollEl, { pointerId: 1, clientX: troll.x * BOARD_W, clientY: troll.y * BOARD_H });
+    fireEvent.pointerUp(trollEl, { pointerId: 1 });
+    await flushAsyncUpdates();
+    const card = screen.getByTestId('selection-card');
+    const name = within(card).getByTestId('selection-card-name');
+    const damage = within(card).getByTestId('roll-damage');
+    const heal = within(card).getByTestId('roll-heal');
+    const statblock = within(card).getByTestId('selection-card-statblock');
+    // Name → actions → description: the lengthy statblock must not push the
+    // Damage/Heal buttons out of view.
+    expect(name.compareDocumentPosition(damage) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(heal.compareDocumentPosition(statblock) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     await flushAsyncUpdates();
   });
 

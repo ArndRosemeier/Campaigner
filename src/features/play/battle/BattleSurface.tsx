@@ -1623,6 +1623,35 @@ export function BattleSurface(): JSX.Element {
               stats={stats}
               statBlock={selectedStatBlock}
               playerSafe={playerSafe}
+              onRollHp={(kind) => {
+                pendingRollRef.current = { tokenId: selectedToken.id, kind };
+                setDiceIntent({ kind, subject: selectedToken.label });
+              }}
+              onToggleVisibility={() => {
+                void commit((current) => ({
+                  ...current,
+                  tokens: current.tokens.map((entry) =>
+                    entry.id === selectedToken.id ? { ...entry, visible: !entry.visible } : entry,
+                  ),
+                }));
+              }}
+              onScale={(delta) => {
+                void commit((current) => ({
+                  ...current,
+                  tokens: current.tokens.map((entry) =>
+                    entry.id === selectedToken.id
+                      ? { ...entry, scale: nextTokenScale(entry.scale, delta) }
+                      : entry,
+                  ),
+                }));
+              }}
+              onRemove={
+                selectedToken.artifactId === null || artifactById.get(selectedToken.artifactId) === undefined
+                  ? () => {
+                      void removeToken(selectedToken);
+                    }
+                  : undefined
+              }
             />
           )}
           {/* Dungeon Path rail (docs/11 D11, complex sites, GM-only): an
@@ -1701,44 +1730,6 @@ export function BattleSurface(): JSX.Element {
                 </div>
               )}
             </div>
-          )}
-          {selectedToken !== null && !playerSafe && (
-            <TokenControls
-              token={selectedToken}
-              stats={stats}
-              onApplyHp={(delta) => {
-                void applyHp(selectedToken, delta);
-              }}
-              onRollHp={(kind) => {
-                pendingRollRef.current = { tokenId: selectedToken.id, kind };
-                setDiceIntent({ kind, subject: selectedToken.label });
-              }}
-              onToggleVisibility={() => {
-                void commit((current) => ({
-                  ...current,
-                  tokens: current.tokens.map((entry) =>
-                    entry.id === selectedToken.id ? { ...entry, visible: !entry.visible } : entry,
-                  ),
-                }));
-              }}
-              onScale={(delta) => {
-                void commit((current) => ({
-                  ...current,
-                  tokens: current.tokens.map((entry) =>
-                    entry.id === selectedToken.id
-                      ? { ...entry, scale: nextTokenScale(entry.scale, delta) }
-                      : entry,
-                  ),
-                }));
-              }}
-              onRemove={
-                selectedToken.artifactId === null || artifactById.get(selectedToken.artifactId) === undefined
-                  ? () => {
-                      void removeToken(selectedToken);
-                    }
-                  : undefined
-              }
-            />
           )}
           {selectedVeilId !== null && !playerSafe && (
             <Button
@@ -2236,6 +2227,13 @@ interface SelectionCardProps {
   stats: FighterStatsLookup;
   statBlock: StatBlock | null;
   playerSafe: boolean;
+  /** GM-only: opens the dice roller with a damage/heal intent for this
+   * token (the pendingRollRef → applyDiceRoll path). Never rendered in
+   * player-safe mode. */
+  onRollHp: (kind: 'damage' | 'heal') => void;
+  onToggleVisibility: () => void;
+  onScale: (delta: -1 | 1) => void;
+  onRemove: (() => void) | undefined;
 }
 
 /**
@@ -2244,8 +2242,24 @@ interface SelectionCardProps {
  * shows (cover art, label, HP), so the player-safe DOM contract holds. The
  * full artifact card (statblock) is GM-only behind an explicit button and
  * never mounts in player-safe mode.
+ *
+ * GM-only, directly below the name (above the lengthy treasure/statblock
+ * descriptions that would otherwise push them out of view): the HP readout,
+ * Damage / Heal roller buttons, and the piece floats (scale, visibility,
+ * remove). Constant ± steppers are gone — the dice roller's own ± modifier
+ * steppers cover fixed amounts.
  */
-function SelectionCard({ token, artifact, stats, statBlock, playerSafe }: SelectionCardProps): JSX.Element {
+function SelectionCard({
+  token,
+  artifact,
+  stats,
+  statBlock,
+  playerSafe,
+  onRollHp,
+  onToggleVisibility,
+  onScale,
+  onRemove,
+}: SelectionCardProps): JSX.Element {
   const [cardOpen, setCardOpen] = useState(false);
   // Same art path as TokenView/the artifact cards: useImageUrl over the
   // artifact's coverImageId — no new image plumbing.
@@ -2281,7 +2295,7 @@ function SelectionCard({ token, artifact, stats, statBlock, playerSafe }: Select
           </span>
         )}
         <div className="min-w-0 flex-1">
-          <p className="truncate text-sm font-medium">{token.label}</p>
+          <p className="truncate text-sm font-medium" data-testid="selection-card-name">{token.label}</p>
           {hpRatio !== null && (
             <div className="mt-1 h-2 w-full overflow-hidden rounded-full bg-zinc-700" data-testid="selection-card-hp">
               <div
@@ -2293,6 +2307,69 @@ function SelectionCard({ token, artifact, stats, statBlock, playerSafe }: Select
           )}
         </div>
       </div>
+      {/* GM-only token controls: HP readout + Damage/Heal roller entries +
+          piece floats, directly below the name so lengthy descriptions below
+          never push them out of view. Never mounts in player-safe mode. */}
+      {!playerSafe && (
+        <div className="flex flex-col gap-1.5 border-t border-white/10 pt-1.5" data-testid="token-controls">
+          {resolved !== null ? (
+            <p className="text-xs text-zinc-400" data-testid="token-hp">
+              HP {String(resolved.currentHp)} / {String(resolved.maxHp)}
+              {resolved.ownedBy === 'artifact' ? ' (persists)' : ''}
+            </p>
+          ) : (
+            <p className="text-xs text-amber-400" data-testid="token-no-stats">
+              No combat stats — excluded from initiative
+            </p>
+          )}
+          <div className="flex gap-1">
+            <Button
+              size="sm"
+              variant="outline"
+              className="min-h-11 flex-1"
+              data-testid="roll-damage"
+              onClick={() => {
+                onRollHp('damage');
+              }}
+            >
+              <DicesIcon aria-hidden data-icon="inline-start" />
+              Damage
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              className="min-h-11 flex-1"
+              data-testid="roll-heal"
+              onClick={() => {
+                onRollHp('heal');
+              }}
+            >
+              <DicesIcon aria-hidden data-icon="inline-start" />
+              Heal
+            </Button>
+          </div>
+          <div className="flex items-center gap-1">
+            <Button size="xs" variant="ghost" aria-label="Shrink token" onClick={() => {
+              onScale(-1);
+            }}>
+              <MinusIcon aria-hidden className="size-3.5" />
+            </Button>
+            <Button size="xs" variant="ghost" aria-label="Grow token" onClick={() => {
+              onScale(1);
+            }}>
+              <PlusIcon aria-hidden className="size-3.5" />
+            </Button>
+            <Button size="xs" variant="ghost" aria-label="Toggle visibility" data-testid="toggle-visibility" onClick={onToggleVisibility}>
+              {token.visible ? <EyeIcon aria-hidden className="size-3.5" /> : <EyeOffIcon aria-hidden className="size-3.5" />}
+            </Button>
+            {onRemove !== undefined && (
+              <Button size="xs" variant="ghost" className="text-destructive" aria-label="Remove token" onClick={onRemove}>
+                <TrashIcon aria-hidden className="size-3.5" />
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Mob treasure (owner-ratified): frozen GM-only checklist text from
           the seeding roster — never mounts in player view. */}
       {!playerSafe && token.treasure !== '' && (
@@ -2395,127 +2472,6 @@ function TokenLightbox({ token, artifact, onClose }: TokenLightboxProps): JSX.El
         )}
       </DialogContent>
     </Dialog>
-  );
-}
-
-interface TokenControlsProps {
-  token: BattleToken;
-  stats: FighterStatsLookup;
-  onApplyHp: (delta: number) => void;
-  onRollHp: (kind: 'damage' | 'heal') => void;
-  onToggleVisibility: () => void;
-  onScale: (delta: -1 | 1) => void;
-  onRemove: (() => void) | undefined;
-}
-
-/** Selected-token floats: HP steppers + dice rolls, visibility, scale,
- * remove. Tablet-first (M5-D amendment): every HP control is a ≥44px button
- * — the typed delta input is gone; arbitrary amounts go through the dice
- * roller's ± steppers. */
-function TokenControls({
-  token,
-  stats,
-  onApplyHp,
-  onRollHp,
-  onToggleVisibility,
-  onScale,
-  onRemove,
-}: TokenControlsProps): JSX.Element | null {
-  const resolved = combatHpForToken(token, stats);
-  return (
-    <div className="flex flex-col gap-1.5 rounded-md border border-white/10 bg-zinc-900 p-2" data-testid="token-controls">
-      <p className="truncate text-sm font-medium">{token.label}</p>
-      {resolved !== null ? (
-        <p className="text-xs text-zinc-400" data-testid="token-hp">
-          HP {String(resolved.currentHp)} / {String(resolved.maxHp)}
-          {resolved.ownedBy === 'artifact' ? ' (persists)' : ''}
-        </p>
-      ) : (
-        <p className="text-xs text-amber-400" data-testid="token-no-stats">
-          No combat stats — excluded from initiative
-        </p>
-      )}
-      <div className="grid grid-cols-3 gap-1" role="group" aria-label="Quick damage">
-        {[10, 5, 1].map((amount) => (
-          <Button
-            key={`damage-${String(amount)}`}
-            size="sm"
-            variant="outline"
-            className="min-h-11 text-destructive"
-            data-testid={`damage-${String(amount)}`}
-            aria-label={`Damage ${String(amount)}`}
-            onClick={() => {
-              onApplyHp(-amount);
-            }}
-          >
-            −{String(amount)}
-          </Button>
-        ))}
-      </div>
-      <div className="grid grid-cols-3 gap-1" role="group" aria-label="Quick heal">
-        {[1, 5, 10].map((amount) => (
-          <Button
-            key={`heal-${String(amount)}`}
-            size="sm"
-            variant="outline"
-            className="min-h-11 text-emerald-400"
-            data-testid={`heal-${String(amount)}`}
-            aria-label={`Heal ${String(amount)}`}
-            onClick={() => {
-              onApplyHp(amount);
-            }}
-          >
-            +{String(amount)}
-          </Button>
-        ))}
-      </div>
-      <div className="flex gap-1">
-        <Button
-          size="sm"
-          variant="outline"
-          className="min-h-11 flex-1"
-          data-testid="roll-damage"
-          onClick={() => {
-            onRollHp('damage');
-          }}
-        >
-          <DicesIcon aria-hidden data-icon="inline-start" />
-          Damage
-        </Button>
-        <Button
-          size="sm"
-          variant="outline"
-          className="min-h-11 flex-1"
-          data-testid="roll-heal"
-          onClick={() => {
-            onRollHp('heal');
-          }}
-        >
-          <DicesIcon aria-hidden data-icon="inline-start" />
-          Heal
-        </Button>
-      </div>
-      <div className="flex items-center gap-1">
-        <Button size="xs" variant="ghost" aria-label="Shrink token" onClick={() => {
-          onScale(-1);
-        }}>
-          <MinusIcon aria-hidden className="size-3.5" />
-        </Button>
-        <Button size="xs" variant="ghost" aria-label="Grow token" onClick={() => {
-          onScale(1);
-        }}>
-          <PlusIcon aria-hidden className="size-3.5" />
-        </Button>
-        <Button size="xs" variant="ghost" aria-label="Toggle visibility" data-testid="toggle-visibility" onClick={onToggleVisibility}>
-          {token.visible ? <EyeIcon aria-hidden className="size-3.5" /> : <EyeOffIcon aria-hidden className="size-3.5" />}
-        </Button>
-        {onRemove !== undefined && (
-          <Button size="xs" variant="ghost" className="text-destructive" aria-label="Remove token" onClick={onRemove}>
-            <TrashIcon aria-hidden className="size-3.5" />
-          </Button>
-        )}
-      </div>
-    </div>
   );
 }
 
