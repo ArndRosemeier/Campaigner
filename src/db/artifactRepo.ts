@@ -191,8 +191,9 @@ export interface AttachableImage extends NewStoredImage {
  * nested transaction; the prune runs last, so kept images are already
  * referenced when the candidate scan runs. `db.battles` rides the scope
  * because the post-attach prune refchecks frozen battle boards (single-map
- * slot) — a table the scope omits throws "object store not found" at the
- * read (the deleteArtifact-scope precedent).
+ * slot), and `db.modules` + `db.campaigns` ride it because the prune
+ * refchecks module/campaign covers — a table the scope omits throws
+ * "object store not found" at the read (the deleteArtifact-scope precedent).
  *
  * The optional `data` patch rides the SAME transaction: content writes that
  * must land with the attach (map-regenerate's layout/mapImageId/preset/
@@ -253,7 +254,7 @@ export async function attachImagesToArtifact(
       asCover: newImage.asCover === true,
     });
   }
-  return db.transaction('rw', [db.images, db.artifacts, db.revisions, db.battles], async () => {
+  return db.transaction('rw', [db.images, db.artifacts, db.revisions, db.battles, db.modules, db.campaigns], async () => {
     const created: Id[] = [];
     let createdCover: Id | null = null;
     for (const { image, asCover } of preparedImages) {
@@ -622,7 +623,7 @@ export async function deleteArtifact(id: Id): Promise<void> {
   // deleteModule's cascade whose scope is fixed — a cache-table read in
   // there throws "not included in parent transaction").
   let globalImagesToRecheck: Id[] = [];
-  await db.transaction('rw', db.artifacts, db.revisions, db.images, db.battles, async () => {
+  await db.transaction('rw', [db.artifacts, db.revisions, db.images, db.battles, db.modules, db.campaigns], async () => {
     const artifact = await db.artifacts.get(id);
     await db.revisions.where('artifactId').equals(id).delete();
     await db.artifacts.delete(id);

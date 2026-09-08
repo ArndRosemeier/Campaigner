@@ -2,6 +2,7 @@ import type { Id, Module, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
 import { moduleSchema } from '@/domain';
 import { db } from '@/db/db';
 import { deleteArtifact, listArtifactsByModule } from '@/db/artifactRepo';
+import { deleteImageIfUnreferenced } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 import { deleteBattlesByModule } from '@/db/battleRepo';
 
@@ -129,9 +130,14 @@ export async function deleteModule(
       await adoptIntoCampaign(entry.artifact.id);
     }
   }
+  // The module's own cover blob (outside the artifact tables): captured
+  // BEFORE the transaction deletes the row, freed AFTER it — the refcheck's
+  // cache-table read cannot join this scope, and the in-tx cascade prunes
+  // still see the row (pinned until the delete lands at the end).
+  const doomedCover = (await getModule(id))?.coverImageId ?? null;
   await db.transaction(
     'rw',
-    [db.modules, db.artifacts, db.revisions, db.images, db.battles, db.settings],
+    [db.modules, db.artifacts, db.revisions, db.images, db.battles, db.settings, db.campaigns],
     async () => {
       // Re-listed INSIDE the transaction (count honesty): rows that landed
       // after the dialog opened are disposed by the same branch.
@@ -162,4 +168,7 @@ export async function deleteModule(
       await db.modules.delete(id);
     },
   );
+  if (doomedCover !== null) {
+    await deleteImageIfUnreferenced(doomedCover);
+  }
 }

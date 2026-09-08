@@ -167,6 +167,11 @@ export const moduleSchema = z
     /** Opt-in unattended generation: the pass-0 spine is approved as-is and
      * pass 1 starts immediately — the spine checkpoint never stops the flow. */
     autoApproveSpine: z.boolean().default(false),
+    /** The module's cover image (list thumb / reader hero / module-PDF
+     * fallback), or null. Additive `.default(null)` mirrors the v2 upgrade
+     * backfill, so rows written before covers parse at the read boundary —
+     * NO Dexie version bump, NO index changes (cover-only; no gallery). */
+    coverImageId: z.uuid().nullable().default(null),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',

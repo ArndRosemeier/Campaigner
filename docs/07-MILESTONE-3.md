@@ -52,6 +52,18 @@ interface StoredImage extends BaseEntity {
   storage + structured clone) before building anything on top of it.
 - Object URLs: one hook `useImageUrl(imageId)` that creates/revokes
   `URL.createObjectURL` properly; components never touch blobs directly.
+- Cover slots (cover-generation arc — Modules and Campaigns, NOT artifacts):
+  `moduleSchema` and `campaignSchema` gain additive
+  `coverImageId: z.uuid().nullable().default(null)` — cover-only, no gallery
+  `imageIds`, NO Dexie version bump, NO index changes (parse-on-read
+  defaults, the v7/v13/v15/v17 precedent). The rows are free of the artifact
+  tables: the reference scans (`referencedImageIds` + global) pin both
+  slots, `deleteModule` frees its cover after the row delete,
+  `deleteCampaign`'s image sweep frees both, export pins them as
+  `module:<id>:cover` / `campaign:<id>:cover`, and the unattended cover
+  queue (`src/features/covers/cover-image-queue.ts`) fills them through the
+  shared `buildImagePrompt` + `assembleImagePrompt` + `generateImages` +
+  `intakeImage` + `createJobQueue` seam with delete-after-replace regen.
 
 ### Settings
 

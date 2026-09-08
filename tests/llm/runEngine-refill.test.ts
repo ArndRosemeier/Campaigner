@@ -160,6 +160,7 @@ const INPUT = (
     name: campaign.name,
     system: 'dnd5e' as const,
     description: '',
+    coverImageId: null,
     createdAt: campaign.createdAt,
     updatedAt: campaign.updatedAt,
   },

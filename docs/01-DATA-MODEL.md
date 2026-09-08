@@ -23,6 +23,7 @@ interface Campaign extends BaseEntity {
   name: string;
   description: string;          // markdown
   system: GameSystem;           // see below
+  coverImageId: Id | null;      // picker card art (cover-generation arc, additive default null)
 }
 type GameSystem = 'dnd5e' | 'pathfinder2e' | 'cosmere' | 'generic-d20' | 'other';
 ```
@@ -397,6 +398,21 @@ battle scan; the global variant scans every campaign). The live battlemap
 is undeletable through `removeImageFromArtifact` — Regenerate is the only
 way to swap it.
 
+Cover-slot ownership (cover-generation arc): a module's and a campaign's
+`coverImageId` (cover-only; no gallery `imageIds` on either row) name image
+rows anchored to the owner campaign — a module cover anchors to its
+`campaignId`, a campaign cover anchors to its own id — so `deleteCampaign`'s
+image sweep frees them with everything else, and `deleteModule` frees the
+module cover after the row delete (captured before, `deleteImageIfUnreferenced`
+after — the refcheck's cache-table read cannot join the delete scope). The
+reference scans (`referencedImageIds` + the global variant) pin both slots,
+so routine artifact prunes never GC cover blobs; export pins them as
+`module:<id>:cover` / `campaign:<id>:cover` refs (JSON carries the binaries,
+the import re-id path keeps image ids so the slots stay valid); and the
+module PDF cover page borrows the seed-source module's cover when the
+deliverable carries none. Regen is delete-after-replace (fresh cover commits
+first, ONLY the superseded id is freed) — the preservation rule.
+
 ```ts
 interface StoredImage extends BaseEntity {
   campaignId: Id | null;        // null when owned by a global artifact
@@ -584,6 +600,12 @@ export class CampaignerDB extends Dexie {
 }
 export const db = new CampaignerDB();
 ```
+
+No version bump for cover slots (cover-generation arc): `coverImageId` on
+modules and campaigns is additive `z.uuid().nullable().default(null)` with
+parse-on-read defaults (the v7/v13/v15/v17 precedent) — no index changes, no
+upgrade function. Campaigns additionally parse on read (`getCampaign` /
+`listCampaigns`) so pre-cover rows surface `null`, never `undefined`.
 
 ## Repository layer
 

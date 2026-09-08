@@ -122,7 +122,10 @@ export async function buildCampaignExport(
   artifactIds?: readonly Id[],
   opts: { images?: boolean } = {},
 ): Promise<CampaignExport> {
-  const campaign = (await db.campaigns.get(campaignId)) ?? null;
+  const rawCampaign = await db.campaigns.get(campaignId);
+  // Parsed (not raw): legacy rows materialize current defaults (e.g.
+  // `coverImageId`) so the export carries them explicitly.
+  const campaign = rawCampaign === undefined ? null : campaignSchema.parse(rawCampaign);
   const all = (await db.artifacts.where('campaignId').equals(campaignId).toArray()).filter(
     (row): row is Artifact => row.campaignId !== null,
   );
@@ -249,6 +252,16 @@ export async function buildCampaignExport(
   }
   for (const deliverable of deliverables) {
     noteRef(deliverable.coverImageId, `deliverable:${deliverable.id}:cover`);
+  }
+  // Module/campaign cover slots (cover-generation arc): the blobs are image
+  // rows owned by the campaign, referenced from outside the artifact tables
+  // — without these pins a JSON export would list the slot but drop the
+  // binary (the loud missingImages note instead names the loser).
+  for (const module of modules) {
+    noteRef(module.coverImageId, `module:${module.id}:cover`);
+  }
+  if (campaign !== null) {
+    noteRef(campaign.coverImageId, `campaign:${campaign.id}:cover`);
   }
   const imageRows = await db.images.bulkGet([...referencedBy.keys()]);
   const foundRows = imageRows.filter((row): row is NonNullable<typeof row> => row !== undefined);
@@ -616,6 +629,7 @@ export async function importExport(
           name: 'Imported campaign',
           system: 'generic-d20' as const,
           description: '',
+          coverImageId: null,
           createdAt: stamp,
           updatedAt: stamp,
         }

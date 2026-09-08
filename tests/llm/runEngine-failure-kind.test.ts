@@ -83,6 +83,7 @@ const INPUT = (campaignId: Id, persona: Persona, autonomy: 'manual' | 'auto' = '
     name: 'Test Campaign',
     system: 'dnd5e' as const,
     description: '',
+    coverImageId: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },

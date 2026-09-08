@@ -37,6 +37,7 @@ import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { useArtifacts, useCampaign, useGlobalArtifacts, useScopedArtifacts } from '@/features/campaign/hooks';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { useModule } from '@/features/modules/hooks';
+import { GenerateModuleCoverButton, ModuleCoverHero } from '@/features/covers/cover-art';
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { PeekModal } from '@/features/modules/peek-modal';
@@ -364,6 +365,10 @@ export function ModuleReaderPage(): JSX.Element {
       <div ref={documentRef} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
         <article className="px-8 py-10 text-[0.9375rem] leading-relaxed">
           <header className="mb-8 border-b pb-4">
+            {/* Cover hero (cover-generation arc): the banner renders only
+                when the module has cover art — the header shape never shifts
+                for cover-less modules. */}
+            <ModuleCoverHero module={module} />
             <ModuleTitleInput module={module} />
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <Badge variant="outline">
@@ -372,6 +377,10 @@ export function ModuleReaderPage(): JSX.Element {
               <Badge variant="outline">{MODULE_SIZE_LABELS[module.sizeDial]}</Badge>
               {module.tone !== '' && <Badge variant="secondary">{module.tone}</Badge>}
               <StatusBadge status={module.status} errorMessage={module.errorMessage} />
+              {/* Cover generation lives with the header's other module
+                  actions (a GM control like every reader control here —
+                  player-safe battle view never mounts this surface). */}
+              <GenerateModuleCoverButton module={module} />
               {busy && (
                 <Button variant="outline" size="xs" onClick={() => { cancelModuleGen(module.id); }}>
                   <BanIcon aria-hidden data-icon="inline-start" />

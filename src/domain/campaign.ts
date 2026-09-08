@@ -8,6 +8,10 @@ export const campaignSchema = z.object({
   name: z.string().min(1),
   description: z.string(),
   system: gameSystemSchema,
+  /** The campaign's cover image (picker card art), or null. Additive
+   * `.default(null)` so rows written before covers parse at the read
+   * boundary — NO Dexie version bump, NO index changes. */
+  coverImageId: z.uuid().nullable().default(null),
 });
 
 export type Campaign = z.infer<typeof campaignSchema>;

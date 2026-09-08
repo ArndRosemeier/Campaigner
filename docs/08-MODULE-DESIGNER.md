@@ -135,6 +135,22 @@ spine approval, stub-popover alias writes), `promoteSecondModuleUses`
 scans the saved text and promotes second-module wikilink uses to campaign
 level with a loud toast.
 
+**Module cover (cover-generation arc):** the module row carries
+`coverImageId` (cover-only; no gallery). The reader header mounts the cover
+hero (`ModuleCoverHero`, `useImageUrl` — the same artifact-cover path as the
+play cards) with **Generate / Regenerate cover** beside the header actions;
+the modules list row mounts the cover thumb (`ModuleCoverThumb`) with a
+compact icon-only generate affordance. Generation is the unattended cover
+queue (`src/features/covers/cover-image-queue.ts`, n=1, dock progress, loud
+per-slot failures): the prompt grounds on title + concept + the full
+document text (`moduleDocumentText` — premise + parts), styled by the owning
+campaign's system; empty grounding refuses loudly (describe the module
+first). Skip-if-imaged for first generation, delete-after-replace for regen
+(fresh cover commits first, ONLY the superseded blob is freed — the
+preservation rule). The module cover doubles as the module-PDF cover fallback:
+a module-seeded deliverable without its own cover borrows the source
+module's art on the PDF cover page (session memory, never persisted).
+
 ---
 
 ## M4-B — Generator: spine → parts

@@ -1,6 +1,6 @@
 import type { Content, Style, TDocumentDefinitions } from 'pdfmake/interfaces';
 
-import type { AnyArtifact, Deliverable, OutlineNode, StatBlock } from '@/domain';
+import type { AnyArtifact, Deliverable, Id, OutlineNode, StatBlock } from '@/domain';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { getImage } from '@/db/imageRepo';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
@@ -386,6 +386,7 @@ export function buildModuleDefinition(
   deliverable: Deliverable,
   artifacts: readonly AnyArtifact[],
   images: ModulePdfImages = {},
+  opts: { fallbackCoverImageId?: Id | null } = {},
 ): TDocumentDefinitions {
   const outlineArtifactIds = new Set<string>();
   collectOutlineArtifactIds(deliverable.outline, outlineArtifactIds);
@@ -406,8 +407,11 @@ export function buildModuleDefinition(
     { text: deliverable.title, style: 'coverTitle', margin: [0, 120, 0, 8] },
     { text: deliverable.subtitle, style: 'coverSubtitle' },
   ];
-  const coverUrl =
-    deliverable.coverImageId !== null ? images[deliverable.coverImageId] : undefined;
+  // Cover page art (cover-generation arc): the deliverable's own cover
+  // wins; a module-seeded outline falls back to its source module's cover
+  // so the module's art is never lost on PDF export.
+  const coverImageId = deliverable.coverImageId ?? opts.fallbackCoverImageId ?? null;
+  const coverUrl = coverImageId !== null ? images[coverImageId] : undefined;
   if (coverUrl !== undefined) {
     cover.push({
       image: coverUrl,
@@ -459,13 +463,15 @@ export function buildModuleDefinition(
   };
 }
 
-/** Loads all images referenced by the deliverable (cover + artifact covers). */
+/** Loads all images referenced by the deliverable (cover + fallback + artifact covers). */
 async function loadModuleImages(
   deliverable: Deliverable,
   artifacts: readonly AnyArtifact[],
+  fallbackCoverImageId?: Id | null,
 ): Promise<ModulePdfImages> {
   const ids = new Set<string>();
   if (deliverable.coverImageId !== null) ids.add(deliverable.coverImageId);
+  if (fallbackCoverImageId != null) ids.add(fallbackCoverImageId);
   const byId = new Map(artifacts.map((entry) => [entry.id, entry]));
   const visit = (nodes: readonly OutlineNode[]): void => {
     for (const node of nodes) {
@@ -501,9 +507,10 @@ export async function buildModulePdf(
   deliverable: Deliverable,
   artifacts: readonly AnyArtifact[],
   generate: (definition: TDocumentDefinitions) => Promise<Blob>,
+  opts: { fallbackCoverImageId?: Id | null } = {},
 ): Promise<Blob> {
-  const images = await loadModuleImages(deliverable, artifacts);
-  const definition = buildModuleDefinition(deliverable, artifacts, images);
+  const images = await loadModuleImages(deliverable, artifacts, opts.fallbackCoverImageId);
+  const definition = buildModuleDefinition(deliverable, artifacts, images, opts);
   return generate(definition);
 }
 

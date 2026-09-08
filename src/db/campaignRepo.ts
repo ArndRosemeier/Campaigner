@@ -13,10 +13,19 @@ import { NotFoundError } from '@/lib/errors';
 
 export type CampaignPatch = EntityPatch<Campaign>;
 
+/**
+ * Parses on read so rows written before a schema addition pick up new
+ * defaulted fields (e.g. `coverImageId`) — and an invalid row fails loudly
+ * instead of leaking a partial type (AGENTS rule 1, moduleRepo precedent).
+ */
+function parseCampaignRow(row: Campaign): Campaign {
+  return campaignSchema.parse(row);
+}
+
 /** All campaigns, most recently updated first (picker order). */
 export async function listCampaigns(): Promise<Campaign[]> {
   const rows = await db.campaigns.toArray();
-  return rows.sort((a, b) => b.updatedAt - a.updatedAt);
+  return rows.map(parseCampaignRow).sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 /** Total campaign count (onboarding detection, guide routing). */
@@ -25,7 +34,8 @@ export async function countCampaigns(): Promise<number> {
 }
 
 export async function getCampaign(id: string): Promise<Campaign | undefined> {
-  return db.campaigns.get(id);
+  const row = await db.campaigns.get(id);
+  return row === undefined ? undefined : parseCampaignRow(row);
 }
 
 export async function createCampaign(input: NewCampaign): Promise<Campaign> {

@@ -23,6 +23,7 @@ import { listArtifactsByModule } from '@/db/artifactRepo';
 import { modulesReferencingOwnedArtifacts, type ReferencedOwnedArtifact } from '@/db/artifactAutoPromote';
 import { deleteModule } from '@/db/moduleRepo';
 import { useModules } from '@/features/modules/hooks';
+import { GenerateModuleCoverButton, ModuleCoverThumb } from '@/features/covers/cover-art';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
 import { useProgressStore } from '@/lib/progress';
@@ -179,6 +180,10 @@ export function ModulesListPage(): JSX.Element {
             <li key={module.id}>
               <div className="flex items-center gap-3 rounded-lg border p-3 hover:bg-accent/40">
                 <BookOpenIcon aria-hidden className="size-5 shrink-0 text-muted-foreground" />
+                {/* Cover thumb (cover-generation arc): renders only when the
+                    module has cover art — the row shape never shifts for
+                    cover-less modules. */}
+                <ModuleCoverThumb module={module} />
                 <button
                   type="button"
                   className="min-w-0 flex-1 text-left"
@@ -204,6 +209,8 @@ export function ModulesListPage(): JSX.Element {
                 </Badge>
                 <Badge variant="outline">{MODULE_SIZE_LABELS[module.sizeDial]}</Badge>
                 <ProgressBadge module={module} />
+                {/* Cover generation (compact: icon-only — the row stays one line). */}
+                <GenerateModuleCoverButton module={module} compact />
                 <Button
                   variant="ghost"
                   size="icon-sm"

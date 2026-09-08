@@ -27,8 +27,9 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
-import type { AnyArtifact, Deliverable, Module, OutlineNode } from '@/domain';
+import type { AnyArtifact, Deliverable, Id, Module, OutlineNode } from '@/domain';
 import { fullInclude } from '@/domain';
+import { getModule } from '@/db/moduleRepo';
 import { listImagesByCampaign } from '@/db/imageRepo';
 import { useArtifacts, useGlobalArtifacts } from '@/features/campaign/hooks';
 import {
@@ -96,6 +97,11 @@ export function DeliverablesPage(): JSX.Element {
   const [generating, setGenerating] = useState(false);
   const [pickerTarget, setPickerTarget] = useState<PickerTarget>(null);
   const [seedDialogOpen, setSeedDialogOpen] = useState(false);
+  /** Seed-source module per deliverable (cover-generation arc, session
+   * memory only): a module-seeded outline falls back to its source
+   * module's cover on the PDF cover page when the deliverable has none of
+   * its own. Never persisted — the outline stays the only stored truth. */
+  const [seedSourceByDeliverable, setSeedSourceByDeliverable] = useState<ReadonlyMap<Id, Id>>(new Map());
 
   const selected = deliverables?.find((entry) => entry.id === selectedId) ?? deliverables?.[0];
 
@@ -123,7 +129,18 @@ export function DeliverablesPage(): JSX.Element {
     const jobId = `deliverable-${deliverable.id}`;
     progress.start(jobId, `Building PDF: ${deliverable.title}`, 'Laying out the document…');
     try {
-      const blob = await buildModulePdf(deliverable, artifacts, generatePdfBlob);
+      // Module cover fallback (cover-generation arc): a module-seeded
+      // outline borrows its source module's cover for the PDF cover page
+      // when the deliverable carries none — read live so a regenerated
+      // module cover reaches the next PDF without re-seeding.
+      const seedSourceId = seedSourceByDeliverable.get(deliverable.id);
+      const fallbackCoverImageId =
+        deliverable.coverImageId !== null || seedSourceId === undefined
+          ? undefined
+          : (await getModule(seedSourceId))?.coverImageId ?? undefined;
+      const blob = await buildModulePdf(deliverable, artifacts, generatePdfBlob, {
+        ...(fallbackCoverImageId === undefined ? {} : { fallbackCoverImageId }),
+      });
       const url = URL.createObjectURL(blob);
       const anchor = document.createElement('a');
       anchor.href = url;
@@ -145,6 +162,7 @@ export function DeliverablesPage(): JSX.Element {
   function seedFromModule(module: Module): void {
     if (selected === undefined) return;
     const outline = seedOutlineFromModule(module, artifacts, { moduleId: module.id });
+    setSeedSourceByDeliverable((previous) => new Map(previous).set(selected.id, module.id));
     void updateDeliverable(selected.id, { outline });
     setSeedDialogOpen(false);
     toast.success(`Outline seeded from “${module.title}”`);

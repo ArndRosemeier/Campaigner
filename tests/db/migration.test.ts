@@ -1104,3 +1104,89 @@ describe('v16 → v17 migration (site shape + per-room challenge, docs/11 D11/D1
     await db.delete();
   }, 20000);
 });
+
+describe('cover-generation arc (no Dexie bump: parse-on-read defaults)', () => {
+  it('v18 rows without coverImageId parse to null through the current schemas', async () => {
+    // Covers are additive `z.uuid().nullable().default(null)` fields with NO
+    // version bump and NO index changes (the v7/v13/v15/v17 precedent): rows
+    // written before covers carry no field and materialize `null` at the
+    // read boundary. The store shape below is v18 verbatim.
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(18).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &chunkId',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('campaigns').put({
+      id: '00000000-0000-4000-8000-000000000c18',
+      name: 'Pre-cover campaign',
+      system: 'dnd5e',
+      description: 'A city of ash.',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('modules').put({
+      id: '00000000-0000-4000-8000-000000000b18',
+      campaignId: '00000000-0000-4000-8000-000000000c18',
+      title: 'Pre-cover module',
+      concept: 'A vault.',
+      levelMin: 1,
+      levelMax: 3,
+      tone: '',
+      sizeDial: 'standard',
+      spine: null,
+      parts: [],
+      status: 'draft',
+      errorMessage: '',
+      entityKinds: [],
+      focusedEntities: [],
+      entitySort: 'mention',
+      entityNamesNormalized: false,
+      entityNormalizationError: '',
+      entityRewriteProposals: null,
+      includePriorModules: false,
+      autoGenerateKinds: [],
+      autoImageKinds: [],
+      autoGenerateBattlemaps: false,
+      autoApproveSpine: false,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's versioned DB runs NO upgrade (still v18): the rows
+    // come back exactly as written, and the current schemas default them.
+    const { db } = await import('@/db/db');
+    await db.open();
+    const campaign = await db.campaigns.get('00000000-0000-4000-8000-000000000c18');
+    const module = await db.modules.get('00000000-0000-4000-8000-000000000b18');
+    expect(campaign).not.toHaveProperty('coverImageId');
+    expect(module).not.toHaveProperty('coverImageId');
+
+    const { campaignSchema, moduleSchema } = await import('@/domain');
+    expect(campaignSchema.parse(campaign).coverImageId).toBeNull();
+    expect(moduleSchema.parse(module).coverImageId).toBeNull();
+
+    // The repos parse on read, so surfaces see `null`, never `undefined`.
+    const { getCampaign } = await import('@/db/campaignRepo');
+    const { getModule } = await import('@/db/moduleRepo');
+    expect((await getCampaign('00000000-0000-4000-8000-000000000c18'))?.coverImageId).toBeNull();
+    expect((await getModule('00000000-0000-4000-8000-000000000b18'))?.coverImageId).toBeNull();
+
+    await db.delete();
+  }, 20000);
+});

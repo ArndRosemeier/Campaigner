@@ -132,6 +132,7 @@ const RUN_INPUT = (campaignId: string, personaId: string) => ({
     name: 'Test Campaign',
     system: 'dnd5e' as const,
     description: '',
+    coverImageId: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },

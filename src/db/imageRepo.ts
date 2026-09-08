@@ -134,12 +134,20 @@ export async function deleteImageIfUnreferenced(imageId: Id): Promise<boolean> {
  * (`data.mapImageId`), their history (`snapshot.data.mapImageId`), and
  * frozen battle boards (`board.mapImageId`) all pin their blobs — deleting
  * an old gallery row must never destroy the blob under a live board.
+ *
+ * Cover-image coverage (module/campaign covers): every module's and every
+ * campaign's `coverImageId` pins its blob — covers are image rows owned by
+ * their campaign (`campaignId` = owner campaign; a campaign cover anchors to
+ * its own id) referenced from outside the artifact tables, so the artifact
+ * scan alone would GC them.
  */
 async function referencedImageIdsGlobal(): Promise<Set<Id>> {
-  const [artifacts, revisions, battles] = await Promise.all([
+  const [artifacts, revisions, battles, modules, campaigns] = await Promise.all([
     db.artifacts.toArray(),
     db.revisions.toArray(),
     db.battles.toArray(),
+    db.modules.toArray(),
+    db.campaigns.toArray(),
   ]);
   const referenced = new Set<Id>();
   for (const artifact of artifacts) {
@@ -148,6 +156,12 @@ async function referencedImageIdsGlobal(): Promise<Set<Id>> {
     if (artifact.kind === 'encounter' && artifact.data.mapImageId !== null) {
       referenced.add(artifact.data.mapImageId);
     }
+  }
+  for (const module of modules) {
+    if (module.coverImageId !== null) referenced.add(module.coverImageId);
+  }
+  for (const campaign of campaigns) {
+    if (campaign.coverImageId !== null) referenced.add(campaign.coverImageId);
   }
   for (const revision of revisions) {
     const snapshot = revision.snapshot as {
@@ -171,11 +185,16 @@ async function referencedImageIdsGlobal(): Promise<Set<Id>> {
 /**
  * All image ids referenced anywhere in the campaign — by artifacts
  * (`imageIds`/`coverImageId`), by revision snapshots (restored history
- * must still render), by encounter live maps and their history, and by
- * frozen battle boards (see above).
+ * must still render), by encounter live maps and their history, by frozen
+ * battle boards (see above), by the campaign's modules (`coverImageId`),
+ * and by the campaign row itself (`coverImageId`).
+ *
+ * SCOPE CONTRACT: reads `artifacts`, `revisions`, `battles`, `modules` and
+ * `campaigns` — every caller transaction scope must include all five (a
+ * read on a table the scope omits throws "object store not found").
  */
 export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
-  const [artifacts, revisions, battles] = await Promise.all([
+  const [artifacts, revisions, battles, modules, campaign] = await Promise.all([
     db.artifacts.where('campaignId').equals(campaignId).toArray(),
     (async () => {
       const artifactIds = (await db.artifacts.where('campaignId').equals(campaignId).toArray()).map(
@@ -186,6 +205,8 @@ export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
       return rows;
     })(),
     db.battles.where('campaignId').equals(campaignId).toArray(),
+    db.modules.where('campaignId').equals(campaignId).toArray(),
+    db.campaigns.get(campaignId),
   ]);
   const referenced = new Set<Id>();
   for (const artifact of artifacts) {
@@ -212,15 +233,20 @@ export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
   for (const battle of battles) {
     if (battle.board.mapImageId !== null) referenced.add(battle.board.mapImageId);
   }
+  for (const module of modules) {
+    if (module.coverImageId !== null) referenced.add(module.coverImageId);
+  }
+  if (campaign?.coverImageId != null) referenced.add(campaign.coverImageId);
   return referenced;
 }
 
 /**
  * Deletes every image of the campaign that nothing references anymore.
  * Called after artifact deletion (cascade) and after run picks discard
- * candidates. Safe inside a caller's transaction when `db.images` (and the
- * tables it reads — artifacts, revisions, battles) are part of its scope
- * (a read on a table the scope omits throws "object store not found").
+ * candidates. Safe inside a caller's transaction only when `db.images` AND
+ * every table `referencedImageIds` reads (artifacts, revisions, battles,
+ * modules, campaigns) are part of its scope (a read on a table the scope
+ * omits throws "object store not found").
  */
 export async function pruneUnreferencedImages(campaignId: Id): Promise<number> {
   const referenced = await referencedImageIds(campaignId);

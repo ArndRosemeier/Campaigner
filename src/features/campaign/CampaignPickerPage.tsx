@@ -53,6 +53,7 @@ import {
 } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { useCampaignSummaries, type CampaignSummary } from '@/features/campaign/hooks';
+import { CampaignCoverArt, GenerateCampaignCoverButton } from '@/features/covers/cover-art';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { readSettings } from '@/db/settingsRepo';
 import { SparklesIcon } from 'lucide-react';
@@ -385,6 +386,10 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
           </CardAction>
         </CardHeader>
         <CardContent className="flex flex-col gap-2 text-xs text-muted-foreground">
+          {/* Cover art (cover-generation arc): renders only when the
+              campaign has cover art — the card shape never shifts for
+              cover-less campaigns. */}
+          <CampaignCoverArt campaign={campaign} />
           {/* Context snippet — quiet, clamped; only when the campaign has a
               description (creation leaves it blank). */}
           {campaign.description !== '' && (
@@ -396,6 +401,11 @@ function CampaignCard({ summary, onOpen }: CampaignCardProps) {
             <Badge variant="secondary">{GAME_SYSTEM_LABELS[campaign.system]}</Badge>
             <span>
               {artifactCount} artifact{artifactCount === 1 ? '' : 's'}
+            </span>
+            {/* Cover generation (GM control — the picker never renders in
+                player-safe mode). */}
+            <span className="ml-auto">
+              <GenerateCampaignCoverButton campaign={campaign} />
             </span>
           </div>
         </CardContent>

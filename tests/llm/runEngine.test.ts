@@ -118,6 +118,7 @@ const INPUT = (campaignId: Id, persona: Persona) => ({
     name: 'Test Campaign',
     system: 'dnd5e' as const,
     description: '',
+    coverImageId: null,
     createdAt: Date.now(),
     updatedAt: Date.now(),
   },

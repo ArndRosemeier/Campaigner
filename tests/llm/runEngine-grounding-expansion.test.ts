@@ -193,6 +193,7 @@ const INPUT = (campaign: Campaign, persona: Persona, brief: string): StartRunInp
     name: campaign.name,
     system: 'dnd5e' as const,
     description: '',
+    coverImageId: null,
     createdAt: campaign.createdAt,
     updatedAt: campaign.updatedAt,
   },
