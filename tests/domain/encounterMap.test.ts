@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   EncounterLayoutError,
+  mergeVeilCovers,
   packRooms,
   placeEntrance,
   placeMonsters,
@@ -217,7 +218,7 @@ describe('encounter map layout engine', () => {
       }
     });
 
-    it('covers each multi-group room with N sub-rects over exactly its spawn cells', () => {
+    it('merges each multi-group room with overlapping covers into ONE veil over the union of its spawn cells', () => {
       const multiA = '00000000-0000-4000-8000-0000000000a1';
       const multiB = '00000000-0000-4000-8000-0000000000b2';
       const counts = [1, 2, 3];
@@ -232,50 +233,97 @@ describe('encounter map layout engine', () => {
         ],
       });
       const veils = veilsFromSpawnClusters(layout, counts);
-      // One group in the Vestry + two groups in the Choir.
-      expect(veils).toHaveLength(3);
+      // One group in the Vestry + two ADJACENT groups in the Choir: the
+      // Choir's contiguous runs own adjacent cells, so their +1-margin
+      // covers always share ground and merge — one veil per room, not three.
+      expect(veils).toHaveLength(2);
       const choir = layout.rooms.find((room) => room.id === multiB);
       if (choir === undefined) throw new Error('choir missing');
       const choirVeils = veils.filter((veil) => veil.id === multiB || veil.roomId === multiB);
-      expect(choirVeils).toHaveLength(2);
-      // Rail identity: the first group keeps the room id, the second mints a
-      // fresh id — both still resolve to the room via roomId.
-      expect(choirVeils[0]?.id).toBe(multiB);
-      expect(choirVeils[1]?.id).not.toBe(multiB);
-      expect(choirVeils.every((veil) => veil.roomId === multiB)).toBe(true);
+      expect(choirVeils).toHaveLength(1);
+      // Rail identity: the merged veil keeps the first-emitted identity —
+      // the room id — so "Reveal next room" still resolves the room, and
+      // roomId carries it for the reveal-all mapping.
+      const merged = choirVeils[0];
+      if (merged === undefined) throw new Error('merged choir veil missing');
+      expect(merged.id).toBe(multiB);
+      expect(merged.roomId).toBe(multiB);
+      expect(merged.kind).toBe('fog');
       expect(new Set(veils.map((veil) => veil.id)).size).toBe(veils.length);
-      // Probe-mapped: every placement cell of a group lies inside that
-      // group's own veil sub-rect (same row-major deal order as
-      // placeMonsters, owner-ordered by monsterIndexes).
+      // Probe-mapped: every placement cell of BOTH groups lies inside the
+      // single merged veil (same row-major deal order as placeMonsters,
+      // owner-ordered by monsterIndexes).
       const placements = placeMonsters(layout, counts.map((count) => ({ count })));
-      const byGroup = new Map<number, { x: number; y: number }[]>();
+      const choirCells: { x: number; y: number }[] = [];
       for (const placement of placements) {
         if (placement.roomId !== multiB) continue;
-        const list = byGroup.get(placement.monsterIndex) ?? [];
-        const cell = { x: Math.floor(placement.x * layout.gridW), y: Math.floor(placement.y * layout.gridH) };
-        list.push(cell);
-        byGroup.set(placement.monsterIndex, list);
+        choirCells.push({ x: Math.floor(placement.x * layout.gridW), y: Math.floor(placement.y * layout.gridH) });
       }
-      // Group deal order in the Choir is [1] then [2] (monsterIndexes order).
-      const ordered = [1, 2].map((monsterIndex) => byGroup.get(monsterIndex) ?? []);
-      expect(ordered[0]).toHaveLength(2);
-      expect(ordered[1]).toHaveLength(3);
-      choirVeils.forEach((veil, groupPosition) => {
-        const covered = veilCells(veil, layout);
-        for (const cell of ordered[groupPosition] ?? []) {
-          expect(covered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
-        }
-        // Center normalized from the sub-rect center (layout-anchored, D6).
-        expect(veil.x).toBe((Math.round(veil.x * layout.gridW - veil.widthCells / 2) + veil.widthCells / 2) / layout.gridW);
-      });
+      expect(choirCells).toHaveLength((counts[1] ?? 0) + (counts[2] ?? 0));
+      const xs = choirCells.map((cell) => cell.x);
+      const ys = choirCells.map((cell) => cell.y);
+      // Exact union pin: bounding box of ALL group cells plus the one-cell
+      // cover margin, clamped to the board — the merge of the two per-group
+      // covers, not either one alone.
+      const want = {
+        x: Math.max(0, Math.min(...xs) - 1),
+        y: Math.max(0, Math.min(...ys) - 1),
+      };
+      const wantW = Math.min(layout.gridW, Math.max(...xs) + 2) - want.x;
+      const wantH = Math.min(layout.gridH, Math.max(...ys) + 2) - want.y;
+      expect(merged.widthCells).toBe(wantW);
+      expect(merged.heightCells).toBe(wantH);
+      expect(merged.x).toBe((want.x + wantW / 2) / layout.gridW);
+      expect(merged.y).toBe((want.y + wantH / 2) / layout.gridH);
+      const covered = veilCells(merged, layout);
+      for (const cell of choirCells) {
+        expect(covered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
+      }
+      // Center normalized from the merged rect center (layout-anchored, D6).
+      expect(merged.x).toBe((Math.round(merged.x * layout.gridW - merged.widthCells / 2) + merged.widthCells / 2) / layout.gridW);
+      expect(battleVeilSchema.parse(merged)).toEqual(merged);
       // The Choir's groups share the room's mobsRect cells between them.
       const allCovered = new Set<string>();
-      for (const veil of choirVeils) {
-        for (const key of veilCells(veil, layout)) allCovered.add(key);
-      }
+      for (const key of veilCells(merged, layout)) allCovered.add(key);
       for (const cell of mobsCells(choir).slice(0, (counts[1] ?? 0) + (counts[2] ?? 0))) {
         expect(allCovered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
       }
+    });
+
+    it('merges a single-room two-group encounter into exactly one veil (owner jungle case: no purposeless stack)', () => {
+      const roomId = '00000000-0000-4000-8000-0000000000c6';
+      const layout: EncounterLayout = {
+        gridW: 12,
+        gridH: 12,
+        theme: 'Jungle probe',
+        rooms: [
+          {
+            id: roomId,
+            name: 'Clearing',
+            rects: [{ x: 2, y: 2, w: 8, h: 6 }],
+            mobsRect: { x: 4, y: 4, w: 4, h: 2 },
+            description: '',
+            monsterIndexes: [0, 1],
+            spawn: true,
+            key: '',
+            keyTreasure: '',
+          },
+        ],
+        corridors: [],
+      };
+      const veils = veilsFromSpawnClusters(layout, [2, 2]);
+      // Row-major deal: group 0 owns (4,4),(5,4); group 1 owns (6,4),(7,4) —
+      // adjacent runs whose covers share ground, so exactly one veil seeds.
+      expect(veils).toHaveLength(1);
+      const veil = veils[0];
+      if (veil === undefined) throw new Error('merged veil missing');
+      // Union of the per-group covers [3,7)x[3,6) and [5,9)x[3,6).
+      expect(veil).toMatchObject({ id: roomId, kind: 'fog', roomId, widthCells: 6, heightCells: 3 });
+      expect(veil.x).toBe((3 + 6 / 2) / layout.gridW);
+      expect(veil.y).toBe((3 + 3 / 2) / layout.gridH);
+      const covered = veilCells(veil, layout);
+      for (const key of ['4,4', '5,4', '6,4', '7,4']) expect(covered.has(key)).toBe(true);
+      expect(battleVeilSchema.parse(veil)).toEqual(veil);
     });
 
     it('fails loudly when a room references a missing roster entry', () => {
@@ -355,31 +403,98 @@ describe('encounter map layout engine', () => {
         corridors: [],
       };
       const veils = veilsFromSpawnClusters(layout, [2, 2]);
-      expect(veils).toHaveLength(2);
       // Row-major deal: group 0 owns (1,1),(2,1); group 1 owns (3,1),(1,2).
-      const expected = [
-        { x: 0, y: 0, w: 4, h: 3, cells: ['1,1', '2,1'] },
-        { x: 0, y: 0, w: 5, h: 4, cells: ['3,1', '1,2'] },
-      ];
-      veils.forEach((veil, index) => {
-        const want = expected[index];
-        if (want === undefined) throw new Error('expected cover missing');
-        expect(veil.widthCells).toBe(want.w);
-        expect(veil.heightCells).toBe(want.h);
-        expect(veil.x).toBe((want.x + want.w / 2) / layout.gridW);
-        expect(veil.y).toBe((want.y + want.h / 2) / layout.gridH);
-        const covered = veilCells(veil, layout);
-        for (const key of want.cells) expect(covered.has(key)).toBe(true);
-        // Clamped to the board on every side.
-        for (const key of covered) {
-          const [x, y] = key.split(',').map(Number);
-          expect(x).toBeGreaterThanOrEqual(0);
-          expect(y).toBeGreaterThanOrEqual(0);
-          expect(x).toBeLessThan(layout.gridW);
-          expect(y).toBeLessThan(layout.gridH);
-        }
-        expect(battleVeilSchema.parse(veil)).toEqual(veil);
-      });
+      // The per-group covers ([0,4)x[0,3) and [0,5)x[0,4)) share ground, so
+      // they merge to their union bounding box — a single veil.
+      expect(veils).toHaveLength(1);
+      const veil = veils[0];
+      if (veil === undefined) throw new Error('merged veil missing');
+      expect(veil).toMatchObject({ id: roomId, kind: 'fog', roomId, widthCells: 5, heightCells: 4 });
+      expect(veil.x).toBe((0 + 5 / 2) / layout.gridW);
+      expect(veil.y).toBe((0 + 4 / 2) / layout.gridH);
+      const covered = veilCells(veil, layout);
+      for (const key of ['1,1', '2,1', '3,1', '1,2']) expect(covered.has(key)).toBe(true);
+      // Clamped to the board on every side.
+      for (const key of covered) {
+        const [x, y] = key.split(',').map(Number);
+        expect(x).toBeGreaterThanOrEqual(0);
+        expect(y).toBeGreaterThanOrEqual(0);
+        expect(x).toBeLessThan(layout.gridW);
+        expect(y).toBeLessThan(layout.gridH);
+      }
+      expect(battleVeilSchema.parse(veil)).toEqual(veil);
+    });
+  });
+
+  describe('mergeVeilCovers (seed-time overlap merge)', () => {
+    const ROOM_X = '00000000-0000-4000-8000-0000000000x1';
+    const ROOM_Y = '00000000-0000-4000-8000-0000000000y2';
+
+    it('merges overlapping same-room covers into the union bounding box under the first identity', () => {
+      const merged = mergeVeilCovers(
+        [
+          { roomId: ROOM_X, veilId: ROOM_X, rect: { x: 0, y: 0, w: 4, h: 3 } },
+          { roomId: ROOM_X, veilId: 'secondary', rect: { x: 2, y: 1, w: 4, h: 3 } },
+        ],
+        12,
+        12,
+      );
+      expect(merged).toHaveLength(1);
+      expect(merged[0]).toEqual({ roomId: ROOM_X, veilId: ROOM_X, rect: { x: 0, y: 0, w: 6, h: 4 } });
+    });
+
+    it('keeps disjoint same-room covers separate so staged reveal still works', () => {
+      const merged = mergeVeilCovers(
+        [
+          { roomId: ROOM_X, veilId: ROOM_X, rect: { x: 0, y: 0, w: 2, h: 2 } },
+          { roomId: ROOM_X, veilId: 'far-group', rect: { x: 8, y: 8, w: 2, h: 2 } },
+        ],
+        12,
+        12,
+      );
+      expect(merged).toHaveLength(2);
+      expect(merged[0]).toEqual({ roomId: ROOM_X, veilId: ROOM_X, rect: { x: 0, y: 0, w: 2, h: 2 } });
+      expect(merged[1]).toEqual({ roomId: ROOM_X, veilId: 'far-group', rect: { x: 8, y: 8, w: 2, h: 2 } });
+    });
+
+    it('keeps edge-touching covers with no shared ground separate', () => {
+      const merged = mergeVeilCovers(
+        [
+          { roomId: ROOM_X, veilId: ROOM_X, rect: { x: 0, y: 0, w: 4, h: 3 } },
+          { roomId: ROOM_X, veilId: 'neighbor', rect: { x: 4, y: 0, w: 4, h: 3 } },
+        ],
+        12,
+        12,
+      );
+      expect(merged).toHaveLength(2);
+    });
+
+    it('never merges cross-room covers however much they overlap', () => {
+      const merged = mergeVeilCovers(
+        [
+          { roomId: ROOM_X, veilId: ROOM_X, rect: { x: 2, y: 2, w: 4, h: 4 } },
+          { roomId: ROOM_Y, veilId: ROOM_Y, rect: { x: 2, y: 2, w: 4, h: 4 } },
+        ],
+        12,
+        12,
+      );
+      expect(merged).toHaveLength(2);
+      expect(merged[0]?.veilId).toBe(ROOM_X);
+      expect(merged[1]?.veilId).toBe(ROOM_Y);
+    });
+
+    it('merges transitively chained covers into one component', () => {
+      const merged = mergeVeilCovers(
+        [
+          { roomId: ROOM_X, veilId: ROOM_X, rect: { x: 0, y: 0, w: 3, h: 3 } },
+          { roomId: ROOM_X, veilId: 'mid', rect: { x: 2, y: 2, w: 3, h: 3 } },
+          { roomId: ROOM_X, veilId: 'far', rect: { x: 4, y: 4, w: 3, h: 3 } },
+        ],
+        12,
+        12,
+      );
+      expect(merged).toHaveLength(1);
+      expect(merged[0]).toEqual({ roomId: ROOM_X, veilId: ROOM_X, rect: { x: 0, y: 0, w: 7, h: 7 } });
     });
   });
 

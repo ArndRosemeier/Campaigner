@@ -3289,10 +3289,11 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     await seedBattleFromEncounter(campaignId, module.id, encounter.id);
     await renderSurface(module.id);
     await flushAsyncUpdates();
-    // Three spawn groups ⇒ three veils: Entry primary + Sanctum primary (room
-    // id, so the rail resolves it) + Sanctum secondary (roomId-mapped).
+    // Two spawn rooms ⇒ two veils: Entry primary + Sanctum merged group
+    // veil (room id, so the rail resolves it) — Sanctum's adjacent groups
+    // fuse at seed (overlap-merge), so no secondary veil is emitted.
     const seeded = await currentBattle(module.id);
-    expect(seeded.board.veils).toHaveLength(3);
+    expect(seeded.board.veils).toHaveLength(2);
     const rail = screen.getByTestId('path-rail');
     const veiledLabel = (testId: string): string | null =>
       within(rail).getByTestId(testId).getAttribute('aria-label');
@@ -3302,12 +3303,11 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     // Reveal room 1 (Entry): only its primary veil lifts.
     await user.click(screen.getByTestId('reveal-next-room'));
     await flushAsyncUpdates();
-    expect((await currentBattle(module.id)).board.veils).toHaveLength(2);
+    expect((await currentBattle(module.id)).board.veils).toHaveLength(1);
     expect(veiledLabel('path-room-1')).not.toContain('(veiled)');
-    // Reveal room 2 (Sanctum): reveal-all lifts the primary AND the
-    // secondary group veil (both resolve per room via id + roomId) — no
-    // room ever reads revealed while its mobs stay covered with no rail
-    // path left.
+    // Reveal room 2 (Sanctum): reveal-all lifts the merged group veil (it
+    // resolves per room via id + roomId) — no room ever reads revealed
+    // while its mobs stay covered with no rail path left.
     await user.click(screen.getByTestId('reveal-next-room'));
     await flushAsyncUpdates();
     const after = await currentBattle(module.id);

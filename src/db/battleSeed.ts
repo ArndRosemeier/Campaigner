@@ -319,7 +319,9 @@ export async function seedBattleFromEncounter(
   // the spawn room, but its monsters still begin veiled). Each veil covers
   // its spawn area plus a one-cell margin (the cover convention in
   // `veilsFromSpawnClusters`) so the GM can grab and resize it around the
-  // tokens. A room with no monster groups seeds no veil; a SINGLE site
+  // tokens; same-room covers sharing ground merge to one veil at seed (the
+  // overlap merge — adjacent same-room spawns veil as a single fog, never a
+  // purposeless stack). A room with no monster groups seeds no veil; a SINGLE site
   // therefore seeds exactly its spawn groups' veils instead of zero. The
   // room's first group keeps `id = room.id` so the Path rail's "Reveal next
   // room" still resolves per room — reveal-all lifts every group veil of the

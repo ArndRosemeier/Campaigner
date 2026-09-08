@@ -331,63 +331,59 @@ describe('roster expansion', () => {
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
 
     expect(battle.board.mapLayout).toEqual({ cols: layout.gridW, rows: layout.gridH });
-    // Group veils (docs/11 D4): one fog veil per monsterIndexes entry — the
-    // spawn room (Gate) has no groups so it seeds none, while the Barracks
-    // seeds TWO (Goblins + Ogre), the first keeping the room id for the
-    // Path rail and the second resolving via roomId.
+    // Group veils (docs/11 D4): the spawn room (Gate) has no groups so it
+    // seeds none, while the Barracks' two ADJACENT groups (Goblins + Ogre own
+    // a contiguous run) merge at seed — their +1-margin covers share ground,
+    // so exactly ONE fog veil seeds, keeping the room id for the Path rail.
     const spawnRoomOfLayout = layout.rooms.find((room) => room.spawn);
-    expect(battle.board.veils).toHaveLength(2);
+    expect(battle.board.veils).toHaveLength(1);
     expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
     const primary = battle.board.veils.find((veil) => veil.id === roomB);
     expect(primary?.roomId).toBe(roomB);
-    const secondary = battle.board.veils.find((veil) => veil.id !== roomB);
-    expect(secondary?.roomId).toBe(roomB);
     expect(battle.board.veils.some((veil) => veil.id === spawnRoomOfLayout?.id || veil.roomId === spawnRoomOfLayout?.id)).toBe(false);
-    // Cover convention (docs/11 D4): each group veil covers its spawn cells
-    // PLUS a one-cell margin clamped to the board — veils are NOT confined
-    // to the mobsRect (the margin is the grabbable veil body beside the
-    // tokens). Pin the exact expanded rect per group, in deal order.
+    // Cover convention + overlap merge (docs/11 D4): the single Barracks veil
+    // covers the UNION of its spawn cells PLUS a one-cell margin clamped to
+    // the board — pin the exact merged rect over both groups' deal-order cells.
     const dealt = placeMonsters(layout, monsters);
-    const cellsByGroup = new Map<number, { x: number; y: number }[]>();
+    const barracksCells: { x: number; y: number }[] = [];
     for (const placement of dealt) {
       if (placement.roomId !== roomB) continue;
-      const cell = { x: Math.floor(placement.x * layout.gridW), y: Math.floor(placement.y * layout.gridH) };
-      cellsByGroup.set(placement.monsterIndex, [...(cellsByGroup.get(placement.monsterIndex) ?? []), cell]);
+      barracksCells.push({ x: Math.floor(placement.x * layout.gridW), y: Math.floor(placement.y * layout.gridH) });
     }
-    const orderedGroups = [0, 1].map((monsterIndex) => cellsByGroup.get(monsterIndex) ?? []);
-    expect(orderedGroups.map((cells) => cells.length)).toEqual([2, 1]);
+    expect(barracksCells).toHaveLength(3);
     const roomVeils = battle.board.veils.filter((veil) => veil.id === roomB || veil.roomId === roomB);
-    expect(roomVeils).toHaveLength(2);
+    expect(roomVeils).toHaveLength(1);
     expect(roomVeils[0]?.id).toBe(roomB);
-    roomVeils.forEach((veil, groupPosition) => {
-      const group = orderedGroups[groupPosition] ?? [];
-      const xs = group.map((cell) => cell.x);
-      const ys = group.map((cell) => cell.y);
+    const mergedVeil = roomVeils[0];
+    if (mergedVeil === undefined) throw new Error('merged barracks veil missing');
+    {
+      const xs = barracksCells.map((cell) => cell.x);
+      const ys = barracksCells.map((cell) => cell.y);
       const want = {
         x: Math.max(0, Math.min(...xs) - 1),
         y: Math.max(0, Math.min(...ys) - 1),
       };
       const wantW = Math.min(layout.gridW, Math.max(...xs) + 2) - want.x;
       const wantH = Math.min(layout.gridH, Math.max(...ys) + 2) - want.y;
-      expect(veil.widthCells).toBe(wantW);
-      expect(veil.heightCells).toBe(wantH);
+      expect(mergedVeil.widthCells).toBe(wantW);
+      expect(mergedVeil.heightCells).toBe(wantH);
       const rect = {
-        x: Math.round(veil.x * layout.gridW - veil.widthCells / 2),
-        y: Math.round(veil.y * layout.gridH - veil.heightCells / 2),
+        x: Math.round(mergedVeil.x * layout.gridW - mergedVeil.widthCells / 2),
+        y: Math.round(mergedVeil.y * layout.gridH - mergedVeil.heightCells / 2),
       };
       expect(rect.x).toBe(want.x);
       expect(rect.y).toBe(want.y);
       // Inside the board on every side, and every spawn cell covered.
       expect(rect.x).toBeGreaterThanOrEqual(0);
       expect(rect.y).toBeGreaterThanOrEqual(0);
-      expect(rect.x + veil.widthCells).toBeLessThanOrEqual(layout.gridW);
-      expect(rect.y + veil.heightCells).toBeLessThanOrEqual(layout.gridH);
+      expect(rect.x + mergedVeil.widthCells).toBeLessThanOrEqual(layout.gridW);
+      expect(rect.y + mergedVeil.heightCells).toBeLessThanOrEqual(layout.gridH);
       const covered = new Set<string>();
-      for (let y = rect.y; y < rect.y + veil.heightCells; y += 1) {
-        for (let x = rect.x; x < rect.x + veil.widthCells; x += 1) covered.add(`${String(x)},${String(y)}`);
+      for (let y = rect.y; y < rect.y + mergedVeil.heightCells; y += 1) {
+        for (let x = rect.x; x < rect.x + mergedVeil.widthCells; x += 1) covered.add(`${String(x)},${String(y)}`);
       }
-      for (const cell of group) expect(covered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
-    });
+      for (const cell of barracksCells) expect(covered.has(`${String(cell.x)},${String(cell.y)}`)).toBe(true);
+    }
     const expected = placeMonsters(layout, monsters);
     const npcTokens = battle.board.tokens.filter((token) => token.currentHp !== null);
     expect(npcTokens.map((token) => [token.x, token.y])).toEqual(

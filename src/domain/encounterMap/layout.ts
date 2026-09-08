@@ -480,14 +480,105 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
  * `'fog'` in the `battleVeilSchema` shape (int cells ≥ VEIL_MIN_CELLS holds
  * because every emitted group owns at least one placement cell, and the
  * margin only grows the span).
+ *
+ * OVERLAP MERGE (owner-observed stacked veils): same-room groups own
+ * CONTIGUOUS runs of one mobsRect, so consecutive groups always own adjacent
+ * cells and their +1-margin covers always share ground — without a merge a
+ * single-room two-type encounter seeds a big veil plus a smaller one stacked
+ * on top, painting above (DOM order) with no staged-reveal purpose. Same-room
+ * covers that OVERLAP (share at least one cell) therefore merge into one veil
+ * — the bounding box of the union, re-clamped to the board — keeping the
+ * first-emitted identity (`id = room.id`, `roomId = room.id`), kind fog.
+ * Disjoint same-room covers stay separate (staged reveal still works), and
+ * cross-room covers NEVER merge (room-id rail semantics untouched). Net
+ * effect: single-room adjacent spawns seed exactly one veil; spatially
+ * separated groups seed several.
  */
+
+/** One per-group cover entering the overlap merge: the room it belongs to,
+ * the veil identity it would carry unmerged, and its clamped cell rect. */
+export interface VeilCover {
+  roomId: string;
+  veilId: string;
+  rect: LayoutRect;
+}
+
+/**
+ * Pure overlap merge for seeded group-veil covers (docs/11 D4): covers merge
+ * ONLY within one room, ONLY when they share at least one cell (strict area
+ * overlap — edge-touching with no shared ground stays separate, staged
+ * reveal still works). A merged component emits the bounding box of the
+ * union (re-clamped to the board by the caller-supplied bounds) under the
+ * first-emitted cover's identity. Cross-room covers never merge however much
+ * they overlap — the rail resolves rooms per room id.
+ */
+export function mergeVeilCovers(
+  covers: readonly VeilCover[],
+  gridW: number,
+  gridH: number,
+): VeilCover[] {
+  const merged: VeilCover[] = [];
+  // Union-find over cover indexes, one component set per room (cross-room
+  // covers never union, so components never span rooms by construction).
+  const parent = covers.map((_, index) => index);
+  const find = (index: number): number => {
+    const root = parent[index];
+    if (root === undefined || root === index) return index;
+    const resolved = find(root);
+    parent[index] = resolved;
+    return resolved;
+  };
+  for (let left = 0; left < covers.length; left += 1) {
+    for (let right = left + 1; right < covers.length; right += 1) {
+      const a = covers[left];
+      const b = covers[right];
+      if (a === undefined || b === undefined) continue;
+      if (a.roomId !== b.roomId) continue;
+      if (!rectsOverlap(a.rect, b.rect)) continue;
+      parent[find(left)] = find(right);
+    }
+  }
+  const seen = new Map<number, { firstIndex: number; members: VeilCover[] }>();
+  covers.forEach((cover, index) => {
+    const root = find(index);
+    const entry = seen.get(root);
+    if (entry === undefined) {
+      seen.set(root, { firstIndex: index, members: [cover] });
+    } else {
+      entry.members.push(cover);
+    }
+  });
+  // Emission order stays stable: components in first-member order, so a
+  // room's first component still carries the room id for the rail.
+  const components = [...seen.values()].sort((left, right) => left.firstIndex - right.firstIndex);
+  for (const { members } of components) {
+    const first = members[0];
+    if (first === undefined) throw new Error('Veil cover merge produced an empty component');
+    if (members.length === 1) {
+      merged.push(first);
+      continue;
+    }
+    const x0 = Math.max(0, Math.min(...members.map((member) => member.rect.x)));
+    const y0 = Math.max(0, Math.min(...members.map((member) => member.rect.y)));
+    const x1 = Math.min(gridW, Math.max(...members.map((member) => member.rect.x + member.rect.w)));
+    const y1 = Math.min(gridH, Math.max(...members.map((member) => member.rect.y + member.rect.h)));
+    if (x1 <= x0 || y1 <= y0) throw new Error('Merged veil cover is empty after clamping');
+    merged.push({ roomId: first.roomId, veilId: first.veilId, rect: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } });
+  }
+  return merged;
+}
+
+/** Strict area overlap: the half-open rects share at least one cell. */
+function rectsOverlap(a: LayoutRect, b: LayoutRect): boolean {
+  return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+}
 export function veilsFromSpawnClusters(
   layout: EncounterLayout,
   rosterCounts: readonly number[],
 ): BattleVeil[] {
   const issues = validateEncounterLayout(layout, rosterCounts);
   if (issues.length > 0) throw new EncounterLayoutError(issues);
-  const veils: BattleVeil[] = [];
+  const covers: VeilCover[] = [];
   for (const room of layout.rooms) {
     const cells = cellsOfRect(room.mobsRect).map(parseCell);
     let cursor = 0;
@@ -513,20 +604,27 @@ export function veilsFromSpawnClusters(
       const coverY0 = Math.max(0, minY - 1);
       const coverX1 = Math.min(layout.gridW, maxX + 1 + 1);
       const coverY1 = Math.min(layout.gridH, maxY + 1 + 1);
-      const subRect = { x: coverX0, y: coverY0, w: coverX1 - coverX0, h: coverY1 - coverY0 };
-      veils.push({
-        id: emittedForRoom === 0 ? room.id : newId(),
-        kind: 'fog',
-        x: (subRect.x + subRect.w / 2) / layout.gridW,
-        y: (subRect.y + subRect.h / 2) / layout.gridH,
-        widthCells: subRect.w,
-        heightCells: subRect.h,
+      covers.push({
         roomId: room.id,
+        veilId: emittedForRoom === 0 ? room.id : newId(),
+        rect: { x: coverX0, y: coverY0, w: coverX1 - coverX0, h: coverY1 - coverY0 },
       });
       emittedForRoom += 1;
     }
   }
-  return veils;
+  // Overlap merge: same-room covers sharing ground collapse to their union
+  // bounding box (first-emitted identity — the room id — survives, so the
+  // rail's room-id resolution is untouched). The union only grows the span,
+  // so VEIL_MIN_CELLS still holds for every merged veil.
+  return mergeVeilCovers(covers, layout.gridW, layout.gridH).map((cover) => ({
+    id: cover.veilId,
+    kind: 'fog',
+    x: (cover.rect.x + cover.rect.w / 2) / layout.gridW,
+    y: (cover.rect.y + cover.rect.h / 2) / layout.gridH,
+    widthCells: cover.rect.w,
+    heightCells: cover.rect.h,
+    roomId: cover.roomId,
+  }));
 }
 
 export function spawnRoom(layout: EncounterLayout): LayoutRoom {
