@@ -11,7 +11,12 @@ import {
 } from '@/db/mobPortraitCache';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
-import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
+import {
+  assembleImagePrompt,
+  buildImagePrompt,
+  MOB_PORTRAIT_TEXT_NEGATIVE,
+  portraitGroundingForChunk,
+} from '@/llm/imagePromptDraft';
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
 import { intakeImage } from '@/lib/imageIntake';
@@ -29,7 +34,7 @@ import { ensureCanonicalMobPortrait } from '@/features/campaign/mob-portrait-cac
  * `buildImagePrompt` contract, attach-as-cover, skip-if-imaged, loud
  * per-mob toasts (EntityBatchFailure {name, message} style) — but keyed by
  * **artifactId**: the queue's wiki-link name resolution does not fit mob
- * artifacts, and prompt grounding is the creature chunk's stat-block text
+ * artifacts, and prompt grounding is the creature chunk's stat-exempt portrait grounding (`portraitGroundingForChunk`)
  * (a fresh mob artifact has empty appearance/body — the chunk is the only
  * source; the artifact's own `appearance` shortcut still wins when the user
  * filled it). Never rides the persona run pipeline (the Illustrator's pick
@@ -104,6 +109,10 @@ async function processJob(
   }
   const summary = artifact.summary;
   let body: string;
+  // Chunk-grounded jobs (rulebook citations) carry the text-render
+  // negative; the creation-dialog extra grounds on user content and stays
+  // out of that scope.
+  let chunkGrounded: boolean;
   if (job.chunkId !== undefined) {
     const chunk = (await getChunksByIds([job.chunkId]))[0];
     if (chunk === undefined) {
@@ -133,17 +142,24 @@ async function processJob(
       });
       return outcome === 'cloned' ? 'done' : 'skipped';
     }
-    // Grounding: the creature chunk's stat-block text — the only
-    // description a fresh mob artifact has.
-    body = chunk.text;
+    // Grounding: the creature chunk's STAT-EXEMPT portrait grounding
+    // (portraitGroundingForChunk — size/type identity + traits/actions
+    // prose, never raw stat numbers) — the only description a fresh mob
+    // artifact has. The text-render negative rides along (belt and braces:
+    // models must not letter stat text into the portrait).
+    body = portraitGroundingForChunk(chunk);
+    chunkGrounded = true;
   } else {
     // Creation-dialog portrait extra: the artifact's own content grounds
     // the prompt (the appearance shortcut still wins inside the shared
     // contract). Empty summary AND body throw in buildImagePrompt —
     // a blank image of nothing is a placeholder, never a fallback.
     body = artifact.body;
+    chunkGrounded = false;
   }
-  const prompt = await draftPrompt(artifact, summary, body, job.campaignId);
+  const prompt = await draftPrompt(artifact, summary, body, job.campaignId, {
+    negative: chunkGrounded ? MOB_PORTRAIT_TEXT_NEGATIVE : undefined,
+  });
   const finalPrompt = assembleImagePrompt(prompt);
   // n=1 (owner-ratified): one portrait per creature kind — candidate-count
   // caps (imageGen's n-retry, cappedToOne) cannot trigger on this path.
@@ -179,14 +195,17 @@ async function processJob(
 /** Prompt-draft for one mob artifact — the shared Illustrator prompt contract
  * (buildImagePrompt: appearance shortcut, body/summary/name grounding) with
  * the queue's wiring: no run row, the campaign's rule system for the style
- * hint, and the grounding text as the description (the creature chunk's
- * stat-block text, or — for the creation-dialog portrait extra — the
- * artifact's own content). Deterministic: no chat call, no repair retry. */
+ * hint, and the grounding text as the description (the chunk's stat-exempt
+ * portrait grounding, or — for the creation-dialog portrait extra — the
+ * artifact's own content, which stays OUT of the text-render-negative scope:
+ * user content, not chunk context). Deterministic: no chat call, no repair
+ * retry. */
 async function draftPrompt(
   artifact: AnyArtifact,
   summary: string,
   body: string,
   campaignId: Id,
+  opts?: { negative?: string | undefined },
 ): Promise<ImagePromptDraft> {
   let systemLabel = 'D&D 5e';
   const campaign = await getCampaign(campaignId);
@@ -201,7 +220,7 @@ async function draftPrompt(
       body,
       data: artifact.data,
     },
-    { systemLabel },
+    { systemLabel, negative: opts?.negative },
   );
 }
 

@@ -110,6 +110,7 @@ async function seedCreatureChunk(
   creatureName: string,
   text: string,
   headingPath?: string[],
+  statBlock?: ReturnType<typeof testStatBlock>,
 ): Promise<string> {
   const book = await createRulebook({ title: 'Bestiary', system: 'dnd5e', filename: 'bestiary.pdf' });
   await putChunks([
@@ -121,7 +122,7 @@ async function seedCreatureChunk(
       chunkType: 'statblock',
       headingPath: headingPath ?? [creatureName],
       text,
-      statBlock: testStatBlock(),
+      statBlock: statBlock ?? testStatBlock(),
       contentHash: await sha256Hex(text),
     }),
   ]);
@@ -272,7 +273,17 @@ describe('canonical-only invariant', () => {
     await drainMobQueue();
 
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
-    expect(generateImagesMock.mock.calls[0]?.[0]).toContain(GIANT_RAT_TEXT);
+    // Stat-exempt canonical grounding: size/type identity, never the raw
+    // stat-block text (models render stat digits into portraits), plus the
+    // text-render negative.
+    const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
+    expect(finalPrompt).not.toContain(GIANT_RAT_TEXT);
+    expect(finalPrompt).not.toContain('HP 59');
+    expect(finalPrompt).not.toContain('AC 11');
+    expect(finalPrompt).not.toContain('darkvision 60 ft.');
+    expect(finalPrompt).toContain('Large');
+    expect(finalPrompt).toContain('beast');
+    expect(finalPrompt).toContain('Avoid: text, letters, numbers');
     expect(chatMock).not.toHaveBeenCalled();
     const entry = await getMobPortraitCacheEntry(chunkId);
     expect(entry).toBeDefined();
@@ -300,6 +311,39 @@ describe('canonical-only invariant', () => {
     const cached = await getImage(entry?.imageId ?? '');
     expect(coverB?.campaignId).toBe(campaignB);
     expect([...(coverB?.bytes ?? [])]).toEqual([...(cached?.bytes ?? [])]);
+  });
+
+  it('canonical grounding carries prose but no stat digits from the fixture chunk', async () => {
+    const proseBlock = statBlockSchema.parse({
+      ...testStatBlock(),
+      traits: [{ name: 'Keen Smell', text: 'a wet snout forever twitching at rot' }],
+      actions: [{ name: 'Bite', text: 'yellowed fangs slick with sewer damp' }],
+    });
+    const chunkId = await seedCreatureChunk(
+      'Giant Rat',
+      GIANT_RAT_TEXT,
+      undefined,
+      proseBlock,
+    );
+    const ensured = await ensureCanonicalMobPortrait({ chunkId, campaignId: 'no-campaign' });
+    expect(ensured.generated).toBe(true);
+    expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).not.toHaveBeenCalled();
+    const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
+    // Prose present: identity + named-text sections.
+    expect(finalPrompt).toContain('Giant Rat');
+    expect(finalPrompt).toContain('Large');
+    expect(finalPrompt).toContain('beast');
+    expect(finalPrompt).toContain('Keen Smell');
+    expect(finalPrompt).toContain('a wet snout forever twitching at rot');
+    expect(finalPrompt).toContain('yellowed fangs slick with sewer damp');
+    // Numbers absent: every numeric field of the fixture stat block.
+    for (const marker of ['11', '59', '7d10 + 21', '40 ft.', '18', 'darkvision 60 ft.']) {
+      expect(finalPrompt, `leaked stat marker: ${marker}`).not.toContain(marker);
+    }
+    expect(finalPrompt).not.toContain(GIANT_RAT_TEXT);
+    // Belt and braces: the text-render negative rides the canonical draft.
+    expect(finalPrompt).toContain('Avoid: text, letters, numbers');
   });
 
   it('a case-insensitive canonical match reuses without generating', async () => {

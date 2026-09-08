@@ -20,7 +20,7 @@ import { clearDatabase } from '../db/helpers';
 /**
  * Mob portrait queue (owner-ratified arc): one click generates n=1 portrait
  * per cover-less rulebook-cited creature kind, keyed by artifactId, grounded
- * in the chunk's stat-block text — entity-image-queue mechanics, mob flavor.
+ * stat-exempt in the chunk's parsed prose (portraitGroundingForChunk) — entity-image-queue mechanics, mob flavor.
  * The prompt draft is deterministic (buildImagePrompt): the openrouter chat
  * mock must stay silent through every queue path.
  */
@@ -144,7 +144,7 @@ beforeEach(async () => {
 });
 
 describe('mob portrait queue', () => {
-  it('generates n=1 per queued mob, grounded in the chunk text, attached as cover', async () => {
+  it('generates n=1 per queued mob, grounded stat-exempt, attached as cover', async () => {
     const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
     const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
     useMobPortraitQueue.getState().enqueue([
@@ -162,19 +162,55 @@ describe('mob portrait queue', () => {
     // Headline pin (owner amendment): NO prompt-draft chat call — the prompt
     // is built deterministically from the artifact's own data.
     expect(chatMock).not.toHaveBeenCalled();
-    // Chunk grounding: the deterministic prompt carries the stat-block text —
-    // the only description a fresh mob artifact has.
-    expect(generateImagesMock.mock.calls[0]?.[0]).toContain(GOBLIN_TEXT);
+    // Stat-exempt grounding: the deterministic prompt carries size/type
+    // identity — never the raw stat-block text (models render stat digits
+    // into portraits) — plus the text-render negative.
+    const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
+    expect(finalPrompt).not.toContain(GOBLIN_TEXT);
+    expect(finalPrompt).not.toContain('HP 21');
+    expect(finalPrompt).not.toContain('AC 17');
+    expect(finalPrompt).toContain('Large');
+    expect(finalPrompt).toContain('giant');
+    expect(finalPrompt).toContain('Avoid: text, letters, numbers');
     // Provenance lands on the image row; the queue and dock drain.
     const mob = await getAnyArtifact(artifactId);
     const stored = await getImage(mob?.coverImageId ?? '');
     expect(stored?.source).toBe('generated');
-    expect(stored?.prompt).toContain(GOBLIN_TEXT);
+    expect(stored?.prompt).not.toContain(GOBLIN_TEXT);
+    expect(stored?.prompt).toContain('Avoid: text, letters, numbers');
     expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
     expect(useMobPortraitQueue.getState().active).toEqual([]);
     expect(
       useProgressStore.getState().jobs.find((job) => job.id === `encounter-mob-portraits-${encounterId}`),
     ).toBeUndefined();
+  });
+
+  it('grounds a flavored citation stat-exempt with the text-render negative', async () => {
+    const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
+    const artifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'sickly goblin boss');
+    useMobPortraitQueue.getState().enqueue([
+      // Non-canonical citing name: the local flavored branch (never the cache).
+      { campaignId, encounterId, artifactId, name: 'sickly goblin boss', chunkId },
+    ]);
+
+    await waitFor(async () => {
+      const mob = await getAnyArtifact(artifactId);
+      expect(mob?.coverImageId).not.toBeNull();
+    });
+
+    expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    expect(chatMock).not.toHaveBeenCalled();
+    const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
+    // The roster flavor names the portrait; the chunk contributes identity
+    // prose only — no stat digits from the fixture chunk.
+    expect(finalPrompt).toContain('sickly goblin boss');
+    expect(finalPrompt).toContain('Large');
+    expect(finalPrompt).toContain('giant');
+    expect(finalPrompt).not.toContain(GOBLIN_TEXT);
+    expect(finalPrompt).not.toContain('59');
+    expect(finalPrompt).not.toContain('7d10');
+    expect(finalPrompt).not.toContain('darkvision 60 ft.');
+    expect(finalPrompt).toContain('Avoid: text, letters, numbers');
   });
 
   it('skips imaged mobs (no re-generation) and drains', async () => {

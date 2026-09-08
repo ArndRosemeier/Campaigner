@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
-import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
+import { statBlockSchema } from '@/domain';
+import {
+  assembleImagePrompt,
+  buildImagePrompt,
+  MOB_PORTRAIT_TEXT_NEGATIVE,
+  portraitGroundingForChunk,
+} from '@/llm/imagePromptDraft';
 
 /**
  * The deterministic Illustrator prompt contract (owner-directed amendment:
@@ -107,5 +113,134 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
     // The deterministic drafts carry no style/negative guidance — nothing is
     // folded in.
     expect(assembleImagePrompt({ prompt: 'P', negative: '', styleNotes: '' })).toBe('P');
+  });
+});
+
+describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
+  // Every numeric/stat field carries a distinctive marker; the prose carries
+  // no digits, so any leaked digit string is a field-exclusion failure.
+  const STAT_FIXTURE = statBlockSchema.parse({
+    system: 'dnd5e',
+    level: '13',
+    size: 'Huge',
+    creatureType: 'dragon',
+    ac: 19,
+    acNote: 'natural armor',
+    hp: 256,
+    hpFormula: '19d12 + 133',
+    speed: '40 ft., fly 80 ft.',
+    abilities: { str: 27, dex: 10, con: 25, int: 16, wis: 13, cha: 21 },
+    saves: 'Dex +5, Con +12',
+    skills: 'Perception +16, Stealth +5',
+    senses: 'blindsight 60 ft., darkvision 120 ft.',
+    languages: 'Common, Draconic',
+    traits: [
+      { name: 'Legendary Resistance', text: 'shrugs off mortal frailty with ancient poise' },
+    ],
+    actions: [{ name: 'Bite', text: 'a cavernous maw lined with smoke' }],
+    reactions: [{ name: 'Tail Sweep', text: 'a lashing tail that scatters embers' }],
+    legendary: [{ name: 'Wing Gust', text: 'a storm of ash unfolds from vast wings' }],
+    extras: { 'Spell Slots': 'three per day' },
+  });
+  const RAW_TEXT = 'Ancient Dragon, Huge dragon. HP 256, AC 19, saves Dex +5.';
+
+  it('composes size + creatureType identity plus named-text prose', () => {
+    const grounding = portraitGroundingForChunk({ text: RAW_TEXT, statBlock: STAT_FIXTURE });
+    expect(grounding).toContain('Huge');
+    expect(grounding).toContain('dragon');
+    expect(grounding).toContain('Legendary Resistance');
+    expect(grounding).toContain('shrugs off mortal frailty with ancient poise');
+    expect(grounding).toContain('Bite');
+    expect(grounding).toContain('a cavernous maw lined with smoke');
+    expect(grounding).toContain('Tail Sweep');
+    expect(grounding).toContain('a lashing tail that scatters embers');
+    expect(grounding).toContain('Wing Gust');
+    expect(grounding).toContain('a storm of ash unfolds from vast wings');
+  });
+
+  it('excludes EVERY numeric/stat field (identity + prose in, numbers out)', () => {
+    const grounding = portraitGroundingForChunk({ text: RAW_TEXT, statBlock: STAT_FIXTURE });
+    // One marker per excluded field: level, ac, acNote, hp, hpFormula,
+    // speed, abilities (str), saves, skills, senses, languages, extras,
+    // system. Exclusion is by FIELD, not digit-sniffing.
+    for (const marker of [
+      '13', // level (borderline progression number — deliberately out)
+      '19', // ac
+      'natural armor', // acNote
+      '256', // hp
+      '19d12 + 133', // hpFormula
+      'fly 80 ft.', // speed
+      '27', // abilities.str
+      'Dex +5', // saves
+      'Perception +16', // skills
+      'darkvision 120 ft.', // senses
+      'Draconic', // languages (digit-free value: excluded by field)
+      'Spell Slots', // extras
+      'dnd5e', // system
+    ]) {
+      expect(grounding, `leaked stat marker: ${marker}`).not.toContain(marker);
+    }
+    // The raw chunk text (stat digits included) never feeds the grounding.
+    expect(grounding).not.toContain(RAW_TEXT);
+  });
+
+  it('falls back to chunk.text verbatim when statBlock is null (loud residual risk)', () => {
+    // Unparsed chunks have no stat-free material: the raw text — today's
+    // behavior, stat digits included — is returned BY EXPLICIT DESIGN.
+    expect(portraitGroundingForChunk({ text: RAW_TEXT, statBlock: null })).toBe(RAW_TEXT);
+  });
+
+  it('caps the composed grounding deterministically at 800 chars', () => {
+    const long = statBlockSchema.parse({
+      ...STAT_FIXTURE,
+      traits: [{ name: 'Verbose', text: 'y'.repeat(2000) }],
+    });
+    const first = portraitGroundingForChunk({ text: RAW_TEXT, statBlock: long });
+    const second = portraitGroundingForChunk({ text: RAW_TEXT, statBlock: long });
+    expect(first).toBe(second);
+    expect(first.length).toBeLessThanOrEqual(800);
+  });
+
+  it('carries the mob text-render negative into the draft and the Avoid line', () => {
+    const draft = buildImagePrompt(
+      {
+        name: 'Ancient Dragon',
+        kind: 'npc',
+        summary: '',
+        body: portraitGroundingForChunk({ text: RAW_TEXT, statBlock: STAT_FIXTURE }),
+        data: null,
+      },
+      { systemLabel: 'D&D 5e', negative: MOB_PORTRAIT_TEXT_NEGATIVE },
+    );
+    expect(draft.negative).toBe(
+      'text, letters, numbers, words, captions, stat block, character sheet, diagram, label',
+    );
+    const final = assembleImagePrompt(draft);
+    expect(final).toContain('Avoid: text, letters, numbers');
+    expect(final).toContain('shrugs off mortal frailty');
+    expect(final).not.toContain('256');
+  });
+
+  it('keeps the appearance shortcut winning while carrying the negative', () => {
+    const draft = buildImagePrompt(
+      {
+        name: 'Grix',
+        kind: 'npc',
+        summary: '',
+        body: 'unused',
+        data: { appearance: 'Small, soot-stained, goggles.' },
+      },
+      { systemLabel: 'D&D 5e', negative: MOB_PORTRAIT_TEXT_NEGATIVE },
+    );
+    expect(draft.prompt).toBe('D&D 5e=>Small, soot-stained, goggles.');
+    expect(draft.negative).toBe(MOB_PORTRAIT_TEXT_NEGATIVE);
+  });
+
+  it('defaults the negative to empty so non-mob callers are unaffected', () => {
+    const draft = buildImagePrompt(
+      { name: 'Bare', kind: 'note', summary: 's', body: '', data: null },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(draft.negative).toBe('');
   });
 });

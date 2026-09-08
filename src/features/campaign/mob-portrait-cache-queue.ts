@@ -10,7 +10,13 @@ import {
 } from '@/db/mobPortraitCache';
 import { getSettings } from '@/db/settingsRepo';
 import { generateImages } from '@/llm/imageGen';
-import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
+import {
+  assembleImagePrompt,
+  buildImagePrompt,
+  MOB_PORTRAIT_TEXT_NEGATIVE,
+  portraitGroundingForChunk,
+  type PortraitGroundingChunk,
+} from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 
 /**
@@ -34,8 +40,9 @@ import { intakeImage } from '@/lib/imageIntake';
  * pending map by design — a reload simply re-generates on next request when
  * the slot is still empty).
  *
- * CANONICAL-ONLY (binding): the prompt grounds on the chunk's text plus the
- * chunk's canonical creature name — never roster/artifact flavor. The ONLY
+ * CANONICAL-ONLY (binding): the prompt grounds on the chunk's stat-exempt
+ * portrait grounding (`portraitGroundingForChunk`) plus the chunk's
+ * canonical creature name — never roster/artifact flavor. The ONLY
  * caller is the mob-portrait queue's canonical branch; flavored citations
  * never reach this module.
  */
@@ -127,7 +134,7 @@ async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<Ens
   // may have published while the prompt inputs were read.
   const reread = await getMobPortraitCacheEntry(options.chunkId);
   if (reread !== undefined) return { imageId: reread.imageId, generated: false };
-  const finalPrompt = assembleImagePrompt(await draftCanonicalPrompt(canonical, chunk.text, options.campaignId));
+  const finalPrompt = assembleImagePrompt(await draftCanonicalPrompt(canonical, chunk, options.campaignId));
   // n=1 (owner-ratified): one portrait per creature kind.
   const generated = await generateImages(finalPrompt, 1, {
     model: settings.imageModel,
@@ -154,16 +161,30 @@ async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<Ens
 }
 
 /** Canonical prompt draft — the shared Illustrator contract grounded on the
- * chunk's stat-block text under the chunk's canonical creature name.
+ * chunk's STAT-EXEMPT portrait grounding (`portraitGroundingForChunk`: size +
+ * type identity plus traits/actions prose, never raw stat numbers) under the
+ * chunk's canonical creature name, with the text-render negative. Only an
+ * unparsed chunk (null statBlock) falls back to raw `chunk.text` — the loud
+ * residual render risk documented on the helper.
  * Deterministic: no chat call, no repair retry (owner amendment). */
-async function draftCanonicalPrompt(canonicalName: string, chunkText: string, campaignId: Id) {
+async function draftCanonicalPrompt(
+  canonicalName: string,
+  chunk: PortraitGroundingChunk,
+  campaignId: Id,
+) {
   let systemLabel = 'D&D 5e';
   const campaign = await getCampaign(campaignId);
   if (campaign !== undefined) {
     systemLabel = GAME_SYSTEM_LABELS[campaign.system];
   }
   return buildImagePrompt(
-    { name: canonicalName, kind: 'npc', summary: '', body: chunkText, data: null },
-    { systemLabel },
+    {
+      name: canonicalName,
+      kind: 'npc',
+      summary: '',
+      body: portraitGroundingForChunk(chunk),
+      data: null,
+    },
+    { systemLabel, negative: MOB_PORTRAIT_TEXT_NEGATIVE },
   );
 }

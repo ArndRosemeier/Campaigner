@@ -99,10 +99,22 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   attaches it as cover — the entity-image-queue mechanics (pump / intake /
   deterministic prompt draft / attach-cover) keyed by **artifactId** (the
   queue's wiki-link-name resolution does not fit mob artifacts;
-  `src/features/campaign/mob-portrait-queue.ts`). **Prompt grounding: the
-  chunk's `text`** feeds `buildImagePrompt` — fresh mob artifacts have
-  empty appearance/body, so the creature's stat-block text is the only
-  source. **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
+  `src/features/campaign/mob-portrait-queue.ts`). **Prompt grounding (stat-exempt,
+  2026-09-08, owner-ordered):** `portraitGroundingForChunk`
+  (`src/llm/imagePromptDraft.ts`) composes the grounding ONLY from stat-free
+  material — size + creatureType identity plus the traits / actions /
+  reactions / legendary named-text prose (names + texts), capped at 800 chars.
+  ALL numeric fields stay out by FIELD (level, ac, acNote, hp, hpFormula,
+  speed, abilities, saves, skills, senses, languages, extras, system — `level`
+  is borderline and deliberately excluded): smart image models RENDER chunk
+  stat text into portraits. When `statBlock` is null (unparsed chunks) the
+  helper falls back to raw `chunk.text` verbatim — the loud residual render
+  risk, documented on the helper, never silent. Belt and braces: both mob
+  drafts set the text-render negative
+  (`MOB_PORTRAIT_TEXT_NEGATIVE` → `Avoid: text, letters, …`), while the
+  artifact `appearance` shortcut keeps winning when the user filled it and
+  the creation-dialog path (artifact's own body — user content, not chunk
+  context) stays out of scope. **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
   deterministic — no LLM call ("I dont want that extra LLM call. Just use
   the appearance/body."). Failures report loud per mob (`{name, message}`
   style, `entity-batch.ts` pattern); skip-if-imaged guard (existing queue
@@ -136,8 +148,9 @@ shared-blob image row.
   the flavor (first-citer-wins artifact naming). A flavored generation
   entering a chunk-keyed cache would make every giant rat everywhere
   slimey — so the cache holds CANONICAL portraits only: prompt grounded on
-  the chunk's text plus the chunk's canonical creature name (last
-  `headingPath` element), never roster/artifact flavor. The cache is
+  the chunk's stat-exempt portrait grounding (`portraitGroundingForChunk` —
+  identity + prose, never raw stat numbers) plus the chunk's canonical
+  creature name (last `headingPath` element), never roster/artifact flavor. The cache is
   written ONLY by canonical generations (the citing entry used the
   canonical name, trimmed case-insensitive), so the single normal
   generation serves both cover and cache. A flavored citation gets its
