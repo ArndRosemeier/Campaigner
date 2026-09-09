@@ -781,3 +781,22 @@ describe('chatApply onto the whole-document editor (raw-view units)', () => {
     host.remove();
   });
 });
+
+describe('canvas chat send key', () => {
+  it('Return sends the instruction; Shift+Return keeps a newline instead', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    mockChatReply('Noted.');
+    const input = screen.getByTestId('canvas-chat-input');
+    await user.type(input, 'hello');
+    await user.keyboard('{Shift>}{Enter}{/Shift}');
+    expect(chatMock).not.toHaveBeenCalled();
+    expect(input.value).toContain('\n');
+    await user.keyboard('{Enter}');
+    await flushAsyncUpdates();
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect(input.value).toBe('');
+  });
+});

@@ -281,6 +281,17 @@ export function ChatSidebar({
             onChange={(event) => {
               setInput(event.target.value);
             }}
+            onKeyDown={(event) => {
+              // Return sends (Shift+Return keeps the newline): same guards
+              // as the send button — busy, in-flight, or blank never sends.
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault();
+                if (sendDisabled) return;
+                const text = input.trim();
+                if (text === '') return;
+                void send(text);
+              }
+            }}
           />
           {inFlight ? (
             <Button
