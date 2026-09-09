@@ -13,6 +13,7 @@ import { CanvasPage } from '@/features/modules/canvas/CanvasPage';
 import { ModuleReaderPage } from '@/features/modules/ModuleReaderPage';
 import { ModulesListPage } from '@/features/modules/ModulesListPage';
 import { RulesPage } from '@/features/rules/RulesPage';
+import { LabPage } from '@/features/lab/LabPage';
 import { SettingsPage } from '@/features/settings/SettingsPage';
 import { GuidePage } from '@/features/guide/GuidePage';
 
@@ -50,6 +51,7 @@ export function createAppRouter(): AppRouter {
           { path: ROUTES.module, element: <ModuleReaderPage /> },
           { path: ROUTES.rules, element: <RulesPage /> },
           { path: ROUTES.settings, element: <SettingsPage /> },
+          { path: ROUTES.lab, element: <LabPage /> },
           { path: ROUTES.guide, element: <GuidePage /> },
           { path: ROUTES.guideChapter, element: <GuidePage /> },
           { path: '*', element: <NotFoundPage /> },

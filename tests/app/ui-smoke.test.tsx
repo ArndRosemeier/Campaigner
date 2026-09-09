@@ -370,6 +370,15 @@ describe('route smoke sweep', () => {
     expect(document.documentElement.style.getPropertyValue('--ui-scale')).toBe('2');
   });
 
+  it('experiment lab route mounts outside the creation path', async () => {
+    renderAppAt(ROUTES.lab);
+
+    expect(await screen.findByTestId('lab-page', {}, { timeout: 5_000 })).toBeInTheDocument();
+    expect(screen.getByTestId('lab-experiment-labeled-dungeon-maps')).toBeInTheDocument();
+    // The cost note lives on the run button itself.
+    expect(screen.getByTestId('lab-run')).toHaveTextContent('generates 4 images');
+  });
+
   it('unknown routes render the not-found page', () => {
     renderAppAt('/definitely-not-a-route');
 

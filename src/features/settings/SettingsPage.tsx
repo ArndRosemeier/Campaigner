@@ -6,6 +6,7 @@ import { listPersonas } from '@/db/personaRepo';
 import { HelpButton } from '@/help/HelpButton';
 import { BackupSection } from '@/features/settings/backup-section';
 import { BestiaryFetchSection } from '@/features/settings/bestiary-fetch-section';
+import { ExperimentsSection } from '@/features/settings/experiments-section';
 import { AppearanceSection } from '@/features/settings/appearance-section';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { PersonaSection } from '@/features/settings/persona-section';
@@ -48,6 +49,7 @@ export function SettingsPage(): JSX.Element {
       </Card>
       <AppearanceSection />
       <PersonaSection personas={personas ?? []} />
+      <ExperimentsSection />
       <BackupSection />
       <DangerZone />
     </div>

@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SettingsPage } from '@/features/settings/SettingsPage';
@@ -36,10 +37,19 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** The page holds a router Link (Settings → Experiments → /lab), so it mounts inside a router. */
+function renderSettingsPage(): ReturnType<typeof render> {
+  return render(
+    <MemoryRouter initialEntries={['/settings']}>
+      <SettingsPage />
+    </MemoryRouter>,
+  );
+}
+
 describe('SettingsPage', () => {
   it('saves the key, tests it against /models and toggles embeddings', async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     const keyInput = await screen.findByLabelText('API key');
     await user.type(keyInput, 'sk-or-test');
@@ -72,7 +82,7 @@ describe('SettingsPage', () => {
   it('updates default reasoning effort when model supports reasoning', async () => {
     await updateSettings({ defaultChatModel: 'openai/o3-mini' });
     const user = userEvent.setup();
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     const select = await screen.findByTestId('chat-reasoning-effort');
     expect(select).toBeEnabled();
@@ -90,7 +100,7 @@ describe('SettingsPage', () => {
 
   it('disables reasoning effort when model does not support reasoning', async () => {
     await updateSettings({ defaultChatModel: 'openai/gpt-4o' });
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     const select = await screen.findByTestId('chat-reasoning-effort');
     expect(select).toBeDisabled();
@@ -99,7 +109,7 @@ describe('SettingsPage', () => {
 
   it('saves the parallel-requests level', async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />);
+    renderSettingsPage();
     // Drain the default-row live query before the plain read (08-TESTING §
     // console guard: raw DB reads re-fire the live query outside act).
     await flushAsyncUpdates();
@@ -118,7 +128,7 @@ describe('SettingsPage', () => {
 
   it('deletes all data only when DELETE is typed', async () => {
     const user = userEvent.setup();
-    render(<SettingsPage />);
+    renderSettingsPage();
 
     await user.click(await screen.findByTestId('delete-all-data'));
 
@@ -148,7 +158,7 @@ describe('SettingsPage', () => {
       mimeType: 'application/pdf',
     });
 
-    render(<SettingsPage />);
+    renderSettingsPage();
     await flushAsyncUpdates();
 
     // Shown before the save button, never a post-hoc toast (owner-ratified).
@@ -192,7 +202,7 @@ describe('SettingsPage', () => {
     );
     expect(manifestText).not.toContain('sk-must-not-travel');
 
-    const rendered = render(<SettingsPage />);
+    const rendered = renderSettingsPage();
 
     // SAVE: the zip reaches the fallback (download) with the right name.
     await user.click(await screen.findByTestId('backup-save'));
@@ -215,7 +225,7 @@ describe('SettingsPage', () => {
     rendered.unmount();
     await clearDatabase();
     expect(await db.campaigns.get(campaign.id)).toBeUndefined();
-    render(<SettingsPage />);
+    renderSettingsPage();
     vi
       .spyOn(filePicker, 'pickBackupFile')
       .mockResolvedValue(new File([bytes as BlobPart], 'backup.zip', { type: 'application/zip' }));
@@ -277,7 +287,7 @@ describe('SettingsPage', () => {
         return buildPromise;
       });
 
-    render(<SettingsPage />);
+    renderSettingsPage();
     await user.click(await screen.findByTestId('backup-save'));
 
     // The picker is open while the build has not even started.
@@ -312,4 +322,11 @@ describe('SettingsPage', () => {
     expect(savedManifest.format).toBe('campaigner-backup');
     expect(buildSpy).toHaveBeenCalledTimes(1);
   }, 30000);
+
+  it('links to the experiment lab from the Experiments section', async () => {
+    renderSettingsPage();
+
+    expect(await screen.findByTestId('experiments-section')).toBeInTheDocument();
+    expect(screen.getByTestId('experiments-open-lab')).toHaveAttribute('href', '/lab');
+  });
 });

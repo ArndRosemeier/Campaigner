@@ -34,6 +34,8 @@ export const ROUTES = {
   rules: '/rules',
   /** Settings page. */
   settings: '/settings',
+  /** Experiment lab (discreet dev surface, linked from Settings only). */
+  lab: '/lab',
   /** First-module guide (opened in another tab from the wizard/help/empty states). */
   guide: '/guide',
   /** One guide chapter by id. */
