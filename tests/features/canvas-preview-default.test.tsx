@@ -283,6 +283,47 @@ describe('last-replacement highlight, both surfaces', () => {
     await flushAsyncUpdates();
   });
 
+  it('the preview wash is a block-level wrapper in the affected part article', async () => {
+    const user = userEvent.setup();
+    await renderCanvas();
+    mockChatReply(
+      'Making it rainier.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>',
+    );
+    await sendChat(user, 'make the rain heavier');
+    // The wash must paint: an inline <mark> around the rendered block
+    // content splits around it and leaves zero-area fragments (DOM present,
+    // nothing visible) — so the wrapper is block-level by contract.
+    const article = screen.getByTestId('canvas-preview-part-0');
+    const wash = await within(article).findByTestId('replacement-highlight');
+    expect(wash.tagName).toBe('DIV');
+    expect(wash).toHaveTextContent('Rain drowns every word.');
+    // The unaffected part carries no wash.
+    expect(
+      within(screen.getByTestId('canvas-preview-part-1')).queryByTestId('replacement-highlight'),
+    ).toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('a preview send then toggle to Edit carries the CM mark', async () => {
+    const user = userEvent.setup();
+    await renderCanvas();
+    mockChatReply(
+      'Making it rainier.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>',
+    );
+    await sendChat(user, 'make the rain heavier');
+    // The preview wash is up (the snapshot path set the highlight)…
+    const wash = await within(screen.getByTestId('canvas-preview')).findByTestId(
+      'replacement-highlight',
+    );
+    expect(wash).toHaveTextContent('Rain drowns every word.');
+    // …and returning to Edit remounts the same snapshot WITH the CM mark.
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+    await screen.findByTestId('canvas-editor');
+    const mark = await screen.findByTestId('canvas-last-replacement');
+    expect(mark).toHaveTextContent('Rain drowns every word.');
+    await flushAsyncUpdates();
+  });
+
   it('appears in the editor as a background mark and clears on hand edit', async () => {
     const user = userEvent.setup();
     await renderCanvas();
@@ -307,6 +348,31 @@ describe('last-replacement highlight, both surfaces', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('canvas-last-replacement')).not.toBeInTheDocument();
     });
+    await flushAsyncUpdates();
+  });
+
+  it('an editor failed-reply Report-to-LLM marks the retry replacement', async () => {
+    const user = userEvent.setup();
+    await renderCanvas();
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+    await screen.findByTestId('canvas-editor');
+    // A malformed reply fails the turn (failed card, nothing applied)…
+    mockChatReply('Trying.\n<edit><search>Rain hammers the stones.</search>');
+    const input = screen.getByTestId('canvas-chat-input');
+    await user.type(input, 'make it rain');
+    await user.click(screen.getByTestId('canvas-chat-send'));
+    await flushAsyncUpdates();
+    // …and the Report-to-LLM retry applies AND marks like every chat apply.
+    mockChatReply(
+      'Retrying.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>',
+    );
+    await user.click(screen.getByTestId('canvas-chat-report-error'));
+    await flushAsyncUpdates();
+    const panel = screen.getByTestId('canvas-chat');
+    const card = await within(panel).findByTestId('canvas-chat-outcome');
+    expect(card).toHaveAttribute('data-kind', 'applied');
+    const mark = await screen.findByTestId('canvas-last-replacement');
+    expect(mark).toHaveTextContent('Rain drowns every word.');
     await flushAsyncUpdates();
   });
 
@@ -338,13 +404,16 @@ describe('WikiMarkdown highlight contract', () => {
     absent.unmount();
   });
 
-  it('wraps exactly the highlighted slice in a mark', () => {
+  it('wraps exactly the highlighted slice in a block-level wash', () => {
     const from = VALUE.indexOf('Rain hammers the stones.');
     const rendered = render(
       <WikiMarkdown value={VALUE} artifacts={[]} highlight={{ from, to: from + 'Rain hammers the stones.'.length }} />,
     );
     const mark = rendered.container.querySelector('[data-testid="replacement-highlight"]');
     expect(mark).not.toBeNull();
+    // Block-level by contract (an inline wrapper around the rendered
+    // blocks paints no background — the invisible-highlight breakage).
+    expect(mark?.tagName).toBe('DIV');
     expect(mark?.textContent).toContain('Rain hammers the stones.');
     // The surrounding text still renders around the mark.
     expect(rendered.container.textContent).toContain('The party bargains with');

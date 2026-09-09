@@ -35,8 +35,8 @@ export interface WikiMarkdownProps {
   /**
    * Last-replacement highlight (canvas preview): offsets into `value`
    * (the part's text) marking the text the chat just replaced. Rendered as
-   * a `<mark>` around that slice; OMITTED (never an empty range) ⇒ the
-   * reader output is byte-identical to the unhighlighted render.
+   * a block-level wash around that slice; OMITTED (never an empty range)
+   * ⇒ the reader output is byte-identical to the unhighlighted render.
    */
   highlight?: { from: number; to: number } | undefined;
 }
@@ -69,10 +69,17 @@ export function WikiMarkdown({
   );
 
   // Last-replacement highlight (canvas preview only): the value is split at
-  // the part-relative offsets so the replaced slice renders inside a <mark>.
-  // The split is on the markdown SOURCE — a mid-token boundary may re-chunk
-  // its formatting, which is acceptable for a transient highlight. Without
-  // the prop the single-render path below runs byte-identical.
+  // the part-relative offsets so the replaced slice renders inside a
+  // highlight wash. The split is on the markdown SOURCE — a mid-token
+  // boundary may re-chunk its formatting, which is acceptable for a
+  // transient highlight. Without the prop the single-render path below runs
+  // byte-identical.
+  //
+  // The wrapper MUST be block-level (a div, never an inline <mark>): the
+  // sliced markdown renders block content (<p>, lists, …) and an inline
+  // wrapper around blocks paints no background (the inline box splits
+  // around the block, leaving zero-area fragments — the mark sat in the
+  // DOM while rendering invisibly).
   const from = highlight === undefined ? null : Math.max(0, Math.min(value.length, highlight.from));
   const to = highlight === undefined ? null : Math.max(0, Math.min(value.length, highlight.to));
   if (from !== null && to !== null && to > from) {
@@ -87,9 +94,9 @@ export function WikiMarkdown({
             {value.slice(0, from)}
           </Markdown>
         )}
-        <mark
+        <div
           data-testid="replacement-highlight"
-          className="rounded-sm bg-amber-300/40 dark:bg-amber-400/25"
+          className="rounded-sm bg-amber-300/40 px-1 py-0.5 dark:bg-amber-400/25"
         >
           <Markdown
             remarkPlugins={[remarkWikiLinks]}
@@ -98,7 +105,7 @@ export function WikiMarkdown({
           >
             {value.slice(from, to)}
           </Markdown>
-        </mark>
+        </div>
         {value.slice(to) !== '' && (
           <Markdown
             remarkPlugins={[remarkWikiLinks]}

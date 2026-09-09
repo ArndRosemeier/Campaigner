@@ -207,7 +207,9 @@ export function ChatSidebar({
           view,
         },
         message,
-      ));
+      ).then((result) => {
+        onEditorTurnApplied?.(result.doc, result.lastApplied);
+      }));
   }
 
   return (
