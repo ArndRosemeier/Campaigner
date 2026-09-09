@@ -691,6 +691,93 @@ own group.
 
 ---
 
+## Module canvas (v1 — document co-authoring for ONE part)
+
+ChatGPT-canvas-style co-authoring for one module part at
+`/c/:campaignId/m/:moduleId/canvas` (the route name the Board rename freed),
+entered from the reader header (**Canvas**, beside **Board**) and the modules
+list row. Screen text is docs/05 §Module canvas; implementation in
+`src/features/modules/canvas/`.
+
+- **The substrate is CodeMirror 6, text-first** (research-ratified): the
+  editor mounts `@uiw/react-codemirror` + `@codemirror/lang-markdown` (both
+  MIT) with GFM extensions and line wrapping. **The editor doc string IS the
+  markdown** — byte-exact fidelity for `[[wiki-links]]`, code spans, fences
+  and tables by construction; there is NO parse→serialize round-trip
+  anywhere. WYSIWYG canvases were rejected on license AND fidelity grounds
+  (decision ledger 48).
+- **ONE part at a time**: the header selector lists the premise (READ-ONLY
+  in v1 — no part-text write path exists for it; it renders through the
+  shared `WikiMarkdown`) and every planned part from the
+  `spine.partPlan × parts` JOIN — title/band from the plan, body/edited from
+  the part, a not-yet-generated part opens as an empty document and saves
+  create it (`patchModulePartText` upserts). Deep links:
+  `?part=<planIndex|premise>` written by `canvasPath`, the reader's
+  `#part-<n>` hash honored on load; resolution + fallback in
+  `canvas/canvasScope.ts` (one parse site).
+- **Wiki chips are marks, not React**: a CM6 ViewPlugin over the visible
+  ranges decorates each `[[token]]` with the `WikiMarkdown` palette resolved
+  against the READER pool (campaign + global) with the module's tier-0
+  context (unresolved dashed, ambiguous wavy-amber) and provides
+  `EditorView.atomicRanges`, so a token edits as one unit
+  (`canvas/wikiDecorations.ts`).
+- **Suggestions are decorations, never mutations** (TipTap suggestion-spec
+  pattern, `canvas/suggestions.ts`): a proposal is a CM6 StateField entry
+  `{id, from, to, originalText, proposedText, instruction, status,
+  streaming, wholePart}`. Ranges RE-MAP on user edits; typing INSIDE a
+  proposed range invalidates it LOUDLY (page toast), while edge insertions
+  re-map outside the span (marimo semantics — the pure rule is
+  `suggestionSurvives`). Span proposals render the original struck + the
+  proposed text as a green ghost + inline Accept/Reject widgets at the range
+  end (disabled while streaming). **Whole-part proposals are the same
+  machinery over the full document range, rendered NO-DIFF** (board
+  precedent, ledger 47): a block replace widget shows the proposed markdown
+  AS-IS, "Show previous" flips the widget to the original, and the header's
+  Apply/Discard drive the same accept/reject commands.
+- **Undo contract**: Accept = ONE dispatch (`{changes}` + the accept effect)
+  annotated `isolateHistory: 'full'` — exactly one undo step from the
+  accepted state back to the pre-accept doc; streaming chunk updates and
+  bookkeeping effects ride `Transaction.addToHistory.of(false)` so tokens
+  NEVER pollute undo. Mod-y / Mod-u accept/reject the proposal at the cursor
+  (the marimo keymaps). Block decorations are computed from the state fields
+  via a facet — CM6 forbids block widgets from view plugins.
+- **AI actions run the `canvasRefine` contract** (`src/llm/canvasRefine.ts`):
+  **Refine selection** grounds the model with the selection triple (full
+  part markdown, enclosing block, selected text) + instruction and returns
+  ONE span replacement; **Rewrite part** returns the COMPLETE part markdown
+  (no H1). Both prompt the `[[wiki-link]]` token semantics (canonical
+  spellings, never inflect inside the token, `[[Name|display]]` for surface
+  differences). The reply is ZOD-validated at the boundary and scanned for
+  escape debris — a failure throws loud, never partial-apply. Settings
+  model/gates are reused (`defaultChatModel`, strict structured outputs,
+  escalation chain, language directive; temperature 0.4 — surgical).
+  **Streaming**: the transport always streams; the strict-JSON reply is not
+  markdown, so an incremental extractor (`ReplacementStreamExtractor`)
+  peels the `replacement` string value out of the raw deltas and streams
+  THAT into the overlay — best-effort preview only (ambiguity yields
+  nothing); the settled, validated reply is the canonical proposal text.
+- **One generation per module**: a module whose forge is running
+  (row status) or that already holds a canvas refine (a registry claimed
+  synchronously at entry) refuses with `ModuleBusyError` — surfaced loudly,
+  never queued. Stop rides the caller's abort signal (a user stop is not an
+  error: the overlay simply drops). While a whole-part proposal is pending
+  or a refine is in flight, the other AI actions are disabled.
+- **Acceptance IS persistence**: the accept dispatch already replaced the
+  doc (one undo unit), so the page lands the resulting text through THE one
+  part-text save path (`saveModulePartText` → `edited: true`, promote scan)
+  and appends the session version ledger `{seq, markdown, origin 'user'|'ai',
+  label, createdAt}` (`canvas/canvasStore.ts` — zustand, SESSION-ONLY, dies
+  on reload; resets when the canvas's module changes). Manual **Save part**
+  appends an origin-'user' entry too. **Restore** re-proposes an older
+  version as a whole-part suggestion — it rides undo and the save path like
+  any proposal; there is no side-door write. A failed save toasts loudly and
+  leaves the editor text (Save part retries).
+- **Scope guard**: switching parts with a pending proposal OR unsaved edits
+  demands an explicit "Discard and switch" confirm — session staging dies on
+  reload AND on part switch; the saved row is never touched by either.
+
+---
+
 ## M4-D — Integration & retirement
 
 - **Deliverable seeding**: "Seed from module" on the Deliverable builder maps

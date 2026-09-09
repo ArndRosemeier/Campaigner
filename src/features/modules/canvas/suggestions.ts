@@ -235,11 +235,16 @@ class SuggestionGhostWidget extends WidgetType {
 function suggestionActions(suggestion: CanvasSuggestion, view: EditorView): HTMLElement {
   const actions = document.createElement('span');
   actions.className = 'cm-suggestion-actions ml-1 inline-flex items-center gap-1 align-middle';
+  // While the proposal is still streaming the decision controls are
+  // disabled — accepting a half-arrived replacement would be a partial
+  // apply (the sealed reply is the authoritative text).
+  const disabledWhileStreaming = suggestion.streaming;
   const accept = document.createElement('button');
   accept.type = 'button';
   accept.textContent = 'Accept';
+  accept.disabled = disabledWhileStreaming;
   accept.className =
-    'rounded border border-emerald-500/60 bg-emerald-500/10 px-1.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-500/20 dark:text-emerald-200';
+    'rounded border border-emerald-500/60 bg-emerald-500/10 px-1.5 py-0.5 text-xs font-medium text-emerald-800 hover:bg-emerald-500/20 disabled:opacity-50 dark:text-emerald-200';
   accept.dataset.testid = 'canvas-suggestion-accept';
   accept.addEventListener('mousedown', (event) => {
     event.preventDefault();
@@ -253,8 +258,9 @@ function suggestionActions(suggestion: CanvasSuggestion, view: EditorView): HTML
   const reject = document.createElement('button');
   reject.type = 'button';
   reject.textContent = 'Reject';
+  reject.disabled = disabledWhileStreaming;
   reject.className =
-    'rounded border border-destructive/50 bg-destructive/5 px-1.5 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/20';
+    'rounded border border-destructive/50 bg-destructive/5 px-1.5 py-0.5 text-xs font-medium text-destructive hover:bg-destructive/20 disabled:opacity-50';
   reject.dataset.testid = 'canvas-suggestion-reject';
   reject.addEventListener('mousedown', (event) => {
     event.preventDefault();

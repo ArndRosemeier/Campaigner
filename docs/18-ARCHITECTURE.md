@@ -168,6 +168,11 @@ column.
 | Stop every running generation | `features/progress/stopAllGenerations` + the dock's Stop all button (queues' `cancelAll`, `runEngine.cancelAllActive`, `cancelModuleGen`, `chainRunner.cancel` composed there — the ONE sweep; non-destructive, rows stay resumable) | a second stop path or per-surface ad-hoc cancel wiring |
 | Persisted UI state | zustand store + `lib/persisted.zodPersistStorage(schema)` | localStorage by hand |
 | Scale the UI app-wide | `app/theme/uiScale.useUiScaleSync` (mounted once in AppShell next to `useThemeSync`) + the uiScale store — `--ui-scale` var × root font-size (index.css); persisted via `zodPersistStorage` (the Persisted UI state seam) and kept through Delete-all-data in `db/maintenance.PRESERVED_KEYS` like the theme | CSS zoom (breaks the px-measured board/pointer/dice/PDF math); a settings-row field (device display preference — theme precedent, stays out of the data DB and backups) |
+| Open a document co-authoring surface for ONE module part | `app/routes.ts` `canvasPath` (deep link `?part=<planIndex\|premise>`; `#part-<n>` hashes honored on load) + `features/modules/canvas/` — `CanvasPage` (shell, part selector, guard), `canvasScope.ts` (the one scope parse site), `canvasEditor.tsx` (the React wrapper publishing `canvasView.activeCanvasView`), `wikiDecorations.ts`, `suggestions.ts`, `canvasStore.ts` | a second markdown editor substrate; hand-rolled `[[…]]` highlighting; a second scope parser |
+| Own the canvas editor viewport | CodeMirror 6 via `@uiw/react-codemirror` + `@codemirror/lang-markdown` (GFM) — THE editor doc string IS the markdown (byte-exact; no parse→serialize) | a WYSIWYG round-trip (lossy, license-hostile); a textarea; a second gesture path |
+| Run a canvas AI action (selection refine / whole-part rewrite) | `llm/canvasRefine.refineModuleText` — the selection triple or the full part + instruction, reply ZOD-validated at the boundary (`canvasRefineReplySchema`) + `encodingHygiene.debrisIssuesForFields` scan (loud reject, never partial-apply) + `ModuleBusyError` for ONE-generation-per-module (registry claimed synchronously at entry + the row's `generating` status) + abort signal (a user stop is not an error) | a private chat client; silent repair; queueing a busy module; a second module-busy mechanism |
+| Render + decide canvas proposals | `features/modules/canvas/suggestions.ts` — a CM6 StateField of suggestions rendered as DECORATIONS that never mutate the doc; span = struck original + ghost + inline Accept/Reject (disabled while streaming); whole-part = full-doc-range proposal rendered NO-DIFF (block replace widget, Show previous toggle); typing INSIDE a proposal invalidates it loudly (page toast), edge edits re-map (pure `suggestionSurvives`); Accept = ONE dispatch + `isolateHistory:'full'` (one undo unit); streaming effects ride `Transaction.addToHistory.of(false)`; Mod-y/Mod-u accept/reject at the cursor | writing proposals into the doc before acceptance; a diff view; a second undo convention; accepting a half-streamed replacement |
+| Append canvas version history | `features/modules/canvas/canvasStore.useCanvasLedgerStore` — per-part append-only `{seq, markdown, origin 'user'\|'ai', label, createdAt}`; every accepted AI action AND manual canvas save appends; **Restore = propose-through-the-same-accept path** (rides undo + the save path) | persisting the ledger; a second part-text write path; restoring by direct row write |
 
 ## 3. Cross-cutting conventions (pointers, not restatements)
 
@@ -316,6 +321,23 @@ column.
   (fit-to-measured-width), `ResizablePanel` px minSizes and px micro-labels
   are intentionally fixed — do not "fix" them to rem, and do not replace the
   mechanism with CSS zoom (board/pointer px math, Firefox breakage).
+- **The canvas editor doc IS the truth; decorations are view chrome.**
+  Wiki chips, proposal ghosts and the whole-part no-diff preview are CM6
+  decorations over the document — the module row only changes through
+  `partText.saveModulePartText` (manual Save, accepted proposal). A proposal
+  streaming in is a best-effort PREVIEW (an incremental extractor peels the
+  `replacement` value out of the raw JSON deltas); the settled, zod-validated
+  reply is the canonical proposal text — never render raw JSON deltas as
+  markdown. Block decorations must be computed from state fields via a facet
+  (CM6 forbids block widgets from view plugins), and the suggestion state
+  fields must be REGISTERED in the editor's extension list (the decoration
+  source reads them with a safe fallback — a missing field silently renders
+  nothing).
+- **The canvas ledger is session-only by design.** The per-part version
+  ledger and every pending proposal die on reload AND on part switch (the
+  loud guard exists for exactly that); the row always holds a complete,
+  un-proposed text. Do not invent persistence for the ledger, and do not
+  "fix" the scope guard — it is the documented price of session staging.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 
