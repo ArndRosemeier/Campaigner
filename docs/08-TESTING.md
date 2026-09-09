@@ -149,13 +149,13 @@ test) · ❌ gap.
 | Battle persistence: module lifecycle, v10→v11 clearing, v11→v12 layout defaults | `battleRepo.test`, `moduleRepo.test`, `migration.test` | ✅ |
 | Battle seeding: roster expansion, room placement/veils, entry-room PCs, map fallback | `battleSeed.test`, `entity-panel.test` | ✅ |
 | Encounter layout engine: packing ladder, structural validation, doors, placement, veils, schematic | `encounterMap.test` | ✅ |
-| Dungeon preset: fixed ×2 grid tiers, room-count independence, staging re-tiering, run/artifact/Settings round-trip, v14→v15 backfill, Preset select + Dungeon caption | `encounterMap.test`, `encounterCartographer.test`, `migration.test`, `persona-run-ui.test`, `images-ui.test` | ✅ |
+| Dungeon preset: fixed ×2 grid tiers, room-count independence, staging re-tiering, run/artifact/Settings round-trip, v14→v15 backfill, Preset select + Dungeon caption | `encounterMap.test`, `encounterCartographer.test`, `migration.test`, `settings-page.test`, `images-ui.test` | ✅ |
 | Encounter clients: input references, exact aspect (the verify machinery was removed — docs/11 D14) | `image-caps.test`, `imageAspect.test` | ✅ |
 | Encounter module queue: one-candidate auto, continue-on-failure, failed-only retry | `encounter-map-queue.test`, `entity-panel.test` | ✅ |
 | Play retirement: `/play` 404, no session kind, one-time v11 notice | `ui-smoke.test`, `m2kinds.test`, `migration-notice.test` | ✅ |
 | Deliverables: outline editing, owned module seeding, explicit-only globals | `deliverables-page.test`, `seed-from-module.test`, `modulePdf.test` | ✅ |
 | Rules: import, book menu, delete, search browser, pin, embedding panel | `rules-page.test`, `search-browser.test`, `rules/embedding-panel.test` | ✅ |
-| Settings: key, models, personas, language, danger zone | `settings-page.test` | ✅ |
+| Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
 | 404 page | `app-shell.test`, `ui-smoke.test` | ✅ |
 

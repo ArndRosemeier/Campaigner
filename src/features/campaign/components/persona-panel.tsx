@@ -44,7 +44,7 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import { defaultSettings, DUNGEON_MAP_PATH_LABELS, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
+import { defaultSettings, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
@@ -329,7 +329,8 @@ export function PersonaPanel({
       // existing map is never silently re-tiered. A fresh run passes NO
       // preset — Auto — so the brief's resolution chain decides (explicit
       // choice > the encounter's locationKind > the Settings fallback); the
-      // Settings select below is that fallback, not a per-run override.
+      // Settings page's Encounter-maps default is that fallback, not a
+      // per-run override.
       const targetArtifact = targetArtifacts.find((artifact) => artifact.id === targetArtifactId);
       const targetPreset = targetArtifact?.kind === 'encounter' ? targetArtifact.data.preset : undefined;
       const runId = await runEngine.startRun({
@@ -623,87 +624,6 @@ export function PersonaPanel({
 
             {isEncounter && (
               <div className="flex flex-col gap-1.5">
-                <Label htmlFor="encounter-aspect">Map aspect</Label>
-                <Select
-                  value={settings?.encounterMapAspect ?? '4:3'}
-                  items={{ '4:3': '4:3', '16:9': '16:9', '1:1': '1:1' }}
-                  onValueChange={(value) => {
-                    if (value === '4:3' || value === '16:9' || value === '1:1') {
-                      void updateSettings({ encounterMapAspect: value }).catch((error: unknown) => {
-                        toastError('Could not save map aspect', error);
-                      });
-                    }
-                  }}
-                >
-                  <SelectTrigger aria-label="Map aspect">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="4:3">4:3</SelectItem>
-                    <SelectItem value="16:9">16:9</SelectItem>
-                    <SelectItem value="1:1">1:1</SelectItem>
-                  </SelectContent>
-                </Select>
-                <Label htmlFor="encounter-preset">Preset</Label>
-                <Select
-                  value={settings?.encounterPreset ?? 'auto'}
-                  items={{ auto: 'Auto', standard: 'Standard', dungeon: 'Dungeon' }}
-                  onValueChange={(value) => {
-                    if (value === 'auto' || value === 'standard' || value === 'dungeon') {
-                      // Auto (null) is the default: each encounter's own
-                      // locationKind decides its grid tier (docs/11 D10
-                      // amendment); Standard/Dungeon force the tier.
-                      void updateSettings({ encounterPreset: value === 'auto' ? null : value }).catch((error: unknown) => {
-                        toastError('Could not save map preset', error);
-                      });
-                    }
-                  }}
-                >
-                  <SelectTrigger aria-label="Preset">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="auto">Auto</SelectItem>
-                    <SelectItem value="standard">Standard</SelectItem>
-                    <SelectItem value="dungeon">Dungeon</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Auto: each encounter's own location kind decides — dungeons map on
-                  the Dungeon tier (a connected multi-room complex on a finer grid,
-                  each cell half the size), everything else on Standard. Standard or
-                  Dungeon forces the tier for every map.
-                </p>
-                <Label htmlFor="dungeon-map-path">Dungeon map path</Label>
-                <Select
-                  value={settings?.dungeonMapPath ?? 'classic'}
-                  items={{ classic: DUNGEON_MAP_PATH_LABELS.classic, vision: DUNGEON_MAP_PATH_LABELS.vision }}
-                  onValueChange={(value) => {
-                    if (value === 'classic' || value === 'vision') {
-                      // The production path for complex/multi-room maps
-                      // (docs/11 vision path): Classic packs vector rooms on
-                      // the grid; Vision paints one labeled map and locates
-                      // each room's plaque by sight. Singles always map
-                      // classic and repopulation never touches the map.
-                      void updateSettings({ dungeonMapPath: value }).catch((error: unknown) => {
-                        toastError('Could not save dungeon map path', error);
-                      });
-                    }
-                  }}
-                >
-                  <SelectTrigger aria-label="Dungeon map path">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="classic">{DUNGEON_MAP_PATH_LABELS.classic}</SelectItem>
-                    <SelectItem value="vision">{DUNGEON_MAP_PATH_LABELS.vision}</SelectItem>
-                  </SelectContent>
-                </Select>
-                <p className="text-xs text-muted-foreground">
-                  Classic packs vector rooms on the grid. Vision paints one labeled
-                  map and locates each room's plaque by sight — complex dungeons
-                  only; single arenas always map classic.
-                </p>
                 {/* fix-02 (decision 6): one lightweight, non-blocking notice
                 when this campaign's system has no ready bestiary pack. */}
                 <NoPackNotice system={campaign.system} />

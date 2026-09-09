@@ -476,7 +476,11 @@ describe('PersonaPanel run lifecycle', () => {
     );
 
     await startRun(user, cartographer, 'Manual');
-    expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
+    // The global map defaults live on the Settings page now — the panel
+    // holds per-run steering only, so none of the three selects render here.
+    expect(screen.queryByRole('combobox', { name: 'Map aspect' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Preset' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Dungeon map path' })).toBeNull();
     expect(await screen.findByTestId('encounter-run-actions')).toBeInTheDocument();
     await user.click(await screen.findByTestId('approve-step'));
     expect(
@@ -511,18 +515,11 @@ describe('PersonaPanel run lifecycle', () => {
     await flushAsyncUpdates();
   }, 30000);
 
-  it('encounter Preset select persists to Settings and starts dungeon runs (docs/11 D10)', async () => {
+  it('encounter panel renders no global map defaults (Settings owns them)', async () => {
     const user = userEvent.setup();
     const { campaign } = await seed();
-    const { saveSettings } = await import('@/db/settingsRepo');
-    const { defaultSettings } = await import('@/domain');
-    await saveSettings({
-      ...defaultSettings(),
-      openRouterApiKey: 'test-key',
-      imagesEnabled: true,
-    });
     const cartographer = await createPersona({
-      slug: 'encounter-preset-ui',
+      slug: 'encounter-no-globals-ui',
       name: 'Encounter Cartographer',
       description: '',
       systemPrompt: 'Return encounter JSON.',
@@ -530,24 +527,6 @@ describe('PersonaPanel run lifecycle', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    chatMock.mockResolvedValueOnce({ text: JSON.stringify({
-        name: 'Deep Halls',
-        summary: '',
-        body: '',
-        difficulty: 'deadly',
-        levelHint: '5',
-        terrain: '',
-        tactics: '',
-        treasure: '',
-        theme: 'drowned dungeon',
-        styleNotes: '',
-        negative: '',
-        monsters: [{ name: 'Drow', count: 2, notes: '', statBlock: VALID_STATBLOCK }],
-        rooms: [
-          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [] },
-        ],
-        entryRoomIndex: 0,
-      }), modelUsed: 'test-model', fallback: null });
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
@@ -557,39 +536,16 @@ describe('PersonaPanel run lifecycle', () => {
     await setAutonomy(user, 'Manual');
     await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: cartographer.name }));
-    // Auto is the DEFAULT (docs/11 D10 amendment): each encounter's own
-    // locationKind decides its tier, the Settings choice only backstops.
-    expect(screen.getByRole('combobox', { name: 'Preset' })).toHaveTextContent('Auto');
-    // An explicit Dungeon choice still overrides, riding Settings (genuine
-    // preference) like the aspect.
-    await user.click(screen.getByRole('combobox', { name: 'Preset' }));
-    await user.click(await screen.findByRole('option', { name: 'Dungeon' }));
-    const { readSettings } = await import('@/db/settingsRepo');
-    await waitFor(() => {
-      expect(screen.getByRole('combobox', { name: 'Preset' })).toHaveTextContent('Dungeon');
-    });
-    // Raw awaited read while the panel is mounted — actDrained closes the
-    // leak window opened by the preset's Settings write (docs/08).
-    expect((await actDrained(() => readSettings())).encounterPreset).toBe('dungeon');
-
-    await user.type(screen.getByLabelText('Brief'), 'a dungeon crawl beneath the keep');
-    await user.click(screen.getByTestId('start-run'));
-    // The read runs inside ONE act with a drain (actDrained, docs/08): the
-    // bare awaits hand fake-indexeddb's timed queue an outside-act window
-    // while the engine is still writing the run row — the brief step's
-    // updateRun re-fires ActiveRun/RunActions' live queries there (the
-    // act-leak the console guard caught in this test).
-    const run = await actDrained(async () => getRun(await onlyRunId()));
-    // The run row persists the EXPLICIT choice only — a fresh panel run is
-    // Auto (null) even when Settings says Dungeon; the brief step stamps the
-    // resolved tier (settings fallback for an unclassified fresh encounter).
-    expect(run?.encounterPreset).toBeNull();
-    await flushAsyncUpdates();
-    // The cancel is a DB write while the run views are mounted — same
-    // actDrained discipline so its liveQuery cascade stays inside act.
-    await actDrained(async () => {
-      await runEngine.cancel(await onlyRunId());
-    });
+    // The global Map aspect / Preset / Dungeon map path defaults moved to
+    // the Settings page (one home for globals) — the panel renders none of
+    // them, and a fresh run still starts Auto (null preset) from Settings.
+    expect(screen.queryByRole('combobox', { name: 'Map aspect' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Preset' })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: 'Dungeon map path' })).toBeNull();
+    expect(
+      screen.queryByText(/each encounter's own location kind decides/),
+    ).toBeNull();
+    expect(screen.queryByText(/locates each room's plaque by sight/)).toBeNull();
     await flushAsyncUpdates();
   }, 30000);
 

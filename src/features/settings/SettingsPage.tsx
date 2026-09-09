@@ -6,6 +6,7 @@ import { listPersonas } from '@/db/personaRepo';
 import { HelpButton } from '@/help/HelpButton';
 import { BackupSection } from '@/features/settings/backup-section';
 import { BestiaryFetchSection } from '@/features/settings/bestiary-fetch-section';
+import { EncounterMapSection } from '@/features/settings/encounter-map-section';
 import { ExperimentsSection } from '@/features/settings/experiments-section';
 import { AppearanceSection } from '@/features/settings/appearance-section';
 import { LanguageSelect } from '@/features/settings/language-select';
@@ -35,6 +36,7 @@ export function SettingsPage(): JSX.Element {
       </h1>
       <SettingsSection />
       <BestiaryFetchSection />
+      <EncounterMapSection />
       <Card>
         <CardHeader>
           <CardTitle>Generation language</CardTitle>

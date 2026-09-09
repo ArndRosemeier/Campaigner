@@ -323,6 +323,52 @@ describe('SettingsPage', () => {
     expect(buildSpy).toHaveBeenCalledTimes(1);
   }, 30000);
 
+  it('encounter map defaults render with current values and persist (incl. Auto/null preset)', async () => {
+    const user = userEvent.setup();
+    renderSettingsPage();
+    // Drain the default-row live query before the plain read (08-TESTING §
+    // console guard: raw DB reads re-fire the live query outside act).
+    await flushAsyncUpdates();
+
+    // Current values render: schema defaults (4:3, Auto/null, classic).
+    expect(await screen.findByRole('combobox', { name: 'Map aspect' })).toHaveTextContent('4:3');
+    expect(screen.getByRole('combobox', { name: 'Preset' })).toHaveTextContent('Auto');
+    expect(screen.getByRole('combobox', { name: 'Dungeon map path' })).toHaveTextContent(
+      'Classic (vector rooms)',
+    );
+    // The honest copy moved with the controls.
+    expect(
+      screen.getByText(/each encounter's own location kind decides/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/locates each room's plaque by sight/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('combobox', { name: 'Map aspect' }));
+    await user.click(await screen.findByRole('option', { name: '16:9' }));
+    await waitFor(async () => {
+      await expect(getSettings()).resolves.toMatchObject({ encounterMapAspect: '16:9' });
+    });
+
+    await user.click(screen.getByRole('combobox', { name: 'Preset' }));
+    await user.click(await screen.findByRole('option', { name: 'Dungeon' }));
+    await waitFor(async () => {
+      await expect(getSettings()).resolves.toMatchObject({ encounterPreset: 'dungeon' });
+    });
+    // Auto maps back to null (docs/11 D10 amendment: self-classification is
+    // the norm, the Settings choice only backstops unclassified rows).
+    await user.click(screen.getByRole('combobox', { name: 'Preset' }));
+    await user.click(await screen.findByRole('option', { name: 'Auto' }));
+    await waitFor(async () => {
+      expect((await getSettings()).encounterPreset).toBeNull();
+    });
+
+    await user.click(screen.getByRole('combobox', { name: 'Dungeon map path' }));
+    await user.click(await screen.findByRole('option', { name: 'Vision-located labels' }));
+    await waitFor(async () => {
+      await expect(getSettings()).resolves.toMatchObject({ dungeonMapPath: 'vision' });
+    });
+    await flushAsyncUpdates();
+  });
+
   it('links to the experiment lab from the Experiments section', async () => {
     renderSettingsPage();
 
