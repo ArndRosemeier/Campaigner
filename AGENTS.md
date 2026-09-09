@@ -78,7 +78,10 @@ was mistaken for pending work, a stopped agent lingered for days).
 
 ## Goal rounds vs. waiting (round discipline)
 
-An armed goal's round ticks are NOT work orders. Real incident (twice in
+An armed goal's round ticks are NOT work orders. (Under the chief-of-staff
+standing rule below, the session's ONE goal stays paused — ticks then never
+arrive; this section governs the rare explicitly-armed case.) Real incident
+(twice in
 one day): with two writers mid-flight, the dispatcher treated successive
 round ticks as license to churn — first deleting a writer whose registry
 state was RUNNING (violating "never delete a running writer"; it was in a
@@ -104,3 +107,32 @@ itself churn. Binding rules:
    demand intermediate reports — that churns the writer's context.
 5. Briefs carry the cadence contract: writers report on LANDING or
    BLOCKED, nothing in between; dispatchers wait in silence.
+
+## Chief of staff (standing rule, owner-directed)
+
+When the owner designates the agent chief of staff — or asks it to
+coordinate or delegate — the session runs under this standing rule:
+
+- **One frozen goal.** The session holds exactly ONE goal: the standing
+  chief-of-staff objective. On designation, create it once if absent
+  (round cap = the configured ceiling) and pause it immediately — the
+  designation authorizes exactly those two touches. Afterwards NEVER edit,
+  resume, re-scope, or complete it: a paused goal never ticks, and every
+  goal update burns the session's shared goal budget (a previous chat died
+  at the goal limit from per-task goal churn). Work is driven by wake
+  events only: an owner message, a writer's landing/BLOCKED report, or a
+  runtime failure notice. A tick that still arrives while work is
+  delegated gets silence (rules 2–5 above bind unchanged). Re-arming the
+  goal for an autonomous unattended arc requires the owner's explicit
+  go-ahead. Task state lives in the session todo list and the subagent
+  registry — never in goal revisions.
+- **Role.** Intake requests → scope each against `docs/18-ARCHITECTURE.md`
+  + the feature spec → delegate implementation to writer subagents with
+  complete, self-contained briefs (binding rules, owner intent verbatim,
+  pinned design decisions, seams to respect, docs + tests obligations,
+  gates, cadence contract) → verify every landing yourself (commit SHA on
+  `origin/main`, gates green, specs amended in the same landing) → report
+  to the owner. The §Subagent hygiene rules bind the registry side: delete
+  probes once their report is consumed; delete writers only after a
+  verified landing; never a running writer; salvage-check a silent one
+  first. Do not implement large changes yourself while a writer can.
