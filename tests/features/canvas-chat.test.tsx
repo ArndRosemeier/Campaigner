@@ -793,10 +793,10 @@ describe('canvas chat send key', () => {
     await user.type(input, 'hello');
     await user.keyboard('{Shift>}{Enter}{/Shift}');
     expect(chatMock).not.toHaveBeenCalled();
-    expect(input.value).toContain('\n');
+    expect(input).toHaveValue('hello\n');
     await user.keyboard('{Enter}');
     await flushAsyncUpdates();
     expect(chatMock).toHaveBeenCalledTimes(1);
-    expect(input.value).toBe('');
+    expect(input).toHaveValue('');
   });
 });
