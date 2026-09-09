@@ -592,9 +592,10 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
               How much of a standard fight's threat each dungeon room should carry, 0–100.
               Left empty, the first map generation draws one (most dungeons 55–90, some
               lighter, some spikier) and keeps it; a value set here always wins. Changing
-              it restocks nothing by itself: the roster re-sizes when the encounter's map
-              is (re)briefed (battlemap Regenerate / the map queue), and content
-              "Regenerate with AI" rewrites the roster as one fight — it never restocks.
+              it restocks nothing by itself: press Repopulate for a new roster against
+              the new value (Regenerate everything rebuilds the map too). Those two
+              buttons are the only automatic generation — a single encounter always
+              rewrites as one fight.
             </span>
           </Field>
         )}
@@ -623,7 +624,7 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
           <span className="text-[11px] font-normal text-muted-foreground">
             {canBeSingle && canBeComplex
               ? 'Encounter = one arena (straight to melee). Dungeon = multi-room complex, played room by room along the path.'
-              : 'The battlemap on file fixes this shape — regenerate the map as the other shape first.'}
+              : 'The battlemap on file fixes this shape — run Regenerate everything for the other shape first.'}
           </span>
         </Field>
         {/* Natural-site mode (docs/11): the map contract is derivable from

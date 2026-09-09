@@ -1452,11 +1452,13 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     await flushAsyncUpdates();
   }, 30000);
 
-  it('hides placement and extras for a targeted in-place run', async () => {
+  it('shows the cartographer without a regenerate target (fresh creates only — the editor buttons start their own runs)', async () => {
     const { campaign } = await seed();
-    // The request channel selects the Encounter Cartographer by slug
-    // (variant 'map' — an encounter-MODE persona, so the targeted-run notice
-    // renders).
+    // The encounter editor no longer hands runs off to this panel (the two
+    // buttons start their own Cartographer/Smith runs directly) — selecting
+    // the Encounter Cartographer here is always a fresh create: no target,
+    // so placement and extras apply and the regenerate-target notice stays
+    // hidden.
     await createPersona({
       slug: 'encounter-cartographer',
       name: 'Encounter Cartographer',
@@ -1466,51 +1468,17 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
       mode: 'encounter',
       builtIn: true,
     });
-    const { useEncounterGenerationRequest } = await import(
-      '@/features/campaign/encounterGenerationRequest'
-    );
-    const target = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'encounter',
-      name: 'Ambush at the ford',
-      summary: '',
-      body: '',
-      data: {
-        difficulty: 'medium',
-        levelHint: '3',
-        monsters: [],
-        terrain: '',
-        tactics: '',
-        treasure: '',
-        mapImageId: null,
-        layout: null,
-        preset: 'standard',
-        locationKind: 'other',
-        siteShape: 'single',
-        budgetAdvisory: '',
-      },
-    });
-
+    const user = userEvent.setup();
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
       </MemoryRouter>,
     );
-    // The artifact editor's "Generate content" affordance: preselects the
-    // Encounter Smith persona and targets the existing encounter.
-    act(() => {
-      useEncounterGenerationRequest.getState().request(target.id, true, 'map');
-    });
 
-    expect(await screen.findByTestId('encounter-regenerate-target')).toHaveTextContent(
-      'Placement and new-artifact options do not apply',
-    );
-    expect(screen.queryByRole('combobox', { name: 'Module' })).not.toBeInTheDocument();
-    expect(screen.queryByTestId('run-extras')).not.toBeInTheDocument();
-    // The request store is file-global: clear it so later tests don't react.
-    act(() => {
-      useEncounterGenerationRequest.getState().clear();
-    });
+    await user.click(screen.getByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: 'Encounter Cartographer' }));
+    expect(screen.queryByTestId('encounter-regenerate-target')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Module' })).toBeInTheDocument();
     await flushAsyncUpdates();
   }, 30000);
 
@@ -1559,12 +1527,12 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
     await flushAsyncUpdates();
   }, 30000);
 
-  it('encounter content hand-off starts a run that carries the target (in-place fill)', async () => {
+  it('encounter smith starts a fresh run with no target (the editor buttons start targeted runs themselves)', async () => {
     const { campaign } = await seed();
-    // The Encounter Smith seeds mode 'generate' — start() must still route
-    // the artifact-editor content hand-off to the TARGETED run (it used to
-    // fall through to the fresh-create branch, dropping the target and
-    // duplicating the artifact instead of refilling it).
+    // The Encounter Smith seeds mode 'generate' — starting it from the panel
+    // with no target takes the fresh-create branch (targetArtifactId null).
+    // Targeted Smith fills are started by the editor's own buttons, not by a
+    // panel hand-off anymore.
     await createPersona({
       slug: 'encounter-smith',
       name: 'Encounter Smith',
@@ -1573,52 +1541,15 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
       producesKind: 'encounter',
       builtIn: true,
     });
-    const { useEncounterGenerationRequest } = await import(
-      '@/features/campaign/encounterGenerationRequest'
-    );
-    const target = await createArtifact({
-      campaignId: campaign.id,
-      kind: 'encounter',
-      name: 'Gate Stub',
-      summary: '',
-      body: '',
-      data: {
-        difficulty: 'medium',
-        levelHint: '3',
-        monsters: [],
-        terrain: '',
-        tactics: '',
-        treasure: '',
-        mapImageId: null,
-        layout: null,
-        preset: 'standard',
-        locationKind: 'other',
-        siteShape: 'single',
-        budgetAdvisory: '',
-      },
-    });
-    chatMock.mockResolvedValue({ text: JSON.stringify({
-        name: 'Gate Ambush',
-        summary: 'Goblins at the gate.',
-        suggestedTags: [],
-        body: '# Gate Ambush',
-        difficulty: 'medium',
-        levelHint: '3',
-        monsters: [{ name: 'Goblin bully', count: 2, notes: '', statBlock: VALID_STATBLOCK }],
-        terrain: 'gatehouse',
-        tactics: 'ambush',
-        treasure: 'none',
-        locationKind: 'building',
-      }), modelUsed: 'test-model', fallback: null });
     const user = userEvent.setup();
     render(
       <MemoryRouter>
         <PersonaPanel campaign={campaign} hasApiKey />
       </MemoryRouter>,
     );
-    act(() => {
-      useEncounterGenerationRequest.getState().request(target.id, false, 'content');
-    });
+    await user.click(screen.getByRole('combobox', { name: 'Persona' }));
+    await user.click(await screen.findByRole('option', { name: 'Encounter Smith' }));
+    await user.type(screen.getByLabelText('Brief'), 'A gate ambush');
     await waitFor(() => {
       expect(screen.getByTestId('start-run')).toBeEnabled();
     });
@@ -1627,16 +1558,13 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
       const runs = await listRunsByCampaign(campaign.id);
       expect(runs.length).toBeGreaterThan(0);
       const run = await getRun(runs[0]?.id ?? '');
-      expect(run?.targetArtifactId).toBe(target.id);
+      expect(run?.targetArtifactId).toBeNull();
     });
     // Drain the pipeline fully — the run must not outlive this test.
     await waitFor(async () => {
       const runs = await listRunsByCampaign(campaign.id);
       const run = await getRun(runs[0]?.id ?? '');
       expect(run?.status === 'completed' || run?.status === 'failed').toBe(true);
-    });
-    act(() => {
-      useEncounterGenerationRequest.getState().clear();
     });
     await flushAsyncUpdates();
   }, 30000);

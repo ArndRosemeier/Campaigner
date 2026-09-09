@@ -102,7 +102,7 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       'Personas are writing specialists (NPC Smith, Location Architect, Event Weaver, Faction Designer, Plot Architect, Encounter Smith, Encounter Cartographer, Continuity Editor) that draft or review artifacts using pinned rule text.',
     tips: [
       'Pick a persona, an autonomy mode, and write a brief: Manual pauses for your approval on every step, Review runs through but pauses on problems, Auto runs to completion.',
-      'Encounter Cartographer turns a brief into a sourced roster, deterministic room layout and battlemap — if a map looks off, use Regenerate candidates to roll a fresh batch from the same brief and layout; regenerating an encounter preserves its authored prose and roster.',
+      'Encounter Cartographer turns a brief into a sourced roster, deterministic room layout and battlemap — if a map looks off, use Regenerate candidates to roll a fresh batch from the same brief and layout. The encounter editor offers exactly two automatic actions: Regenerate everything (new roster, layout and map) and Repopulate (a new roster for all rooms, map kept) — name and prose stay unless the redesign box is ticked.',
       'Review personas (Continuity Editor) check an existing artifact for contradictions and write a continuity report — pick the artifact to check instead of writing a brief.',
       'Add "Artifacts created earlier" to give the persona extra context from this campaign.',
       'While a run streams you can approve, retry with an edited brief, or cancel. Manual mode waits for you between steps.',

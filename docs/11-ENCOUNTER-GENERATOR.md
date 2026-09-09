@@ -52,6 +52,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D17 | **The encounter map has a STYLE MODE — architectural vs. natural site — and OUTDOORS the encounter's own prose is the truth** (owner-ratified): WHO HOLDS GROUND TRUTH. Dungeons: the layout IS the truth — the schematic-faithful contract (walls/corridors/keys/veils; keep-structure prompt + the stone/wood/dirt materials line) stays byte-identical. Outdoors: our geometry encodes ONLY spawn positions — the schematic renders a placement-only overlay (soft organic spawn patches over the mob-cluster cells + the entrance marker; NO region boundary stroke, NO wall geometry) and the stylize prompt is rebuilt from the brief's own prose (theme + terrain + summary), with NO materials line, NO keep-walls clause, and NO terrain bans (an island in a lava lake or a murder-clown tent stays paintable). The usability hard-bans (no title/legend/grid/text/characters; no white/pale boxes) and the entrance marker stay verbatim; the entrance clause softens to "a visible approach path at the marked spot" (marker mechanics unchanged). Mode derivation: the brief's `environment: 'outdoor'` OR the persisted `locationKind: 'wilderness'` ⇒ natural, else architectural — and the owner's editor override (`mapMode` on the encounter data, additive optional, 'auto' stores nothing) beats both. See "Natural-site mode" below. |
 | D14 | **The user is the judge; regenerate is the correction; NO VLM verification** (owner-directed removal, 2026-09-08): "Nope. Stop the verification altogether. Let the user be the judge with a regenerate option. No need to waste model calls here. Things do not need to be verified in a brittle way. Just have a way to easily regenerate." The verify step (the 5a8f8f2/42db-era machinery: the coarse-grid cell contract, the `arena-verdict` structural check, thresholds, drift overlays, the dedicated verify model) is DELETED — model calls are not spent on brittle self-grading. The manual run pauses at pick; **"Regenerate candidates"** re-runs the stylize step only (same brief, same layout — room keys and geometry untouched) and pauses at pick again. Regenerating the LAYOUT (fresh keys/geometry) stays the separate existing affordance. Old run rows carrying verify steps heal at the run-row parse boundary. |
 | D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). **D10 amendment (locationKind, owner-ratified)**: encounters classify themselves — the encounter persona's EXISTING draft call gains a bounded `locationKind` (`'dungeon' | 'building' | 'wilderness' | 'other'`, persisted additively on the encounter artifact, owner-correctable in the editor, no extra LLM call), and the preset resolves per encounter: **explicit per-run choice > the encounter's own `locationKind` (`'dungeon'` → Dungeon tier, `'building'`/`'wilderness'` → Standard) > the Settings fallback** for unclassified (`'other'`) rows. The persona-panel Preset select gains **Auto** as its default (self-classification is the norm; Standard/Dungeon remain explicit overrides). See "D10 amendment — per-encounter locationKind" below. |
+| D18 | **Two-button regeneration (owner-directed, 2026-09-09)**: the encounter editor offers EXACTLY two automatic actions for BOTH shapes, plus the prose checkbox — the old one-fight content "Regenerate with AI" and the standalone battlemap "Generate layout & map / Regenerate" are DELETED (subsumed, never renamed). **Regenerate everything** = a new dungeon top to bottom (complex: a fresh full Cartographer run — new roster + new layout + new map, same as if module-generated fresh; a roomless complex resets the row first so the fill-grade machinery runs against the row's own preset; single: a fresh Smith one-fight draft + a fresh map, one action). **Repopulate** = the map looks fine, the spawn looks wrong — a NEW roster for ALL rooms (complex: ROSTER-ONLY Cartographer pass — brief with the 'empty'/'over' repair loop + room-mirror + fresh cap, finalize persisting ONLY `monsters` (+ lowered `targetLevel`s) onto the PRESERVED rooms/map; single: today's Smith one-fight fill). A dungeon's repopulation is NOT a Smith extension — its clauses key on the target's actual shape. The **prose checkbox** ("Also redesign name and prose", default OFF) chains AFTER the automatic pass: a Smith PROSE-ONLY run (persists name/prose/body; any roster drift fails the run loud with nothing persisted). Unticked, a dungeon's name and prose stay byte-identical (singles always get fresh Smith prose; the box additionally replaces the name there). Both buttons honor the draw-once fill grade, the row preset, the remembered-preset trap fix, the cap math and the repair-turn semantics; manual Clear (map deletion) and the invisible unattended map queue stay as-is. See "D18 — two-button regeneration" below. |
 
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
 
@@ -558,9 +559,9 @@ checklist content — never player-facing, never structured loot output.
   `data.layout !== null`) with one key + room-treasure textarea per room,
   labelled `Room <canonical letter> — <name>`. Edits touch only the key
   fields — room rectangles stay regenerate-only (non-goals). The
-  battlemap section states the regeneration consequence ("Regenerating the
-  layout & map writes fresh room keys"), and the persona panel's
-  pre-filled brief says so for map runs.
+  battlemap section states the two-action contract ("Regenerate everything
+  builds a new layout and map, Repopulate keeps the map") and the
+  fresh-keys consequence ("Regenerate everything writes fresh room keys").
 - **Seeding**: `battleTokenSchema` gains `treasure` (default `''`,
   mirroring the `initiativeBonus` frozen-copy precedent);
   `tokenFromFighter` takes an optional treasure; `expandRosterEntries`
@@ -649,6 +650,62 @@ a seed after a replace picks up the new board copy.
 
 ## Persona + run engine
 
+### D18 — two-button regeneration (owner-directed, 2026-09-09)
+
+Owner verdict on the old surface: a content "Regenerate with AI" on a
+dungeon resetting it to one fight is "just wrong UI". The editor now offers
+EXACTLY two automatic actions for both shapes plus the checkbox (D18 row
+above for the contract). Engine seams (all in `src/llm/runEngine.ts` unless
+noted; no Dexie/schema changes):
+
+- `StartRunInput.encounterScope?: 'full' | 'rosterOnly'`,
+  `encounterProseOnly?: boolean`, `encounterRedesignName?: boolean`.
+- `ENCOUNTER_ROSTER_ONLY_STEP_NAMES = ['brief', 'finalize']` + the
+  step-output marker pattern (`briefRosterOnlyMarker()` stamps
+  `rosterOnly: true`): scope-aware `executeFrom` kinds, `runStep` finalize
+  routing, `editStep` re-stamp, `retryStep` pre-reset capture, and guards in
+  `regenerateEncounterLayout` / `regenerateEncounterCandidates` /
+  `pickEncounterMap` that refuse roster-only runs.
+- The brief drops the empty-roster throw (an empty roster is now a FRESH
+  population — "appending to nothing means designing everything"); the
+  roster pin applies to full runs only; a roster-only complex brief renders
+  the stocking clauses against the target's actual rooms (mirror list),
+  keeps the verbatim-prefix → source-cited-appends → cap structure, and
+  stamps the brief's draw-once fill grade on the step output.
+- The evaluate gate enforces the room mirror (same count, same order,
+  every roster entry in exactly one room) and the fresh cap
+  (Σ room expectations + margin, byte-identical message).
+- `runEncounterRosterFinalize()` persists ONLY `monsters` (plus lowered
+  `targetLevel`s and the LOUD advisory) onto the preserved rooms — geometry,
+  keys, corridors, path, name, prose, links, tags, images, preset,
+  siteShape, locationKind and fill grade all ride along; the room-tagging
+  maps the brief's partition by index (the gate already approved it — a
+  drift is a loud invariant failure, never a silent re-partition).
+- The Smith's `encounterProseOnly` branch persists name/prose/body only and
+  fails loud on ANY roster drift (`renamed` / `encounterRedesignName`
+  aliases feed the alias-append only when the box is ticked).
+- Orchestration seam `src/features/campaign/encounterRegen.ts`:
+  `repopulateEncounter()` (complex roster-only pass, singles the Smith
+  fill; roomless complexes refuse with a loud error pointing at Regenerate
+  everything), `regenerateEncounterEverything()` (complex full reset via
+  `resetComplexForRegeneration()` then the full pipeline with the row
+  preset — remembered-preset trap fix; singles the Smith draft then the
+  unattended map queue), `runProseRedesign()` chained after when the box
+  is ticked. Draw-once: finalize uses `target.data.fillGrade ??
+  <brief stamp> ?? drawFillGrade()` — one draw per run at most, legacy rows
+  backfill on repopulation.
+- Surface: `encounter-ai-section` holds `encounter-regenerate-everything`,
+  `encounter-repopulate` (disabled for roomless complexes) and
+  `encounter-redesign-prose`; the battlemap section keeps Upload + Clear
+  and states the two-action contract; the old hand-off store
+  (`encounterGenerationRequest.ts`) is deleted — the panel no longer
+  receives encounter hand-offs (manual panel runs are fresh creates only).
+- Tests: `tests/llm/encounterRepopulate.test.ts` (9: replace-all-rooms +
+  repair loop + byte-identical layout/map + advisory + fill grade, over-cap
+  rejection, legacy backfill, pipeline shape, regen-everything complex,
+  prose ON byte-identical roster, prose drift loud fail, single repopulate,
+  single regen-all).
+
 - New built-in persona `encounter-cartographer`, `mode: 'encounter'`,
   `producesKind: 'encounter'` (mode enum and the `producesKind` refine extend).
 - Run engine: step list above; `brief` and `layout` are user-editable
@@ -662,24 +719,15 @@ a seed after a replace picks up the new board copy.
   **not** hand-editable in v1
   (regenerate instead — D2's "later refinements" = edit the roster/brief and
   re-run).
-- Standalone entry points: persona panel (new encounter from a brief), the
-  encounter editor's Battlemap section (**Generate layout & map** /
-  **Regenerate** — sits beside today's Upload battlemap), and the encounter
-  editor's **content** section (**Generate with AI** / two-step
-  **Regenerate with AI**): a targeted Encounter-Smith run that writes roster,
-  terrain, tactics, treasure and prose INTO the existing artifact — preserving
-  its name (the model's name becomes an alias), links, tags, images and
-  battlemap. This is the intended path for module stubs. The Battlemap section
-  refuses an encounter with an empty roster and points at the content run.
-  The battlemap section previews the map on file (click → lightbox) with the
-  stored layout's room count; the pre-filled brief words the run as
-  "Generate…" for a mapless encounter and "Regenerate…" only when a map
-  exists. The hand-off rides the persona panel's `start()` ENCOUNTER-TARGET
-  branch: the Encounter Smith seeds as a mode-`generate` persona, and the
-  panel used to fall through to the fresh-create branch for it — dropping the
-  target and DUPLICATING the artifact instead of filling it. Fixed: a
-  generate persona with `producesKind: 'encounter'` and a target set starts
-  the targeted run (pinned in persona-run-ui).
+- The encounter editor's generation surface is the D18 two-button section
+  (**Regenerate everything** / **Repopulate** + the "Also redesign name and
+  prose" checkbox — the ONLY automatic actions for both shapes): both run
+  their own Cartographer/Smith runs directly (no persona-panel hand-off —
+  the `encounterGenerationRequest` store is deleted and manual panel runs
+  are fresh creates only). The Battlemap section keeps Upload battlemap +
+  Clear and states the two-action contract; the pre-filled-brief wording is
+  gone with the hand-off. This is the intended path for module stubs
+  (a roomless complex resets, then runs the full pipeline).
 
 ## Module generation integration (the unattended path)
 
@@ -1017,7 +1065,9 @@ complexes only — a single arena keeps "a quiet room is a feature" byte-identic
   layout first materializes with the field ABSENT: the run's brief step draws
   a candidate (so the prompt can carry real numbers and the expansion cap)
   and the finalize STAMPS it — a fresh Cartographer birth, a legacy row's
-  first map regen, or an in-place refill of a legacy complex. A value on the
+  first full regeneration, or a repopulation backfill (`target grade ??
+  brief stamp ?? draw` — one draw per run at most, a legacy complex with
+  neither draws NOW so the budget check runs against a real expectation). A value on the
   row — owner-set or an earlier draw — is NEVER redrawn (the mapMode
   precedence); a single-arena outcome discards the draw; the editor shows a
   complex-only "Fill grade" number input next to Location kind (empty =
@@ -1086,12 +1136,15 @@ complexes only — a single arena keeps "a quiet room is a feature" byte-identic
   keeps the exact verbatim pin — it is never repaired against a source
   contract the prompt never stated. pf2e keeps the byte-identical verbatim
   pin (no cap exists to bound an append, so no append clause renders).
-  **Content "Regenerate with AI" (the Encounter Smith) NEVER restocks**: its
-  charter is ONE fight per request — it packs that one-fight roster into the
-  existing rooms and emits the loud 'empty'/'under' advisories; only a MAP
-  (re)brief (battlemap Regenerate / the map queue) re-sizes the roster
-  against the fill grade. The editor's fill-grade helper and the
-  content-section copy say so.
+  **AMENDED (D18 two-button regeneration, owner-directed): the old content
+  "Regenerate with AI" (the Encounter Smith one-fight fill) NEVER restocked
+  — and now it no longer exists as a standalone button. Restocking is
+  REPOPULATE (roster-only Cartographer pass: the stocking clauses keyed on
+  the target's actual shape, brief partition mapped by index onto the
+  preserved rooms, 'empty'/'under' LOUD) and REGENERATE EVERYTHING (fresh
+  full run). Only these two automatic actions re-size a roster against the
+  fill grade. The editor's fill-grade helper and the two-button copy say
+  so.**
 - **Reconcile packing (D12 semantics change)**: `reconcileRoomAssignments`
   step (2) now packs unclaimed entries by NEAREST-BAND FIT when per-room
   expectations exist — biggest-threat-first, each entry into the room whose

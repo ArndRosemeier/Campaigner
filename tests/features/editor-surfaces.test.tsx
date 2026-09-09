@@ -292,7 +292,7 @@ describe('editor surfaces', () => {
     await flushAsyncUpdates();
   }, 20000);
 
-  it('encounter content AI section states the one-fight honesty (never restocks)', async () => {
+  it('encounter AI section offers exactly two automatic actions plus the prose checkbox (docs/11 two-button regeneration)', async () => {
     const campaign = await createCampaign({ name: 'Restock', system: 'dnd5e' });
     const encounter = await createArtifact({
       campaignId: campaign.id,
@@ -324,11 +324,19 @@ describe('editor surfaces', () => {
       />,
     );
     const section = screen.getByTestId('encounter-ai-section');
-    // Honesty copy (docs/11 D12 amendment, shape-gated restock): content
-    // "Regenerate with AI" is ONE fight — it never restocks a dungeon.
-    expect(section).toHaveTextContent('Regenerate roster, terrain, tactics, treasure and prose with the Encounter Smith.');
-    expect(section).toHaveTextContent('rewrites the roster as ONE fight');
-    expect(section).toHaveTextContent('never restocks');
+    // The two automatic actions and nothing else…
+    expect(within(section).getByTestId('encounter-regenerate-everything')).toHaveTextContent(
+      'Regenerate everything',
+    );
+    expect(within(section).getByTestId('encounter-repopulate')).toHaveTextContent('Repopulate');
+    expect(section).toHaveTextContent('Two automatic actions exist');
+    // …plus the prose checkbox (name/prose stay authored unless ticked)…
+    expect(section).toHaveTextContent('Also redesign name and prose');
+    // …and the old one-fight content hand-off is gone.
+    expect(screen.queryByTestId('generate-encounter-content')).not.toBeInTheDocument();
+    // A roomless complex cannot repopulate — Regenerate everything first.
+    expect(within(section).getByTestId('encounter-repopulate')).toBeDisabled();
+    expect(within(section).getByTestId('encounter-regenerate-everything')).toBeEnabled();
     await flushAsyncUpdates();
   }, 20000);
 });

@@ -475,10 +475,11 @@ describe('encounter form fill grade (docs/11 D12 amendment)', () => {
     const input = screen.getByRole('spinbutton', { name: 'Fill grade' });
     expect(input).toHaveValue(null);
     expect(screen.getByText(/Left empty, the first map generation draws one/)).toBeInTheDocument();
-    // Honesty copy (docs/11 D12 amendment, shape-gated restock): the fill
-    // grade restocks nothing by itself.
+    // Honesty copy (docs/11 D18 two-button regeneration): the fill grade
+    // restocks nothing by itself — Repopulate / Regenerate everything do.
     expect(screen.getByText(/restocks nothing by itself/)).toBeInTheDocument();
-    expect(screen.getByText(/it never restocks/)).toBeInTheDocument();
+    expect(screen.getByText(/press Repopulate for a new roster/)).toBeInTheDocument();
+    expect(screen.getByText(/the only automatic generation/)).toBeInTheDocument();
     unmount();
     // A single arena has no rooms to stock — no field, honest copy.
     render(<EncounterForm data={singleComplexFree()} campaignArtifacts={[]} campaignSystem="dnd5e" onChange={vi_noop()} />);

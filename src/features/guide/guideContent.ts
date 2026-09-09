@@ -219,7 +219,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Generate encounter maps',
         markdown:
-          'Encounters created by automation — an encounter persona run, a module batch, or the post-parts pass — are mapped automatically: an unattended Cartographer run with the campaign\'s defaults, the Dungeon tier only for dungeon encounters. An encounter that already has a map (or a map in the queue) is never re-mapped automatically; regenerating stays your explicit call from the entity panel or the encounter editor — regenerating preserves the authored prose, tactics and roster.',
+          'Encounters created by automation — an encounter persona run, a module batch, or the post-parts pass — are mapped automatically: an unattended Cartographer run with the campaign\'s defaults, the Dungeon tier only for dungeon encounters. An encounter that already has a map (or a map in the queue) is never re-mapped automatically; regenerating stays your explicit call — the encounter editor offers exactly two automatic actions, Regenerate everything (new roster, layout and map) and Repopulate (new roster, map kept).',
       },
       {
         heading: 'Pick, aspect, failure',

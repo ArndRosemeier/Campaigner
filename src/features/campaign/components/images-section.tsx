@@ -18,7 +18,6 @@ import {
 import { toastError, toastSuccess } from '@/lib/toast';
 import { intakeImage } from '@/lib/imageIntake';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
-import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
 import { LightboxImage } from '@/features/images/lightbox-image';
 import { useImageUrl } from '@/features/images/use-image-url';
 
@@ -38,7 +37,6 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
   const [lightboxId, setLightboxId] = useState<Id | null>(null);
   const [busy, setBusy] = useState(false);
   const requestIllustration = useIllustrationRequest((state) => state.request);
-  const requestEncounterMap = useEncounterGenerationRequest((state) => state.request);
 
   async function handleFiles(files: FileList | null): Promise<void> {
     if (files === null || files.length === 0) return;
@@ -232,17 +230,6 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
                 variant="outline"
                 size="xs"
                 onClick={() => {
-                  requestEncounterMap(artifact.id, mapImageId !== null);
-                }}
-                data-testid="generate-encounter-map"
-              >
-                <SparklesIcon aria-hidden data-icon="inline-start" />
-                {mapImageId === null ? 'Generate layout & map' : 'Regenerate'}
-              </Button>
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => {
                   mapUploadRef.current?.click();
                 }}
                 disabled={busy}
@@ -266,16 +253,21 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
               )}
             </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Battlemaps come from the two generation actions above — Regenerate everything builds a
+            new layout and map, Repopulate keeps the map. Nothing else generates one automatically;
+            or upload one by hand. Clear removes the battlemap without touching the roster.
+          </p>
           {mapImageId === null ? (
             <p className="text-xs text-muted-foreground">
               No battlemap — the battle runs on a viewport board until one is set.
             </p>
           ) : (
             <>
-              {/* Owner-ratified room-keys consequence, stated where the
-                  regeneration button lives: a fresh map brings fresh keys. */}
+              {/* Owner-ratified room-keys consequence, stated where the map
+                  lives: a fresh map brings fresh keys. */}
               <p className="text-xs text-muted-foreground" data-testid="regenerate-keys-note">
-                Regenerating the layout &amp; map writes fresh room keys — edit them again in the encounter form afterwards.
+                Regenerate everything writes fresh room keys — edit them again in the encounter form afterwards.
               </p>
               <div className="flex items-center gap-2">
               <button

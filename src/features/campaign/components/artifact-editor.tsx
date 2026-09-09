@@ -11,10 +11,11 @@ import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { modulePath } from '@/app/routes';
 import { getModule } from '@/db/moduleRepo';
-import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
 import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
+import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
 import {
   ARTIFACT_KIND_SINGULAR,
+  encounterDataIsComplex,
   type AnyArtifact,
   type ArtifactLink,
   type ArtifactRevision,
@@ -30,6 +31,7 @@ import {
 } from '@/domain';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { HelpButton } from '@/help/HelpButton';
 import { useModules } from '@/features/modules/hooks';
 import { buttonVariants } from '@/components/ui/button';
@@ -504,41 +506,130 @@ function ContentAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element 
 }
 
 /**
- * Encounter content hand-off (docs/11 §entry points): a module stub has no
- * roster, so the battlemap section alone cannot help — this hands off to the
- * Encounter Smith, whose targeted run writes content INTO this artifact.
- * Overwriting authored content is a two-step act.
+ * Encounter generation surface (docs/11, two-button regeneration): EXACTLY
+ * two automatic actions for both shapes, plus the prose checkbox — nothing
+ * else generates encounter content on its own.
+ *
+ * - Regenerate everything: a new dungeon top to bottom (complex: new roster
+ *   + new layout + new map, same as if freshly module-generated; single: a
+ *   fresh one-fight draft plus a fresh map, one action).
+ * - Repopulate: the dungeon looks fine, the spawn looks wrong — a NEW roster
+ *   for ALL rooms (complex: rooms, layout and map kept; single: today's
+ *   Smith one-fight fill, map preserved).
+ * - The checkbox ("Also redesign name and prose", default OFF): name/prose
+ *   are redesigned too, prose-ONLY — it never touches the roster the run
+ *   just built. Unticked, a dungeon's name and prose stay exactly as
+ *   authored (singles always get fresh Smith prose per the Smith charter;
+ *   ticking additionally replaces the name there).
+ *
+ * Both actions honor the fill grade (drawn once at the first materialization,
+ * never redrawn, never ignored). Manual Clear (map deletion) and the
+ * invisible unattended map queue are not generation buttons and stay as-is.
  */
 function EncounterAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element | null {
-  const requestEncounter = useEncounterGenerationRequest((state) => state.request);
-  const [armed, setArmed] = useState(false);
   const data = artifact.kind === 'encounter' ? artifact.data : null;
   if (data === null) return null;
-  const hasContent = data.monsters.length > 0;
+  return <EncounterRegenControls artifactId={artifact.id} data={data} />;
+}
+
+function EncounterRegenControls({
+  artifactId,
+  data,
+}: {
+  artifactId: Id;
+  data: EncounterArtifactData;
+}): JSX.Element {
+  const [redesignProse, setRedesignProse] = useState(false);
+  const [running, setRunning] = useState<'repopulate' | 'everything' | null>(null);
+  const complex = encounterDataIsComplex(data);
+  // Repopulating a roomless complex has nothing to stock — Regenerate
+  // everything builds rooms and a map first.
+  const repopulateBlocked = complex && data.layout === null;
+
+  async function run(action: 'repopulate' | 'everything'): Promise<void> {
+    if (running !== null) return;
+    setRunning(action);
+    try {
+      if (action === 'repopulate') {
+        await repopulateEncounter(artifactId, { redesignProse });
+        toastSuccess('Encounter repopulated — a new roster stocks every room, map kept');
+      } else {
+        await regenerateEncounterEverything(artifactId, { redesignProse });
+        toastSuccess('Encounter regenerated — new roster, new layout, new map');
+      }
+    } catch (error) {
+      toastError(
+        action === 'repopulate' ? 'Could not repopulate the encounter' : 'Could not regenerate the encounter',
+        error,
+      );
+    } finally {
+      setRunning(null);
+    }
+  }
 
   return (
-    <div className="flex items-center justify-between gap-3 rounded-md border p-3" data-testid="encounter-ai-section">
+    <div className="flex flex-col gap-2 rounded-md border p-3" data-testid="encounter-ai-section">
       <p className="text-xs text-muted-foreground">
-        {hasContent
-          ? 'Regenerate roster, terrain, tactics, treasure and prose with the Encounter Smith. Name, relations and battlemap are preserved. This rewrites the roster as ONE fight — it never restocks a dungeon\'s rooms; the roster re-sizes when the encounter\'s map is (re)briefed.'
-          : 'This encounter has no content yet — generate roster, terrain, tactics, treasure and prose with the Encounter Smith.'}
+        Two automatic actions exist — nothing else generates encounter content on its own.
+        {complex
+          ? ' Regenerate everything builds a new roster, a new layout and a new map. Repopulate writes a new roster for all rooms and keeps rooms, layout and map.'
+          : ' Regenerate everything writes a fresh roster and prose, then a fresh map. Repopulate rewrites the roster as one fight and keeps the map.'}
       </p>
-      <Button
-        variant={hasContent && !armed ? 'outline' : 'default'}
-        size="sm"
-        data-testid="generate-encounter-content"
-        onClick={() => {
-          if (hasContent && !armed) {
-            setArmed(true);
-            return;
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          variant="default"
+          size="sm"
+          data-testid="encounter-regenerate-everything"
+          disabled={running !== null}
+          onClick={() => {
+            void run('everything');
+          }}
+        >
+          <SparklesIcon aria-hidden data-icon="inline-start" />
+          {running === 'everything' ? 'Regenerating…' : 'Regenerate everything'}
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          data-testid="encounter-repopulate"
+          disabled={running !== null || repopulateBlocked}
+          title={
+            repopulateBlocked
+              ? 'This dungeon has no rooms yet — Regenerate everything builds rooms and a map first'
+              : complex
+                ? 'New roster for all rooms — rooms, layout and map kept'
+                : 'New one-fight roster — map kept'
           }
-          requestEncounter(artifact.id, hasContent, 'content');
-          setArmed(false);
-        }}
-      >
-        <SparklesIcon aria-hidden data-icon="inline-start" />
-        {!hasContent ? 'Generate with AI' : armed ? 'Overwrite content — confirm?' : 'Regenerate with AI'}
-      </Button>
+          onClick={() => {
+            void run('repopulate');
+          }}
+        >
+          <SwordsIcon aria-hidden data-icon="inline-start" />
+          {running === 'repopulate' ? 'Repopulating…' : 'Repopulate'}
+        </Button>
+        <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+          <Checkbox
+            checked={redesignProse}
+            data-testid="encounter-redesign-prose"
+            aria-label="Also redesign name and prose"
+            onCheckedChange={(checked) => {
+              setRedesignProse(checked);
+            }}
+          />
+          Also redesign name and prose
+        </label>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        {complex
+          ? 'Unticked, name and prose stay exactly as authored. Manual Clear (map deletion) and the budget advisory below are untouched by either button.'
+          : 'The Smith always refreshes prose on singles — ticking the box additionally replaces the name. Manual Clear (map deletion) and the budget advisory below are untouched by either button.'}
+      </p>
+      {running !== null && (
+        <p className="text-xs text-muted-foreground" data-testid="encounter-regen-status" role="status">
+          {running === 'repopulate' ? 'Repopulating the roster…' : 'Regenerating everything…'} The run
+          rows stay visible under Runs.
+        </p>
+      )}
     </div>
   );
 }

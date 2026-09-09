@@ -231,8 +231,7 @@ describe('images ui', () => {
     expect(screen.getByTestId('start-run')).toBeEnabled();
   }, 20000);
 
-  it('encounter battlemap action pre-selects the Cartographer for a first generation', async () => {
-    const user = userEvent.setup();
+  it('encounter editor shows exactly two automatic actions plus the prose checkbox (no per-section generate buttons)', async () => {
     await seedBuiltInPersonas();
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
     const campaign = await createCampaign({ name: 'Maps', system: 'dnd5e' });
@@ -240,50 +239,74 @@ describe('images ui', () => {
       campaignId: campaign.id,
       kind: 'encounter',
       name: 'Bridge Ambush',
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));
 
-    await user.click(await screen.findByTestId('generate-encounter-map'));
-    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
-    await waitFor(() => {
-      expect(personaSelect.textContent).toContain('Encounter Cartographer');
-    });
-    expect(screen.getByTestId('encounter-regenerate-target')).toBeInTheDocument();
-    // No map on file yet — the pre-filled brief must not claim "regenerate".
-    expect(screen.getByLabelText('Brief')).toHaveValue(
-      'Generate a battlemap and room layout for this encounter, with a GM-only key and treasure checklist per room.',
+    const section = await screen.findByTestId('encounter-ai-section');
+    // The two automatic actions, verbatim labels…
+    expect(within(section).getByTestId('encounter-regenerate-everything')).toHaveTextContent(
+      'Regenerate everything',
     );
-    expect(screen.getByRole('combobox', { name: 'Map aspect' })).toBeInTheDocument();
-    expect(screen.getByTestId('start-run')).toBeEnabled();
+    expect(within(section).getByTestId('encounter-repopulate')).toHaveTextContent('Repopulate');
+    // …plus the prose checkbox, default OFF.
+    const checkbox = within(section).getByTestId('encounter-redesign-prose');
+    expect(checkbox).toHaveTextContent('');
+    expect(section).toHaveTextContent('Also redesign name and prose');
+    // The old per-section hand-offs are gone: no map button, no content button.
+    expect(screen.queryByTestId('generate-encounter-map')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('generate-encounter-content')).not.toBeInTheDocument();
+    // The battlemap section still offers Upload + the no-map note.
+    expect(screen.getByTestId('upload-battlemap')).toBeInTheDocument();
+    expect(screen.getByText(/No battlemap/)).toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20000);
 
-  it('encounter content action pre-selects the Encounter Smith for a stub', async () => {
-    const user = userEvent.setup();
+  it('repopulate is disabled for a roomless complex (regenerate-everything builds rooms first)', async () => {
     await seedBuiltInPersonas();
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
-    const campaign = await createCampaign({ name: 'Stubs', system: 'dnd5e' });
+    const campaign = await createCampaign({ name: 'Roomless', system: 'dnd5e' });
     const encounter = await createArtifact({
       campaignId: campaign.id,
       kind: 'encounter',
-      name: 'Gate Stub',
+      name: 'Empty Halls',
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'dungeon',
+        locationKind: 'dungeon',
+        siteShape: 'complex',
+        budgetAdvisory: '',
+      },
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));
 
-    await user.click(await screen.findByTestId('generate-encounter-content'));
-    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
-    await waitFor(() => {
-      expect(personaSelect.textContent).toContain('Encounter Smith');
-    });
-    expect(screen.getByLabelText('Brief')).toHaveValue(
-      'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.',
-    );
-    expect(screen.getByTestId('start-run')).toBeEnabled();
+    const section = await screen.findByTestId('encounter-ai-section');
+    expect(within(section).getByTestId('encounter-regenerate-everything')).toBeEnabled();
+    expect(within(section).getByTestId('encounter-repopulate')).toBeDisabled();
     await flushAsyncUpdates();
   }, 20000);
 
-  it('encounter battlemap action words the brief as regeneration when a map exists', async () => {
-    const user = userEvent.setup();
+  it('battlemap section keeps Upload + Clear, states the two-action contract and the fresh-keys note', async () => {
     await seedBuiltInPersonas();
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
     const campaign = await createCampaign({ name: 'Maps II', system: 'dnd5e' });
@@ -291,6 +314,20 @@ describe('images ui', () => {
       campaignId: campaign.id,
       kind: 'encounter',
       name: 'Bridge Ambush II',
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
     });
     const image = await createImage({
       campaignId: campaign.id,
@@ -320,13 +357,14 @@ describe('images ui', () => {
     });
     renderAppAt(artifactPath(campaign.id, encounter.id));
 
-    await user.click(await screen.findByTestId('generate-encounter-map'));
-    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
-    await waitFor(() => {
-      expect(personaSelect.textContent).toContain('Encounter Cartographer');
-    });
-    expect(screen.getByLabelText('Brief')).toHaveValue(
-      'Regenerate this encounter map while preserving its authored roster and prose. Room keys regenerate with the map — edit them again afterwards if needed.',
+    // No standalone generate button — Upload + Clear stay.
+    expect(await screen.findByTestId('upload-battlemap')).toBeInTheDocument();
+    expect(screen.getByTestId('clear-battlemap')).toBeInTheDocument();
+    expect(screen.queryByTestId('generate-encounter-map')).not.toBeInTheDocument();
+    // The contract copy names both actions; the keys note names Regenerate everything.
+    expect(screen.getByTestId('battlemap-section')).toHaveTextContent('Regenerate everything builds a');
+    expect(screen.getByTestId('regenerate-keys-note')).toHaveTextContent(
+      'Regenerate everything writes fresh room keys',
     );
     // The editor shows the map on file instead of the "no battlemap" note.
     expect(screen.getByRole('button', { name: 'Open battlemap' })).toBeInTheDocument();
@@ -334,8 +372,7 @@ describe('images ui', () => {
     await flushAsyncUpdates();
   }, 20000);
 
-  it('a dungeon-preset encounter captions the map as a Dungeon layout and regenerates keeping its preset (docs/11 D10)', async () => {
-    const user = userEvent.setup();
+  it('a dungeon-preset encounter captions the map as a Dungeon layout', async () => {
     await seedBuiltInPersonas();
     await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
     const campaign = await createCampaign({ name: 'Dungeons', system: 'dnd5e' });
@@ -343,6 +380,20 @@ describe('images ui', () => {
       campaignId: campaign.id,
       kind: 'encounter',
       name: 'Drowned Halls',
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'dungeon',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
     });
     const image = await createImage({
       campaignId: campaign.id,
@@ -374,14 +425,6 @@ describe('images ui', () => {
 
     // The map caption names the preset (the layout is the encounter's identity).
     expect(await screen.findByText(/Dungeon layout on file/)).toBeInTheDocument();
-
-    // Regeneration keeps the encounter's own preset (panel-side override).
-    await user.click(await screen.findByTestId('generate-encounter-map'));
-    const personaSelect = await screen.findByRole('combobox', { name: 'Persona' });
-    await waitFor(() => {
-      expect(personaSelect.textContent).toContain('Encounter Cartographer');
-    });
-    expect(screen.getByTestId('encounter-regenerate-target').textContent).toContain('keeping its map preset');
     await flushAsyncUpdates();
   }, 20000);
 

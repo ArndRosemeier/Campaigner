@@ -49,7 +49,6 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
-import { useEncounterGenerationRequest } from '@/features/campaign/encounterGenerationRequest';
 import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { extrasForPersona } from '@/llm/personas/extras';
@@ -227,11 +226,6 @@ export function PersonaPanel({
   const requestArtifactId = useIllustrationRequest((state) => state.artifactId);
   const requestedAt = useIllustrationRequest((state) => state.requestedAt);
   const clearRequest = useIllustrationRequest((state) => state.clear);
-  const encounterRequestId = useEncounterGenerationRequest((state) => state.artifactId);
-  const encounterRequestRegenerate = useEncounterGenerationRequest((state) => state.regenerate);
-  const encounterRequestVariant = useEncounterGenerationRequest((state) => state.variant);
-  const encounterRequestedAt = useEncounterGenerationRequest((state) => state.requestedAt);
-  const clearEncounterRequest = useEncounterGenerationRequest((state) => state.clear);
   const settings = useLiveQuery(() => readSettings(), []);
 
   const selectedPersona = personas?.find((persona) => persona.id === personaId);
@@ -275,31 +269,6 @@ export function PersonaPanel({
     setTab('assistant');
     clearRequest();
   }, [requestArtifactId, requestedAt, personas, clearRequest]);
-
-  useEffect(() => {
-    if (encounterRequestId === null) return;
-    const slug =
-      encounterRequestVariant === 'content' ? 'encounter-smith' : 'encounter-cartographer';
-    const persona = personas?.find((candidate) => candidate.slug === slug);
-    if (persona === undefined) return; // personas not loaded yet
-    setPersonaId(persona.id);
-    setTargetArtifactId(encounterRequestId);
-    // Word the brief truthfully: an encounter without the thing being
-    // generated is a first generation, not a regeneration — "regenerate"
-    // made it sound like one already existed.
-    setBrief(
-      encounterRequestVariant === 'content'
-        ? encounterRequestRegenerate
-          ? 'Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.'
-          : 'Generate the full content of this encounter: roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.'
-        : encounterRequestRegenerate
-          ? 'Regenerate this encounter map while preserving its authored roster and prose. Room keys regenerate with the map — edit them again afterwards if needed.'
-          : 'Generate a battlemap and room layout for this encounter, with a GM-only key and treasure checklist per room.',
-    );
-    setAutonomy('auto');
-    setTab('assistant');
-    clearEncounterRequest();
-  }, [encounterRequestId, encounterRequestRegenerate, encounterRequestVariant, encounterRequestedAt, personas, clearEncounterRequest]);
 
   // "Generate/Regenerate with AI" from the artifact editor (smith kinds):
   // select the kind's smith persona, target the requesting artifact, word
@@ -388,11 +357,12 @@ export function PersonaPanel({
       setActiveRunId(runId);
       return;
     }
-    // Encounter Smith targeted content fill (mode generate, docs/11): the
-    // artifact-editor's content hand-off targets an existing encounter and
-    // the run writes INTO it — name, links, images and battlemap preserved.
-    // start() used to fall through to the fresh-create branch here, DROPPING
-    // the target (the run duplicated the artifact instead of refilling it).
+    // Encounter Smith targeted content fill (mode generate, docs/11): a
+    // manually targeted run writes INTO the existing encounter — name,
+    // links, images and battlemap preserved (the editor's two buttons start
+    // their own runs instead of handing off here). start() used to fall
+    // through to the fresh-create branch here, DROPPING the target (the run
+    // duplicated the artifact instead of refilling it).
     if (selectedPersona.producesKind === 'encounter' && targetArtifactId !== '') {
       const runId = await runEngine.startRun({
         campaign,
