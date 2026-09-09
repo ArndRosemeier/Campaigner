@@ -28,6 +28,7 @@ describe('buildEntityBrief', () => {
       'Harbormaster Ilse',
       'The party meets Harbormaster Ilse at the tide gate.\nShe warns of the cult.',
       'A flooded chapel hides a cult.',
+      undefined,
     );
     expect(brief).toContain('Harbormaster Ilse');
     expect(brief).toContain('tide gate');
@@ -35,7 +36,7 @@ describe('buildEntityBrief', () => {
   });
 
   it('produces a usable brief even without context', () => {
-    const brief = buildEntityBrief('The Gray Nun', '', '');
+    const brief = buildEntityBrief('The Gray Nun', '', '', undefined);
     expect(brief).toContain('The Gray Nun');
     expect(brief.trim()).not.toBe('');
   });

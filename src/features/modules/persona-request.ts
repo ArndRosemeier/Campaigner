@@ -1,5 +1,6 @@
 import type { EntityKind } from '@/domain';
 import { ENTITY_KINDS } from '@/domain';
+import { partyLevelLine } from '@/llm/roomBudget';
 
 /**
  * Stub-kind constants and brief builders for the entity workflow
@@ -42,16 +43,25 @@ export function guessKindFromSentence(sentence: string): StubKind {
  * The brief for "Generate with persona" (08 §M4-C): link name + the
  * paragraphs surrounding its occurrences (cap ~1200 chars) + module premise.
  * No numeric entity quotas — the persona details exactly this one entity.
+ *
+ * `partyLevel` carries the structured level context (docs/11) for encounter
+ * drafts: the referencing part's exact level, resolved by the caller with
+ * `partLevelForMention` at the same mention position `contextParagraphs`
+ * was excerpted from. When defined, the brief states the party as
+ * `partyLevelLine(partyLevel)`; when undefined the brief is byte-identical
+ * to the level-free form (non-encounter stubs never pass one).
  */
 export function buildEntityBrief(
   name: string,
   contextParagraphs: string,
   premise: string,
+  partyLevel: number | undefined,
 ): string {
   return [
     `Detail the entity "${name}" for this module. It appears in the module text below — match it exactly by name.`,
     contextParagraphs === '' ? null : `Where it is mentioned:\n\n${contextParagraphs}`,
     premise === '' ? null : `Module premise for context:\n\n${premise}`,
+    partyLevel === undefined ? null : partyLevelLine(partyLevel),
     // The artifact is linked back from the module's wiki-link, which resolves
     // by exact name — the name field must be verbatim; epithets go in the body.
     `The artifact "name" field must be exactly "${name}" — verbatim, with no epithets, titles, or additions (put those in the body).`,

@@ -10,6 +10,7 @@ import {
   STUB_PERSONA_SLUGS,
   type StubKind,
 } from '@/features/modules/persona-request';
+import { partLevelForMention } from '@/llm/roomBudget';
 import { surroundingParagraphs } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
 import { toastError } from '@/lib/toast';
@@ -175,10 +176,15 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       try {
         // The brief stands alone per entity: module text around the wiki-link
         // plus the spine premise — no dependency on sibling entities.
+        // Encounter drafts additionally carry the structured level context
+        // (docs/11): the referencing part's exact level at this same mention
+        // position; other stub kinds have no level semantics and stay
+        // byte-identical.
         const brief = buildEntityBrief(
           target.name,
           surroundingParagraphs(moduleText, target.name),
           module.spine?.premise ?? '',
+          kind === 'encounter' ? partLevelForMention(module, target.name) : undefined,
         );
         const runInput: StartRunInput = {
           campaign,

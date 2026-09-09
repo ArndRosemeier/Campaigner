@@ -198,7 +198,7 @@ describe('remaining personas wired', () => {
         {
           personaId: persona.id,
           title: 'Detail: Kael',
-          brief: buildEntityBrief('Kael', '[[Kael]] watches the tide gate.', ''),
+          brief: buildEntityBrief('Kael', '[[Kael]] watches the tide gate.', '', undefined),
           autonomy: 'auto',
         },
       ],
@@ -264,7 +264,7 @@ describe('remaining personas wired', () => {
         {
           personaId: persona.id,
           title: 'Detail: Ferryman Ollo',
-          brief: buildEntityBrief('Ferryman Ollo', 'The party hires [[Ferryman Ollo]].', ''),
+          brief: buildEntityBrief('Ferryman Ollo', 'The party hires [[Ferryman Ollo]].', '', undefined),
           autonomy: 'auto',
         },
       ],

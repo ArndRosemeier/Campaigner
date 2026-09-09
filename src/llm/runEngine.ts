@@ -71,6 +71,8 @@ import {
   checkRoomBudget,
   expectedRoomThreat,
   fillGradeStockingFor,
+  partLevelForMention,
+  partyLevelLine,
   reconcileRoomAssignments,
   resolveBriefMonsterLevels,
   resolveEntryLevels,
@@ -2757,12 +2759,27 @@ export class RunEngine {
     // field absent (finalize); a single-arena outcome discards it.
     const targetFillGrade = target?.kind === 'encounter' ? target.data.fillGrade : undefined;
     const fillGrade = targetFillGrade ?? drawFillGrade();
+    // Structured level context (docs/11): the party level is the
+    // referencing part's EXACT level — the first part whose markdown carries
+    // the target's [[Name]] mention supplies its levelBand (ONE shared pure
+    // helper, `partLevelForMention` — no second implementation). No mention
+    // in the module text (or no owning module) keeps today's behavior
+    // byte-identical: the structured line stays absent and the free-text
+    // chain below drives.
+    const partLevel = await (async (): Promise<number | undefined> => {
+      if (target?.kind !== 'encounter' || target.moduleId === null) return undefined;
+      const owner = await getModule(target.moduleId);
+      if (owner === undefined) return undefined;
+      return partLevelForMention(owner, target.name);
+    })();
     // The level the rooms' targetLevels will default to (stampTargetLevels):
-    // the target's own hint on a regenerate, the run brief's text for a
-    // fresh encounter. Without a digit there is no honest number to render.
-    const promptLevel = target?.kind === 'encounter'
-      ? parseRosterTargetLevel(target.data.levelHint)
-      : parseRosterTargetLevel(input.brief);
+    // the structured part level first, then the target's own hint on a
+    // regenerate, the run brief's text for a fresh encounter. Without a
+    // digit there is no honest number to render.
+    const promptLevel = partLevel
+      ?? (target?.kind === 'encounter'
+        ? parseRosterTargetLevel(target.data.levelHint)
+        : parseRosterTargetLevel(input.brief));
     // Per-room stocking numbers (docs/11 D12 amendment): the fill-grade
     // share as concrete creature-levels at the level the rooms default to.
     // Null for pf2e (no Paizo numbers) or a digit-free level — the
@@ -2869,6 +2886,7 @@ export class RunEngine {
       input.brief,
       groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
+      partLevel === undefined ? null : partyLevelLine(partLevel),
       `Map aspect: ${aspect}`,
       presetShapeClause,
       stockingNumbers,

@@ -1174,6 +1174,45 @@ initiative resets, and key markers/badges now sit at each room's mobsRect
 CENTER (derived from the live layout — the old `stagingPoint ?? (0.5, 0.5)`
 fallback stamped dead-center-of-board badges on every non-staging layout).
 
+### Structured level context — the part's level and a party of 4 (owner-directed)
+
+Owner rule, verbatim: "Each module part has an explicite level and always
+assume a party of 4, thats what all modules do normally." Neither the Smith
+draft nor the Cartographer brief received structured level data before this
+arc — no party level, no party size, no level band; the level flowed only as
+free text (`levelHint` / brief prose via `parseRosterTargetLevel`). Owner
+correction: there is NO band math — a part's level is EXACT (a "2–4 module"
+is a 2-part, a 3-part and a 4-part); the low/high-end question does not
+apply.
+
+- **Party size** is the constant 4 — `PARTY_SIZE` (`src/llm/roomBudget.ts`,
+  beside the budget derivation): the one named constant both prompts use,
+  nobody re-derives it.
+- **Party level** is the referencing part's level: at brief time the
+  encounter's `[[Name]]` mention is located in the module text → the
+  containing part → its `levelBand`, taken as the EXACT level. ONE shared
+  pure helper, `partLevelForMention` (`src/llm/roomBudget.ts` — no second
+  implementation): first part in plan order carrying the mention wins
+  (deterministic); a pathological multi-level band string on one part parses
+  to its low end — never a loud failure, never a silent break of
+  generation; a premise-only mention carries no levelBand and does not
+  count.
+- **Both prompts** carry the one structured line `Party of 4 adventurers at
+  level N.` (`partyLevelLine`): the Smith draft via `buildEntityBrief`
+  (`src/features/modules/persona-request.ts` — encounter stubs only,
+  resolved in `entity-batch.ts` at the same position
+  `surroundingParagraphs` excerpts) and the Cartographer brief via
+  `runEncounterBrief` (module lookup through the target's `moduleId`, same
+  helper).
+- **Budgets key off N**: `fillGradeStockingFor`'s `promptLevel` prefers the
+  structured level; the free-text `parseRosterTargetLevel(target?.data.
+  levelHint ?? input.brief)` chain STAYS as the fallback underneath
+  (levelHint-only regenerations behave exactly as today).
+- **Edges**: no mention found in the module text (or no owning module) →
+  today's behavior byte-identical (structured line absent, fallback chain as
+  now). No new failure modes, no new loud paths, no Dexie/schema changes
+  (the association is derived at brief time, never stored).
+
 ### Deletion record — the marker path dies entirely (owner: all pixel
 read-back is unnecessary)
 

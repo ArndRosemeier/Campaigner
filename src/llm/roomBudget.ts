@@ -1,7 +1,8 @@
 import type { GameSystem } from '@/domain/gameSystem';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
-import type { Id, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
+import type { Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { parseLevelSort } from '@/llm/encounterRoster';
+import { extractWikiLinks } from '@/lib/wikilinks';
 
 /**
  * The per-room budget loop (docs/11 D12, owner-specified; amended by the
@@ -50,6 +51,61 @@ import { parseLevelSort } from '@/llm/encounterRoster';
 
 /** The band's headroom over the target level (our own dnd5e approximation). */
 export const ROOM_BUDGET_OVER_MARGIN = 2;
+
+/**
+ * Structured level context (owner-directed: every module part has an explicit
+ * level and every table seats a party of 4 — "thats what all modules do
+ * normally"). The party size is THIS constant, used by both encounter
+ * prompts (the Smith draft via `buildEntityBrief`, the Cartographer brief
+ * via `runEncounterBrief`) — nobody re-derives it.
+ */
+export const PARTY_SIZE = 4;
+
+/**
+ * The one structured party line both encounter prompts carry when the
+ * encounter's part level is known (docs/11): `Party of 4 adventurers at
+ * level N.` — built from `PARTY_SIZE` so the size can never drift between
+ * the two prompts.
+ */
+export function partyLevelLine(level: number): string {
+  return `Party of ${String(PARTY_SIZE)} adventurers at level ${String(level)}.`;
+}
+
+/**
+ * The referencing part's EXACT level for an encounter mention (docs/11):
+ * the first module part (plan order) whose markdown carries the encounter's
+ * `[[Name]]` mention supplies its `levelBand` as the exact party level —
+ * parts carry single levels, so a "2–4 module" is a 2-part, a 3-part and a
+ * 4-part, never band math. A pathological multi-level band string on one
+ * part deterministically parses to its LOW end (the first digit run).
+ *
+ * Returns undefined when there is nothing honest to report — no mention in
+ * any part (the premise carries no levelBand, so a premise-only mention
+ * does not count), no spine entry for the containing part, or a band with
+ * no digits — and the caller keeps today's free-text fallback chain
+ * (`parseRosterTargetLevel` over `levelHint`/brief). Never throws for data
+ * conditions: a missing level is a legitimate state, not a failure.
+ */
+export function partLevelForMention(
+  module: Pick<Module, 'spine' | 'parts'>,
+  name: string,
+): number | undefined {
+  const target = name.trim().toLowerCase();
+  if (target === '') return undefined;
+  const parts = module.parts.slice().sort((a, b) => a.planIndex - b.planIndex);
+  for (const part of parts) {
+    const mentioned = extractWikiLinks(part.markdown).some(
+      (link) => link.name.trim().toLowerCase() === target,
+    );
+    if (!mentioned) continue;
+    // FIRST mention wins: the containing part decides, deterministically.
+    const band = module.spine?.partPlan[part.planIndex]?.levelBand;
+    if (band === undefined) return undefined;
+    const digits = /(\d+)/.exec(band)?.[1];
+    return digits === undefined ? undefined : Number(digits);
+  }
+  return undefined;
+}
 
 /**
  * The lower verdicts' slack (fill-grade arc): a complex room ships 'under'
