@@ -12,6 +12,13 @@ import type { NamedText, StatBlock } from '@/domain/statblock';
  * one contract-repair retry) is GONE. The image prompt is assembled
  * deterministically from the artifact's own data — no chat call anywhere in
  * the image-prompt path.
+ *
+ * Owner-directed amendment (image text-render guard default-on): the
+ * `IMAGE_TEXT_NEGATIVE` Avoid list rides EVERY draft unless the caller
+ * passes its own `negative` (the explicit-override seam) — covers, entity
+ * images, portraits, and the appearance shortcut alike. The vision dungeon
+ * path is the one documented carve-out (it needs its room plaques, so it
+ * never routes through this contract).
  */
 
 /** The final image-API prompt: draft prompt + style notes + avoid list. */
@@ -42,20 +49,32 @@ export interface BuildImagePromptOptions {
   /** Trailing steering line (the run engine's retry/continue instruction). */
   extraInstruction?: string | undefined;
   /** Text folded into the draft's `negative` field (surfaced by
-   * `assembleImagePrompt` as `Avoid: …`). Defaults to '' (no avoid list) —
-   * only the mob portrait drafts set a text-render guard; every other caller
-   * is unaffected. */
+   * `assembleImagePrompt` as `Avoid: …`). DEFAULTS to the shared
+   * `IMAGE_TEXT_NEGATIVE` guard — every caller is guarded unless it passes
+   * its own list. This option is the explicit-override seam: a caller with a
+   * tailored need (the vision dungeon path's room plaques) passes its own
+   * `negative` instead (an explicit `''` opts out — documented carve-outs
+   * only, never by accident). */
   negative?: string | undefined;
 }
 
 /**
- * Text-render guard for the mob portrait drafts (docs/11 D5): smart image
- * models otherwise render the grounding prose as captions inside the
- * portrait. Flows into the final prompt as `Avoid: …` via
- * `assembleImagePrompt`.
+ * Text-render guard for EVERY image prompt (docs/11 D5, generalized):
+ * smart image models otherwise render the grounding prose as captions
+ * inside the art (owner report: the model "tends to render lots of text,
+ * explaining the whole plot in the image"). Flows into the final prompt as
+ * `Avoid: …` via `assembleImagePrompt`. "Use text sparingly" hedges are
+ * explicitly NOT the fix — this Avoid list is the proven mechanism.
  */
-export const MOB_PORTRAIT_TEXT_NEGATIVE =
-  'text, letters, numbers, words, captions, stat block, character sheet, diagram, label';
+export const IMAGE_TEXT_NEGATIVE =
+  'text, letters, numbers, words, captions, stat block, character sheet, diagram, label, speech bubbles, watermark, signature, plot summary, explanatory text';
+
+/**
+ * The mob-portrait name for the shared guard (docs/11 D5): the portrait
+ * queues import this symbol, so it stays as an alias — the general list
+ * covers the proven portrait list, and the two names denote the same string.
+ */
+export const MOB_PORTRAIT_TEXT_NEGATIVE = IMAGE_TEXT_NEGATIVE;
 
 /**
  * The chunk input the mob portrait grounding reads: raw text plus the
@@ -143,7 +162,7 @@ export function buildImagePrompt(
       opts.extraInstruction === undefined || opts.extraInstruction === ''
         ? `${opts.systemLabel}=>${appearance}`
         : `${opts.systemLabel}=>${appearance}\n${opts.extraInstruction}`;
-    return { prompt, negative: opts.negative ?? '', styleNotes: '' };
+    return { prompt, negative: opts.negative ?? IMAGE_TEXT_NEGATIVE, styleNotes: '' };
   }
 
   const summary = target.summary.trim();
@@ -166,5 +185,5 @@ export function buildImagePrompt(
   ]
     .filter((part) => part !== null)
     .join('\n');
-  return { prompt, negative: opts.negative ?? '', styleNotes: '' };
+  return { prompt, negative: opts.negative ?? IMAGE_TEXT_NEGATIVE, styleNotes: '' };
 }

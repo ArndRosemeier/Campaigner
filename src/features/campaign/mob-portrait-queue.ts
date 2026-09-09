@@ -136,8 +136,9 @@ async function processJob(
   const summary = artifact.summary;
   let body: string;
   // Chunk-grounded jobs (rulebook citations) carry the text-render
-  // negative; the creation-dialog extra grounds on user content and stays
-  // out of that scope.
+  // negative explicitly; the creation-dialog extra grounds on user content
+  // and rides the shared default-on guard (docs/11 D5, generalized — the
+  // contract defaults `negative` when the caller passes none).
   let chunkGrounded: boolean;
   if (job.chunkId !== undefined) {
     const chunk = (await getChunksByIds([job.chunkId]))[0];
@@ -239,9 +240,10 @@ async function processJob(
  * the queue's wiring: no run row, the campaign's rule system for the style
  * hint, and the grounding text as the description (the chunk's stat-exempt
  * portrait grounding, or — for the creation-dialog portrait extra — the
- * artifact's own content, which stays OUT of the text-render-negative scope:
- * user content, not chunk context). Deterministic: no chat call, no repair
- * retry. */
+ * artifact's own content, guarded by the contract default). Chunk-grounded
+ * jobs pass the text-render negative explicitly (identical to the default
+ * via the alias); the creation-dialog extra passes none and rides the
+ * default. Deterministic: no chat call, no repair retry. */
 async function draftPrompt(
   artifact: AnyArtifact,
   summary: string,

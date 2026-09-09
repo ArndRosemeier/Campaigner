@@ -115,12 +115,21 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   is borderline and deliberately excluded): smart image models RENDER chunk
   stat text into portraits. When `statBlock` is null (unparsed chunks) the
   helper falls back to raw `chunk.text` verbatim — the loud residual render
-  risk, documented on the helper, never silent. Belt and braces: both mob
-  drafts set the text-render negative
-  (`MOB_PORTRAIT_TEXT_NEGATIVE` → `Avoid: text, letters, …`), while the
-  artifact `appearance` shortcut keeps winning when the user filled it and
-  the creation-dialog path (artifact's own body — user content, not chunk
-  context) stays out of scope. **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
+  risk, documented on the helper, never silent. Belt and braces: the
+  text-render guard is default-on EVERYWHERE (`IMAGE_TEXT_NEGATIVE` →
+  `Avoid: text, letters, … speech bubbles, watermark, signature, plot
+  summary, explanatory text`), wired as the default `negative` of the shared
+  Illustrator contract — covers, entity images, portraits, the run-engine
+  prompt draft, the classic battlemap stylize (empty brief negative falls
+  back to it), and the `appearance` shortcut (which keeps winning AND
+  carries the guard) are all guarded; a caller passes its own list only as
+  an explicit override. The mob-portrait `MOB_PORTRAIT_TEXT_NEGATIVE` name
+  stays as an alias (identical by identity — the general list covers the
+  proven portrait list). The ONE carve-out is the vision dungeon path
+  below: it NEEDS its carved room plaques, so it never routes through the
+  Illustrator contract — its tailored "no written text anywhere except the
+  N letter plaques" clause is its guard instead (a blanket no-letters Avoid
+  would fight the locate contract). **Owner amendment (2026-09-05, c3c021f):** the prompt draft is
   deterministic — no LLM call ("I dont want that extra LLM call. Just use
   the appearance/body."). Failures report loud per mob (`{name, message}`
   style, `entity-batch.ts` pattern); skip-if-imaged guard (existing queue

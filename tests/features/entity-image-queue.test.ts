@@ -237,11 +237,16 @@ describe('entity image queue', () => {
       expect(seoni?.imageIds).toHaveLength(1);
     });
 
-    expect(generateImagesMock).toHaveBeenCalledWith(
+    // The appearance shortcut wins AND carries the default-on text-render
+    // guard (the negative reaches the final prompt on both builder
+    // branches).
+    const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';
+    expect(finalPrompt).toContain(
       'Pathfinder 2e=>Varisian sorceress with blue robes and tattoos',
-      1,
-      expect.anything(),
     );
+    expect(finalPrompt).toContain('Avoid: text, letters, numbers');
+    expect(finalPrompt).toContain('speech bubbles');
+    expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
     expect(chatMock).not.toHaveBeenCalled();
   });
 

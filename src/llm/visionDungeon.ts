@@ -69,6 +69,14 @@ export function labelsForRoomCount(count: number): string[] {
  * organic — because the descriptions already carry shape language. There is
  * deliberately no global shape clause to argue with the rooms.
  *
+ * TEXT-RENDER CARVE-OUT (docs/11 D5, generalized): this builder is the one
+ * documented exception to the shared `IMAGE_TEXT_NEGATIVE` default — the
+ * map NEEDS its carved letter plaques, so a blanket no-letters Avoid list
+ * would fight the locate contract. The guard here is the tailored clause in
+ * the Requirements line instead ("no written text anywhere except the N
+ * letter plaques"). The lab bench inherits the carve-out through this same
+ * builder — never a forked copy.
+ *
  * Pure — prompt-capture tests pin its contents.
  */
 export function buildLabeledMapPrompt(

@@ -9,6 +9,7 @@ import { createImage, getImage, listImagesByIds } from '@/db/imageRepo';
 import { getRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { createPersona, defaultSettings, type Id, type Persona } from '@/domain';
+import { IMAGE_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
 
@@ -154,7 +155,7 @@ describe('illustrator run (image persona)', () => {
           'Summary: A storm-lashed beacon on a black cliff.',
           'Description: Windswept rocks, gulls, one tower of black stone.',
         ].join('\n'),
-        negative: '',
+        negative: IMAGE_TEXT_NEGATIVE,
         styleNotes: '',
       },
     });
@@ -513,18 +514,20 @@ describe('image persona validation', () => {
     // LLM chat was NEVER called to rewrite or hallucinate a prompt
     expect(chatMock).not.toHaveBeenCalled();
 
-    // Image generator received exact system prefix and appearance
-    expect(generateImagesMock).toHaveBeenCalledWith(
+    // Image generator received the system prefix + appearance AND the
+    // default-on text-render guard assembled onto the final prompt.
+    const appearanceCall = generateImagesMock.mock.calls[0]?.[0] ?? '';
+    expect(appearanceCall).toContain(
       'Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier',
-      2,
-      expect.anything(),
     );
+    expect(appearanceCall).toContain(`Avoid: ${IMAGE_TEXT_NEGATIVE}`);
+    expect(generateImagesMock.mock.calls[0]?.[1]).toBe(2);
 
     const pickRun = await getRun(runId);
     expect(pickRun?.steps[0]?.output).toEqual({
       parsed: {
         prompt: 'Pathfinder 2e=>A tall elf with silver hair, dark leather armor, holding a rapier',
-        negative: '',
+        negative: IMAGE_TEXT_NEGATIVE,
         styleNotes: '',
       },
     });
@@ -580,7 +583,7 @@ describe('image persona validation', () => {
     expect(pausedRun?.steps[0]?.output).toEqual({
       parsed: {
         prompt: 'D&D 5e=>Small, soot-stained, goggles.',
-        negative: '',
+        negative: IMAGE_TEXT_NEGATIVE,
         styleNotes: '',
       },
     });
@@ -650,11 +653,16 @@ describe('image persona validation', () => {
         'Summary: A ruined border keep.',
         'Description: Courtyard\nCollapsed walls, bramble-choked wells.',
       ].join('\n'),
-      negative: '',
+      negative: IMAGE_TEXT_NEGATIVE,
       styleNotes: '',
     };
     expect(run?.steps[0]?.output).toEqual({ parsed: draft });
-    // The image API received the assembled deterministic prompt.
-    expect(generateImagesMock).toHaveBeenCalledWith(draft.prompt, 2, expect.anything());
+    // The image API received the assembled deterministic prompt — grounding
+    // plus the default-on text-render guard.
+    expect(generateImagesMock).toHaveBeenCalledWith(
+      `${draft.prompt}\nAvoid: ${IMAGE_TEXT_NEGATIVE}`,
+      2,
+      expect.anything(),
+    );
   });
 });

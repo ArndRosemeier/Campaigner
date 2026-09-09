@@ -96,7 +96,7 @@ import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonRe
 import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFallback';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { failureKindOf } from '@/llm/failureKind';
-import { assembleImagePrompt, buildImagePrompt } from '@/llm/imagePromptDraft';
+import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
 import { intakeImage } from '@/lib/imageIntake';
 import {
   encounterDraftSchema,
@@ -3747,6 +3747,12 @@ export class RunEngine {
     const concept = parsed.terrain === ''
       ? `${parsed.theme} dungeon`
       : `${parsed.theme} dungeon — ${parsed.terrain}`;
+    // TEXT-RENDER CARVE-OUT (docs/11 D5, generalized): this path NEVER takes
+    // the shared `IMAGE_TEXT_NEGATIVE` blanket list — a no-letters clause
+    // would fight the room plaques the map NEEDS. Its tailored negative is
+    // the builder's own "no written text anywhere except the N letter
+    // plaques" clause (see `buildLabeledMapPrompt`) — documented here so the
+    // carve-out is explicit, never an accidentally unguarded caller.
     const prompt = buildLabeledMapPrompt(
       sidecarRooms,
       concept,
@@ -3937,7 +3943,12 @@ export class RunEngine {
 
     // The usability hard-bans are the shared contract tail (docs/11): they
     // pin byte-identical in BOTH modes — the anti-hallucination negatives
-    // (owner-observed white-rectangle failure) never soften.
+    // (owner-observed white-rectangle failure) never soften. The brief's own
+    // `negative` rides as the `Avoid:` line when the Cartographer wrote one;
+    // an empty brief negative falls back to the shared default-on text-render
+    // guard (docs/11 D5, generalized) — an unguarded stylize is never
+    // accidental, only an explicit custom list.
+    const avoid = parsed.negative === '' ? IMAGE_TEXT_NEGATIVE : parsed.negative;
     const usabilityBans =
       'No title banner, no compass rose, no map legend, no scale bar, no grid lines, no text labels, no characters, no monsters, no tokens, no miniatures. No white or pale boxes, rectangles, plaques, discs, signposts, or other markers or label-like geometry apart from the entrance triangle: paint every room floor as continuous natural terrain with no discrete light-colored sub-rectangles.';
     const prompt = natural
@@ -3954,7 +3965,7 @@ export class RunEngine {
           'This site is open natural terrain: the reference image only marks placement — its soft darker patches show where the encounter\'s creatures gather and its single neon triangle marks the party\'s approach — so shape the ground itself from the scene description above.',
           entranceClause,
           usabilityBans,
-          parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
+          `Avoid: ${avoid}`,
         ].filter((part) => part !== null && part !== '').join(' ')
       : [
           `Top-down orthographic RPG battlemap, flat vertical overhead view. Theme: ${parsed.theme}.`,
@@ -3963,7 +3974,7 @@ export class RunEngine {
           entranceClause,
           'Keep walls, openings, the entrance gap and overall structure exactly as in the reference image.',
           usabilityBans,
-          parsed.negative === '' ? null : `Avoid: ${parsed.negative}`,
+          `Avoid: ${avoid}`,
         ].filter((part) => part !== null && part !== '').join(' ');
     const generated = await encounterRunAdapters.generateImages(prompt, input.unattended === true ? 1 : 2, {
       model: settings.imageModel,

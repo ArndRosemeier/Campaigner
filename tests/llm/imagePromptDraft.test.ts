@@ -4,6 +4,7 @@ import { statBlockSchema } from '@/domain';
 import {
   assembleImagePrompt,
   buildImagePrompt,
+  IMAGE_TEXT_NEGATIVE,
   MOB_PORTRAIT_TEXT_NEGATIVE,
   portraitGroundingForChunk,
 } from '@/llm/imagePromptDraft';
@@ -28,7 +29,7 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
     );
     expect(draft).toEqual({
       prompt: 'Pathfinder 2e=>Small, soot-stained, goggles.',
-      negative: '',
+      negative: IMAGE_TEXT_NEGATIVE,
       styleNotes: '',
     });
   });
@@ -58,7 +59,7 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
         'Summary: A storm-lashed beacon on a black cliff.',
         'Description: The Lighthouse\nBlack cliffs, gulls and a storm.',
       ].join('\n'),
-      negative: '',
+      negative: IMAGE_TEXT_NEGATIVE,
       styleNotes: '',
     });
   });
@@ -212,9 +213,7 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
       },
       { systemLabel: 'D&D 5e', negative: MOB_PORTRAIT_TEXT_NEGATIVE },
     );
-    expect(draft.negative).toBe(
-      'text, letters, numbers, words, captions, stat block, character sheet, diagram, label',
-    );
+    expect(draft.negative).toBe(IMAGE_TEXT_NEGATIVE);
     const final = assembleImagePrompt(draft);
     expect(final).toContain('Avoid: text, letters, numbers');
     expect(final).toContain('shrugs off mortal frailty');
@@ -236,11 +235,31 @@ describe('portraitGroundingForChunk (stat-exempt mob grounding)', () => {
     expect(draft.negative).toBe(MOB_PORTRAIT_TEXT_NEGATIVE);
   });
 
-  it('defaults the negative to empty so non-mob callers are unaffected', () => {
-    const draft = buildImagePrompt(
+  it('defaults the negative to the shared text-render guard (default-on, both branches)', () => {
+    const grounded = buildImagePrompt(
       { name: 'Bare', kind: 'note', summary: 's', body: '', data: null },
       { systemLabel: 'D&D 5e' },
     );
-    expect(draft.negative).toBe('');
+    expect(grounded.negative).toBe(IMAGE_TEXT_NEGATIVE);
+    const shortcut = buildImagePrompt(
+      { name: 'Grix', kind: 'npc', summary: '', body: '', data: { appearance: 'Tall and gaunt.' } },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(shortcut.negative).toBe(IMAGE_TEXT_NEGATIVE);
+    expect(assembleImagePrompt(shortcut)).toContain('Avoid: text, letters, numbers');
+  });
+
+  it('keeps the negative option as the explicit-override seam (explicit \'\' opts out)', () => {
+    const custom = buildImagePrompt(
+      { name: 'Bare', kind: 'note', summary: 's', body: '', data: null },
+      { systemLabel: 'D&D 5e', negative: 'custom avoid' },
+    );
+    expect(custom.negative).toBe('custom avoid');
+    const optedOut = buildImagePrompt(
+      { name: 'Bare', kind: 'note', summary: 's', body: '', data: null },
+      { systemLabel: 'D&D 5e', negative: '' },
+    );
+    expect(optedOut.negative).toBe('');
+    expect(assembleImagePrompt(optedOut)).not.toContain('Avoid:');
   });
 });
