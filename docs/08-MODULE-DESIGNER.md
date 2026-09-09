@@ -728,12 +728,16 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   not match the plan, or a lying label — never silent re-splitting. A bare
   `==========` line inside part CONTENT is harmless (the label line is what
   identifies a section start); content faking a full section header fails the
-  split loudly. Deep links are SCROLL targets, not scope: `?part=<planIndex|
-  premise>` written by `canvasPath`, the reader's `#part-<n>` hash honored on
-  load; resolution in `canvas/canvasScope.ts` (still the one parse site).
-  Preview round-trips are safe: returning from the preview remounts the
-  editor from the toggle-time snapshot, never from the pristine assemble
-  (which would silently discard unsaved edits).
+   split loudly. Deep links are SCROLL targets, not scope: `?part=<planIndex|
+   premise>` written by `canvasPath`, the reader's `#part-<n>` hash honored on
+   load — in preview (the DEFAULT view, ledger 58) the same targets scroll
+   the preview articles, each carrying its `part-<n>` anchor id (the scroll
+   re-runs once the content commits, so a module row arriving before the
+   campaign rows cannot drop it); resolution in `canvas/canvasScope.ts`
+   (still the one parse site). Preview round-trips are safe: returning from
+   the preview remounts the editor from the LATEST snapshot (preview chat
+   turns rewrite it) through the existing mountDoc path, never from the
+   pristine assemble (which would silently discard unsaved edits).
 - **Wiki chips are marks, not React**: a CM6 ViewPlugin over the visible
   ranges decorates each `[[token]]` with the `WikiMarkdown` palette resolved
   against the READER pool (campaign + global) with the module's tier-0
@@ -809,6 +813,35 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   either. Same-page deep links and the preview toggle are not navigation
   away: they never guard (the doc is one document).
 
+- **Preview is the DEFAULT view: chat + rendered preview side by side**
+  (owner-directed, ledger 58): `previewOpen` defaults TRUE per module on
+  first open (store `openByModule` undefined ⇒ true; `previewStore.ts`
+  session-only, dies on reload, resets on module change); the toggle stays
+  session-only and the Edit affordance stays prominent — one click back
+  to the document. The preview fills its pane (padding kept, NO centered
+  narrow measure) with the chat sidebar beside it unchanged (chat left,
+  preview fills the rest). It renders the toggle-time snapshot — or, on
+  first open, the assembled/mount doc — through the shared
+  `WikiMarkdown` with the reader pool and clickable entity chips, scaffolding
+  stripped, empty parts marked explicitly unwritten; a doc whose scaffolding
+  no longer parses shows the splitter's loud reason. Header AI actions +
+  Save stay disabled in preview (unchanged).
+- **Last-replacement highlight, both surfaces** (owner-directed, ledger 58:
+  "just the last replacement"): page state `lastReplacement: {doc, from,
+  to} | null` — whole-doc offsets plus the post-apply doc string
+  identity, SET ONLY by chat application (the LAST command's FIRST applied
+  range; both apply paths report it in post-apply coordinates, so an
+  empty-part fill highlights the filled text). Rendered WHILE AND ONLY WHILE
+  the current doc text is byte-identical to the stored string — any
+  hand edit, proposal accept or next apply clears/replaces, never a stale
+  mark. Editor = a CM6 background mark via a small StateField/extension
+  (`canvas/lastReplacement.ts` — own file, not a fork of the
+  suggestions field; the field re-checks the identity itself, so a lagging
+  page can never leave a stale mark); preview = the SHARED `WikiMarkdown`'s
+  OPTIONAL highlight prop (part-relative range, forwarded by `CanvasPreview`
+  after mapping the whole-doc range to its part; reader output byte-identical
+  when absent). Chat only — refine keeps its ghost affordances.
+
 ### Module canvas chat (v2 — LLM co-authoring via XML edit commands)
 
 Owner direction: "a real chat where the LLM can make targeted edits", XML for
@@ -817,11 +850,15 @@ row 51): "No part selection. Whole module in context (without premise),
 parts split by an easy to see delimiter … I want the model to see the whole
 module and be able to make changes to the whole module" + an uncapped
 read-only grounding block for continuity. A collapsible wide LEFT
-sidebar (`w-96`, `canvas/ChatSidebar.tsx`) beside the editor; every chat
+sidebar (`w-96`, `canvas/ChatSidebar.tsx`) beside the editor — and
+beside the PREVIEW, which is the DEFAULT view (ledger 58): the canvas opens
+as chat + rendered preview side by side, and the chat is FULLY LIVE there
+(sending re-enabled; the "persist for preview mode" end-state). Every chat
 control is a 44px touch target (iPad-proportioned). Protocol + engine in
-`src/llm/canvasChat.ts`; application in `canvas/chatApply.ts`; flow in
-`canvas/chatController.ts`; state in `canvas/chatStore.ts`. Decision ledger
-rows 50 and 51.
+`src/llm/canvasChat.ts`; application in `canvas/chatApply.ts` (editor) and
+`canvas/snapshotChat.ts` (preview); flow in `canvas/chatController.ts`
+(editor) and `canvas/snapshotChat.ts` (preview); state in
+`canvas/chatStore.ts`. Decision ledger rows 50, 51 and 58.
 
 - **Protocol**: the assistant replies with short prose plus ZERO OR MORE XML
   command blocks — `<edit all="false"><search>…</search><replace>…</replace></edit>`
@@ -909,12 +946,28 @@ rows 50 and 51.
   mini before→after: the ACTUAL replaced text vs the replace) or failed
   (reason + closest candidate + **Report to LLM**). The encoding-hygiene
   debris scan runs per command's replace text (loud failed card,
-  canvasRefine parity).
+  canvasRefine parity). **In preview** (the editor is unmounted — v3
+  contract, never remounted hidden) the SAME protocol runs against the
+  preview SNAPSHOT STRING (`snapshotChat.applyChatCommandsToSnapshot`:
+  pure string splices through the SAME per-part ladder — no second
+  matcher — re-split per command, so earlier commands never shift
+  later ranges and a faked section header throws `ModulePartsDocumentError`
+  loud; flow `snapshotChat.runSnapshotChatTurn` + snapshot report
+  variants): the batch persists through the SAME split-save
+  (`saveWholeModuleDocument` is headless — row writes, no editor),
+  then the snapshot + highlight advance and the preview re-renders;
+  return-to-Edit remounts the latest snapshot through the existing mountDoc
+  path; a scaffolding-broken snapshot fails the send loudly through the
+  existing error path. DOCUMENTED CAVEAT (no UI apology): preview-applied
+  chat edits have NO undo — there is no CM history while the editor
+  is unmounted. Outcome cards are unchanged (before→after still shown
+  per command).
 - **Report-to-LLM loop** (first-class): the button composes a user turn —
   the error, the failed command verbatim, and the current text around the
   failure point (`composeFailureReport`, ±300 chars) — where the excerpt
-  comes from the TARGET part's CURRENT text in the live editor doc — and
-  sends it through the normal send path (aider's "N SEARCH/REPLACE blocks
+  comes from the TARGET part's CURRENT text in the live editor doc — in
+  preview, from the CURRENT snapshot at click time — and sends it
+  through the normal send path (aider's "N SEARCH/REPLACE blocks
   failed to match! … Did you mean…" retry loop). One-shot per failure
   (button flips to "Reported"). A restored outcome (thread reloaded from the
   row) reports the same way: the excerpt is cut from the CURRENT doc at
@@ -960,7 +1013,9 @@ rows 50 and 51.
   (extracted from canvasRefine) — ONE generation per module across every
   canvas surface; `ModuleBusyError` surfaces as a failed card AND the
   caller's toast, never queued. While a proposal is pending, a refine is in
-  flight, or the module generates, the chat send is disabled.
+  flight, or the module generates, the chat send is disabled. The send
+  stays ENABLED while the preview is open (the live default view —
+  preview turns need no editor).
 
 ---
 
