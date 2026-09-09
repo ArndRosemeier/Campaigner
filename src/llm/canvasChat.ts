@@ -1,18 +1,28 @@
 import { z } from 'zod';
 
-import type { Id } from '@/domain';
-import { getModule } from '@/db/moduleRepo';
+import type { Id, Module } from '@/domain';
+import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
+import { getCampaign } from '@/db/campaignRepo';
 import { getSettings } from '@/db/settingsRepo';
+import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy';
 
 /**
  * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat): LLM
- * co-authoring of ONE module part through a chat sidebar. The assistant
+ * co-authoring of the WHOLE module through a chat sidebar. The assistant
  * replies with prose plus ZERO OR MORE XML edit commands:
  *
  *   <edit all="false"><search>…current text…</search><replace>…new text…</replace></edit>
+ *
+ * Owner direction (docs/17 ledger row 51): no part selection — the model
+ * sees the WHOLE module (all parts, spine premise excluded) split by a
+ * clearly visible `==========` delimiter + `[Part <n> of <total> — <title>]`
+ * scaffold labels, and can edit every part; a REFERENCE-ONLY block carries
+ * the campaign premise, the game-system label and ALL preceding modules'
+ * FULL text (uncapped — the generation-time PRIOR_*_CHAR_CAP frugality is
+ * deliberately not applied to chat) for continuity.
  *
  * Design lineage (docs/17 ledger row 50):
  * - AIDER's SEARCH/REPLACE edit format + flexible-match ladder
@@ -37,9 +47,13 @@ import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy
  *   regex-guessing across boundaries) and zod-validated at this boundary —
  *   a malformed, unbalanced or over-cap reply THROWS `CanvasChatParseError`
  *   (the whole reply fails loudly; nothing partial is applied).
- * - The context ALWAYS carries the CURRENT document text — read from the
- *   CM6 doc at send time, never a cached copy — with an explicit note that
- *   it already contains every previously applied edit.
+ * - The context ALWAYS carries the CURRENT parts document — assembled from
+ *   the module row AT SEND TIME (never a cached copy), with the OPEN part's
+ *   text substituted from the live CM6 doc — with an explicit note that it
+ *   already contains every previously applied edit.
+ * - Matching is PER PART, never across the assembled string: a search
+ *   spanning two parts cannot match and fails loudly (zero-match card with
+ *   the closest candidate across parts).
  * - ONE generation per module — the SHARED `canvasBusy` registry (refine +
  *   chat serialize); `ModuleBusyError` is loud, never queued.
  * - Model: the canvas selection (session-only) defaulting to the Settings
@@ -463,6 +477,203 @@ export function resolveCanvasEdit(doc: string, search: string): CanvasEditResolu
   };
 }
 
+// --- whole-module parts document --------------------------------------------------
+
+/**
+ * The scaffold delimiter between part sections (owner: "an easy to see
+ * delimiter" — blank line, exactly ten `=`, blank line). SCAFFOLDING: the
+ * prompt forbids it inside any search/replace, and per-part matching means
+ * a command can never edit across it.
+ */
+export const CANVAS_PARTS_DELIMITER = '==========';
+
+/** One part's snapshot as the model saw it (application matches THIS text). */
+export interface CanvasPartSnapshot {
+  planIndex: number;
+  title: string;
+  text: string;
+}
+
+/**
+ * The scaffold label line introducing one part section:
+ * `[Part <n> of <total> — <title>]` (n = 1-based position in the plan).
+ * Without a usable title the label falls back to `[Part <n> of <total>]`.
+ * For an EMPTY (not-yet-written) part the label line is the only anchor:
+ * a command whose search EXACTLY equals it fills that part (the replace
+ * must start with the same label line).
+ */
+export function canvasPartLabel(position: number, total: number, title: string): string {
+  const head = `Part ${String(position)} of ${String(total)}`;
+  const clean = title.trim();
+  return clean === '' ? `[${head}]` : `[${head} — ${clean}]`;
+}
+
+export interface AssembleModulePartsInput {
+  /** The plan in order — position i IS planIndex i (08 §Module canvas). */
+  partPlan: readonly { title: string }[];
+  /** Row parts; text joined by planIndex (missing/empty part → ''). */
+  parts: readonly { planIndex: number; markdown: string }[];
+  /** The OPEN part's planIndex — `openPartText` substitutes its row text
+   * so unsaved hand edits ride along exactly as they appear on screen. */
+  openPlanIndex: number;
+  openPartText: string;
+}
+
+/**
+ * Assembles the WHOLE-module parts document (PURE — 08 §Module canvas
+ * chat): every planned part in `partPlan` order, the spine premise
+ * EXCLUDED (owner: "without premise"), each section introduced by its
+ * scaffold label line and separated by the `==========` delimiter. The
+ * OPEN part's text is substituted from the live editor doc byte-exactly —
+ * no trimming, so resolved offsets map 1:1 onto the CM6 doc. The spine
+ * premise is not part of the document and not referenced by it.
+ */
+export function assembleModulePartsDocument(input: AssembleModulePartsInput): {
+  document: string;
+  parts: CanvasPartSnapshot[];
+} {
+  const total = input.partPlan.length;
+  if (total === 0) {
+    throw new Error('assembleModulePartsDocument needs at least one planned part');
+  }
+  if (!Number.isInteger(input.openPlanIndex) || input.openPlanIndex < 0 || input.openPlanIndex >= total) {
+    throw new Error(
+      `openPlanIndex ${String(input.openPlanIndex)} is not a planned part of this module (${String(total)} planned)`,
+    );
+  }
+  const sections: CanvasPartSnapshot[] = input.partPlan.map((plan, index) => ({
+    planIndex: index,
+    title: plan.title,
+    text:
+      index === input.openPlanIndex
+        ? input.openPartText
+        : (input.parts.find((part) => part.planIndex === index)?.markdown ?? ''),
+  }));
+  const document = sections
+    .map((section, index) => {
+      const head = `${canvasPartLabel(index + 1, total, section.title)}\n`;
+      if (index === 0) return `${head}${section.text}`;
+      return `\n\n${CANVAS_PARTS_DELIMITER}\n\n${head}${section.text}`;
+    })
+    .join('');
+  return { document, parts: sections };
+}
+
+// --- cross-part resolution ---------------------------------------------------------
+
+export type CanvasCrossPartResolution =
+  | {
+      status: 'found';
+      /** Per-part matches in part order (only parts with ≥1 range). */
+      matches: { partIndex: number; ranges: { from: number; to: number }[] }[];
+      /** Total occurrences across the WHOLE module. */
+      totalRanges: number;
+    }
+  | {
+      status: 'filled';
+      /** The empty part the label-anchor fill targets. */
+      partIndex: number;
+      /** The part's new text (label-stripped remainder, leading blank
+       * lines trimmed). */
+      newText: string;
+    }
+  | {
+      status: 'fill-failed';
+      partIndex: number;
+      /** The loud reason the fill attempt is rejected. */
+      reason: string;
+    }
+  | {
+      status: 'none';
+      /** The closest candidate snippet across ALL parts. */
+      closest: string;
+      /** Its offset within the closest part's text (null when nothing in
+       * any part corresponds). */
+      closestFrom: number | null;
+      /** The part holding the closest candidate (null when none). */
+      closestPartIndex: number | null;
+    };
+
+/** Strips leading blank/whitespace-only lines (the fill convention). */
+function trimLeadingBlankLines(text: string): string {
+  return text.replace(/^(?:[ \t\r]*\n)+/, '');
+}
+
+/**
+ * Resolves ONE command across the WHOLE module (PURE; 08 §Module canvas
+ * chat): the tolerant ladder runs against EACH part's snapshot text, never
+ * across the assembled string — a search spanning two parts therefore
+ * cannot match. `all="false"` needs EXACTLY ONE match across the WHOLE
+ * module (the caller enforces it against `totalRanges`); `all="true"`
+ * applies in every part where it matched. On zero textual matches, the
+ * empty-part label-anchor convention applies: a search EXACTLY equal to an
+ * empty part's label line fills that part (the replace must start with the
+ * same label line — the part text becomes the remainder after the label,
+ * leading blank lines trimmed; anything else fails loudly via
+ * `fill-failed`). Zero matches return the closest candidate across parts
+ * (best bigram-similarity part) — reporting only, never an auto-apply.
+ */
+export function resolveCanvasEditAcrossParts(
+  command: Pick<CanvasEditCommand, 'search' | 'replace'>,
+  parts: readonly CanvasPartSnapshot[],
+): CanvasCrossPartResolution {
+  if (command.search === '') {
+    return { status: 'none', closest: '', closestFrom: null, closestPartIndex: null };
+  }
+  const matches: { partIndex: number; ranges: { from: number; to: number }[] }[] = [];
+  let totalRanges = 0;
+  const needle = projectWhitespace(command.search).normalized.trim();
+  let best: { partIndex: number; closest: string; closestFrom: number | null; score: number } | null = null;
+  for (const [partIndex, part] of parts.entries()) {
+    const resolution = resolveCanvasEdit(part.text, command.search);
+    if (resolution.status === 'found') {
+      matches.push({ partIndex, ranges: resolution.ranges });
+      totalRanges += resolution.ranges.length;
+      continue;
+    }
+    const score =
+      needle === ''
+        ? 0
+        : bigramSimilarity(projectWhitespace(resolution.closest).normalized, needle);
+    if (best === null || score > best.score) {
+      best = { partIndex, closest: resolution.closest, closestFrom: resolution.closestFrom, score };
+    }
+  }
+  if (matches.length > 0) {
+    return { status: 'found', matches, totalRanges };
+  }
+  // Empty-part label-anchor fill: the label line is an empty part's only
+  // anchor (labels are unique — the 1-based position differs per part).
+  const total = parts.length;
+  for (const [partIndex, part] of parts.entries()) {
+    if (part.text !== '') continue;
+    const label = canvasPartLabel(partIndex + 1, total, part.title);
+    if (command.search !== label) continue;
+    if (!command.replace.startsWith(label)) {
+      return {
+        status: 'fill-failed',
+        partIndex,
+        reason: `filling the empty part "${part.title}" requires the replace to start with its label line ${label}`,
+      };
+    }
+    const remainder = trimLeadingBlankLines(command.replace.slice(label.length));
+    if (remainder.trim() === '') {
+      return {
+        status: 'fill-failed',
+        partIndex,
+        reason: 'the replace carries no content after the label line — write the part text after it',
+      };
+    }
+    return { status: 'filled', partIndex, newText: remainder };
+  }
+  return {
+    status: 'none',
+    closest: best?.closest ?? '',
+    closestFrom: best?.closestFrom ?? null,
+    closestPartIndex: best?.partIndex ?? null,
+  };
+}
+
 // --- context contract -------------------------------------------------------------
 
 const WIKI_TOKEN_RULES =
@@ -470,34 +681,121 @@ const WIKI_TOKEN_RULES =
 
 /**
  * The fixed system prompt (08 §Module canvas chat): the XML protocol, the
- * doc-is-current contract, replace-all guidance, small-edit preference.
+ * whole-module doc-is-current contract, the scaffold rules (separator +
+ * label lines never appear in a command; one command lives inside ONE
+ * part), the empty-part label-anchor fill convention, the REFERENCE-ONLY
+ * grounding rule, replace-all guidance, small-edit preference.
  */
 export function canvasChatSystemPrompt(): string {
   return [
     'You are the Canvas chat co-editor for tabletop RPG modules — an expert editor of GM-facing markdown prose.',
-    'You edit ONE module part by replying with short conversational prose plus ZERO OR MORE XML edit commands:',
+    'You edit the WHOLE module — EVERY part of the parts document below — by replying with short conversational prose plus ZERO OR MORE XML edit commands:',
     '<edit all="false"><search>the exact current text</search><replace>the new text</replace></edit>',
     'Command rules:',
-    '- "search" must match the CURRENT document (below / in the latest message) EXACTLY, byte for byte, including whitespace, punctuation and line breaks. Copy it verbatim from the document.',
-    '- With all="false" (the default) the search must match EXACTLY ONE place; with all="true" every occurrence is replaced (replace-all). Use all="true" whenever repetition is intended (a recurring heading, a name used many times).',
+    '- "search" must match the CURRENT parts document (below / in the latest message) EXACTLY, byte for byte, including whitespace, punctuation and line breaks. Copy it verbatim from the document.',
+    '- With all="false" (the default) the search must match EXACTLY ONE place ACROSS ALL PARTS of the module; with all="true" EVERY occurrence in EVERY part is replaced (replace-all). Use all="true" whenever repetition is intended (a recurring heading, a name used many times).',
     '- Prefer SMALL, targeted edits over whole-part rewrites: several small commands beat one giant replacement.',
+    '- The parts document is split into sections by a separator line of exactly ten equals signs (==========) and every section starts with a scaffold label line like [Part 2 of 3 — The Gate Bargain]. That scaffolding is NOT content: never include a separator or a label line in a search or replace, and never edit across a separator — one command lives inside ONE part.',
+    '- Filling an EMPTY part (a section whose label line is followed by no text): make the search EXACTLY that part\'s label line (nothing more) and start the replace with the same label line — the text after that label line becomes the part\'s content. Anything else fails.',
     '- The search text may not be empty and must not contain the literal strings </search> or </edit>.',
     '- Write <search> and <replace> bodies verbatim — no escaping, no markdown code fences around them.',
-    'The document you receive is the CURRENT state: it ALREADY CONTAINS every edit applied earlier in this conversation. Never repeat an already-applied edit and never assume the text is still in its older form.',
+    'The parts document you receive is the CURRENT state: it ALREADY CONTAINS every edit applied earlier in this conversation. Never repeat an already-applied edit and never assume the text is still in its older form.',
+    'The REFERENCE-ONLY context block (campaign premise, game system, previous modules) exists for continuity: never edit it, never emit commands against it — commands apply to the current module\'s parts document only.',
     WIKI_TOKEN_RULES,
     'Match the language of the document. Prose between commands is shown to the user — keep it brief.',
   ].join('\n');
 }
 
-/** The per-turn user content: the CURRENT doc + the instruction. */
-export function canvasChatTurnContent(document: string, instruction: string): string {
+/** One prior module rendered into the read-only grounding block. */
+export interface ChatGroundingModule {
+  title: string;
+  premise: string;
+  /** Plan-order parts, already labeled; empty markdown sections are skipped. */
+  parts: readonly { label: string; markdown: string }[];
+}
+
+/**
+ * Renders the REFERENCE-ONLY grounding block (PURE; 08 §Module canvas
+ * chat): the campaign's name + description, the game-system label, then
+ * ALL preceding modules' FULL text in story order (createdAt ascending —
+ * the priorModulesContext convention). Deliberately UNCAPPED: this is a
+ * chat-specific renderer, NOT `moduleGen.priorModulesContext` — the
+ * generation-time PRIOR_*_CHAR_CAP context frugality does not apply here
+ * (owner-directed, docs/17 ledger row 51).
+ */
+export function renderChatGrounding(input: {
+  campaignName: string;
+  campaignDescription: string;
+  systemLabel: string;
+  priorModules: readonly ChatGroundingModule[];
+}): string {
+  const lines: string[] = [
+    `Campaign: ${input.campaignName}${input.campaignDescription === '' ? '' : ` — ${input.campaignDescription}`}`,
+    `Game system: ${input.systemLabel}`,
+  ];
+  if (input.priorModules.length > 0) {
+    lines.push(
+      'Previous modules of this campaign, story order (oldest first) — settled history. ' +
+        'Build on their events and open threads, reuse their established names exactly, never retcon them:',
+    );
+    for (const prior of input.priorModules) {
+      lines.push(`## ${prior.title}`);
+      if (prior.premise !== '') lines.push(`Premise:\n${prior.premise}`);
+      for (const part of prior.parts) {
+        lines.push(`${part.label}\n${part.markdown}`);
+      }
+    }
+  }
+  return lines.join('\n\n');
+}
+
+/** Loads the read-only grounding inputs from the rows (loud on a vanished campaign). */
+async function loadChatGrounding(module: Module): Promise<string> {
+  const campaign = await getCampaign(module.campaignId);
+  if (campaign === undefined) {
+    throw new Error('the module\'s campaign no longer exists');
+  }
+  const all = await listModulesByCampaign(module.campaignId);
+  const priors = all
+    .filter((candidate) => candidate.id !== module.id)
+    .sort((a, b) => a.createdAt - b.createdAt);
+  return renderChatGrounding({
+    campaignName: campaign.name,
+    campaignDescription: campaign.description,
+    systemLabel: GAME_SYSTEM_LABELS[campaign.system],
+    priorModules: priors.map((prior) => {
+      const plan = prior.spine?.partPlan ?? [];
+      const parts: { label: string; markdown: string }[] = [];
+      for (let index = 0; index < plan.length; index += 1) {
+        const markdown = prior.parts.find((part) => part.planIndex === index)?.markdown ?? '';
+        if (markdown === '') continue;
+        const title = plan[index]?.title ?? '';
+        const head = title === '' ? `Part ${String(index + 1)}` : `Part ${String(index + 1)}: ${title}`;
+        parts.push({ label: `### ${head}`, markdown });
+      }
+      return { title: prior.title, premise: prior.spine?.premise ?? '', parts };
+    }),
+  });
+}
+
+/** The per-turn user content: the CURRENT parts doc + grounding + instruction. */
+export function canvasChatTurnContent(input: {
+  document: string;
+  grounding: string;
+  instruction: string;
+}): string {
   return [
-    'Module part document — the CURRENT state, including all previously applied edits:',
+    'Module parts document — the CURRENT state, including all previously applied edits:',
     '<document>',
-    document,
+    input.document,
     '</document>',
     '',
-    `Instruction: ${instruction}`,
+    'REFERENCE-ONLY CONTEXT — continuity material. NEVER edit it and never emit edit commands against it; commands apply to the current module\'s parts document above:',
+    '<reference-only>',
+    input.grounding,
+    '</reference-only>',
+    '',
+    `Instruction: ${input.instruction}`,
   ].join('\n');
 }
 
@@ -545,9 +843,12 @@ export function composeFailureReport(input: {
  * STRIPPED from older turns (stale snapshots must never ride along; the
  * current doc goes into the final turn only). When the tail was trimmed, a
  * note says so (documented v1 trim policy — a note, not an LLM summary).
+ * The REFERENCE-ONLY grounding block rides INSIDE the final turn — outside
+ * the tail policy, so it is never trimmed away (08 §Module canvas chat).
  */
 export function buildCanvasChatPayload(input: {
   document: string;
+  grounding: string;
   instruction: string;
   history: { role: 'user' | 'assistant'; text: string }[];
 }): ChatMessage[] {
@@ -574,7 +875,11 @@ export function buildCanvasChatPayload(input: {
   }
   messages.push({
     role: 'user',
-    content: canvasChatTurnContent(input.document, input.instruction),
+    content: canvasChatTurnContent({
+      document: input.document,
+      grounding: input.grounding,
+      instruction: input.instruction,
+    }),
   });
   return messages;
 }
@@ -583,8 +888,11 @@ export function buildCanvasChatPayload(input: {
 
 export interface CanvasChatTurnInput {
   moduleId: Id;
-  /** The CURRENT document text, read from the CM6 doc at send time. */
-  document: string;
+  /** The OPEN part's planIndex — its text rides from the live editor view
+   * (openPartText) instead of the row, so unsaved hand edits apply. */
+  openPlanIndex: number;
+  /** The live CM6 doc of the OPEN part, read at send time. */
+  openPartText: string;
   instruction: string;
   /** Prior conversation (store order, oldest first) — tail-capped here. */
   history: { role: 'user' | 'assistant'; text: string }[];
@@ -599,14 +907,24 @@ export interface CanvasChatTurnResult {
   raw: string;
   modelUsed: string;
   parse: ParsedCanvasChatReply;
+  /** The per-part snapshot EXACTLY as the model saw it (the open part's
+   * text = the live editor doc) — application must match THIS text. */
+  parts: CanvasPartSnapshot[];
 }
 
 /**
  * Sends one chat turn (08 §Module canvas chat). Throws LOUDLY on busy
  * (`ModuleBusyError`, shared registry — chat + refine serialize), a
- * generating module, a vanished module, transport errors, and
+ * generating module, a module without planned parts ("no parts to chat
+ * about"), a vanished module or campaign, transport errors, and
  * `CanvasChatParseError` for malformed replies. User aborts throw
  * AbortError (distinguish via `signal.aborted`, 18-ARCHITECTURE).
+ *
+ * The parts document is assembled from the module ROW AT SEND TIME (never
+ * a cached copy — the load-bearing context contract) with the OPEN part's
+ * text substituted from `openPartText`; the read-only grounding block
+ * (campaign premise + system label + ALL preceding modules' FULL text,
+ * uncapped, story order) rides every request.
  */
 export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise<CanvasChatTurnResult> {
   if (input.signal?.aborted) {
@@ -625,9 +943,20 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
     if (module.status === 'generating') {
       throw new ModuleBusyError(input.moduleId);
     }
+    if (module.spine === null || module.spine.partPlan.length === 0) {
+      throw new Error('no parts to chat about — generate the module first');
+    }
     const settings = await getSettings();
+    const grounding = await loadChatGrounding(module);
+    const assembled = assembleModulePartsDocument({
+      partPlan: module.spine.partPlan,
+      parts: module.parts,
+      openPlanIndex: input.openPlanIndex,
+      openPartText: input.openPartText,
+    });
     const messages = buildCanvasChatPayload({
-      document: input.document,
+      document: assembled.document,
+      grounding,
       instruction,
       history: input.history,
     });
@@ -645,7 +974,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       },
     });
     const parse = parseCanvasChatReply(raw);
-    return { raw, modelUsed, parse };
+    return { raw, modelUsed, parse, parts: assembled.parts };
   } finally {
     releaseModuleGeneration(input.moduleId);
   }

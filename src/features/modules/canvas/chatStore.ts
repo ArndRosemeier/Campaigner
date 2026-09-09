@@ -3,17 +3,25 @@ import { create } from 'zustand';
 import type { CanvasEditCommand } from '@/llm/canvasChat';
 
 /**
- * Canvas chat state (08-MODULE-DESIGNER §Module canvas chat): the per-part
+ * Canvas chat state (08-MODULE-DESIGNER §Module canvas chat): the per-MODULE
  * conversation, command outcome cards and the session model selection —
  * STRICTLY SESSION-ONLY zustand (Board staging precedent, docs/08). Dies on
  * reload AND resets when the canvas's module changes (resetFor). The DOC is
  * the truth: chat messages are a review surface, never a persistence
  * layer — do not "fix" this with persistence.
  *
- * Keyed per open part (`moduleId#planIndex`): each part carries its own
- * conversation and selection; switching parts keeps the other parts' chats
- * within the session.
+ * Keyed per MODULE (`canvasChatKey(moduleId)` — no part component, owner
+ * direction in docs/17 row 51): ONE conversation per module; switching the
+ * open part in the editor keeps the same conversation, and the model
+ * selection is per module too. The chat edits the whole module's parts
+ * document — outcome cards name the part each outcome targets.
  */
+
+/** Which part an outcome targets (whole-module chat: cards must name it). */
+export interface CanvasChatOutcomePart {
+  planIndex: number;
+  title: string;
+}
 
 /** One applied/failed edit command rendered as an OUTCOME CARD. */
 export interface CanvasChatOutcome {
@@ -21,20 +29,25 @@ export interface CanvasChatOutcome {
   kind: 'applied' | 'failed';
   /** The original command (the report-to-LLM turn quotes it verbatim). */
   command: CanvasEditCommand;
-  /** applied: how many occurrences (1, or N for replace-all). */
+  /** Which part(s) this outcome targets/applies to (part order; failures
+   * anchor on the closest/multi-match part; [] = no part applies). */
+  targetParts: CanvasChatOutcomePart[];
+  /** applied: how many occurrences IN THE TARGET PART (1, or N for a
+   * replace-all inside it). */
   occurrences: number | null;
-  /** applied: first applied range in doc coordinates (card anchor). */
+  /** applied: first applied range in the TARGET part's text coordinates
+   * (card anchor). */
   from: number | null;
   to: number | null;
-  /** applied: the ACTUAL replaced doc text (ladder-resolved, may differ
-   * from search by case/whitespace) — the card's mini before→after. */
+  /** applied: the ACTUAL replaced text (ladder-resolved, may differ from
+   * search by case/whitespace) — the card's mini before→after. */
   before: string | null;
   /** failed: the loud reason. */
   reason: string | null;
-  /** failed (zero matches): the closest candidate snippet from the doc. */
+  /** failed (zero matches): the closest candidate snippet from the parts. */
   closest: string | null;
-  /** failed: anchor offset for the report-to-LLM excerpt (null when
-   * nothing in the doc corresponds). */
+  /** failed: anchor offset in the target part's text for the report-to-LLM
+   * excerpt (null when nothing corresponds). */
   failureFrom: number | null;
   /** Report-to-LLM has fired for this outcome (button is one-shot). */
   reported: boolean;
@@ -61,26 +74,27 @@ export interface CanvasChatMessage {
   createdAt: number;
 }
 
-export interface CanvasChatPartState {
+export interface CanvasChatModuleState {
   messages: CanvasChatMessage[];
-  /** Sidebar visibility (session-only; per part like everything else). */
+  /** Sidebar visibility (session-only; per module like everything else). */
   open: boolean;
   /** The canvas model selection; null = Settings defaultChatModel. */
   modelSelection: string | null;
-  /** One chat generation in flight for this part (drives the Stop button). */
+  /** One chat generation in flight for this module (drives the Stop button). */
   inFlight: boolean;
 }
 
-export function canvasChatKey(moduleId: string, planIndex: number): string {
-  return `${moduleId}#${String(planIndex)}`;
+/** The chat state key: per MODULE — one conversation across part switches. */
+export function canvasChatKey(moduleId: string): string {
+  return moduleId;
 }
 
 interface CanvasChatStoreState {
   ownerModuleId: string | null;
-  byPart: Record<string, CanvasChatPartState>;
+  byModule: Record<string, CanvasChatModuleState>;
   /** Clears every chat when the canvas page's module changes (Board precedent). */
   resetFor: (moduleId: string) => void;
-  part: (key: string) => CanvasChatPartState;
+  module: (key: string) => CanvasChatModuleState;
   toggleOpen: (key: string) => void;
   setOpen: (key: string, open: boolean) => void;
   setModelSelection: (key: string, model: string | null) => void;
@@ -90,7 +104,7 @@ interface CanvasChatStoreState {
   markOutcomeReported: (key: string, messageId: string, outcomeId: string) => void;
 }
 
-const EMPTY_PART: CanvasChatPartState = {
+const EMPTY_STATE: CanvasChatModuleState = {
   messages: [],
   open: false,
   modelSelection: null,
@@ -106,64 +120,64 @@ export function newChatId(prefix: string): string {
 
 export const useCanvasChatStore = create<CanvasChatStoreState>((set, get) => ({
   ownerModuleId: null,
-  byPart: {},
+  byModule: {},
   resetFor: (moduleId) => {
     if (get().ownerModuleId === moduleId) return;
-    set({ ownerModuleId: moduleId, byPart: {} });
+    set({ ownerModuleId: moduleId, byModule: {} });
   },
-  part: (key) => get().byPart[key] ?? EMPTY_PART,
+  module: (key) => get().byModule[key] ?? EMPTY_STATE,
   toggleOpen: (key) => {
     set((state) => ({
-      byPart: {
-        ...state.byPart,
-        [key]: { ...(state.byPart[key] ?? EMPTY_PART), open: !(state.byPart[key] ?? EMPTY_PART).open },
+      byModule: {
+        ...state.byModule,
+        [key]: { ...(state.byModule[key] ?? EMPTY_STATE), open: !(state.byModule[key] ?? EMPTY_STATE).open },
       },
     }));
   },
   setOpen: (key, open) => {
     set((state) => ({
-      byPart: {
-        ...state.byPart,
-        [key]: { ...(state.byPart[key] ?? EMPTY_PART), open },
+      byModule: {
+        ...state.byModule,
+        [key]: { ...(state.byModule[key] ?? EMPTY_STATE), open },
       },
     }));
   },
   setModelSelection: (key, model) => {
     set((state) => ({
-      byPart: {
-        ...state.byPart,
-        [key]: { ...(state.byPart[key] ?? EMPTY_PART), modelSelection: model },
+      byModule: {
+        ...state.byModule,
+        [key]: { ...(state.byModule[key] ?? EMPTY_STATE), modelSelection: model },
       },
     }));
   },
   setInFlight: (key, inFlight) => {
     set((state) => ({
-      byPart: {
-        ...state.byPart,
-        [key]: { ...(state.byPart[key] ?? EMPTY_PART), inFlight },
+      byModule: {
+        ...state.byModule,
+        [key]: { ...(state.byModule[key] ?? EMPTY_STATE), inFlight },
       },
     }));
   },
   addMessage: (key, message) => {
     set((state) => ({
-      byPart: {
-        ...state.byPart,
+      byModule: {
+        ...state.byModule,
         [key]: {
-          ...(state.byPart[key] ?? EMPTY_PART),
-          messages: [...(state.byPart[key] ?? EMPTY_PART).messages, message],
+          ...(state.byModule[key] ?? EMPTY_STATE),
+          messages: [...(state.byModule[key] ?? EMPTY_STATE).messages, message],
         },
       },
     }));
   },
   updateMessage: (key, messageId, patch) => {
     set((state) => {
-      const part = state.byPart[key] ?? EMPTY_PART;
+      const moduleState = state.byModule[key] ?? EMPTY_STATE;
       return {
-        byPart: {
-          ...state.byPart,
+        byModule: {
+          ...state.byModule,
           [key]: {
-            ...part,
-            messages: part.messages.map((message) =>
+            ...moduleState,
+            messages: moduleState.messages.map((message) =>
               message.id === messageId ? { ...message, ...patch } : message,
             ),
           },
@@ -173,13 +187,13 @@ export const useCanvasChatStore = create<CanvasChatStoreState>((set, get) => ({
   },
   markOutcomeReported: (key, messageId, outcomeId) => {
     set((state) => {
-      const part = state.byPart[key] ?? EMPTY_PART;
+      const moduleState = state.byModule[key] ?? EMPTY_STATE;
       return {
-        byPart: {
-          ...state.byPart,
+        byModule: {
+          ...state.byModule,
           [key]: {
-            ...part,
-            messages: part.messages.map((message) =>
+            ...moduleState,
+            messages: moduleState.messages.map((message) =>
               message.id === messageId
                 ? {
                     ...message,

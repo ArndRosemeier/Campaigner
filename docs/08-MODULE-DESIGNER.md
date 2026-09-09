@@ -779,16 +779,21 @@ list row. Screen text is docs/05 §Module canvas; implementation in
 ### Module canvas chat (v2 — LLM co-authoring via XML edit commands)
 
 Owner direction: "a real chat where the LLM can make targeted edits", XML for
-commands (fewer problems in owner experience). A collapsible wide LEFT
+commands (fewer problems in owner experience); amended 2026-09-09 (ledger
+row 51): "No part selection. Whole module in context (without premise),
+parts split by an easy to see delimiter … I want the model to see the whole
+module and be able to make changes to the whole module" + an uncapped
+read-only grounding block for continuity. A collapsible wide LEFT
 sidebar (`w-96`, `canvas/ChatSidebar.tsx`) beside the editor; every chat
 control is a 44px touch target (iPad-proportioned). Protocol + engine in
 `src/llm/canvasChat.ts`; application in `canvas/chatApply.ts`; flow in
 `canvas/chatController.ts`; state in `canvas/chatStore.ts`. Decision ledger
-row 50.
+rows 50 and 51.
 
 - **Protocol**: the assistant replies with short prose plus ZERO OR MORE XML
   command blocks — `<edit all="false"><search>…</search><replace>…</replace></edit>`
-  (`all="true"` = replace-all; default exactly one match). XML over JSON:
+  (`all="true"` = replace-every-occurrence ACROSS ALL PARTS; default exactly
+  one match across the WHOLE module). XML over JSON:
   nested multi-line prose bodies need no escape dance. This is the deliberate
   deviation from canvasRefine's strict-JSON-schema reply — prose+XML is not a
   JSON shape, so NO `responseFormat` rides the call; validation is the strict
@@ -802,48 +807,93 @@ row 50.
   are taken VERBATIM (no entity decoding). `chatProseSoFar` is the
   best-effort DISPLAY splitter for streaming (hides forming blocks, never
   throws, never applies).
-- **Tolerant match ladder** (`resolveCanvasEdit`, pure): the search resolves
-  against the CURRENT doc at apply time — (1) exact bytes, (2)
-  case-insensitive (index-safe fold), (3) whitespace-collapsed (runs of
-  whitespace ≡ one space, normalized spans mapped back to exact original
-  offsets). Lineage: aider's `replace_most_similar_chunk` ladder; aider's
-  fuzzy AUTO-APPLY branch stays dead (as upstream) — a zero match FAILS with
-  the closest candidate snippet (bigram-similarity line-window scan, aider's
-  `find_similar_lines` reporting role) instead of guessing. Curly/straight
-  quote folding is NOT included: the canvas editor has no prior fuzzy text
-  matcher to reuse (chips + suggestions are range-based), so the ladder IS
-  the matcher — documented deviation. Exactly one match → apply; multiple
-  matches → apply ONLY with `all="true"`, else a failed card ("N matches —
-  add surrounding context or set all"); zero matches → failed card with the
-  candidate.
-- **Apply semantics** (`chatApply.ts`): each applied command is ONE CM6
-  transaction with NORMAL history — chat applies are NOT
-  `addToHistory: false`; the user can undo the AI's edits ONE command at a
-  time (a replace-all's ranges ride that one transaction = one undo step).
-  Each command renders as an OUTCOME CARD in the flow: applied (occurrence
-  count + mini before→after: the ACTUAL replaced doc text vs the replace) or
-  failed (reason + closest candidate + **Report to LLM**). The
-  encoding-hygiene debris scan runs per command's replace text (loud failed
-  card, canvasRefine parity).
+- **Per-part match ladder** (`resolveCanvasEdit` per part, pure; cross-part
+  aggregation in `resolveCanvasEditAcrossParts`): the search resolves against
+  EACH part's snapshot text — NEVER across the assembled string (a search
+  spanning two parts therefore cannot match and fails loudly). Ladder per
+  part: (1) exact bytes, (2) case-insensitive (index-safe fold), (3)
+  whitespace-collapsed (runs of whitespace ≡ one space, normalized spans
+  mapped back to exact original offsets). Lineage: aider's
+  `replace_most_similar_chunk` ladder; aider's fuzzy AUTO-APPLY branch stays
+  dead (as upstream) — a zero match FAILS with the closest candidate snippet
+  (bigram-similarity line-window scan, aider's `find_similar_lines` reporting
+  role) picked across ALL parts, instead of guessing. Curly/straight quote
+  folding is NOT included (documented deviation, row 50). Exactly one match
+  across the whole module → apply; multiple matches → apply ONLY with
+  `all="true"` (in every part where it matched), else a failed card ("N
+  matches — add surrounding context or set all"); zero matches → failed card
+  with the candidate.
+- **Whole-module parts document** (context contract, load-bearing): EVERY
+  request re-assembles the document from the module ROW AT SEND TIME —
+  never a cached copy — every planned part in `spine.partPlan` order, part
+  text joined from `parts` by planIndex (missing/empty part = empty
+  section). The spine premise is EXCLUDED (owner: "without premise"). The
+  OPEN part's text is substituted from the live CM6 doc byte-exactly (no
+  trimming), so unsaved hand edits ride along and resolved offsets map 1:1
+  onto the editor doc. Pure assembly: `assembleModulePartsDocument` returns
+  the document AND the per-part snapshot it sent (`{planIndex, title, text}[]`)
+  — application matches EXACTLY the text the model saw. **Delimiter + label
+  spec**: sections are separated by a blank line + a line of exactly ten `=`
+  characters (`==========`) + a blank line, and every section OPENS with the
+  scaffold label line `[Part <n> of <total> — <title>]` (n = 1-based
+  position in the plan; no usable title → `[Part <n> of <total>]`). That
+  scaffolding is never content: the prompt forbids separators/label lines
+  inside any search/replace and forbids editing across a separator (one
+  command lives inside ONE part). **Empty-part label-anchor convention**:
+  an empty (not-yet-written) part's label line is its only anchor — a
+  command whose search EXACTLY equals an empty part's label line fills that
+  part; the replace must START with the same label line and the part text
+  becomes the remainder after the label (leading blank lines trimmed);
+  anything else fails loudly. The prompt states this convention explicitly.
+- **Read-only grounding (unconditional, UNCAPPED)**: every request carries a
+  clearly-marked `<reference-only>` block, riding INSIDE the final user turn
+  (outside the `MAX_CONTEXT_MESSAGES` tail policy — never trimmed): the
+  campaign's `name` + `description` (`campaignRepo` read), the game system
+  as `GAME_SYSTEM_LABELS[campaign.system]`, and ALL preceding modules' FULL
+  text — the campaign's other modules in story order (createdAt ascending,
+  the `priorModulesContext` convention), each as title + premise + every
+  written part's markdown in plan order. Deliberately NOT
+  `moduleGen.priorModulesContext`: its PRIOR_*_CHAR_CAP caps are the
+  generation-time context frugality the owner removed for chat — the
+  chat-specific renderer (`renderChatGrounding`) is uncapped. The block is
+  labeled REFERENCE-ONLY: continuity context the model must never edit or
+  emit commands against; commands apply to the current module's parts
+  document only.
+- **Apply semantics** (`chatApply.applyChatCommandsAcrossParts`): commands
+  resolve per part against each part's CURRENT text at apply time (the open
+  part's is the live view doc — earlier commands in one reply never shift
+  later ranges). **Open part**: each command is ONE CM6 transaction with
+  NORMAL history — chat applies are NOT `addToHistory: false`; the user can
+  undo the AI's edits ONE command at a time (a replace-all's ranges ride
+  that one transaction = one undo step). **Other parts**: there is no editor
+  holding them — the new part text is computed by splicing the resolved
+  ranges and SAVED FIRST through `saveModulePartText(moduleId, planIndex,
+  text)` (the one save path, `edited: true`, promote scan) before its
+  outcomes render applied; a failed save is a LOUD failed outcome card ("the
+  edit did not land") plus `toastError` naming the part — never a silent
+  drop. Each command renders as OUTCOME CARDS (one per part application,
+  plus one per failure), each naming its target part (planIndex + title):
+  applied (occurrence count + mini before→after: the ACTUAL replaced text vs
+  the replace) or failed (reason + closest candidate + **Report to LLM**).
+  The encoding-hygiene debris scan runs per command's replace text (loud
+  failed card, canvasRefine parity).
 - **Report-to-LLM loop** (first-class): the button composes a user turn —
   the error, the failed command verbatim, and the current text around the
-  failure point (`composeFailureReport`, ±300 chars) — and sends it through
+  failure point (`composeFailureReport`, ±300 chars) — where the excerpt
+  comes from the TARGET part's CURRENT text (the open part's live view doc;
+  other parts re-read the row at report time) — and sends it through
   the normal send path (aider's "N SEARCH/REPLACE blocks failed to match! …
   Did you mean…" retry loop). One-shot per failure (button flips to
   "Reported").
-- **Context contract** (load-bearing): EVERY request re-reads the document
-  from the CM6 view AT SEND TIME — never a cached or initial copy — and the
-  system prompt states explicitly that the document is the CURRENT state
-  including all previously applied edits (never repeat an applied edit; use
-  `all="true"` when repetition is intended; prefer small targeted edits).
-  History rides as the last 12 messages (`MAX_CONTEXT_MESSAGES`); older user
-  turns are re-rendered instruction-only (stale doc blocks stripped), a
+- **Context history**: the last 12 messages (`MAX_CONTEXT_MESSAGES`); older
+  user turns are re-rendered instruction-only (stale doc blocks stripped), a
   system note counts the omissions — the documented v1 trim policy (a note,
-  not an LLM summary). Assistant history entries keep their raw replies so
+  not an LLM summary). The grounding block rides outside this policy.
+  Assistant history entries keep their raw replies so
   the model sees its own commands.
 - **Model**: the Settings `ModelInput` component reused in the sidebar;
   default = the Settings `defaultChatModel`, the selection is session-only
-  canvas state keyed per part (Board staging precedent), persisted nowhere;
+  canvas state keyed per module (Board staging precedent), persisted nowhere;
   the Settings gates ride the transport unchanged (fallback escalation
   chain, language directive, reasoning effort; temperature 0.4).
 - **Streaming**: prose streams into the bubble (rAF-coalesced, suggestion
@@ -851,12 +901,17 @@ row 50.
   no mid-stream XML application in v1. Aborting mid-stream marks the partial
   reply `aborted` LOUDLY (card: "Stopped — nothing was applied"); no
   commands apply, nothing saves.
-- **State**: session-only zustand keyed per open part
-  (`{messages, outcomes, modelSelection}`, `canvasChatKey(moduleId#planIndex)`) —
-  dies on reload AND resets on module change; the DOC is the truth and
-  persistence rides the canvas's existing save seam (applied batches land
-  through `saveModulePartText` → `edited: true` + promote scan, ledger entry
-  `Chat: …`); the chat never writes the row directly.
+- **State**: session-only zustand keyed per MODULE
+  (`{messages, outcomes, modelSelection}`, `canvasChatKey(moduleId)` — no
+  part component: ONE conversation per module, switching the open part in
+  the editor keeps it) — dies on reload AND resets on module change; the
+  DOC is the truth and persistence rides the canvas's existing save seam
+  (`saveModulePartText` → `edited: true` + promote scan, ledger entry
+  `Chat: …` per changed part); the chat never writes the row directly.
+- **Pre-flight**: a module with no planned parts (no spine/partPlan) fails
+  LOUDLY before anything sends ("no parts to chat about — generate the
+  module first" — controller pre-flight toast + the engine's send-time
+  boundary check), never an empty-context send.
 - **Serialization**: chat and refine share the `llm/canvasBusy` registry
   (extracted from canvasRefine) — ONE generation per module across every
   canvas surface; `ModuleBusyError` surfaces as a failed card AND the

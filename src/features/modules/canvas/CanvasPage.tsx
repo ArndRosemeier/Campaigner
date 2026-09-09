@@ -103,9 +103,11 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * the ledger dies on reload by design.
  *
  * Chat co-editor (canvasChat contract): a collapsible wide LEFT sidebar —
- * the LLM answers prose + XML edit commands that are applied to the doc as
- * ONE-transaction-per-command edits (normal undo), persisted through the
- * same save path. Chat state is session-only, keyed per part.
+ * the LLM answers prose + XML edit commands that are applied to the WHOLE
+ * module's parts document (the open part via CM6 transactions, other parts
+ * via the save seam), one command = one undo step in the open part. Chat
+ * state is session-only, keyed per module (one conversation across part
+ * switches).
  */
 
 const EMPTY_VERSIONS: readonly CanvasVersionEntry[] = [];
@@ -176,10 +178,11 @@ export function CanvasPage(): JSX.Element {
   // dispatch never re-renders React by itself).
   const [showPrevious, setShowPrevious] = useState(false);
 
-  // Chat sidebar visibility — session-only, keyed per open part (Board
-  // staging precedent; dies on reload). The premise uses a synthetic key.
-  const chatKey = canvasChatKey(moduleId, scope.kind === 'part' ? scope.planIndex : -1);
-  const chatOpen = useCanvasChatStore((store) => store.byPart[chatKey]?.open ?? false);
+  // Chat sidebar visibility — session-only, keyed per MODULE (one
+  // conversation across part switches; dies on reload). The premise uses
+  // chat-disabled scope.
+  const chatKey = canvasChatKey(moduleId);
+  const chatOpen = useCanvasChatStore((store) => store.byModule[chatKey]?.open ?? false);
 
   const ledgerKey =
     scope.kind === 'part' ? canvasLedgerKey(moduleId, scope.planIndex) : '';
@@ -610,6 +613,7 @@ export function CanvasPage(): JSX.Element {
           <ChatSidebar
             moduleId={currentModule.id}
             scope={scope.kind === 'part' ? scope : { kind: 'premise' }}
+            hasPlannedParts={plans.length > 0}
             pool={pool}
             aiBusy={aiBlocked}
           />

@@ -3,19 +3,24 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  CANVAS_PARTS_DELIMITER,
   CanvasChatParseError,
   MAX_COMMANDS_PER_REPLY,
   MAX_CONTEXT_MESSAGES,
+  assembleModulePartsDocument,
   buildCanvasChatPayload,
   canvasEditCommandSchema,
+  canvasPartLabel,
   chatProseSoFar,
   composeFailureReport,
   parseCanvasChatReply,
+  renderChatGrounding,
   resolveCanvasEdit,
+  resolveCanvasEditAcrossParts,
   sendCanvasChatMessage,
   type CanvasChatTurnInput,
 } from '@/llm/canvasChat';
-import { ModuleBusyError } from '@/llm/moduleGen';
+import { ModuleBusyError, PRIOR_MODULES_TOTAL_CAP } from '@/llm/moduleGen';
 import { refineModuleText } from '@/llm/canvasRefine';
 import { createCampaign } from '@/db/campaignRepo';
 import {
@@ -31,11 +36,16 @@ import { clearDatabase } from '../db/helpers';
  * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat): the XML
  * command protocol is parsed by a STRICT extractor (malformed/unbalanced/
  * over-cap replies fail loud, never partially), commands are zod-validated,
- * the tolerant match ladder resolves search text against the CURRENT doc
- * (exact → case → whitespace-collapse; zero matches report the closest
- * candidate), and every payload pins the CURRENT document + the doc-is-
- * current note with the conversation tail capped. The transport is mocked —
- * extractor, ladder and boundary logic run for real.
+ * the tolerant match ladder resolves search text per PART (whole-module
+ * context: a spanning search cannot match; the empty-part label-anchor
+ * fill is the only way into a not-yet-written part), the parts document is
+ * assembled from the module row at send time (no premise, `==========`
+ * delimiters + `[Part n of total — title]` labels, the OPEN part's live
+ * text substituted byte-exactly), and the REFERENCE-ONLY grounding block
+ * (campaign premise + system label + ALL preceding modules' FULL text,
+ * UNCAPPED — deliberately not moduleGen's capped renderer) rides every
+ * request. The transport is mocked — extractor, ladder, assembly,
+ * grounding and boundary logic run for real.
  */
 
 vi.mock('@/llm/openrouter', async (importOriginal) => ({
@@ -48,10 +58,53 @@ const chatMock = vi.mocked(chat);
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
-const DOC = '## The Gate Bargain\n\nThe party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.';
+const PART_0 = '## The Gate Bargain\n\nThe party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.';
+const PART_1 = 'The docks breathe fog. Rain hammers the stones.';
+const SPINE_PREMISE = 'The premise that must NOT ride the parts document.';
+
+const PART_PLAN = [
+  { title: 'The Gate Bargain', levelBand: '1' },
+  { title: 'Under the Docks', levelBand: '1' },
+  { title: 'The Long Watch', levelBand: '2' },
+];
 
 async function seedModule(): Promise<void> {
-  const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+  const campaign = await createCampaign({
+    name: 'Ember',
+    description: 'The ember war.',
+    system: 'dnd5e',
+  });
+  // A PRIOR module with text LONGER than the generation-time total cap —
+  // chat grounding is uncapped, so the full text must ride (story order,
+  // createdAt ascending).
+  const priorDraft = createModule({
+    campaignId: campaign.id,
+    title: 'The Sunken Chapel',
+    concept: 'concept',
+    levelMin: 1,
+    levelMax: 1,
+    tone: '',
+    sizeDial: 'standard',
+  });
+  const longPriorMarkdown = `lighthouse ${'a'.repeat(PRIOR_MODULES_TOTAL_CAP + 2000)}`;
+  await saveModule({
+    ...priorDraft,
+    createdAt: 1,
+    spine: moduleSpineSchema.parse({
+      premise: 'The chapel premise.',
+      themes: [],
+      partPlan: [{ title: 'Chapel Bells', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
+    }),
+    parts: [
+      modulePartSchema.parse({
+        planIndex: 0,
+        markdown: longPriorMarkdown,
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    ],
+  });
   const draft = createModule({
     campaignId: campaign.id,
     title: 'The Drowned Vault',
@@ -63,19 +116,15 @@ async function seedModule(): Promise<void> {
   });
   await saveModule({
     ...draft,
+    createdAt: 2,
     spine: moduleSpineSchema.parse({
-      premise: 'The premise.',
+      premise: SPINE_PREMISE,
       themes: [],
-      partPlan: [{ title: 'The Gate Bargain', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
+      partPlan: PART_PLAN,
     }),
     parts: [
-      modulePartSchema.parse({
-        planIndex: 0,
-        markdown: DOC,
-        status: 'ready',
-        errorMessage: '',
-        edited: false,
-      }),
+      modulePartSchema.parse({ planIndex: 0, markdown: PART_0, status: 'ready', errorMessage: '', edited: false }),
+      modulePartSchema.parse({ planIndex: 1, markdown: PART_1, status: 'ready', errorMessage: '', edited: false }),
     ],
   });
   world = { campaignId: campaign.id, moduleId: draft.id };
@@ -185,21 +234,21 @@ describe('chatProseSoFar (streaming display, best effort)', () => {
   });
 });
 
-describe('resolveCanvasEdit (tolerant ladder)', () => {
+describe('resolveCanvasEdit (tolerant ladder, single doc)', () => {
   it('level 1 — exact match, unique', () => {
-    const resolution = resolveCanvasEdit(DOC, 'Rain hammers the stones.');
+    const resolution = resolveCanvasEdit(PART_0, 'Rain hammers the stones.');
     expect(resolution.status).toBe('found');
     if (resolution.status !== 'found') throw new Error('unreachable');
     expect(resolution.ranges).toEqual([
-      { from: DOC.indexOf('Rain'), to: DOC.indexOf('Rain') + 'Rain hammers the stones.'.length },
+      { from: PART_0.indexOf('Rain'), to: PART_0.indexOf('Rain') + 'Rain hammers the stones.'.length },
     ]);
   });
 
   it('level 2 — case-insensitive fallback', () => {
-    const resolution = resolveCanvasEdit(DOC, 'rain HAMMERS the stones');
+    const resolution = resolveCanvasEdit(PART_0, 'rain HAMMERS the stones');
     expect(resolution.status).toBe('found');
     if (resolution.status !== 'found') throw new Error('unreachable');
-    expect(DOC.slice(resolution.ranges[0]?.from ?? 0, resolution.ranges[0]?.to ?? 0)).toBe(
+    expect(PART_0.slice(resolution.ranges[0]?.from ?? 0, resolution.ranges[0]?.to ?? 0)).toBe(
       'Rain hammers the stones',
     );
   });
@@ -233,7 +282,190 @@ describe('resolveCanvasEdit (tolerant ladder)', () => {
   });
 
   it('an empty search never matches', () => {
-    expect(resolveCanvasEdit(DOC, '')).toEqual({ status: 'none', closest: '', closestFrom: null });
+    expect(resolveCanvasEdit(PART_0, '')).toEqual({ status: 'none', closest: '', closestFrom: null });
+  });
+});
+
+describe('assembleModulePartsDocument (whole-module context)', () => {
+  const base = {
+    partPlan: PART_PLAN,
+    parts: [
+      { planIndex: 0, markdown: PART_0 },
+      { planIndex: 1, markdown: PART_1 },
+    ],
+    openPlanIndex: 0,
+    openPartText: PART_0,
+  };
+
+  it('assembles every planned part in plan order with delimiter + label scaffolding', () => {
+    const { document, parts } = assembleModulePartsDocument(base);
+    expect(document).toContain(`\n\n${CANVAS_PARTS_DELIMITER}\n\n[Part 2 of 3 — Under the Docks]\n${PART_1}`);
+    expect(document).toContain('[Part 1 of 3 — The Gate Bargain]\n');
+    expect(document).toContain('[Part 3 of 3 — The Long Watch]\n');
+    // The spine premise is EXCLUDED (owner: "without premise").
+    expect(document).not.toContain(SPINE_PREMISE);
+    expect(parts.map((part) => part.planIndex)).toEqual([0, 1, 2]);
+    expect(parts.map((part) => part.title)).toEqual(['The Gate Bargain', 'Under the Docks', 'The Long Watch']);
+  });
+
+  it('substitutes the OPEN part byte-exactly from the live editor doc (unsaved edits ride)', () => {
+    const liveText = '## The Gate Bargain\n\nRain POUNDS the stones.\n\nAn unsaved hand edit.';
+    const { document, parts } = assembleModulePartsDocument({ ...base, openPartText: liveText });
+    // Byte-exact: the document opens with the label + the LIVE text.
+    expect(document.startsWith(`[Part 1 of 3 — The Gate Bargain]\n${liveText}`)).toBe(true);
+    expect(parts[0]?.text).toBe(liveText);
+    expect(parts[1]?.text).toBe(PART_1);
+  });
+
+  it('a missing/empty planned part is an empty section (its label is the only content)', () => {
+    const { document, parts } = assembleModulePartsDocument(base);
+    expect(parts[2]?.text).toBe('');
+    expect(document).toContain(`${CANVAS_PARTS_DELIMITER}\n\n[Part 3 of 3 — The Long Watch]\n`);
+  });
+
+  it('the label falls back to [Part n of total] when the plan has no title', () => {
+    expect(canvasPartLabel(2, 3, '')).toBe('[Part 2 of 3]');
+    expect(canvasPartLabel(1, 2, 'Title')).toBe('[Part 1 of 2 — Title]');
+    const { document } = assembleModulePartsDocument({
+      partPlan: [{ title: '' }, { title: 'B' }],
+      parts: [],
+      openPlanIndex: 0,
+      openPartText: 'x',
+    });
+    expect(document).toContain('[Part 1 of 2]\nx');
+  });
+
+  it('throws loud on an out-of-range open part or an empty plan', () => {
+    expect(() => assembleModulePartsDocument({ ...base, openPlanIndex: 9 })).toThrow(/not a planned part/);
+    expect(() => assembleModulePartsDocument({ ...base, partPlan: [] })).toThrow(/planned part/);
+  });
+});
+
+describe('resolveCanvasEditAcrossParts (per-part matching)', () => {
+  const snapshots = assembleModulePartsDocument({
+    partPlan: PART_PLAN,
+    parts: [
+      { planIndex: 0, markdown: PART_0 },
+      { planIndex: 1, markdown: PART_1 },
+    ],
+    openPlanIndex: 0,
+    openPartText: PART_0,
+  }).parts;
+
+  it('one textual match across the whole module resolves in its own part', () => {
+    const resolution = resolveCanvasEditAcrossParts(
+      { search: 'The docks breathe fog.', replace: 'x' },
+      snapshots,
+    );
+    expect(resolution.status).toBe('found');
+    if (resolution.status !== 'found') throw new Error('unreachable');
+    expect(resolution.totalRanges).toBe(1);
+    expect(resolution.matches).toEqual([
+      { partIndex: 1, ranges: [{ from: 0, to: 'The docks breathe fog.'.length }] },
+    ]);
+  });
+
+  it('occurrences sum across parts (the caller enforces all="false" = exactly one)', () => {
+    const resolution = resolveCanvasEditAcrossParts({ search: 'Rain', replace: 'Mist' }, snapshots);
+    expect(resolution.status).toBe('found');
+    if (resolution.status !== 'found') throw new Error('unreachable');
+    expect(resolution.totalRanges).toBe(2); // once in part 0, once in part 1
+    expect(resolution.matches.map((match) => match.partIndex)).toEqual([0, 1]);
+  });
+
+  it('a search SPANNING two parts cannot match (loud zero-match, never across the string)', () => {
+    const spanning = `${PART_0}\n\n${CANVAS_PARTS_DELIMITER}\n\n[Part 2 of 3 — Under the Docks]\n${PART_1}`;
+    const resolution = resolveCanvasEditAcrossParts({ search: spanning, replace: 'x' }, snapshots);
+    expect(resolution.status).toBe('none');
+  });
+
+  it('zero matches pick the closest candidate across parts (real neighbor)', () => {
+    const parts = assembleModulePartsDocument({
+      partPlan: [{ title: 'A' }, { title: 'B' }],
+      parts: [
+        { planIndex: 0, markdown: 'The ferry crosses at dusk.' },
+        { planIndex: 1, markdown: 'The lighthouse keeper lights the lamp at dusk.' },
+      ],
+      openPlanIndex: 0,
+      openPartText: 'The ferry crosses at dusk.',
+    }).parts;
+    const resolution = resolveCanvasEditAcrossParts(
+      { search: 'The lighthouse keeper lights the lamp at down.', replace: 'x' },
+      parts,
+    );
+    expect(resolution.status).toBe('none');
+    if (resolution.status !== 'none') throw new Error('unreachable');
+    expect(resolution.closestPartIndex).toBe(1);
+    expect(resolution.closest).toContain('lighthouse');
+    expect(resolution.closestFrom).not.toBeNull();
+  });
+
+  it('the label-anchor fill fills an EMPTY part (replace starts with the same label)', () => {
+    const label = canvasPartLabel(3, 3, 'The Long Watch');
+    const resolution = resolveCanvasEditAcrossParts(
+      { search: label, replace: `${label}\n\nThe watch begins in fog.` },
+      snapshots,
+    );
+    expect(resolution.status).toBe('filled');
+    if (resolution.status !== 'filled') throw new Error('unreachable');
+    expect(resolution.partIndex).toBe(2);
+    expect(resolution.newText).toBe('The watch begins in fog.');
+  });
+
+  it('a fill whose replace lacks the label line fails loud', () => {
+    const label = canvasPartLabel(3, 3, 'The Long Watch');
+    const resolution = resolveCanvasEditAcrossParts(
+      { search: label, replace: 'The watch begins in fog.' },
+      snapshots,
+    );
+    expect(resolution.status).toBe('fill-failed');
+    if (resolution.status !== 'fill-failed') throw new Error('unreachable');
+    expect(resolution.reason).toContain('label line');
+  });
+
+  it('a label-only replace (no content after the label) fails loud', () => {
+    const label = canvasPartLabel(3, 3, 'The Long Watch');
+    const resolution = resolveCanvasEditAcrossParts({ search: label, replace: label }, snapshots);
+    expect(resolution.status).toBe('fill-failed');
+  });
+
+  it('a search equal to a NON-empty part\'s label never matches (labels are scaffolding)', () => {
+    const label = canvasPartLabel(1, 3, 'The Gate Bargain');
+    const resolution = resolveCanvasEditAcrossParts({ search: label, replace: 'x' }, snapshots);
+    expect(resolution.status).toBe('none');
+  });
+});
+
+describe('renderChatGrounding (read-only block)', () => {
+  it('carries campaign premise + system label + preceding modules in story order, UNCAPPED', () => {
+    const longText = 'x'.repeat(PRIOR_MODULES_TOTAL_CAP + 3000);
+    const block = renderChatGrounding({
+      campaignName: 'Ember',
+      campaignDescription: 'The ember war.',
+      systemLabel: 'D&D 5e',
+      priorModules: [
+        { title: 'First Module', premise: 'First premise.', parts: [{ label: '### Part 1: A', markdown: 'short' }] },
+        { title: 'Second Module', premise: 'Second premise.', parts: [{ label: '### Part 1: B', markdown: longText }] },
+      ],
+    });
+    expect(block).toContain('Campaign: Ember — The ember war.');
+    expect(block).toContain('Game system: D&D 5e');
+    expect(block.indexOf('## First Module')).toBeLessThan(block.indexOf('## Second Module'));
+    expect(block).toContain('Premise:\nFirst premise.');
+    expect(block).toContain('### Part 1: A\nshort');
+    // UNCAPPED: the full text rides, no generation-time truncation marker.
+    expect(block).toContain(longText);
+    expect(block).not.toContain('[truncated]');
+  });
+
+  it('omits the previous-modules section when the campaign has none', () => {
+    const block = renderChatGrounding({
+      campaignName: 'Ember',
+      campaignDescription: '',
+      systemLabel: 'D&D 5e',
+      priorModules: [],
+    });
+    expect(block).toBe('Campaign: Ember\n\nGame system: D&D 5e');
   });
 });
 
@@ -243,9 +475,10 @@ describe('buildCanvasChatPayload (context contract)', () => {
     text: `turn ${String(index)}`,
   }));
 
-  it('pins the CURRENT doc into the final user turn and states the doc-is-current contract', () => {
+  it('pins the CURRENT parts doc + the REFERENCE-ONLY grounding into the final user turn', () => {
     const messages = buildCanvasChatPayload({
-      document: DOC,
+      document: PART_0,
+      grounding: 'Campaign: Ember\nGame system: D&D 5e',
       instruction: 'make it rain',
       history: [],
     });
@@ -254,13 +487,28 @@ describe('buildCanvasChatPayload (context contract)', () => {
     expect(messages[0]?.content).toContain('all="true"');
     const last = messages[messages.length - 1];
     expect(last?.role).toBe('user');
-    expect(last?.content).toContain(DOC);
+    expect(last?.content).toContain(PART_0);
+    expect(last?.content).toContain('<reference-only>');
+    expect(last?.content).toContain('Campaign: Ember');
     expect(last?.content).toContain('Instruction: make it rain');
+  });
+
+  it('the grounding block rides OUTSIDE the message-tail policy (never trimmed)', () => {
+    const messages = buildCanvasChatPayload({
+      document: PART_0,
+      grounding: 'Campaign: Ember',
+      instruction: 'next',
+      history,
+    });
+    const last = messages[messages.length - 1];
+    expect(last?.content).toContain('<reference-only>');
+    expect(last?.content).toContain('Campaign: Ember');
   });
 
   it('caps the conversation tail and notes the omission', () => {
     const messages = buildCanvasChatPayload({
-      document: DOC,
+      document: PART_0,
+      grounding: 'Campaign: Ember',
       instruction: 'next',
       history,
     });
@@ -274,7 +522,8 @@ describe('buildCanvasChatPayload (context contract)', () => {
 
   it('older user turns are re-rendered instruction-only (stale docs never ride along)', () => {
     const messages = buildCanvasChatPayload({
-      document: DOC,
+      document: PART_0,
+      grounding: 'Campaign: Ember',
       instruction: 'next',
       history: [{ role: 'user', text: 'make it rain' }, { role: 'assistant', text: 'Done.' }],
     });
@@ -305,7 +554,7 @@ describe('composeFailureReport (report-to-LLM loop)', () => {
     const report = composeFailureReport({
       errorText: 'unbalanced <edit> block',
       command: null,
-      document: DOC,
+      document: PART_0,
       failureFrom: null,
     });
     expect(report).toContain('unbalanced <edit> block');
@@ -317,14 +566,15 @@ describe('sendCanvasChatMessage (engine)', () => {
   function baseInput(overrides: Partial<CanvasChatTurnInput> = {}): CanvasChatTurnInput {
     return {
       moduleId: world.moduleId,
-      document: DOC,
+      openPlanIndex: 0,
+      openPartText: PART_0,
       instruction: 'make the gate scene rainier',
       history: [],
       ...overrides,
     };
   }
 
-  it('sends the CURRENT doc + system note and returns the parsed reply', async () => {
+  it('sends the WHOLE module (no premise) + grounding and returns the per-part snapshot', async () => {
     const raw =
       'Done — one edit.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>';
     chatMock.mockResolvedValue({ text: raw, modelUsed: 'test-model', fallback: null });
@@ -332,17 +582,42 @@ describe('sendCanvasChatMessage (engine)', () => {
     expect(result.parse.prose).toBe('Done — one edit.');
     expect(result.parse.commands).toHaveLength(1);
     expect(result.modelUsed).toBe('test-model');
+    // The per-part snapshot matches EXACTLY what the model saw.
+    expect(result.parts.map((part) => part.planIndex)).toEqual([0, 1, 2]);
+    expect(result.parts[0]?.text).toBe(PART_0);
+    expect(result.parts[1]?.text).toBe(PART_1);
+    expect(result.parts[2]?.text).toBe('');
 
     const [messages, opts] = chatMock.mock.calls[0] ?? [];
     expect(messages?.[0]?.role).toBe('system');
     expect(messages?.[0]?.content).toContain('CURRENT state');
     const last = messages?.[messages.length - 1];
     expect(last?.role).toBe('user');
-    expect(last?.content).toContain(DOC);
+    expect(last?.content).toContain(PART_0);
+    expect(last?.content).toContain(PART_1);
+    expect(last?.content).toContain(CANVAS_PARTS_DELIMITER);
+    expect(last?.content).toContain('[Part 3 of 3 — The Long Watch]');
+    // The spine premise NEVER rides the parts document.
+    expect(last?.content).not.toContain(SPINE_PREMISE);
+    // Read-only grounding: campaign premise + system label + prior module FULL text.
+    expect(last?.content).toContain('REFERENCE-ONLY CONTEXT');
+    expect(last?.content).toContain('Campaign: Ember — The ember war.');
+    expect(last?.content).toContain('Game system: D&D 5e');
+    expect(last?.content).toContain('## The Sunken Chapel');
+    expect(last?.content).toContain(`lighthouse ${'a'.repeat(PRIOR_MODULES_TOTAL_CAP + 2000)}`);
     expect(last?.content).toContain('Instruction: make the gate scene rainier');
     // No strict JSON response format — the XML protocol is deliberately not
     // a JSON contract (docs/17 row 50).
     expect(opts?.responseFormat).toBeUndefined();
+  });
+
+  it('the OPEN part rides from the live editor doc, not the row (unsaved edits apply)', async () => {
+    chatMock.mockResolvedValue({ text: 'ok', modelUsed: 'm', fallback: null });
+    const live = `${PART_0}\n\nAn unsaved hand edit.`;
+    await sendCanvasChatMessage(baseInput({ openPartText: live }));
+    const [messages] = chatMock.mock.calls[0] ?? [];
+    const last = messages?.[messages.length - 1];
+    expect(last?.content).toContain('An unsaved hand edit.');
   });
 
   it('uses the Settings defaultChatModel and honors the canvas selection override', async () => {
@@ -357,6 +632,14 @@ describe('sendCanvasChatMessage (engine)', () => {
   it('a generating module refuses with ModuleBusyError (chat not called)', async () => {
     await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
     await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(ModuleBusyError);
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('a module without planned parts fails the pre-flight loudly', async () => {
+    const module = await (await import('@/db/moduleRepo')).getModule(world.moduleId);
+    if (module === undefined) throw new Error('seed missing');
+    await saveModule({ ...module, spine: null, parts: [] });
+    await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(/no parts to chat about/);
     expect(chatMock).not.toHaveBeenCalled();
   });
 
@@ -381,7 +664,7 @@ describe('sendCanvasChatMessage (engine)', () => {
       moduleId: world.moduleId,
       scope: 'part',
       instruction: 'rewrite',
-      fullMarkdown: DOC,
+      fullMarkdown: PART_0,
       selectedText: '',
       enclosingBlock: '',
     });

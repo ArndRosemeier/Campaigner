@@ -26,8 +26,9 @@ import {
   canvasLedgerKey,
   useCanvasLedgerStore,
 } from '@/features/modules/canvas/canvasStore';
+import type * as PartTextModule from '@/features/modules/partText';
 import {
-  applyChatCommandToView,
+  applyChatCommandsAcrossParts,
 } from '@/features/modules/canvas/chatApply';
 import {
   canvasChatKey,
@@ -35,13 +36,16 @@ import {
 } from '@/features/modules/canvas/chatStore';
 
 /**
- * Canvas CHAT sidebar — page flows (08-MODULE-DESIGNER §Module canvas chat):
- * send → stream → settle → parse → apply. Every applied command is ONE
- * undoable CM6 transaction landed through the save seam; failures render as
- * loud outcome cards whose Report-to-LLM button composes and sends the
- * follow-up turn; the payload always carries the CURRENT editor doc; chat
- * state is session-only. The LLM is mocked — the controller, store, apply
- * and save seam run for real.
+ * Canvas CHAT sidebar — page flows (08-MODULE-DESIGNER §Module canvas
+ * chat): send → stream → settle → parse → apply ACROSS THE WHOLE MODULE.
+ * The open part edits as ONE undoable CM6 transaction landed through the
+ * save seam; other parts land through the same save path per changed part
+ * (a failed save is a loud failed outcome, never a silent drop); failures
+ * render as loud outcome cards whose Report-to-LLM button composes and
+ * sends the follow-up turn; the payload always carries the CURRENT
+ * whole-module parts document + the REFERENCE-ONLY grounding; chat state
+ * is session-only and keyed per MODULE. The LLM is mocked — the
+ * controller, store, apply and save seam run for real.
  */
 
 vi.mock('@/lib/toast', () => ({
@@ -60,10 +64,24 @@ vi.mock('@/db/artifactAutoPromote', async (importOriginal) => ({
   promoteSecondModuleUses: vi.fn(),
 }));
 
+vi.mock('@/features/modules/partText', async (importOriginal) => {
+  const original = await importOriginal<typeof PartTextModule>();
+  return {
+    ...original,
+    saveModulePartText: vi.fn(original.saveModulePartText),
+  };
+});
+
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
+const { saveModulePartText } = await import('@/features/modules/partText');
+const savePartMock = vi.mocked(saveModulePartText);
+const { toastError } = await import('@/lib/toast');
 
-const PART_0_TEXT = 'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.';
+const PART_0_TEXT = 'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain hammers the stones.\n\n[[Keeper Ilse]] watches.';
+const PART_1_TEXT = 'The docks breathe fog.\n\nMist climbs the stairs.\n\n[[Keeper Ilse]] watches.';
+const SPINE_PREMISE = 'The premise that must not be edited by the chat.';
+const PRIOR_TEXT = 'The chapel bells ring beneath the water.';
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -73,7 +91,39 @@ function renderAppAt(path: string): ReturnType<typeof render> {
 }
 
 async function seedModule(): Promise<void> {
-  const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+  const campaign = await createCampaign({
+    name: 'Ember',
+    description: 'The ember war.',
+    system: 'dnd5e',
+  });
+  // A preceding module — its FULL text grounds the chat read-only.
+  const priorDraft = createModule({
+    campaignId: campaign.id,
+    title: 'The Sunken Chapel',
+    concept: 'concept',
+    levelMin: 1,
+    levelMax: 1,
+    tone: '',
+    sizeDial: 'standard',
+  });
+  await saveModule({
+    ...priorDraft,
+    createdAt: 1,
+    spine: moduleSpineSchema.parse({
+      premise: 'The chapel premise.',
+      themes: [],
+      partPlan: [{ title: 'Chapel Bells', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
+    }),
+    parts: [
+      modulePartSchema.parse({
+        planIndex: 0,
+        markdown: PRIOR_TEXT,
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    ],
+  });
   const draft = createModule({
     campaignId: campaign.id,
     title: 'The Drowned Vault',
@@ -86,17 +136,27 @@ async function seedModule(): Promise<void> {
   });
   await saveModule({
     ...draft,
+    createdAt: 2,
     spine: moduleSpineSchema.parse({
-      premise: 'The premise.',
+      premise: SPINE_PREMISE,
       themes: [],
       partPlan: [
         { title: 'The Gate Bargain', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+        { title: 'Under the Docks', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+        { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
       ],
     }),
     parts: [
       modulePartSchema.parse({
         planIndex: 0,
         markdown: PART_0_TEXT,
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+      modulePartSchema.parse({
+        planIndex: 1,
+        markdown: PART_1_TEXT,
         status: 'ready',
         errorMessage: '',
         edited: false,
@@ -110,7 +170,7 @@ beforeEach(async () => {
   await clearDatabase();
   vi.clearAllMocks();
   useCanvasLedgerStore.setState({ ownerModuleId: null, byPart: {} });
-  useCanvasChatStore.setState({ ownerModuleId: null, byPart: {} });
+  useCanvasChatStore.setState({ ownerModuleId: null, byModule: {} });
   await seedModule();
 });
 
@@ -143,7 +203,7 @@ async function sendChat(
 }
 
 describe('canvas chat sidebar (page flows)', () => {
-  it('applies a valid command: doc edit (one undo step), outcome card, save seam + ledger', async () => {
+  it('applies a valid command to the OPEN part: doc edit (one undo step), outcome card, save seam + ledger', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
@@ -156,7 +216,7 @@ describe('canvas chat sidebar (page flows)', () => {
     // The doc changed through the editor.
     const view = activeCanvasView.current;
     expect(view?.state.doc.toString()).toBe(
-      'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain drowns every word.',
+      PART_0_TEXT.replace('Rain hammers the stones.', 'Rain drowns every word.'),
     );
     // The outcome card is applied with 1 occurrence and a mini before→after.
     const panel = screen.getByTestId('canvas-chat');
@@ -165,10 +225,13 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(card).toHaveAttribute('data-occurrences', '1');
     expect(card.textContent).toContain('Rain hammers the stones.');
     expect(card.textContent).toContain('Rain drowns every word.');
+    expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
+      'Part 1 — The Gate Bargain',
+    );
     // Persistence rode THE one part-text save path (edited: true) + ledger.
     const row = await getModule(world.moduleId);
     expect(row?.parts[0]?.markdown).toBe(
-      'The party bargains with [[Keeper Ilse]] at the gate.\n\nRain drowns every word.',
+      PART_0_TEXT.replace('Rain hammers the stones.', 'Rain drowns every word.'),
     );
     expect(row?.parts[0]?.edited).toBe(true);
     const ledger = useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)];
@@ -183,7 +246,34 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
   });
 
-  it('the payload carries the doc AS OF SEND TIME (current text, not the initial copy)', async () => {
+  it('the payload carries the WHOLE module: other parts, delimiter + labels, grounding, NO premise', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    mockChatReply('ok');
+    await sendChat(user, 'tighten the module');
+    const [messages] = chatMock.mock.calls[0] ?? [];
+    const last = messages?.[messages.length - 1];
+    expect(last?.role).toBe('user');
+    // Every planned part rides (the open part from the live view, others from the row).
+    expect(last?.content).toContain(PART_0_TEXT);
+    expect(last?.content).toContain(PART_1_TEXT);
+    expect(last?.content).toContain('==========');
+    expect(last?.content).toContain('[Part 1 of 3 — The Gate Bargain]');
+    expect(last?.content).toContain('[Part 2 of 3 — Under the Docks]');
+    expect(last?.content).toContain('[Part 3 of 3 — The Long Watch]');
+    // The spine premise is EXCLUDED from the parts document.
+    expect(last?.content).not.toContain(SPINE_PREMISE);
+    // REFERENCE-ONLY grounding: campaign premise + system label + prior modules FULL text.
+    expect(last?.content).toContain('REFERENCE-ONLY CONTEXT');
+    expect(last?.content).toContain('Campaign: Ember — The ember war.');
+    expect(last?.content).toContain('Game system: D&D 5e');
+    expect(last?.content).toContain('## The Sunken Chapel');
+    expect(last?.content).toContain(PRIOR_TEXT);
+  });
+
+  it('the payload carries the open part AS OF SEND TIME (current text, not the initial copy)', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
@@ -202,6 +292,129 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(last?.role).toBe('user');
     expect(last?.content).toContain('A new line.');
     expect(last?.content).toContain('CURRENT state');
+  });
+
+  it('a command targeting a NON-open part lands on the row (save per changed part), open part untouched', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    mockChatReply(
+      '<edit><search>Mist climbs the stairs.</search><replace>Mist floods the stairwell.</replace></edit>',
+    );
+    await sendChat(user, 'flood the stairwell');
+
+    // The outcome names the target part and shows the mini before→after.
+    const panel = screen.getByTestId('canvas-chat');
+    const card = await within(panel).findByTestId('canvas-chat-outcome');
+    expect(card).toHaveAttribute('data-kind', 'applied');
+    expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
+      'Part 2 — Under the Docks',
+    );
+    // The row for part 1 landed through the save seam; the open part was NOT rewritten.
+    const row = await getModule(world.moduleId);
+    expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(
+      PART_1_TEXT.replace('Mist climbs the stairs.', 'Mist floods the stairwell.'),
+    );
+    expect(row?.parts.find((part) => part.planIndex === 1)?.edited).toBe(true);
+    expect(row?.parts.find((part) => part.planIndex === 0)?.markdown).toBe(PART_0_TEXT);
+    expect(row?.parts.find((part) => part.planIndex === 0)?.edited).toBe(false);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
+    // Ledger entry for THAT part, none for the open part.
+    expect(
+      useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 1)]?.versions,
+    ).toHaveLength(1);
+    expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)]).toBeUndefined();
+  });
+
+  it('all="true" applies in EVERY part where it matched (open part + other part)', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    // '[[Keeper Ilse]] watches.' occurs once per part.
+    mockChatReply(
+      '<edit all="true"><search>[[Keeper Ilse]] watches.</search><replace>[[Keeper Ilse]] keeps the watch.</replace></edit>',
+    );
+    await sendChat(user, 'sharpen the watcher line');
+    const panel = screen.getByTestId('canvas-chat');
+    const cards = await within(panel).findAllByTestId('canvas-chat-outcome');
+    const applied = cards.filter((entry) => entry.getAttribute('data-kind') === 'applied');
+    // One outcome PER PART application, each naming its part.
+    expect(applied).toHaveLength(2);
+    expect(applied.map((card) => card.textContent).join(' ')).toContain('Part 1 — The Gate Bargain');
+    expect(applied.map((card) => card.textContent).join(' ')).toContain('Part 2 — Under the Docks');
+    const row = await getModule(world.moduleId);
+    expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(
+      PART_1_TEXT.replace('[[Keeper Ilse]] watches.', '[[Keeper Ilse]] keeps the watch.'),
+    );
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(
+      PART_0_TEXT.replace('[[Keeper Ilse]] watches.', '[[Keeper Ilse]] keeps the watch.'),
+    );
+  });
+
+  it('matches spread across parts fail loud without all; a spanning search cannot match', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    // '[[Keeper Ilse]] watches.' appears TWICE in the open doc (the user
+    // appended a copy) and once in part 1 → 3 matches across the module.
+    act(() => {
+      activeCanvasView.current?.dispatch({
+        changes: { from: PART_0_TEXT.length, to: PART_0_TEXT.length, insert: '\n\n[[Keeper Ilse]] watches.' },
+      });
+    });
+    mockChatReply(
+      '<edit><search>[[Keeper Ilse]] watches.</search><replace>[[Keeper Ilse]] keeps the watch.</replace></edit>',
+    );
+    await sendChat(user, 'sharpen the watcher line once');
+    const panel = screen.getByTestId('canvas-chat');
+    const failed = await within(panel).findByTestId('canvas-chat-outcome');
+    expect(failed).toHaveAttribute('data-kind', 'failed');
+    expect(within(failed).getByTestId('canvas-chat-outcome-reason').textContent).toContain('3 matches');
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(
+      `${PART_0_TEXT}\n\n[[Keeper Ilse]] watches.`,
+    );
+
+    // A search SPANNING the delimiter never matches (per-part matching).
+    mockChatReply(
+      `<edit><search>${PART_0_TEXT}\n\n==========\n\n[Part 2 of 3 — Under the Docks]\nThe docks breathe fog.</search><replace>x</replace></edit>`,
+    );
+    await sendChat(user, 'spanning edit');
+    const failedCards = await within(panel).findAllByTestId('canvas-chat-outcome');
+    expect(
+      failedCards.some(
+        (card) =>
+          card.getAttribute('data-kind') === 'failed' &&
+          card.textContent.includes('does not appear'),
+      ),
+    ).toBe(true);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(
+      `${PART_0_TEXT}\n\n[[Keeper Ilse]] watches.`,
+    );
+    const row = await getModule(world.moduleId);
+    expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
+  });
+
+  it('an EMPTY part fills through its label anchor and lands on the row', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await openSidebar(user);
+    mockChatReply(
+      '<edit><search>[Part 3 of 3 — The Long Watch]</search><replace>[Part 3 of 3 — The Long Watch]\n\nThe watch begins in fog.</replace></edit>',
+    );
+    await sendChat(user, 'write the last part');
+    const panel = screen.getByTestId('canvas-chat');
+    const card = await within(panel).findByTestId('canvas-chat-outcome');
+    expect(card).toHaveAttribute('data-kind', 'applied');
+    expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
+      'Part 3 — The Long Watch',
+    );
+    const row = await getModule(world.moduleId);
+    expect(row?.parts.find((part) => part.planIndex === 2)?.markdown).toBe('The watch begins in fog.');
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
   });
 
   it('a zero-match failure renders the closest candidate and Report-to-LLM sends the composed follow-up', async () => {
@@ -250,37 +463,30 @@ describe('canvas chat sidebar (page flows)', () => {
     );
   });
 
-  it('multiple matches without all fail loud; all="true" applies every occurrence in one command', async () => {
+  it('a failed save for a NON-open part is LOUD: failed outcome card + toast naming the part', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
-    act(() => {
-      activeCanvasView.current?.dispatch({
-        changes: { from: PART_0_TEXT.length, to: PART_0_TEXT.length, insert: '\n\nRain hammers the stones.' },
-      });
-    });
     await openSidebar(user);
+    savePartMock.mockImplementationOnce(() => Promise.reject(new Error('disk full')));
     mockChatReply(
-      '<edit><search>Rain hammers the stones.</search><replace>Mist swallows the stones.</replace></edit>',
+      '<edit><search>Mist climbs the stairs.</search><replace>Mist floods the stairwell.</replace></edit>',
     );
-    await sendChat(user, 'replace the rain line');
-    const panel = screen.getByTestId('canvas-chat');
-    const failed = await within(panel).findByTestId('canvas-chat-outcome');
-    expect(failed).toHaveAttribute('data-kind', 'failed');
-    expect(within(failed).getByTestId('canvas-chat-outcome-reason').textContent).toContain('2 matches');
+    await sendChat(user, 'flood the stairwell');
 
-    mockChatReply(
-      '<edit all="true"><search>Rain hammers the stones.</search><replace>Mist swallows the stones.</replace></edit>',
+    const panel = screen.getByTestId('canvas-chat');
+    const card = await within(panel).findByTestId('canvas-chat-outcome');
+    expect(card).toHaveAttribute('data-kind', 'failed');
+    expect(within(card).getByTestId('canvas-chat-outcome-reason').textContent).toContain(
+      'the edit did not land',
     );
-    await sendChat(user, 'replace every occurrence');
-    const cards = await within(panel).findAllByTestId('canvas-chat-outcome');
-    const applied = cards.find((entry) => entry.getAttribute('data-kind') === 'applied');
-    expect(applied).toBeDefined();
-    expect(applied).toHaveAttribute('data-occurrences', '2');
-    // PART_0_TEXT occurrence + the appended one — both replaced.
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(
-      `${PART_0_TEXT.replace(/Rain hammers the stones\./g, 'Mist swallows the stones.')}\n\nMist swallows the stones.`,
+    expect(toastError).toHaveBeenCalledWith(
+      expect.stringContaining('Under the Docks'),
+      expect.anything(),
     );
+    // The row was NOT touched — the edit did not land.
+    const row = await getModule(world.moduleId);
+    expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
   });
 
   it('a malformed reply fails the WHOLE reply loudly with a report button', async () => {
@@ -394,26 +600,33 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(chatMock).not.toHaveBeenCalled();
   });
 
-  it('chat state is session-only zustand (no persistence layer, module switch resets)', async () => {
+  it('chat state is keyed per MODULE: switching parts keeps the conversation, module change resets', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
     await openSidebar(user);
     mockChatReply('plain answer');
     await sendChat(user, 'hello');
-    const key = canvasChatKey(world.moduleId, 0);
-    expect(useCanvasChatStore.getState().byPart[key]?.messages).toHaveLength(2);
+    const key = canvasChatKey(world.moduleId);
+    expect(useCanvasChatStore.getState().byModule[key]?.messages).toHaveLength(2);
     // No persist middleware anywhere on the store.
     expect((useCanvasChatStore as unknown as { persist?: unknown }).persist).toBeUndefined();
-    // A module change wipes the chats (Board staging precedent).
+    // Switching the open part keeps the SAME conversation (per-module key).
+    await user.click(screen.getByTestId('canvas-part-select'));
+    await user.click(await screen.findByRole('option', { name: 'Part 2: Under the Docks' }));
+    await flushAsyncUpdates();
+    expect(useCanvasChatStore.getState().byModule[key]?.messages).toHaveLength(2);
+    const panel = screen.getByTestId('canvas-chat');
+    await within(panel).findByTestId('canvas-chat-assistant-message');
+    // A module change wipes the chat (Board staging precedent).
     act(() => {
       useCanvasChatStore.getState().resetFor('other-module');
     });
-    expect(useCanvasChatStore.getState().byPart[key]).toBeUndefined();
+    expect(useCanvasChatStore.getState().byModule[key]).toBeUndefined();
   });
 });
 
-describe('chatApply (raw-view units)', () => {
+describe('chatApply across parts (raw-view units)', () => {
   function mountEditor(doc: string): { view: EditorView; host: HTMLElement } {
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -424,15 +637,25 @@ describe('chatApply (raw-view units)', () => {
     return { view, host };
   }
 
-  it('an applied replace-all rides ONE transaction (one undo step)', () => {
-    const { view, host } = mountEditor('Rain here.\nRain there.');
-    const outcome = applyChatCommandToView(view, {
-      search: 'Rain',
-      replace: 'Mist',
-      all: true,
+  const SNAPSHOT_PARTS = [
+    { planIndex: 0, title: 'Open Part', text: 'Rain here.\nRain there.' },
+    { planIndex: 1, title: 'Other Part', text: 'Fog elsewhere.' },
+  ];
+
+  it('an applied replace-all on the open part rides ONE transaction (one undo step)', () => {
+    const { view, host } = mountEditor(SNAPSHOT_PARTS[0]?.text ?? '');
+    const result = applyChatCommandsAcrossParts({
+      commands: [{ search: 'Rain', replace: 'Mist', all: true }],
+      parts: SNAPSHOT_PARTS,
+      openPlanIndex: 0,
+      view,
     });
-    expect(outcome.kind).toBe('applied');
-    expect(outcome.occurrences).toBe(2);
+    expect(result.openPartChanged).toBe(true);
+    expect(result.changedParts).toEqual([]);
+    expect(result.outcomes).toHaveLength(1);
+    expect(result.outcomes[0]?.kind).toBe('applied');
+    expect(result.outcomes[0]?.occurrences).toBe(2);
+    expect(result.outcomes[0]?.targetParts[0]?.title).toBe('Open Part');
     expect(view.state.doc.toString()).toBe('Mist here.\nMist there.');
     act(() => {
       undo(view);
@@ -441,20 +664,50 @@ describe('chatApply (raw-view units)', () => {
     host.remove();
   });
 
-  it('multiple matches without all fail loud with the count', () => {
-    const { view, host } = mountEditor('Rain here.\nRain there.');
-    const outcome = applyChatCommandToView(view, { search: 'Rain', replace: 'Mist', all: false });
-    expect(outcome.kind).toBe('failed');
-    expect(outcome.reason).toContain('2 matches');
-    expect(view.state.doc.toString()).toBe('Rain here.\nRain there.');
+  it('multiple matches across the whole module fail loud with the total count (open + other)', () => {
+    const { view, host } = mountEditor('the gate.\nthe dock.');
+    const result = applyChatCommandsAcrossParts({
+      commands: [{ search: 'the', replace: 'ye', all: false }],
+      parts: [
+        { planIndex: 0, title: 'Open Part', text: 'the gate.\nthe dock.' },
+        { planIndex: 1, title: 'Other Part', text: 'past the weir.' },
+      ],
+      openPlanIndex: 0,
+      view,
+    });
+    const outcome = result.outcomes[0];
+    expect(outcome?.kind).toBe('failed');
+    expect(outcome?.reason).toContain('3 matches');
+    expect(view.state.doc.toString()).toBe('the gate.\nthe dock.');
+    host.remove();
+  });
+
+  it('a command lands in a NON-open part as a splice reported for save; the open doc is untouched', () => {
+    const { view, host } = mountEditor('Open text.');
+    const result = applyChatCommandsAcrossParts({
+      commands: [{ search: 'Fog elsewhere.', replace: 'Mist elsewhere.', all: false }],
+      parts: SNAPSHOT_PARTS,
+      openPlanIndex: 0,
+      view,
+    });
+    expect(result.openPartChanged).toBe(false);
+    expect(result.changedParts).toEqual([
+      { partIndex: 1, title: 'Other Part', text: 'Mist elsewhere.' },
+    ]);
+    expect(view.state.doc.toString()).toBe('Open text.');
     host.remove();
   });
 
   it('an empty search fails loud', () => {
     const { view, host } = mountEditor('text');
-    const outcome = applyChatCommandToView(view, { search: '  ', replace: 'x', all: false });
-    expect(outcome.kind).toBe('failed');
-    expect(outcome.reason).toContain('empty');
+    const result = applyChatCommandsAcrossParts({
+      commands: [{ search: '  ', replace: 'x', all: false }],
+      parts: SNAPSHOT_PARTS,
+      openPlanIndex: 0,
+      view,
+    });
+    expect(result.outcomes[0]?.kind).toBe('failed');
+    expect(result.outcomes[0]?.reason).toContain('empty');
     host.remove();
   });
 });
