@@ -1,6 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import { cleanup, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
@@ -173,7 +174,13 @@ describe('iPad batch D: coarse-pointer 16px floor', () => {
 
   it('edit-campaign dialog: name is name-hinted, description keeps autocorrect', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    render(<EditCampaignDialog campaign={campaign} open onOpenChange={vi.fn()} />);
+    // The dialog navigates after destructive actions (clear-workspace arc),
+    // so it renders inside router context.
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <EditCampaignDialog campaign={campaign} open onOpenChange={vi.fn()} />
+      </MemoryRouter>,
+    );
     const name = screen.getByLabelText('Campaign name');
     expectCoarseText(name);
     expectNameHints(name, 'next');

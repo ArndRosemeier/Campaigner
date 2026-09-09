@@ -2,6 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
@@ -61,7 +62,13 @@ describe('EditCampaignDialog — remove all generated content', () => {
   }
 
   function renderDialog(campaign: Campaign): void {
-    render(<EditCampaignDialog campaign={campaign} open={true} onOpenChange={vi.fn()} />);
+    // The dialog now navigates after destructive actions (clear-workspace
+    // arc), so it needs router context even for the wipe-only tests.
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <EditCampaignDialog campaign={campaign} open={true} onOpenChange={vi.fn()} />
+      </MemoryRouter>,
+    );
   }
 
   it('lists live counts in the confirm and wipes on confirm, keeping the Party', async () => {

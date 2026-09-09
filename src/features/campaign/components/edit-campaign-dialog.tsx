@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { JSX } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -22,6 +23,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { GAME_SYSTEM_LABELS, type Campaign } from '@/domain';
 import {
@@ -30,6 +32,11 @@ import {
   updateCampaign,
   type RemovedContentCounts,
 } from '@/db/campaignRepo';
+import {
+  deleteCampaignWorkspace,
+  type ClearedWorkspaceCounts,
+} from '@/db/maintenance';
+import { campaignIdFromPath, workspacePath } from '@/app/routes';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -54,6 +61,15 @@ export function EditCampaignDialog({
   const [saving, setSaving] = useState(false);
   const [wipeOpen, setWipeOpen] = useState(false);
   const [wiping, setWiping] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearName, setClearName] = useState('');
+  const [clearing, setClearing] = useState(false);
+  const location = useLocation();
+  const navigate = useNavigate();
+  // Exact, case-sensitive: the multi-campaign footgun case refuses anything
+  // but the campaign's own name (danger-zone DELETE precedent, per-campaign).
+  const clearArmed = clearName === campaign.name;
+  const clearMismatch = clearName.length > 0 && !clearArmed;
 
   // Live census for the wipe confirm: re-derives while the confirm is open,
   // so the dialog lists what the campaign holds NOW, not what it held when
@@ -105,6 +121,51 @@ export function EditCampaignDialog({
       toastError('Could not remove generated content', error);
     } finally {
       setWiping(false);
+    }
+  }
+
+  async function handleClearWorkspace(): Promise<void> {
+    // One clear at a time: a double-click (or a second dialog) while the
+    // first clear is in flight refuses loudly instead of stacking wipes.
+    if (clearing) {
+      toastError(
+        `“${campaign.name}” is already being cleared — wait for it to finish.`,
+      );
+      return;
+    }
+    // Defense in depth behind the disabled-until-exact confirm button: a
+    // wrong name refuses loudly and deletes nothing.
+    if (clearName !== campaign.name) {
+      toastError(
+        `Type the campaign name exactly (“${campaign.name}”) to clear its workspace — nothing was deleted.`,
+      );
+      return;
+    }
+    setClearing(true);
+    try {
+      // Fresh recount + disposal happen inside the maintenance transaction;
+      // the returned counts describe what actually went. Any failure rejects
+      // — no success toast on a half-applied (rolled-back) clear.
+      const cleared = await deleteCampaignWorkspace(campaign.id);
+      setClearOpen(false);
+      setClearName('');
+      toastSuccess(formatCleared(campaign.name, cleared));
+      // Every campaign list reads through Dexie live queries, so the commit
+      // above already refreshed them — no reload, no manual invalidation.
+      // Only the route needs help: when the user sits on deleted content (a
+      // module reader, an open artifact, any campaign child route), navigate
+      // out to the campaign page, now empty.
+      const target = workspacePath(campaign.id);
+      if (
+        campaignIdFromPath(location.pathname) === campaign.id &&
+        location.pathname !== target
+      ) {
+        navigate(target);
+      }
+    } catch (error) {
+      toastError('Could not clear the workspace', error);
+    } finally {
+      setClearing(false);
     }
   }
 
@@ -184,6 +245,30 @@ export function EditCampaignDialog({
               Remove all generated content…
             </Button>
           </div>
+          {/* Clear workspace: the FULL per-campaign reset — everything under
+              the campaign goes (including the Party), only the premise row
+              stays. The typed campaign name (exact, case-sensitive) is the
+              multi-campaign footgun guard. */}
+          <div className="mb-3 rounded-lg border border-destructive/30 p-3">
+            <p className="text-xs font-semibold text-destructive">Clear workspace</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Delete everything under this campaign — artifacts (including the Party), modules,
+              battles, runs and outlines — keeping only the campaign itself. Rulebooks and the
+              global library are never affected.
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-2 text-destructive"
+              data-testid="clear-workspace"
+              onClick={() => {
+                setClearOpen(true);
+              }}
+            >
+              Clear workspace…
+            </Button>
+          </div>
           <DialogFooter>
             <Button
               type="button"
@@ -237,6 +322,64 @@ export function EditCampaignDialog({
         </AlertDialogFooter>
       </AlertDialogContent>
     </AlertDialog>
+
+    <AlertDialog
+      open={clearOpen}
+      onOpenChange={(next) => {
+        setClearOpen(next);
+        if (!next) {
+          setClearName('');
+        }
+      }}
+    >
+      <AlertDialogContent data-testid="clear-workspace-confirm-dialog">
+        <AlertDialogHeader>
+          <AlertDialogTitle>Clear the workspace of “{campaign.name}”?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently deletes everything under this campaign — every artifact (including
+            the Party), every module, every battle, run and outline. Only the campaign itself
+            stays, so generation can restart from its premise. Type the campaign name exactly
+            to confirm.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="clear-workspace-confirm-input">
+            Type {campaign.name}
+          </Label>
+          <Input
+            id="clear-workspace-confirm-input"
+            data-testid="clear-workspace-name"
+            value={clearName}
+            autoComplete="off"
+            onChange={(event) => {
+              setClearName(event.target.value);
+            }}
+          />
+          {clearMismatch ? (
+            <p className="text-xs text-destructive" role="alert">
+              That doesn’t match the campaign name — nothing will be deleted until it matches
+              exactly (case-sensitive).
+            </p>
+          ) : null}
+        </div>
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={clearing}>Cancel</AlertDialogCancel>
+          {/* Stays clickable while clearing (label flips to Clearing…) so a
+              double-click lands on the in-flight loud refusal, never a
+              stacked wipe. */}
+          <AlertDialogAction
+            className="bg-destructive text-white hover:bg-destructive/90"
+            data-testid="clear-workspace-confirm"
+            disabled={!clearArmed}
+            onClick={() => {
+              void handleClearWorkspace();
+            }}
+          >
+            {clearing ? 'Clearing…' : 'Clear workspace'}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
     </>
   );
 }
@@ -265,6 +408,22 @@ function formatCensus(summary: {
   if (summary.runs > 0) parts.push(pluralize(summary.runs, 'run'));
   if (summary.deliverables > 0) parts.push(pluralize(summary.deliverables, 'outline'));
   return parts.join(', ');
+}
+
+/** Success toast body: names the cleared campaign and reports what the clear
+ * actually removed (in-transaction recount). */
+function formatCleared(campaignName: string, cleared: ClearedWorkspaceCounts): string {
+  const parts: string[] = [];
+  if (cleared.artifacts > 0) {
+    const kinds = cleared.byKind.map((entry) => pluralize(entry.count, entry.kind)).join(', ');
+    parts.push(`${pluralize(cleared.artifacts, 'artifact')} (${kinds})`);
+  }
+  parts.push(pluralize(cleared.modules, 'module'));
+  parts.push(pluralize(cleared.battles, 'battle'));
+  if (cleared.runs > 0) parts.push(pluralize(cleared.runs, 'run'));
+  if (cleared.deliverables > 0) parts.push(pluralize(cleared.deliverables, 'outline'));
+  if (parts.length === 0) return `Cleared the workspace of “${campaignName}” — nothing to remove.`;
+  return `Cleared the workspace of “${campaignName}” — removed ${parts.join(', ')}.`;
 }
 
 /** Success toast body: what the wipe actually removed (in-transaction
