@@ -100,6 +100,20 @@ export function canvasPath(
   return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/canvas${query}`;
 }
 
+/**
+ * Path of the whole-module document canvas with the chat sidebar forced
+ * OPEN (08 §Module canvas chat, docs/17 row 57 — the chat is the front
+ * door): the modules list row and the reader header link here, so one click
+ * from anywhere starts talking to the module. The page reads `?chat=open`
+ * and opens the sidebar even when the session toggle closed it.
+ */
+export function canvasChatPath(
+  campaignId: string,
+  moduleId: string,
+): `/c/${string}/m/${string}/canvas${string}` {
+  return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/canvas?chat=open`;
+}
+
 /** Path of the deliverable builder for a given campaign (M3-D). */
 export function deliverablesPath(campaignId: string): `/c/${string}/deliverables` {
   return `/c/${encodeURIComponent(campaignId)}/deliverables`;

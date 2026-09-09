@@ -6,6 +6,7 @@ import {
   ArrowLeftIcon,
   ListIcon,
   LoaderCircleIcon,
+  MessageSquareTextIcon,
   NetworkIcon,
   PencilIcon,
   PlayIcon,
@@ -16,7 +17,7 @@ import {
   TriangleAlertIcon,
 } from 'lucide-react';
 
-import { artifactPath, battlePath, boardPath, canvasPath, modulesPath } from '@/app/routes';
+import { artifactPath, battlePath, boardPath, canvasChatPath, canvasPath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -436,6 +437,19 @@ export function ModuleReaderPage(): JSX.Element {
               >
                 <SquarePenIcon aria-hidden data-icon="inline-start" />
                 Canvas
+              </Button>
+              {/* Chat front door (08 §Module canvas chat, ledger 57) — one
+                  click from the reader to talking to the module: the canvas
+                  with the chat sidebar forced open. */}
+              <Button
+                variant="outline"
+                size="xs"
+                data-testid="chat-header-link"
+                render={<Link to={canvasChatPath(campaignId, moduleId)} />}
+                nativeButton={false}
+              >
+                <MessageSquareTextIcon aria-hidden data-icon="inline-start" />
+                Chat
               </Button>
               <Button
                 variant="ghost"

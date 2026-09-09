@@ -108,7 +108,10 @@ interface CanvasChatStoreState {
 
 const EMPTY_STATE: CanvasChatModuleState = {
   messages: [],
-  open: false,
+  // Front door (docs/17 row 57): the canvas opens with the chat sidebar
+  // OPEN by default. Still collapsible — the toggle writes this same field,
+  // which stays session-only per module.
+  open: true,
   modelSelection: null,
   inFlight: false,
 };

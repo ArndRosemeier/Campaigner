@@ -174,6 +174,16 @@ export function CanvasPage(): JSX.Element {
     hydrateChatFromThread(canvasChatKey(moduleId), module.chatThread);
   }, [moduleId, module]);
 
+  // Front-door entries (docs/17 row 57): a `?chat=open` arrival (the modules
+  // list row + the reader header link here) forces the sidebar open even
+  // when this session's toggle closed it. Plain canvas arrivals leave the
+  // toggle state untouched.
+  useEffect(() => {
+    if (new URLSearchParams(location.search).get('chat') === 'open') {
+      useCanvasChatStore.getState().setOpen(canvasChatKey(moduleId), true);
+    }
+  }, [location.search, moduleId]);
+
   // Part text lives in the EDITOR (the doc string is the truth); the page
   // mirrors it only as a render trigger for the Save affordance and the
   // leave-guard. `initialDoc` is captured ONCE per module — the editor doc
@@ -227,9 +237,10 @@ export function CanvasPage(): JSX.Element {
   const [showPrevious, setShowPrevious] = useState(false);
 
   // Chat sidebar visibility + preview toggle — session-only, keyed per
-  // MODULE (dies on reload).
+  // MODULE (the toggle state dies on reload; the sidebar itself defaults
+  // OPEN — front door — and `?chat=open` arrivals force it open).
   const chatKey = canvasChatKey(moduleId);
-  const chatOpen = useCanvasChatStore((store) => store.byModule[chatKey]?.open ?? false);
+  const chatOpen = useCanvasChatStore((store) => store.module(chatKey).open);
   const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? false);
   // The preview renders the doc AS OF THE TOGGLE (captured once — the
   // editor is hidden and all writing surfaces disabled while it is open).

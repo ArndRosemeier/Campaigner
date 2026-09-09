@@ -20,7 +20,7 @@ import {
 } from '@/domain';
 import { DEFAULT_CHAT_MODEL } from '@/domain/settings';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import {
   canvasLedgerKey,
@@ -202,7 +202,10 @@ function mockChatReply(raw: string): void {
 async function openSidebar(
   user: ReturnType<typeof userEvent.setup>,
 ): Promise<void> {
-  await user.click(await screen.findByTestId('canvas-chat-toggle'));
+  // Front door: the sidebar is OPEN by default — only toggle when closed.
+  if (screen.queryByTestId('canvas-chat') === null) {
+    await user.click(await screen.findByTestId('canvas-chat-toggle'));
+  }
   expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
 }
 
@@ -631,7 +634,9 @@ describe('canvas chat sidebar (page flows)', () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
-    await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
+    // The sidebar is open from the start now — the row write's live-query
+    // cascade must land inside act (console guard).
+    await actDrained(() => patchModule(world.moduleId, { status: 'generating', errorMessage: '' }));
     await openSidebar(user);
     // The send affordance is disabled while the module generates (the
     // queue-less ONE-generation-per-module rule surfaced in the UI).

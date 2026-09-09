@@ -2,9 +2,9 @@ import { useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpenIcon, NetworkIcon, PencilIcon, PlusIcon, SquarePenIcon, Trash2Icon } from 'lucide-react';
+import { BookOpenIcon, MessageSquareTextIcon, NetworkIcon, PencilIcon, PlusIcon, SquarePenIcon, Trash2Icon } from 'lucide-react';
 
-import { boardPath, canvasPath, guidePath, modulePath } from '@/app/routes';
+import { boardPath, canvasChatPath, canvasPath, guidePath, modulePath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -239,6 +239,21 @@ export function ModulesListPage(): JSX.Element {
                   }}
                 >
                   <SquarePenIcon aria-hidden />
+                </Button>
+                {/* Chat front door (08 §Module canvas chat, ledger 57) — one
+                    click from the list to talking to the module: the canvas
+                    with the chat sidebar forced open. */}
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  aria-label={`Chat: ${module.title}`}
+                  className="shrink-0"
+                  data-testid={`module-chat-link-${module.id}`}
+                  onClick={() => {
+                    navigate(canvasChatPath(campaignId, module.id));
+                  }}
+                >
+                  <MessageSquareTextIcon aria-hidden />
                 </Button>
                 <Button
                   variant="ghost"

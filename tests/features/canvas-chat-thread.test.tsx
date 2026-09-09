@@ -6,7 +6,7 @@ import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
-import { canvasPath } from '@/app/routes';
+import { canvasChatPath, canvasPath, modulePath, modulesPath } from '@/app/routes';
 import { createCampaign } from '@/db/campaignRepo';
 import { db } from '@/db/db';
 import { getModule, saveModule } from '@/db/moduleRepo';
@@ -158,7 +158,10 @@ function mockChatReply(raw: string): void {
 async function openSidebar(
   user: ReturnType<typeof userEvent.setup>,
 ): Promise<void> {
-  await user.click(await screen.findByTestId('canvas-chat-toggle'));
+  // Front door: the sidebar is OPEN by default — only toggle when closed.
+  if (screen.queryByTestId('canvas-chat') === null) {
+    await user.click(await screen.findByTestId('canvas-chat-toggle'));
+  }
   expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
 }
 
@@ -318,6 +321,65 @@ describe('canvas chat thread persistence', () => {
     expect(modules[0]?.chatThread).toEqual(thread);
     await flushAsyncUpdates();
   });
+
+describe('canvas chat front door', () => {
+  it('the canvas opens with the chat sidebar OPEN by default; the toggle still overrides per session', async () => {
+    const user = userEvent.setup();
+    renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    // No toggle click: the sidebar is already there.
+    expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    expect(
+      useCanvasChatStore.getState().module(canvasChatKey(world.moduleId)).open,
+    ).toBe(true);
+    // Collapsible: the toggle closes it and the session state sticks.
+    await user.click(screen.getByTestId('canvas-chat-toggle'));
+    expect(screen.queryByTestId('canvas-chat')).not.toBeInTheDocument();
+    expect(
+      useCanvasChatStore.getState().module(canvasChatKey(world.moduleId)).open,
+    ).toBe(false);
+    await flushAsyncUpdates();
+  });
+
+  it('a `?chat=open` arrival forces the sidebar open even after the toggle closed it', async () => {
+    const user = userEvent.setup();
+    const { unmount } = renderAppAt(canvasPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    await user.click(await screen.findByTestId('canvas-chat-toggle'));
+    expect(screen.queryByTestId('canvas-chat')).not.toBeInTheDocument();
+    // Same module, fresh router (the toggle state is session-only and
+    // survives the remount — only the param re-opens it).
+    unmount();
+    renderAppAt(canvasChatPath(world.campaignId, world.moduleId));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  });
+
+  it('a modules-list row Chat entry routes to the canvas with the chat open', async () => {
+    const user = userEvent.setup();
+    renderAppAt(modulesPath(world.campaignId));
+    await user.click(
+      await screen.findByTestId(`module-chat-link-${world.moduleId}`, {}, { timeout: 10_000 }),
+    );
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    expect(window.location.pathname).toContain(`/m/${world.moduleId}/canvas`);
+    expect(window.location.search).toContain('chat=open');
+    expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  });
+
+  it('a reader-header Chat entry routes to the canvas with the chat open', async () => {
+    const user = userEvent.setup();
+    renderAppAt(modulePath(world.campaignId, world.moduleId));
+    await user.click(await screen.findByTestId('chat-header-link', {}, { timeout: 10_000 }));
+    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+    expect(window.location.pathname).toContain(`/m/${world.moduleId}/canvas`);
+    expect(window.location.search).toContain('chat=open');
+    expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    await flushAsyncUpdates();
+  });
+});
 
   it('generation prompt readers never contain the thread field', async () => {
     const marker = 'CHAT-THREAD-MARKER-9f3c';
