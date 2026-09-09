@@ -279,7 +279,12 @@ For part i, the user message contains:
       satisfied. Satisfaction is rationed to the finale, at full price
       (every want met is paid for visibly),
    - no stat blocks in the prose — mechanics belong to linked entities;
-     reference DCs/checks inline where natural.
+     reference DCs/checks inline where natural,
+   - REFERENCE encounters, never author them: the prose sets up the scene
+     and links it as `[[Encounter Name]]` — no monster roster with counts,
+     no tactics or terrain rules, no battle map or ASCII map (those belong
+     to the linked encounter artifact, designed by the encounter pipeline
+     from the prose mention).
 
 **Encounter-floor gate (hard):** after the parts loop AND the
 name-normalization pass, but BEFORE the ready write, `runParts` counts the

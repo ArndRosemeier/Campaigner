@@ -1319,6 +1319,7 @@ async function partCall(
         ? '- This is the FINALE: satisfaction is allowed here, at full price — every want met must be paid for visibly in loss, consequence, or foregone alternative.'
         : '- REQUIREMENT — no clean resolution: end this part with a cost, a revelation, or a new pressure — never with every side satisfied. Satisfaction is rationed to the finale.',
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
+      '- Encounters live in separate encounter artifacts — in the prose, set up the scene and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
     ].join('\n'),
     options.extraInstruction === '' ? null : `Additional instruction from the GM: ${options.extraInstruction}`,
   ]
