@@ -43,6 +43,44 @@ const BRIEF = {
   entryRoomIndex: 0,
 };
 
+/** A 4-room complex brief with inline statblocks (vision-path queue test). */
+const COMPLEX_BRIEF = {
+  name: 'Cellar Undercroft',
+  summary: 'A four-room crypt.',
+  body: '# Cellar\nFour rooms of cultists.',
+  difficulty: 'hard',
+  levelHint: '4',
+  terrain: 'crypt stone',
+  tactics: 'hold the lines',
+  treasure: 'cult hoard',
+  theme: 'ash-choked crypt',
+  styleNotes: 'inked fantasy map',
+  negative: 'text, labels, tokens',
+  environment: 'dungeon',
+  monsters: [
+    { name: 'Ash Cultist', count: 2, notes: '', treasure: '', statBlock: { ...STATBLOCK, level: '2' } },
+    { name: 'Crypt Ghoul', count: 1, notes: '', treasure: '', statBlock: { ...STATBLOCK, level: '4' } },
+    { name: 'Bone Acolyte', count: 2, notes: '', treasure: '', statBlock: { ...STATBLOCK, level: '2' } },
+    { name: 'Ash Priest', count: 1, notes: '', treasure: '', statBlock: { ...STATBLOCK, level: '4' } },
+  ],
+  rooms: [
+    { name: 'Entry', description: 'Broken doors.', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
+    { name: 'Ossuary', description: 'Stacked bones.', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
+    { name: 'Ritual Chamber', description: 'A carved circle.', size: 'large', monsterIndexes: [2], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
+    { name: 'Sanctum', description: 'A dark altar.', size: 'large', monsterIndexes: [3], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
+  ],
+  entryRoomIndex: 0,
+};
+
+const FULL_MARKS = {
+  marks: [
+    { label: 'A', x: 100, y: 200 },
+    { label: 'B', x: 400, y: 200 },
+    { label: 'C', x: 400, y: 600 },
+    { label: 'D', x: 700, y: 600 },
+  ],
+};
+
 beforeEach(async () => {
   await clearDatabase();
   useEncounterMapQueue.getState().reset();
@@ -175,6 +213,48 @@ describe('module encounter map queue', () => {
     expect(hallAfter.data.preset).toBe('standard');
     expect(hallAfter.data.layout?.gridW).toBe(24);
     expect(hallAfter.data.layout?.gridH).toBe(18);
+  }, 30000);
+
+  it('maps a complex job through the vision path when the setting says vision (no per-run steering in the queue)', async () => {
+    const campaign = await createCampaign({ name: 'Queue Vision', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    // The unattended queue makes no explicit per-run choice — the Settings
+    // default governs (docs/11 vision path).
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true, dungeonMapPath: 'vision' });
+    vi.spyOn(encounterRunAdapters, 'blobToDataUrl').mockResolvedValue('data:image/webp;base64,bWFw');
+    const dungeon = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Cellar',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon', siteShape: 'complex', budgetAdvisory: '' },
+    });
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(FULL_MARKS), modelUsed: 'test-model', fallback: null });
+    useEncounterMapQueue.getState().enqueue([
+      { campaignId: campaign.id, moduleId: dungeon.moduleId, artifactId: dungeon.id, name: dungeon.name },
+    ]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+      expect(useEncounterMapQueue.getState().failed).toEqual([]);
+    }, { timeout: 15000 });
+    const after = await getArtifact(dungeon.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter rows disappeared');
+    expect(after.data.layout?.mapPath).toBe('vision');
+    expect(after.data.layout?.rooms.map((room) => room.letter)).toEqual(['A', 'B', 'C', 'D']);
+    expect(after.data.mapImageId).not.toBeNull();
+    // No pick pause on the unattended vision run: brief→vision-map→finalize.
+    const runs = await listRunsByCampaign(campaign.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.steps.map((step) => step.name)).toEqual(['brief', 'vision-map', 'finalize']);
+    expect(runs[0]?.dungeonMapPath).toBeNull();
   }, 30000);
 
   it('exposes the no-double-work guards: pending job and already-mapped checks', async () => {

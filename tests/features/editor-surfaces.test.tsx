@@ -339,4 +339,96 @@ describe('editor surfaces', () => {
     expect(within(section).getByTestId('encounter-regenerate-everything')).toBeEnabled();
     await flushAsyncUpdates();
   }, 20000);
+
+  it('complex encounters offer a per-run map path choice for Regenerate everything (docs/11 vision path steering)', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Steering', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Old Undercroft',
+      summary: '',
+      body: '',
+      data: {
+        difficulty: 'old',
+        levelHint: '4',
+        monsters: [{ name: 'Tomb Ogre', count: 4, notes: '', treasure: '', source: { type: 'inline', statBlock: testStatBlock() } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        preset: 'standard',
+        locationKind: 'dungeon',
+        siteShape: 'complex',
+        budgetAdvisory: '',
+        layout: null,
+      },
+    });
+    render(
+      <ArtifactEditor
+        artifact={encounter}
+        campaignId={encounter.campaignId}
+        campaignArtifacts={[encounter]}
+        campaignSystem="dnd5e"
+      />,
+    );
+    const section = screen.getByTestId('encounter-ai-section');
+    // The steering control starts at Use default (never a persisted choice)…
+    const trigger = within(section).getByTestId('encounter-regen-map-path');
+    expect(trigger).toHaveTextContent('Use default');
+    expect(within(section).getByTestId('encounter-regen-map-path-hint')).toHaveTextContent(
+      'follows the dungeon map path setting',
+    );
+    // …with one honest line per path.
+    await user.click(trigger);
+    await user.click(await screen.findByRole('option', { name: 'Vision-located labels' }));
+    expect(trigger).toHaveTextContent('Vision-located labels');
+    expect(within(section).getByTestId('encounter-regen-map-path-hint')).toHaveTextContent(
+      'one painted map, room plaques located by sight',
+    );
+    await user.click(trigger);
+    await user.click(await screen.findByRole('option', { name: 'Classic (vector rooms)' }));
+    expect(trigger).toHaveTextContent('Classic (vector rooms)');
+    expect(within(section).getByTestId('encounter-regen-map-path-hint')).toHaveTextContent(
+      'packed vector rooms on the grid',
+    );
+    await flushAsyncUpdates();
+  }, 20000);
+
+  it('single encounters offer no map path choice (singles always map classic)', async () => {
+    const campaign = await createCampaign({ name: 'Single Steering', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Gate Ambush',
+      summary: '',
+      body: '',
+      data: {
+        difficulty: 'old',
+        levelHint: '3',
+        monsters: [{ name: 'Tomb Ogre', count: 4, notes: '', treasure: '', source: { type: 'inline', statBlock: testStatBlock() } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+        layout: null,
+      },
+    });
+    render(
+      <ArtifactEditor
+        artifact={encounter}
+        campaignId={encounter.campaignId}
+        campaignArtifacts={[encounter]}
+        campaignSystem="dnd5e"
+      />,
+    );
+    const section = screen.getByTestId('encounter-ai-section');
+    expect(within(section).queryByTestId('encounter-regen-map-path')).not.toBeInTheDocument();
+    expect(within(section).queryByTestId('encounter-regen-map-path-hint')).not.toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20000);
 });

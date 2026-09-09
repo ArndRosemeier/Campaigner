@@ -44,7 +44,7 @@ import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
-import { defaultSettings, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
+import { defaultSettings, DUNGEON_MAP_PATH_LABELS, type ArtifactKind, type Autonomy, type Campaign, type EncounterLayout, type Id, type Persona, type PersonaRun } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
@@ -674,6 +674,36 @@ export function PersonaPanel({
                   each cell half the size), everything else on Standard. Standard or
                   Dungeon forces the tier for every map.
                 </p>
+                <Label htmlFor="dungeon-map-path">Dungeon map path</Label>
+                <Select
+                  value={settings?.dungeonMapPath ?? 'classic'}
+                  items={{ classic: DUNGEON_MAP_PATH_LABELS.classic, vision: DUNGEON_MAP_PATH_LABELS.vision }}
+                  onValueChange={(value) => {
+                    if (value === 'classic' || value === 'vision') {
+                      // The production path for complex/multi-room maps
+                      // (docs/11 vision path): Classic packs vector rooms on
+                      // the grid; Vision paints one labeled map and locates
+                      // each room's plaque by sight. Singles always map
+                      // classic and repopulation never touches the map.
+                      void updateSettings({ dungeonMapPath: value }).catch((error: unknown) => {
+                        toastError('Could not save dungeon map path', error);
+                      });
+                    }
+                  }}
+                >
+                  <SelectTrigger aria-label="Dungeon map path">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="classic">{DUNGEON_MAP_PATH_LABELS.classic}</SelectItem>
+                    <SelectItem value="vision">{DUNGEON_MAP_PATH_LABELS.vision}</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  Classic packs vector rooms on the grid. Vision paints one labeled
+                  map and locates each room's plaque by sight — complex dungeons
+                  only; single arenas always map classic.
+                </p>
                 {/* fix-02 (decision 6): one lightweight, non-blocking notice
                 when this campaign's system has no ready bestiary pack. */}
                 <NoPackNotice system={campaign.system} />
@@ -1200,6 +1230,7 @@ function EncounterRunActions({
     ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
     ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
     ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
+    ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
     ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
     ...(run.runExtras === null ? {} : { extras: run.runExtras }),
   };
@@ -1379,6 +1410,7 @@ function RunActions({
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
     ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
+    ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),
         };
@@ -1391,6 +1423,7 @@ function RunActions({
     run.targetArtifactId,
     run.encounterMapAspect,
     run.encounterPreset,
+    run.dungeonMapPath,
     run.placementModuleId,
     run.runExtras,
   ]);
@@ -1693,6 +1726,7 @@ function FailedRunActions({
           ...(run.targetArtifactId === null ? {} : { targetArtifactId: run.targetArtifactId }),
           ...(run.encounterMapAspect === null ? {} : { encounterMapAspect: run.encounterMapAspect }),
     ...(run.encounterPreset === null ? {} : { encounterPreset: run.encounterPreset }),
+    ...(run.dungeonMapPath === null ? {} : { dungeonMapPath: run.dungeonMapPath }),
           ...(run.placementModuleId === null ? {} : { placementModuleId: run.placementModuleId }),
           ...(run.runExtras === null ? {} : { extras: run.runExtras }),
         };

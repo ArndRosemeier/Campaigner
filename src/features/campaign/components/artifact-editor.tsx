@@ -15,10 +15,12 @@ import { useContentRefillRequest } from '@/features/campaign/contentRefillReques
 import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
 import {
   ARTIFACT_KIND_SINGULAR,
+  DUNGEON_MAP_PATH_LABELS,
   encounterDataIsComplex,
   type AnyArtifact,
   type ArtifactLink,
   type ArtifactRevision,
+  type DungeonMapPath,
   type EncounterArtifactData,
   type EventArtifactData,
   type FactionArtifactData,
@@ -32,6 +34,13 @@ import {
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { HelpButton } from '@/help/HelpButton';
 import { useModules } from '@/features/modules/hooks';
 import { buttonVariants } from '@/components/ui/button';
@@ -541,6 +550,11 @@ function EncounterRegenControls({
 }): JSX.Element {
   const [redesignProse, setRedesignProse] = useState(false);
   const [running, setRunning] = useState<'repopulate' | 'everything' | null>(null);
+  // The per-run dungeon-map path for THIS Regenerate everything only
+  // (docs/11 vision path): never persisted, never a new Settings default —
+  // the next run starts back at 'default' (the control resets with the
+  // section's state per mount).
+  const [mapPathChoice, setMapPathChoice] = useState<'default' | DungeonMapPath>('default');
   const complex = encounterDataIsComplex(data);
   // Repopulating a roomless complex has nothing to stock — Regenerate
   // everything builds rooms and a map first.
@@ -554,7 +568,13 @@ function EncounterRegenControls({
         await repopulateEncounter(artifactId, { redesignProse });
         toastSuccess('Encounter repopulated — a new roster stocks every room, map kept');
       } else {
-        await regenerateEncounterEverything(artifactId, { redesignProse });
+        await regenerateEncounterEverything(artifactId, {
+          redesignProse,
+          // Singles ignore the choice (the control is complex-only, so the
+          // state is always 'default' there — and the engine stamps single
+          // briefs classic regardless).
+          ...(mapPathChoice === 'default' ? {} : { dungeonMapPath: mapPathChoice }),
+        });
         toastSuccess('Encounter regenerated — new roster, new layout, new map');
       }
     } catch (error) {
@@ -618,7 +638,43 @@ function EncounterRegenControls({
           />
           Also redesign name and prose
         </label>
+        {complex && (
+          <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
+            Map path
+            <Select
+              value={mapPathChoice}
+              items={{
+                default: 'Use default',
+                classic: DUNGEON_MAP_PATH_LABELS.classic,
+                vision: DUNGEON_MAP_PATH_LABELS.vision,
+              }}
+              onValueChange={(value) => {
+                if (value === 'default' || value === 'classic' || value === 'vision') {
+                  setMapPathChoice(value);
+                }
+              }}
+            >
+              <SelectTrigger aria-label="Regenerate map path" data-testid="encounter-regen-map-path">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="default">Use default</SelectItem>
+                <SelectItem value="classic">{DUNGEON_MAP_PATH_LABELS.classic}</SelectItem>
+                <SelectItem value="vision">{DUNGEON_MAP_PATH_LABELS.vision}</SelectItem>
+              </SelectContent>
+            </Select>
+          </label>
+        )}
       </div>
+      {complex && (
+        <p className="text-[11px] text-muted-foreground" data-testid="encounter-regen-map-path-hint">
+          {mapPathChoice === 'vision'
+            ? 'Vision: one painted map, room plaques located by sight.'
+            : mapPathChoice === 'classic'
+              ? 'Classic: packed vector rooms on the grid.'
+              : 'Use default: follows the dungeon map path setting.'}
+        </p>
+      )}
       <p className="text-[11px] text-muted-foreground">
         {complex
           ? 'Unticked, name and prose stay exactly as authored. Manual Clear (map deletion) and the budget advisory below are untouched by either button.'

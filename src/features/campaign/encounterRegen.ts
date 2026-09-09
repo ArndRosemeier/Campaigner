@@ -2,7 +2,7 @@ import { getAnyArtifact, updateArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
-import { encounterDataIsComplex, type Campaign, type Id, type Persona } from '@/domain';
+import { encounterDataIsComplex, type Campaign, type DungeonMapPath, type Id, type Persona } from '@/domain';
 import { runEngine, waitForRunStatus } from '@/llm/runEngine';
 
 /**
@@ -37,6 +37,15 @@ import { runEngine, waitForRunStatus } from '@/llm/runEngine';
 export interface EncounterRegenOptions {
   /** The "Also redesign name and prose" checkbox (default OFF). */
   redesignProse: boolean;
+  /**
+   * The D18 per-run dungeon-map path for Regenerate everything (docs/11
+   * vision path): `'vision'`/`'classic'` force the path for a COMPLEX
+   * regen; undefined/null = no override (the Settings `dungeonMapPath`
+   * default governs). Ignored for singles (one arena needs no registration
+   * — always classic) and repopulation (roster-only, path-independent).
+   * Never persisted as a new Settings default.
+   */
+  dungeonMapPath?: DungeonMapPath | null;
 }
 
 interface RegenContext {
@@ -184,6 +193,11 @@ export async function regenerateEncounterEverything(
     targetArtifactId: artifactId,
     encounterPreset: reread.data.preset,
     encounterMapAspect: settings.encounterMapAspect,
+    // The D18 per-run path choice (explicit beats the Settings default;
+    // omitted/null = no override). Singles never reach this leg.
+    ...(options.dungeonMapPath === undefined || options.dungeonMapPath === null
+      ? {}
+      : { dungeonMapPath: options.dungeonMapPath }),
   });
   await awaitCompletedRun(runId, 'Regenerate everything');
   if (options.redesignProse) {
