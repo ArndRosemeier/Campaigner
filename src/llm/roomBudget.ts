@@ -1,8 +1,8 @@
 import type { GameSystem } from '@/domain/gameSystem';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
-import type { Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
+import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { parseLevelSort } from '@/llm/encounterRoster';
-import { extractWikiLinks } from '@/lib/wikilinks';
+import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 
 /**
  * The per-room budget loop (docs/11 D12, owner-specified; amended by the
@@ -451,8 +451,97 @@ export function fillGradeStockingFor(
   );
 }
 
-// --- Roster level resolution -------------------------------------------------
+// --- Fixed cast ------------------------------------------------------------
 
+/**
+ * A named, already-drafted participant the prose pins into an encounter
+ * (docs/11 fixed cast): an npc-kind artifact (NPCs and monsters are both
+ * `npc` rows — mob artifacts carry the `monsterChunkId` marker, the Smith
+ * details both) whose `[[Name]]` mention falls in the encounter's scene
+ * context.
+ */
+export interface FixedCastMember {
+  /** Exact artifact name — the roster entry must carry it verbatim. */
+  name: string;
+  /** Printed level from the NPC's stat block; undefined when statless. */
+  level: string | undefined;
+  /** Brief-ready one-liner: name + key stats + level. */
+  summary: string;
+  /** Full stat block for the as-is inline path; null when statless. */
+  statBlock: StatBlock | null;
+}
+
+function fixedCastSummary(name: string, statBlock: StatBlock | null): string {
+  if (statBlock === null) return `${name} (no stat block on file)`;
+  return (
+    `${name} — level ${statBlock.level}, ` +
+    `AC ${String(statBlock.ac)}, HP ${String(statBlock.hp)}`
+  );
+}
+
+/**
+ * The fixed cast for an encounter mention (docs/11, pure): every `[[Name]]`
+ * in the encounter's scene context that resolves to a drafted npc-kind
+ * artifact. The encounter's own name never counts (its row — when drafted
+ * yet — is kind `encounter`, and the name check belts it regardless).
+ * Order = first mention in the scene text. Never throws for data
+ * conditions: undrafted names and other kinds yield no member, ambiguity
+ * follows the reader's winner — and the caller keeps today's behavior when
+ * the cast is empty.
+ */
+export function fixedCastForEncounter(
+  encounterName: string,
+  sceneContext: string,
+  artifacts: readonly AnyArtifact[],
+  moduleId: Id | null,
+): FixedCastMember[] {
+  const self = encounterName.trim().toLowerCase();
+  const seen = new Set<string>();
+  const cast: FixedCastMember[] = [];
+  for (const link of extractWikiLinks(sceneContext)) {
+    const key = link.name.trim().toLowerCase();
+    if (key === '' || key === self || seen.has(key)) continue;
+    seen.add(key);
+    const artifact = resolveWikiLink(
+      link.name,
+      artifacts,
+      moduleId === null ? undefined : { moduleId },
+    ).artifact;
+    if (artifact?.kind !== 'npc') continue;
+    const statBlock = artifact.data.statBlock;
+    cast.push({
+      name: artifact.name,
+      level: statBlock?.level,
+      summary: fixedCastSummary(artifact.name, statBlock),
+      statBlock,
+    });
+  }
+  return cast;
+}
+
+/**
+ * The FIXED CAST brief section (docs/11): the must-appear instruction for
+ * the encounter draft — the cast MUST appear by exact name with their stats
+ * used as-is via the inline-statblock path (never substituted with generic
+ * equivalents), while the pipeline fills the REST of the roster as today.
+ * Null when the cast is empty, so briefs without one stay byte-identical.
+ */
+export function fixedCastSectionFor(cast: readonly FixedCastMember[]): string | null {
+  if (cast.length === 0) return null;
+  const lines = cast.map((member) =>
+    member.statBlock === null
+      ? `- "${member.name}" (${member.summary}): no stat block is on file — design their stats at the party level above.`
+      : `- "${member.name}" (${member.summary}): use these stats as-is — embed them as this monster's ` +
+        `complete inline "statBlock" (never substitute a generic equivalent):\n${JSON.stringify(member.statBlock)}`,
+  );
+  return [
+    'Fixed cast — these named participants MUST appear in this encounter roster (one roster entry each, exact names):',
+    ...lines,
+    'Design the REST of the roster as usual — only the fixed cast above is pinned.',
+  ].join('\n');
+}
+
+// --- Roster level resolution -------------------------------------------------
 export interface BriefLevelLookups {
   /** Chunk stat blocks by id (the retrieval pool + roster citations). */
   chunkById: ReadonlyMap<Id, RuleChunk>;

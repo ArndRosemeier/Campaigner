@@ -1,6 +1,7 @@
 import type { Campaign, Id, Module } from '@/domain';
 import { moduleDocumentText, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
+import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
@@ -8,9 +9,10 @@ import { errorMessage } from '@/lib/errors';
 import {
   buildEntityBrief,
   STUB_PERSONA_SLUGS,
+  stubKindCarriesPartyLevel,
   type StubKind,
 } from '@/features/modules/persona-request';
-import { partLevelForMention } from '@/llm/roomBudget';
+import { fixedCastForEncounter, partLevelForMention } from '@/llm/roomBudget';
 import { surroundingParagraphs } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
 import { toastError } from '@/lib/toast';
@@ -169,6 +171,14 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     }
     const settings = await getSettings();
     const limit = Math.max(1, settings.maxParallelRequests);
+    // The fixed-cast pool (docs/11): encounter briefs build AFTER the
+    // NPC/monster results land — the batch orchestration runs encounters
+    // last (post-generation's kind order), and this snapshot re-reads the
+    // campaign rows fresh here, so every NPC/monster an earlier batch
+    // drafted is visible at brief time. Single-kind panel batches read the
+    // same table: already-drafted scene members pin, undrafted names cast
+    // as usual.
+    const castPool = kind === 'encounter' ? await listArtifactsByCampaign(campaign.id) : [];
 
     await mapWithConcurrency(targets, limit, async (target) => {
       inFlight.set(target.name, null);
@@ -176,15 +186,21 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       try {
         // The brief stands alone per entity: module text around the wiki-link
         // plus the spine premise — no dependency on sibling entities.
-        // Encounter drafts additionally carry the structured level context
-        // (docs/11): the referencing part's exact level at this same mention
-        // position; other stub kinds have no level semantics and stay
-        // byte-identical.
+        // Encounter and NPC drafts additionally carry the structured level
+        // context (docs/11): the referencing part's exact level at this same
+        // mention position; other stub kinds have no level semantics and stay
+        // byte-identical. Encounter drafts additionally carry the fixed cast
+        // (docs/11): drafted NPCs/monsters sharing this scene's context, with
+        // the must-appear instruction — the rest of the roster casts as usual.
+        const contextParagraphs = surroundingParagraphs(moduleText, target.name);
         const brief = buildEntityBrief(
           target.name,
-          surroundingParagraphs(moduleText, target.name),
+          contextParagraphs,
           module.spine?.premise ?? '',
-          kind === 'encounter' ? partLevelForMention(module, target.name) : undefined,
+          stubKindCarriesPartyLevel(kind) ? partLevelForMention(module, target.name) : undefined,
+          kind === 'encounter'
+            ? fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
+            : [],
         );
         const runInput: StartRunInput = {
           campaign,

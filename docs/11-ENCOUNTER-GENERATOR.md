@@ -1199,8 +1199,9 @@ apply.
   count.
 - **Both prompts** carry the one structured line `Party of 4 adventurers at
   level N.` (`partyLevelLine`): the Smith draft via `buildEntityBrief`
-  (`src/features/modules/persona-request.ts` — encounter stubs only,
-  resolved in `entity-batch.ts` at the same position
+  (`src/features/modules/persona-request.ts` — encounter AND npc stubs
+  (`stubKindCarriesPartyLevel`: the npc kind covers NPCs and monsters alike,
+  both `npc` rows), resolved in `entity-batch.ts` at the same position
   `surroundingParagraphs` excerpts) and the Cartographer brief via
   `runEncounterBrief` (module lookup through the target's `moduleId`, same
   helper).
@@ -1212,6 +1213,44 @@ apply.
   today's behavior byte-identical (structured line absent, fallback chain as
   now). No new failure modes, no new loud paths, no Dexie/schema changes
   (the association is derived at brief time, never stored).
+
+### Fixed cast — the encounter pins its drafted scene members (owner-directed)
+
+Owner case: part prose established an undead NPC (the Smith gave it stats —
+the prose itself carried none), but the encounter that was supposed to
+feature it shipped only generic undeads; on top, the NPC's stats were never
+encounter-weighted (a level-6 NPC in a level-1 module). Owner decisions
+(pinned, not relitigated): NPCs detail BEFORE encounters (batch order is
+pinned, never "usually"); the prose writer may define constant participants
+per encounter with the rest generated (the end boss fight against Halvar
+the giant never fields a generic giant); the prose names ONLY those
+constants, the rest stays automated.
+
+- **NPC drafts carry the structured level** (ledger 56 extended):
+  `stubKindCarriesPartyLevel` (`src/features/modules/persona-request.ts`)
+  passes `partLevelForMention` for npc stubs exactly like encounter stubs —
+  this kills level-6-in-level-1 at the source. Deliberate mismatches stay
+  legal: the brief states levels honestly, the finalize advisories flag them.
+- **Encounters detail last**: `orderedKinds`
+  (`src/features/modules/post-generation.ts`) runs the post-generation
+  batches in `ENTITY_KINDS` order — npc first, encounter last — so an
+  encounter batch's brief-time snapshot (`listArtifactsByCampaign`, re-read
+  fresh in `runEntityBatch`) already holds every NPC/monster an earlier
+  batch drafted. Pinned by test against reordering; no other orchestration
+  changes.
+- **The brief carries the fixed cast**: per encounter target,
+  `fixedCastForEncounter` (`src/llm/roomBudget.ts`, pure) collects the
+  drafted npc-kind artifacts whose `[[Name]]` mentions share the encounter's
+  scene context (the same `surroundingParagraphs` position the brief
+  excerpts; first mention wins the order; the encounter's own name never
+  counts), and `buildEntityBrief` renders them as FIXED CAST with the
+  must-appear instruction — exact names, stats used as-is via the
+  inline-statblock path (never substituted with generic equivalents, and
+  finalize's one-entity-per-name reuse links the existing row instead of
+  duplicating it); the pipeline designs the REST of the roster as today. An
+  empty cast renders nothing — briefs without one stay byte-identical.
+- **No Dexie/schema changes**: the cast is brief-time derivation from
+  in-batch results + module text, never stored.
 
 ### Deletion record — the marker path dies entirely (owner: all pixel
 read-back is unnecessary)

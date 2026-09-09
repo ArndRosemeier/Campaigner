@@ -7,8 +7,8 @@ import { listArtifactsByCampaign, createArtifact } from '@/db/artifactRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { saveSettings } from '@/db/settingsRepo';
-import { createModule, defaultSettings, modulePartSchema, moduleSpineSchema, type Module } from '@/domain';
-import { runModulePostGeneration } from '@/features/modules/post-generation';
+import { createModule, defaultSettings, ENTITY_KINDS, modulePartSchema, moduleSpineSchema, type Module } from '@/domain';
+import { orderedKinds, runModulePostGeneration } from '@/features/modules/post-generation';
 import { chainRunner } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
@@ -491,4 +491,24 @@ describe('runModulePostGeneration', () => {
     expect(enqueueImageJobs).not.toHaveBeenCalled();
     await flushAsyncUpdates();
   }, 30_000);
+});
+
+describe('orderedKinds (the fixed-cast order pin)', () => {
+  it('runs NPC batches before encounter batches — encounters detail last', () => {
+    // The encounter brief pins already-drafted scene members as fixed cast,
+    // so the NPC/monster results must land first (docs/11). ENTITY_KINDS
+    // order is the mechanism; this pins it against reordering.
+    expect(ENTITY_KINDS[0]).toBe('npc');
+    expect(ENTITY_KINDS[ENTITY_KINDS.length - 1]).toBe('encounter');
+    const ordered = orderedKinds(['encounter', 'note', 'npc', 'location', 'faction', 'event']);
+    expect(ordered[0]).toBe('npc');
+    expect(ordered[ordered.length - 1]).toBe('encounter');
+    expect(ordered).toEqual(['npc', 'location', 'event', 'faction', 'note', 'encounter']);
+  });
+
+  it('keeps the relative order for subsets', () => {
+    expect(orderedKinds(['encounter', 'npc'])).toEqual(['npc', 'encounter']);
+    expect(orderedKinds(['encounter'])).toEqual(['encounter']);
+    expect(orderedKinds([])).toEqual([]);
+  });
 });

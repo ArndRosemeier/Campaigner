@@ -44,8 +44,12 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * never stop the remaining automation.
  */
 
-/** Configured kinds in the domain's stable order (encounters last). */
-function orderedKinds(configured: readonly EntityKind[]): EntityKind[] {
+/** Configured kinds in the domain's stable order (encounters last).
+ *
+ * The order is the fixed-cast pin (docs/11): NPCs/monsters detail BEFORE
+ * encounters, so an encounter batch's brief-time snapshot already holds the
+ * scene members its brief must pin as fixed cast. */
+export function orderedKinds(configured: readonly EntityKind[]): EntityKind[] {
   return ENTITY_KINDS.filter((kind) => configured.includes(kind));
 }
 
