@@ -5,6 +5,7 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { EditorView, keymap } from '@codemirror/view';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import type { AnyArtifact, Id } from '@/domain';
+import { canvasTheme } from '@/features/modules/canvas/canvasTheme';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import { wikiLinkDecorations } from '@/features/modules/canvas/wikiDecorations';
 import {
@@ -70,12 +71,17 @@ export function CanvasEditor({
       <CodeMirror
         value={initialMarkdown}
         height="100%"
+        // 'none' disables the wrapper's default light chrome — the canvas
+        // theme extension below owns ALL colors from the app's CSS vars
+        // (owner report: the unthemed mount rendered a white slab).
+        theme="none"
         style={{ height: '100%', fontSize: '0.9375rem' }}
         basicSetup={false}
         onCreateEditor={(view) => {
           activeCanvasView.current = view;
         }}
         extensions={[
+          canvasTheme,
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
           markdown({ base: markdownLanguage }),

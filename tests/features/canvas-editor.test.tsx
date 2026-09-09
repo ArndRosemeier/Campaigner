@@ -21,6 +21,7 @@ import {
   suggestionSurvives,
 } from '@/features/modules/canvas/suggestions';
 import { wikiLinkDecorations } from '@/features/modules/canvas/wikiDecorations';
+import { canvasThemeSpec } from '@/features/modules/canvas/canvasTheme';
 
 /**
  * Canvas editor SUBSTRATE pins (08-MODULE-DESIGNER §Module canvas, commit 1):
@@ -114,6 +115,29 @@ function propose(view: EditorView, input: ProposeInput): string {
   });
   return id;
 }
+
+describe('canvas theme', () => {
+  it('colors EVERYTHING from app CSS variables — no hardcoded light chrome (owner: white-on-white)', () => {
+    // jsdom computes no styles, so the pin is on the spec: the editor
+    // chrome (background, text, caret, selection, active line) must all
+    // derive from --card/--foreground/--muted/--primary so the editor
+    // follows the app theme in light AND dark.
+    const flattened = JSON.stringify(canvasThemeSpec);
+    expect(canvasThemeSpec['&']).toMatchObject({
+      backgroundColor: 'var(--card)',
+      color: 'var(--card-foreground)',
+    });
+    expect(flattened).toContain('var(--foreground)');
+    expect(flattened).toContain('var(--muted)');
+    expect(flattened).toContain('var(--primary)');
+    // No raw hex/oklch color literals in the chrome — those are what made
+    // the unthemed mount a white slab.
+    expect(flattened).not.toMatch(/#[0-9a-fA-F]{3,8}\b/u);
+    expect(flattened).not.toMatch(/oklch\(/u);
+    // The markdown highlight style rides the same constraint (checked via
+    // the extension's spec, exported for pinning through the theme array).
+  });
+});
 
 describe('wiki-link decorations', () => {
   it('marks resolved links with the kind palette and data attributes (module tier-0)', () => {
