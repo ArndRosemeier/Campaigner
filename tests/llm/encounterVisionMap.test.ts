@@ -252,6 +252,40 @@ describe('vision dungeon label helpers (docs/11 vision path)', () => {
     expect(prompt).toContain("follow its description");
   });
 
+  it('renders the designated entry chamber as the visual entrance, naming its letter', () => {
+    const prompt = buildLabeledMapPrompt(
+      [
+        { label: 'A', name: 'Entry', description: 'Broken doors' },
+        { label: 'B', name: 'Ossuary', description: 'Stacked bones', isEntry: true },
+      ],
+      'ash-choked crypt dungeon',
+      'A ↔ B',
+    );
+    expect(prompt).toContain('Room B is the dungeon entrance');
+    expect(prompt).toContain('plaque included');
+    // Non-entry rooms get no entrance clause.
+    expect(prompt).not.toContain('Room A is the dungeon entrance');
+    // The natural-shape rule is unchanged by the entrance clause.
+    expect(prompt).not.toMatch(/regular|irregular/i);
+  });
+
+  it('renders no entrance clause without a designation and refuses two entrances loud', () => {
+    const plain = buildLabeledMapPrompt(
+      [{ label: 'A', name: 'Entry', description: 'Broken doors' }],
+      'ash-choked crypt dungeon',
+    );
+    expect(plain).not.toContain('dungeon entrance');
+    expect(() =>
+      buildLabeledMapPrompt(
+        [
+          { label: 'A', name: 'Entry', description: 'Broken doors', isEntry: true },
+          { label: 'B', name: 'Ossuary', description: 'Stacked bones', isEntry: true },
+        ],
+        'ash-choked crypt dungeon',
+      ),
+    ).toThrow('exactly one room is the way in');
+  });
+
   it('locates every plaque in one pass when all letters are seen', async () => {
     const seen: string[] = [];
     const marks = await locateDungeonLabels(
@@ -378,6 +412,10 @@ describe('vision-map pipeline (docs/11 vision path)', () => {
     expect(prompt).toContain('Room A: Entry — Broken doors.');
     expect(prompt).toContain('Room D: Sanctum — A dark altar.');
     expect(prompt).toContain('A ↔ B');
+    // The sidecar carried the brief's entryRoomIndex (0 → A): the prompt
+    // draws room A as the visual entrance, and no other room gets the clause.
+    expect(prompt).toContain('Room A is the dungeon entrance');
+    expect(prompt).not.toContain('Room B is the dungeon entrance');
 
     const run = await getRun(runId);
     const artifact = await getArtifact(run?.resultArtifactId ?? newId());
@@ -389,6 +427,10 @@ describe('vision-map pipeline (docs/11 vision path)', () => {
     expect(layout.rooms.map((room) => [room.observedX, room.observedY])).toEqual([
       [0.1, 0.2], [0.4, 0.2], [0.4, 0.6], [0.7, 0.6],
     ]);
+    // The entry room id/letter matches the entryRoomIndex resolution: room A
+    // carries the spawn flag and the stored path leads with it.
+    expect(layout.rooms.map((room) => room.spawn)).toEqual([true, false, false, false]);
+    expect(layout.path?.[0]).toBe(layout.rooms[0]?.id);
     // Geometry posture: NO packed geometry on vision rooms.
     for (const room of layout.rooms) {
       expect(room.rects).toBeUndefined();
@@ -454,6 +496,66 @@ describe('vision-map pipeline (docs/11 vision path)', () => {
     expect(failed?.resultArtifactId).toBeNull();
     // Nothing persisted: the unattached candidate was pruned before the
     // throw — no invented coordinate, no orphaned image.
+    expect(await listImagesByCampaign(campaign.id)).toEqual([]);
+    expect(vi.mocked(encounterRunAdapters.generateImages)).toHaveBeenCalledTimes(1);
+  });
+
+  it('designates a non-zero entry room: the entrance names its letter, spawn + path + ingress follow', async () => {
+    const { campaign, cartographer } = await setup('classic');
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify({ ...COMPLEX_BRIEF, entryRoomIndex: 2 }), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: locateReply(FULL_MARKS), modelUsed: 'test-model', fallback: null });
+    const runInput = { ...input(campaign, cartographer), dungeonMapPath: 'vision' as const };
+    const runId = await runEngine.startRun(runInput);
+    await waitForBriefPause(runId);
+    await runEngine.approve(runId, runInput);
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    // The sidecar carried entryRoomIndex 2 through: room C is drawn as the
+    // entrance, and no other room gets the clause.
+    const prompt = vi.mocked(encounterRunAdapters.generateImages).mock.calls[0]?.[0] ?? '';
+    expect(prompt).toContain('Room C is the dungeon entrance');
+    expect(prompt).not.toContain('Room A is the dungeon entrance');
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? newId());
+    if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+    const layout = artifact.data.layout;
+    if (layout === null) throw new Error('vision run persisted no layout');
+    expect(layout.rooms[2]?.letter).toBe('C');
+    expect(layout.rooms.map((room) => room.spawn)).toEqual([false, false, true, false]);
+    expect(layout.path?.[0]).toBe(layout.rooms[2]?.id);
+    // Party ingress resolves to the entry point: the table stages at C's plaque.
+    const moduleRow = await createModuleRepo(
+      createModule({ campaignId: campaign.id, title: 'Seed Module', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const { battle } = await seedBattleFromEncounter(campaign.id, moduleRow.id, artifact.id);
+    expect(battle.board.stagingGround?.x).toBeCloseTo(0.4, 9);
+    expect(battle.board.stagingGround?.y).toBeCloseTo(0.6, 9);
+  });
+
+  it('fails the map step loud with nothing persisted when the ENTRY plaque stays missing', async () => {
+    const { campaign, cartographer } = await setup('classic');
+    // The entry plaque (A) is never seen — the existing miss policy covers
+    // its absence exactly like any other letter, naming it loud.
+    const withoutEntry = FULL_MARKS.slice(1);
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: locateReply(withoutEntry), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: locateReply(withoutEntry), modelUsed: 'test-model', fallback: null });
+    const runInput = {
+      ...input(campaign, cartographer),
+      autonomy: 'auto' as const,
+      dungeonMapPath: 'vision' as const,
+    };
+    const runId = await runEngine.startRun(runInput);
+    await waitForRun(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('failed');
+      expect(run?.errorMessage).toContain('A');
+    });
+    const failed = await getRun(runId);
+    expect(failed?.resultArtifactId).toBeNull();
     expect(await listImagesByCampaign(campaign.id)).toEqual([]);
     expect(vi.mocked(encounterRunAdapters.generateImages)).toHaveBeenCalledTimes(1);
   });

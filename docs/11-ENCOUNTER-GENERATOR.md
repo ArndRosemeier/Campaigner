@@ -56,7 +56,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D14 | **The user is the judge; regenerate is the correction; NO VLM verification** (owner-directed removal, 2026-09-08): "Nope. Stop the verification altogether. Let the user be the judge with a regenerate option. No need to waste model calls here. Things do not need to be verified in a brittle way. Just have a way to easily regenerate." The verify step (the 5a8f8f2/42db-era machinery: the coarse-grid cell contract, the `arena-verdict` structural check, thresholds, drift overlays, the dedicated verify model) is DELETED — model calls are not spent on brittle self-grading. The manual run pauses at pick; **"Regenerate candidates"** re-runs the stylize step only (same brief, same layout — room keys and geometry untouched) and pauses at pick again. Regenerating the LAYOUT (fresh keys/geometry) stays the separate existing affordance. Old run rows carrying verify steps heal at the run-row parse boundary. Amended 2026-09-09 (D19): the vision path reintroduces a VLM call as LOCATION, not verification — reading back plaque positions the pipeline itself painted, gated by the count check + focused re-ask, still-missing failing loud. No grading, no verdict, no thresholds; Regenerate everything stays the human's correction. |
 | D10 | **The Dungeon preset is a generation-time grid tier + brief bias, not a board feature** (owner-ratified, 2026-09-07): choosing Dungeon makes the layout engine pack on a FIXED ×2 tier per aspect (4:3 48×36, 16:9 56×32, 1:1 40×40 — "same cells per room, more cells per map"; room size classes unchanged), biases the brief toward a connected 4–8 room complex, and persists the choice as `preset` on the encounter artifact, the run row and in Settings so regenerations and resumes reproduce the tier. No `battle.gridScale` field ever: cells keep their in-world meaning and every D6 layout-anchored metric derives from `cols/rows`, so half-size cells render everywhere automatically. Exit marker out of v1 (the name stays reserved). **D10 amendment (locationKind, owner-ratified)**: encounters classify themselves — the encounter persona's EXISTING draft call gains a bounded `locationKind` (`'dungeon' | 'building' | 'wilderness' | 'other'`, persisted additively on the encounter artifact, owner-correctable in the editor, no extra LLM call), and the preset resolves per encounter: **explicit per-run choice > the encounter's own `locationKind` (`'dungeon'` → Dungeon tier, `'building'`/`'wilderness'` → Standard) > the Settings fallback** for unclassified (`'other'`) rows. The persona-panel Preset select gains **Auto** as its default (self-classification is the norm; Standard/Dungeon remain explicit overrides). See "D10 amendment — per-encounter locationKind" below. |
 | D18 | **Two-button regeneration (owner-directed, 2026-09-09)**: the encounter editor offers EXACTLY two automatic actions for BOTH shapes, plus the prose checkbox — the old one-fight content "Regenerate with AI" and the standalone battlemap "Generate layout & map / Regenerate" are DELETED (subsumed, never renamed). **Regenerate everything** = a new dungeon top to bottom (complex: a fresh full Cartographer run — new roster + new layout + new map, same as if module-generated fresh; a roomless complex resets the row first so the fill-grade machinery runs against the row's own preset; single: a fresh Smith one-fight draft + a fresh map, one action). **Repopulate** = the map looks fine, the spawn looks wrong — a NEW roster for ALL rooms (complex: ROSTER-ONLY Cartographer pass — brief with the 'empty'/'over' repair loop + room-mirror + fresh cap, finalize persisting ONLY `monsters` (+ lowered `targetLevel`s) onto the PRESERVED rooms/map; single: today's Smith one-fight fill). A dungeon's repopulation is NOT a Smith extension — its clauses key on the target's actual shape. The **prose checkbox** ("Also redesign name and prose", default OFF) chains AFTER the automatic pass: a Smith PROSE-ONLY run (persists name/prose/body; any roster drift fails the run loud with nothing persisted). Unticked, a dungeon's name and prose stay byte-identical (singles always get fresh Smith prose; the box additionally replaces the name there). Both buttons honor the draw-once fill grade, the row preset, the remembered-preset trap fix, the cap math and the repair-turn semantics; manual Clear (map deletion) and the invisible unattended map queue stay as-is. Amended 2026-09-09 (D19): the D18 section gains a complex-only per-run **Map path** control (Use default / Classic / Vision) for Regenerate everything — the choice rides `EncounterRegenOptions.dungeonMapPath` through the run row (explicit-only, never persisted as the Settings default); singles ignore it, repopulation takes none. See "D18 — two-button regeneration" below. |
-| D19 | **A second, vision-located dungeon path for complex maps (owner-directed, 2026-09-09; the lab's labeled-map recipe production-hardened — "31 of 32 letters found, success for this config")**: the Settings `dungeonMapPath: 'classic' \| 'vision'` (DEFAULT `'classic'` — vision is opt-in; select beside the encounter preset, labels "Classic (vector rooms)" / "Vision-located labels") governs complex/multi-room production (initial runs + the unattended queue + Regenerate everything); the D18 per-run choice beats it both ways for ONE run. SINGLES always map classic (one arena needs no registration — the override is ignored, never an error); REPOPULATION is path-independent (roster-only, never touches the map); the unattended queue passes no override (the setting governs). The vision pipeline is `brief → vision-map → finalize`: (a) SIDECAR FIRST — rooms (letter A..N in room order for 4–10 rooms, name, description, encounter assignment, declared graph edges) authored from the brief BEFORE any image exists; (b) ONE labeled map through the existing image pipeline + storage (same `mapImageId` home; no aspect normalization — the image IS the map); (c) ONE structured vision pass with the configured chat model (0–1000 grid, zod boundary — a vision-incapable model fails the map step loud); (d) VERIFY by count check + a focused re-ask per miss ("only label D", found points as context) — still missing ⇒ the MAP STEP FAILS LOUD (candidate pruned, nothing persisted) naming the letters, NEVER an invented coordinate. Geometry posture: vision rooms carry NO `rects`/`mobsRect`/`entrance`/corridor-`rects` (schema-enforced); corridors carry declared `a`/`b` edges; spawns, group veils and key markers resolve to the observed point (+ deterministic scatter/placement around a point); anything needing polygons fails loud, never silently centers; connectivity IS the sidecar's declared room graph. Shape follows each room's description + the dungeon concept — NO regular/irregular distinction or toggle anywhere in the vision path. KNOWN DEBT (accepted): layout drift (the painted map drifting from the declared graph) has no verifier this arc — Regenerate everything is the correction. See "Vision-located dungeon path" below. |
+| D19 | **A second, vision-located dungeon path for complex maps (owner-directed, 2026-09-09; the lab's labeled-map recipe production-hardened — "31 of 32 letters found, success for this config")**: the Settings `dungeonMapPath: 'classic' \| 'vision'` (DEFAULT `'classic'` — vision is opt-in; select beside the encounter preset, labels "Classic (vector rooms)" / "Vision-located labels") governs complex/multi-room production (initial runs + the unattended queue + Regenerate everything); the D18 per-run choice beats it both ways for ONE run. SINGLES always map classic (one arena needs no registration — the override is ignored, never an error); REPOPULATION is path-independent (roster-only, never touches the map); the unattended queue passes no override (the setting governs). The vision pipeline is `brief → vision-map → finalize`: (a) SIDECAR FIRST — rooms (letter A..N in room order for 4–10 rooms, name, description, encounter assignment, declared graph edges) + the brief's `entryRoomIndex` room flagged as the entrance (entry keeps its letter; the prompt draws it AS the visual ingress — stairs/cave mouth/gate/portal per concept, plaque included — and its observed point doubles as party ingress) authored from the brief BEFORE any image exists; (b) ONE labeled map through the existing image pipeline + storage (same `mapImageId` home; no aspect normalization — the image IS the map); (c) ONE structured vision pass with the configured chat model (0–1000 grid, zod boundary — a vision-incapable model fails the map step loud); (d) VERIFY by count check + a focused re-ask per miss ("only label D", found points as context) — still missing ⇒ the MAP STEP FAILS LOUD (candidate pruned, nothing persisted) naming the letters, NEVER an invented coordinate. Geometry posture: vision rooms carry NO `rects`/`mobsRect`/`entrance`/corridor-`rects` (schema-enforced); corridors carry declared `a`/`b` edges; spawns, group veils and key markers resolve to the observed point (+ deterministic scatter/placement around a point); anything needing polygons fails loud, never silently centers; connectivity IS the sidecar's declared room graph. Shape follows each room's description + the dungeon concept — NO regular/irregular distinction or toggle anywhere in the vision path. KNOWN DEBT (accepted): layout drift (the painted map drifting from the declared graph) has no verifier this arc — Regenerate everything is the correction. See "Vision-located dungeon path" below. |
 
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
 
@@ -752,13 +752,19 @@ noted; no Dexie/schema changes):
 The lab's labeled-map recipe (`experiments/labeledDungeon.ts`), hardened
 for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
 
-- `src/llm/visionDungeon.ts` (new, creation-path home): `LabeledMapRoom`,
+- `src/llm/visionDungeon.ts` (new, creation-path home): `LabeledMapRoom`
+  (rooms carry optional `isEntry` — the brief's entry room keeps its letter
+  like every other room; the flag only designates it),
   `MAX_LABELED_MAP_ROOMS = 14`, `labelForRoomIndex` / `labelsForRoomCount`
   (A..N in room order), `buildLabeledMapPrompt(rooms, concept,
   connectivity?)` (rooms render as "Room A: name — description",
   connectivity as the declared graph, diegetic engraved/carved plaques,
   no-monsters clause, place-for-labels rule, natural-shape instruction —
-  NO global regular/irregular clause), `buildVisionLocateInstruction` /
+  NO global regular/irregular clause; exactly one `isEntry` room renders
+  the entrance clause naming its letter explicitly — "Room C is the
+  dungeon entrance … draw it AS a visual entrance (stairs descending, a
+  cave mouth, a gate, or a portal to suit the concept), plaque included" —
+  zero flagged rooms render no clause, two throw loud), `buildVisionLocateInstruction` /
   `buildVisionRelocateInstruction` (0–1000 grid, omit-never-invent),
   `visionLabelMarkSchema` / `visionLocateReplySchema` /
   `parseVisionLocateReply` (JSON extraction + zod boundary), `locateDungeonLabels`
@@ -781,9 +787,17 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   over `visionLocatePass` (configured chat model, temperature 0,
   `schemaResponseFormat`) → rooms minted with letters + observed
   `x_norm/y_norm` (+ `key`/`keyTreasure`/`targetLevel` carried over) and
-  declared-graph corridors. NO aspect normalization (cropping could cut
+  declared-graph corridors. The sidecar carries the brief's entry
+  designation under the SAME rule as classic's `entryRoomId`
+  (`labels[entryRoomIndex]` at the sidecar construction site, mirroring the
+  layout step's `roomIds[entryRoomIndex]` — never a second rule): the entry
+  room is flagged `isEntry` so the prompt draws it as the ingress, the
+  stored room keeps `spawn` on the entry room, and the stored `path` leads
+  with it. NO aspect normalization (cropping could cut
   plaques). ANY locate failure prunes the unattached candidate via
-  `deleteUnreferencedImages` first — the failed step persists NOTHING.
+  `deleteUnreferencedImages` first — the failed step persists NOTHING
+  (a missing entry plaque fails loud under the same miss policy, naming
+  its letter like any other).
 - `effectiveEncounterLayout` also reads the vision-map step; finalize
   selects the single map by contract (`readVisionMapImageId`); the
   classic-only affordances (`regenerateEncounterLayout`,
@@ -793,14 +807,21 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   from deterministic Chebyshev-ring cells around each room's observed
   point (`pointRoomCells`, shared helper); `seedBattleFromEncounter`
   stages the party AT the spawn room's observed point (missing point ⇒
-  loud seed failure); battle-surface key markers sit on the observed
+  loud seed failure) — the spawn room IS the brief's entry room, so the
+  entry coordinate doubles as party ingress (no separate entry-spawn
+  handling: spawn resolution already reads the spawn room's point
+  uniformly); battle-surface key markers sit on the observed
   point; anything needing polygons (`renderSchematic`,
   `veilsFromRooms`, `stagingBlockRect`) throws loud on geometry-less
   rooms. The layout preview marks observed plaques instead of rects.
-- Tests: `tests/llm/encounterVisionMap.test.ts` (14: helpers, happy path,
-  miss⇒re-ask⇒found, still-missing loud fail with nothing persisted,
-  override-beats-setting, singles-ignore, repopulate-untouched, observed-
-  point seeding), `tests/llm/encounterVisionSteering.test.ts` (5: classic
+- Tests: `tests/llm/encounterVisionMap.test.ts` (18: helpers, entry-as-
+  entrance prompt clause (entry letter named, non-entry rooms clean, no
+  clause without a designation, two entrances throw), happy path,
+  non-zero entryRoomIndex control (prompt + spawn + entry-first path +
+  ingress at that room's plaque), miss⇒re-ask⇒found, still-missing loud
+  fail with nothing persisted, missing-ENTRY loud fail with nothing
+  persisted, override-beats-setting, singles-ignore,
+  repopulate-untouched, observed-point seeding), `tests/llm/encounterVisionSteering.test.ts` (5: classic
   default, steered regen both ways + never-persisted default, setting
   default, singles ignore), the queue-uses-setting case in
   `tests/features/encounter-map-queue.test.ts`, the steering control in

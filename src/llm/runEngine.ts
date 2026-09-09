@@ -3631,11 +3631,22 @@ export class RunEngine {
     // The sidecar (docs/11 vision path): authored from the brief's existing
     // room input — name + description render as "Room A: name — description",
     // connectivity from the brief's room graph, diegetic letter plaques
-    // engraved/carved per room, no monsters.
+    // engraved/carved per room, no monsters. The entry designation rides the
+    // SAME rule as classic's entryRoomId (`roomIds[entryRoomIndex]`, in the
+    // layout step) translated to letter space — `labels[entryRoomIndex]` —
+    // never a second rule: the entry room keeps its letter, flagged `isEntry`
+    // so the prompt draws it as the visual ingress.
+    const entryLabel = labels[entryRoomIndex];
+    if (entryLabel === undefined) throw new Error('Encounter brief has no valid entry room');
     const sidecarRooms = parsed.rooms.map((room, index) => {
       const label = labels[index];
       if (label === undefined) throw new Error(`Encounter room ${String(index)} has no marker letter`);
-      return { label, name: room.name, description: room.description };
+      return {
+        label,
+        name: room.name,
+        description: room.description,
+        isEntry: index === entryRoomIndex,
+      };
     });
     const seenPairs = new Set<string>();
     const links: string[] = [];

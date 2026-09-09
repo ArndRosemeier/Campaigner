@@ -20,6 +20,14 @@ export interface LabeledMapRoom {
   label: string;
   name: string;
   description: string;
+  /**
+   * Designates the dungeon entrance (docs/11 vision path): the brief's
+   * `entryRoomIndex` room, threaded through the vision sidecar. The entry
+   * room keeps its letter like every other room — this flag only tells the
+   * prompt builder to draw it as the visual ingress. Optional so bench/lab
+   * callers without an entry keep working (no clause when absent).
+   */
+  isEntry?: boolean;
 }
 
 /**
@@ -49,6 +57,12 @@ export function labelsForRoomCount(count: number): string[] {
  * Builds the labeled-map image prompt for ANY room list: one interconnected
  * dungeon holding every room, each marked inside with its letter plaque.
  *
+ * When exactly one room carries `isEntry` (the brief's entry room, threaded
+ * through the vision sidecar), the prompt renders that chamber AS the visual
+ * entrance — stairs down, a cave mouth, a gate, a portal, per the dungeon
+ * concept — naming the entry letter explicitly. Zero flagged rooms render no
+ * entrance clause; more than one throws loud (never a silent pick).
+ *
  * Owner-directed shape posture (no regular/irregular distinction or toggle
  * anywhere in the vision path): shape follows each room's description + the
  * dungeon concept naturally — worked rooms read architectural, natural ones
@@ -69,12 +83,22 @@ export function buildLabeledMapPrompt(
     throw new Error(`Cannot label ${String(rooms.length)} rooms (A–N only)`);
   }
   if (concept.trim() === '') throw new Error('Cannot build a labeled map prompt with no dungeon concept');
+  const entries = rooms.filter((room) => room.isEntry === true);
+  if (entries.length > 1) {
+    throw new Error(
+      `Cannot build a labeled map prompt with ${String(entries.length)} entrances (${entries.map((room) => room.label).join(', ')}) — exactly one room is the way in`,
+    );
+  }
+  const entry = entries[0];
   const first = rooms[0]?.label ?? '';
   const last = rooms[rooms.length - 1]?.label ?? '';
   const roomLines = rooms.map((room) => `Room ${room.label}: ${room.name} — ${room.description}.`);
   return [
     `Top-down tabletop battlemap of ${concept} containing ALL ${String(rooms.length)} of these rooms, linked by tunnels and passages into a single explorable whole:`,
     ...roomLines,
+    ...(entry === undefined
+      ? []
+      : [`Room ${entry.label} is the dungeon entrance — the party's way in: draw it AS a visual entrance (stairs descending, a cave mouth, a gate, or a portal to suit the ${concept}), plaque included.`]),
     ...(connectivity === undefined || connectivity.trim() === '' ? [] : [`Rooms connect: ${connectivity}.`]),
     `Requirements: let each room's shape follow its description and the dungeon concept — worked, built rooms read architectural with walls and corners, natural spaces read organic; there is no single global shape rule. INSIDE each room, on the floor, a LARGE clearly-legible capital letter plaque (${first} through ${last}, one per room), engraved or carved into the floor, marking that room; top-down battlemap style with a subtle grid; no monsters, no creatures, no people, and no written text anywhere except the ${String(rooms.length)} letter plaques.`,
   ].join('\n');
