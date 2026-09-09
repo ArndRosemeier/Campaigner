@@ -12,7 +12,7 @@ import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
-import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Id, type Persona } from '@/domain';
+import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Artifact, type Id, type Persona } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
@@ -1666,6 +1666,278 @@ describe('Encounter Cartographer run', () => {
       const untouched = await getArtifact(target.id);
       if (untouched?.kind !== 'encounter') throw new Error('encounter missing');
       expect(untouched.data.layout).toBeNull();
+    });
+  });
+
+  describe('shape-gated restock (docs/11 D12 amendment, owner-directed)', () => {
+    /** A valid persisted 4-room complex layout for a regeneration target
+     *  (the OLD module dungeon: a real multi-room battlemap on file). */
+    function complexLayoutFixture() {
+      const ids = [newId(), newId(), newId(), newId()];
+      const names = ['Entry', 'Ossuary', 'Ritual Chamber', 'Sanctum'];
+      return {
+        gridW: 40,
+        gridH: 12,
+        theme: 'ash temple',
+        rooms: ids.map((id, index) => ({
+          id,
+          name: names[index] ?? `Room ${String(index)}`,
+          rects: [{ x: 2 + index * 10, y: 2, w: 6, h: 6 }],
+          mobsRect: { x: 3 + index * 10, y: 3, w: 3, h: 3 },
+          description: '',
+          monsterIndexes: index === 0 ? [0] : [],
+          spawn: index === 0,
+          key: '',
+          keyTreasure: '',
+        })),
+        corridors: [
+          { a: ids[0] ?? newId(), b: ids[1] ?? newId(), rects: [{ x: 8, y: 5, w: 4, h: 1 }] },
+          { a: ids[1] ?? newId(), b: ids[2] ?? newId(), rects: [{ x: 18, y: 5, w: 4, h: 1 }] },
+          { a: ids[2] ?? newId(), b: ids[3] ?? newId(), rects: [{ x: 28, y: 5, w: 4, h: 1 }] },
+        ],
+        path: ids,
+      };
+    }
+
+    /** The owner's OLD module row: a complex battlemap on file, ONE stale
+     *  monster, remembered preset 'standard' (the D10 trap), owner-set fill
+     *  grade. */
+    async function seedComplexTarget(campaignId: Id, goblinChunkId: Id): Promise<Artifact & { kind: 'encounter' }> {
+      const target = await createArtifact({
+        campaignId,
+        kind: 'encounter',
+        name: 'Old Undercroft',
+        body: 'Existing prose.',
+        links: [],
+        data: {
+          difficulty: 'old', levelHint: '4',
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          terrain: '', tactics: '', treasure: '',
+          mapImageId: null, preset: 'standard', locationKind: 'dungeon',
+          siteShape: 'complex', budgetAdvisory: '',
+          layout: complexLayoutFixture(),
+          fillGrade: 100,
+        },
+      });
+      if (target.kind !== 'encounter') throw new Error('encounter target missing');
+      return target;
+    }
+
+    /** A single-arena row (one stale fight, no layout on file). */
+    async function seedSingleTarget(campaignId: Id, goblinChunkId: Id): Promise<Artifact & { kind: 'encounter' }> {
+      const target = await createArtifact({
+        campaignId,
+        kind: 'encounter',
+        name: 'Gate Ambush',
+        body: 'Existing prose.',
+        links: [],
+        data: {
+          difficulty: 'old', levelHint: '4',
+          monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', source: { type: 'rulebook', chunkId: goblinChunkId } }],
+          terrain: '', tactics: '', treasure: '',
+          mapImageId: null, preset: 'standard', locationKind: 'other',
+          siteShape: 'single', budgetAdvisory: '', layout: null,
+        },
+      });
+      if (target.kind !== 'encounter') throw new Error('encounter target missing');
+      return target;
+    }
+
+    async function briefPrompt(): Promise<string> {
+      await waitFor(() => {
+        expect(chatMock.mock.calls.length).toBeGreaterThanOrEqual(1);
+      });
+      const content = chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content;
+      return typeof content === 'string' ? content : '';
+    }
+
+    it('a complex-shaped target on an explicit standard preset renders the stocking contract and passes the expansion gate', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const target = await seedComplexTarget(campaign.id, goblinChunkId);
+      // The reply keeps the pinned prefix and appends three sourced goblins.
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        ...COMPLEX_BRIEF,
+        monsters: [
+          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+      // The battlemap "Regenerate" action passes the target's OWN persisted
+      // preset (persona-panel) — 'standard' on this legacy row.
+      const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'standard' as const };
+      const runId = await runEngine.startRun(runInput);
+      const briefContent = await briefPrompt();
+      // The stocking contract rides the SHAPE, not the remembered preset.
+      expect(briefContent).toContain(
+        'Preset: Standard — this encounter is an existing multi-room complex, so design a connected dungeon complex of 4–10 rooms',
+      );
+      expect(briefContent).toContain('you MUST append more entries after those to stock it');
+      expect(briefContent).toContain('(reach the per-room stocking numbers above)');
+      expect(briefContent).toContain('fill grade is 100%');
+      expect(briefContent).toContain('the target roster first, verbatim; appended entries stock the complex');
+      expect(briefContent).not.toContain('you MAY append more entries');
+      expect(briefContent).not.toContain('Preset: Dungeon');
+
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact(target.id);
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      // The gate PASSED: the merged roster persisted — pinned prefix
+      // byte-identical, appended entries materialized through the fresh
+      // source-resolution birth path.
+      expect(artifact.data.monsters).toHaveLength(4);
+      expect(artifact.data.monsters[0]).toEqual(target.data.monsters[0]);
+      for (const index of [1, 2, 3]) {
+        expect(artifact.data.monsters[index]?.source).toEqual({
+          type: 'rulebook',
+          chunkId: goblinChunkId,
+          mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId),
+          contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
+          creatureName: 'Goblin Boss',
+        });
+      }
+      // Advisory paths unchanged: the under-stocked rooms ship the LOUD
+      // 'under' advisory on the artifact.
+      expect(artifact.data.budgetAdvisory).toContain('ships under its expected challenge');
+      expect(artifact.data.siteShape).toBe('complex');
+      expect(artifact.data.fillGrade).toBe(100);
+      // The remembered preset still drives the tier it names.
+      expect(artifact.data.preset).toBe('standard');
+    });
+
+    it('a single arena on the standard preset keeps the quiet-room contract byte-identical', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const target = await seedSingleTarget(campaign.id, goblinChunkId);
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        ...BRIEF,
+        monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' }],
+      }), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'standard' as const };
+      const runId = await runEngine.startRun(runInput);
+      const briefContent = await briefPrompt();
+      // The exact shipped standard line — no stocking contract, no append
+      // permission, verbatim-copy field spec.
+      expect(briefContent).toContain(
+        'Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party\'s way in.',
+      );
+      expect(briefContent).toContain('(the target roster copied verbatim)');
+      expect(briefContent).not.toContain('append more entries');
+      expect(briefContent).not.toContain('MUST append');
+
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact(target.id);
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      // The roster is the target's, byte-identical (the exact pin).
+      expect(artifact.data.monsters).toEqual(target.data.monsters);
+      expect(artifact.data.fillGrade).toBeUndefined();
+    });
+
+    it('a genuine single arena on a dungeon preset keeps the dungeon prompt byte-identical', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const target = await seedSingleTarget(campaign.id, goblinChunkId);
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        ...BRIEF,
+        monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' }],
+      }), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'dungeon' as const };
+      const runId = await runEngine.startRun(runInput);
+      const briefContent = await briefPrompt();
+      // The D10 bias applies verbatim: the full shipped dungeon line and the
+      // PERMISSIVE append clause (the target is not complex-shaped).
+      expect(briefContent).toContain(
+        'Preset: Dungeon — design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel). A complex of N rooms needs roughly one fight per room — size the roster for N fights, and every room stocks a real fight (a complex room with no creatures is a repairable defect).',
+      );
+      expect(briefContent).toContain('you MAY append more entries after those to stock the complex');
+      expect(briefContent).not.toContain('MUST append');
+      // Nothing further asserted — the run pauses at its brief as usual.
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+    });
+
+    it('rejects an over-cap append on a standard-preset complex target (gate and cap agree)', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const target = await seedComplexTarget(campaign.id, goblinChunkId);
+      // 4 + 15 + 15 = 34 creature-levels against a cap of 6+6+6+7 + 2 = 27
+      // (fill grade 100: each level-4 room expects 6, the level-5 room 7).
+      chatMock.mockResolvedValue({ text: JSON.stringify({
+        ...COMPLEX_BRIEF,
+        monsters: [
+          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '' },
+          { name: 'Goblin Boss', count: 15, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 15, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+        ],
+        rooms: [
+          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [2], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'standard' as const };
+      const runId = await runEngine.startRun(runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      const step = (await getRun(runId))?.steps[0];
+      expect(step?.status).toBe('rejected');
+      expect(rejectionIssues(step ?? { output: null })[0]).toContain(
+        'over the complex\'s stocking cap of 27 (the rooms\' expected shares + 2)',
+      );
+      // Nothing persisted over the cap.
+      const untouched = await getArtifact(target.id);
+      if (untouched?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(untouched.data.monsters).toHaveLength(1);
+      expect(untouched.data.mapImageId).toBeNull();
+    });
+
+    it('keeps the byte-identical verbatim pin for pf2e (no append clause, no expansion)', async () => {
+      const { campaign, cartographer } = await setup('pathfinder2e');
+      const goblinChunkId = await seedPackBook();
+      const target = await seedComplexTarget(campaign.id, goblinChunkId);
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        ...COMPLEX_BRIEF,
+        monsters: [
+          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' },
+        ],
+        // Coverage-coherent verbatim reply: the one pinned entry stays in the
+        // entry room; pf2e runs no numeric room check (the loud advisory).
+        rooms: [
+          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 4 },
+          { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 5 },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'dungeon' as const };
+      const runId = await runEngine.startRun(runInput);
+      const briefContent = await briefPrompt();
+      // The dungeon tier prose renders; the append machinery does NOT — pf2e
+      // has no cap to bound an append, so the verbatim pin holds and the
+      // prompt never states a contract the gate would refuse.
+      expect(briefContent).toContain('Preset: Dungeon — design a connected dungeon complex of 4–10 rooms');
+      expect(briefContent).not.toContain('append more entries');
+      expect(briefContent).not.toContain('fill grade is');
+      // The verbatim-only reply is accepted as-is (a 4-room brief over a
+      // one-entry roster is coherent on the verbatim pin).
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      const step = (await getRun(runId))?.steps[0];
+      expect(step?.status).toBe('done');
     });
   });
 });

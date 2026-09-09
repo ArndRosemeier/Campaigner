@@ -591,7 +591,10 @@ export function EncounterForm({ data, campaignArtifacts, campaignSystem, onChang
             <span className="text-[11px] font-normal text-muted-foreground">
               How much of a standard fight's threat each dungeon room should carry, 0–100.
               Left empty, the first map generation draws one (most dungeons 55–90, some
-              lighter, some spikier) and keeps it; a value set here always wins.
+              lighter, some spikier) and keeps it; a value set here always wins. Changing
+              it restocks nothing by itself: the roster re-sizes when the encounter's map
+              is (re)briefed (battlemap Regenerate / the map queue), and content
+              "Regenerate with AI" rewrites the roster as one fight — it never restocks.
             </span>
           </Field>
         )}

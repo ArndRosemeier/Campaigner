@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   encounterDataSchema,
+  encounterDataIsComplex,
   LEGACY_COMPLEX_BUDGET_NOTE,
   drawFillGrade,
   type EncounterArtifactData,
@@ -127,6 +128,25 @@ describe('siteShape derivation (docs/11 D11)', () => {
   it('defaults budgetAdvisory to empty', () => {
     const parsed = encounterDataSchema.parse(baseData());
     expect(parsed.budgetAdvisory).toBe('');
+  });
+});
+
+describe('encounterDataIsComplex (docs/11 D12 amendment — shape-gated restock)', () => {
+  it('reads the parse-normalized siteShape, never a second room-count heuristic', () => {
+    const complex = encounterDataSchema.parse(baseData({ siteShape: 'complex', layout: layoutWithRooms(2) }));
+    expect(encounterDataIsComplex(complex)).toBe(true);
+    const single = encounterDataSchema.parse(baseData({ siteShape: 'single', layout: layoutWithRooms(1) }));
+    expect(encounterDataIsComplex(single)).toBe(false);
+  });
+
+  it('sees a legacy row\'s derived shape (the field normalizes at every parse)', () => {
+    // No persisted siteShape: the multi-room layout derives 'complex' at
+    // parse — exactly what the Cartographer's stocking gate must react to.
+    const legacy = baseData({ layout: layoutWithRooms(3) });
+    delete legacy.siteShape;
+    const parsed = encounterDataSchema.parse(legacy);
+    expect(parsed.siteShape).toBe('complex');
+    expect(encounterDataIsComplex(parsed)).toBe(true);
   });
 });
 

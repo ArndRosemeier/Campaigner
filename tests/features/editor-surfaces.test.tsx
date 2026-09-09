@@ -291,4 +291,44 @@ describe('editor surfaces', () => {
     });
     await flushAsyncUpdates();
   }, 20000);
+
+  it('encounter content AI section states the one-fight honesty (never restocks)', async () => {
+    const campaign = await createCampaign({ name: 'Restock', system: 'dnd5e' });
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Old Undercroft',
+      summary: '',
+      body: '',
+      data: {
+        difficulty: 'old',
+        levelHint: '4',
+        monsters: [{ name: 'Tomb Ogre', count: 4, notes: '', treasure: '', source: { type: 'inline', statBlock: testStatBlock() } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        preset: 'standard',
+        locationKind: 'dungeon',
+        siteShape: 'complex',
+        budgetAdvisory: '',
+        layout: null,
+      },
+    });
+    render(
+      <ArtifactEditor
+        artifact={encounter}
+        campaignId={encounter.campaignId}
+        campaignArtifacts={[encounter]}
+        campaignSystem="dnd5e"
+      />,
+    );
+    const section = screen.getByTestId('encounter-ai-section');
+    // Honesty copy (docs/11 D12 amendment, shape-gated restock): content
+    // "Regenerate with AI" is ONE fight — it never restocks a dungeon.
+    expect(section).toHaveTextContent('Regenerate roster, terrain, tactics, treasure and prose with the Encounter Smith.');
+    expect(section).toHaveTextContent('rewrites the roster as ONE fight');
+    expect(section).toHaveTextContent('never restocks');
+    await flushAsyncUpdates();
+  }, 20000);
 });

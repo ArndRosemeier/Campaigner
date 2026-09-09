@@ -303,6 +303,22 @@ export interface EncounterShapeDataLike {
 }
 
 /**
+ * The regeneration target's ACTUAL shape (docs/11 D12 amendment, shape-gated
+ * restock): the ONE pure predicate for "is this encounter a multi-room
+ * complex". It reads the parsed data's own `siteShape` — `encounterDataSchema`
+ * normalizes that field at EVERY read through `normalizeEncounterShapeData`
+ * (a persisted value wins; a legacy row derives it from the layout's room
+ * count) and the superRefine rejects shape-inconsistent rows — so this IS the
+ * D11 shape derivation, never a second room-count heuristic at a call site.
+ * The Cartographer consumes it for BOTH the stocking prompt clauses and the
+ * bounded-expansion gate so the prompt and the gate can never disagree; the
+ * remembered `preset` keeps driving the grid tier/prose (docs/11 D10).
+ */
+export function encounterDataIsComplex(data: EncounterArtifactData): boolean {
+  return data.siteShape === 'complex';
+}
+
+/**
  * The migration note (docs/11 D12, amended by the fill-grade arc) the v17
  * upgrade writes onto encounter rows it maps to 'complex' (legacy multi-room
  * layouts): their rooms carry no per-room challenge targets, so each is

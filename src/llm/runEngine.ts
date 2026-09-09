@@ -19,6 +19,7 @@ import type {
   StatBlock,
 } from '@/domain';
 import {
+  encounterDataIsComplex,
   encounterDataSchema,
   encounterLayoutSchema,
   encounterLocationKindSchema,
@@ -2608,6 +2609,29 @@ export class RunEngine {
     // sources. pf2e runs replace the numeric check with the loud verbatim
     // advisory (no Paizo numbers ship — roomBudget.ts).
     const budgetMode = roomBudgetMode(input.campaign.system);
+    // Shape-gated restock (docs/11 D12 amendment, owner-directed): the
+    // stocking/expansion contract keys on the TARGET'S ACTUAL SHAPE —
+    // `encounterDataIsComplex`, the parse-normalized D11 derivation — not on
+    // the remembered preset. The battlemap "Regenerate" action passes the
+    // artifact's OWN persisted `data.preset` as the explicit per-run choice
+    // (persona-panel), so a legacy complex row whose remembered preset is
+    // 'standard' used to brief a one-arena map with NO stocking clauses at
+    // all; the shape now carries the contract. A genuine single arena on a
+    // dungeon preset keeps today's prompt byte-identical (the preset's D10
+    // bias still applies — the clause gate below is an OR, never a switch).
+    // pf2e has no cap to bound an append (Paizo numbers never ship), so the
+    // machinery stays band-only and the verbatim pin holds. ONE flag drives
+    // BOTH the prompt clauses and the evaluate gate — they cannot drift
+    // apart again.
+    const targetIsComplex = target?.kind === 'encounter' && encounterDataIsComplex(target.data);
+    const expansionAuthorized =
+      targetRoster !== undefined &&
+      (preset === 'dungeon' || targetIsComplex) &&
+      budgetMode === 'band';
+    // The directive tier: a complex-shaped target is TOLD to append (the
+    // permissive 'may' let an under-appending model ship the old roster plus
+    // a loud advisory — a stocking contract, not a permission).
+    const directiveAppend = expansionAuthorized && targetIsComplex;
     // Fill grade (docs/11 D12 amendment, draw-once): a value on the target
     // row (owner-set or a previous draw) ALWAYS wins; a fresh run or a
     // legacy target without one draws a candidate here so the brief prompt
@@ -2622,6 +2646,12 @@ export class RunEngine {
     const promptLevel = target?.kind === 'encounter'
       ? parseRosterTargetLevel(target.data.levelHint)
       : parseRosterTargetLevel(input.brief);
+    // Per-room stocking numbers (docs/11 D12 amendment): the fill-grade
+    // share as concrete creature-levels at the level the rooms default to.
+    // Null for pf2e (no Paizo numbers) or a digit-free level — the
+    // qualitative clause still applies, never an invented number. Rendered
+    // ABOVE the roster contract, which the append clauses cite.
+    const stockingNumbers = fillGradeStockingFor(fillGrade, promptLevel, input.campaign.system);
     // Regenerate mode keeps the roster verbatim INCLUDING mob treasure: a
     // map run replaces layout + room keys, never the encounter-scoped
     // treasure authored on the entries (owner-ratified D1 extension).
@@ -2630,6 +2660,20 @@ export class RunEngine {
     // (verbatim, sources preserved) and appended entries stock the rooms
     // the pin would have left empty; bounded by the rooms' expected shares
     // (budget-checked in evaluate). A single arena keeps the exact pin.
+    // AMENDED AGAIN (shape-gated restock): the append clause renders when
+    // the stocking contract is authorized at all (dungeon preset OR a
+    // complex-shaped target, band systems) and is a DIRECTIVE for a
+    // complex-shaped target — same three-part structure (verbatim prefix →
+    // source-cited appends → cap), but the model must reach one fight per
+    // room, not merely may.
+    const appendClauseMay =
+      'If you design a multi-room complex, you MAY append more entries after those to stock the complex — every room needs a real fight, so size the roster for one fight per room. Every appended entry must cite a source (sourceChunkIndex, sourceName or a complete inline statBlock). The whole complex must total at most (number of rooms × the per-room expected creature-levels above) + ' +
+      `${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels.`;
+    const appendClauseDirective =
+      'This encounter is an existing multi-room complex — you MUST append more entries after those to stock it: every room needs a real fight, so the roster must reach one fight per room' +
+      (stockingNumbers === null ? '' : ' (reach the per-room stocking numbers above)') +
+      '. Every appended entry must cite a source (sourceChunkIndex, sourceName or a complete inline statBlock). The whole complex must total at most (number of rooms × the per-room expected creature-levels above) + ' +
+      `${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels.`;
     const rosterContract = targetRoster !== undefined
       ? [
           `Regeneration target roster — keep these EXACT entries as the first ${String(targetRoster.length)} entries of your reply, same order, same names, counts and treasure (name/count/notes/treasure; emit null for sourceChunkIndex, sourceName and statBlock — the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
@@ -2640,27 +2684,19 @@ export class RunEngine {
               treasure: monster.treasure,
             })),
           )}`,
-          ...(preset === 'dungeon'
-            ? [
-                'If you design a multi-room complex, you MAY append more entries after those to stock the complex — every room needs a real fight, so size the roster for one fight per room. Every appended entry must cite a source (sourceChunkIndex, sourceName or a complete inline statBlock). The whole complex must total at most (number of rooms × the per-room expected creature-levels above) + ' +
-                  `${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels.`,
-              ]
-            : []),
+          ...(expansionAuthorized ? [directiveAppend ? appendClauseDirective : appendClauseMay] : []),
         ].join('\n')
       : 'Design a concrete monster roster appropriate to the requested difficulty.';
-    const monsterFieldSpec = targetRoster !== undefined
-      ? preset === 'dungeon'
-        ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (the target roster first, verbatim; optional appended entries stock a complex)'
-        : 'monsters [{name,count,notes,treasure}] (the target roster copied verbatim)'
-      : 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}]';
+    const monsterFieldSpec = targetRoster === undefined
+      ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}]'
+      : directiveAppend
+        ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (the target roster first, verbatim; appended entries stock the complex — the roster must grow to one fight per room)'
+        : expansionAuthorized
+          ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (the target roster first, verbatim; optional appended entries stock a complex)'
+          : 'monsters [{name,count,notes,treasure}] (the target roster copied verbatim)';
     const inlineStatHint = targetRoster === undefined && retrieval.statblockChunkIds.length === 0
       ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
       : null;
-    // Per-room stocking numbers (docs/11 D12 amendment): the fill-grade
-    // share as concrete creature-levels at the level the rooms default to.
-    // Null for pf2e (no Paizo numbers) or a digit-free level — the
-    // qualitative clause still applies, never an invented number.
-    const stockingNumbers = fillGradeStockingFor(fillGrade, promptLevel, input.campaign.system);
     // 15-GRAPH-RETRIEVAL (D2 = general grounding only): the encounter brief
     // renders the derived campaign-grounding section after the brief line;
     // the citable stat-block search and the pack roster above stay
@@ -2671,20 +2707,29 @@ export class RunEngine {
       retrieval.expansionExcerpts.length > 0
         ? renderCampaignGroundingSection(retrieval.expansionExcerpts)
         : null;
+    // Site-shape branch (docs/11 D11): the brief must commit to ONE arena
+    // (exactly 1 room, no corridors) or a real dungeon complex (4–10
+    // rooms) — 2–3-room briefs are repair-rejected at this boundary. The
+    // Dungeon preset clause extends the D10 bias with the per-room
+    // challenge contract, and the roster sizing seam (fill-grade arc):
+    // a complex of N rooms needs roughly one fight per room. AMENDED
+    // (shape-gated restock): the complex shape contract also renders for a
+    // COMPLEX-SHAPED target on the standard preset (the remembered preset
+    // keeps naming the tier — the shape names the rooms), while a genuine
+    // single arena on the dungeon preset keeps the shipped bytes exactly.
+    const complexShapeProse =
+      'design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel). A complex of N rooms needs roughly one fight per room — size the roster for N fights, and every room stocks a real fight (a complex room with no creatures is a repairable defect).';
+    const presetShapeClause = preset === 'dungeon'
+      ? `Preset: Dungeon — ${complexShapeProse}`
+      : targetIsComplex
+        ? `Preset: Standard — this encounter is an existing multi-room complex, so ${complexShapeProse}`
+        : 'Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party\'s way in.';
     const contract = [
       input.brief,
       groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
       `Map aspect: ${aspect}`,
-      // Site-shape branch (docs/11 D11): the brief must commit to ONE arena
-      // (exactly 1 room, no corridors) or a real dungeon complex (4–10
-      // rooms) — 2–3-room briefs are repair-rejected at this boundary. The
-      // Dungeon preset clause extends the D10 bias with the per-room
-      // challenge contract, and the roster sizing seam (fill-grade arc):
-      // a complex of N rooms needs roughly one fight per room.
-      preset === 'dungeon'
-        ? 'Preset: Dungeon — design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel). A complex of N rooms needs roughly one fight per room — size the roster for N fights, and every room stocks a real fight (a complex room with no creatures is a repairable defect).'
-        : 'Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party\'s way in.',
+      presetShapeClause,
       stockingNumbers,
       // Natural-site mode (docs/11): the brief's `environment` classifies the
       // map contract — one honest line (the field was listed but never
@@ -2842,11 +2887,15 @@ export class RunEngine {
       if (result.brief === null) return { ...result, advisory: null, expansionActive: false };
       const brief = result.brief;
       const isComplex = brief.rooms.length > 1;
-      // Bounded roster expansion (docs/11 D12 amendment): a COMPLEX brief on
-      // a numeric-band system may keep the pinned prefix and append entries
-      // to stock its rooms. pf2e (no numbers → no cap to compute) and
-      // single arenas keep the exact verbatim pin.
-      const expansion = targetRoster !== undefined && isComplex && budgetMode === 'band';
+      // Bounded roster expansion (docs/11 D12 amendment, shape-gated): the
+      // gate reads the SAME authorization the prompt rendered — a COMPLEX
+      // brief (this reply's shape) on a numeric-band system, when the
+      // stocking contract was authorized at all (dungeon preset or a
+      // complex-shaped target). A reply that grows rooms on an unauthorized
+      // run keeps the exact verbatim pin (the repair below says so) — never
+      // a source contract the prompt never stated. pf2e (no numbers → no
+      // cap to compute) and single arenas keep the exact verbatim pin.
+      const expansion = expansionAuthorized && isComplex;
       // Site-shape dichotomy (docs/11 D11): 1 room (single arena) or 4–10
       // rooms (complex). 2–3 rooms are a repairable issue — the prompt
       // states the exact shape contract.
