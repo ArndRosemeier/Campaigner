@@ -76,6 +76,7 @@ import {
   fillGradeStockingFor,
   fixedCastAdvisories,
   fixedCastForEncounter,
+  fixedCastSectionFor,
   partLevelForMention,
   partyLevelLine,
   reconcileRoomAssignments,
@@ -2772,6 +2773,11 @@ export class RunEngine {
      * step drew or read off the target. Undefined on pre-arc runs; finalize
      * draws a fallback for a complex that materializes without one. */
     fillGrade: number | undefined;
+    /** Fresh population (first generation stocks like regeneration) — an
+     * unpinned brief on a never-mapped target. Finalize persists the whole
+     * brief roster fully materialized instead of prefix-merging. Absent on
+     * pre-arc runs (falsy) and on owner-edited briefs that dropped it. */
+    freshPopulation: boolean;
   } {    const step = steps.find((candidate) => candidate.name === 'brief');
     const effective = step?.userEdit ?? step?.output;
     if (effective === null || effective === undefined || typeof effective !== 'object') {
@@ -2786,6 +2792,7 @@ export class RunEngine {
       statblockChunkIds?: unknown;
       rosterChunkByName?: unknown;
       fillGrade?: unknown;
+      freshPopulation?: unknown;
     };
     const parsed = encounterGeneratorBriefSchema.safeParse(value.parsed);
     if (!parsed.success) {
@@ -2832,6 +2839,9 @@ export class RunEngine {
           value.fillGrade <= 100
         ? value.fillGrade
         : undefined,
+      // Step outputs are plain JSON: the marker reads back truthy-only (an
+      // owner edit that dropped it falls back to the prefix-merge persist).
+      freshPopulation: value.freshPopulation === true,
     };
   }
 
@@ -2896,11 +2906,8 @@ export class RunEngine {
     // it never pins the target's entries. An empty target roster (a fresh
     // Regenerate-everything reset, or a stub that never had content) is a
     // fresh population, not an error: appending to nothing means designing
-    // the whole population. The pin exists only for legacy verbatim map
-    // regenerations with a roster on file.
+    // the whole population.
     const rosterOnly = this.encounterIsRosterOnly(input, steps);
-    const rosterPin =
-      rosterOnly || targetRoster === undefined || targetRoster.length === 0 ? undefined : targetRoster;
     const existingRooms =
       target?.kind === 'encounter' && target.data.layout !== null ? target.data.layout.rooms : undefined;
     // Roster sources are only checked for fresh encounters: a regenerate run
@@ -2933,6 +2940,24 @@ export class RunEngine {
     // the same numbers and cap.
     const stockingAuthorized =
       (preset === 'dungeon' || targetIsComplex) && budgetMode === 'band';
+    // First generation stocks like regeneration (docs/11): a never-mapped
+    // target (layout null — no rooms on file, nothing to preserve) carries
+    // the Smith stub's one-fight roster, which must NOT pin a dungeon-intent
+    // brief (dungeon preset or complex shape, band systems): the pin exists
+    // only for mapped verbatim map regenerations with a roster on file, so
+    // a never-mapped stocking-authorized target briefs unpinned — the
+    // MUST-style fresh-population clause with numbers and the cap gate
+    // below — exactly like a fresh regeneration. A never-mapped single
+    // (standard preset, single shape) keeps its pin byte-identical: one
+    // fight is the Smith's charter there, and the map run preserves it.
+    // pf2e never authorizes (no cap to bound an append), so its verbatim
+    // pin holds untouched.
+    const targetNeverMapped = target?.kind === 'encounter' && target.data.layout === null;
+    const rosterPin =
+      rosterOnly || targetRoster === undefined || targetRoster.length === 0 ||
+        (targetNeverMapped && stockingAuthorized)
+        ? undefined
+        : targetRoster;
     const expansionAuthorized = rosterPin !== undefined && stockingAuthorized;
     // The directive tier: a complex-shaped target is TOLD to append (the
     // permissive 'may' let an under-appending model ship the old roster plus
@@ -2973,6 +2998,27 @@ export class RunEngine {
     // qualitative clause still applies, never an invented number. Rendered
     // ABOVE the roster contract, which the append clauses cite.
     const stockingNumbers = fillGradeStockingFor(fillGrade, promptLevel, input.campaign.system);
+    // Fixed-cast glue for the unpinned first generation (docs/11): the map
+    // brief carries no fixed-cast summaries of its own, so unpinning the
+    // Smith stub's generics would drop a fixed-cast NPC (ledger row 59).
+    // Thread the must-appear section into the brief — the Cartographer
+    // re-adds the cast from the summaries (exact names, stats as-is via the
+    // inline-statblock path) and designs the REST of the roster fresh.
+    // Scoped to unpinned never-mapped single-shape briefs (the first
+    // generation): pinned briefs keep the exact verbatim gate — a
+    // must-appear extra would fight it — and complex-shaped targets keep
+    // their directive path byte-identical. Null (no cast, no module scene)
+    // renders nothing, so cast-less briefs stay byte-identical.
+    const fixedCastSection = await (async (): Promise<string | null> => {
+      if (rosterPin !== undefined || !targetNeverMapped || targetIsComplex) return null;
+      if (target.moduleId === null) return null;
+      const owner = await getModule(target.moduleId);
+      if (owner === undefined) return null;
+      const sceneContext = surroundingParagraphs(moduleDocumentText(owner), target.name);
+      if (sceneContext === '') return null;
+      const pool = await listArtifactsByCampaign(input.campaign.id);
+      return fixedCastSectionFor(fixedCastForEncounter(target.name, sceneContext, pool, owner.id));
+    })();
     // Regenerate mode keeps the roster verbatim INCLUDING mob treasure: a
     // map run replaces layout + room keys, never the encounter-scoped
     // treasure authored on the entries (owner-ratified D1 extension).
@@ -3061,7 +3107,9 @@ export class RunEngine {
     // (shape-gated restock): the complex shape contract also renders for a
     // COMPLEX-SHAPED target on the standard preset (the remembered preset
     // keeps naming the tier — the shape names the rooms), while a genuine
-    // single arena on the dungeon preset keeps the shipped bytes exactly.
+    // single arena on the dungeon preset keeps the shipped bytes exactly —
+    // genuine meaning mapped (a never-mapped single on a dungeon preset is
+    // a first generation and briefs fresh, see the rosterPin rule above).
     const complexShapeProse =
       'design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel). A complex of N rooms needs roughly one fight per room — size the roster for N fights, and every room stocks a real fight (a complex room with no creatures is a repairable defect).';
     const presetShapeClause = preset === 'dungeon'
@@ -3082,6 +3130,9 @@ export class RunEngine {
       // explained); when it says outdoor, the map is prose-led natural-site.
       'Environment: set "environment" honestly from the site\'s own nature — "outdoor" when the encounter plays in the open (forest, swamp, coast, road, cavern mouth), "dungeon" only when it plays inside an enclosed built complex of halls and corridors.',
       rosterContract,
+      // Fixed cast (docs/11): the must-appear section for unpinned first
+      // generations — null (renders nothing) everywhere else.
+      fixedCastSection,
       context.length === 0 ? null : `Context: ${JSON.stringify(context)}`,
       retrieval.excerpts === '' ? null : `Retrieved rules:\n${retrieval.excerpts}`,
       buildStatblockCitationSection(retrieval.statblockTitles),
@@ -3252,7 +3303,15 @@ export class RunEngine {
       // states the exact shape contract. AMENDED (two-button regeneration):
       // a repopulation mirrors the dungeon's EXISTING rooms instead, so a
       // grandfathered 2–3-room complex repopulates in place — the count must
-      // match the rooms on file exactly.
+      // match the rooms on file exactly. AMENDED (first generation stocks
+      // like regeneration): a 1-room reply on a never-mapped dungeon-intent
+      // target is a repairable issue — the brief promised a 4–10-room
+      // complex under the MUST-fresh stocking clause, and a single arena
+      // would ship one fight clean through the no-lower-verdicts single
+      // path. Scoped to unpinned never-mapped single-shape briefs on an
+      // authorized contract: pinned runs keep their verbatim gate, fresh
+      // creates have no target, repopulations mirror instead, and a
+      // Regenerate-everything reset keeps its complex shape.
       const mirrorCount = rosterOnly ? existingRooms?.length : undefined;
       if (mirrorCount !== undefined && mirrorCount > 0) {
         if (brief.rooms.length !== mirrorCount) {
@@ -3265,6 +3324,22 @@ export class RunEngine {
             ],
           };
         }
+      } else if (
+        !rosterOnly &&
+        rosterPin === undefined &&
+        targetNeverMapped &&
+        !targetIsComplex &&
+        stockingAuthorized &&
+        brief.rooms.length === 1
+      ) {
+        return {
+          brief: null,
+          advisory: null,
+          expansionActive: false,
+          issues: [
+            'rooms: this encounter is a new dungeon (no rooms on file) — design a connected dungeon complex of 4–10 rooms, not a single arena (your reply listed 1 room)',
+          ],
+        };
       } else if (brief.rooms.length !== 1 && brief.rooms.length < 4) {
         return {
           brief: null,
@@ -3532,6 +3607,14 @@ export class RunEngine {
             // that rebuild the input from the run row read this back —
             // without it a repopulation would resume as a full map run.
             ...(rosterOnly ? { rosterOnly: true as const } : {}),
+            // Fresh population (first generation stocks like regeneration):
+            // an unpinned brief on a never-mapped target designs the WHOLE
+            // roster — finalize persists it fully materialized instead of
+            // prefix-merging the Smith stub's entries under the brief's
+            // room indexes.
+            ...(rosterPin === undefined && target !== undefined && targetNeverMapped && !rosterOnly
+              ? { freshPopulation: true as const }
+              : {}),
             ...(budgetAdvisory === null ? {} : { budgetAdvisory }),
           },
           fallback,
@@ -4202,7 +4285,7 @@ export class RunEngine {
     steps: RunStep[],
     input: StartRunInput,
   ): Promise<{ step: RunStep; artifactId: Id }> {
-    const { parsed, statblockChunkIds, rosterChunkByName, fillGrade: briefFillGrade } =
+    const { parsed, statblockChunkIds, rosterChunkByName, fillGrade: briefFillGrade, freshPopulation } =
       this.effectiveEncounterBrief(steps);
     const layout = this.effectiveEncounterLayout(steps);
     // Vision runs (docs/11 vision path) select their single map by contract
@@ -4253,8 +4336,21 @@ export class RunEngine {
       // target's own entries stay byte-identical (identity, mob artifact,
       // treasure survive) and the appended entries materialize their fresh
       // sources exactly like the fresh-encounter birth path below.
-      const expandedMonsters =
-        parsed.monsters.length > target.data.monsters.length
+      // AMENDED (first generation stocks like regeneration): a fresh
+      // population (unpinned brief on a never-mapped target) persists the
+      // WHOLE brief roster fully materialized — prefix-merging would file
+      // the Smith stub's entries under the brief's room indexes, which were
+      // designed against the fresh roster.
+      const expandedMonsters = freshPopulation
+        ? await this.materializeBriefRoster(
+          parsed.monsters,
+          input.campaign.id,
+          runId,
+          statblockChunkIds,
+          rosterChunkByName,
+          new Map<Id, Id>(),
+        )
+        : parsed.monsters.length > target.data.monsters.length
           ? [
               ...target.data.monsters,
               ...await this.materializeBriefRoster(

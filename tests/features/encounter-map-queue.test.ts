@@ -191,6 +191,11 @@ describe('module encounter map queue', () => {
       campaignId: campaign.id, kind: 'encounter', name: 'Great Hall',
       data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'building', siteShape: 'single', budgetAdvisory: '' },
     });
+    // The dungeon job briefs fresh (never-mapped + dungeon preset ⇒ no pin),
+    // so its reply must stock a real complex; the hall job keeps the pinned
+    // single-arena path on the shared default mock. Jobs run serially —
+    // dungeon first.
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null });
     useEncounterMapQueue.getState().enqueue([
       { campaignId: campaign.id, moduleId: dungeon.moduleId, artifactId: dungeon.id, name: dungeon.name },
       { campaignId: campaign.id, moduleId: hall.moduleId, artifactId: hall.id, name: hall.name },

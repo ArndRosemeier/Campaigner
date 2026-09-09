@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, getAnyArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { saveModule } from '@/db/moduleRepo';
 import { getImage } from '@/db/imageRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
@@ -12,7 +13,7 @@ import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { encounterRunAdapters, rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine';
 import { chat } from '@/llm/openrouter';
-import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, type Artifact, type Id, type Persona } from '@/domain';
+import { createPersona, defaultSettings, newId, ruleChunkSchema, stampNewEntity, statBlockSchema, createModule, type Artifact, type Id, type Persona } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
@@ -1179,7 +1180,11 @@ describe('Encounter Cartographer run', () => {
           locationKind: 'dungeon', mapMode: 'natural', siteShape: 'single', budgetAdvisory: '',
         },
       });
-      chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      // A complex reply: this never-mapped dungeon-intent target briefs
+      // fresh, so a single-arena reply would repair instead of pausing at
+      // pick. The mode assertions below ride the stamped owner override,
+      // never the reply's room count.
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null });
       const runInput = input(campaign, cartographer, openCave.id);
       const runId = await runEngine.startRun(runInput);
       await approveUntilPick(runId, runInput);
@@ -1445,7 +1450,7 @@ describe('Encounter Cartographer run', () => {
       expect(artifact.data.fillGrade).toBe(70);
     });
 
-    it('expands a pinned one-fight roster for a complex and draws the legacy row\'s fill grade once', async () => {
+    it('briefs a never-mapped dungeon-intent target fresh: MUST clause with numbers and cap, no pin', async () => {
       const { campaign, cartographer } = await setup();
       const goblinChunkId = await seedPackBook();
       const target = await createArtifact({
@@ -1462,12 +1467,14 @@ describe('Encounter Cartographer run', () => {
         },
       });
       if (target.kind !== 'encounter') throw new Error('encounter target missing');
-      // The pinned prefix stays verbatim; three appended goblins stock the
-      // rooms the one-fight pin would have left empty.
+      // The Smith stub's one-fight roster does NOT pin the brief: the reply
+      // designs the whole population fresh (the Tomb Ogre name recurs below
+      // only because the mocked model reuses it — now source-cited like any
+      // fresh entry).
       chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         ...COMPLEX_BRIEF,
         monsters: [
-          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' },
+          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp', sourceName: 'Goblin Boss' },
           { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
           { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
           { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
@@ -1486,10 +1493,15 @@ describe('Encounter Cartographer run', () => {
       });
       const briefContent =
         chatMock.mock.calls[0]?.[0].find((message) => message.role === 'user')?.content ?? '';
-      // The expansion permission and the drawn expectation are in the prompt.
-      expect(briefContent).toContain('you MAY append more entries');
+      // The MUST-style fresh-population clause with per-room numbers and
+      // the cap — no verbatim pin, no append permission.
+      expect(briefContent).toContain('Design a complete new roster for the whole encounter');
+      expect(briefContent).toContain('(reach the per-room stocking numbers above)');
+      expect(briefContent).toContain('at most (number of rooms × the per-room expected creature-levels above)');
       expect(briefContent).toContain('fill grade is 70%');
-      expect(briefContent).toContain('Tomb Ogre');
+      expect(briefContent).not.toContain('Regeneration target roster');
+      expect(briefContent).not.toContain('you MAY append more entries');
+      expect(briefContent).not.toContain('MUST append');
 
       const candidates = await approveUntilPick(runId, runInput);
       await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
@@ -1498,12 +1510,12 @@ describe('Encounter Cartographer run', () => {
       });
       const artifact = await getArtifact(target.id);
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-      // The merged roster: the pinned entry byte-identical (identity,
-      // treasure preserved), the appended entries materialized as rulebook
-      // citations exactly like the fresh-encounter birth path.
+      // The whole fresh roster persists fully materialized through the
+      // fresh source-resolution birth path — no Smith-stub prefix survives.
       expect(artifact.data.monsters).toHaveLength(4);
-      expect(artifact.data.monsters[0]).toEqual(target.data.monsters[0]);
-      for (const index of [1, 2, 3]) {
+      expect(artifact.data.monsters[0]?.name).toBe('Tomb Ogre');
+      expect(artifact.data.monsters[0]?.treasure).toBe('Ogre pocket: 4 gp');
+      for (const index of [0, 1, 2, 3]) {
         expect(artifact.data.monsters[index]?.source).toEqual({
           type: 'rulebook',
           chunkId: goblinChunkId,
@@ -1518,9 +1530,9 @@ describe('Encounter Cartographer run', () => {
       expect(roomByName.get('Ossuary')?.monsterIndexes).toEqual([1]);
       expect(roomByName.get('Ritual Chamber')?.monsterIndexes).toEqual([2]);
       expect(roomByName.get('Sanctum')?.monsterIndexes).toEqual([3]);
-      // The layout re-stamped the shape; the legacy row drew its fill grade
-      // ONCE at the first regen that materialized a complex (draw-on-first-
-      // regen), and the under-stocked appended rooms ship a LOUD advisory.
+      // The layout stamped the shape; the first generation drew its fill
+      // grade ONCE as the complex materialized, and the under-stocked fresh
+      // rooms ship a LOUD advisory.
       expect(artifact.data.siteShape).toBe('complex');
       expect(artifact.data.fillGrade).toBe(70);
       expect(artifact.data.budgetAdvisory).toContain('ships under its expected challenge');
@@ -1550,9 +1562,11 @@ describe('Encounter Cartographer run', () => {
         },
       });
       if (target.kind !== 'encounter') throw new Error('encounter target missing');
+      // A fresh population cites its sources like any fresh birth (the
+      // Smith stub's entries no longer ride the verbatim pin).
       const briefReply = { text: JSON.stringify({
         ...COMPLEX_BRIEF,
-        monsters: roster.map((entry) => ({ name: entry.name, count: entry.count, notes: '', treasure: '' })),
+        monsters: roster.map((entry) => ({ name: entry.name, count: entry.count, notes: '', treasure: '', sourceName: 'Goblin Boss' })),
       }), modelUsed: 'test-model', fallback: null };
 
       // First regen: the legacy row draws 70 (the mocked default).
@@ -1621,7 +1635,7 @@ describe('Encounter Cartographer run', () => {
       expect(kept.data.fillGrade).toBe(40);
     });
 
-    it('rejects an over-cap expansion loudly (the bounded roster seam)', async () => {
+    it('rejects an over-cap fresh roster loudly (the bounded stocking seam)', async () => {
       const { campaign, cartographer } = await setup();
       const goblinChunkId = await seedPackBook();
       const target = await createArtifact({
@@ -1644,7 +1658,7 @@ describe('Encounter Cartographer run', () => {
       chatMock.mockResolvedValue({ text: JSON.stringify({
         ...COMPLEX_BRIEF,
         monsters: [
-          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '' },
+          { name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: '', sourceName: 'Goblin Boss' },
           { name: 'Goblin Boss', count: 10, notes: '', treasure: '', sourceName: 'Goblin Boss' },
           { name: 'Goblin Boss', count: 10, notes: '', treasure: '', sourceName: 'Goblin Boss' },
         ],
@@ -1663,7 +1677,7 @@ describe('Encounter Cartographer run', () => {
       const step = (await getRun(runId))?.steps[0];
       expect(step?.status).toBe('rejected');
       expect(rejectionIssues(step ?? { output: null })).toEqual([
-        'monsters: the expanded roster sums to 24 creature-levels — over the complex\'s stocking cap of 19.5 (the rooms\' expected shares + 2). Trim the roster so every room fits its band.',
+        'monsters: the roster sums to 24 creature-levels — over the complex\'s stocking cap of 19.5 (the rooms\' expected shares + 2). Trim the roster so every room fits its band.',
       ]);
       // Nothing persisted over the cap.
       const untouched = await getArtifact(target.id);
@@ -1846,23 +1860,24 @@ describe('Encounter Cartographer run', () => {
       expect(artifact.data.fillGrade).toBeUndefined();
     });
 
-    it('a genuine single arena on a dungeon preset keeps the dungeon prompt byte-identical', async () => {
+    it('a never-mapped single on a dungeon preset briefs a fresh dungeon population', async () => {
       const { campaign, cartographer } = await setup();
       const goblinChunkId = await seedPackBook();
       const target = await seedSingleTarget(campaign.id, goblinChunkId);
-      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
-        ...BRIEF,
-        monsters: [{ name: 'Tomb Ogre', count: 4, notes: 'keep', treasure: 'Ogre pocket: 4 gp' }],
-      }), modelUsed: 'test-model', fallback: null });
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify(COMPLEX_BRIEF), modelUsed: 'test-model', fallback: null });
       const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'dungeon' as const };
       const runId = await runEngine.startRun(runInput);
       const briefContent = await briefPrompt();
-      // The D10 bias applies verbatim: the full shipped dungeon line and the
-      // PERMISSIVE append clause (the target is not complex-shaped).
+      // The D10 complex bias still applies — but the Smith stub's one-fight
+      // roster no longer pins it: the MUST-style fresh-population clause
+      // with numbers and cap renders instead of the permissive MAY.
       expect(briefContent).toContain(
         'Preset: Dungeon — design a connected dungeon complex of 4–10 rooms (never 2–3): distinct chambers joined by corridors, with the entry room as the party\'s way in, and EACH ROOM must alone challenge the party (its own targetLevel). A complex of N rooms needs roughly one fight per room — size the roster for N fights, and every room stocks a real fight (a complex room with no creatures is a repairable defect).',
       );
-      expect(briefContent).toContain('you MAY append more entries after those to stock the complex');
+      expect(briefContent).toContain('Design a complete new roster for the whole encounter');
+      expect(briefContent).toContain('fill grade is 70%');
+      expect(briefContent).not.toContain('Regeneration target roster');
+      expect(briefContent).not.toContain('you MAY append more entries');
       expect(briefContent).not.toContain('MUST append');
       // Nothing further asserted — the run pauses at its brief as usual.
       await waitForRun(async () => {
@@ -1941,6 +1956,142 @@ describe('Encounter Cartographer run', () => {
       });
       const step = (await getRun(runId))?.steps[0];
       expect(step?.status).toBe('done');
+    });
+
+    it('rejects a single-arena reply on a never-mapped dungeon-intent target (the single-room escape)', async () => {
+      const { campaign, cartographer } = await setup();
+      const goblinChunkId = await seedPackBook();
+      const target = await seedSingleTarget(campaign.id, goblinChunkId);
+      // A single-fight reply on the unpinned brief: fully source-cited and
+      // coverage-coherent, so only the never-mapped shape gate can catch it.
+      chatMock.mockResolvedValue({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      const runInput = { ...input(campaign, cartographer, target.id), encounterPreset: 'dungeon' as const };
+      const runId = await runEngine.startRun(runInput);
+      const briefContent = await briefPrompt();
+      // The brief ran unpinned (no verbatim escape hatch).
+      expect(briefContent).not.toContain('Regeneration target roster');
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      const step = (await getRun(runId))?.steps[0];
+      expect(step?.status).toBe('rejected');
+      expect(rejectionIssues(step ?? { output: null })).toEqual([
+        'rooms: this encounter is a new dungeon (no rooms on file) — design a connected dungeon complex of 4–10 rooms, not a single arena (your reply listed 1 room)',
+      ]);
+      // Nothing ships: the stub keeps its unmapped row, no one-fight roster
+      // lands clean.
+      const untouched = await getArtifact(target.id);
+      if (untouched?.kind !== 'encounter') throw new Error('encounter missing');
+      expect(untouched.data.layout).toBeNull();
+      expect(untouched.data.monsters).toEqual(target.data.monsters);
+    });
+
+    it('carries the fixed cast through an unpinned first generation (Halvar survives with stats)', async () => {
+      const { campaign, cartographer } = await setup();
+      await seedPackBook();
+      const draft = createModule({
+        campaignId: campaign.id,
+        title: 'Sunless Module',
+        concept: 'concept',
+        levelMin: 2,
+        levelMax: 2,
+        tone: '',
+        sizeDial: 'standard',
+      });
+      const module = await saveModule({
+        ...draft,
+        spine: {
+          premise: 'Crypt premise.',
+          themes: [],
+          partPlan: [{ title: 'Descent', levelBand: '2', synopsis: '', levelUpTrigger: '' }],
+        },
+        parts: [
+          {
+            planIndex: 0,
+            markdown: 'The party enters [[Sunless Crypt]] where [[Halvar]] holds the bridge against the dead.',
+            status: 'ready',
+            errorMessage: '',
+            edited: false,
+          },
+        ],
+      });
+      const halvarStats = statBlockSchema.parse({ ...INLINE_STATBLOCK, level: '2', ac: 14, hp: 20, hpFormula: '3d8+6' });
+      await createArtifact({
+        campaignId: campaign.id,
+        moduleId: module.id,
+        kind: 'npc',
+        name: 'Halvar',
+        summary: 'A guard holding the crypt bridge.',
+        body: 'Halvar holds the bridge.',
+        links: [],
+        data: { appearance: '', personality: '', statBlock: halvarStats },
+      });
+      // The Smith stub: Halvar (fixed cast) plus one generic, one fight, no map.
+      const target = await createArtifact({
+        campaignId: campaign.id,
+        moduleId: module.id,
+        kind: 'encounter',
+        name: 'Sunless Crypt',
+        body: 'Existing prose.',
+        links: [],
+        data: {
+          difficulty: 'old', levelHint: '2',
+          monsters: [
+            { name: 'Halvar', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+            { name: 'Crypt Rat', count: 2, notes: '', treasure: '', source: { type: 'none' } },
+          ],
+          terrain: '', tactics: '', treasure: '',
+          mapImageId: null, layout: null, preset: 'standard', locationKind: 'dungeon',
+          siteShape: 'single', budgetAdvisory: '',
+        },
+      });
+      if (target.kind !== 'encounter') throw new Error('encounter target missing');
+      // The model re-adds Halvar from the fixed-cast section (stats as-is
+      // via the inline path) and stocks the remaining rooms fresh.
+      chatMock.mockResolvedValueOnce({ text: JSON.stringify({
+        ...COMPLEX_BRIEF,
+        levelHint: '2',
+        monsters: [
+          { name: 'Halvar', count: 1, notes: '', treasure: '', statBlock: halvarStats },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+          { name: 'Goblin Boss', count: 1, notes: '', treasure: '', sourceName: 'Goblin Boss' },
+        ],
+        rooms: [
+          { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], key: '', keyTreasure: '', targetLevel: 2 },
+          { name: 'Ossuary', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], key: '', keyTreasure: '', targetLevel: 2 },
+          { name: 'Ritual Chamber', description: '', size: 'large', monsterIndexes: [2], adjacentRoomIndexes: [1, 3], key: '', keyTreasure: '', targetLevel: 2 },
+          { name: 'Sanctum', description: '', size: 'large', monsterIndexes: [3], adjacentRoomIndexes: [2], key: '', keyTreasure: '', targetLevel: 2 },
+        ],
+      }), modelUsed: 'test-model', fallback: null });
+      const runInput = input(campaign, cartographer, target.id);
+      const runId = await runEngine.startRun(runInput);
+      const briefContent = await briefPrompt();
+      // Unpinned generics, pinned-by-instruction cast.
+      expect(briefContent).not.toContain('Regeneration target roster');
+      expect(briefContent).toContain('Design a complete new roster for the whole encounter');
+      expect(briefContent).toContain('Fixed cast');
+      expect(briefContent).toContain('"Halvar"');
+      expect(briefContent).toContain('MUST appear');
+
+      const candidates = await approveUntilPick(runId, runInput);
+      await runEngine.editStep(runId, await pickIndexOf(runId), { keep: [candidates[0]] }, runInput);
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('completed');
+      });
+      const artifact = await getArtifact(target.id);
+      if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
+      // Multi-room stocked roster, and Halvar survives with his stats.
+      expect(artifact.data.layout?.rooms).toHaveLength(4);
+      expect(artifact.data.siteShape).toBe('complex');
+      expect(artifact.data.monsters).toHaveLength(4);
+      const halvar = artifact.data.monsters[0];
+      if (halvar === undefined) throw new Error('Halvar missing from the roster');
+      expect(halvar.name).toBe('Halvar');
+      if (halvar.source.type !== 'inline') throw new Error('Halvar lost his inline stats');
+      expect(halvar.source.statBlock.level).toBe('2');
+      expect(halvar.source.statBlock.ac).toBe(14);
+      expect(halvar.source.statBlock.hp).toBe(20);
     });
   });
 });

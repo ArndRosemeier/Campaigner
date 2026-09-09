@@ -79,14 +79,25 @@ const ENCOUNTER_DRAFT = {
   treasure: 'none',
   locationKind: 'dungeon',
 };
-/** The Cartographer brief the mocked chat returns when a map job runs. */
+/** The Cartographer brief the mocked chat returns when a map job runs: a
+ * fresh 4-room stocking (first generation briefs fresh — one fight per
+ * room, every entry source-cited). Sized to fit any drawn fill grade at
+ * levelHint 5 (2 creature-levels per room against a ≥2.1 minimum share). */
 const CARTOGRAPHER_BRIEF = {
   // Minimum-content contract: summary/body carry substance.
   name: 'Ignored regeneration name', summary: 'Kuo-toa in flooded cellars.', body: '# The Drowned Cellars\nRoom prose.', difficulty: 'deadly', levelHint: '5',
   terrain: 'flooded cellars', tactics: '', treasure: '', theme: 'drowned cellars', styleNotes: '', negative: '',
-  monsters: [{ name: 'Kuo-toa', count: 3, notes: '', statBlock: ENCOUNTER_STATBLOCK }],
+  monsters: [
+    { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
+    { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
+    { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
+    { name: 'Kuo-toa', count: 2, notes: '', treasure: '', statBlock: ENCOUNTER_STATBLOCK },
+  ],
   rooms: [
-    { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [] },
+    { name: 'Entry', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [1], targetLevel: 5 },
+    { name: 'Flooded Hall', description: '', size: 'medium', monsterIndexes: [1], adjacentRoomIndexes: [0, 2], targetLevel: 5 },
+    { name: 'Sunken Chapel', description: '', size: 'medium', monsterIndexes: [2], adjacentRoomIndexes: [1, 3], targetLevel: 5 },
+    { name: 'Drowned Vault', description: '', size: 'medium', monsterIndexes: [3], adjacentRoomIndexes: [2], targetLevel: 5 },
   ],
   entryRoomIndex: 0,
 };
@@ -351,6 +362,10 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
     expect(mapped.data.layout).not.toBeNull();
     expect(mapped.data.mapImageId).not.toBeNull();
+    // First generation stocks the dungeon: a multi-room layout with a
+    // fresh roster (one fight per room), not the Smith stub's one fight.
+    expect(mapped.data.layout?.rooms).toHaveLength(4);
+    expect(mapped.data.monsters).toHaveLength(4);
     // The queue's run carried the encounter's own moduleId.
     const runs = await listRunsByCampaign(campaign.id);
     const mapRun = runs.find((entry) => entry.targetArtifactId === artifact.id && entry.personaId !== smith.id);

@@ -1243,6 +1243,28 @@ complexes only — a single arena keeps "a quiet room is a feature" byte-identic
   full run). Only these two automatic actions re-size a roster against the
   fill grade. The editor's fill-grade helper and the two-button copy say
   so.**
+  **AMENDED (first generation stocks like regeneration, owner-directed):
+  a never-mapped target (`layout` null — the Smith stub's one-fight roster,
+  always single-shape with row preset `'standard'` from the forge) briefs
+  like a fresh regeneration whenever the stocking contract authorizes
+  (dungeon preset or complex shape, band systems): NO verbatim pin — the
+  MUST-style fresh-population clause with per-room numbers and cap renders
+  instead of the permissive MAY — and the evaluate gate engages the
+  `freshCapped` cap on complex replies. A 1-room reply on such a target is
+  a repairable shape issue (the old single-room escape shipped one fight
+  clean through the no-lower-verdicts single path). Finalize persists the
+  whole brief roster fully materialized (the `freshPopulation` brief-step
+  marker), never prefix-merged under the stub's entries. A never-mapped
+  single (standard preset, single shape) keeps the verbatim pin
+  byte-identical, and pf2e keeps its verbatim pin (no cap to bound an
+  append). The fixed cast rides a threaded must-appear section in the
+  unpinned brief (the map brief never carried the summaries) — the
+  Cartographer re-adds fixed-cast NPCs by exact name with stats as-is via
+  the inline-statblock path. Dungeon-intent arrives through the Smith
+  draft's `locationKind` (model-classified per the draft guidance, default
+  `'other'`) or the Settings encounter-preset default — the documented
+  lever when the forge leaves a row unclassified; no forge changes in this
+  arc.**
 - **Reconcile packing (D12 semantics change)**: `reconcileRoomAssignments`
   step (2) now packs unclaimed entries by NEAREST-BAND FIT when per-room
   expectations exist — biggest-threat-first, each entry into the room whose
