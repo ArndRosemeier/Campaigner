@@ -21,7 +21,9 @@ import { toastError } from '@/lib/toast';
  * Model field (05-UI.md §Settings): free-form text input prefilled with the
  * default, plus a combobox of the account's models (fetched from /models when
  * a valid key is present). `fetchOptions` customizes the source — e.g. the
- * image-model list (07-MILESTONE-3 M3-A §Settings).
+ * image-model list (07-MILESTONE-3 M3-A §Settings). The optional class props
+ * let dense surfaces (canvas chat sidebar) size the controls up (44px touch
+ * targets) without forking the component.
  */
 export function ModelInput({
   id,
@@ -30,6 +32,8 @@ export function ModelInput({
   placeholder,
   canBrowse,
   fetchOptions,
+  inputClassName,
+  triggerClassName,
   onChange,
 }: {
   id: string;
@@ -39,6 +43,8 @@ export function ModelInput({
   canBrowse: boolean;
   /** Model ids to offer; defaults to all account models. */
   fetchOptions?: () => Promise<string[]>;
+  inputClassName?: string | undefined;
+  triggerClassName?: string | undefined;
   onChange: (value: string) => void;
 }): JSX.Element {
   const [open, setOpen] = useState(false);
@@ -63,6 +69,7 @@ export function ModelInput({
           id={id}
           value={value}
           placeholder={placeholder}
+          className={inputClassName}
           onChange={(event) => {
             onChange(event.target.value);
           }}
@@ -75,7 +82,7 @@ export function ModelInput({
           }}
         >
           <PopoverTrigger
-            className={buttonVariants({ variant: 'outline' })}
+            className={buttonVariants({ variant: 'outline', className: triggerClassName })}
             disabled={!canBrowse}
             aria-label={`Browse ${label}s`}
           >

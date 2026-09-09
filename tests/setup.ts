@@ -39,6 +39,41 @@ if (typeof Element !== 'undefined' && !('scrollIntoView' in Element.prototype)) 
   });
 }
 
+// CodeMirror 6 measures text with DOM Range.getClientRects/getBoundingClientRect
+// (editor measurement runs on requestAnimationFrame after doc updates); jsdom
+// implements neither on Range, so an rAF-scheduled measure crashes the worker
+// with an uncaught exception. An empty rect list is the honest "no layout"
+// answer — CM6 falls back to its char-size heuristics.
+if (typeof Range !== 'undefined') {
+  if (!('getClientRects' in Range.prototype)) {
+    Object.defineProperty(Range.prototype, 'getClientRects', {
+      // An empty rect list (length 0) is the honest "no layout" answer —
+      // CM6 iterates it and falls back to its char-size heuristics.
+      value: () => ({ length: 0, item: () => null }) as unknown as DOMRectList,
+      configurable: true,
+      writable: true,
+    });
+  }
+  if (!('getBoundingClientRect' in Range.prototype)) {
+    Object.defineProperty(Range.prototype, 'getBoundingClientRect', {
+      value: () =>
+        ({
+          left: 0,
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: 0,
+          height: 0,
+          x: 0,
+          y: 0,
+          toJSON: () => ({}),
+        }) as DOMRect,
+      configurable: true,
+      writable: true,
+    });
+  }
+}
+
 /**
  * Console-hygiene guard (docs/08-TESTING.md §Console guard).
  *

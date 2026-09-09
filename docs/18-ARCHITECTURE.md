@@ -173,6 +173,7 @@ column.
 | Run a canvas AI action (selection refine / whole-part rewrite) | `llm/canvasRefine.refineModuleText` — the selection triple or the full part + instruction, reply ZOD-validated at the boundary (`canvasRefineReplySchema`) + `encodingHygiene.debrisIssuesForFields` scan (loud reject, never partial-apply) + `ModuleBusyError` for ONE-generation-per-module (registry claimed synchronously at entry + the row's `generating` status) + abort signal (a user stop is not an error) | a private chat client; silent repair; queueing a busy module; a second module-busy mechanism |
 | Render + decide canvas proposals | `features/modules/canvas/suggestions.ts` — a CM6 StateField of suggestions rendered as DECORATIONS that never mutate the doc; span = struck original + ghost + inline Accept/Reject (disabled while streaming); whole-part = full-doc-range proposal rendered NO-DIFF (block replace widget, Show previous toggle); typing INSIDE a proposal invalidates it loudly (page toast), edge edits re-map (pure `suggestionSurvives`); Accept = ONE dispatch + `isolateHistory:'full'` (one undo unit); streaming effects ride `Transaction.addToHistory.of(false)`; Mod-y/Mod-u accept/reject at the cursor | writing proposals into the doc before acceptance; a diff view; a second undo convention; accepting a half-streamed replacement |
 | Append canvas version history | `features/modules/canvas/canvasStore.useCanvasLedgerStore` — per-part append-only `{seq, markdown, origin 'user'\|'ai', label, createdAt}`; every accepted AI action AND manual canvas save appends; **Restore = propose-through-the-same-accept path** (rides undo + the save path) | persisting the ledger; a second part-text write path; restoring by direct row write |
+| Run a canvas CHAT turn (LLM co-authoring via XML edit commands) | `llm/canvasChat.sendCanvasChatMessage` — reply = prose + `<edit all="…"><search>…</search><replace>…</replace></edit>` blocks parsed by the STRICT extractor (`parseCanvasChatReply`, balanced scan; malformed/unbalanced/>40 commands = `CanvasChatParseError`, whole reply failed) + zod `canvasEditCommandSchema`; tolerant ladder `resolveCanvasEdit` (exact → case → whitespace-collapse; zero matches return the closest candidate, never an auto-apply — aider lineage, ledger 50); claims the SHARED `llm/canvasBusy` registry (chat + refine serialize, `ModuleBusyError` loud). Application is `features/modules/canvas/chatApply.ts` (ONE CM6 transaction per command, NORMAL history — one undo step per command) and the flow is `chatController.runChatTurn` (streams prose only; commands apply AFTER the reply; report-to-LLM via `composeFailureReport`); state is the session-only `chatStore` keyed per part; applied batches land through `partText.saveModulePartText` | a private chat transport; `responseFormat` on the chat call (prose+XML is deliberately not a JSON contract); regex-guessed block extraction; a fuzzy auto-apply on zero matches; `addToHistory:false` on applied commands (undo must revert chat edits); persisting chat state; a second module-busy registry; chat writing the row directly |
 
 ## 3. Cross-cutting conventions (pointers, not restatements)
 
@@ -338,6 +339,16 @@ column.
   loud guard exists for exactly that); the row always holds a complete,
   un-proposed text. Do not invent persistence for the ledger, and do not
   "fix" the scope guard — it is the documented price of session staging.
+- **The chat context is the doc AS OF SEND, and every request says so.**
+  Canvas chat NEVER caches the document across turns: the payload re-reads
+  the CM6 doc at send time and the system prompt states that it is the
+  CURRENT state including all previously applied edits. Caching an initial
+  copy (or letting older user turns re-send stale `<document>` blocks) makes
+  the model re-edit text that no longer exists — the exact failure the
+  contract exists to prevent. Commands resolve against the doc AT APPLY time
+  (re-resolved per command, so earlier commands in one reply never shift
+  later ranges). Chat state (messages/outcomes/model selection) is
+  session-only and dies on reload — same price as the ledger.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 

@@ -776,6 +776,93 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   demands an explicit "Discard and switch" confirm — session staging dies on
   reload AND on part switch; the saved row is never touched by either.
 
+### Module canvas chat (v2 — LLM co-authoring via XML edit commands)
+
+Owner direction: "a real chat where the LLM can make targeted edits", XML for
+commands (fewer problems in owner experience). A collapsible wide LEFT
+sidebar (`w-96`, `canvas/ChatSidebar.tsx`) beside the editor; every chat
+control is a 44px touch target (iPad-proportioned). Protocol + engine in
+`src/llm/canvasChat.ts`; application in `canvas/chatApply.ts`; flow in
+`canvas/chatController.ts`; state in `canvas/chatStore.ts`. Decision ledger
+row 50.
+
+- **Protocol**: the assistant replies with short prose plus ZERO OR MORE XML
+  command blocks — `<edit all="false"><search>…</search><replace>…</replace></edit>`
+  (`all="true"` = replace-all; default exactly one match). XML over JSON:
+  nested multi-line prose bodies need no escape dance. This is the deliberate
+  deviation from canvasRefine's strict-JSON-schema reply — prose+XML is not a
+  JSON shape, so NO `responseFormat` rides the call; validation is the strict
+  extractor + zod (`canvasEditCommandSchema`) at the boundary.
+- **Strict extractor** (`parseCanvasChatReply`): a balanced left-to-right scan
+  — no regex-guessing across boundaries. A stray `</edit>`, an unterminated
+  block, missing/duplicated children, unexpected content inside a block, an
+  unknown attribute, or more than 40 commands per reply throws
+  `CanvasChatParseError`: the WHOLE reply is marked failed with an error card
+  (loud, AGENTS 1/3) — nothing partial is ever applied. Search/replace bodies
+  are taken VERBATIM (no entity decoding). `chatProseSoFar` is the
+  best-effort DISPLAY splitter for streaming (hides forming blocks, never
+  throws, never applies).
+- **Tolerant match ladder** (`resolveCanvasEdit`, pure): the search resolves
+  against the CURRENT doc at apply time — (1) exact bytes, (2)
+  case-insensitive (index-safe fold), (3) whitespace-collapsed (runs of
+  whitespace ≡ one space, normalized spans mapped back to exact original
+  offsets). Lineage: aider's `replace_most_similar_chunk` ladder; aider's
+  fuzzy AUTO-APPLY branch stays dead (as upstream) — a zero match FAILS with
+  the closest candidate snippet (bigram-similarity line-window scan, aider's
+  `find_similar_lines` reporting role) instead of guessing. Curly/straight
+  quote folding is NOT included: the canvas editor has no prior fuzzy text
+  matcher to reuse (chips + suggestions are range-based), so the ladder IS
+  the matcher — documented deviation. Exactly one match → apply; multiple
+  matches → apply ONLY with `all="true"`, else a failed card ("N matches —
+  add surrounding context or set all"); zero matches → failed card with the
+  candidate.
+- **Apply semantics** (`chatApply.ts`): each applied command is ONE CM6
+  transaction with NORMAL history — chat applies are NOT
+  `addToHistory: false`; the user can undo the AI's edits ONE command at a
+  time (a replace-all's ranges ride that one transaction = one undo step).
+  Each command renders as an OUTCOME CARD in the flow: applied (occurrence
+  count + mini before→after: the ACTUAL replaced doc text vs the replace) or
+  failed (reason + closest candidate + **Report to LLM**). The
+  encoding-hygiene debris scan runs per command's replace text (loud failed
+  card, canvasRefine parity).
+- **Report-to-LLM loop** (first-class): the button composes a user turn —
+  the error, the failed command verbatim, and the current text around the
+  failure point (`composeFailureReport`, ±300 chars) — and sends it through
+  the normal send path (aider's "N SEARCH/REPLACE blocks failed to match! …
+  Did you mean…" retry loop). One-shot per failure (button flips to
+  "Reported").
+- **Context contract** (load-bearing): EVERY request re-reads the document
+  from the CM6 view AT SEND TIME — never a cached or initial copy — and the
+  system prompt states explicitly that the document is the CURRENT state
+  including all previously applied edits (never repeat an applied edit; use
+  `all="true"` when repetition is intended; prefer small targeted edits).
+  History rides as the last 12 messages (`MAX_CONTEXT_MESSAGES`); older user
+  turns are re-rendered instruction-only (stale doc blocks stripped), a
+  system note counts the omissions — the documented v1 trim policy (a note,
+  not an LLM summary). Assistant history entries keep their raw replies so
+  the model sees its own commands.
+- **Model**: the Settings `ModelInput` component reused in the sidebar;
+  default = the Settings `defaultChatModel`, the selection is session-only
+  canvas state keyed per part (Board staging precedent), persisted nowhere;
+  the Settings gates ride the transport unchanged (fallback escalation
+  chain, language directive, reasoning effort; temperature 0.4).
+- **Streaming**: prose streams into the bubble (rAF-coalesced, suggestion
+  ghost precedent); commands parse + apply ONLY after the reply completes —
+  no mid-stream XML application in v1. Aborting mid-stream marks the partial
+  reply `aborted` LOUDLY (card: "Stopped — nothing was applied"); no
+  commands apply, nothing saves.
+- **State**: session-only zustand keyed per open part
+  (`{messages, outcomes, modelSelection}`, `canvasChatKey(moduleId#planIndex)`) —
+  dies on reload AND resets on module change; the DOC is the truth and
+  persistence rides the canvas's existing save seam (applied batches land
+  through `saveModulePartText` → `edited: true` + promote scan, ledger entry
+  `Chat: …`); the chat never writes the row directly.
+- **Serialization**: chat and refine share the `llm/canvasBusy` registry
+  (extracted from canvasRefine) — ONE generation per module across every
+  canvas surface; `ModuleBusyError` surfaces as a failed card AND the
+  caller's toast, never queued. While a proposal is pending, a refine is in
+  flight, or the module generates, the chat send is disabled.
+
 ---
 
 ## M4-D — Integration & retirement

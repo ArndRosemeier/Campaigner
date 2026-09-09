@@ -8,6 +8,8 @@ import {
   HistoryIcon,
   LoaderCircleIcon,
   NotebookPenIcon,
+  PanelLeftCloseIcon,
+  PanelLeftOpenIcon,
   SaveIcon,
   TriangleAlertIcon,
   WandSparklesIcon,
@@ -54,6 +56,8 @@ import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { useModule } from '@/features/modules/hooks';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
+import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
+import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import {
   resolveCanvasScope,
   scopeKey,
@@ -97,6 +101,11 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * the NEW text as-is (no-diff, Board precedent) with Show previous / Apply /
  * Discard. Acceptance IS persistence (save path + session version ledger);
  * the ledger dies on reload by design.
+ *
+ * Chat co-editor (canvasChat contract): a collapsible wide LEFT sidebar —
+ * the LLM answers prose + XML edit commands that are applied to the doc as
+ * ONE-transaction-per-command edits (normal undo), persisted through the
+ * same save path. Chat state is session-only, keyed per part.
  */
 
 const EMPTY_VERSIONS: readonly CanvasVersionEntry[] = [];
@@ -129,9 +138,11 @@ export function CanvasPage(): JSX.Element {
   );
 
   // Session version ledger: dies on reload by design (Board staging
-  // precedent) and resets when the canvas's module changes.
+  // precedent) and resets when the canvas's module changes. The chat
+  // store resets with it (its keys embed the module id).
   useEffect(() => {
     useCanvasLedgerStore.getState().resetFor(moduleId);
+    useCanvasChatStore.getState().resetFor(moduleId);
   }, [moduleId]);
 
   // Part text lives in the EDITOR (the doc string is the truth); the page
@@ -164,6 +175,11 @@ export function CanvasPage(): JSX.Element {
   // reading it from the view during render would use a stale closure (the
   // dispatch never re-renders React by itself).
   const [showPrevious, setShowPrevious] = useState(false);
+
+  // Chat sidebar visibility — session-only, keyed per open part (Board
+  // staging precedent; dies on reload). The premise uses a synthetic key.
+  const chatKey = canvasChatKey(moduleId, scope.kind === 'part' ? scope.planIndex : -1);
+  const chatOpen = useCanvasChatStore((store) => store.byPart[chatKey]?.open ?? false);
 
   const ledgerKey =
     scope.kind === 'part' ? canvasLedgerKey(moduleId, scope.planIndex) : '';
@@ -418,6 +434,18 @@ export function CanvasPage(): JSX.Element {
       <header className="flex flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
         <Button
           variant="ghost"
+          size="icon"
+          className="size-11"
+          aria-label={chatOpen ? 'Close chat sidebar' : 'Open chat sidebar'}
+          data-testid="canvas-chat-toggle"
+          onClick={() => {
+            useCanvasChatStore.getState().setOpen(chatKey, !chatOpen);
+          }}
+        >
+          {chatOpen ? <PanelLeftCloseIcon aria-hidden /> : <PanelLeftOpenIcon aria-hidden />}
+        </Button>
+        <Button
+          variant="ghost"
           size="xs"
           render={<Link to={modulePath(campaignId, moduleId)} />}
           nativeButton={false}
@@ -577,117 +605,129 @@ export function CanvasPage(): JSX.Element {
         </div>
       </header>
 
-      {scope.kind === 'premise' ? (
-        <div className="min-h-0 flex-1 overflow-y-auto p-6">
-          <div className="mx-auto max-w-3xl">
-            <p
-              className="mb-4 flex items-center gap-2 rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
-              data-testid="canvas-premise-notice"
-            >
-              <TriangleAlertIcon aria-hidden className="size-4 shrink-0" />
-              The premise is read-only in canvas v1 — it is generated with the spine. Switch to a
-              part to co-author its markdown.
-            </p>
-            <article className="prose-module" data-testid="canvas-premise-body">
-              <WikiMarkdown
-                value={currentModule.spine.premise}
+      <div className="flex min-h-0 flex-1 overflow-hidden">
+        {chatOpen && (
+          <ChatSidebar
+            moduleId={currentModule.id}
+            scope={scope.kind === 'part' ? scope : { kind: 'premise' }}
+            pool={pool}
+            aiBusy={aiBlocked}
+          />
+        )}
+        <div className="flex min-h-0 flex-1 flex-col">
+          {scope.kind === 'premise' ? (
+            <div className="min-h-0 flex-1 overflow-y-auto p-6">
+              <div className="mx-auto max-w-3xl">
+                <p
+                  className="mb-4 flex items-center gap-2 rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
+                  data-testid="canvas-premise-notice"
+                >
+                  <TriangleAlertIcon aria-hidden className="size-4 shrink-0" />
+                  The premise is read-only in canvas v1 — it is generated with the spine. Switch to a
+                  part to co-author its markdown.
+                </p>
+                <article className="prose-module" data-testid="canvas-premise-body">
+                  <WikiMarkdown
+                    value={currentModule.spine.premise}
+                    artifacts={pool}
+                    moduleId={currentModule.id}
+                  />
+                </article>
+              </div>
+            </div>
+          ) : (
+            <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
+              <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">
+                  {plans.find((plan) => plan.planIndex === scope.planIndex)?.title ??
+                    `Part ${String(scope.planIndex + 1)}`}
+                </span>
+                <span>
+                  Levels {plans.find((plan) => plan.planIndex === scope.planIndex)?.levelBand ?? '?'}
+                </span>
+                {part?.edited === true && <Badge variant="outline">edited</Badge>}
+                {wholeProposal !== undefined && (
+                  <span
+                    className="ml-auto flex items-center gap-1.5"
+                    data-testid="canvas-proposal-bar"
+                    data-streaming={refineInFlight ? 'true' : 'false'}
+                  >
+                    {refineInFlight && (
+                      <>
+                        <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin" />
+                        <span>Proposing…</span>
+                      </>
+                    )}
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      data-testid="canvas-show-previous"
+                      onClick={() => {
+                        const view = activeCanvasView.current;
+                        if (view === null) return;
+                        const next = !view.state.field(canvasShowPreviousField);
+                        view.dispatch({
+                          effects: setShowPreviousEffect.of(next),
+                          annotations: Transaction.addToHistory.of(false),
+                        });
+                        setShowPrevious(next);
+                      }}
+                    >
+                      {showPrevious ? 'Show proposed' : 'Show previous'}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="xs"
+                      disabled={refineInFlight}
+                      data-testid="canvas-proposal-apply"
+                      onClick={() => {
+                        const view = activeCanvasView.current;
+                        if (view === null) return;
+                        acceptSuggestion(view, wholeProposal.id);
+                      }}
+                    >
+                      Apply
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      disabled={refineInFlight}
+                      data-testid="canvas-proposal-discard"
+                      onClick={() => {
+                        const view = activeCanvasView.current;
+                        if (view === null) return;
+                        rejectSuggestion(view, wholeProposal.id);
+                        proposalsRef.current.delete(wholeProposal.id);
+                        syncSuggestions();
+                      }}
+                    >
+                      Discard
+                    </Button>
+                  </span>
+                )}
+              </div>
+              <CanvasEditor
+                key={scopeKey(scope)}
+                initialMarkdown={partMarkdown}
                 artifacts={pool}
                 moduleId={currentModule.id}
+                onChange={setDocText}
+                onSuggestionAccepted={(id) => {
+                  void handleSuggestionAccepted(id);
+                }}
+                onSuggestionInvalidated={() => {
+                  toastError(
+                    'Suggestion discarded — the text was edited inside the proposed range',
+                    new Error('a pending proposal was invalidated by an edit inside its range'),
+                  );
+                  syncSuggestions();
+                }}
+                onSuggestionsChanged={syncSuggestions}
               />
-            </article>
-          </div>
+            </div>
+          )}
         </div>
-      ) : (
-        <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <span className="font-medium text-foreground">
-              {plans.find((plan) => plan.planIndex === scope.planIndex)?.title ??
-                `Part ${String(scope.planIndex + 1)}`}
-            </span>
-            <span>
-              Levels {plans.find((plan) => plan.planIndex === scope.planIndex)?.levelBand ?? '?'}
-            </span>
-            {part?.edited === true && <Badge variant="outline">edited</Badge>}
-            {wholeProposal !== undefined && (
-              <span
-                className="ml-auto flex items-center gap-1.5"
-                data-testid="canvas-proposal-bar"
-                data-streaming={refineInFlight ? 'true' : 'false'}
-              >
-                {refineInFlight && (
-                  <>
-                    <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin" />
-                    <span>Proposing…</span>
-                  </>
-                )}
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  data-testid="canvas-show-previous"
-                  onClick={() => {
-                    const view = activeCanvasView.current;
-                    if (view === null) return;
-                    const next = !view.state.field(canvasShowPreviousField);
-                    view.dispatch({
-                      effects: setShowPreviousEffect.of(next),
-                      annotations: Transaction.addToHistory.of(false),
-                    });
-                    setShowPrevious(next);
-                  }}
-                >
-                  {showPrevious ? 'Show proposed' : 'Show previous'}
-                </Button>
-                <Button
-                  variant="outline"
-                  size="xs"
-                  disabled={refineInFlight}
-                  data-testid="canvas-proposal-apply"
-                  onClick={() => {
-                    const view = activeCanvasView.current;
-                    if (view === null) return;
-                    acceptSuggestion(view, wholeProposal.id);
-                  }}
-                >
-                  Apply
-                </Button>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  disabled={refineInFlight}
-                  data-testid="canvas-proposal-discard"
-                  onClick={() => {
-                    const view = activeCanvasView.current;
-                    if (view === null) return;
-                    rejectSuggestion(view, wholeProposal.id);
-                    proposalsRef.current.delete(wholeProposal.id);
-                    syncSuggestions();
-                  }}
-                >
-                  Discard
-                </Button>
-              </span>
-            )}
-          </div>
-          <CanvasEditor
-            key={scopeKey(scope)}
-            initialMarkdown={partMarkdown}
-            artifacts={pool}
-            moduleId={currentModule.id}
-            onChange={setDocText}
-            onSuggestionAccepted={(id) => {
-              void handleSuggestionAccepted(id);
-            }}
-            onSuggestionInvalidated={() => {
-              toastError(
-                'Suggestion discarded — the text was edited inside the proposed range',
-                new Error('a pending proposal was invalidated by an edit inside its range'),
-              );
-              syncSuggestions();
-            }}
-            onSuggestionsChanged={syncSuggestions}
-          />
-        </div>
-      )}
+      </div>
 
       <Dialog
         open={instructionTarget !== null}

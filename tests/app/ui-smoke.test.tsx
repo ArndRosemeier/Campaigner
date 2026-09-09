@@ -317,6 +317,13 @@ describe('route smoke sweep', () => {
     expect(await screen.findByTestId('module-canvas', {}, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.getByTestId('canvas-part-select')).toBeInTheDocument();
     expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
+    // Chat co-editor: collapsed by default; the toggle opens the sidebar.
+    await waitFor(() => {
+      expect(screen.getByTestId('canvas-chat-toggle')).not.toBeDisabled();
+    });
+    fireEvent.click(screen.getByTestId('canvas-chat-toggle'));
+    expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    expect(screen.getByLabelText('Chat model')).toBeInTheDocument();
   });
 
   it('retired play route falls through to 404', async () => {
