@@ -691,9 +691,9 @@ own group.
 
 ---
 
-## Module canvas (v1 — document co-authoring for ONE part)
+## Module canvas (v3 — document co-authoring for the WHOLE module)
 
-ChatGPT-canvas-style co-authoring for one module part at
+ChatGPT-canvas-style co-authoring for the whole module in ONE document at
 `/c/:campaignId/m/:moduleId/canvas` (the route name the Board rename freed),
 entered from the reader header (**Canvas**, beside **Board**) and the modules
 list row. Screen text is docs/05 §Module canvas; implementation in
@@ -706,15 +706,29 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   and tables by construction; there is NO parse→serialize round-trip
   anywhere. WYSIWYG canvases were rejected on license AND fidelity grounds
   (decision ledger 48).
-- **ONE part at a time**: the header selector lists the premise (READ-ONLY
-  in v1 — no part-text write path exists for it; it renders through the
-  shared `WikiMarkdown`) and every planned part from the
-  `spine.partPlan × parts` JOIN — title/band from the plan, body/edited from
-  the part, a not-yet-generated part opens as an empty document and saves
-  create it (`patchModulePartText` upserts). Deep links:
-  `?part=<planIndex|premise>` written by `canvasPath`, the reader's
-  `#part-<n>` hash honored on load; resolution + fallback in
-  `canvas/canvasScope.ts` (one parse site).
+- **ONE document for the whole module — no part selector** (v3, ledger 53):
+  the editor doc is assembled by the shared `assembleModulePartsDocument`
+  (pure, `src/domain/modulePartsDocument.ts` — the SAME format the chat sees:
+  every planned part in `spine.partPlan` order, the spine premise EXCLUDED,
+  each section introduced by its `[Part <n> of <total> — <title>]` label line
+  and separated by a blank line + exactly ten `=` + a blank line). A
+  not-yet-written part opens as a labeled empty section. The doc is assembled
+  ONCE per module mount — never re-assembled mid-session (that would clobber
+  unsaved edits). The scaffold lines are ordinary editable text while
+  editing; they are validated only at the boundaries that need the split
+  (save, chat send, proposal ranges) by the shared INVERSE
+  `splitPartsDocument`/`splitModulePartsDocument`, which FAIL LOUDLY (typed
+  `ModulePartsDocumentError` naming the offending line/section) on a
+  missing/malformed/duplicated separator or label, a section count that does
+  not match the plan, or a lying label — never silent re-splitting. A bare
+  `==========` line inside part CONTENT is harmless (the label line is what
+  identifies a section start); content faking a full section header fails the
+  split loudly. Deep links are SCROLL targets, not scope: `?part=<planIndex|
+  premise>` written by `canvasPath`, the reader's `#part-<n>` hash honored on
+  load; resolution in `canvas/canvasScope.ts` (still the one parse site).
+  Preview round-trips are safe: returning from the preview remounts the
+  editor from the toggle-time snapshot, never from the pristine assemble
+  (which would silently discard unsaved edits).
 - **Wiki chips are marks, not React**: a CM6 ViewPlugin over the visible
   ranges decorates each `[[token]]` with the `WikiMarkdown` palette resolved
   against the READER pool (campaign + global) with the module's tier-0
@@ -741,11 +755,17 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   NEVER pollute undo. Mod-y / Mod-u accept/reject the proposal at the cursor
   (the marimo keymaps). Block decorations are computed from the state fields
   via a facet — CM6 forbids block widgets from view plugins.
-- **AI actions run the `canvasRefine` contract** (`src/llm/canvasRefine.ts`):
-  **Refine selection** grounds the model with the selection triple (full
-  part markdown, enclosing block, selected text) + instruction and returns
-  ONE span replacement; **Rewrite part** returns the COMPLETE part markdown
-  (no H1). Both prompt the `[[wiki-link]]` token semantics (canonical
+- **AI actions — the cursor plays no role** (v3, ledger 53, owner-directed;
+  the `canvasRefine` contract in `src/llm/canvasRefine.ts`):
+  **Refine selection** works on an explicit text SELECTION over the whole
+  doc and grounds the model with the SELECTED RANGE (+ enclosing block) and
+  the instruction — the full part text is never ambient context — returning
+  ONE span replacement; **Rewrite part** works on an explicitly PICKED part
+  (a dialog picker listing the plan; the confirm stays disabled until a part
+  is picked — the editor selection is not consulted) and grounds the model
+  with that part's current text, returning the COMPLETE part markdown (no
+  H1); the proposal is a block replace over THAT part's section range
+  (the whole-part machinery below). Both prompt the `[[wiki-link]]` token semantics (canonical
   spellings, never inflect inside the token, `[[Name|display]]` for surface
   differences). The reply is ZOD-validated at the boundary and scanned for
   escape debris — a failure throws loud, never partial-apply. Settings
@@ -762,19 +782,27 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   never queued. Stop rides the caller's abort signal (a user stop is not an
   error: the overlay simply drops). While a whole-part proposal is pending
   or a refine is in flight, the other AI actions are disabled.
-- **Acceptance IS persistence**: the accept dispatch already replaced the
-  doc (one undo unit), so the page lands the resulting text through THE one
-  part-text save path (`saveModulePartText` → `edited: true`, promote scan)
-  and appends the session version ledger `{seq, markdown, origin 'user'|'ai',
-  label, createdAt}` (`canvas/canvasStore.ts` — zustand, SESSION-ONLY, dies
-  on reload; resets when the canvas's module changes). Manual **Save part**
-  appends an origin-'user' entry too. **Restore** re-proposes an older
-  version as a whole-part suggestion — it rides undo and the save path like
-  any proposal; there is no side-door write. A failed save toasts loudly and
-  leaves the editor text (Save part retries).
-- **Scope guard**: switching parts with a pending proposal OR unsaved edits
-  demands an explicit "Discard and switch" confirm — session staging dies on
-  reload AND on part switch; the saved row is never touched by either.
+- **Acceptance IS persistence through the split-save** (v3, ledger 53): the
+  accept dispatch already replaced the doc (one undo unit), so the page
+  lands the result through `saveWholeModuleDocument`
+  (`canvas/saveDoc.ts`) — the doc is split and ONLY the parts whose text
+  changed vs the module row land through THE one part-text save path
+  (`saveModulePartText` → `edited: true`, promote scan), each with its
+  per-part session-ledger entry (`canvas/canvasStore.ts` — zustand,
+  SESSION-ONLY, dies on reload; resets when the canvas's module changes).
+  Manual **Save** is the same one action (origin-'user' entries per changed
+  part; an unchanged empty section saves nothing). A failed part save toasts
+  loudly NAMING the part while the remaining parts still land (the return
+  value reports exactly what persisted); a doc whose scaffolding no longer
+  parses fails the save loudly with the splitter's reason and the editor
+  keeps its text. **Restore** re-proposes an older per-part version as a
+  block replace over THAT part's current section range — it rides undo and
+  the split-save like any proposal; there is no side-door write.
+- **Leave guard, not scope guard** (v3): leaving the page with unsaved edits
+  or a pending proposal demands the explicit discard confirm — session
+  staging dies on reload AND on leave; the saved row is never touched by
+  either. Same-page deep links and the preview toggle are not navigation
+  away: they never guard (the doc is one document).
 
 ### Module canvas chat (v2 — LLM co-authoring via XML edit commands)
 
@@ -824,22 +852,22 @@ rows 50 and 51.
   matches — add surrounding context or set all"); zero matches → failed card
   with the candidate.
 - **Whole-module parts document** (context contract, load-bearing): EVERY
-  request re-assembles the document from the module ROW AT SEND TIME —
-  never a cached copy — every planned part in `spine.partPlan` order, part
-  text joined from `parts` by planIndex (missing/empty part = empty
-  section). The spine premise is EXCLUDED (owner: "without premise"). The
-  OPEN part's text is substituted from the live CM6 doc byte-exactly (no
-  trimming), so unsaved hand edits ride along and resolved offsets map 1:1
-  onto the editor doc. Pure assembly: `assembleModulePartsDocument` returns
-  the document AND the per-part snapshot it sent (`{planIndex, title, text}[]`)
-  — application matches EXACTLY the text the model saw. **Delimiter + label
-  spec**: sections are separated by a blank line + a line of exactly ten `=`
-  characters (`==========`) + a blank line, and every section OPENS with the
-  scaffold label line `[Part <n> of <total> — <title>]` (n = 1-based
-  position in the plan; no usable title → `[Part <n> of <total>]`). That
-  scaffolding is never content: the prompt forbids separators/label lines
-  inside any search/replace and forbids editing across a separator (one
-  command lives inside ONE part). **Empty-part label-anchor convention**:
+  request carries the CURRENT document — v3: the LIVE whole-document canvas
+  editor doc passed by the page at send time (the doc IS the whole module,
+  so unsaved edits in EVERY part ride along; never a cached copy, never a
+  row re-assembly). The per-part snapshot the model saw comes from the
+  SHARED `splitModulePartsDocument` (domain) applied to that SAME doc, so
+  application matches EXACTLY the text the model saw — a doc whose
+  scaffolding no longer parses fails the send loudly with the splitter's
+  reason. Every planned part in `spine.partPlan` order (missing/empty part
+  = empty section); the spine premise is EXCLUDED (owner: "without
+  premise"). **Delimiter + label spec**: sections are separated by a blank
+  line + a line of exactly ten `=` characters (`==========`) + a blank
+  line, and every section OPENS with the scaffold label line `[Part <n> of
+  <total> — <title>]` (n = 1-based position in the plan; no usable title →
+  `[Part <n> of <total>]`). That scaffolding is never content: the prompt
+  forbids separators/label lines inside any search/replace and forbids
+  editing across a separator (one command lives inside ONE part). **Empty-part label-anchor convention**:
   an empty (not-yet-written) part's label line is its only anchor — a
   command whose search EXACTLY equals an empty part's label line fills that
   part; the replace must START with the same label line and the part text
@@ -860,31 +888,29 @@ rows 50 and 51.
   emit commands against; commands apply to the current module's parts
   document only.
 - **Apply semantics** (`chatApply.applyChatCommandsAcrossParts`): commands
-  resolve per part against each part's CURRENT text at apply time (the open
-  part's is the live view doc — earlier commands in one reply never shift
-  later ranges). **Open part**: each command is ONE CM6 transaction with
-  NORMAL history — chat applies are NOT `addToHistory: false`; the user can
-  undo the AI's edits ONE command at a time (a replace-all's ranges ride
-  that one transaction = one undo step). **Other parts**: there is no editor
-  holding them — the new part text is computed by splicing the resolved
-  ranges and SAVED FIRST through `saveModulePartText(moduleId, planIndex,
-  text)` (the one save path, `edited: true`, promote scan) before its
-  outcomes render applied; a failed save is a LOUD failed outcome card ("the
-  edit did not land") plus `toastError` naming the part — never a silent
-  drop. Each command renders as OUTCOME CARDS (one per part application,
-  plus one per failure), each naming its target part (planIndex + title):
-  applied (occurrence count + mini before→after: the ACTUAL replaced text vs
-  the replace) or failed (reason + closest candidate + **Report to LLM**).
-  The encoding-hygiene debris scan runs per command's replace text (loud
-  failed card, canvasRefine parity).
+  resolve per part against each part's CURRENT text at apply time
+  (re-resolved per command against the live doc — earlier commands in one
+  reply never shift later ranges). The editor holds the whole module, so
+  EVERY command lands as ONE CM6 transaction with NORMAL history — chat
+  applies are NOT `addToHistory: false`; the user can undo the AI's edits
+  ONE command at a time (a replace-all's ranges ride that one transaction
+  = one undo step). The batch persists afterwards through the split-save
+  (only the parts whose text changed hit the row); a failed part save flips
+  that part's outcomes to LOUD failed cards ("the edit did not land") plus
+  `toastError` naming the part — never a silent drop. Each command renders
+  as OUTCOME CARDS (one per part application, plus one per failure), each
+  naming its target part (planIndex + title): applied (occurrence count +
+  mini before→after: the ACTUAL replaced text vs the replace) or failed
+  (reason + closest candidate + **Report to LLM**). The encoding-hygiene
+  debris scan runs per command's replace text (loud failed card,
+  canvasRefine parity).
 - **Report-to-LLM loop** (first-class): the button composes a user turn —
   the error, the failed command verbatim, and the current text around the
   failure point (`composeFailureReport`, ±300 chars) — where the excerpt
-  comes from the TARGET part's CURRENT text (the open part's live view doc;
-  other parts re-read the row at report time) — and sends it through
-  the normal send path (aider's "N SEARCH/REPLACE blocks failed to match! …
-  Did you mean…" retry loop). One-shot per failure (button flips to
-  "Reported").
+  comes from the TARGET part's CURRENT text in the live editor doc — and
+  sends it through the normal send path (aider's "N SEARCH/REPLACE blocks
+  failed to match! … Did you mean…" retry loop). One-shot per failure
+  (button flips to "Reported").
 - **Context history**: the last 12 messages (`MAX_CONTEXT_MESSAGES`); older
   user turns are re-rendered instruction-only (stale doc blocks stripped), a
   system note counts the omissions — the documented v1 trim policy (a note,
@@ -903,11 +929,11 @@ rows 50 and 51.
   commands apply, nothing saves.
 - **State**: session-only zustand keyed per MODULE
   (`{messages, outcomes, modelSelection}`, `canvasChatKey(moduleId)` — no
-  part component: ONE conversation per module, switching the open part in
-  the editor keeps it) — dies on reload AND resets on module change; the
-  DOC is the truth and persistence rides the canvas's existing save seam
-  (`saveModulePartText` → `edited: true` + promote scan, ledger entry
-  `Chat: …` per changed part); the chat never writes the row directly.
+  part component: ONE conversation per module) — dies on reload AND resets
+  on module change; the DOC is the truth and persistence rides the canvas's
+  split-save (`saveWholeModuleDocument` → `edited: true` + promote scan,
+  ledger entry `Chat: …` per changed part); the chat never writes the row
+  directly.
 - **Pre-flight**: a module with no planned parts (no spine/partPlan) fails
   LOUDLY before anything sends ("no parts to chat about — generate the
   module first" — controller pre-flight toast + the engine's send-time
