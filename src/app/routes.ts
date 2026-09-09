@@ -21,7 +21,8 @@ export const ROUTES = {
   /** Whole-module board for one module (08 §Module board) — the module's
    * spatial overview. */
   board: '/c/:campaignId/m/:moduleId/board',
-  /** Document co-authoring canvas for ONE module part (08 §Module canvas). */
+  /** Document co-authoring canvas for ONE module (whole-module document,
+   * 08 §Module canvas). */
   canvas: '/c/:campaignId/m/:moduleId/canvas',
   /** Deliverable builder for module PDFs (M3-D). */
   deliverables: '/c/:campaignId/deliverables',
@@ -72,21 +73,22 @@ export function boardPath(
 }
 
 /**
- * The canvas part selector target: a part's `planIndex`, or `'premise'` for
- * the spine premise (read-only scope in canvas v1).
+ * The canvas deep-link scroll target: a part's `planIndex`, or `'premise'`
+ * for a scroll to the top (canvas v3 — `?part=` is a SCROLL target on the
+ * whole-module document, not a scope).
  */
 export type CanvasPartParam = number | 'premise';
 
-/** Serializes the part selector target for the `?part=` query parameter. */
+/** Serializes the canvas scroll target for the `?part=` query parameter. */
 export function canvasPartParam(part: CanvasPartParam): string {
   return part === 'premise' ? 'premise' : String(part);
 }
 
 /**
- * Path of the per-part document canvas (08 §Module canvas). An optional
+ * Path of the whole-module document canvas (08 §Module canvas). An optional
  * part target becomes a `?part=<planIndex|premise>` query parameter the
- * page opens on (`#part-<n>` hashes are honored on load too — the reader's
- * deep-link convention).
+ * page SCROLLS to (the editor doc is the whole module; `#part-<n>` hashes
+ * are honored the same way — the reader's deep-link convention).
  */
 export function canvasPath(
   campaignId: string,

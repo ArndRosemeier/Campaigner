@@ -1,6 +1,7 @@
 import type { EditorView } from '@codemirror/view';
 
-import type { CanvasEditCommand, CanvasPartSnapshot } from '@/llm/canvasChat';
+import { splitPartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
+import type { CanvasEditCommand } from '@/llm/canvasChat';
 import { resolveCanvasEditAcrossParts } from '@/llm/canvasChat';
 import { debrisIssuesForFields } from '@/lib/encodingHygiene';
 import {
@@ -10,22 +11,25 @@ import {
 } from '@/features/modules/canvas/chatStore';
 
 /**
- * Chat command application across the WHOLE module (08-MODULE-DESIGNER
- * §Module canvas chat): each command is resolved PER PART (never across
- * the assembled string — a search spanning two parts cannot match) against
- * each part's CURRENT text, and applied where it matched:
- * - the OPEN part lands as ONE CodeMirror 6 transaction with NORMAL
- *   history — chat applies are NOT `addToHistory: false`; the user can
- *   undo the AI's edits one command at a time (a replace-all's ranges ride
- *   that ONE transaction, so one undo step reverts the whole command);
- * - OTHER parts are spliced in memory (there is no editor holding them) —
- *   the caller saves each changed part through THE one part-text save path
- *   BEFORE its outcomes render as applied ("save first, then report
- *   applied").
+ * Chat command application onto the WHOLE-document editor (canvas v3,
+ * 08-MODULE-DESIGNER §Module canvas chat): the canvas editor doc IS the
+ * whole module's parts document, so every command — whatever part it
+ * targets — lands as ONE CodeMirror 6 transaction over that doc with NORMAL
+ * history (one undo step per command; a replace-all's ranges ride the same
+ * transaction). Command matching is still PER PART
+ * (`resolveCanvasEditAcrossParts` against the per-part texts) and
+ * RE-RESOLVED PER COMMAND against the CURRENT doc — earlier commands in one
+ * reply never shift later ranges (the split's section ranges are re-derived
+ * from the live doc each time, so matched ranges map onto exact
+ * whole-document coordinates and can never leak across a section boundary).
+ * The caller persists the batch afterwards through the split-save (only the
+ * parts whose text changed hit the row).
+ *
  * Nothing is ever silently skipped: a command that cannot apply uniquely
  * comes back as a LOUD failed outcome (with the closest candidate snippet
  * across parts on zero matches) — never a guess, never a partial apply
- * (AGENTS 1/2). Every outcome names the part(s) it targets.
+ * (AGENTS 1/2). Every outcome names the part(s) it targets; outcome anchors
+ * (`from`/`to`/`failureFrom`) are whole-document coordinates.
  */
 
 function failedOutcome(command: CanvasEditCommand, reason: string, extra: {
@@ -52,7 +56,9 @@ function failedOutcome(command: CanvasEditCommand, reason: string, extra: {
 function appliedOutcome(
   command: CanvasEditCommand,
   targetPart: CanvasChatOutcomePart,
-  ranges: { from: number; to: number }[],
+  occurrences: number,
+  from: number | null,
+  to: number | null,
   before: string,
 ): CanvasChatOutcome {
   return {
@@ -60,9 +66,9 @@ function appliedOutcome(
     kind: 'applied',
     command,
     targetParts: [targetPart],
-    occurrences: ranges.length,
-    from: ranges[0]?.from ?? null,
-    to: ranges[0]?.to ?? null,
+    occurrences,
+    from,
+    to,
     before,
     reason: null,
     closest: null,
@@ -73,67 +79,36 @@ function appliedOutcome(
 
 const MAX_CARD_SNIPPET = 280;
 
-/** Splices non-overlapping left-to-right ranges into the text (right first). */
-function spliceRanges(text: string, ranges: { from: number; to: number }[], insert: string): string {
-  let out = text;
-  for (const range of [...ranges].sort((a, b) => b.from - a.from)) {
-    out = out.slice(0, range.from) + insert + out.slice(range.to);
-  }
-  return out;
-}
-
-export interface AppliedPartEdit {
-  partIndex: number;
-  title: string;
-  /** The part's full new text after all its splices — save this. */
-  text: string;
-}
-
 export interface ApplyChatCommandsResult {
   outcomes: CanvasChatOutcome[];
-  /** Non-open parts changed by this reply with their final text — the
-   * caller saves each through saveModulePartText BEFORE rendering the
-   * applied outcomes (a failed save flips that part's outcomes loud). */
-  changedParts: AppliedPartEdit[];
-  /** True when the OPEN part's CM6 doc changed (caller persists it through
-   * the save seam with the live doc). */
-  openPartChanged: boolean;
+  /** True when any command changed the doc (caller persists via the
+   * split-save; unchanged parts never hit the row). */
+  docChanged: boolean;
 }
 
 /**
- * Applies commands IN ORDER across the module's parts; outcomes in reply
- * order, one per (command × part) application plus one per failure. Each
- * command re-resolves against the part's CURRENT text (the open part's is
- * the live view doc — earlier commands in one reply never shift later
- * ranges), the canvasRefine-parity debris scan runs per replace text, and
- * `all="false"` demands EXACTLY ONE match across the WHOLE module.
+ * Applies commands IN ORDER to the live whole-document editor; outcomes in
+ * reply order, one per (command × part) application plus one per failure.
+ * Each command re-splits the CURRENT doc against the plan and re-resolves
+ * against those per-part texts, the canvasRefine-parity debris scan runs
+ * per replace text, and `all="false"` demands EXACTLY ONE match across the
+ * WHOLE module. A broken scaffolding mid-batch (a replace faked a section
+ * header) throws `ModulePartsDocumentError` loud — the caller surfaces it;
+ * the already-applied commands stay in the doc as unsaved edits.
  */
-export function applyChatCommandsAcrossParts(input: {
+export function applyChatCommandsToDocument(input: {
   commands: readonly CanvasEditCommand[];
-  /** The per-part snapshot EXACTLY as the model saw it. */
-  parts: readonly CanvasPartSnapshot[];
-  openPlanIndex: number;
+  /** The plan titles in order (position i IS planIndex i). */
+  partPlan: readonly { title: string }[];
   view: EditorView;
 }): ApplyChatCommandsResult {
   const { view } = input;
-  const openIndex = input.parts.findIndex((part) => part.planIndex === input.openPlanIndex);
-  if (openIndex === -1) {
-    throw new Error(`the open part ${String(input.openPlanIndex)} is not in the parts snapshot`);
-  }
-  // Working texts per part (open part mirrors the live view; others splice).
-  const working: string[] = input.parts.map((part) => part.text);
-  const changedParts = new Map<number, AppliedPartEdit>();
   const outcomes: CanvasChatOutcome[] = [];
-  let openPartChanged = false;
+  let docChanged = false;
 
-  const partMeta = (partIndex: number): CanvasChatOutcomePart => ({
-    planIndex: input.parts[partIndex]?.planIndex ?? partIndex,
-    title: input.parts[partIndex]?.title ?? `Part ${String(partIndex + 1)}`,
-  });
-  /** Current text of a part: the open part is the LIVE view doc (it moves
-   * under us as commands dispatch); others are the working splices. */
-  const currentText = (partIndex: number): string =>
-    partIndex === openIndex ? view.state.doc.toString() : (working[partIndex] ?? '');
+  /** Fresh per-part sections of the CURRENT doc (ranges included). */
+  const currentSections = (): ModulePartsSection[] =>
+    splitPartsDocument(view.state.doc.toString(), input.partPlan);
 
   for (const command of input.commands) {
     // Encoding-hygiene debris scan (canvasRefine parity): a hit fails the
@@ -152,91 +127,112 @@ export function applyChatCommandsAcrossParts(input: {
       );
       continue;
     }
-    const resolution = resolveCanvasEditAcrossParts(
-      command,
-      input.parts.map((part, partIndex) => ({ ...part, text: currentText(partIndex) })),
-    );
+    const parts = currentSections();
+    const resolution = resolveCanvasEditAcrossParts(command, parts);
     if (resolution.status === 'none') {
+      const anchor =
+        resolution.closestPartIndex === null ? undefined : parts[resolution.closestPartIndex];
       outcomes.push(
         failedOutcome(command, 'the search text does not appear in the current document', {
           closest: resolution.closest === '' ? null : resolution.closest.slice(0, MAX_CARD_SNIPPET),
-          failureFrom: resolution.closestFrom,
-          targetParts:
-            resolution.closestPartIndex === null ? [] : [partMeta(resolution.closestPartIndex)],
+          failureFrom:
+            resolution.closestFrom === null || anchor === undefined
+              ? null
+              : anchor.textFrom + resolution.closestFrom,
+          targetParts: anchor === undefined ? [] : [{ planIndex: anchor.planIndex, title: anchor.title }],
         }),
       );
       continue;
     }
     if (resolution.status === 'fill-failed') {
+      const section = parts[resolution.partIndex];
+      if (section === undefined) throw new Error('parts snapshot has no section for the fill target');
       outcomes.push(failedOutcome(command, resolution.reason, {
-        targetParts: [partMeta(resolution.partIndex)],
+        targetParts: [{ planIndex: section.planIndex, title: section.title }],
       }));
       continue;
     }
     if (resolution.status === 'filled') {
-      // Empty-part label-anchor fill: the label line was the only anchor.
-      const meta = partMeta(resolution.partIndex);
-      if (resolution.partIndex === openIndex) {
-        view.dispatch({
-          changes: { from: 0, to: view.state.doc.toString().length, insert: resolution.newText },
-          userEvent: 'canvas.chat.apply',
-        });
-        openPartChanged = true;
-      } else {
-        working[resolution.partIndex] = resolution.newText;
-        changedParts.set(resolution.partIndex, {
-          partIndex: meta.planIndex,
-          title: meta.title,
-          text: resolution.newText,
-        });
-      }
+      // Empty-part label-anchor fill: the label line was the only anchor —
+      // the part's new text replaces its (empty) section range.
+      const section = parts[resolution.partIndex];
+      if (section === undefined) throw new Error('parts snapshot has no section for the fill target');
+      const before = view.state.doc.sliceString(section.textFrom, section.textTo);
+      view.dispatch({
+        changes: { from: section.textFrom, to: section.textTo, insert: resolution.newText },
+        userEvent: 'canvas.chat.apply',
+      });
+      docChanged = true;
       outcomes.push(
-        appliedOutcome(command, meta, [{ from: 0, to: 0 }], ''),
+        appliedOutcome(
+          command,
+          { planIndex: section.planIndex, title: section.title },
+          1,
+          section.textFrom,
+          section.textTo,
+          before.slice(0, MAX_CARD_SNIPPET),
+        ),
       );
       continue;
     }
     // status 'found'.
     if (resolution.totalRanges > 1 && !command.all) {
       const first = resolution.matches[0];
+      const firstSection = first === undefined ? undefined : parts[first.partIndex];
       const firstRange = first?.ranges[0];
       outcomes.push(
         failedOutcome(
           command,
           `${String(resolution.totalRanges)} matches — add surrounding context to the search or set all="true"`,
           {
-            failureFrom: firstRange?.from ?? null,
-            targetParts: first === undefined ? [] : [partMeta(first.partIndex)],
+            failureFrom:
+              firstSection === undefined || firstRange === undefined
+                ? null
+                : firstSection.textFrom + firstRange.from,
+            targetParts:
+              firstSection === undefined
+                ? []
+                : [{ planIndex: firstSection.planIndex, title: firstSection.title }],
           },
         ),
       );
       continue;
     }
+    const doc = view.state.doc.toString();
+    // ONE transaction per command (all its part ranges together) — CM6
+    // maps simultaneous changes atomically, so ranges computed against the
+    // pre-dispatch doc are exact; normal history: one undo step reverts
+    // the whole command. Ranges are non-overlapping, left-to-right.
+    const changes: { from: number; to: number; insert: string }[] = [];
+    const perPart: { section: ModulePartsSection; docRanges: { from: number; to: number }[]; before: string }[] = [];
     for (const match of resolution.matches) {
-      const meta = partMeta(match.partIndex);
-      if (match.partIndex === openIndex) {
-        const doc = view.state.doc.toString();
-        const before = doc.slice(match.ranges[0]?.from ?? 0, match.ranges[0]?.to ?? 0);
-        // ONE transaction per command-part — normal history (undoable, one
-        // undo step per command). Ranges are non-overlapping, left-to-right.
-        view.dispatch({
-          changes: match.ranges.map((range) => ({ from: range.from, to: range.to, insert: command.replace })),
-          userEvent: 'canvas.chat.apply',
-        });
-        openPartChanged = true;
-        outcomes.push(appliedOutcome(command, meta, match.ranges, before.slice(0, MAX_CARD_SNIPPET)));
-      } else {
-        const text = currentText(match.partIndex);
-        const before = text.slice(match.ranges[0]?.from ?? 0, match.ranges[0]?.to ?? 0);
-        const next = spliceRanges(text, match.ranges, command.replace);
-        working[match.partIndex] = next;
-        changedParts.set(match.partIndex, {
-          partIndex: meta.planIndex,
-          title: meta.title,
-          text: next,
-        });
-        outcomes.push(appliedOutcome(command, meta, match.ranges, before.slice(0, MAX_CARD_SNIPPET)));
-      }
+      const section = parts[match.partIndex];
+      if (section === undefined) throw new Error('parts snapshot has no section for a match');
+      const docRanges = match.ranges.map((range) => ({
+        from: section.textFrom + range.from,
+        to: section.textFrom + range.to,
+      }));
+      perPart.push({
+        section,
+        docRanges,
+        before: doc.slice(docRanges[0]?.from ?? 0, docRanges[0]?.to ?? 0),
+      });
+      changes.push(...docRanges.map((range) => ({ from: range.from, to: range.to, insert: command.replace })));
+    }
+    view.dispatch({ changes, userEvent: 'canvas.chat.apply' });
+    docChanged = true;
+    for (const applied of perPart) {
+      outcomes.push(
+        appliedOutcome(
+          command,
+          { planIndex: applied.section.planIndex, title: applied.section.title },
+          applied.docRanges.length,
+          applied.docRanges[0]?.from ?? null,
+          applied.docRanges[0]?.to ?? null,
+          applied.before.slice(0, MAX_CARD_SNIPPET),
+        ),
+      );
     }
   }
-  return { outcomes, changedParts: [...changedParts.values()], openPartChanged };
+  return { outcomes, docChanged };
 }

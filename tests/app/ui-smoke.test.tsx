@@ -311,11 +311,11 @@ describe('route smoke sweep', () => {
     expect(document.querySelector('.react-flow__attribution')).not.toBeNull();
   });
 
-  it('module canvas route mounts with the part editor', async () => {
+  it('module canvas route mounts with the whole-module editor (no part selector)', async () => {
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
 
     expect(await screen.findByTestId('module-canvas', {}, { timeout: 10_000 })).toBeInTheDocument();
-    expect(screen.getByTestId('canvas-part-select')).toBeInTheDocument();
+    expect(screen.queryByTestId('canvas-part-select')).not.toBeInTheDocument();
     expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
     // Chat co-editor: collapsed by default; the toggle opens the sidebar.
     await waitFor(() => {

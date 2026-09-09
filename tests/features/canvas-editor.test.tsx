@@ -247,12 +247,33 @@ describe('suggestion machinery', () => {
     }
   });
 
-  it('whole-part proposals invalidate on any edit', () => {
-    const doc = 'Part text.';
+  it('block SECTION proposals follow the span rule: edits outside re-map, edits inside kill', () => {
+    // Canvas v3: the editor doc is the WHOLE module — a whole-part (block)
+    // proposal covers that part's section range and must survive edits in
+    // OTHER parts (uniform span rule), dying only on interior edits.
+    const sectionA = 'Part one text.';
+    const doc = `${sectionA}\n\n==========\n\n[Part 2 of 2 — B]\nPart two text.`;
     const { view } = mountEditor(doc);
     try {
-      propose(view, { from: 0, to: doc.length, originalText: doc, proposedText: 'New.', wholePart: true });
+      const sectionAEnd = sectionA.length;
+      const id = propose(view, {
+        from: 0,
+        to: sectionAEnd,
+        originalText: sectionA,
+        proposedText: 'Rewritten part one.',
+        wholePart: true,
+      });
+
+      // An edit in ANOTHER part (inside part two's section) re-maps — the
+      // proposal survives.
       view.dispatch({ changes: { from: doc.length, to: doc.length, insert: 'x' } });
+      const remapped = pendingSuggestions(view.state).find((entry) => entry.id === id);
+      expect(remapped).toBeDefined();
+      expect(remapped?.from).toBe(0);
+      expect(remapped?.to).toBe(sectionAEnd);
+
+      // An edit strictly INSIDE the proposed section kills it.
+      view.dispatch({ changes: { from: 5, to: 5, insert: 'X' } });
       expect(pendingSuggestions(view.state)).toHaveLength(0);
     } finally {
       view.destroy();

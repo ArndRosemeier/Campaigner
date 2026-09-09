@@ -25,10 +25,13 @@ import { isolateHistory } from '@codemirror/commands';
  * (a single undo unit); streaming chunk updates ride
  * `Transaction.addToHistory.of(false)` so tokens never pollute undo.
  *
- * Whole-part proposals are the SAME machinery over the full document range,
- * rendered no-diff per the Board precedent (docs/08): a replace widget shows
+ * Block proposals (`wholePart: true` — canvas v3: a whole part's SECTION
+ * range; the editor doc is the whole module) are the SAME machinery rendered
+ * NO-DIFF per the Board precedent (docs/08): a block replace widget shows
  * the proposed markdown AS-IS, "Show previous" flips the widget to the
- * original, Apply = accept (persist + ledger), Discard = drop (doc untouched).
+ * original, Apply = accept (persist + ledger), Discard = drop (doc
+ * untouched). Invalidation is the uniform span rule: edits inside the
+ * section invalidate it; edits elsewhere re-map it.
  */
 
 export interface CanvasSuggestion {
@@ -42,7 +45,10 @@ export interface CanvasSuggestion {
   status: 'pending' | 'accepted' | 'rejected';
   /** True while streamed tokens are still arriving (ghost shows …). */
   streaming: boolean;
-  /** Full-part proposal: the whole document range, no-diff rendering. */
+  /** Block no-diff proposal: covers a whole part's SECTION range (canvas
+   * v3 — the editor doc is the whole module) and renders as a block
+   * replace widget with Show previous. Invalidation stays the uniform span
+   * rule (edits inside the section kill it). */
   wholePart: boolean;
 }
 
@@ -93,15 +99,16 @@ interface ChangeSegment {
  * a change set when (a) no removed range intersects the proposal's span
  * interior-or-boundary-inside, and (b) no insertion lands STRICTLY inside
  * the span — edge insertions re-map outside instead (marimo semantics:
- * typing inside the proposal invalidates it). Whole-part proposals
- * invalidate on ANY doc change: the proposal snapshots the whole part, so
- * every edit makes it stale.
+ * typing inside the proposal invalidates it). Canvas v3: the rule is
+ * UNIFORM over ranges — block section proposals (`wholePart`, a whole
+ * part's section range) follow the same span rule, so edits in OTHER parts
+ * re-map (never kill) them and only edits inside the proposed section
+ * invalidate.
  */
 export function suggestionSurvives(
   suggestion: CanvasSuggestion,
   segments: readonly ChangeSegment[],
 ): boolean {
-  if (suggestion.wholePart) return false;
   for (const { fromA, toA } of segments) {
     const isDeletion = toA > fromA;
     const insertionInside = fromA > suggestion.from && fromA < suggestion.to;

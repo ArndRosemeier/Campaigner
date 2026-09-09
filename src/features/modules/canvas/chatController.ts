@@ -14,43 +14,41 @@ import {
   type CanvasChatMessage,
   type CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
-import { applyChatCommandsAcrossParts } from '@/features/modules/canvas/chatApply';
-import { canvasLedgerKey, useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
-import { saveModulePartText } from '@/features/modules/partText';
-import { toastError } from '@/lib/toast';
+import { applyChatCommandsToDocument } from '@/features/modules/canvas/chatApply';
+import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 
 /**
  * Canvas chat flow controller (08-MODULE-DESIGNER §Module canvas chat):
- * owns ONE chat turn end-to-end — send (context contract: the WHOLE
- * module's parts document assembled from the row at send time, the OPEN
- * part's text read from the CM6 view), stream into the bubble (prose only,
- * best-effort display split), parse + apply AFTER the reply completes
- * (per part: the open part via CM6 transactions, other parts spliced and
- * SAVED FIRST through the one part-text save path), and the report-to-LLM
- * loop. Loudness map (AGENTS 2):
+ * owns ONE chat turn end-to-end — send (context contract: the LIVE
+ * whole-document editor doc, read at send time — unsaved edits in EVERY
+ * part ride along; the per-part snapshot is its split), stream into the
+ * bubble (prose only, best-effort display split), parse + apply AFTER the
+ * reply completes (every command is ONE undoable transaction over the whole
+ * doc, per part via mapped section ranges), then persist the batch through
+ * the split-save (only the parts whose text changed hit the row — a failed
+ * part save is a LOUD toast naming the part and the ledger reflects what
+ * actually landed). The report-to-LLM loop composes error + failed command
+ * + the current doc excerpt. Loudness map (AGENTS 2):
  * - busy (`ModuleBusyError`) THROWS to the caller → page toast (the
  *   canvasRefine surface),
- * - parse failures / transport errors become a LOUD failed message card
- *   (error + Report-to-LLM button) inside the chat flow,
- * - a failed save for a NON-open part is a LOUD failed outcome card (the
- *   edit did not land) plus a toast naming the part — never a silent drop,
+ * - parse failures / transport errors / a doc whose scaffolding no longer
+ *   parses become a LOUD failed message card (error + Report-to-LLM button)
+ *   inside the chat flow,
  * - a user abort marks the partial reply `aborted` in place — a stop is
  *   not an error, but nothing is applied and the card says so.
- * Persistence rides THE one part-text save path (saveModulePartText) — the
- * chat never writes the row directly.
+ * Persistence rides THE one part-text save path (saveModulePartText, via
+ * saveWholeModuleDocument) — the chat never writes the row directly.
  */
 
 export interface ChatTurnOptions {
   moduleId: Id;
-  /** The OPEN part's planIndex (its text rides from the live view). */
-  openPlanIndex: number;
   /** Per-MODULE chat key (canvasChatKey) — one conversation per module. */
   key: string;
   /** Pre-flight: a module without planned parts must not send an empty
    * context ("no parts to chat about — generate the module first"). */
   hasPlannedParts: boolean;
-  /** The live canvas editor view of the OPEN part (the doc string is the
-   * truth for that part). */
+  /** The live canvas editor view of the WHOLE module (the doc string is
+   * the truth for every part). */
   view: EditorView;
   /** The session model selection; null = Settings defaultChatModel. */
   modelSelection: string | null;
@@ -124,11 +122,13 @@ export async function runChatTurn(options: ChatTurnOptions, instruction: string)
     useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, { text: prose });
   };
   try {
-    const openPartText = options.view.state.doc.toString();
+    // The LIVE whole-document editor doc — read at send time (never a
+    // cached copy, never re-assembled from the row). Unsaved edits in
+    // every part ride the context.
+    const document = options.view.state.doc.toString();
     const result = await sendCanvasChatMessage({
       moduleId: options.moduleId,
-      openPlanIndex: options.openPlanIndex,
-      openPartText,
+      document,
       instruction: text,
       history,
       model: options.modelSelection ?? undefined,
@@ -145,60 +145,36 @@ export async function runChatTurn(options: ChatTurnOptions, instruction: string)
       text: result.parse.prose,
       raw: result.raw,
     });
-    let finalOutcomes: CanvasChatOutcome[] = [];
     if (result.parse.commands.length > 0) {
-      const applied = applyChatCommandsAcrossParts({
+      const applied = applyChatCommandsToDocument({
         commands: result.parse.commands,
-        parts: result.parts,
-        openPlanIndex: options.openPlanIndex,
+        partPlan: result.parts.map((part) => ({ title: part.title })),
         view: options.view,
       });
-      finalOutcomes = [...applied.outcomes];
-      // OTHER parts have no editor holding them — SAVE FIRST, then the
-      // applied outcomes render. A failed save is LOUD: the edit did not
-      // land, so its outcomes flip to failed and the part is named.
-      for (const edit of applied.changedParts) {
-        try {
-          await saveModulePartText(options.moduleId, edit.partIndex, edit.text);
-          useCanvasLedgerStore.getState().append(canvasLedgerKey(options.moduleId, edit.partIndex), {
-            markdown: edit.text,
-            origin: 'ai',
-            label: `Chat: ${text.slice(0, 60)}`,
-          });
-        } catch (error) {
-          const reason = error instanceof Error ? error.message : String(error);
-          finalOutcomes = finalOutcomes.map((outcome) =>
-            outcome.kind === 'applied' && outcome.targetParts[0]?.planIndex === edit.partIndex
-              ? {
-                  ...outcome,
-                  kind: 'failed',
-                  occurrences: null,
-                  from: null,
-                  to: null,
-                  before: null,
-                  reason: `save failed — the edit did not land: ${reason}`,
-                  failureFrom: outcome.from,
-                }
-              : outcome,
-          );
-          toastError(
-            `Could not save the chat edits to part "${edit.title}" — the edit did not land`,
-            error,
-          );
-        }
-      }
       useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
         outcomes: [
           ...(useCanvasChatStore.getState().module(options.key).messages.find(
             (message) => message.id === assistantMessage.id,
           )?.outcomes ?? []),
-          ...finalOutcomes,
+          ...applied.outcomes,
         ],
       });
-      // Open part: unchanged CM6 semantics — the transactions already
-      // landed; persist the resulting doc through THE one save path.
-      if (applied.openPartChanged) {
-        await persistChatApplied(options, text);
+      // Persist the batch through the split-save: only the parts whose
+      // text changed hit the row; a failed part save is a loud toast
+      // naming the part (saveWholeModuleDocument fires it) while the rest
+      // land — the doc keeps every in-doc edit either way.
+      if (applied.docChanged) {
+        const module = await getModule(options.moduleId);
+        if (module === undefined) {
+          throw new Error('Module no longer exists — the edits are still in the editor, use Save to retry');
+        }
+        await saveWholeModuleDocument({
+          moduleId: options.moduleId,
+          doc: options.view.state.doc.toString(),
+          module,
+          origin: 'ai',
+          label: `Chat: ${text.slice(0, 60)}`,
+        });
       }
     }
   } catch (error) {
@@ -230,52 +206,26 @@ export async function runChatTurn(options: ChatTurnOptions, instruction: string)
   }
 }
 
-/** The save seam: applied chat edits land through THE one part-text path. */
-async function persistChatApplied(options: ChatTurnOptions, instruction: string): Promise<void> {
-  const doc = options.view.state.doc.toString();
-  try {
-    await saveModulePartText(options.moduleId, options.openPlanIndex, doc);
-    useCanvasLedgerStore.getState().append(canvasLedgerKey(options.moduleId, options.openPlanIndex), {
-      markdown: doc,
-      origin: 'ai',
-      label: `Chat: ${instruction.slice(0, 60)}`,
-    });
-  } catch (error) {
-    toastError('Could not save the chat edits — use Save part to retry', error);
-  }
-}
-
 export interface ReportTarget {
   /** The error text surfaced on the card. */
   errorText: string;
   command: CanvasEditCommand | null;
-  /** Anchor offset in the TARGET part's CURRENT text (null when nothing
-   * in any part corresponds). */
+  /** Anchor offset in the CURRENT whole-document editor doc (null when
+   * nothing corresponds). */
   failureFrom: number | null;
-  /** The part the outcome anchors on (null = no part applies). */
-  targetPlanIndex: number | null;
 }
 
 /**
- * The target part's CURRENT text for the report excerpt: the open part's
- * live view doc; any other part re-reads the ROW at report time.
+ * Builds the report-to-LLM user turn: the error, the failed command
+ * verbatim, and the current text around the failure point — the excerpt
+ * comes from the LIVE whole-document editor doc (the model's context is
+ * that same doc).
  */
-async function targetPartText(options: ChatTurnOptions, planIndex: number | null): Promise<string> {
-  if (planIndex === null) return '';
-  if (planIndex === options.openPlanIndex) {
-    return options.view.state.doc.toString();
-  }
-  const module = await getModule(options.moduleId);
-  return module?.parts.find((part) => part.planIndex === planIndex)?.markdown ?? '';
-}
-
-/** Builds the report-to-LLM user turn (the current doc rides the request). */
-export async function composeReportTurn(options: ChatTurnOptions, target: ReportTarget): Promise<string> {
-  const document = await targetPartText(options, target.targetPlanIndex);
+export function composeReportTurn(options: ChatTurnOptions, target: ReportTarget): string {
   return composeFailureReport({
     errorText: target.errorText,
     command: target.command,
-    document,
+    document: options.view.state.doc.toString(),
     failureFrom: target.failureFrom,
   });
 }
@@ -287,20 +237,20 @@ export function reportChatOutcome(
   outcome: CanvasChatOutcome,
 ): Promise<void> {
   useCanvasChatStore.getState().markOutcomeReported(options.key, messageId, outcome.id);
-  return composeReportTurn(options, {
+  const report = composeReportTurn(options, {
     errorText: outcome.reason ?? 'the edit command failed',
     command: outcome.command,
     failureFrom: outcome.failureFrom,
-    targetPlanIndex: outcome.targetParts[0]?.planIndex ?? null,
-  }).then((report) => runChatTurn(options, report));
+  });
+  return runChatTurn(options, report);
 }
 
 /** Report a FAILED REPLY (parse/transport card) back to the LLM. */
 export function reportChatMessage(options: ChatTurnOptions, message: CanvasChatMessage): Promise<void> {
-  return composeReportTurn(options, {
+  const report = composeReportTurn(options, {
     errorText: message.error ?? 'the reply could not be parsed',
     command: null,
     failureFrom: null,
-    targetPlanIndex: null,
-  }).then((report) => runChatTurn(options, report));
+  });
+  return runChatTurn(options, report);
 }

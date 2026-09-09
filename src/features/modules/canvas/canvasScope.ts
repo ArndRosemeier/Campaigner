@@ -1,14 +1,16 @@
-import type { CanvasPartParam } from '@/app/routes';
-
 /**
- * Canvas scope resolution (08-MODULE-DESIGNER §Module canvas): the canvas
- * edits ONE module part at a time (the premise is a read-only scope), and a
- * deep link opens a chosen part via `?part=<planIndex|premise>` — with the
- * reader's `#part-<n>` hash honored on load. Pure: exported from here (not
- * the page component file) so tests and the page share one parse site.
+ * Canvas deep-link resolution (canvas v3, 08-MODULE-DESIGNER §Module
+ * canvas): the canvas edits the WHOLE module in ONE document — there is no
+ * part selector and no scope to resolve. A deep link (`?part=<planIndex|premise>`
+ * via `canvasPath`, or the reader's `#part-<n>` hash) is a SCROLL target:
+ * the editor scrolls to that part's section; `premise` scrolls to the top
+ * (the premise itself lives on the Board/reader, not in the editor doc).
+ * Pure: exported from here (not the page component file) so tests and the
+ * page share one parse site. Unknown targets are NOT errors — a stale deep
+ * link just means no scroll.
  */
 
-export type CanvasScope = { kind: 'premise' } | { kind: 'part'; planIndex: number };
+export type CanvasScrollTarget = { kind: 'premise' } | { kind: 'part'; planIndex: number };
 
 export interface PlannedPart {
   planIndex: number;
@@ -16,30 +18,28 @@ export interface PlannedPart {
   levelBand: string;
 }
 
-/** Resolves the scope from `?part=` / `#part-<n>`, falling forward to the
- * first planned part (else the premise). Unknown targets are NOT errors —
- * a stale deep link just opens the default scope. */
-export function resolveCanvasScope(
+/** Resolves the scroll target from `?part=` / `#part-<n>` (null = no
+ * scroll; the page stays at the top). */
+export function resolveCanvasScrollTarget(
   search: string,
   hash: string,
   plans: readonly PlannedPart[],
-): CanvasScope {
+): CanvasScrollTarget | null {
   const param = new URLSearchParams(search).get('part');
-  const fromParam = scopeFromParam(param, plans);
+  const fromParam = targetFromParam(param, plans);
   if (fromParam !== null) return fromParam;
   const hashMatch = /^#part-(\d+)$/.exec(hash);
   if (hashMatch !== null) {
-    const fromHash = scopeFromParam(hashMatch[1] ?? null, plans);
+    const fromHash = targetFromParam(hashMatch[1] ?? null, plans);
     if (fromHash !== null) return fromHash;
   }
-  const first = plans[0]?.planIndex;
-  return first === undefined ? { kind: 'premise' } : { kind: 'part', planIndex: first };
+  return null;
 }
 
-function scopeFromParam(
+function targetFromParam(
   param: string | null,
   plans: readonly PlannedPart[],
-): CanvasScope | null {
+): CanvasScrollTarget | null {
   if (param === 'premise') return { kind: 'premise' };
   if (param !== null && /^\d+$/.test(param)) {
     const planIndex = Number(param);
@@ -48,12 +48,4 @@ function scopeFromParam(
     }
   }
   return null;
-}
-
-export function scopeParam(scope: CanvasScope): CanvasPartParam {
-  return scope.kind === 'premise' ? 'premise' : scope.planIndex;
-}
-
-export function scopeKey(scope: CanvasScope): string {
-  return scope.kind === 'premise' ? 'premise' : `part-${String(scope.planIndex)}`;
 }

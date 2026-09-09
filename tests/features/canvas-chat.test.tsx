@@ -28,8 +28,12 @@ import {
 } from '@/features/modules/canvas/canvasStore';
 import type * as PartTextModule from '@/features/modules/partText';
 import {
-  applyChatCommandsAcrossParts,
+  applyChatCommandsToDocument,
 } from '@/features/modules/canvas/chatApply';
+import {
+  assembleModulePartsDocument,
+  splitPartsDocument,
+} from '@/domain/modulePartsDocument';
 import {
   canvasChatKey,
   useCanvasChatStore,
@@ -82,6 +86,21 @@ const PART_0_TEXT = 'The party bargains with [[Keeper Ilse]] at the gate.\n\nRai
 const PART_1_TEXT = 'The docks breathe fog.\n\nMist climbs the stairs.\n\n[[Keeper Ilse]] watches.';
 const SPINE_PREMISE = 'The premise that must not be edited by the chat.';
 const PRIOR_TEXT = 'The chapel bells ring beneath the water.';
+
+const PART_PLAN = [
+  { title: 'The Gate Bargain', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+  { title: 'Under the Docks', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+  { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
+];
+
+/** The WHOLE-module editor doc the page mounts with (canvas v3). */
+const WHOLE_DOC = assembleModulePartsDocument({
+  partPlan: PART_PLAN,
+  parts: [
+    { planIndex: 0, markdown: PART_0_TEXT },
+    { planIndex: 1, markdown: PART_1_TEXT },
+  ],
+}).document;
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -140,11 +159,7 @@ async function seedModule(): Promise<void> {
     spine: moduleSpineSchema.parse({
       premise: SPINE_PREMISE,
       themes: [],
-      partPlan: [
-        { title: 'The Gate Bargain', levelBand: '1', synopsis: '', levelUpTrigger: '' },
-        { title: 'Under the Docks', levelBand: '1', synopsis: '', levelUpTrigger: '' },
-        { title: 'The Long Watch', levelBand: '2', synopsis: '', levelUpTrigger: '' },
-      ],
+      partPlan: PART_PLAN,
     }),
     parts: [
       modulePartSchema.parse({
@@ -213,10 +228,10 @@ describe('canvas chat sidebar (page flows)', () => {
     );
     await sendChat(user, 'make the rain heavier');
 
-    // The doc changed through the editor.
+    // The doc changed through the editor (the whole-module document).
     const view = activeCanvasView.current;
     expect(view?.state.doc.toString()).toBe(
-      PART_0_TEXT.replace('Rain hammers the stones.', 'Rain drowns every word.'),
+      WHOLE_DOC.replace('Rain hammers the stones.', 'Rain drowns every word.'),
     );
     // The outcome card is applied with 1 occurrence and a mini before→after.
     const panel = screen.getByTestId('canvas-chat');
@@ -243,7 +258,7 @@ describe('canvas chat sidebar (page flows)', () => {
     act(() => {
       undo(view);
     });
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
   });
 
   it('the payload carries the WHOLE module: other parts, delimiter + labels, grounding, NO premise', async () => {
@@ -273,16 +288,24 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(last?.content).toContain(PRIOR_TEXT);
   });
 
-  it('the payload carries the open part AS OF SEND TIME (current text, not the initial copy)', async () => {
+  it('the payload is the LIVE editor doc AS OF SEND TIME — unsaved edits in ANY part ride (no row re-assembly)', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
     await openSidebar(user);
-    // The user edits the doc BEFORE sending — the payload must reflect that.
+    // Unsaved edits in TWO parts BEFORE sending: part 1 (first section) and
+    // part 2 (its section). The row still holds the OLD texts.
+    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
+    const part0End = sections[0]?.textTo ?? 0;
+    const part1Text = sections[1]?.text ?? '';
+    const part1From = sections[1]?.textFrom ?? 0;
     act(() => {
       const view = activeCanvasView.current;
       view?.dispatch({
-        changes: { from: PART_0_TEXT.length, to: PART_0_TEXT.length, insert: '\n\nA new line.' },
+        changes: [
+          { from: part0End, to: part0End, insert: '\n\nA new line.' },
+          { from: part1From, to: part1From + part1Text.length, insert: 'The docks breathe heavy fog.' },
+        ],
       });
     });
     mockChatReply('ok');
@@ -290,11 +313,18 @@ describe('canvas chat sidebar (page flows)', () => {
     const [messages] = chatMock.mock.calls[0] ?? [];
     const last = messages?.[messages.length - 1];
     expect(last?.role).toBe('user');
+    // BOTH unsaved edits ride the context…
     expect(last?.content).toContain('A new line.');
+    expect(last?.content).toContain('The docks breathe heavy fog.');
+    // …the stale row text does NOT…
+    expect(last?.content).not.toContain('The docks breathe fog.');
+    // …and the row was never re-assembled into the context.
+    const rowBefore = await getModule(world.moduleId);
+    expect(rowBefore?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
     expect(last?.content).toContain('CURRENT state');
   });
 
-  it('a command targeting a NON-open part lands on the row (save per changed part), open part untouched', async () => {
+  it('a command targeting another part lands on the doc AND the row (split-save: only that part saved)', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
@@ -311,7 +341,7 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(within(card).getByTestId('canvas-chat-outcome-part').textContent).toContain(
       'Part 2 — Under the Docks',
     );
-    // The row for part 1 landed through the save seam; the open part was NOT rewritten.
+    // The row for part 1 landed through the split-save; part 1 (planIndex 0) untouched.
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(
       PART_1_TEXT.replace('Mist climbs the stairs.', 'Mist floods the stairwell.'),
@@ -319,8 +349,11 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(row?.parts.find((part) => part.planIndex === 1)?.edited).toBe(true);
     expect(row?.parts.find((part) => part.planIndex === 0)?.markdown).toBe(PART_0_TEXT);
     expect(row?.parts.find((part) => part.planIndex === 0)?.edited).toBe(false);
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
-    // Ledger entry for THAT part, none for the open part.
+    // The doc holds the edit in part 2's section; scaffolding intact.
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(
+      WHOLE_DOC.replace('Mist climbs the stairs.', 'Mist floods the stairwell.'),
+    );
+    // Ledger entry for THAT part, none for the other.
     expect(
       useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 1)]?.versions,
     ).toHaveLength(1);
@@ -349,7 +382,7 @@ describe('canvas chat sidebar (page flows)', () => {
       PART_1_TEXT.replace('[[Keeper Ilse]] watches.', '[[Keeper Ilse]] keeps the watch.'),
     );
     expect(activeCanvasView.current?.state.doc.toString()).toBe(
-      PART_0_TEXT.replace('[[Keeper Ilse]] watches.', '[[Keeper Ilse]] keeps the watch.'),
+      WHOLE_DOC.replaceAll('[[Keeper Ilse]] watches.', '[[Keeper Ilse]] keeps the watch.'),
     );
   });
 
@@ -358,11 +391,13 @@ describe('canvas chat sidebar (page flows)', () => {
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
     await openSidebar(user);
-    // '[[Keeper Ilse]] watches.' appears TWICE in the open doc (the user
-    // appended a copy) and once in part 1 → 3 matches across the module.
+    // '[[Keeper Ilse]] watches.' appears TWICE in part 1's section (the user
+    // appended a copy INSIDE it) and once in part 2 → 3 matches across the module.
+    const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
+    const part0End = sections[0]?.textTo ?? 0;
     act(() => {
       activeCanvasView.current?.dispatch({
-        changes: { from: PART_0_TEXT.length, to: PART_0_TEXT.length, insert: '\n\n[[Keeper Ilse]] watches.' },
+        changes: { from: part0End, to: part0End, insert: '\n\n[[Keeper Ilse]] watches.' },
       });
     });
     mockChatReply(
@@ -374,7 +409,7 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(failed).toHaveAttribute('data-kind', 'failed');
     expect(within(failed).getByTestId('canvas-chat-outcome-reason').textContent).toContain('3 matches');
     expect(activeCanvasView.current?.state.doc.toString()).toBe(
-      `${PART_0_TEXT}\n\n[[Keeper Ilse]] watches.`,
+      WHOLE_DOC.replace(PART_0_TEXT, `${PART_0_TEXT}\n\n[[Keeper Ilse]] watches.`),
     );
 
     // A search SPANNING the delimiter never matches (per-part matching).
@@ -391,7 +426,7 @@ describe('canvas chat sidebar (page flows)', () => {
       ),
     ).toBe(true);
     expect(activeCanvasView.current?.state.doc.toString()).toBe(
-      `${PART_0_TEXT}\n\n[[Keeper Ilse]] watches.`,
+      WHOLE_DOC.replace(PART_0_TEXT, `${PART_0_TEXT}\n\n[[Keeper Ilse]] watches.`),
     );
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
@@ -414,7 +449,9 @@ describe('canvas chat sidebar (page flows)', () => {
     );
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 2)?.markdown).toBe('The watch begins in fog.');
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(
+      WHOLE_DOC.replace('[Part 3 of 3 — The Long Watch]\n', '[Part 3 of 3 — The Long Watch]\nThe watch begins in fog.'),
+    );
   });
 
   it('a zero-match failure renders the closest candidate and Report-to-LLM sends the composed follow-up', async () => {
@@ -435,7 +472,7 @@ describe('canvas chat sidebar (page flows)', () => {
     );
     expect(card.textContent).toContain('Rain hammers the stones.');
     // Doc untouched, nothing saved.
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
     expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)]).toBeUndefined();
 
     // Report to LLM: the follow-up turn composes error + command + excerpt.
@@ -459,11 +496,11 @@ describe('canvas chat sidebar (page flows)', () => {
     const appliedCard = await within(panel).findAllByTestId('canvas-chat-outcome');
     expect(appliedCard.some((entry) => entry.getAttribute('data-kind') === 'applied')).toBe(true);
     expect(activeCanvasView.current?.state.doc.toString()).toBe(
-      PART_0_TEXT.replace('Rain hammers', 'Mist swallows'),
+      WHOLE_DOC.replace('Rain hammers the stones.', 'Mist swallows the stones.'),
     );
   });
 
-  it('a failed save for a NON-open part is LOUD: failed outcome card + toast naming the part', async () => {
+  it('a failed part save in the batch is LOUD: toast naming the part, ledger reflects what landed', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
@@ -474,19 +511,23 @@ describe('canvas chat sidebar (page flows)', () => {
     );
     await sendChat(user, 'flood the stairwell');
 
+    // The edit DID land in the editor doc (the outcome card is applied)…
     const panel = screen.getByTestId('canvas-chat');
     const card = await within(panel).findByTestId('canvas-chat-outcome');
-    expect(card).toHaveAttribute('data-kind', 'failed');
-    expect(within(card).getByTestId('canvas-chat-outcome-reason').textContent).toContain(
-      'the edit did not land',
-    );
+    expect(card).toHaveAttribute('data-kind', 'applied');
+    expect(activeCanvasView.current?.state.doc.toString()).toContain('Mist floods the stairwell.');
+    // …but the row save failed LOUDLY, naming the part.
     expect(toastError).toHaveBeenCalledWith(
       expect.stringContaining('Under the Docks'),
       expect.anything(),
     );
-    // The row was NOT touched — the edit did not land.
+    // The ledger/loaded state reflects what actually landed: nothing.
     const row = await getModule(world.moduleId);
     expect(row?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
+    expect(row?.parts.find((part) => part.planIndex === 1)?.edited).toBe(false);
+    expect(useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 1)]).toBeUndefined();
+    // Save stays available to retry (the doc is dirty vs the baseline).
+    expect(screen.getByTestId('canvas-save')).toBeEnabled();
   });
 
   it('a malformed reply fails the WHOLE reply loudly with a report button', async () => {
@@ -499,7 +540,7 @@ describe('canvas chat sidebar (page flows)', () => {
     const panel = screen.getByTestId('canvas-chat');
     const errorCard = await within(panel).findByTestId('canvas-chat-error-card');
     expect(within(errorCard).getByTestId('canvas-chat-error-text').textContent).toContain('unbalanced');
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
     chatMock.mockResolvedValue({ text: 'Understood — corrected reply. No edits this time.', modelUsed: 'm', fallback: null });
     await user.click(within(errorCard).getByTestId('canvas-chat-report-error'));
     await flushAsyncUpdates();
@@ -532,7 +573,7 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(streaming).toHaveAttribute('data-status', 'streaming');
     expect(streaming.textContent).toContain('Working on it…');
     expect(streaming.textContent).not.toContain('<edit>');
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
     // Settle: now the command applies and the card appears.
     release();
     await flushAsyncUpdates();
@@ -564,7 +605,7 @@ describe('canvas chat sidebar (page flows)', () => {
     const aborted = await within(panel).findByTestId('canvas-chat-assistant-message');
     expect(aborted).toHaveAttribute('data-status', 'aborted');
     expect(aborted.textContent).toContain('NOTHING was applied');
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(PART_0_TEXT);
+    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
     const ledger = useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)];
     expect(ledger).toBeUndefined();
   });
@@ -600,7 +641,7 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(chatMock).not.toHaveBeenCalled();
   });
 
-  it('chat state is keyed per MODULE: switching parts keeps the conversation, module change resets', async () => {
+  it('chat state is keyed per MODULE: one conversation for the whole doc, module change resets', async () => {
     const user = userEvent.setup();
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
@@ -611,9 +652,10 @@ describe('canvas chat sidebar (page flows)', () => {
     expect(useCanvasChatStore.getState().byModule[key]?.messages).toHaveLength(2);
     // No persist middleware anywhere on the store.
     expect((useCanvasChatStore as unknown as { persist?: unknown }).persist).toBeUndefined();
-    // Switching the open part keeps the SAME conversation (per-module key).
-    await user.click(screen.getByTestId('canvas-part-select'));
-    await user.click(await screen.findByRole('option', { name: 'Part 2: Under the Docks' }));
+    // A preview round-trip (hides + restores the editor) keeps the SAME
+    // conversation (per-module key).
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
     await flushAsyncUpdates();
     expect(useCanvasChatStore.getState().byModule[key]?.messages).toHaveLength(2);
     const panel = screen.getByTestId('canvas-chat');
@@ -626,7 +668,7 @@ describe('canvas chat sidebar (page flows)', () => {
   });
 });
 
-describe('chatApply across parts (raw-view units)', () => {
+describe('chatApply onto the whole-document editor (raw-view units)', () => {
   function mountEditor(doc: string): { view: EditorView; host: HTMLElement } {
     const host = document.createElement('div');
     document.body.appendChild(host);
@@ -637,73 +679,85 @@ describe('chatApply across parts (raw-view units)', () => {
     return { view, host };
   }
 
-  const SNAPSHOT_PARTS = [
-    { planIndex: 0, title: 'Open Part', text: 'Rain here.\nRain there.' },
-    { planIndex: 1, title: 'Other Part', text: 'Fog elsewhere.' },
-  ];
+  const PART_PLAN_UNITS = [{ title: 'Open Part' }, { title: 'Other Part' }];
+  const UNIT_DOC = assembleModulePartsDocument({
+    partPlan: PART_PLAN_UNITS,
+    parts: [
+      { planIndex: 0, markdown: 'Rain here.\nRain there.' },
+      { planIndex: 1, markdown: 'Fog elsewhere.' },
+    ],
+  }).document;
 
-  it('an applied replace-all on the open part rides ONE transaction (one undo step)', () => {
-    const { view, host } = mountEditor(SNAPSHOT_PARTS[0]?.text ?? '');
-    const result = applyChatCommandsAcrossParts({
+  it('an applied replace-all rides ONE transaction (one undo step)', () => {
+    const { view, host } = mountEditor(UNIT_DOC);
+    const result = applyChatCommandsToDocument({
       commands: [{ search: 'Rain', replace: 'Mist', all: true }],
-      parts: SNAPSHOT_PARTS,
-      openPlanIndex: 0,
+      partPlan: PART_PLAN_UNITS,
       view,
     });
-    expect(result.openPartChanged).toBe(true);
-    expect(result.changedParts).toEqual([]);
+    expect(result.docChanged).toBe(true);
     expect(result.outcomes).toHaveLength(1);
     expect(result.outcomes[0]?.kind).toBe('applied');
     expect(result.outcomes[0]?.occurrences).toBe(2);
     expect(result.outcomes[0]?.targetParts[0]?.title).toBe('Open Part');
-    expect(view.state.doc.toString()).toBe('Mist here.\nMist there.');
+    expect(view.state.doc.toString()).toBe(UNIT_DOC.replace(/Rain/g, 'Mist'));
     act(() => {
       undo(view);
     });
-    expect(view.state.doc.toString()).toBe('Rain here.\nRain there.');
+    expect(view.state.doc.toString()).toBe(UNIT_DOC);
     host.remove();
   });
 
-  it('multiple matches across the whole module fail loud with the total count (open + other)', () => {
-    const { view, host } = mountEditor('the gate.\nthe dock.');
-    const result = applyChatCommandsAcrossParts({
-      commands: [{ search: 'the', replace: 'ye', all: false }],
-      parts: [
-        { planIndex: 0, title: 'Open Part', text: 'the gate.\nthe dock.' },
-        { planIndex: 1, title: 'Other Part', text: 'past the weir.' },
-      ],
-      openPlanIndex: 0,
+  it('a command in ANOTHER part edits the doc inside that section; scaffolding untouched', () => {
+    const { view, host } = mountEditor(UNIT_DOC);
+    const result = applyChatCommandsToDocument({
+      commands: [{ search: 'Fog elsewhere.', replace: 'Mist elsewhere.', all: false }],
+      partPlan: PART_PLAN_UNITS,
+      view,
+    });
+    expect(result.docChanged).toBe(true);
+    expect(view.state.doc.toString()).toBe(UNIT_DOC.replace('Fog elsewhere.', 'Mist elsewhere.'));
+    expect(view.state.doc.toString()).toContain('[Part 1 of 2 — Open Part]');
+    expect(view.state.doc.toString()).toContain('==========');
+    host.remove();
+  });
+
+  it('multiple matches across the whole module fail loud with the total count', () => {
+    const { view, host } = mountEditor(UNIT_DOC);
+    const result = applyChatCommandsToDocument({
+      commands: [{ search: 'e', replace: 'E', all: false }],
+      partPlan: PART_PLAN_UNITS,
       view,
     });
     const outcome = result.outcomes[0];
     expect(outcome?.kind).toBe('failed');
-    expect(outcome?.reason).toContain('3 matches');
-    expect(view.state.doc.toString()).toBe('the gate.\nthe dock.');
+    expect(outcome?.reason).toContain('matches');
+    expect(view.state.doc.toString()).toBe(UNIT_DOC);
     host.remove();
   });
 
-  it('a command lands in a NON-open part as a splice reported for save; the open doc is untouched', () => {
-    const { view, host } = mountEditor('Open text.');
-    const result = applyChatCommandsAcrossParts({
-      commands: [{ search: 'Fog elsewhere.', replace: 'Mist elsewhere.', all: false }],
-      parts: SNAPSHOT_PARTS,
-      openPlanIndex: 0,
+  it('earlier commands in one reply never shift later ranges (re-resolved per command)', () => {
+    const { view, host } = mountEditor(UNIT_DOC);
+    const result = applyChatCommandsToDocument({
+      commands: [
+        { search: 'Rain here.', replace: 'Longer rainy opening.', all: false },
+        { search: 'Rain there.', replace: 'Closing rain.', all: false },
+      ],
+      partPlan: PART_PLAN_UNITS,
       view,
     });
-    expect(result.openPartChanged).toBe(false);
-    expect(result.changedParts).toEqual([
-      { partIndex: 1, title: 'Other Part', text: 'Mist elsewhere.' },
-    ]);
-    expect(view.state.doc.toString()).toBe('Open text.');
+    expect(result.outcomes.every((outcome) => outcome.kind === 'applied')).toBe(true);
+    expect(view.state.doc.toString()).toBe(
+      UNIT_DOC.replace('Rain here.', 'Longer rainy opening.').replace('Rain there.', 'Closing rain.'),
+    );
     host.remove();
   });
 
   it('an empty search fails loud', () => {
-    const { view, host } = mountEditor('text');
-    const result = applyChatCommandsAcrossParts({
+    const { view, host } = mountEditor(UNIT_DOC);
+    const result = applyChatCommandsToDocument({
       commands: [{ search: '  ', replace: 'x', all: false }],
-      parts: SNAPSHOT_PARTS,
-      openPlanIndex: 0,
+      partPlan: PART_PLAN_UNITS,
       view,
     });
     expect(result.outcomes[0]?.kind).toBe('failed');

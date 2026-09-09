@@ -18,9 +18,10 @@ import {
 
 /**
  * The canvas markdown editor (08-MODULE-DESIGNER §Module canvas): ONE
- * CodeMirror 6 document per part — THE text-first substrate. The editor doc
- * string IS the markdown (byte-exact fidelity for [[wiki-links]], code and
- * tables by construction; there is NO parse→serialize round-trip anywhere).
+ * CodeMirror 6 document per module — THE text-first substrate over the
+ * WHOLE module's parts document (canvas v3). The editor doc string IS the
+ * markdown (byte-exact fidelity for [[wiki-links]], code and tables by
+ * construction; there is NO parse→serialize round-trip anywhere).
  *
  * Extensions: GFM markdown (the default `markdownLanguage` dialect),
  * line wrapping, undo/redo history (the suggestion accept must ride ONE
@@ -28,9 +29,9 @@ import {
  * coloring), and the suggestion machinery.
  *
  * The live view is published in `activeCanvasView` because the page's AI
- * toolbar, decision bar and guard live OUTSIDE this component and need the
- * real editor (selection capture, proposal dispatches) — the board slice's
- * page-owned-view precedent, one current view per canvas page.
+ * toolbar, decision bar and leave-guard live OUTSIDE this component and
+ * need the real editor (selection capture, proposal dispatches) — the board
+ * slice's page-owned-view precedent, one current view per canvas page.
  */
 
 export interface CanvasEditorProps {

@@ -14,8 +14,16 @@ import { debrisIssuesForFields } from '@/lib/encodingHygiene';
  * Canvas refine contract (08-MODULE-DESIGNER §Module canvas): ONE loud
  * section-rewrite call behind the canvas AI actions — either a SELECTION
  * refine (a replacement for exactly the selected span, grounded with the
- * selection triple: full markdown + enclosing block + selected text) or a
- * WHOLE-PART rewrite (the complete part markdown back).
+ * selection + its enclosing block) or a WHOLE-PART rewrite (the complete
+ * replacement for the explicitly picked part).
+ *
+ * v3 (docs/17 ledger row 53): the editor document is the WHOLE module, and
+ * an LLM-triggered action cannot depend on cursor position — the grounding
+ * is the EXPLICIT INPUT, never the ambient doc: selection refine grounds on
+ * the selected range (plus the block containing its start as context),
+ * whole-part rewrite grounds on the picked part's current text. The caller
+ * resolves both from the whole-document editor doc; the engine never sees
+ * scaffolding or unrelated parts.
  *
  * Contract rules (binding, AGENTS 1/3):
  * - settings model/gates reused — `defaultChatModel` + the default
@@ -50,11 +58,12 @@ export interface CanvasRefineInput {
   scope: CanvasRefineScope;
   /** What to do with the text (non-empty). */
   instruction: string;
-  /** The full part markdown — the editor doc string, the truth. */
-  fullMarkdown: string;
-  /** Scope 'selection': the exact selected span ('' otherwise). */
-  selectedText: string;
-  /** Scope 'selection': the block paragraph containing the selection. */
+  /** scope 'selection': the EXACT selected span (replaced exactly).
+   * scope 'part': the picked part's COMPLETE current text (fully
+   * rewritten). The grounding is explicit input — never cursor-derived. */
+  text: string;
+  /** scope 'selection': the block paragraph containing the selection's
+   * start (context only — the model must not emit it). */
   enclosingBlock: string;
   signal?: AbortSignal | undefined;
   /** Cumulative extracted replacement text so far (overlay streaming). */
@@ -181,7 +190,7 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
     if (instruction === '') {
       throw new Error('canvas refine needs an instruction');
     }
-    if (input.scope === 'selection' && input.selectedText === '') {
+    if (input.scope === 'selection' && input.text === '') {
       throw new Error('canvas selection refine needs a selected span');
     }
     const module = await getModule(input.moduleId);
@@ -230,7 +239,7 @@ function canvasRefineMessages(input: CanvasRefineInput, instruction: string): Ch
   const rules =
     input.scope === 'selection'
       ? [
-          `Rewrite ONLY the selected span of a module part, following the instruction.`,
+          `Rewrite ONLY the selected span of the module's document, following the instruction.`,
           '- "replacement" replaces EXACTLY the selected text — same boundaries, no surrounding words, no added quotes, no explanations.',
           '- Preserve the markdown structure around the selection: never unbalance **emphasis**, lists, headings, tables, or code fences; never start or end the replacement with a newline unless the selection itself did.',
           WIKI_TOKEN_RULES,
@@ -249,10 +258,9 @@ function canvasRefineMessages(input: CanvasRefineInput, instruction: string): Ch
     input.scope === 'selection'
       ? [
           `Enclosing block (context only — never part of the replacement):\n${input.enclosingBlock}`,
-          `Full part text (context only — never part of the replacement):\n${input.fullMarkdown}`,
-          `Selected text — the span "replacement" replaces exactly:\n${input.selectedText}`,
+          `Selected text — the span "replacement" replaces exactly:\n${input.text}`,
         ]
-      : [`Full part text to rewrite:\n${input.fullMarkdown}`];
+      : [`Full part text to rewrite:\n${input.text}`];
   return [
     { role: 'system', content: system },
     {

@@ -1,21 +1,23 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { Transaction } from '@codemirror/state';
-import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
+import { EditorView } from '@codemirror/view';
+import { Link, useBlocker, useLocation, useParams } from 'react-router-dom';
 import {
   ArrowLeftIcon,
   BanIcon,
+  EyeIcon,
   HistoryIcon,
   LoaderCircleIcon,
   NotebookPenIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
+  PencilIcon,
   SaveIcon,
-  TriangleAlertIcon,
   WandSparklesIcon,
 } from 'lucide-react';
 
-import { canvasPath, modulePath, modulesPath } from '@/app/routes';
+import { modulePath, modulesPath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -47,24 +49,31 @@ import {
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import type { Module } from '@/domain';
+import {
+  assembleModulePartsDocument,
+  canvasPartLabel,
+  CANVAS_PARTS_DELIMITER,
+  ModulePartsDocumentError,
+  splitPartsDocument,
+  type AnyArtifact,
+  type Module,
+} from '@/domain';
 import { cancelModuleGen, ModuleBusyError } from '@/llm/moduleGen';
 import { enclosingBlockOf, refineModuleText } from '@/llm/canvasRefine';
-import { saveModulePartText } from '@/features/modules/partText';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
-import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { useModule } from '@/features/modules/hooks';
+import { PeekModal } from '@/features/modules/peek-modal';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
-import { activeCanvasView } from '@/features/modules/canvas/canvasView';
+import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
 import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
+import { CanvasPreview } from '@/features/modules/canvas/CanvasPreview';
+import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
 import {
-  resolveCanvasScope,
-  scopeKey,
-  scopeParam,
-  type CanvasScope,
+  resolveCanvasScrollTarget,
   type PlannedPart,
 } from '@/features/modules/canvas/canvasScope';
+import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import {
   acceptSuggestion,
   canvasShowPreviousField,
@@ -85,32 +94,39 @@ import {
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
- * Module canvas (08-MODULE-DESIGNER §Module canvas): ChatGPT-canvas-style
- * document co-authoring for ONE module part — a CodeMirror 6 markdown
- * document (the doc string IS the markdown, byte-exact) with wiki-link chips,
- * AI proposals rendered as suggestions, and every accepted text landing
- * through THE one part-text save path. ONE part is edited at a time; the
- * part selector (premise + parts by planIndex) is the scope control, and
- * deep links open a chosen part (`?part=<planIndex|premise>`, `#part-<n>`
- * honored — the reader's convention).
+ * Module canvas (08-MODULE-DESIGNER §Module canvas, canvas v3 — docs/17
+ * ledger row 53): ChatGPT-canvas-style co-authoring of the WHOLE module in
+ * ONE document — a CodeMirror 6 markdown doc assembled by the shared
+ * `assembleModulePartsDocument` (every planned part in plan order, the
+ * spine premise EXCLUDED, `==========` separators + `[Part <n> of
+ * <total> — <title>]` label lines). There is NO part selector: the editor
+ * doc and the chat's context are THE SAME whole-module format, and deep
+ * links (`?part=<planIndex|premise>`, the reader's `#part-<n>` hash) are
+ * SCROLL targets.
  *
- * AI actions (canvasRefine contract): selection refine (selection triple →
- * one span replacement) and whole-part rewrite (full-doc proposal). Proposals
- * render as suggestions over the doc (never mutations): spans show the struck
- * original + green ghost + inline Accept/Reject; a whole-part proposal shows
- * the NEW text as-is (no-diff, Board precedent) with Show previous / Apply /
- * Discard. Acceptance IS persistence (save path + session version ledger);
- * the ledger dies on reload by design.
+ * The scaffolding lines are ordinary editable text while editing; they are
+ * validated only at the boundaries that need the split. Save is ONE action
+ * (manual Save, accepted proposals, chat batches): the doc is split by the
+ * shared `splitPartsDocument` and ONLY the parts whose text changed land
+ * through THE one part-text save path (+ per-part ledger entries) — a doc
+ * whose scaffolding no longer parses fails the save loudly with the
+ * splitter's reason (editor keeps the text). Leaving with unsaved edits or
+ * a pending proposal demands the explicit discard confirm.
  *
- * Chat co-editor (canvasChat contract): a collapsible wide LEFT sidebar —
- * the LLM answers prose + XML edit commands that are applied to the WHOLE
- * module's parts document (the open part via CM6 transactions, other parts
- * via the save seam), one command = one undo step in the open part. Chat
- * state is session-only, keyed per module (one conversation across part
- * switches).
+ * AI actions (cursor plays no role): selection refine works on an explicit
+ * text SELECTION over the whole doc; rewrite part works on an explicitly
+ * PICKED part (dialog picker) and proposes a block replace over that
+ * part's section range. Proposals render as suggestions (never mutations);
+ * acceptance IS persistence (split-save + session version ledger).
+ *
+ * Preview (header toggle, session-only per module): hides the editor and
+ * renders the per-part texts (scaffolding stripped) through the shared
+ * `WikiMarkdown` with the reader pool — reader parity by construction. It
+ * captures the doc at toggle time; while it is open every writing surface
+ * is disabled, so the editor doc is untouched.
  */
 
-const EMPTY_VERSIONS: readonly CanvasVersionEntry[] = [];
+const EMPTY_LEDGER: readonly CanvasVersionEntry[] = [];
 
 export function CanvasPage(): JSX.Element {
   const { campaignId = '', moduleId = '' } = useParams<{
@@ -122,7 +138,6 @@ export function CanvasPage(): JSX.Element {
   const artifacts = useArtifacts(campaignId === '' ? undefined : campaignId);
   const globalArtifacts = useGlobalArtifacts();
   const location = useLocation();
-  const navigate = useNavigate();
 
   const plans = useMemo<PlannedPart[]>(() => {
     if (module === null || module === undefined) return [];
@@ -134,32 +149,48 @@ export function CanvasPage(): JSX.Element {
     }));
   }, [module]);
 
-  const scope = useMemo<CanvasScope>(
-    () => resolveCanvasScope(location.search, location.hash, plans),
-    [location.search, location.hash, plans],
-  );
-
-  // Session version ledger: dies on reload by design (Board staging
-  // precedent) and resets when the canvas's module changes. The chat
-  // store resets with it (its keys embed the module id).
+  // Session version ledger, chat state and preview toggle: die on reload by
+  // design (Board staging precedent) and reset when the canvas's module
+  // changes (their keys embed the module id).
   useEffect(() => {
     useCanvasLedgerStore.getState().resetFor(moduleId);
     useCanvasChatStore.getState().resetFor(moduleId);
+    useCanvasPreviewStore.getState().resetFor(moduleId);
   }, [moduleId]);
 
   // Part text lives in the EDITOR (the doc string is the truth); the page
   // mirrors it only as a render trigger for the Save affordance and the
-  // part-switch guard (the guard re-reads the live editor view).
+  // leave-guard. `initialDoc` is captured ONCE per module — the editor doc
+  // is never re-assembled from the row mid-session (that would clobber
+  // unsaved edits).
+  const [initialDoc, setInitialDoc] = useState<string | null>(null);
+  const [baselineDoc, setBaselineDoc] = useState<string | null>(null);
+  // The doc the editor (re)mounts with: the assembled row doc on first
+  // mount, the toggle-time snapshot when returning from the preview (the
+  // preview UNMOUNTS the editor, so remounting from the pristine assemble
+  // would silently discard unsaved edits — AGENTS 1).
+  const [mountDoc, setMountDoc] = useState<string | null>(null);
+  const [mountedModuleId, setMountedModuleId] = useState<string | null>(null);
   const [docText, setDocText] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [switchTarget, setSwitchTarget] = useState<CanvasScope | null>(null);
-  // Adjusting state during render (React's derive-state pattern): a scope
-  // change remounts the editor, so unsaved-edit tracking resets NOW, not a
-  // frame later — the guard can never read the previous part's dirtiness.
-  const [renderedScopeKey, setRenderedScopeKey] = useState(scopeKey(scope));
-  if (renderedScopeKey !== scopeKey(scope)) {
-    setRenderedScopeKey(scopeKey(scope));
-    setDocText(null);
+  // Adjusting state during render (React's derive-state pattern): the whole
+  // document is assembled the first time the module row is available, and
+  // never again while the same module stays mounted.
+  if (
+    module !== undefined &&
+    module !== null &&
+    module.spine !== null &&
+    module.spine.partPlan.length > 0 &&
+    mountedModuleId !== module.id
+  ) {
+    const assembled = assembleModulePartsDocument({
+      partPlan: module.spine.partPlan,
+      parts: module.parts,
+    });
+    setMountedModuleId(module.id);
+    setInitialDoc(assembled.document);
+    setBaselineDoc(assembled.document);
+    setMountDoc(assembled.document);
   }
 
   // AI proposal state: the page mirrors the editor's suggestion field for
@@ -168,6 +199,7 @@ export function CanvasPage(): JSX.Element {
   const [suggestions, setSuggestions] = useState<readonly CanvasSuggestion[]>([]);
   const [refineInFlight, setRefineInFlight] = useState(false);
   const [instructionTarget, setInstructionTarget] = useState<'selection' | 'part' | null>(null);
+  const [rewritePartIndex, setRewritePartIndex] = useState<number | null>(null);
   const [instruction, setInstruction] = useState('');
   const refineAbortRef = useRef<AbortController | null>(null);
   const proposalsRef = useRef<
@@ -178,17 +210,65 @@ export function CanvasPage(): JSX.Element {
   // dispatch never re-renders React by itself).
   const [showPrevious, setShowPrevious] = useState(false);
 
-  // Chat sidebar visibility — session-only, keyed per MODULE (one
-  // conversation across part switches; dies on reload). The premise uses
-  // chat-disabled scope.
+  // Chat sidebar visibility + preview toggle — session-only, keyed per
+  // MODULE (dies on reload).
   const chatKey = canvasChatKey(moduleId);
   const chatOpen = useCanvasChatStore((store) => store.byModule[chatKey]?.open ?? false);
+  const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? false);
+  // The preview renders the doc AS OF THE TOGGLE (captured once — the
+  // editor is hidden and all writing surfaces disabled while it is open).
+  const [previewDoc, setPreviewDoc] = useState<string | null>(null);
+  // The peek modal behind the preview's resolved chips (reader affordance).
+  const [peekArtifact, setPeekArtifact] = useState<AnyArtifact | null>(null);
 
-  const ledgerKey =
-    scope.kind === 'part' ? canvasLedgerKey(moduleId, scope.planIndex) : '';
-  const versions = useCanvasLedgerStore((state) =>
-    ledgerKey === '' ? EMPTY_VERSIONS : (state.byPart[ledgerKey]?.versions ?? EMPTY_VERSIONS),
+  // The leave-guard mirrors (the guard re-checks the live editor view too).
+  const dirty = docText !== null && baselineDoc !== null && docText !== baselineDoc;
+  const pendingProposalCount = suggestions.length;
+
+  const blocker = useBlocker(
+    ({ currentLocation, nextLocation }) =>
+      mountedModuleId !== null &&
+      mountedModuleId === moduleId &&
+      (dirty || pendingProposalCount > 0) &&
+      currentLocation.pathname !== nextLocation.pathname,
   );
+
+  // Deep links are SCROLL targets (no scope, no remount): `?part=` /
+  // `#part-<n>` scroll the editor to that part's section, `premise` and the
+  // no-target default scroll to the top. Re-applies on location change.
+  useEffect(() => {
+    if (initialDoc === null || mountedModuleId !== moduleId) return;
+    lastCanvasScroll.current = null;
+    const target = resolveCanvasScrollTarget(location.search, location.hash, plans);
+    if (target === null) return;
+    if (target.kind === 'premise') {
+      lastCanvasScroll.current = { target: 'top', offset: 0 };
+      activeCanvasView.current?.dispatch({
+        effects: EditorView.scrollIntoView(0, { y: 'start' }),
+      });
+      return;
+    }
+    // The section's label line anchors the scroll (tolerant: a doc whose
+    // scaffolding is broken simply doesn't scroll — its brokenness surfaces
+    // at save/preview time, not here).
+    const plan = plans.find((entry) => entry.planIndex === target.planIndex);
+    if (plan === undefined) return;
+    let offset: number | null = null;
+    if (target.planIndex === 0) {
+      offset = 0;
+    } else {
+      const label = canvasPartLabel(target.planIndex + 1, plans.length, plan.title);
+      const at = initialDoc.indexOf(`\n\n${CANVAS_PARTS_DELIMITER}\n\n${label}\n`);
+      if (at !== -1) offset = at + `\n\n${CANVAS_PARTS_DELIMITER}\n\n`.length;
+    }
+    if (offset === null) return;
+    lastCanvasScroll.current = { target: 'doc', offset };
+    activeCanvasView.current?.dispatch({
+      effects: EditorView.scrollIntoView(offset, { y: 'start' }),
+    });
+  }, [location.search, location.hash, initialDoc, mountedModuleId, moduleId, plans]);
+
+  const ledgerByPart = useCanvasLedgerStore((state) => state.byPart);
 
   if (
     campaign === undefined ||
@@ -205,11 +285,11 @@ export function CanvasPage(): JSX.Element {
     return <MissingCanvas message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   const currentModule: Module = module;
-  if (currentModule.spine === null) {
+  if (currentModule.spine === null || currentModule.spine.partPlan.length === 0 || initialDoc === null) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <p className="text-sm text-muted-foreground">
-          This module has no spine yet — the canvas edits its parts once the spine exists.
+          This module has no planned parts yet — the canvas edits its parts once the spine exists.
         </p>
         <Button
           variant="outline"
@@ -225,57 +305,50 @@ export function CanvasPage(): JSX.Element {
 
   const busy = currentModule.status === 'generating';
   const pool = [...artifacts, ...globalArtifacts];
-  const scopeIsPart = scope.kind === 'part';
-  const part =
-    scope.kind === 'part'
-      ? currentModule.parts.find((entry) => entry.planIndex === scope.planIndex)
-      : undefined;
-  const partMarkdown = scope.kind === 'part' ? (part?.markdown ?? '') : '';
-  // Dirty = the live doc diverged from the saved row (the mirror updates on
-  // every editor change; the save itself re-reads the live editor view).
-  const dirty = scopeIsPart && docText !== null && docText !== partMarkdown;
   const wholeProposal = suggestions.find((entry) => entry.wholePart);
   const aiBlocked = busy || refineInFlight || wholeProposal !== undefined;
+  const viewBusy = busy || refineInFlight || suggestions.length > 0;
 
   function syncSuggestions(): void {
     const view = activeCanvasView.current;
     setSuggestions(view === null ? [] : pendingSuggestions(view.state));
   }
 
-  /** The selector's switch request — a pending proposal or unsaved edits
-   * die with the screen, so switching away needs an explicit loud confirm. */
-  function requestScopeSwitch(target: CanvasScope): void {
-    const sameScope =
-      (target.kind === 'premise' && scope.kind === 'premise') ||
-      (target.kind === 'part' &&
-        scope.kind === 'part' &&
-        target.planIndex === scope.planIndex);
-    if (sameScope) return;
+  /**
+   * ONE save action for the whole document (manual Save, accepted
+   * proposals, chat batches): split → save ONLY the changed parts through
+   * THE one part-text save path (+ per-part ledger entries). A doc whose
+   * scaffolding no longer parses fails loud with the splitter's reason —
+   * the editor keeps its text so the problem can be fixed. Per-part save
+   * failures toast loudly naming the part (saveWholeModuleDocument) while
+   * the remaining parts still land.
+   */
+  async function saveDoc(origin: 'user' | 'ai', label: string, successMessage: string | null): Promise<void> {
     const view = activeCanvasView.current;
-    const pendingCount = view === null ? 0 : pendingSuggestions(view.state).length;
-    if (pendingCount > 0 || dirty) {
-      setSwitchTarget(target);
-      return;
-    }
-    navigate(canvasPath(campaignId, moduleId, scopeParam(target)));
-  }
-
-  async function savePart(): Promise<void> {
-    if (scope.kind !== 'part' || saving) return;
-    const doc = activeCanvasView.current?.state.doc.toString();
-    if (doc === undefined) return;
+    if (view === null || saving) return;
+    const doc = view.state.doc.toString();
     setSaving(true);
     try {
-      await saveModulePartText(currentModule.id, scope.planIndex, doc);
-      useCanvasLedgerStore.getState().append(canvasLedgerKey(currentModule.id, scope.planIndex), {
-        markdown: doc,
-        origin: 'user',
-        label: 'Manual edit',
+      const result = await saveWholeModuleDocument({
+        moduleId: currentModule.id,
+        doc,
+        module: currentModule,
+        origin,
+        label,
       });
-      setDocText(doc);
-      toastSuccess('Part saved');
+      setBaselineDoc(doc);
+      if (successMessage !== null && result.failedParts.length === 0) {
+        toastSuccess(successMessage);
+      }
     } catch (error) {
-      toastError('Could not save the part', error);
+      if (error instanceof ModulePartsDocumentError) {
+        toastError(
+          'Could not save — the parts-document scaffolding no longer parses. Fix the separator / label lines, then Save again.',
+          error,
+        );
+      } else {
+        toastError('Could not save the module document', error);
+      }
     } finally {
       setSaving(false);
     }
@@ -284,13 +357,20 @@ export function CanvasPage(): JSX.Element {
   /**
    * Runs one canvas refine (canvasRefine contract): proposes the suggestion
    * overlay immediately, streams extracted content deltas into it, seals it
-   * with the validated reply — or drops it loudly. User aborts are silent
-   * (a stop is not an error); ModuleBusyError surfaces the one-generation-
-   * per-module rule; every other failure drops the proposal with a toast.
+   * with the validated reply — or drops it loudly. The grounding is the
+   * EXPLICIT input, never the cursor: the selected range for a selection
+   * refine, the picked part's current text for a rewrite. User aborts are
+   * silent (a stop is not an error); ModuleBusyError surfaces the
+   * one-generation-per-module rule; every other failure drops the proposal
+   * with a toast.
    */
-  function beginProposal(target: 'selection' | 'part', instructionText: string): void {
+  function beginProposal(
+    target: 'selection' | 'part',
+    instructionText: string,
+    rewritePlanIndex: number | null,
+  ): void {
     const view = activeCanvasView.current;
-    if (view === null || scope.kind !== 'part') return;
+    if (view === null) return;
     const doc = view.state.doc.toString();
     const selection = view.state.selection.main;
     const isSelection = target === 'selection';
@@ -298,12 +378,40 @@ export function CanvasPage(): JSX.Element {
       toastInfo('Select the text to refine first, then run Refine selection.');
       return;
     }
+    let from = selection.from;
+    let to = selection.to;
+    let groundingText = doc.slice(selection.from, selection.to);
+    if (!isSelection) {
+      if (rewritePlanIndex === null) {
+        toastInfo('Pick the part to rewrite first.');
+        return;
+      }
+      try {
+        const section = splitPartsDocument(doc, currentModule.spine?.partPlan ?? []).find(
+          (entry) => entry.planIndex === rewritePlanIndex,
+        );
+        if (section === undefined) {
+          throw new Error(`part ${String(rewritePlanIndex + 1)} is not in the document`);
+        }
+        from = section.textFrom;
+        to = section.textTo;
+        groundingText = section.text;
+      } catch (error) {
+        if (error instanceof ModulePartsDocumentError) {
+          toastError(
+            'Could not start the rewrite — the parts-document scaffolding no longer parses.',
+            error,
+          );
+        } else {
+          toastError('Could not start the rewrite', error);
+        }
+        return;
+      }
+    }
     const controller = new AbortController();
     refineAbortRef.current = controller;
     setRefineInFlight(true);
     const id = newSuggestionId();
-    const from = isSelection ? selection.from : 0;
-    const to = isSelection ? selection.to : doc.length;
     proposalsRef.current.set(id, {
       instruction: instructionText,
       wholePart: !isSelection,
@@ -336,8 +444,7 @@ export function CanvasPage(): JSX.Element {
           moduleId: currentModule.id,
           scope: target,
           instruction: instructionText,
-          fullMarkdown: doc,
-          selectedText: isSelection ? doc.slice(selection.from, selection.to) : '',
+          text: groundingText,
           enclosingBlock: isSelection ? enclosingBlockOf(doc, selection.from) : '',
           signal: controller.signal,
           onDelta: (soFar) => {
@@ -376,43 +483,48 @@ export function CanvasPage(): JSX.Element {
 
   /**
    * Acceptance IS persistence: the accept dispatch already replaced the doc
-   * (ONE undo unit), so the page lands the resulting text through THE one
-   * part-text save path and appends the session ledger entry. A failed save
-   * toasts loudly and leaves the editor text (Save part retries from there).
+   * (ONE undo unit), so the page lands the result through the split-save
+   * (only the part(s) the proposal touched hit the row) and appends the
+   * session ledger entry per changed part. A failed save toasts loudly and
+   * leaves the editor text (Save retries from there).
    */
   async function handleSuggestionAccepted(id: string): Promise<void> {
     const meta = proposalsRef.current.get(id);
     proposalsRef.current.delete(id);
-    if (scope.kind !== 'part') return;
     const view = activeCanvasView.current;
     if (view === null) return;
-    const doc = view.state.doc.toString();
-    try {
-      await saveModulePartText(currentModule.id, scope.planIndex, doc);
-      useCanvasLedgerStore.getState().append(canvasLedgerKey(currentModule.id, scope.planIndex), {
-        markdown: doc,
-        origin: 'ai',
-        label: meta?.ledgerLabel ?? 'AI proposal',
-      });
-      toastSuccess(meta?.wholePart === true ? 'Rewrite applied' : 'Proposal applied');
-    } catch (error) {
-      toastError('Could not save the accepted proposal — use Save part to retry', error);
-    } finally {
-      syncSuggestions();
-    }
+    await saveDoc('ai', meta?.ledgerLabel ?? 'AI proposal', meta?.wholePart === true ? 'Rewrite applied' : 'Proposal applied');
+    syncSuggestions();
   }
 
-  /** Restore proposes an older version through the SAME suggestion
-   * machinery — accepting it rides undo and the save path like any AI
-   * proposal (no side-door write). */
-  function restoreVersion(entry: CanvasVersionEntry): void {
+  /** Restore proposes an older per-part version through the SAME suggestion
+   * machinery — a block replace over THAT part's current section range;
+   * accepting it rides undo and the save path like any AI proposal (no
+   * side-door write). */
+  function restoreVersion(planIndex: number, entry: CanvasVersionEntry): void {
     const view = activeCanvasView.current;
-    if (view === null || scope.kind !== 'part') return;
+    if (view === null) return;
     if (pendingSuggestions(view.state).length > 0) {
       toastInfo('Discard the pending proposal first.');
       return;
     }
     const doc = view.state.doc.toString();
+    let section;
+    try {
+      section = splitPartsDocument(doc, currentModule.spine?.partPlan ?? []).find(
+        (candidate) => candidate.planIndex === planIndex,
+      );
+    } catch (error) {
+      toastError(
+        'Could not restore — the parts-document scaffolding no longer parses.',
+        error,
+      );
+      return;
+    }
+    if (section === undefined) {
+      toastError('Could not restore — the part is not in the document', new Error(`part ${String(planIndex + 1)} is not in the document`));
+      return;
+    }
     const id = newSuggestionId();
     proposalsRef.current.set(id, {
       instruction: `Restore version #${String(entry.seq)}`,
@@ -421,15 +533,30 @@ export function CanvasPage(): JSX.Element {
     });
     proposeSuggestion(view, {
       id,
-      from: 0,
-      to: doc.length,
-      originalText: doc,
+      from: section.textFrom,
+      to: section.textTo,
+      originalText: section.text,
       proposedText: entry.markdown,
       instruction: `Restore version #${String(entry.seq)}`,
       streaming: false,
       wholePart: true,
     });
     syncSuggestions();
+  }
+
+  function togglePreview(): void {
+    const next = !previewOpen;
+    if (next) {
+      const view = activeCanvasView.current;
+      if (view === null) return;
+      setPreviewDoc(view.state.doc.toString());
+    } else {
+      // Return from the preview: the editor remounts — hand it the
+      // toggle-time snapshot so unsaved edits survive the round trip.
+      setMountDoc(previewDoc ?? mountDoc ?? initialDoc);
+      setPreviewDoc(null);
+    }
+    useCanvasPreviewStore.getState().setOpen(moduleId, next);
   }
 
   return (
@@ -481,130 +608,120 @@ export function CanvasPage(): JSX.Element {
           <Badge variant="secondary">{currentModule.status}</Badge>
         )}
         <div className="ml-auto flex items-center gap-2">
-          <Select
-            value={scope.kind === 'premise' ? 'premise' : String(scope.planIndex)}
-            items={{
-              premise: 'Premise',
-              ...Object.fromEntries(
-                plans.map((plan) => [
-                  String(plan.planIndex),
-                  `Part ${String(plan.planIndex + 1)}: ${plan.title}`,
-                ]),
-              ),
-            }}
-            onValueChange={(value) => {
-              requestScopeSwitch(
-                value === 'premise' ? { kind: 'premise' } : { kind: 'part', planIndex: Number(value) },
-              );
+          <Button
+            variant="ghost"
+            size="xs"
+            aria-pressed={previewOpen}
+            disabled={viewBusy}
+            data-testid="canvas-preview-toggle"
+            onClick={togglePreview}
+          >
+            {previewOpen ? <PencilIcon aria-hidden data-icon="inline-start" /> : <EyeIcon aria-hidden data-icon="inline-start" />}
+            {previewOpen ? 'Edit' : 'Preview'}
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={aiBlocked || previewOpen}
+            data-testid="canvas-refine-selection"
+            onClick={() => {
+              setInstruction('');
+              setInstructionTarget('selection');
             }}
           >
-            <SelectTrigger aria-label="Part" className="w-64" data-testid="canvas-part-select">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="premise">Premise (read-only)</SelectItem>
-              {plans.map((plan) => (
-                <SelectItem key={String(plan.planIndex)} value={String(plan.planIndex)}>
-                  {`Part ${String(plan.planIndex + 1)}: ${plan.title}`}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {scope.kind === 'part' && (
-            <>
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={aiBlocked}
-                data-testid="canvas-refine-selection"
-                onClick={() => {
-                  setInstruction('');
-                  setInstructionTarget('selection');
-                }}
-              >
-                <WandSparklesIcon aria-hidden data-icon="inline-start" />
-                Refine selection
-              </Button>
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={aiBlocked}
-                data-testid="canvas-rewrite-part"
-                onClick={() => {
-                  setInstruction('');
-                  setInstructionTarget('part');
-                }}
-              >
-                <NotebookPenIcon aria-hidden data-icon="inline-start" />
-                Rewrite part
-              </Button>
-              <DropdownMenu>
-                <DropdownMenuTrigger
-                  render={
-                    <Button variant="ghost" size="xs" data-testid="canvas-versions">
-                      <HistoryIcon aria-hidden data-icon="inline-start" />
-                      Versions
-                    </Button>
-                  }
-                />
-                <DropdownMenuContent align="end" className="max-h-80 w-80 overflow-y-auto">
-                  <DropdownMenuGroup>
-                    <DropdownMenuLabel>Session versions — dies on reload</DropdownMenuLabel>
-                    {versions.length === 0 ? (
-                      <p className="px-2 py-3 text-sm text-muted-foreground" data-testid="canvas-versions-empty">
-                        Nothing accepted yet — accepted proposals and saves land here.
-                      </p>
-                    ) : (
-                      [...versions].reverse().map((entry) => (
-                        <DropdownMenuItem
-                          key={String(entry.seq)}
-                          data-testid={`canvas-version-${String(entry.seq)}`}
-                          onClick={() => {
-                            restoreVersion(entry);
-                          }}
-                        >
-                          <span className="flex min-w-0 flex-col">
-                            <span className="truncate text-sm">
-                              #{String(entry.seq)} · {entry.label}
-                            </span>
-                            <span className="text-xs text-muted-foreground">
-                              {entry.origin === 'ai' ? 'AI' : 'you'} ·{' '}
-                              {new Date(entry.createdAt).toLocaleTimeString()}
-                            </span>
-                          </span>
-                        </DropdownMenuItem>
-                      ))
-                    )}
-                  </DropdownMenuGroup>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              {refineInFlight && (
-                <Button
-                  variant="outline"
-                  size="xs"
-                  data-testid="canvas-stop-proposal"
-                  onClick={() => {
-                    refineAbortRef.current?.abort();
-                  }}
-                >
-                  <BanIcon aria-hidden data-icon="inline-start" />
-                  Stop proposal
+            <WandSparklesIcon aria-hidden data-icon="inline-start" />
+            Refine selection
+          </Button>
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={aiBlocked || previewOpen}
+            data-testid="canvas-rewrite-part"
+            onClick={() => {
+              setInstruction('');
+              setRewritePartIndex(null);
+              setInstructionTarget('part');
+            }}
+          >
+            <NotebookPenIcon aria-hidden data-icon="inline-start" />
+            Rewrite part
+          </Button>
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <Button variant="ghost" size="xs" data-testid="canvas-versions">
+                  <HistoryIcon aria-hidden data-icon="inline-start" />
+                  Versions
                 </Button>
-              )}
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={!dirty || saving || busy}
-                data-testid="canvas-save"
-                onClick={() => {
-                  void savePart();
-                }}
-              >
-                <SaveIcon aria-hidden data-icon="inline-start" />
-                {saving ? 'Saving…' : 'Save part'}
-              </Button>
-            </>
+              }
+            />
+            <DropdownMenuContent align="end" className="max-h-80 w-80 overflow-y-auto">
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Session versions — dies on reload</DropdownMenuLabel>
+                {plans.every((plan) => (ledgerByPart[canvasLedgerKey(moduleId, plan.planIndex)]?.versions.length ?? 0) === 0) ? (
+                  <p className="px-2 py-3 text-sm text-muted-foreground" data-testid="canvas-versions-empty">
+                    Nothing accepted yet — accepted proposals and saves land here.
+                  </p>
+                ) : (
+                  plans.map((plan) => {
+                    const versions = ledgerByPart[canvasLedgerKey(moduleId, plan.planIndex)]?.versions ?? EMPTY_LEDGER;
+                    if (versions.length === 0) return null;
+                    return (
+                      <DropdownMenuGroup key={String(plan.planIndex)}>
+                        <DropdownMenuLabel>
+                          {`Part ${String(plan.planIndex + 1)} — ${plan.title}`}
+                        </DropdownMenuLabel>
+                        {[...versions].reverse().map((entry) => (
+                          <DropdownMenuItem
+                            key={`${String(plan.planIndex)}-${String(entry.seq)}`}
+                            data-testid={`canvas-version-${String(plan.planIndex)}-${String(entry.seq)}`}
+                            onClick={() => {
+                              restoreVersion(plan.planIndex, entry);
+                            }}
+                          >
+                            <span className="flex min-w-0 flex-col">
+                              <span className="truncate text-sm">
+                                #{String(entry.seq)} · {entry.label}
+                              </span>
+                              <span className="text-xs text-muted-foreground">
+                                {entry.origin === 'ai' ? 'AI' : 'you'} ·{' '}
+                                {new Date(entry.createdAt).toLocaleTimeString()}
+                              </span>
+                            </span>
+                          </DropdownMenuItem>
+                        ))}
+                      </DropdownMenuGroup>
+                    );
+                  })
+                )}
+              </DropdownMenuGroup>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {refineInFlight && (
+            <Button
+              variant="outline"
+              size="xs"
+              data-testid="canvas-stop-proposal"
+              onClick={() => {
+                refineAbortRef.current?.abort();
+              }}
+            >
+              <BanIcon aria-hidden data-icon="inline-start" />
+              Stop proposal
+            </Button>
           )}
+          <Button
+            variant="outline"
+            size="xs"
+            disabled={!dirty || saving || busy || previewOpen}
+            data-testid="canvas-save"
+            onClick={() => {
+              void saveDoc('user', 'Manual edit', 'Module saved');
+            }}
+          >
+            <SaveIcon aria-hidden data-icon="inline-start" />
+            {saving ? 'Saving…' : 'Save'}
+          </Button>
         </div>
       </header>
 
@@ -612,107 +729,86 @@ export function CanvasPage(): JSX.Element {
         {chatOpen && (
           <ChatSidebar
             moduleId={currentModule.id}
-            scope={scope.kind === 'part' ? scope : { kind: 'premise' }}
             hasPlannedParts={plans.length > 0}
             pool={pool}
             aiBusy={aiBlocked}
           />
         )}
         <div className="flex min-h-0 flex-1 flex-col">
-          {scope.kind === 'premise' ? (
-            <div className="min-h-0 flex-1 overflow-y-auto p-6">
-              <div className="mx-auto max-w-3xl">
-                <p
-                  className="mb-4 flex items-center gap-2 rounded-lg border border-dashed p-3 text-sm text-muted-foreground"
-                  data-testid="canvas-premise-notice"
-                >
-                  <TriangleAlertIcon aria-hidden className="size-4 shrink-0" />
-                  The premise is read-only in canvas v1 — it is generated with the spine. Switch to a
-                  part to co-author its markdown.
-                </p>
-                <article className="prose-module" data-testid="canvas-premise-body">
-                  <WikiMarkdown
-                    value={currentModule.spine.premise}
-                    artifacts={pool}
-                    moduleId={currentModule.id}
-                  />
-                </article>
-              </div>
+          {wholeProposal !== undefined && !previewOpen && (
+            <div
+              className="flex items-center gap-2 border-b px-4 py-1.5 text-sm text-muted-foreground"
+              data-testid="canvas-proposal-bar"
+              data-streaming={refineInFlight ? 'true' : 'false'}
+            >
+              {refineInFlight && (
+                <>
+                  <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin" />
+                  <span>Proposing…</span>
+                </>
+              )}
+              <Button
+                variant="ghost"
+                size="xs"
+                data-testid="canvas-show-previous"
+                onClick={() => {
+                  const view = activeCanvasView.current;
+                  if (view === null) return;
+                  const next = !view.state.field(canvasShowPreviousField);
+                  view.dispatch({
+                    effects: setShowPreviousEffect.of(next),
+                    annotations: Transaction.addToHistory.of(false),
+                  });
+                  setShowPrevious(next);
+                }}
+              >
+                {showPrevious ? 'Show proposed' : 'Show previous'}
+              </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={refineInFlight}
+                data-testid="canvas-proposal-apply"
+                onClick={() => {
+                  const view = activeCanvasView.current;
+                  if (view === null) return;
+                  acceptSuggestion(view, wholeProposal.id);
+                }}
+              >
+                Apply
+              </Button>
+              <Button
+                variant="ghost"
+                size="xs"
+                disabled={refineInFlight}
+                data-testid="canvas-proposal-discard"
+                onClick={() => {
+                  const view = activeCanvasView.current;
+                  if (view === null) return;
+                  rejectSuggestion(view, wholeProposal.id);
+                  proposalsRef.current.delete(wholeProposal.id);
+                  syncSuggestions();
+                }}
+              >
+                Discard
+              </Button>
             </div>
+          )}
+          {previewOpen && previewDoc !== null ? (
+            <CanvasPreview
+              doc={previewDoc}
+              module={currentModule}
+              artifacts={pool}
+              moduleId={currentModule.id}
+              onOpenArtifact={(artifact) => {
+                setPeekArtifact(artifact);
+              }}
+            />
           ) : (
-            <div className="flex min-h-0 flex-1 flex-col gap-2 p-4">
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">
-                  {plans.find((plan) => plan.planIndex === scope.planIndex)?.title ??
-                    `Part ${String(scope.planIndex + 1)}`}
-                </span>
-                <span>
-                  Levels {plans.find((plan) => plan.planIndex === scope.planIndex)?.levelBand ?? '?'}
-                </span>
-                {part?.edited === true && <Badge variant="outline">edited</Badge>}
-                {wholeProposal !== undefined && (
-                  <span
-                    className="ml-auto flex items-center gap-1.5"
-                    data-testid="canvas-proposal-bar"
-                    data-streaming={refineInFlight ? 'true' : 'false'}
-                  >
-                    {refineInFlight && (
-                      <>
-                        <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin" />
-                        <span>Proposing…</span>
-                      </>
-                    )}
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      data-testid="canvas-show-previous"
-                      onClick={() => {
-                        const view = activeCanvasView.current;
-                        if (view === null) return;
-                        const next = !view.state.field(canvasShowPreviousField);
-                        view.dispatch({
-                          effects: setShowPreviousEffect.of(next),
-                          annotations: Transaction.addToHistory.of(false),
-                        });
-                        setShowPrevious(next);
-                      }}
-                    >
-                      {showPrevious ? 'Show proposed' : 'Show previous'}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      disabled={refineInFlight}
-                      data-testid="canvas-proposal-apply"
-                      onClick={() => {
-                        const view = activeCanvasView.current;
-                        if (view === null) return;
-                        acceptSuggestion(view, wholeProposal.id);
-                      }}
-                    >
-                      Apply
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      disabled={refineInFlight}
-                      data-testid="canvas-proposal-discard"
-                      onClick={() => {
-                        const view = activeCanvasView.current;
-                        if (view === null) return;
-                        rejectSuggestion(view, wholeProposal.id);
-                        proposalsRef.current.delete(wholeProposal.id);
-                        syncSuggestions();
-                      }}
-                    >
-                      Discard
-                    </Button>
-                  </span>
-                )}
-              </div>
+            <div className="flex min-h-0 flex-1 flex-col p-4">
               <CanvasEditor
-                key={scopeKey(scope)}
-                initialMarkdown={partMarkdown}
+                key={currentModule.id}
+                initialMarkdown={mountDoc ?? initialDoc}
                 artifacts={pool}
                 moduleId={currentModule.id}
                 onChange={setDocText}
@@ -733,6 +829,18 @@ export function CanvasPage(): JSX.Element {
         </div>
       </div>
 
+      {peekArtifact !== null && (
+        <PeekModal
+          artifact={peekArtifact}
+          artifacts={pool}
+          open
+          onOpenChange={(open) => {
+            if (!open) setPeekArtifact(null);
+          }}
+          campaignId={campaignId}
+        />
+      )}
+
       <Dialog
         open={instructionTarget !== null}
         onOpenChange={(open) => {
@@ -746,10 +854,40 @@ export function CanvasPage(): JSX.Element {
             </DialogTitle>
             <DialogDescription>
               {instructionTarget === 'selection'
-                ? 'The selected span is replaced exactly — the rest of the part stays untouched until you accept.'
-                : 'The whole part is rewritten as a proposal — nothing changes until you apply it.'}
+                ? 'The selected span is replaced exactly — the rest of the document stays untouched until you accept.'
+                : 'The picked part is rewritten as a proposal — nothing changes until you apply it.'}
             </DialogDescription>
           </DialogHeader>
+          {instructionTarget === 'part' && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="canvas-rewrite-part-select">Part to rewrite</Label>
+              <Select
+                value={rewritePartIndex === null ? '' : String(rewritePartIndex)}
+                items={{
+                  ...Object.fromEntries(
+                    plans.map((plan) => [
+                      String(plan.planIndex),
+                      `Part ${String(plan.planIndex + 1)}: ${plan.title}`,
+                    ]),
+                  ),
+                }}
+                onValueChange={(value) => {
+                  setRewritePartIndex(Number(value));
+                }}
+              >
+                <SelectTrigger id="canvas-rewrite-part-select" className="w-full" data-testid="canvas-rewrite-part-select">
+                  <SelectValue placeholder="Pick a part…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {plans.map((plan) => (
+                    <SelectItem key={String(plan.planIndex)} value={String(plan.planIndex)}>
+                      {`Part ${String(plan.planIndex + 1)}: ${plan.title}`}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          )}
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="canvas-instruction">Instruction</Label>
             <Textarea
@@ -773,13 +911,13 @@ export function CanvasPage(): JSX.Element {
             </Button>
             <Button
               data-testid="canvas-instruction-confirm"
-              disabled={instruction.trim() === ''}
+              disabled={instruction.trim() === '' || (instructionTarget === 'part' && rewritePartIndex === null)}
               onClick={() => {
                 const target = instructionTarget;
                 const text = instruction.trim();
                 setInstructionTarget(null);
                 if (target === null) return;
-                beginProposal(target, text);
+                beginProposal(target, text, target === 'part' ? rewritePartIndex : null);
               }}
             >
               Propose
@@ -788,38 +926,35 @@ export function CanvasPage(): JSX.Element {
         </DialogContent>
       </Dialog>
 
-      <AlertDialog
-        open={switchTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setSwitchTarget(null);
-        }}
-      >
-        <AlertDialogContent data-testid="canvas-switch-guard">
-          <AlertDialogHeader>
-            <AlertDialogTitle>Leave this part?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Pending proposals and unsaved edits live only on this screen — switching parts
-              discards them (the saved module text is unaffected). Session staging dies on reload
-              too.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Stay</AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="canvas-switch-confirm"
-              onClick={() => {
-                const target = switchTarget;
-                setSwitchTarget(null);
-                if (target !== null) {
-                  navigate(canvasPath(campaignId, moduleId, scopeParam(target)));
-                }
-              }}
-            >
-              Discard and switch
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      {blocker.state === 'blocked' && (
+        <AlertDialog
+          open
+          onOpenChange={(open) => {
+            if (!open) blocker.reset();
+          }}
+        >
+          <AlertDialogContent data-testid="canvas-leave-guard">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Leave the canvas?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Pending proposals and unsaved edits live only on this screen — leaving discards
+                them (the saved module text is unaffected). Session staging dies on reload too.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Stay</AlertDialogCancel>
+              <AlertDialogAction
+                data-testid="canvas-leave-confirm"
+                onClick={() => {
+                  blocker.proceed();
+                }}
+              >
+                Discard and leave
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
     </div>
   );
 }

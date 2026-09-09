@@ -78,8 +78,7 @@ function baseInput(overrides: Partial<CanvasRefineInput> = {}): CanvasRefineInpu
     moduleId: world.moduleId,
     scope: 'selection',
     instruction: 'tighten the scene',
-    fullMarkdown: DOC,
-    selectedText: 'The party bargains with [[Keeper Ilse]] at the gate.',
+    text: 'The party bargains with [[Keeper Ilse]] at the gate.',
     enclosingBlock: 'The party bargains with [[Keeper Ilse]] at the gate.',
     ...overrides,
   };
@@ -96,7 +95,7 @@ afterEach(() => {
 });
 
 describe('canvasRefine contract', () => {
-  it('sends the selection triple + wiki-token rules + strict JSON contract, returns the validated replacement', async () => {
+  it('sends the selection grounding + wiki-token rules + strict JSON contract, returns the validated replacement', async () => {
     chatMock.mockResolvedValue({
       text: JSON.stringify({ replacement: 'The party bargains harder.' }),
       modelUsed: 'test-model',
@@ -111,7 +110,10 @@ describe('canvasRefine contract', () => {
     if (typeof user !== 'string') throw new Error('expected string user content');
     // Selection triple is grounded.
     expect(user).toContain('The party bargains with [[Keeper Ilse]] at the gate.');
-    expect(user).toContain(DOC);
+    // v3: the grounding is the EXPLICIT selection only — the full part
+    // text is never ambient context (cursor plays no role, and neither
+    // does the surrounding part).
+    expect(user).not.toContain('## The Gate Bargain');
     expect(user).toContain('tighten the scene');
     // Wiki-link token semantics are instructed.
     expect(user).toContain('[[Name|display]]');
@@ -127,7 +129,7 @@ describe('canvasRefine contract', () => {
       modelUsed: 'm',
       fallback: null,
     });
-    await refineModuleText(baseInput({ scope: 'part', selectedText: '', enclosingBlock: '' }));
+    await refineModuleText(baseInput({ scope: 'part', text: DOC, enclosingBlock: '' }));
     const user = (chatMock.mock.calls[0]?.[0]?.[1]?.content ?? '') as string;
     expect(user).toContain('COMPLETE new markdown');
     expect(user).toContain('NO H1');
@@ -176,13 +178,13 @@ describe('canvasRefine contract', () => {
 
   it('an empty whole-part replacement fails loud', async () => {
     chatMock.mockResolvedValue({ text: JSON.stringify({ replacement: '  ' }), modelUsed: 'm', fallback: null });
-    await expect(refineModuleText(baseInput({ scope: 'part', selectedText: '', enclosingBlock: '' })))
+    await expect(refineModuleText(baseInput({ scope: 'part', text: DOC, enclosingBlock: '' })))
       .rejects.toThrow(/empty replacement/i);
   });
 
   it('an empty instruction or empty selection fails loud before any model call', async () => {
     await expect(refineModuleText(baseInput({ instruction: '   ' }))).rejects.toThrow(/instruction/i);
-    await expect(refineModuleText(baseInput({ selectedText: '' }))).rejects.toThrow(/selected span/i);
+    await expect(refineModuleText(baseInput({ text: '' }))).rejects.toThrow(/selected span/i);
     expect(chatMock).not.toHaveBeenCalled();
   });
 

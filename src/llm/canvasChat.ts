@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { Id, Module } from '@/domain';
+import { canvasPartLabel, splitModulePartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -47,10 +48,13 @@ import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy
  *   regex-guessing across boundaries) and zod-validated at this boundary —
  *   a malformed, unbalanced or over-cap reply THROWS `CanvasChatParseError`
  *   (the whole reply fails loudly; nothing partial is applied).
- * - The context ALWAYS carries the CURRENT parts document — assembled from
- *   the module row AT SEND TIME (never a cached copy), with the OPEN part's
- *   text substituted from the live CM6 doc — with an explicit note that it
- *   already contains every previously applied edit.
+ * - The context ALWAYS carries the CURRENT parts document — v3: the LIVE
+ *   whole-document canvas editor doc passed by the page at send time (the
+ *   doc IS the whole module; unsaved edits in EVERY part ride along). The
+ *   per-part snapshot comes from the shared `splitModulePartsDocument`
+ *   (domain) applied to that same doc, so application matches EXACTLY the
+ *   text the model saw. A doc whose scaffolding no longer parses fails the
+ *   send loudly with the splitter's reason.
  * - Matching is PER PART, never across the assembled string: a search
  *   spanning two parts cannot match and fails loudly (zero-match card with
  *   the closest candidate across parts).
@@ -479,85 +483,11 @@ export function resolveCanvasEdit(doc: string, search: string): CanvasEditResolu
 
 // --- whole-module parts document --------------------------------------------------
 
-/**
- * The scaffold delimiter between part sections (owner: "an easy to see
- * delimiter" — blank line, exactly ten `=`, blank line). SCAFFOLDING: the
- * prompt forbids it inside any search/replace, and per-part matching means
- * a command can never edit across it.
- */
-export const CANVAS_PARTS_DELIMITER = '==========';
-
-/** One part's snapshot as the model saw it (application matches THIS text). */
-export interface CanvasPartSnapshot {
-  planIndex: number;
-  title: string;
-  text: string;
-}
-
-/**
- * The scaffold label line introducing one part section:
- * `[Part <n> of <total> — <title>]` (n = 1-based position in the plan).
- * Without a usable title the label falls back to `[Part <n> of <total>]`.
- * For an EMPTY (not-yet-written) part the label line is the only anchor:
- * a command whose search EXACTLY equals it fills that part (the replace
- * must start with the same label line).
- */
-export function canvasPartLabel(position: number, total: number, title: string): string {
-  const head = `Part ${String(position)} of ${String(total)}`;
-  const clean = title.trim();
-  return clean === '' ? `[${head}]` : `[${head} — ${clean}]`;
-}
-
-export interface AssembleModulePartsInput {
-  /** The plan in order — position i IS planIndex i (08 §Module canvas). */
-  partPlan: readonly { title: string }[];
-  /** Row parts; text joined by planIndex (missing/empty part → ''). */
-  parts: readonly { planIndex: number; markdown: string }[];
-  /** The OPEN part's planIndex — `openPartText` substitutes its row text
-   * so unsaved hand edits ride along exactly as they appear on screen. */
-  openPlanIndex: number;
-  openPartText: string;
-}
-
-/**
- * Assembles the WHOLE-module parts document (PURE — 08 §Module canvas
- * chat): every planned part in `partPlan` order, the spine premise
- * EXCLUDED (owner: "without premise"), each section introduced by its
- * scaffold label line and separated by the `==========` delimiter. The
- * OPEN part's text is substituted from the live editor doc byte-exactly —
- * no trimming, so resolved offsets map 1:1 onto the CM6 doc. The spine
- * premise is not part of the document and not referenced by it.
- */
-export function assembleModulePartsDocument(input: AssembleModulePartsInput): {
-  document: string;
-  parts: CanvasPartSnapshot[];
-} {
-  const total = input.partPlan.length;
-  if (total === 0) {
-    throw new Error('assembleModulePartsDocument needs at least one planned part');
-  }
-  if (!Number.isInteger(input.openPlanIndex) || input.openPlanIndex < 0 || input.openPlanIndex >= total) {
-    throw new Error(
-      `openPlanIndex ${String(input.openPlanIndex)} is not a planned part of this module (${String(total)} planned)`,
-    );
-  }
-  const sections: CanvasPartSnapshot[] = input.partPlan.map((plan, index) => ({
-    planIndex: index,
-    title: plan.title,
-    text:
-      index === input.openPlanIndex
-        ? input.openPartText
-        : (input.parts.find((part) => part.planIndex === index)?.markdown ?? ''),
-  }));
-  const document = sections
-    .map((section, index) => {
-      const head = `${canvasPartLabel(index + 1, total, section.title)}\n`;
-      if (index === 0) return `${head}${section.text}`;
-      return `\n\n${CANVAS_PARTS_DELIMITER}\n\n${head}${section.text}`;
-    })
-    .join('');
-  return { document, parts: sections };
-}
+// The parts-document format (delimiter + label lines + assemble/split) is
+// OWNED by the domain layer (`domain/modulePartsDocument.ts`) since canvas
+// v3: the editor doc, the chat context and the save path all share ONE
+// implementation. The chat consumes the shared `splitModulePartsDocument`
+// and the label helper (the empty-part fill convention anchors on it).
 
 // --- cross-part resolution ---------------------------------------------------------
 
@@ -615,7 +545,7 @@ function trimLeadingBlankLines(text: string): string {
  */
 export function resolveCanvasEditAcrossParts(
   command: Pick<CanvasEditCommand, 'search' | 'replace'>,
-  parts: readonly CanvasPartSnapshot[],
+  parts: readonly ModulePartsSection[],
 ): CanvasCrossPartResolution {
   if (command.search === '') {
     return { status: 'none', closest: '', closestFrom: null, closestPartIndex: null };
@@ -888,11 +818,12 @@ export function buildCanvasChatPayload(input: {
 
 export interface CanvasChatTurnInput {
   moduleId: Id;
-  /** The OPEN part's planIndex — its text rides from the live editor view
-   * (openPartText) instead of the row, so unsaved hand edits apply. */
-  openPlanIndex: number;
-  /** The live CM6 doc of the OPEN part, read at send time. */
-  openPartText: string;
+  /** The LIVE whole-module parts document — the canvas editor's CM6 doc
+   * string, read at send time. Unsaved edits in EVERY part ride along; the
+   * per-part snapshot is the split of THIS doc, so application matches the
+   * text the model saw byte-exactly. A doc whose scaffolding no longer
+   * parses fails the send loudly (`ModulePartsDocumentError`). */
+  document: string;
   instruction: string;
   /** Prior conversation (store order, oldest first) — tail-capped here. */
   history: { role: 'user' | 'assistant'; text: string }[];
@@ -907,24 +838,25 @@ export interface CanvasChatTurnResult {
   raw: string;
   modelUsed: string;
   parse: ParsedCanvasChatReply;
-  /** The per-part snapshot EXACTLY as the model saw it (the open part's
-   * text = the live editor doc) — application must match THIS text. */
-  parts: CanvasPartSnapshot[];
+  /** The per-part snapshot EXACTLY as the model saw it (the split of the
+   * live editor doc) — application must match THIS text. */
+  parts: ModulePartsSection[];
 }
 
 /**
  * Sends one chat turn (08 §Module canvas chat). Throws LOUDLY on busy
  * (`ModuleBusyError`, shared registry — chat + refine serialize), a
  * generating module, a module without planned parts ("no parts to chat
- * about"), a vanished module or campaign, transport errors, and
- * `CanvasChatParseError` for malformed replies. User aborts throw
- * AbortError (distinguish via `signal.aborted`, 18-ARCHITECTURE).
+ * about"), a doc whose scaffolding no longer parses
+ * (`ModulePartsDocumentError`), a vanished module or campaign, transport
+ * errors, and `CanvasChatParseError` for malformed replies. User aborts
+ * throw AbortError (distinguish via `signal.aborted`, 18-ARCHITECTURE).
  *
- * The parts document is assembled from the module ROW AT SEND TIME (never
- * a cached copy — the load-bearing context contract) with the OPEN part's
- * text substituted from `openPartText`; the read-only grounding block
- * (campaign premise + system label + ALL preceding modules' FULL text,
- * uncapped, story order) rides every request.
+ * The parts document is the caller-provided LIVE editor doc (never a cached
+ * copy — the load-bearing context contract); the per-part snapshot is its
+ * split against the row's plan. The read-only grounding block (campaign
+ * premise + system label + ALL preceding modules' FULL text, uncapped,
+ * story order) rides every request.
  */
 export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise<CanvasChatTurnResult> {
   if (input.signal?.aborted) {
@@ -948,14 +880,12 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
     }
     const settings = await getSettings();
     const grounding = await loadChatGrounding(module);
-    const assembled = assembleModulePartsDocument({
-      partPlan: module.spine.partPlan,
-      parts: module.parts,
-      openPlanIndex: input.openPlanIndex,
-      openPartText: input.openPartText,
-    });
+    // The per-part snapshot: the split of the LIVE editor doc against the
+    // row's plan — loud on broken scaffolding (the same guard the save
+    // path uses), never a silent row re-assembly.
+    const parts = splitModulePartsDocument(input.document, module);
     const messages = buildCanvasChatPayload({
-      document: assembled.document,
+      document: input.document,
       grounding,
       instruction,
       history: input.history,
@@ -974,7 +904,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       },
     });
     const parse = parseCanvasChatReply(raw);
-    return { raw, modelUsed, parse, parts: assembled.parts };
+    return { raw, modelUsed, parse, parts };
   } finally {
     releaseModuleGeneration(input.moduleId);
   }

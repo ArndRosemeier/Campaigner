@@ -19,6 +19,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { ModelInput } from '@/features/settings/model-input';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
+import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import {
   canvasChatKey,
   useCanvasChatStore,
@@ -26,39 +27,37 @@ import {
   type CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
 import { reportChatMessage, reportChatOutcome, runChatTurn } from '@/features/modules/canvas/chatController';
-import { toastError, toastInfo } from '@/lib/toast';
+import { toastError } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 /**
  * The canvas CHAT sidebar (08-MODULE-DESIGNER §Module canvas chat): a wide
- * LEFT column beside the editor where the LLM co-authors the WHOLE module
- * through XML edit commands. Assistant prose renders as chat markdown;
- * every command renders as an OUTCOME CARD in the flow (applied with a mini
- * before→after and the part it landed in, or failed with the reason, the
- * closest matching text, and a Report-to-LLM button — failures are loud,
- * never skipped). ONE conversation per module (switching the open part
- * keeps it — owner direction, docs/17 row 51). Chat state is SESSION-ONLY
- * (dies on reload); the DOC is the truth — applied commands are doc
- * transactions (open part) or part-row saves (other parts) landed through
- * THE one part-text save path.
+ * LEFT column beside the whole-document editor where the LLM co-authors the
+ * WHOLE module through XML edit commands. Assistant prose renders as chat
+ * markdown; every command renders as an OUTCOME CARD in the flow (applied
+ * with a mini before→after and the part it landed in, or failed with the
+ * reason, the closest matching text, and a Report-to-LLM button — failures
+ * are loud, never skipped). ONE conversation per module (docs/17 row 51).
+ * Chat state is SESSION-ONLY (dies on reload); the DOC is the truth —
+ * applied commands are editor transactions persisted through the split-save
+ * (THE one part-text save path, only changed parts hit the row).
  *
  * Touch targets: every chat control is 44px (iPad-proportioned).
  */
 
 export interface ChatSidebarProps {
   moduleId: Id;
-  /** Current scope: the part's planIndex, or 'premise' (chat disabled). */
-  scope: { kind: 'premise' } | { kind: 'part'; planIndex: number };
   /** Pre-flight: a module without planned parts must not send. */
   hasPlannedParts: boolean;
   pool: readonly AnyArtifact[];
-  /** Module generating / refine in flight / whole-part proposal pending. */
+  /** Module generating / refine in flight / block proposal pending. */
   aiBusy: boolean;
 }
 
-export function ChatSidebar({ moduleId, scope, hasPlannedParts, pool, aiBusy }: ChatSidebarProps): JSX.Element {
+export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSidebarProps): JSX.Element {
   const chatKey = canvasChatKey(moduleId);
   const state = useCanvasChatStore((store) => store.byModule[chatKey]);
+  const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? false);
   const settings = useLiveQuery(() => readSettings(), []);
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -74,13 +73,9 @@ export function ChatSidebar({ moduleId, scope, hasPlannedParts, pool, aiBusy }: 
   const inFlight = state?.inFlight ?? false;
   const effectiveModel = modelSelection ?? settings?.defaultChatModel ?? '';
   const canBrowse = settings !== undefined && settings.openRouterApiKey !== '';
-  const sendDisabled = aiBusy || inFlight || input.trim() === '' || scope.kind === 'premise';
+  const sendDisabled = aiBusy || inFlight || previewOpen || input.trim() === '';
 
   async function send(text: string): Promise<void> {
-    if (scope.kind !== 'part') {
-      toastInfo('The premise is read-only in canvas v1 — switch to a part to chat.');
-      return;
-    }
     const controller = new AbortController();
     abortRef.current = controller;
     setInput('');
@@ -88,7 +83,6 @@ export function ChatSidebar({ moduleId, scope, hasPlannedParts, pool, aiBusy }: 
       runChatTurn(
         {
           moduleId,
-          openPlanIndex: scope.planIndex,
           key: chatKey,
           hasPlannedParts,
           modelSelection,
@@ -120,17 +114,12 @@ export function ChatSidebar({ moduleId, scope, hasPlannedParts, pool, aiBusy }: 
   }
 
   function onReportOutcome(messageId: string, outcome: CanvasChatOutcome): void {
-    if (scope.kind !== 'part') {
-      toastInfo('Switch to a part to continue the chat — the report needs the editor view.');
-      return;
-    }
     const controller = new AbortController();
     abortRef.current = controller;
     void guardedTurn((view) =>
       reportChatOutcome(
         {
           moduleId,
-          openPlanIndex: scope.planIndex,
           key: chatKey,
           hasPlannedParts,
           modelSelection,
@@ -143,17 +132,12 @@ export function ChatSidebar({ moduleId, scope, hasPlannedParts, pool, aiBusy }: 
   }
 
   function onReportMessage(message: CanvasChatMessage): void {
-    if (scope.kind !== 'part') {
-      toastInfo('Switch to a part to continue the chat — the report needs the editor view.');
-      return;
-    }
     const controller = new AbortController();
     abortRef.current = controller;
     void guardedTurn((view) =>
       reportChatMessage(
         {
           moduleId,
-          openPlanIndex: scope.planIndex,
           key: chatKey,
           hasPlannedParts,
           modelSelection,
@@ -196,8 +180,8 @@ export function ChatSidebar({ moduleId, scope, hasPlannedParts, pool, aiBusy }: 
           <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
             Ask for edits in plain language — the whole module is in context, so edits can land in
             any part. The assistant answers with prose and edit commands (<code>&lt;edit&gt;</code>{' '}
-            blocks) that are applied to the parts document — each one its own undo step in the open
-            part, saved straight to the row for the others.
+            blocks) that are applied to the document — each one its own undo step, and only the
+            changed parts are saved to the module row.
           </p>
         ) : (
           <div className="flex flex-col gap-3">
@@ -219,9 +203,9 @@ export function ChatSidebar({ moduleId, scope, hasPlannedParts, pool, aiBusy }: 
           </div>
         )}
       </div>
-      {scope.kind === 'premise' ? (
+      {previewOpen ? (
         <div className="border-t p-3 text-sm text-muted-foreground">
-          The premise is read-only in canvas v1 — switch to a part to chat.
+          The editor is hidden in preview — switch back to Edit to continue the chat.
         </div>
       ) : (
         <div className="flex items-end gap-2 border-t p-3">
