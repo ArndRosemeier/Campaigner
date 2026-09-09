@@ -1484,9 +1484,11 @@ export function BattleSurface(): JSX.Element {
   // never stamped — the seeding encounter's CURRENT layout is the live
   // source of truth, so re-seeding or editing keys is reflected without
   // touching the board. Key markers sit at each room's mobsRect CENTER (the
-  // room's own floor, never the board center). Only rooms that actually
-  // carry key content get a marker; letters fall back to the canonical
-  // sequence by room index.
+  // room's own floor, never the board center) — vision-located rooms sit at
+  // their observed plaque point instead (the image is the map; there is no
+  // rect to center on, and centering the board would lie about the room).
+  // Only rooms that actually carry key content get a marker; letters fall
+  // back to the canonical sequence by room index.
   const provenanceLayout = useMemo(() => {
     if (encounterArtifact === 'loading' || encounterArtifact === null || encounterArtifact === undefined) return null;
     if (encounterArtifact.kind !== 'encounter') return null;
@@ -1504,14 +1506,26 @@ export function BattleSurface(): JSX.Element {
       : 'single';
   const layoutRooms = useMemo(() => {
     if (provenanceLayout === null) return [];
-    return provenanceLayout.rooms.map((room, index) => ({
-      room,
-      letter: room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1),
-      marker: {
-        x: (room.mobsRect.x + room.mobsRect.w / 2) / provenanceLayout.gridW,
-        y: (room.mobsRect.y + room.mobsRect.h / 2) / provenanceLayout.gridH,
-      },
-    }));
+    return provenanceLayout.rooms.map((room, index) => {
+      // A room without packed geometry resolves to its observed plaque
+      // point (docs/11 vision path); a room with neither fails loud —
+      // never a centered default (AGENTS rule 1).
+      const marker = room.mobsRect !== undefined
+        ? {
+          x: (room.mobsRect.x + room.mobsRect.w / 2) / provenanceLayout.gridW,
+          y: (room.mobsRect.y + room.mobsRect.h / 2) / provenanceLayout.gridH,
+        }
+        : room.observedX !== undefined && room.observedY !== undefined
+          ? { x: room.observedX, y: room.observedY }
+          : (() => {
+            throw new Error(`Room “${room.name}” has no marker position — neither packed geometry nor an observed plaque point`);
+          })();
+      return {
+        room,
+        letter: room.letter ?? CANONICAL_ROOM_MARKERS[index]?.letter ?? String(index + 1),
+        marker,
+      };
+    });
   }, [provenanceLayout]);
   const keyedRooms = useMemo(
     () => layoutRooms.filter((entry) => entry.room.key !== '' || entry.room.keyTreasure !== ''),

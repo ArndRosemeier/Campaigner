@@ -47,7 +47,7 @@ const GRID_BY_ASPECT_DUNGEON: Readonly<Record<EncounterMapAspect, { gridW: numbe
   '1:1': { gridW: 40, gridH: 40 },
 };
 
-function gridDimensionsFor(preset: EncounterPreset, aspect: EncounterMapAspect): { gridW: number; gridH: number } {
+export function gridDimensionsFor(preset: EncounterPreset, aspect: EncounterMapAspect): { gridW: number; gridH: number } {
   return preset === 'dungeon' ? GRID_BY_ASPECT_DUNGEON[aspect] : GRID_BY_ASPECT[aspect];
 }
 
@@ -65,6 +65,18 @@ export class EncounterLayoutError extends Error {
     this.name = 'EncounterLayoutError';
     this.issues = issues;
   }
+}
+
+/**
+ * The packer's geometry (packer-internal): packed rooms always carry
+ * rects + mobsRect by construction — the packer never sees vision-path
+ * rooms. The guard is loud-if-violated (never a silent undefined spread).
+ */
+function requirePackedGeometry(room: LayoutRoom): { rects: LayoutRect[]; mobsRect: LayoutRect } {
+  if (room.rects === undefined || room.mobsRect === undefined) {
+    throw new EncounterLayoutError([`${room.name}: the room packer needs packed room geometry`]);
+  }
+  return { rects: room.rects, mobsRect: room.mobsRect };
 }
 
 /** Deterministic bounded packer. No coordinates ever come from the LLM.
@@ -186,7 +198,7 @@ export function placeEntrance(
   gridH: number,
 ): LayoutEntrance | undefined {
   const roomCells = new Set<string>();
-  for (const rect of room.rects) {
+  for (const rect of requirePackedGeometry(room).rects) {
     for (const key of cellsOfRect(rect)) roomCells.add(key);
   }
   const doorCells: Cell[] = [];
@@ -251,6 +263,13 @@ export function placeEntrance(
  * exactly the mobsRect — the pre-entrance staging-ground behavior.
  */
 export function stagingBlockRect(room: LayoutRoom): LayoutRect {
+  // Vision-path rooms carry no polygon geometry (docs/11 vision path) — the
+  // observed point is their staging ground, resolved by the caller
+  // (battleSeed). A rect here would be invented geometry, so this throws
+  // loud instead of centering silently (AGENTS rule 1).
+  if (room.mobsRect === undefined || room.rects === undefined) {
+    throw new EncounterLayoutError([`${room.name}: vision room has no staging rect — seed at its observed point`]);
+  }
   const entrance = room.entrance;
   if (entrance === undefined) return room.mobsRect;
   const [dx, dy] = entranceSideDelta(entrance.side);
@@ -310,6 +329,10 @@ export function validateEncounterLayout(
   const parsed = encounterLayoutSchema.safeParse(input);
   if (!parsed.success) return parsed.error.issues.map((issue) => issue.message);
   const layout = parsed.data;
+  // Vision-path layouts (docs/11 vision path) carry no packed geometry — the
+  // image is the map — so they validate on a separate branch: observed
+  // points, declared-graph connectivity and roster assignment only.
+  if (layout.mapPath === 'vision') return validateVisionLayout(layout, rosterCounts);
   const issues: string[] = [];
   if (layout.rooms.filter((room) => room.spawn).length !== 1) {
     issues.push('layout must contain exactly one spawn room');
@@ -318,12 +341,25 @@ export function validateEncounterLayout(
   const ownerByCell = new Map<string, string>();
   const corridorCellKeys = new Set<string>();
   for (const corridor of layout.corridors) {
+    // The schema refine already rejects a classic corridor without painted
+    // geometry; this guard only satisfies the optional type (dead by
+    // construction, loud if ever reached).
+    if (corridor.rects === undefined) {
+      issues.push('classic corridor carries no geometry');
+      continue;
+    }
     for (const key of cellsOfRects(corridor.rects)) corridorCellKeys.add(key);
   }
   if (layout.rooms.filter((room) => room.entrance !== undefined).length > 1) {
     issues.push('layout must contain at most one entrance');
   }
   for (const room of layout.rooms) {
+    // Same construction as above: classic rooms always carry geometry past
+    // the schema refine.
+    if (room.rects === undefined || room.mobsRect === undefined) {
+      issues.push(`${room.name}: classic room carries no geometry`);
+      continue;
+    }
     const cells = cellsOfRects(room.rects);
     if (cells.size === 0 || !cellsConnected(cells)) issues.push(`${room.name}: room union is disconnected`);
     const entrance = room.entrance;
@@ -362,20 +398,7 @@ export function validateEncounterLayout(
   }
 
   if (rosterCounts.length > 0) {
-    const assignments = new Map<number, number>();
-    for (const room of layout.rooms) {
-      for (const index of room.monsterIndexes) {
-        assignments.set(index, (assignments.get(index) ?? 0) + 1);
-      }
-    }
-    for (let index = 0; index < rosterCounts.length; index += 1) {
-      if (assignments.get(index) !== 1) {
-        issues.push(`roster entry ${String(index)} must belong to exactly one room`);
-      }
-    }
-    for (const index of assignments.keys()) {
-      if (rosterCounts[index] === undefined) issues.push(`room references missing roster entry ${String(index)}`);
-    }
+    issues.push(...checkRosterAssignments(layout, rosterCounts));
   }
 
   const roomIds = new Set(layout.rooms.map((room) => room.id));
@@ -383,6 +406,10 @@ export function validateEncounterLayout(
   for (const corridor of layout.corridors) {
     if (!roomIds.has(corridor.a) || !roomIds.has(corridor.b)) {
       issues.push('corridor references an unknown room');
+      continue;
+    }
+    if (corridor.rects === undefined) {
+      issues.push('classic corridor carries no geometry');
       continue;
     }
     if (corridor.rects.some((rect) => rect.w !== 1 && rect.h !== 1)) {
@@ -397,8 +424,14 @@ export function validateEncounterLayout(
       }
       if (ownerByCell.has(key)) issues.push('corridor crosses a room');
     }
-    const aCells = cellsOfRects(requireRoom(layout.rooms, corridor.a).rects);
-    const bCells = cellsOfRects(requireRoom(layout.rooms, corridor.b).rects);
+    const aRoom = requireRoom(layout.rooms, corridor.a);
+    const bRoom = requireRoom(layout.rooms, corridor.b);
+    if (aRoom.rects === undefined || bRoom.rects === undefined) {
+      issues.push('classic room carries no geometry');
+      continue;
+    }
+    const aCells = cellsOfRects(aRoom.rects);
+    const bCells = cellsOfRects(bRoom.rects);
     if (!touches(cells, aCells) || !touches(cells, bCells)) {
       issues.push('corridor does not connect door-to-door');
     }
@@ -411,6 +444,105 @@ export function validateEncounterLayout(
   return unique(issues);
 }
 
+/**
+ * Vision-path validation (docs/11 vision path): the image is the map, so
+ * there is no packed geometry to check — rooms resolve to their observed
+ * plaque points and corridors are declared edges. Loud on: more than one
+ * spawn room, a room without its observed point (never a defaulted spawn),
+ * a corridor naming an unknown room, a declared graph disconnected from
+ * spawn, and roster-assignment drift. Layout drift between the painted map
+ * and the declared graph is ACCEPTED and known (docs/11 drift debt) — this
+ * branch checks the declaration, never the pixels (no connectivity verifier
+ * in this arc, explicit non-goal).
+ */
+function validateVisionLayout(
+  layout: EncounterLayout,
+  rosterCounts: readonly number[],
+): string[] {
+  const issues: string[] = [];
+  if (layout.rooms.filter((room) => room.spawn).length !== 1) {
+    issues.push('layout must contain exactly one spawn room');
+  }
+  for (const room of layout.rooms) {
+    if (room.observedX === undefined || room.observedY === undefined) {
+      issues.push(`${room.name}: vision room carries no observed plaque point — refusing a defaulted spawn`);
+    }
+  }
+  const roomIds = new Set(layout.rooms.map((room) => room.id));
+  const connectedPairs = new Set<string>();
+  for (const corridor of layout.corridors) {
+    if (!roomIds.has(corridor.a) || !roomIds.has(corridor.b)) {
+      issues.push('corridor references an unknown room');
+      continue;
+    }
+    connectedPairs.add(pairKey(corridor.a, corridor.b));
+  }
+  if (!allRoomsReachSpawn(layout.rooms, connectedPairs)) {
+    issues.push('room graph is disconnected from spawn');
+  }
+  issues.push(...checkRosterAssignments(layout, rosterCounts));
+  return unique(issues);
+}
+
+/** Roster↔room assignment checks, shared by the classic and vision branches. */
+function checkRosterAssignments(
+  layout: EncounterLayout,
+  rosterCounts: readonly number[],
+): string[] {
+  const issues: string[] = [];
+  if (rosterCounts.length === 0) return issues;
+  const assignments = new Map<number, number>();
+  for (const room of layout.rooms) {
+    for (const index of room.monsterIndexes) {
+      assignments.set(index, (assignments.get(index) ?? 0) + 1);
+    }
+  }
+  for (let index = 0; index < rosterCounts.length; index += 1) {
+    if (assignments.get(index) !== 1) {
+      issues.push(`roster entry ${String(index)} must belong to exactly one room`);
+    }
+  }
+  for (const index of assignments.keys()) {
+    if (rosterCounts[index] === undefined) issues.push(`room references missing roster entry ${String(index)}`);
+  }
+  return issues;
+}
+
+/**
+ * Point-room cell order (docs/11 vision path): the deterministic spawn-cell
+ * enumeration for a room WITHOUT packed geometry. First is the observed
+ * plaque cell itself; the rest spiral outward in Chebyshev rings (ring d
+ * lists every dx/dy with max(|dx|,|dy|) === d, ascending dx then dy),
+ * skipping out-of-grid cells. `placeMonsters` and `veilsFromSpawnClusters`
+ * share this ONE order with the same cursor slicing, so every spawn cell is
+ * veiled by construction. No Math.random: the same observed point always
+ * yields the same cells. A room without its observed point throws loud —
+ * never a centered default (AGENTS rule 1).
+ */
+export function pointRoomCells(room: LayoutRoom, gridW: number, gridH: number): Cell[] {
+  if (room.observedX === undefined || room.observedY === undefined) {
+    throw new EncounterLayoutError([
+      `${room.name}: vision room carries no observed plaque point — refusing a defaulted spawn`,
+    ]);
+  }
+  const cx = Math.min(gridW - 1, Math.max(0, Math.floor(room.observedX * gridW)));
+  const cy = Math.min(gridH - 1, Math.max(0, Math.floor(room.observedY * gridH)));
+  const cells: Cell[] = [{ x: cx, y: cy }];
+  const maxRing = Math.max(gridW, gridH);
+  for (let ring = 1; ring <= maxRing; ring += 1) {
+    for (let dx = -ring; dx <= ring; dx += 1) {
+      for (let dy = -ring; dy <= ring; dy += 1) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== ring) continue;
+        const x = cx + dx;
+        const y = cy + dy;
+        if (x < 0 || y < 0 || x >= gridW || y >= gridH) continue;
+        cells.push({ x, y });
+      }
+    }
+  }
+  return cells;
+}
+
 export function placeMonsters(
   layout: EncounterLayout,
   roster: readonly { count: number }[],
@@ -419,7 +551,12 @@ export function placeMonsters(
   if (issues.length > 0) throw new EncounterLayoutError(issues);
   const placements: MonsterPlacement[] = [];
   for (const room of layout.rooms) {
-    const cells = cellsOfRect(room.mobsRect).map(parseCell);
+    // Vision-path rooms scatter around their observed plaque point (the
+    // point-based fallback, docs/11 vision path); classic rooms enumerate
+    // their mobsRect exactly as before.
+    const cells = room.mobsRect === undefined
+      ? pointRoomCells(room, layout.gridW, layout.gridH)
+      : cellsOfRect(room.mobsRect).map(parseCell);
     let cursor = 0;
     for (const monsterIndex of room.monsterIndexes) {
       const count = roster[monsterIndex]?.count;
@@ -444,14 +581,23 @@ export function placeMonsters(
 export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
   const issues = validateEncounterLayout(layout);
   if (issues.length > 0) throw new EncounterLayoutError(issues);
-  return layout.rooms.map((room) => ({
-    id: room.id,
-    kind: 'fog',
-    x: (room.mobsRect.x + room.mobsRect.w / 2) / layout.gridW,
-    y: (room.mobsRect.y + room.mobsRect.h / 2) / layout.gridH,
-    widthCells: room.mobsRect.w,
-    heightCells: room.mobsRect.h,
-  }));
+  return layout.rooms.map((room) => {
+    // The legacy helper resolves veils from packed geometry — a vision-path
+    // room has none, and its veil comes from the spawn-cluster fallback
+    // below. Failing loud keeps the geometry-less room from ever reading a
+    // centered default veil (AGENTS rule 1).
+    if (room.mobsRect === undefined) {
+      throw new EncounterLayoutError([`${room.name}: vision room has no mobsRect — veil it from its observed point`]);
+    }
+    return {
+      id: room.id,
+      kind: 'fog',
+      x: (room.mobsRect.x + room.mobsRect.w / 2) / layout.gridW,
+      y: (room.mobsRect.y + room.mobsRect.h / 2) / layout.gridH,
+      widthCells: room.mobsRect.w,
+      heightCells: room.mobsRect.h,
+    };
+  });
 }
 
 /**
@@ -580,7 +726,13 @@ export function veilsFromSpawnClusters(
   if (issues.length > 0) throw new EncounterLayoutError(issues);
   const covers: VeilCover[] = [];
   for (const room of layout.rooms) {
-    const cells = cellsOfRect(room.mobsRect).map(parseCell);
+    // Vision-path rooms slice the same deterministic point-cell order
+    // `placeMonsters` assigns (the observed plaque point first), so every
+    // spawn cell is covered by construction — the margin + merge below are
+    // shared verbatim.
+    const cells = room.mobsRect === undefined
+      ? pointRoomCells(room, layout.gridW, layout.gridH)
+      : cellsOfRect(room.mobsRect).map(parseCell);
     let cursor = 0;
     let emittedForRoom = 0;
     for (const monsterIndex of room.monsterIndexes) {
@@ -703,13 +855,16 @@ function topologyOrderedRooms(
 }
 
 function topologyScore(layout: EncounterLayout, brief: EncounterMapBrief): number {
-  const centers = new Map(layout.rooms.map((room) => [
-    room.id,
-    {
-      x: room.rects.reduce((sum, rect) => sum + rect.x + rect.w / 2, 0) / room.rects.length,
-      y: room.rects.reduce((sum, rect) => sum + rect.y + rect.h / 2, 0) / room.rects.length,
-    },
-  ]));
+  const centers = new Map(layout.rooms.map((room) => {
+    const { rects } = requirePackedGeometry(room);
+    return [
+      room.id,
+      {
+        x: rects.reduce((sum, rect) => sum + rect.x + rect.w / 2, 0) / rects.length,
+        y: rects.reduce((sum, rect) => sum + rect.y + rect.h / 2, 0) / rects.length,
+      },
+    ];
+  }));
   const pairs = adjacencyPairs(brief);
   const edgeDistance = pairs.reduce((sum, [left, right]) => {
     const a = centers.get(left);
@@ -717,7 +872,7 @@ function topologyScore(layout: EncounterLayout, brief: EncounterMapBrief): numbe
     return a === undefined || b === undefined ? sum : sum + Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
   }, 0);
   const corridorLength = layout.corridors.reduce(
-    (sum, corridor) => sum + corridor.rects.reduce((inner, rect) => inner + rect.w * rect.h, 0),
+    (sum, corridor) => sum + (corridor.rects ?? []).reduce((inner, rect) => inner + rect.w * rect.h, 0),
     0,
   );
   const linePenalty = layout.rooms.reduce((sum, room) => {
@@ -756,8 +911,8 @@ function routeCorridor(
   gridW: number,
   gridH: number,
 ): Cell[] {
-  const aCells = cellsOfRects(a.rects);
-  const bCells = cellsOfRects(b.rects);
+  const aCells = cellsOfRects(requirePackedGeometry(a).rects);
+  const bCells = cellsOfRects(requirePackedGeometry(b).rects);
   const starts = boundaryNeighbors(aCells, occupied, gridW, gridH);
   const goals = new Set(boundaryNeighbors(bCells, occupied, gridW, gridH).map(cellKey));
   const queue = starts.map((cell) => ({ cell, path: [cell] }));
@@ -848,7 +1003,7 @@ function allRoomsReachSpawn(rooms: readonly LayoutRoom[], pairs: ReadonlySet<str
 
 function roomCellSet(rooms: readonly LayoutRoom[]): Set<string> {
   const cells = new Set<string>();
-  for (const room of rooms) for (const key of cellsOfRects(room.rects)) cells.add(key);
+  for (const room of rooms) for (const key of cellsOfRects(requirePackedGeometry(room).rects)) cells.add(key);
   return cells;
 }
 

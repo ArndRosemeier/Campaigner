@@ -11,7 +11,7 @@ import {
   type NoteArtifact,
   type PcArtifact,
 } from '@/domain/artifact';
-import type { EncounterPreset } from '@/domain/encounterMap/schema';
+import type { DungeonMapPath, EncounterPreset } from '@/domain/encounterMap/schema';
 import { campaignSchema, type Campaign, type NewCampaign } from '@/domain/campaign';
 import { stampNewEntity, type Id } from '@/domain/entity';
 import { DEFAULT_PERSONA_TEMPERATURE, personaSchema, type Persona } from '@/domain/persona';
@@ -241,6 +241,11 @@ export interface NewPersonaRun {
   encounterMapAspect?: '4:3' | '16:9' | '1:1' | null;
   /** Dungeon preset (docs/11 D10); null/omitted = standard / not an encounter run. */
   encounterPreset?: EncounterPreset | null;
+  /**
+   * Dungeon-map path override for ONE run (docs/11 vision path, D18
+   * steering); null/omitted = no override (the Settings default governs).
+   */
+  dungeonMapPath?: DungeonMapPath | null;
   /** Module placement for a NEW artifact; null/omitted = campaign level. */
   placementModuleId?: Id | null;
   /** Ticked creation-dialog extras; null/omitted = none. */
@@ -266,6 +271,7 @@ export function createPersonaRun(input: NewPersonaRun): PersonaRun {
     targetArtifactId: input.targetArtifactId ?? null,
     encounterMapAspect: input.encounterMapAspect ?? null,
     encounterPreset: input.encounterPreset ?? null,
+    dungeonMapPath: input.dungeonMapPath ?? null,
     placementModuleId: input.placementModuleId ?? null,
     runExtras: input.runExtras ?? null,
     unattended: input.unattended ?? null,

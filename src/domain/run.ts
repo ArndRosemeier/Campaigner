@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 import { BaseEntitySchema } from '@/domain/entity';
-import { encounterMapAspectSchema, encounterPresetSchema } from '@/domain/encounterMap/schema';
+import {
+  dungeonMapPathSchema,
+  encounterMapAspectSchema,
+  encounterPresetSchema,
+} from '@/domain/encounterMap/schema';
 
 export const autonomySchema = z.enum(['manual', 'review', 'auto']);
 
@@ -151,6 +155,14 @@ export const personaRunSchema = z.object({
    * runs started before the field existed and for every other persona mode.
    */
   encounterPreset: encounterPresetSchema.nullable().default(null),
+  /**
+   * Dungeon-map production path override for ONE run (docs/11 vision path):
+   * the D18 steering control's per-run choice. Persisted so pause/resume/
+   * retry reconstructs the input exactly (like `encounterPreset`); null =
+   * no override (the Settings default governs). Never a remembered
+   * preference — the setting default is untouched by per-run choices.
+   */
+  dungeonMapPath: dungeonMapPathSchema.nullable().default(null),
   /**
    * Module placement chosen in the creation dialog for a NEWLY created
    * artifact (null = campaign level / unset). One-off per run, never a

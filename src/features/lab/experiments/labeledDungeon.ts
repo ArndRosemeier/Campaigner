@@ -1,7 +1,11 @@
-import { z } from 'zod';
-
-import { parseJsonReply } from '@/llm/jsonReply';
-import { absentable } from '@/llm/schemas';
+import {
+  buildLabeledMapPrompt,
+  buildVisionLocateInstruction,
+  parseVisionLocateReply,
+  visionLocateReplySchema,
+  type VisionLabelMark,
+  type VisionLocateReply,
+} from '@/llm/visionDungeon';
 
 /**
  * The first lab bench: `labeled-dungeon-maps`. Eight hardcoded IRREGULAR
@@ -13,6 +17,10 @@ import { absentable } from '@/llm/schemas';
  * Pure logic only (prompt, contract, parsing, mapping, runner with injected
  * deps) — the React shell lives in `features/lab/`, the transport clients in
  * `features/lab/labClients.ts`. Nothing in the creation path imports this.
+ * The prompt builder + vision contract live in the SHARED
+ * `llm/visionDungeon` module (the production vision path's recipe) — this
+ * experiment is one caller of `buildLabeledMapPrompt` /
+ * `buildVisionLocateInstruction` / `parseVisionLocateReply`, never a fork.
  */
 
 /** One hardcoded bench room: a stable letter, a name, and a one-line visual hook. */
@@ -73,52 +81,67 @@ export const DUNGEON_BENCH_LABELS: readonly string[] = DUNGEON_BENCH_ROOMS.map((
 export const LABELED_DUNGEON_IMAGE_COUNT = 4;
 
 /**
+ * The bench dungeon's concept line for the SHARED prompt builder: this
+ * particular bench dungeon is irregular by construction (caves, wrecks,
+ * grown structures — the rooms' own visual hooks carry the shape language),
+ * so the concept names it. No regular/irregular toggle exists — the concept
+ * is just this dungeon's description (owner-directed vision-path posture).
+ */
+export const LABELED_DUNGEON_CONCEPT = 'ONE interconnected IRREGULAR dungeon complex';
+
+/**
  * Builds the image-generation prompt: ONE interconnected IRREGULAR dungeon
  * containing all 8 rooms, each marked inside with its letter plaque.
  * Pure — prompt-capture tests pin its contents.
+ *
+ * One caller of the SHARED builder (`llm/visionDungeon.buildLabeledMapPrompt`
+ * — the production vision path uses the same function, never a forked copy):
+ * the bench rooms adapt to the shared room shape and the bench concept rides
+ * along.
  */
 export function buildLabeledDungeonPrompt(
   rooms: readonly DungeonBenchRoom[] = DUNGEON_BENCH_ROOMS,
 ): string {
-  const roomLines = rooms.map(
-    (room) => `${room.label}. ${room.name} — ${room.visualHook}.`,
+  return buildLabeledMapPrompt(
+    rooms.map((room) => ({ label: room.label, name: room.name, description: room.visualHook })),
+    LABELED_DUNGEON_CONCEPT,
   );
-  return [
-    'Top-down tabletop battlemap of ONE interconnected IRREGULAR dungeon complex containing ALL 8 of these rooms, linked by tunnels and passages into a single explorable whole:',
-    ...roomLines,
-    'Requirements: every room an IRREGULAR organic shape (caves, wrecks, grown structures — no plain rectangles); the rooms interconnect through carved tunnels, gaps, and bridges so the whole reads as one dungeon; INSIDE each room, on the floor, a LARGE clearly-legible capital letter plaque (A through H, one per room) marking that room; top-down battlemap style with a subtle grid; no monsters, no creatures, no people, and no written text anywhere except the eight letter plaques.',
-  ].join('\n');
 }
-
-/** The instruction sent with each map image on the vision pass. */
-export function buildDungeonVisionInstruction(): string {
-  return 'This is a top-down battlemap of one interconnected dungeon whose rooms are marked inside with large capital letter plaques A through H. For EVERY plaque letter you can actually see, report its label and its position as a point in a 0–1000 normalized grid with the origin at the TOP-LEFT of the image (x grows right, y grows down). Reply with JSON only: {"marks": [{"label": "A", "x": 123, "y": 456}]}. If a letter is not visible, OMIT it — never invent coordinates for a letter you cannot see. An optional short "note" per mark may describe the plaque.';
-}
-
-/** One validated vision mark: a letter plus its 0–1000 grid point. */
-export const dungeonMarkSchema = z.object({
-  label: z.string().regex(/^[A-H]$/, 'label must be one capital letter A–H'),
-  x: z.number().min(0).max(1000),
-  y: z.number().min(0).max(1000),
-  note: absentable(z.string()),
-});
-
-export type DungeonMark = z.infer<typeof dungeonMarkSchema>;
-
-/** The vision reply contract — validated at the boundary (AGENTS rule 3). */
-export const dungeonVisionReplySchema = z.object({
-  marks: z.array(dungeonMarkSchema),
-});
-
-export type DungeonVisionReply = z.infer<typeof dungeonVisionReplySchema>;
 
 /**
- * Parses one vision reply: JSON extraction (`parseJsonReply`) + the zod
- * contract. Malformed JSON or a contract violation THROWS — that image's
- * pass fails loud, and no partial disks are drawn from unparsed text.
+ * The instruction sent with each map image on the vision pass — the SHARED
+ * instruction for the bench's 8 letters (the production vision path builds
+ * its own from its room count through the same function).
+ */
+export function buildDungeonVisionInstruction(): string {
+  return buildVisionLocateInstruction(DUNGEON_BENCH_LABELS);
+}
+
+/**
+ * One validated vision mark: a letter plus its 0–1000 grid point. The
+ * SHARED mark schema (the production vision path validates through the same
+ * contract — the bench's A–H closed vocabulary is a subset of its A–N).
+ */
+export const dungeonMarkSchema = visionLocateReplySchema.shape.marks.element;
+
+export type DungeonMark = VisionLabelMark;
+
+/**
+ * The vision reply contract — the SHARED contract, validated at the
+ * boundary (AGENTS rule 3).
+ */
+export const dungeonVisionReplySchema = visionLocateReplySchema;
+
+export type DungeonVisionReply = VisionLocateReply;
+
+/**
+ * Parses one vision reply through the SHARED parse: JSON extraction
+ * (`parseJsonReply`) + the zod contract. Malformed JSON or a contract
+ * violation THROWS — that image's pass fails loud, and no partial disks are
+ * drawn from unparsed text.
  */
 export function parseDungeonVisionReply(raw: string): DungeonVisionReply {
-  return dungeonVisionReplySchema.parse(parseJsonReply(raw));
+  return parseVisionLocateReply(raw);
 }
 
 /**

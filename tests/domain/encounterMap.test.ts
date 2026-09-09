@@ -97,7 +97,10 @@ describe('encounter map layout engine', () => {
     expect(first.corridors).toHaveLength(2);
     expect(validateEncounterLayout(first, brief().rosterCounts)).toEqual([]);
     expect(first.rooms.filter((room) => room.spawn).map((room) => room.id)).toEqual([ROOM_A]);
-    expect(first.rooms.some((room) => room.rects.length > 1)).toBe(true);
+    expect(first.rooms.some((room) => {
+      if (room.rects === undefined) throw new Error(`room ${room.id} missing rects`);
+      return room.rects.length > 1;
+    })).toBe(true);
   });
 
   it('fails loudly after the bounded ladder for disconnected or impossible briefs', () => {
@@ -157,22 +160,26 @@ describe('encounter map layout engine', () => {
     expect(veils).toHaveLength(layout.rooms.length);
     for (const room of layout.rooms) {
       const veil = veils.find((candidate) => candidate.id === room.id);
+      const mobs = room.mobsRect;
+      if (mobs === undefined) throw new Error(`room ${room.id} missing mobsRect`);
       expect(veil).toMatchObject({
         kind: 'fog',
-        widthCells: room.mobsRect.w,
-        heightCells: room.mobsRect.h,
+        widthCells: mobs.w,
+        heightCells: mobs.h,
       });
-      expect(veil?.x).toBe((room.mobsRect.x + room.mobsRect.w / 2) / layout.gridW);
-      expect(veil?.y).toBe((room.mobsRect.y + room.mobsRect.h / 2) / layout.gridH);
+      expect(veil?.x).toBe((mobs.x + mobs.w / 2) / layout.gridW);
+      expect(veil?.y).toBe((mobs.y + mobs.h / 2) / layout.gridH);
     }
   });
 
   describe('veilsFromSpawnClusters (one fog veil per monster spawn group)', () => {
     /** A room's mobsRect cells in the row-major order placeMonsters deals from. */
     function mobsCells(room: LayoutRoom): { x: number; y: number }[] {
+      const mobs = room.mobsRect;
+      if (mobs === undefined) throw new Error(`room ${room.id} missing mobsRect`);
       const cells: { x: number; y: number }[] = [];
-      for (let y = room.mobsRect.y; y < room.mobsRect.y + room.mobsRect.h; y += 1) {
-        for (let x = room.mobsRect.x; x < room.mobsRect.x + room.mobsRect.w; x += 1) {
+      for (let y = mobs.y; y < mobs.y + mobs.h; y += 1) {
+        for (let x = mobs.x; x < mobs.x + mobs.w; x += 1) {
           cells.push({ x, y });
         }
       }
@@ -635,7 +642,9 @@ describe('encounter map layout engine', () => {
       );
 
       // The spawn room's own door cell aimed at its corridor.
-      const spawnCells = new Set(spawn.rects.flatMap((rect) => {
+      const spawnRects = spawn.rects;
+      if (spawnRects === undefined) throw new Error('spawn room missing rects');
+      const spawnCells = new Set(spawnRects.flatMap((rect) => {
         const keys: string[] = [];
         for (let y = rect.y; y < rect.y + rect.h; y += 1) {
           for (let x = rect.x; x < rect.x + rect.w; x += 1) keys.push(`${String(x)},${String(y)}`);
@@ -645,7 +654,9 @@ describe('encounter map layout engine', () => {
       let doorCell: { x: number; y: number } | null = null;
       let doorSide: 'north' | 'south' | 'west' | 'east' = 'north';
       outer: for (const corridor of layout.corridors) {
-        for (const rect of corridor.rects) {
+        const corridorRects = corridor.rects;
+        if (corridorRects === undefined) throw new Error('corridor missing rects');
+        for (const rect of corridorRects) {
           for (let y = rect.y; y < rect.y + rect.h; y += 1) {
             for (let x = rect.x; x < rect.x + rect.w; x += 1) {
               const probes: readonly (readonly ['north' | 'south' | 'west' | 'east', number, number])[] = [
@@ -781,10 +792,11 @@ describe('encounter map layout engine', () => {
       });
       expect(validateEncounterLayout(layout, [1])).toEqual([]);
       const centers = new Map(
-        layout.rooms.map((room) => [
-          room.id,
-          room.rects.reduce((sum, rect) => sum + rect.x + rect.w / 2, 0) / room.rects.length,
-        ]),
+        layout.rooms.map((room) => {
+          const rects = room.rects;
+          if (rects === undefined) throw new Error(`room ${room.id} missing rects`);
+          return [room.id, rects.reduce((sum, rect) => sum + rect.x + rect.w / 2, 0) / rects.length];
+        }),
       );
       // The hub room should sit between its linked leaves instead of lining
       // them up across the map: the joined adjacent rooms must remain within
@@ -794,10 +806,11 @@ describe('encounter map layout engine', () => {
       expect(Math.abs((centers.get(roomIds[3] ?? ROOM_A) ?? 0) - hub)).toBeLessThanOrEqual(20);
       // Corridors only connect graph neighbors; the union footprint must stay
       // far smaller than a serial route across the whole dungeon tier.
-      const corridorCells = layout.corridors.reduce(
-        (sum, corridor) => sum + corridor.rects.reduce((inner, rect) => inner + rect.w * rect.h, 0),
-        0,
-      );
+      const corridorCells = layout.corridors.reduce((sum, corridor) => {
+        const rects = corridor.rects;
+        if (rects === undefined) throw new Error('corridor missing rects');
+        return sum + rects.reduce((inner, rect) => inner + rect.w * rect.h, 0);
+      }, 0);
       expect(corridorCells).toBeLessThan(110);
       expect(layout.corridors).toHaveLength(5);
     });

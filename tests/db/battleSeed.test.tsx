@@ -399,7 +399,9 @@ describe('roster expansion', () => {
     // so PCs fill the STAGING BLOCK inside the spawn room UNION (the border
     // ring included) — no longer pinned to the mobsRect bounds.
     const unionCells = new Set<string>();
-    for (const rect of entry.rects) {
+    const entryRects = entry.rects;
+    if (entryRects === undefined) throw new Error('spawn room missing rects');
+    for (const rect of entryRects) {
       for (let y = rect.y; y < rect.y + rect.h; y += 1) {
         for (let x = rect.x; x < rect.x + rect.w; x += 1) unionCells.add(`${String(x)},${String(y)}`);
       }
@@ -746,11 +748,13 @@ describe('entrance-anchored staging (adjudicated)', () => {
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const spawn = legacy.rooms.find((room) => room.spawn);
     if (spawn === undefined) throw new Error('spawn room missing');
+    const spawnMobs = spawn.mobsRect;
+    if (spawnMobs === undefined) throw new Error('spawn room missing mobsRect');
     expect(battle.board.stagingGround).toEqual({
-      x: (spawn.mobsRect.x + spawn.mobsRect.w / 2) / legacy.gridW,
-      y: (spawn.mobsRect.y + spawn.mobsRect.h / 2) / legacy.gridH,
-      cellWidth: spawn.mobsRect.w / 3 / legacy.gridW,
-      cellHeight: spawn.mobsRect.h / 3 / legacy.gridH,
+      x: (spawnMobs.x + spawnMobs.w / 2) / legacy.gridW,
+      y: (spawnMobs.y + spawnMobs.h / 2) / legacy.gridH,
+      cellWidth: spawnMobs.w / 3 / legacy.gridW,
+      cellHeight: spawnMobs.h / 3 / legacy.gridH,
     });
     expect(battle.board.entrance).toBeNull();
     // Group veils (docs/11 D4): the spawn room (Gate) carries no monster

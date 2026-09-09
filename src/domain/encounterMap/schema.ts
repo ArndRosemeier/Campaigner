@@ -18,6 +18,23 @@ export const encounterPresetSchema = z.enum(['standard', 'dungeon']);
 export type EncounterPreset = z.infer<typeof encounterPresetSchema>;
 
 /**
+ * The dungeon-map production path (docs/11 vision path): which pipeline
+ * authors a complex map. `'classic'` (the default) packs vector rooms
+ * deterministically and stylizes a rendered schematic; `'vision'` paints the
+ * labeled map first and locates each room's letter plaque with the
+ * configured chat model. Singles always map classic (one arena needs no
+ * registration); repopulate never touches the map.
+ */
+export const dungeonMapPathSchema = z.enum(['classic', 'vision']);
+export type DungeonMapPath = z.infer<typeof dungeonMapPathSchema>;
+
+/** Display labels for the dungeon-map path (settings + regen steering). */
+export const DUNGEON_MAP_PATH_LABELS: Readonly<Record<DungeonMapPath, string>> = {
+  classic: 'Classic (vector rooms)',
+  vision: 'Vision-located labels',
+};
+
+/**
  * Where an encounter takes place, classified by the encounter persona in its
  * EXISTING draft call (no extra LLM call, no verification pass — docs/11
  * D10 amendment). Persisted on the encounter artifact; owner-correctable in
@@ -213,13 +230,35 @@ export function cellKeyOf(cell: { x: number; y: number }): string {
 export const layoutRoomSchema = z.object({
   id: z.uuid(),
   name: z.string().min(1),
-  rects: z.array(layoutRectSchema).min(1).max(3),
-  mobsRect: layoutRectSchema,
+  /**
+   * Union footprint (classic path: 1 = plain rect, 2–3 = L/T shapes).
+   * Absent on vision-path rooms — they carry NO polygon geometry; the
+   * image is the map and the observed point below is the room's spawn +
+   * description marker (docs/11 vision path).
+   */
+  rects: z.array(layoutRectSchema).min(1).max(3).optional(),
+  /**
+   * Inscribed mob area (classic path): placement source and the room veil's
+   * footprint. Absent on vision-path rooms (point-based fallbacks resolve
+   * spawns/veils/markers from the observed point instead).
+   */
+  mobsRect: layoutRectSchema.optional(),
   description: z.string(),
   monsterIndexes: z.array(z.number().int().nonnegative()),
   spawn: z.boolean(),
   /** Canonical marker letter (room labels; optional, never load-bearing). */
   letter: z.string().optional(),
+  /**
+   * The vision-located plaque point (docs/11 vision path): the observed
+   * room position in NORMALIZED board units (0..1, origin top-left — the
+   * 0–1000 vision grid divided by 1000). Present exactly on vision-path
+   * rooms; the observed point IS the room's spawn + description marker
+   * (one coordinate per room). NEVER defaulted or invented — a room whose
+   * plaque was not found fails the map step loud instead of carrying a
+   * coordinate (AGENTS rule 1: a wrong spawn breaks playability silently).
+   */
+  observedX: z.number().min(0).max(1).optional(),
+  observedY: z.number().min(0).max(1).optional(),
   /**
    * GM-only room key (owner-ratified room-keys/treasure arc): the room
    * information the GM reads at the room's staging-point key marker, and the
@@ -251,7 +290,12 @@ export type LayoutRoom = z.infer<typeof layoutRoomSchema>;
 export const layoutCorridorSchema = z.object({
   a: z.uuid(),
   b: z.uuid(),
-  rects: z.array(layoutRectSchema).min(1),
+  /**
+   * Corridor cells (classic path only). Absent on vision-path edges: the
+   * sidecar's declared room graph (doors/edges) without painted geometry —
+   * the image is the map, so connectivity is declared, never packed.
+   */
+  rects: z.array(layoutRectSchema).min(1).optional(),
 });
 export type LayoutCorridor = z.infer<typeof layoutCorridorSchema>;
 
@@ -263,6 +307,15 @@ export const encounterLayoutSchema = z
     theme: z.string(),
     rooms: z.array(layoutRoomSchema).min(1).max(10),
     corridors: z.array(layoutCorridorSchema),
+    /**
+     * Which production path authored this layout (docs/11 vision path):
+     * `'classic'` = packed vector rooms with polygon geometry;
+     * `'vision'` = the image is the map — rooms carry letters + observed
+     * points and NO polygon geometry, corridors carry declared edges only.
+     * Additive + optional: legacy layouts parse with the field absent =
+     * classic (the M5-C additive pattern, no Dexie bump).
+     */
+    mapPath: dungeonMapPathSchema.optional(),
     /**
      * Ordered play sequence of room ids (docs/11 D13): the Cartographer
      * brief's room order, spawn room first. Stored EXPLICITLY because
@@ -289,15 +342,61 @@ export const encounterLayoutSchema = z
     if (layout.rooms.filter((room) => room.spawn).length !== 1) {
       context.addIssue({ code: 'custom', message: 'layout must contain exactly one spawn room' });
     }
+    // Vision-path layouts (docs/11 vision path): the image is the map, so
+    // rooms carry letters + observed points and NO polygon geometry, and
+    // corridors carry declared edges only. Every room without its observed
+    // point is a loud schema failure — never a defaulted coordinate.
+    if (layout.mapPath === 'vision') {
+      const letters = new Set<string>();
+      for (const room of layout.rooms) {
+        if (room.letter === undefined || room.letter === '') {
+          context.addIssue({ code: 'custom', message: `${room.name}: vision room carries no marker letter` });
+        } else if (letters.has(room.letter)) {
+          context.addIssue({ code: 'custom', message: `${room.name}: duplicate marker letter ${room.letter}` });
+        } else {
+          letters.add(room.letter);
+        }
+        if (room.observedX === undefined || room.observedY === undefined) {
+          context.addIssue({
+            code: 'custom',
+            message: `${room.name}: vision room carries no observed plaque point — refusing a defaulted spawn`,
+          });
+        }
+        if (room.rects !== undefined || room.mobsRect !== undefined) {
+          context.addIssue({ code: 'custom', message: `${room.name}: vision room carries polygon geometry` });
+        }
+        if (room.entrance !== undefined) {
+          context.addIssue({ code: 'custom', message: `${room.name}: vision room carries an entrance` });
+        }
+      }
+      for (const corridor of layout.corridors) {
+        if (corridor.rects !== undefined) {
+          context.addIssue({ code: 'custom', message: 'vision corridor carries painted geometry' });
+        }
+      }
+      return;
+    }
     const owners = new Map<string, string>();
     const corridorCellKeys = new Set<string>();
     for (const corridor of layout.corridors) {
+      // Classic layouts always carry painted corridor geometry (the vision
+      // branch above already returned).
+      if (corridor.rects === undefined) {
+        context.addIssue({ code: 'custom', message: 'classic corridor carries no geometry' });
+        continue;
+      }
       for (const key of layoutCells(corridor.rects)) corridorCellKeys.add(key);
     }
     if (layout.rooms.filter((room) => room.entrance !== undefined).length > 1) {
       context.addIssue({ code: 'custom', message: 'layout must contain at most one entrance' });
     }
     for (const room of layout.rooms) {
+      // Classic rooms always carry polygon geometry (the vision branch
+      // above already returned).
+      if (room.rects === undefined || room.mobsRect === undefined) {
+        context.addIssue({ code: 'custom', message: `${room.name}: classic room carries no geometry` });
+        continue;
+      }
       const roomCells = new Set(layoutCells(room.rects));
       const entrance = room.entrance;
       if (entrance !== undefined) {
@@ -345,6 +444,7 @@ export const encounterLayoutSchema = z
       }
     }
     for (const corridor of layout.corridors) {
+      if (corridor.rects === undefined) continue;
       if (corridor.rects.some((rect) => rect.w !== 1 && rect.h !== 1)) {
         context.addIssue({ code: 'custom', message: 'corridors must be one cell wide' });
       }

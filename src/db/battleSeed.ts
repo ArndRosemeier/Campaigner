@@ -274,37 +274,61 @@ export async function seedBattleFromEncounter(
   // normalize-on-write; statful only — a statless PC is skipped and badged.
   const artifacts = await listArtifactsByCampaign(campaignId);
   const entryRoom = layout === null ? undefined : spawnRoom(layout);
+  // Vision-path staging (docs/11 vision path): the spawn room carries no
+  // staging rect — the party stages AT its observed plaque point (the same
+  // point monsters scatter around), never a defaulted center. A room
+  // without its observed point fails the seed loud here.
+  const visionSpawnPoint = layout?.mapPath === 'vision' && entryRoom !== undefined
+    ? (() => {
+      const { observedX, observedY } = entryRoom;
+      if (observedX === undefined || observedY === undefined) {
+        throw new Error(
+          `The generated layout has no observed plaque point for “${entryRoom.name}” — refusing a defaulted spawn`,
+        );
+      }
+      return { x: observedX, y: observedY };
+    })()
+    : null;
   // Entrance-anchored staging (entrance/exit spawn zones, doc 11): the party
   // block is the mobsRect-sized rect slid along the entrance axis until it
   // hugs the entrance wall (staying inside the room union). Without an
   // entrance (legacy layouts) this is exactly the mobsRect — byte-identical
   // to the pre-entrance behavior.
-  const stagingRect = layout === null || entryRoom === undefined ? null : stagingBlockRect(entryRoom);
+  const stagingRect = layout === null || entryRoom === undefined || visionSpawnPoint !== null
+    ? null
+    : stagingBlockRect(entryRoom);
   // Start position (docs/11 D11): a SINGLE site starts AT the entrance cell
   // when the layout carries one (the party walks in), else at the room's
   // mobsRect center. Complex sites keep the entrance-hugging staging block.
+  // Vision sites start at the spawn room's observed plaque point.
   const stagingCenter =
-    layout === null || stagingRect === null
+    layout === null
       ? null
-      : siteShape === 'single' && entryRoom?.entrance !== undefined
-        ? {
+      : visionSpawnPoint ?? (stagingRect === null
+        ? null
+        : siteShape === 'single' && entryRoom?.entrance !== undefined
+          ? {
             x: (entryRoom.entrance.x + 0.5) / layout.gridW,
             y: (entryRoom.entrance.y + 0.5) / layout.gridH,
           }
-        : {
+          : {
             x: (stagingRect.x + stagingRect.w / 2) / layout.gridW,
             y: (stagingRect.y + stagingRect.h / 2) / layout.gridH,
-          };
+          });
   const stagingGround =
-    stagingCenter === null || stagingRect === null || layout === null
+    stagingCenter === null || layout === null
       ? defaultStagingGround()
-      : {
-          ...stagingCenter,
-          // ensurePcTokens fills a 3×3 staging block; scale that block to the
-          // staging rect even when it is only two cells wide.
-          cellWidth: stagingRect.w / 3 / layout.gridW,
-          cellHeight: stagingRect.h / 3 / layout.gridH,
-        };
+      : visionSpawnPoint !== null
+        ? stagingGroundAt(visionSpawnPoint.x, visionSpawnPoint.y, 1000, 1000, GRID_SIZE_DEFAULT)
+        : stagingRect === null
+          ? defaultStagingGround()
+          : {
+            ...stagingCenter,
+            // ensurePcTokens fills a 3×3 staging block; scale that block to the
+            // staging rect even when it is only two cells wide.
+            cellWidth: stagingRect.w / 3 / layout.gridW,
+            cellHeight: stagingRect.h / 3 / layout.gridH,
+          };
   const entrance =
     layout === null || entryRoom?.entrance === undefined
       ? null

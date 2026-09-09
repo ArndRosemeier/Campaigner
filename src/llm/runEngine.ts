@@ -24,7 +24,9 @@ import {
   encounterLayoutSchema,
   encounterLocationKindSchema,
   entranceMarkerConfig,
+  gridDimensionsFor,
   moduleDocumentText,
+  spawnFirstPath,
   drawFillGrade,
   newId,
   packRooms,
@@ -32,6 +34,7 @@ import {
   resolveEncounterMapMode,
   resolveEncounterPreset,
   schematicCellPx,
+  type DungeonMapPath,
 } from '@/domain';
 import {
   attachImagesToArtifact,
@@ -108,6 +111,12 @@ import {
   continuityReportSchema,
 } from '@/llm/schemas';
 import type { EncounterDraft, EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
+import {
+  buildLabeledMapPrompt,
+  labelsForRoomCount,
+  locateDungeonLabels,
+  visionLocateReplySchema,
+} from '@/llm/visionDungeon';
 import { normalizeImageAspect } from '@/lib/imageAspect';
 import { surroundingParagraphs } from '@/lib/wikilinks';
 
@@ -126,7 +135,23 @@ export const encounterRunAdapters = {
   generateImages,
   normalizeImageAspect,
   intakeImage,
+  blobToDataUrl,
 };
+
+/** Blob → data URL (FileReader; session-only transport for vision passes). */
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => {
+      reader.abort();
+      reject(new Error('could not read a generated map image — the vision-map step failed'));
+    };
+    reader.onload = () => {
+      resolve(typeof reader.result === 'string' ? reader.result : '');
+    };
+    reader.readAsDataURL(blob);
+  });
+}
 
 /**
  * Persona run engine (04-LLM-PERSONAS.md §Run pipeline): fixed named steps
@@ -241,7 +266,8 @@ export type StepName =
   | (typeof STEP_NAMES)[number]
   | ReviewStepName
   | ImageStepName
-  | EncounterStepName;
+  | EncounterStepName
+  | EncounterVisionStepName;
 
 const REVIEW_STEP_NAMES = ['gather', 'check', 'finalize'] as const;
 export type ReviewStepName = (typeof REVIEW_STEP_NAMES)[number];
@@ -268,6 +294,18 @@ const ENCOUNTER_STEP_NAMES = [
   'finalize',
 ] as const;
 export type EncounterStepName = (typeof ENCOUNTER_STEP_NAMES)[number];
+
+/**
+ * Encounter vision-map pipeline (docs/11 vision path): the dungeon-map
+ * path resolved to `'vision'` for a COMPLEX brief — brief (rooms are
+ * authored here = the sidecar, BEFORE any image exists) → vision-map
+ * (generate the labeled map, locate each plaque with the chat model, verify
+ * with a focused re-ask per miss) → finalize (persists the vision layout +
+ * map). ONE map candidate by contract — no pick step: locate+verify is the
+ * gate and Regenerate everything is the correction path (D14).
+ */
+const ENCOUNTER_VISION_STEP_NAMES = ['brief', 'vision-map', 'finalize'] as const;
+export type EncounterVisionStepName = (typeof ENCOUNTER_VISION_STEP_NAMES)[number];
 
 /**
  * Encounter repopulation (two-button regeneration, docs/11): the roster-only
@@ -510,6 +548,17 @@ export interface StartRunInput {
    * aspect.
    */
   encounterPreset?: EncounterPreset;
+  /**
+   * Dungeon-map production path for ONE run (docs/11 vision path): the D18
+   * steering control's per-run choice for Regenerate everything.
+   * `'vision'` forces the vision-located pipeline, `'classic'` forces the
+   * packed-rooms pipeline, undefined/null = no override (the Settings
+   * `dungeonMapPath` default governs). Ignored for singles (one arena needs
+   * no registration — always classic) and repopulation (roster-only, never
+   * touches the map). Persisted on the run row for pauses/retries like the
+   * preset; never persisted as a new settings default.
+   */
+  dungeonMapPath?: DungeonMapPath | null;
   /**
    * Module placement for the NEWLY created artifact (creation-dialog
    * choice, one-off per run; null/omitted = campaign level). Applied only
@@ -1054,9 +1103,57 @@ function briefRosterOnlyMarker(steps: readonly RunStep[]): boolean {
   );
 }
 
+/**
+ * Reads the dungeon-map path marker off a run's brief step (docs/11 vision
+ * path): the brief stamps `mapPath: 'vision' | 'classic'` when it resolves
+ * the path from the brief's room count + the per-run override/Settings
+ * default, so continuations that rebuild `StartRunInput` from the run row
+ * keep the pipeline shape. User edits replace the output, so both
+ * `userEdit` and `output` are read — the edit path re-stamps it (the
+ * roster-only precedent above).
+ */
+function briefVisionMapMarker(steps: readonly RunStep[]): 'vision' | 'classic' | undefined {
+  const brief = steps.find((candidate) => candidate.name === 'brief');
+  const effective = brief?.userEdit ?? brief?.output;
+  if (effective !== null && typeof effective === 'object') {
+    const value = (effective as { mapPath?: unknown }).mapPath;
+    if (value === 'vision' || value === 'classic') return value;
+  }
+  return undefined;
+}
+
+/**
+ * The dungeon-map path resolution (docs/11 vision path): the vision
+ * pipeline runs ONLY for multi-room briefs whose resolved path is
+ * `'vision'` — the explicit per-run choice (D18 steering) beats the
+ * Settings default, and SINGLES always resolve classic (one arena needs no
+ * registration — the override is ignored, never an error).
+ */
+function resolveBriefMapPath(
+  roomCount: number,
+  override: DungeonMapPath | null | undefined,
+  settingsPath: DungeonMapPath,
+): 'vision' | 'classic' {
+  if (roomCount <= 1) return 'classic';
+  return (override ?? settingsPath) === 'vision' ? 'vision' : 'classic';
+}
+
 /** Draft fields are schema-validated strings; coerce defensively. */
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * Reads the vision-map step's selected image (docs/11 vision path): the
+ * single generated map, validated as a string id at the boundary. A missing
+ * or garbage value fails finalize loud — never a dangling map reference.
+ */
+function readVisionMapImageId(steps: readonly RunStep[]): Id | undefined {
+  const vision = steps.find((candidate) => candidate.name === 'vision-map');
+  const effective = vision?.userEdit ?? vision?.output;
+  if (effective === null || effective === undefined || typeof effective !== 'object') return undefined;
+  const imageId = (effective as { imageId?: unknown }).imageId;
+  return typeof imageId === 'string' && imageId !== '' ? imageId : undefined;
 }
 
 /**
@@ -1125,6 +1222,11 @@ export class RunEngine {
       // coercing would outrank the encounter's own locationKind.
       encounterPreset:
         input.persona.mode === 'encounter' ? (input.encounterPreset ?? null) : null,
+      // The D18 per-run path choice persists explicit-only (null = no
+      // override — the Settings default governs at brief time), exactly
+      // like the preset above.
+      dungeonMapPath:
+        input.persona.mode === 'encounter' ? (input.dungeonMapPath ?? null) : null,
       placementModuleId: input.placementModuleId ?? null,
       runExtras: input.extras ?? null,
       // F8: the run context persists with the row so resumeRun reconstructs
@@ -1182,7 +1284,9 @@ export class RunEngine {
     // effective boundary before changing status or starting another step.
     if (input.persona.mode === 'encounter') {
       if (targetStep.name === 'brief') this.effectiveEncounterBrief(run.steps);
-      if (targetStep.name === 'layout') this.effectiveEncounterLayout(run.steps);
+      if (targetStep.name === 'layout' || targetStep.name === 'vision-map') {
+        this.effectiveEncounterLayout(run.steps);
+      }
     }
     await this.updateStep(runId, target, { status: 'approved' });
     this.emit({
@@ -1224,7 +1328,9 @@ export class RunEngine {
       const preview = [...run.steps];
       preview[stepIndex] = { ...targetStep, userEdit };
       if (targetStep.name === 'brief') this.effectiveEncounterBrief(preview);
-      if (targetStep.name === 'layout') this.effectiveEncounterLayout(preview);
+      if (targetStep.name === 'layout' || targetStep.name === 'vision-map') {
+        this.effectiveEncounterLayout(preview);
+      }
     }
     // A manual brief edit replaces the step output wholesale — re-stamp the
     // roster-only marker so the edited run keeps its brief→finalize shape
@@ -1240,6 +1346,34 @@ export class RunEngine {
       (storedEdit as { rosterOnly?: unknown }).rosterOnly !== true
     ) {
       storedEdit = { ...storedEdit, rosterOnly: true };
+    }
+    // A manual brief edit replaces the step output wholesale — re-stamp the
+    // dungeon-map path marker so the edited run keeps its pipeline shape
+    // (the marker is pipeline metadata, not brief prose). The edited room
+    // count re-resolves against the run's per-run choice + the Settings
+    // default exactly like a fresh brief.
+    if (
+      input.persona.mode === 'encounter' &&
+      targetStep.name === 'brief' &&
+      !briefRosterOnlyMarker(run.steps) &&
+      storedEdit !== null &&
+      typeof storedEdit === 'object' &&
+      !Array.isArray(storedEdit)
+    ) {
+      const editedParsed = encounterGeneratorBriefSchema.safeParse(
+        (storedEdit as { parsed?: unknown }).parsed,
+      );
+      if (editedParsed.success) {
+        const editedSettings = await getSettings();
+        storedEdit = {
+          ...storedEdit,
+          mapPath: resolveBriefMapPath(
+            editedParsed.data.rooms.length,
+            run.dungeonMapPath ?? input.dungeonMapPath,
+            editedSettings.dungeonMapPath,
+          ),
+        };
+      }
     }
     await this.updateStep(runId, stepIndex, { userEdit: storedEdit, status: 'approved' });
     this.emit({
@@ -1310,6 +1444,9 @@ export class RunEngine {
         ...(run.targetArtifactId !== null ? { targetArtifactId: run.targetArtifactId } : {}),
         ...(run.encounterMapAspect !== null ? { encounterMapAspect: run.encounterMapAspect } : {}),
         ...(run.encounterPreset !== null ? { encounterPreset: run.encounterPreset } : {}),
+        // The D18 per-run path choice rides the row like the preset — a
+        // resumed steered run keeps its forced path, never the new default.
+        ...(run.dungeonMapPath !== null ? { dungeonMapPath: run.dungeonMapPath } : {}),
         ...(run.placementModuleId !== null ? { placementModuleId: run.placementModuleId } : {}),
         ...(run.runExtras !== null ? { extras: run.runExtras } : {}),
         // F8: the run's context rides the row — the unattended mode (no user
@@ -1354,6 +1491,9 @@ export class RunEngine {
     if (briefRosterOnlyMarker(run.steps)) {
       throw new Error('A roster-only repopulation has no layout to regenerate — its rooms are preserved by design');
     }
+    if (briefVisionMapMarker(run.steps) === 'vision') {
+      throw new Error('A vision-located map has no packed layout to regenerate — retry the vision-map step for a fresh map');
+    }
     const stepIndex = run.steps.findIndex((step) => step.name === 'layout');
     if (stepIndex === -1) throw new Error('Encounter run has no layout step to regenerate');
     this.encounterLayoutVariants.set(runId, (this.encounterLayoutVariants.get(runId) ?? 0) + 1);
@@ -1385,6 +1525,9 @@ export class RunEngine {
     if (run === undefined || input.persona.mode !== 'encounter') return;
     if (briefRosterOnlyMarker(run.steps)) {
       throw new Error('A roster-only repopulation has no map candidates to regenerate — its map is preserved by design');
+    }
+    if (briefVisionMapMarker(run.steps) === 'vision') {
+      throw new Error('A vision-located map has no stylized candidates to regenerate — retry the vision-map step for a fresh map');
     }
     const stepIndex = run.steps.findIndex((step) => step.name === 'stylize');
     if (stepIndex === -1) throw new Error('Encounter run has no stylize step to regenerate');
@@ -1468,9 +1611,7 @@ export class RunEngine {
         : input.persona.mode === 'image'
           ? [...IMAGE_STEP_NAMES]
           : input.persona.mode === 'encounter'
-            ? this.encounterIsRosterOnly(input, run.steps)
-              ? [...ENCOUNTER_ROSTER_ONLY_STEP_NAMES]
-              : [...ENCOUNTER_STEP_NAMES]
+            ? this.encounterPipelineKinds(input, run.steps)
             : input.persona.producesKind === 'npc'
             ? [...STEP_NAMES]
             : STEP_NAMES.filter((name) => name !== 'statblock');
@@ -1518,6 +1659,16 @@ export class RunEngine {
         );
         debugLog('run', `step ${name} finished with status ${outcome.step.status}`);
         steps[i] = outcome.step;
+        // The encounter pipeline shape re-resolves after the brief (docs/11
+        // vision path): only the brief knows the room count, so an auto run
+        // whose brief stamped a vision marker continues into vision-map, not
+        // layout. Paused runs re-resolve on continuation (executeFrom reads
+        // the stamped marker), so this only steers the in-flight loop.
+        if (input.persona.mode === 'encounter' && name === 'brief' && outcome.step.status !== 'rejected') {
+          const resolved = this.encounterPipelineKinds(input, steps);
+          kinds.length = 0;
+          kinds.push(...resolved);
+        }
         await updateRun(runId, {
           steps: [...steps],
           status: outcome.runStatus ?? 'running',
@@ -1623,6 +1774,8 @@ export class RunEngine {
         return this.runGenerate(runId, stepIndex, steps, input, signal);
       case 'brief':
         return this.runEncounterBrief(runId, stepIndex, steps, input, signal, extraInstruction);
+      case 'vision-map':
+        return this.runVisionDungeonMap(stepIndex, steps, input, signal);
       case 'layout':
         return this.runEncounterLayout(runId, stepIndex, steps, input);
       case 'schematic':
@@ -2581,6 +2734,33 @@ export class RunEngine {
     return briefRosterOnlyMarker(steps);
   }
 
+  /**
+   * Whether this run maps the vision-located pipeline (docs/11 vision
+   * path): the stamped brief marker wins once the brief ran (it reflects
+   * the ACTUAL room count — a vision override on a single room still maps
+   * classic); before the brief runs, an explicit vision override selects
+   * the vision list optimistically (brief is step 0 in every list, and the
+   * list re-resolves after the brief stamps its marker).
+   */
+  private encounterIsVisionMap(input: StartRunInput, steps: readonly RunStep[]): boolean {
+    if (this.encounterIsRosterOnly(input, steps)) return false;
+    const marker = briefVisionMapMarker(steps);
+    if (marker !== undefined) return marker === 'vision';
+    return input.dungeonMapPath === 'vision';
+  }
+
+  /**
+   * The encounter pipeline shape: roster-only repopulation (brief→finalize)
+   * beats vision mapping (brief→vision-map→finalize) beats the full
+   * classic pipeline. The shape re-resolves after the brief step (see
+   * executeFrom) because only the brief knows the room count.
+   */
+  private encounterPipelineKinds(input: StartRunInput, steps: readonly RunStep[]): StepName[] {
+    if (this.encounterIsRosterOnly(input, steps)) return [...ENCOUNTER_ROSTER_ONLY_STEP_NAMES];
+    if (this.encounterIsVisionMap(input, steps)) return [...ENCOUNTER_VISION_STEP_NAMES];
+    return [...ENCOUNTER_STEP_NAMES];
+  }
+
   private effectiveEncounterBrief(steps: readonly RunStep[]): {
     parsed: EncounterGeneratorBrief;
     aspect: EncounterMapAspect;
@@ -2656,7 +2836,12 @@ export class RunEngine {
   }
 
   private effectiveEncounterLayout(steps: readonly RunStep[]): EncounterLayout {
-    const step = steps.find((candidate) => candidate.name === 'layout');
+    // Vision runs store their layout on the vision-map step (docs/11 vision
+    // path) — classic runs on the layout step. The zod boundary below
+    // validates the vision branch (letters + observed points, no geometry)
+    // exactly like the packed branch.
+    const step = steps.find((candidate) => candidate.name === 'layout') ??
+      steps.find((candidate) => candidate.name === 'vision-map');
     const effective = step?.userEdit ?? step?.output;
     if (effective === null || effective === undefined || typeof effective !== 'object') {
       throw new Error('Encounter run has no approved layout');
@@ -3315,6 +3500,17 @@ export class RunEngine {
     // (derive from the brief's `environment` alone).
     const mapModeOverride = target?.kind === 'encounter' ? (target.data.mapMode ?? null) : null;
     const mapLocationKind = target?.kind === 'encounter' ? target.data.locationKind : null;
+    // The dungeon-map path marker (docs/11 vision path): stamped from the
+    // brief's ACTUAL room count + the per-run choice/Settings default, so
+    // the pipeline shape (and every continuation) follows the rooms on
+    // file — singles always stamp classic, repopulation never reads it.
+    const mapPath = rosterOnly
+      ? ('classic' as const)
+      : resolveBriefMapPath(
+        parsed.rooms.length,
+        run?.dungeonMapPath ?? input.dungeonMapPath,
+        settings.dungeonMapPath,
+      );
     return {
       step: this.finishStep(
         steps[stepIndex],
@@ -3325,6 +3521,7 @@ export class RunEngine {
             preset,
             mapModeOverride,
             mapLocationKind,
+            mapPath,
             statblockChunkIds: retrieval.statblockChunkIds,
             rosterChunkByName: retrieval.rosterChunkByName,
             // The run's fill grade (docs/11 D12 amendment): the value the
@@ -3393,6 +3590,198 @@ export class RunEngine {
     return {
       step: this.finishStep(steps[stepIndex], { layout }),
     };
+  }
+
+  /**
+   * The vision-map step (docs/11 vision path): SIDECAR FIRST — rooms (id,
+   * name, description, encounter assignment, marker letter A..N in plan
+   * order) are authored from the brief BEFORE any image exists — then the
+   * labeled map is generated through the existing image pipeline + storage
+   * (same `mapImageId` home), then ONE structured vision pass with the
+   * configured chat model locates each plaque (0–1000 grid, zod boundary),
+   * with a focused re-ask per miss. A still-missing plaque fails the MAP
+   * STEP LOUD (the run fails / pauses per the pipeline's existing failure
+   * handling) after pruning the unattached candidate — NEVER an
+   * invented/defaulted coordinate (AGENTS rule 1). A vision-incapable
+   * configured chat model fails here loudly too — a valid result, never a
+   * silent skip.
+   *
+   * Single candidate by contract: no pick step follows (locate+verify is
+   * the gate; Regenerate everything is the correction path, D14). No
+   * aspect normalization: the image IS the map, and cropping could cut
+   * plaques — the board letterboxes instead.
+   */
+  private async runVisionDungeonMap(
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+    signal: AbortSignal,
+  ): Promise<{ step: RunStep }> {
+    const settings = await getSettings();
+    if (!settings.imagesEnabled) throw new Error('Image generation is disabled — enable it in Settings');
+    const { parsed, aspect, preset } = this.effectiveEncounterBrief(steps);
+    if (parsed.rooms.length <= 1) {
+      throw new Error('Vision-located mapping needs a multi-room brief — single arenas map classic');
+    }
+    const labels = labelsForRoomCount(parsed.rooms.length);
+    const entryRoomIndex = parsed.entryRoomIndex;
+    if (entryRoomIndex < 0 || entryRoomIndex >= parsed.rooms.length) {
+      throw new Error('Encounter brief has no valid entry room');
+    }
+    // The sidecar (docs/11 vision path): authored from the brief's existing
+    // room input — name + description render as "Room A: name — description",
+    // connectivity from the brief's room graph, diegetic letter plaques
+    // engraved/carved per room, no monsters.
+    const sidecarRooms = parsed.rooms.map((room, index) => {
+      const label = labels[index];
+      if (label === undefined) throw new Error(`Encounter room ${String(index)} has no marker letter`);
+      return { label, name: room.name, description: room.description };
+    });
+    const seenPairs = new Set<string>();
+    const links: string[] = [];
+    for (const [index, room] of parsed.rooms.entries()) {
+      for (const adjacent of room.adjacentRoomIndexes) {
+        if (adjacent === index) continue;
+        const pair = [Math.min(index, adjacent), Math.max(index, adjacent)].join('<>');
+        if (seenPairs.has(pair)) continue;
+        seenPairs.add(pair);
+        const left = labels[Math.min(index, adjacent)];
+        const right = labels[Math.max(index, adjacent)];
+        if (left !== undefined && right !== undefined) links.push(`${left} ↔ ${right}`);
+      }
+    }
+    const concept = parsed.terrain === ''
+      ? `${parsed.theme} dungeon`
+      : `${parsed.theme} dungeon — ${parsed.terrain}`;
+    const prompt = buildLabeledMapPrompt(
+      sidecarRooms,
+      concept,
+      links.length === 0 ? undefined : links.join(', '),
+    );
+    const generated = await encounterRunAdapters.generateImages(prompt, 1, {
+      model: settings.imageModel,
+      signal,
+    });
+    const blob = generated.images[0];
+    if (blob === undefined) {
+      throw new Error('The image model returned no map images — the vision-map step failed without saving partial results');
+    }
+    const intake = await encounterRunAdapters.intakeImage(blob, { role: 'map' });
+    const stored = await createImage({
+      campaignId: input.campaign.id,
+      blob: intake.blob,
+      mimeType: intake.mimeType,
+      width: intake.width,
+      height: intake.height,
+      prompt,
+      model: generated.modelUsed,
+      source: 'generated',
+      role: 'map',
+    });
+    // LOCATE + VERIFY (docs/11 vision path): the observed point per letter.
+    // Any failure prunes the unattached candidate first — the failed step
+    // persists NOTHING and invents NOTHING.
+    let marks;
+    try {
+      const imageDataUrl = await encounterRunAdapters.blobToDataUrl(intake.blob);
+      const chatModel = resolveChatModel(settings);
+      marks = await locateDungeonLabels(
+        {
+          visionPass: (imageDataUrlForPass, instruction) =>
+            this.visionLocatePass(imageDataUrlForPass, instruction, chatModel),
+        },
+        { imageDataUrl, labels },
+      );
+    } catch (error) {
+      await deleteUnreferencedImages(input.campaign.id, [stored.id]);
+      throw error;
+    }
+    // STORE (docs/11 vision path): observed x_norm/y_norm as ADDITIVE room
+    // fields (no Dexie version). Room ids are assigned here and persisted on
+    // the step output, so pause/resume never re-mints them.
+    const roomIds = parsed.rooms.map(() => newId());
+    const entryRoomId = roomIds[entryRoomIndex];
+    if (entryRoomId === undefined) throw new Error('Encounter brief has no valid entry room');
+    const corridorPairs = new Set<string>();
+    for (const [index, room] of parsed.rooms.entries()) {
+      for (const adjacent of room.adjacentRoomIndexes) {
+        if (adjacent === index) continue;
+        corridorPairs.add([Math.min(index, adjacent), Math.max(index, adjacent)].join('<>'));
+      }
+    }
+    const { gridW, gridH } = gridDimensionsFor(preset, aspect);
+    const layout = encounterLayoutSchema.parse({
+      gridW,
+      gridH,
+      theme: parsed.theme,
+      rooms: parsed.rooms.map((room, index) => {
+        const id = roomIds[index];
+        const mark = marks[index];
+        if (id === undefined || mark === undefined) {
+          throw new Error(`Encounter room ${String(index)} has no located plaque`);
+        }
+        return {
+          id,
+          name: room.name,
+          description: room.description,
+          monsterIndexes: room.monsterIndexes,
+          spawn: index === entryRoomIndex,
+          letter: labels[index],
+          observedX: mark.x / 1000,
+          observedY: mark.y / 1000,
+          key: room.key,
+          keyTreasure: room.keyTreasure,
+          ...(room.targetLevel === undefined ? {} : { targetLevel: room.targetLevel }),
+        };
+      }),
+      corridors: [...corridorPairs].flatMap((pair) => {
+        const [leftText, rightText] = pair.split('<>');
+        const left = roomIds[Number(leftText)];
+        const right = roomIds[Number(rightText)];
+        return left === undefined || right === undefined ? [] : [{ a: left, b: right }];
+      }),
+      mapPath: 'vision',
+      path: parsed.rooms.length > 1 ? spawnFirstPath(roomIds, entryRoomId) : undefined,
+    });
+    return {
+      step: this.finishStep(steps[stepIndex], {
+        imageId: stored.id,
+        layout,
+        costUsd: generated.costUsd,
+        cappedToOne: generated.cappedToOne,
+        notice: imageStepNotice(generated),
+      }),
+    };
+  }
+
+  /**
+   * One structured vision pass for the vision-map step: the configured chat
+   * model reads the labeled map back (0–1000 grid, strict JSON boundary).
+   * A vision-incapable model fails LOUD here — the map step owns the error,
+   * never a silent skip.
+   */
+  private async visionLocatePass(
+    imageDataUrl: string,
+    instruction: string,
+    model: string,
+  ): Promise<{ text: string }> {
+    const reply = await chat(
+      [
+        {
+          role: 'user',
+          content: [
+            { type: 'text', text: instruction },
+            { type: 'image_url', image_url: { url: imageDataUrl } },
+          ],
+        },
+      ],
+      {
+        model,
+        temperature: 0,
+        responseFormat: schemaResponseFormat('vision-dungeon-locate', visionLocateReplySchema),
+      },
+    );
+    return { text: reply.text };
   }
 
   private runEncounterSchematic(
@@ -3558,6 +3947,9 @@ export class RunEngine {
     if (run?.status !== 'awaiting_user' && run?.status !== 'needs_review') return;
     if (briefRosterOnlyMarker(run.steps)) {
       throw new Error('A roster-only repopulation has no battlemap to pick — its map is preserved by design');
+    }
+    if (briefVisionMapMarker(run.steps) === 'vision') {
+      throw new Error('A vision-located map has no candidates to pick — its single map is selected by contract');
     }
     const stepIndex = run.steps.findIndex((step) => step.name === 'pick');
     const pick = run.steps[stepIndex];
@@ -3801,10 +4193,14 @@ export class RunEngine {
   ): Promise<{ step: RunStep; artifactId: Id }> {
     const { parsed, statblockChunkIds, rosterChunkByName, fillGrade: briefFillGrade } =
       this.effectiveEncounterBrief(steps);
-    const pick = steps.find((step) => step.name === 'pick');
-    const selected = (pick?.userEdit as { keep?: Id[] } | null | undefined)?.keep?.[0];
-    if (selected === undefined) throw new Error('Encounter finalize has no selected battlemap');
     const layout = this.effectiveEncounterLayout(steps);
+    // Vision runs (docs/11 vision path) select their single map by contract
+    // — no pick step ran, locate+verify was the gate. Classic runs read the
+    // human's pick.
+    const selected = layout.mapPath === 'vision'
+      ? readVisionMapImageId(steps)
+      : (steps.find((step) => step.name === 'pick')?.userEdit as { keep?: Id[] } | null | undefined)?.keep?.[0];
+    if (selected === undefined) throw new Error('Encounter finalize has no selected battlemap');
     const target = input.targetArtifactId === undefined
       ? undefined
       : await getAnyArtifact(input.targetArtifactId);
@@ -4866,6 +5262,7 @@ function encounterProgressId(runId: Id): string {
 function encounterStepDetail(name: StepName): string {
   const labels: Partial<Record<StepName, string>> = {
     brief: 'Drafting the encounter brief…',
+    'vision-map': 'Painting the labeled map and locating rooms…',
     layout: 'Packing rooms into the map grid…',
     schematic: 'Rendering layout reference…',
     stylize: 'Generating candidate battlemaps…',

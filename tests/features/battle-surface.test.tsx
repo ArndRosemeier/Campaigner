@@ -3122,12 +3122,14 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     }
     const roomA = encounter.data.layout.rooms.find((room) => room.name === 'Entry');
     if (roomA == undefined) throw new Error('room A missing');
+    const roomAMobs = roomA.mobsRect;
+    if (roomAMobs === undefined) throw new Error('room A missing mobsRect');
     const marker = screen.getByTestId('room-key-marker-A');
     expect(marker.style.left).toBe(
-      `${String(((roomA.mobsRect.x + roomA.mobsRect.w / 2) / encounter.data.layout.gridW) * 100)}%`,
+      `${String(((roomAMobs.x + roomAMobs.w / 2) / encounter.data.layout.gridW) * 100)}%`,
     );
     expect(marker.style.top).toBe(
-      `${String(((roomA.mobsRect.y + roomA.mobsRect.h / 2) / encounter.data.layout.gridH) * 100)}%`,
+      `${String(((roomAMobs.y + roomAMobs.h / 2) / encounter.data.layout.gridH) * 100)}%`,
     );
     // Marker text carries the key + room treasure; the GM reads it in the rail.
     fireEvent.click(screen.getByTestId('room-key-marker-A'));
@@ -3391,8 +3393,10 @@ describe('site shape on the surface (docs/11 D11)', () => {
     const { battle, spawn, layout } = await seedSingleSite(false);
     expect(battle.board.veils).toHaveLength(1);
     expect(battle.board.veils[0]).toMatchObject({ id: spawn.id, kind: 'fog', roomId: spawn.id });
-    expect(battle.board.stagingGround?.x).toBeCloseTo((spawn.mobsRect.x + spawn.mobsRect.w / 2) / layout.gridW, 9);
-    expect(battle.board.stagingGround?.y).toBeCloseTo((spawn.mobsRect.y + spawn.mobsRect.h / 2) / layout.gridH, 9);
+    const spawnMobs = spawn.mobsRect;
+    if (spawnMobs === undefined) throw new Error('spawn room missing mobsRect');
+    expect(battle.board.stagingGround?.x).toBeCloseTo((spawnMobs.x + spawnMobs.w / 2) / layout.gridW, 9);
+    expect(battle.board.stagingGround?.y).toBeCloseTo((spawnMobs.y + spawnMobs.h / 2) / layout.gridH, 9);
   });
 
 });

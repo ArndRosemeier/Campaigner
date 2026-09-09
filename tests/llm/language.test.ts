@@ -47,6 +47,7 @@ const SETTINGS_BASE = {
   },
   encounterMapAspect: '4:3' as const,
   encounterPreset: 'standard' as const,
+  dungeonMapPath: 'classic' as const,
   runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,
   onboarding: { status: 'fresh' as const, stepState: [] },

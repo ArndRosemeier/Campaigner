@@ -3,7 +3,9 @@ import {
   entranceSideDelta,
   type EncounterLayout,
   type EncounterMapMode,
+  type LayoutCorridor,
   type LayoutRect,
+  type LayoutRoom,
 } from '@/domain/encounterMap/schema';
 
 export interface RoomMarkerConfig {
@@ -82,6 +84,17 @@ export function schematicCellPx(layout: Pick<EncounterLayout, 'gridW' | 'gridH'>
  * is the default: legacy callers and every pre-mode run keep their exact
  * bytes.
  */
+/**
+ * Packed geometry for the painters below: every painter runs only on
+ * classic layouts (`renderSchematic` throws for vision layouts first), so
+ * absent geometry is a loud internal error — never a silently skipped room.
+ */
+function paintedRects(holder: LayoutRoom | LayoutCorridor): readonly LayoutRect[] {
+  if (holder.rects === undefined) {
+    throw new Error('Schematic rendering needs packed room geometry — vision-located layouts have no schematic');
+  }
+  return holder.rects;
+}
 export function renderSchematic(
   layout: EncounterLayout,
   cellPx = 96,
@@ -89,6 +102,12 @@ export function renderSchematic(
   mode: EncounterMapMode = 'architectural',
 ): SchematicResult {
   if (!Number.isInteger(cellPx) || cellPx < 1) throw new Error('cellPx must be a positive integer');
+  // Vision-path layouts carry no packed geometry (docs/11 vision path) — the
+  // image IS the map, so there is no schematic to render. Failing loud keeps
+  // a vision layout from ever rendering an empty or centered canvas.
+  if (layout.mapPath === 'vision') {
+    throw new Error('Vision-located layouts have no schematic — the generated image is the map');
+  }
   if (mode === 'natural') return renderNaturalPlacement(layout, cellPx, factory);
   const width = layout.gridW * cellPx;
   const height = layout.gridH * cellPx;
@@ -102,16 +121,16 @@ export function renderSchematic(
   // Corridors first; room floors cover the implied doorway cells cleanly.
   context.fillStyle = '#d1d5db';
   for (const corridor of layout.corridors) {
-    for (const rect of corridor.rects) fillRect(context, rect, cellPx);
+    for (const rect of paintedRects(corridor)) fillRect(context, rect, cellPx);
   }
 
   const roomPalette = ['#e5e7eb', '#dbeafe', '#dcfce7', '#fef3c7', '#f3e8ff'];
   for (const [index, room] of layout.rooms.entries()) {
     context.fillStyle = roomPalette[index % roomPalette.length] ?? '#e5e7eb';
-    for (const rect of room.rects) fillRect(context, rect, cellPx);
+    for (const rect of paintedRects(room)) fillRect(context, rect, cellPx);
     context.strokeStyle = '#1f2937';
     context.lineWidth = Math.max(2, Math.floor(cellPx / 12));
-    for (const rect of room.rects) strokeRect(context, rect, cellPx);
+    for (const rect of paintedRects(room)) strokeRect(context, rect, cellPx);
   }
   drawDoorGaps(context, layout, cellPx);
   drawEntrance(context, layout, cellPx);
@@ -159,7 +178,13 @@ function renderNaturalPlacement(
   context.fillStyle = PLACEMENT_BASE;
   context.fillRect(0, 0, width, height);
 
-  for (const room of layout.rooms) paintSpawnPatch(context, room.mobsRect, cellPx);
+  for (const room of layout.rooms) {
+    const mobsRect = room.mobsRect;
+    if (mobsRect === undefined) {
+      throw new Error('Schematic rendering needs packed room geometry — vision-located layouts have no schematic');
+    }
+    paintSpawnPatch(context, mobsRect, cellPx);
+  }
   const spawnRoom = layout.rooms.find((room) => room.spawn);
   const entrance = spawnRoom?.entrance;
   if (spawnRoom !== undefined && entrance !== undefined) {
@@ -267,11 +292,11 @@ function drawEntrance(
   const outward = { x: entrance.x + dx, y: entrance.y + dy };
   const roomCells = new Set<string>();
   for (const room of layout.rooms) {
-    for (const rect of room.rects) addRectCells(roomCells, rect);
+    for (const rect of paintedRects(room)) addRectCells(roomCells, rect);
   }
   const corridorCells = new Set<string>();
   for (const corridor of layout.corridors) {
-    for (const rect of corridor.rects) addRectCells(corridorCells, rect);
+    for (const rect of paintedRects(corridor)) addRectCells(corridorCells, rect);
   }
   const outwardInGrid =
     outward.x >= 0 && outward.y >= 0 && outward.x < layout.gridW && outward.y < layout.gridH;
@@ -325,12 +350,12 @@ function drawDoorGaps(
 ): void {
   const roomCells = new Set<string>();
   for (const room of layout.rooms) {
-    for (const rect of room.rects) addRectCells(roomCells, rect);
+    for (const rect of paintedRects(room)) addRectCells(roomCells, rect);
   }
   context.fillStyle = '#d1d5db';
   for (const corridor of layout.corridors) {
     const corridorCells = new Set<string>();
-    for (const rect of corridor.rects) addRectCells(corridorCells, rect);
+    for (const rect of paintedRects(corridor)) addRectCells(corridorCells, rect);
     for (const key of corridorCells) {
       const [xText, yText] = key.split(',');
       const x = Number(xText);

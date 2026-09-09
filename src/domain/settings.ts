@@ -1,7 +1,11 @@
 import { z } from 'zod';
 
 import { DEFAULT_IMAGE_MODEL } from '@/domain/image';
-import { encounterMapAspectSchema, encounterPresetSchema } from '@/domain/encounterMap/schema';
+import {
+  dungeonMapPathSchema,
+  encounterMapAspectSchema,
+  encounterPresetSchema,
+} from '@/domain/encounterMap/schema';
 
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
@@ -223,6 +227,18 @@ export const settingsSchema = z.object({
    */
   encounterPreset: encounterPresetSchema.nullable().default(null),
   /**
+   * Dungeon-map production path (docs/11 vision path): which pipeline
+   * authors COMPLEX (multi-room) encounter maps — `'classic'` (the default)
+   * packs vector rooms deterministically and stylizes a rendered schematic;
+   * `'vision'` paints the labeled map first and locates each room's letter
+   * plaque with the configured chat model. Governs initial generation, the
+   * unattended map queue (no steering possible unattended) and Regenerate
+   * everything; SINGLES ignore it (one arena needs no registration) and
+   * REPOPULATE never touches the map. A genuine preference default (current
+   * behavior changes for nobody silently), never a failure mask.
+   */
+  dungeonMapPath: dungeonMapPathSchema.default('classic'),
+  /**
    * Remembered defaults for the creation dialog's "After creation" extras
    * checkboxes (aspect pattern): the dialog pre-ticks these per persona.
    * The former one-off "Generate a battlemap" extra is gone — battlemaps
@@ -277,6 +293,7 @@ export function defaultSettings(): Settings {
     },
     encounterMapAspect: '4:3',
     encounterPreset: null,
+    dungeonMapPath: 'classic',
     runExtras: { image: false, statBlock: false, mobPortraits: false },
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
