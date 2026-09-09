@@ -914,7 +914,7 @@ describe('Encounter Cartographer run', () => {
     expect(artifact.data.mapImageId).toBe(candidates[0]);
   });
 
-  it('refuses map generation while the encounter has no roster', async () => {
+  it('treats an empty roster as a fresh population (Regenerate-everything reset), not an error', async () => {
     const { campaign, cartographer } = await setup();
     const target = await createArtifact({
       campaignId: campaign.id,
@@ -927,13 +927,16 @@ describe('Encounter Cartographer run', () => {
         mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
       },
     });
+    chatMock.mockResolvedValueOnce({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
     const runInput = input(campaign, cartographer, target.id);
     const runId = await runEngine.startRun(runInput);
+    // The brief drafts a whole population instead of failing — appending to
+    // nothing means designing everything (two-button regeneration, docs/11).
     await waitForRun(async () => {
-      expect((await getRun(runId))?.status).toBe('failed');
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
     });
-    expect((await getRun(runId))?.errorMessage).toContain('no monsters yet');
-    expect(chatMock).not.toHaveBeenCalled();
+    expect((await getRun(runId))?.steps[0]?.status).toBe('done');
+    expect((await getRun(runId))?.errorMessage ?? '').toBe('');
   });
 
   it('resumes a failed encounter run from stylize step without re-generating brief or layout', async () => {

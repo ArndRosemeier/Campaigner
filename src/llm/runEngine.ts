@@ -265,6 +265,14 @@ const ENCOUNTER_STEP_NAMES = [
 ] as const;
 export type EncounterStepName = (typeof ENCOUNTER_STEP_NAMES)[number];
 
+/**
+ * Encounter repopulation (two-button regeneration, docs/11): the roster-only
+ * Cartographer pass — brief (with the 'empty' repair loop, which kills
+ * pile-ups structurally) then finalize, which persists the roster ONLY.
+ * Layout/stylize/pick are skipped, never executed.
+ */
+const ENCOUNTER_ROSTER_ONLY_STEP_NAMES = ['brief', 'finalize'] as const;
+
 export type EngineEvent =
   | { kind: 'run'; runId: Id; status: PersonaRun['status'] }
   | { kind: 'step'; runId: Id; stepIndex: number; status: RunStep['status']; stepName?: string | undefined }
@@ -509,6 +517,31 @@ export interface StartRunInput {
   extras?: RunExtras;
   /** Module post-pass: one candidate, no user checkpoints. */
   unattended?: boolean;
+  /**
+   * Encounter pipeline scope (two-button regeneration, docs/11): `'full'`
+   * runs the whole Cartographer pipeline
+   * (brief→layout→schematic→stylize→pick→finalize); `'rosterOnly'` runs the
+   * roster-only repopulation pass (brief→finalize — layout/stylize/pick are
+   * skipped, the roster is REPLACED with no verbatim pin, and only the
+   * roster persists). Defaults to `'full'`. The scope also stamps onto the
+   * brief step output (`rosterOnly: true`) so pause/resume continuations —
+   * which rebuild this input from the run row — keep the pipeline shape
+   * without a Dexie change.
+   */
+  encounterScope?: 'full' | 'rosterOnly';
+  /**
+   * Smith encounter in-place fills only: `true` scopes the persist to
+   * name/summary/body — a prose-only redesign that must never touch the
+   * roster the pipeline just built. A draft that renames, adds or removes a
+   * roster entry fails loud and nothing persists (never a partial apply).
+   */
+  encounterProseOnly?: boolean;
+  /**
+   * Smith encounter in-place fills only: `true` replaces the target's name
+   * with the draft's (the old name becomes an alias) instead of the default
+   * name-preserving alias behavior.
+   */
+  encounterRedesignName?: boolean;
 }
 
 /** Fetches context artifacts for the prompt (name + summary + body excerpt). */
@@ -999,6 +1032,24 @@ export function rejectionIssues(step: Pick<RunStep, 'output'>): string[] {
   return Array.isArray(issues) ? issues.filter((issue): issue is string => typeof issue === 'string') : [];
 }
 
+/**
+ * Reads the roster-only pipeline marker off a run's brief step (two-button
+ * regeneration, docs/11): the brief step stamps `rosterOnly: true` when it
+ * ran in repopulation scope, so continuations that rebuild `StartRunInput`
+ * from the run row (approve/edit/retry/resume — no Dexie field carries the
+ * scope) keep the brief→finalize shape. User edits replace the output, so
+ * both `userEdit` and `output` are read — the edit path re-stamps it.
+ */
+function briefRosterOnlyMarker(steps: readonly RunStep[]): boolean {
+  const brief = steps.find((candidate) => candidate.name === 'brief');
+  const effective = brief?.userEdit ?? brief?.output;
+  return (
+    effective !== null &&
+    typeof effective === 'object' &&
+    (effective as { rosterOnly?: unknown }).rosterOnly === true
+  );
+}
+
 /** Draft fields are schema-validated strings; coerce defensively. */
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
@@ -1087,10 +1138,11 @@ export class RunEngine {
       this.encounterLayoutVariants.set(run.id, 0);
     }
     if (input.persona.mode === 'encounter' && input.unattended !== true) {
+      const rosterOnlyStart = input.encounterScope === 'rosterOnly';
       useProgressStore.getState().start(
         encounterProgressId(run.id),
-        'Generating encounter map',
-        'Drafting the encounter brief…',
+        rosterOnlyStart ? 'Repopulating encounter roster' : 'Generating encounter map',
+        rosterOnlyStart ? 'Drafting the new roster…' : 'Drafting the encounter brief…',
         // The dock label opens the run in the workspace persona panel
         // (deep-linked via ?run=), wherever the user currently is.
         `${workspacePath(input.campaign.id)}?run=${run.id}`,
@@ -1170,7 +1222,22 @@ export class RunEngine {
       if (targetStep.name === 'brief') this.effectiveEncounterBrief(preview);
       if (targetStep.name === 'layout') this.effectiveEncounterLayout(preview);
     }
-    await this.updateStep(runId, stepIndex, { userEdit, status: 'approved' });
+    // A manual brief edit replaces the step output wholesale — re-stamp the
+    // roster-only marker so the edited run keeps its brief→finalize shape
+    // (the marker is pipeline metadata, not brief prose).
+    let storedEdit: unknown = userEdit;
+    if (
+      input.persona.mode === 'encounter' &&
+      targetStep.name === 'brief' &&
+      briefRosterOnlyMarker(run.steps) &&
+      storedEdit !== null &&
+      typeof storedEdit === 'object' &&
+      !Array.isArray(storedEdit) &&
+      (storedEdit as { rosterOnly?: unknown }).rosterOnly !== true
+    ) {
+      storedEdit = { ...storedEdit, rosterOnly: true };
+    }
+    await this.updateStep(runId, stepIndex, { userEdit: storedEdit, status: 'approved' });
     this.emit({
       kind: 'step',
       runId,
@@ -1187,6 +1254,16 @@ export class RunEngine {
   async retryStep(runId: Id, extraInstruction: string, input: StartRunInput): Promise<void> {
     const run = await getRun(runId);
     if (run === undefined) return;
+    // Retrying clears the step being retried — capture the roster-only scope
+    // BEFORE the reset so a repopulation retry keeps its brief→finalize
+    // shape (the rebuilt input carries no scope field).
+    if (
+      input.persona.mode === 'encounter' &&
+      input.encounterScope === undefined &&
+      briefRosterOnlyMarker(run.steps)
+    ) {
+      input.encounterScope = 'rosterOnly';
+    }
     const stepIndex = run.steps.findIndex(
       (step) =>
         step.status === 'rejected' || step.status === 'running' || step.status === 'pending',
@@ -1270,6 +1347,9 @@ export class RunEngine {
   async regenerateEncounterLayout(runId: Id, input: StartRunInput): Promise<void> {
     const run = await getRun(runId);
     if (run === undefined || input.persona.mode !== 'encounter') return;
+    if (briefRosterOnlyMarker(run.steps)) {
+      throw new Error('A roster-only repopulation has no layout to regenerate — its rooms are preserved by design');
+    }
     const stepIndex = run.steps.findIndex((step) => step.name === 'layout');
     if (stepIndex === -1) throw new Error('Encounter run has no layout step to regenerate');
     this.encounterLayoutVariants.set(runId, (this.encounterLayoutVariants.get(runId) ?? 0) + 1);
@@ -1299,6 +1379,9 @@ export class RunEngine {
   async regenerateEncounterCandidates(runId: Id, input: StartRunInput): Promise<void> {
     const run = await getRun(runId);
     if (run === undefined || input.persona.mode !== 'encounter') return;
+    if (briefRosterOnlyMarker(run.steps)) {
+      throw new Error('A roster-only repopulation has no map candidates to regenerate — its map is preserved by design');
+    }
     const stepIndex = run.steps.findIndex((step) => step.name === 'stylize');
     if (stepIndex === -1) throw new Error('Encounter run has no stylize step to regenerate');
     const discarded = run.steps
@@ -1381,7 +1464,9 @@ export class RunEngine {
         : input.persona.mode === 'image'
           ? [...IMAGE_STEP_NAMES]
           : input.persona.mode === 'encounter'
-            ? [...ENCOUNTER_STEP_NAMES]
+            ? this.encounterIsRosterOnly(input, run.steps)
+              ? [...ENCOUNTER_ROSTER_ONLY_STEP_NAMES]
+              : [...ENCOUNTER_STEP_NAMES]
             : input.persona.producesKind === 'npc'
             ? [...STEP_NAMES]
             : STEP_NAMES.filter((name) => name !== 'statblock');
@@ -1545,9 +1630,12 @@ export class RunEngine {
           ? this.runEncounterPick(stepIndex, steps, input)
           : this.runPick(stepIndex, steps);
       case 'finalize':
-        return input.persona.mode === 'encounter'
-          ? this.runEncounterFinalize(runId, stepIndex, steps, input)
-          : this.runFinalize(runId, stepIndex, steps, input);
+        if (input.persona.mode === 'encounter') {
+          return this.encounterIsRosterOnly(input, steps)
+            ? this.runEncounterRosterFinalize(runId, stepIndex, steps, input)
+            : this.runEncounterFinalize(runId, stepIndex, steps, input);
+        }
+        return this.runFinalize(runId, stepIndex, steps, input);
     }
   }
 
@@ -2091,6 +2179,13 @@ export class RunEngine {
             '- "locationKind": where the encounter takes place — "dungeon" (underground/ruin complex), "building" (indoor structure), "wilderness" (open terrain), or "other" when nothing fits.',
           ].join('\n')
         : null,
+      // Prose-only redesign (two-button regeneration): the roster already on
+      // file is final — redesign ONLY name/summary/body prose and copy every
+      // roster entry's name and count verbatim. Renaming, adding or removing
+      // a monster fails the run (the persist is scoped to name/prose/body).
+      kind === 'encounter' && input.encounterProseOnly === true
+        ? 'Prose-only redesign: redesign ONLY the name, summary and body prose — copy every roster entry (name and count) verbatim from the existing encounter. Renaming, adding or removing a monster fails the run.'
+        : null,
       `Reply with ONLY a JSON object with exactly these fields: ${JSON.stringify(contract.keys)}`,
       extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     ]
@@ -2470,6 +2565,18 @@ export class RunEngine {
     return typeof value === 'string' ? value : '';
   }
 
+  /**
+   * The encounter pipeline shape (two-button regeneration, docs/11): the
+   * explicit input flag wins; otherwise the brief step's stamped marker
+   * decides (pause/resume continuations rebuild the input from the run row,
+   * which carries no scope field). Anything else is the full pipeline.
+   */
+  private encounterIsRosterOnly(input: StartRunInput, steps: readonly RunStep[]): boolean {
+    if (input.encounterScope === 'rosterOnly') return true;
+    if (input.encounterScope === 'full') return false;
+    return briefRosterOnlyMarker(steps);
+  }
+
   private effectiveEncounterBrief(steps: readonly RunStep[]): {
     parsed: EncounterGeneratorBrief;
     aspect: EncounterMapAspect;
@@ -2595,12 +2702,18 @@ export class RunEngine {
     const context = await loadContextArtifacts(input.contextArtifactIds ?? []);
     const retrieval = await this.retrieveContext(runId, input);
     const targetRoster = target?.kind === 'encounter' ? target.data.monsters : undefined;
-    if (targetRoster?.length === 0) {
-      throw new Error(
-        'This encounter has no monsters yet, so there is no roster to design a map around. ' +
-          'Generate its content first (artifact editor → "Generate with AI") or add monsters manually.',
-      );
-    }
+    // Two-button regeneration (docs/11): the roster-only repopulation pass
+    // REPLACES the roster — the old spawn was wrong, that is the point — so
+    // it never pins the target's entries. An empty target roster (a fresh
+    // Regenerate-everything reset, or a stub that never had content) is a
+    // fresh population, not an error: appending to nothing means designing
+    // the whole population. The pin exists only for legacy verbatim map
+    // regenerations with a roster on file.
+    const rosterOnly = this.encounterIsRosterOnly(input, steps);
+    const rosterPin =
+      rosterOnly || targetRoster === undefined || targetRoster.length === 0 ? undefined : targetRoster;
+    const existingRooms =
+      target?.kind === 'encounter' && target.data.layout !== null ? target.data.layout.rooms : undefined;
     // Roster sources are only checked for fresh encounters: a regenerate run
     // replaces the roster with the target's verbatim entries below.
     // Asymmetric per-room budget loop (docs/11 D12): the lookups the level
@@ -2624,10 +2737,14 @@ export class RunEngine {
     // BOTH the prompt clauses and the evaluate gate — they cannot drift
     // apart again.
     const targetIsComplex = target?.kind === 'encounter' && encounterDataIsComplex(target.data);
-    const expansionAuthorized =
-      targetRoster !== undefined &&
-      (preset === 'dungeon' || targetIsComplex) &&
-      budgetMode === 'band';
+    // The stocking contract authorizes whenever the shape calls for a complex
+    // (dungeon preset OR a complex-shaped target) on a band system — the pin
+    // decides only HOW it binds: a pinned roster expands (verbatim prefix →
+    // source-cited appends → cap), an unpinned one is designed whole under
+    // the same numbers and cap.
+    const stockingAuthorized =
+      (preset === 'dungeon' || targetIsComplex) && budgetMode === 'band';
+    const expansionAuthorized = rosterPin !== undefined && stockingAuthorized;
     // The directive tier: a complex-shaped target is TOLD to append (the
     // permissive 'may' let an under-appending model ship the old roster plus
     // a loud advisory — a stocking contract, not a permission).
@@ -2674,10 +2791,30 @@ export class RunEngine {
       (stockingNumbers === null ? '' : ' (reach the per-room stocking numbers above)') +
       '. Every appended entry must cite a source (sourceChunkIndex, sourceName or a complete inline statBlock). The whole complex must total at most (number of rooms × the per-room expected creature-levels above) + ' +
       `${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels.`;
-    const rosterContract = targetRoster !== undefined
+    // Fresh-population instruction (two-button regeneration, docs/11): no pin
+    // exists — an empty roster after a Regenerate-everything reset, or a
+    // roster-only repopulation whose old spawn was wrong — so the reply
+    // designs the WHOLE population under the same numbers and cap. A
+    // repopulation mirrors the dungeon's existing rooms (named below, in
+    // order, with their targetLevels) instead of inventing new ones.
+    const existingRoomList =
+      existingRooms === undefined || existingRooms.length === 0
+        ? null
+        : existingRooms
+            .map((room, index) => {
+              const level = room.targetLevel === undefined ? '' : ` (targetLevel ${String(room.targetLevel)})`;
+              return `${String(index + 1)}. ${room.name}${level}`;
+            })
+            .join('; ');
+    const freshComplexClause =
+      rosterOnly && existingRoomList !== null
+        ? `This dungeon keeps its ${String(existingRooms?.length ?? 0)} rooms — design a NEW roster stocking every one of them: one fight per room (${existingRoomList}); reply rooms must mirror these rooms in order (same names, same targetLevels). Every entry must cite a source (sourceChunkIndex, sourceName or a complete inline statBlock). The whole complex must total at most (number of rooms × the per-room expected creature-levels above) + ${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels.`
+        : 'Design a complete new roster for the whole encounter — a complex needs one fight per room (reach the per-room stocking numbers above). Every entry must cite a source (sourceChunkIndex, sourceName or a complete inline statBlock). The whole complex must total at most (number of rooms × the per-room expected creature-levels above) + ' +
+          `${String(ROOM_BUDGET_OVER_MARGIN)} creature-levels.`;
+    const rosterContract = rosterPin !== undefined
       ? [
-          `Regeneration target roster — keep these EXACT entries as the first ${String(targetRoster.length)} entries of your reply, same order, same names, counts and treasure (name/count/notes/treasure; emit null for sourceChunkIndex, sourceName and statBlock — the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
-            targetRoster.map((monster) => ({
+          `Regeneration target roster — keep these EXACT entries as the first ${String(rosterPin.length)} entries of your reply, same order, same names, counts and treasure (name/count/notes/treasure; emit null for sourceChunkIndex, sourceName and statBlock — the existing encounter's stat sources are preserved automatically): ${JSON.stringify(
+            rosterPin.map((monster) => ({
               name: monster.name,
               count: monster.count,
               notes: monster.notes,
@@ -2686,15 +2823,19 @@ export class RunEngine {
           )}`,
           ...(expansionAuthorized ? [directiveAppend ? appendClauseDirective : appendClauseMay] : []),
         ].join('\n')
-      : 'Design a concrete monster roster appropriate to the requested difficulty.';
-    const monsterFieldSpec = targetRoster === undefined
-      ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}]'
+      : stockingAuthorized
+        ? freshComplexClause
+        : 'Design a concrete monster roster appropriate to the requested difficulty.';
+    const monsterFieldSpec = rosterPin === undefined
+      ? stockingAuthorized
+        ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (a new roster stocking the whole complex — one fight per room)'
+        : 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}]'
       : directiveAppend
         ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (the target roster first, verbatim; appended entries stock the complex — the roster must grow to one fight per room)'
         : expansionAuthorized
           ? 'monsters [{name,count,notes,treasure,sourceChunkIndex? or sourceName? or statBlock?}] (the target roster first, verbatim; optional appended entries stock a complex)'
           : 'monsters [{name,count,notes,treasure}] (the target roster copied verbatim)';
-    const inlineStatHint = targetRoster === undefined && retrieval.statblockChunkIds.length === 0
+    const inlineStatHint = rosterPin === undefined && retrieval.statblockChunkIds.length === 0
       ? `No stat-block excerpts are available, so every monster needs a complete inline "statBlock" object matching exactly this shape: ${statBlockSchemaHint(input.campaign.system)}. A partial stat block is rejected.`
       : null;
     // 15-GRAPH-RETRIEVAL (D2 = general grounding only): the encounter brief
@@ -2820,9 +2961,9 @@ export class RunEngine {
         statblockChunkIds: retrieval.statblockChunkIds,
       });
       const entryLevels =
-        targetRoster === undefined
+        rosterPin === undefined
           ? undefined
-          : await resolveEntryLevels(targetRoster, {
+          : await resolveEntryLevels(rosterPin, {
               chunkById,
               getArtifactStatBlock: async (artifactId) => {
                 const artifact = await getAnyArtifact(artifactId);
@@ -2831,7 +2972,7 @@ export class RunEngine {
               },
             });
       const levelFor = (monsterIndex: number): string | undefined => {
-        if (targetRoster !== undefined && monsterIndex < targetRoster.length) {
+        if (rosterPin !== undefined && monsterIndex < rosterPin.length) {
           return entryLevels?.[monsterIndex];
         }
         return briefLevels[monsterIndex];
@@ -2882,7 +3023,7 @@ export class RunEngine {
     }> => {
       const result = parseEncounterBrief(
         reply,
-        targetRoster === undefined ? {} : { stripStatFieldCount: targetRoster.length },
+        rosterPin === undefined ? {} : { stripStatFieldCount: rosterPin.length },
       );
       if (result.brief === null) return { ...result, advisory: null, expansionActive: false };
       const brief = result.brief;
@@ -2895,11 +3036,31 @@ export class RunEngine {
       // run keeps the exact verbatim pin (the repair below says so) — never
       // a source contract the prompt never stated. pf2e (no numbers → no
       // cap to compute) and single arenas keep the exact verbatim pin.
+      // AMENDED (two-button regeneration): an UNPINNED complex reply on a
+      // stocked target (a fresh Regenerate-everything population or a
+      // roster-only repopulation) is capped the same way — the cap binds the
+      // shape, not the pin.
       const expansion = expansionAuthorized && isComplex;
+      const freshCapped = rosterPin === undefined && target !== undefined && isComplex && stockingAuthorized;
       // Site-shape dichotomy (docs/11 D11): 1 room (single arena) or 4–10
       // rooms (complex). 2–3 rooms are a repairable issue — the prompt
-      // states the exact shape contract.
-      if (brief.rooms.length !== 1 && brief.rooms.length < 4) {
+      // states the exact shape contract. AMENDED (two-button regeneration):
+      // a repopulation mirrors the dungeon's EXISTING rooms instead, so a
+      // grandfathered 2–3-room complex repopulates in place — the count must
+      // match the rooms on file exactly.
+      const mirrorCount = rosterOnly ? existingRooms?.length : undefined;
+      if (mirrorCount !== undefined && mirrorCount > 0) {
+        if (brief.rooms.length !== mirrorCount) {
+          return {
+            brief: null,
+            advisory: null,
+            expansionActive: false,
+            issues: [
+              `rooms: this repopulation keeps the dungeon's ${String(mirrorCount)} rooms — mirror them in order with the same names (your reply listed ${String(brief.rooms.length)} rooms)`,
+            ],
+          };
+        }
+      } else if (brief.rooms.length !== 1 && brief.rooms.length < 4) {
         return {
           brief: null,
           advisory: null,
@@ -2909,25 +3070,26 @@ export class RunEngine {
           ],
         };
       }
-      if (targetRoster !== undefined) {
+      const pinLength = rosterPin?.length ?? 0;
+      if (rosterPin !== undefined) {
         if (expansion) {
-          if (brief.monsters.length < targetRoster.length) {
+          if (brief.monsters.length < pinLength) {
             return {
               brief: null,
               advisory: null,
               expansionActive: false,
               issues: [
-                `monsters: keep the target roster's ${String(targetRoster.length)} entries as the FIRST entries of your reply, same order (your reply listed ${String(brief.monsters.length)})`,
+                `monsters: keep the target roster's ${String(pinLength)} entries as the FIRST entries of your reply, same order (your reply listed ${String(brief.monsters.length)})`,
               ],
             };
           }
-        } else if (brief.monsters.length !== targetRoster.length) {
+        } else if (brief.monsters.length !== pinLength) {
           return {
             brief: null,
             advisory: null,
             expansionActive: false,
             issues: [
-              `monsters: the target roster has exactly ${String(targetRoster.length)} entries — copy it verbatim in the same order (your reply listed ${String(brief.monsters.length)})`,
+              `monsters: the target roster has exactly ${String(pinLength)} entries — copy it verbatim in the same order (your reply listed ${String(brief.monsters.length)})`,
             ],
           };
         }
@@ -2948,7 +3110,7 @@ export class RunEngine {
           ? {
               ...brief,
               monsters: brief.monsters.map((monster, index) => {
-                const pinned = index < targetRoster.length ? targetRoster[index] : undefined;
+                const pinned = index < pinLength ? rosterPin[index] : undefined;
                 return pinned === undefined
                   ? monster
                   : {
@@ -2961,7 +3123,7 @@ export class RunEngine {
             }
           : brief;
       if (expansion) {
-        const expandedEntries = corrected.monsters.slice(targetRoster.length);
+        const expandedEntries = corrected.monsters.slice(pinLength);
         const sourceIssues = encounterSourceIssues(
           expandedEntries,
           retrieval.statblockChunkIds,
@@ -2982,11 +3144,12 @@ export class RunEngine {
         return { brief: stamped, issues: [], advisory: PF2E_BUDGET_ADVISORY, expansionActive: false };
       }
       const verdicts = await budgetVerdicts(stamped);
-      if (expansion) {
-        // The expansion cap (docs/11 D12 amendment): the whole complex may
+      if (expansion || freshCapped) {
+        // The stocking cap (docs/11 D12 amendment): the whole complex may
         // carry at most the SUM of its rooms' expected shares plus the
         // band's documented headroom — an oversized roster is a repairable
-        // issue, never a silent accept.
+        // issue, never a silent accept. Binds pinned expansions and unpinned
+        // fresh populations alike.
         const expectedTotal = stamped.rooms.reduce((total, room) => {
           if (room.targetLevel === undefined) return total;
           const expectation = expectedRoomThreat(fillGrade, room.targetLevel, input.campaign.system);
@@ -3000,7 +3163,7 @@ export class RunEngine {
             advisory: null,
             expansionActive: false,
             issues: [
-              `monsters: the expanded roster sums to ${formatLevels(shipped)} creature-levels — over the complex's stocking cap of ${formatLevels(cap)} (the rooms' expected shares + ${String(ROOM_BUDGET_OVER_MARGIN)}). Trim the roster so every room fits its band.`,
+              `monsters: the ${expansion ? 'expanded ' : ''}roster sums to ${formatLevels(shipped)} creature-levels — over the complex's stocking cap of ${formatLevels(cap)} (the rooms' expected shares + ${String(ROOM_BUDGET_OVER_MARGIN)}). Trim the roster so every room fits its band.`,
             ],
           };
         }
@@ -3072,7 +3235,7 @@ export class RunEngine {
     if (evaluated.brief === null) {
       // One repair turn that names every problem — a bare "the schema failed"
       // made the model repeat the same mistake three runs in a row.
-      const statHintForRepair = targetRoster === undefined && evaluated.issues.some((issue) => issue.includes('statBlock'))
+      const statHintForRepair = rosterPin === undefined && evaluated.issues.some((issue) => issue.includes('statBlock'))
         ? `\nA complete inline "statBlock" object must match exactly this shape: ${statBlockSchemaHint(input.campaign.system)}.`
         : '';
       // Contract repair escalates to the fallback model (see runDraft).
@@ -3102,16 +3265,18 @@ export class RunEngine {
       return { step, runStatus: 'needs_review' };
     }
     let parsed: EncounterGeneratorBrief = evaluated.brief;
-    if (targetRoster !== undefined && !evaluated.expansionActive) {
+    if (rosterPin !== undefined && !evaluated.expansionActive) {
       // Regenerate mode (verbatim pin) replaces the roster with the target's
       // verbatim entries — mob treasure included (the brief was told to copy
       // it verbatim; the target's own values win over any model drift). An
       // EXPANDED complex roster keeps the merged entries: the corrected
       // prefix already carries the target's verbatim values (evaluate), and
       // the appended entries are what finalize resolves and persists.
+      // Unpinned replies (fresh creates, fresh re-populations, roster-only
+      // repopulations) keep the model's roster as evaluated.
       parsed = {
         ...parsed,
-        monsters: targetRoster.map((monster) => ({
+        monsters: rosterPin.map((monster) => ({
           name: monster.name,
           count: monster.count,
           notes: monster.notes,
@@ -3146,6 +3311,10 @@ export class RunEngine {
             // brief was written against — finalize stamps it when a complex
             // materializes with the field absent (draw-once).
             fillGrade,
+            // The pipeline shape (two-button regeneration): continuations
+            // that rebuild the input from the run row read this back —
+            // without it a repopulation would resume as a full map run.
+            ...(rosterOnly ? { rosterOnly: true as const } : {}),
             ...(budgetAdvisory === null ? {} : { budgetAdvisory }),
           },
           fallback,
@@ -3367,6 +3536,9 @@ export class RunEngine {
     if (keep.length !== 1) throw new Error('Select exactly one generated battlemap');
     const run = await getRun(runId);
     if (run?.status !== 'awaiting_user' && run?.status !== 'needs_review') return;
+    if (briefRosterOnlyMarker(run.steps)) {
+      throw new Error('A roster-only repopulation has no battlemap to pick — its map is preserved by design');
+    }
     const stepIndex = run.steps.findIndex((step) => step.name === 'pick');
     const pick = run.steps[stepIndex];
     const candidates = (pick?.output as { candidates?: Id[] } | undefined)?.candidates ?? [];
@@ -3393,6 +3565,212 @@ export class RunEngine {
     void this.executeFrom(runId, stepIndex + 1, input).catch((error: unknown) => {
       void this.fail(runId, error);
     });
+  }
+
+  /**
+   * Roster-only repopulation finalize (two-button regeneration, docs/11):
+   * the `rosterOnly` Cartographer variant — brief → evaluate (with the
+   * 'empty' repair loop: this is what kills pile-ups structurally) → SKIP
+   * layout/stylize/pick → finalize persists the roster ONLY. Rooms, room
+   * geometry/keys, layout corridors/path and the battlemap (`mapImageId`)
+   * are PRESERVED — only each room's `monsterIndexes` is re-partitioned
+   * onto the new roster. The roster is REPLACED (no verbatim pin — the old
+   * spawn was wrong), room-tagged per the brief's stocking contract from the
+   * row's fill grade, bounded by the existing cap, source-citing per the
+   * existing monsters-field rules. Shape-gating (`encounterDataIsComplex`)
+   * and the directive-append machinery are reused, not re-derived. The
+   * advisory block is recomputed. Downstream effects (statblocks, portraits,
+   * entity records) follow the first-materialization path — reuse, never
+   * reinvent. The Smith keeps its one-fight charter for singles: this pass
+   * is the Cartographer's, not a Smith extension.
+   */
+  private async runEncounterRosterFinalize(
+    runId: Id,
+    stepIndex: number,
+    steps: RunStep[],
+    input: StartRunInput,
+  ): Promise<{ step: RunStep; artifactId: Id }> {
+    const { parsed, statblockChunkIds, rosterChunkByName, fillGrade: briefFillGrade } =
+      this.effectiveEncounterBrief(steps);
+    const target = input.targetArtifactId === undefined
+      ? undefined
+      : await getAnyArtifact(input.targetArtifactId);
+    if (input.targetArtifactId !== undefined && target === undefined) {
+      throw new Error('The encounter to repopulate no longer exists');
+    }
+    if (target === undefined) {
+      throw new Error('A roster-only repopulation needs an existing encounter to restock');
+    }
+    if (target.kind !== 'encounter') throw new Error('Encounter repopulation target changed kind');
+    if (input.placementModuleId !== undefined) {
+      throw new Error(
+        'Module placement applies only to a newly created artifact — clear the module choice or drop the target',
+      );
+    }
+    const targetLayout = target.data.layout;
+    if (targetLayout === null) {
+      throw new Error(
+        `"${target.name}" has no room layout to restock — use Regenerate everything to build rooms and a map first`,
+      );
+    }
+    const isComplex = targetLayout.rooms.length > 1;
+    // Fill grade (docs/11 D12 amendment, draw-once): the row's value always
+    // wins; then the brief's stamped value (the draw the prompt was written
+    // against — the same precedence the full finalize uses); a legacy
+    // complex with neither draws NOW (the same backfill the Smith fill
+    // performs) so the budget check runs against a real expectation. One
+    // draw per run at most — never redrawn, never ignored.
+    const fillGrade = isComplex
+      ? (target.data.fillGrade ?? briefFillGrade ?? drawFillGrade())
+      : undefined;
+    const fillGradeToPersist: number | undefined = isComplex
+      ? (target.data.fillGrade ?? fillGrade)
+      : target.data.fillGrade;
+    // The fresh roster materializes through the first-materialization path
+    // (rulebook citations → shared mob artifacts, inline blocks stay inline)
+    // — every entry, since no verbatim pin exists.
+    const monsters = await this.materializeBriefRoster(
+      parsed.monsters,
+      input.campaign.id,
+      runId,
+      statblockChunkIds,
+      rosterChunkByName,
+      new Map<Id, Id>(),
+    );
+    await promoteRosterUses(target.moduleId ?? null, monsters);
+    // Room-tagging comes straight from the brief's stocking contract: the
+    // evaluate gate forced the reply's rooms to mirror the dungeon's
+    // existing rooms (same count, same order), with every roster entry in
+    // exactly one room — so the partition maps by index onto the PRESERVED
+    // rooms. Geometry, keys, corridors and path ride along untouched — only
+    // `monsterIndexes` (and lowered `targetLevel`s below) change. A
+    // count/index drift here is a loud invariant failure, never a silent
+    // re-partition: the gate already approved this assignment.
+    if (parsed.rooms.length !== targetLayout.rooms.length) {
+      throw new Error(
+        `repopulate: the approved brief stocks ${String(parsed.rooms.length)} rooms but "${target.name}" has ${String(targetLayout.rooms.length)} — refusing to re-partition a mismatched roster`,
+      );
+    }
+    for (const [roomIndex, briefRoom] of parsed.rooms.entries()) {
+      for (const monsterIndex of briefRoom.monsterIndexes) {
+        if (monsterIndex < 0 || monsterIndex >= monsters.length) {
+          throw new Error(
+            `repopulate: the approved brief assigns roster entry ${String(monsterIndex)} to room ${String(roomIndex)} but the roster has ${String(monsters.length)} entries — refusing a dangling assignment`,
+          );
+        }
+      }
+    }
+    const hintLevel = parseRosterTargetLevel(parsed.levelHint);
+    const stampedRooms = targetLayout.rooms.map((room) => ({
+      ...room,
+      ...(room.targetLevel === undefined && hintLevel !== undefined
+        ? { targetLevel: hintLevel }
+        : {}),
+    }));
+    let reconciledLayout = {
+      ...targetLayout,
+      rooms: stampedRooms.map((room, roomIndex) => ({
+        ...room,
+        monsterIndexes: [...(parsed.rooms[roomIndex]?.monsterIndexes ?? [])],
+      })),
+    };
+    const chunkIds = [
+      ...new Set(
+        monsters.flatMap((monster) =>
+          monster.source.type === 'rulebook' ? [monster.source.chunkId] : [],
+        ),
+      ),
+    ];
+    const chunks = chunkIds.length === 0 ? [] : await getChunksByIds(chunkIds);
+    const chunkById = new Map(chunks.map((chunk) => [chunk.id, chunk]));
+    const levels = await resolveEntryLevels(monsters, {
+      chunkById,
+      getArtifactStatBlock: async (artifactId) => {
+        const artifact = await getArtifact(artifactId);
+        if (artifact?.kind !== 'npc') return null;
+        return artifact.data.statBlock;
+      },
+    });
+    // The budget loop's deterministic tail (no repair turn at finalize):
+    // over rooms step their target down (floor 1); 'empty'/'under' rooms
+    // ship with the LOUD advisory persisted — never silent, never a failed
+    // run. The repopulation brief's repair loop already forced every room
+    // covered, so an 'empty' verdict here is loud by construction.
+    const verdicts = reconciledLayout.rooms.map((room, roomIndex) =>
+      checkRoomBudget({
+        roomIndex,
+        roomName: room.name,
+        targetLevel: room.targetLevel,
+        creatures: room.monsterIndexes.map((monsterIndex) => {
+          const monster = monsters[monsterIndex];
+          return {
+            name: monster?.name ?? `roster entry ${String(monsterIndex)}`,
+            count: monster?.count ?? 0,
+            level: levels[monsterIndex],
+          };
+        }),
+        ...(fillGrade === undefined ? {} : { fillGrade }),
+        complex: isComplex,
+        system: input.campaign.system,
+      }),
+    );
+    const lowered = new Map<number, number>(
+      verdicts.flatMap((verdict) =>
+        verdict.loweredTargetLevel === null
+          ? []
+          : [[verdict.roomIndex, verdict.loweredTargetLevel]],
+      ),
+    );
+    if (lowered.size > 0) {
+      reconciledLayout = {
+        ...reconciledLayout,
+        rooms: reconciledLayout.rooms.map((room, roomIndex) => {
+          const next = lowered.get(roomIndex);
+          return next === undefined ? room : { ...room, targetLevel: next };
+        }),
+      };
+    }
+    const advisories = verdicts
+      .map((verdict) => (verdict.status === 'ok' ? '' : verdict.advisory ?? ''))
+      .filter((advisory) => advisory !== '');
+    if (roomBudgetMode(input.campaign.system) === 'verbatim') {
+      advisories.push(PF2E_BUDGET_ADVISORY);
+    }
+    const budgetAdvisory = advisories.join(' ');
+    await updateArtifact(
+      target.id,
+      {
+        // Roster ONLY: name, prose, links, tags, images, preset, siteShape,
+        // locationKind, layout geometry and mapImageId all ride the spread
+        // untouched. Only the roster, its room partition, the recomputed
+        // advisory and the (draw-once) fill grade land.
+        data: encounterDataSchema.parse({
+          ...target.data,
+          monsters,
+          layout: reconciledLayout,
+          budgetAdvisory,
+          ...(fillGradeToPersist === undefined ? {} : { fillGrade: fillGradeToPersist }),
+        }),
+      },
+      { source: 'persona', runId },
+    );
+    // Portrait preservation (docs/11 D5): same-named re-cited entries carry
+    // covers forward. Best-effort: never fails the finalize.
+    await carryMobCoversForward({
+      campaignId: input.campaign.id,
+      oldMonsters: target.data.monsters,
+      newMonsters: monsters,
+    });
+    const step = this.finishStep(
+      steps[stepIndex],
+      withNotice(
+        { artifactId: target.id },
+        null,
+        budgetAdvisory === '' ? null : budgetAdvisory,
+      ),
+    );
+    await updateRun(runId, { resultArtifactId: target.id });
+    return { step, artifactId: target.id };
   }
 
   private async runEncounterFinalize(
@@ -4023,10 +4401,65 @@ export class RunEngine {
       if (!('monsters' in data)) {
         throw new Error('In-place generation produced no monster roster to fill the encounter with');
       }
+      // Prose-only redesign (two-button regeneration, docs/11): name and
+      // prose are redesigned; the roster the pipeline just built is NEVER
+      // touched. A draft that renames, adds or removes a roster entry fails
+      // LOUD here — before any write — so a prose reply can never
+      // partial-apply a roster rewrite. `data` (including layout, map,
+      // advisories and fill grade) persists byte-identically.
+      if (input.encounterProseOnly === true) {
+        const rosterKey = (entries: readonly { name: string; count: number }[]): string =>
+          JSON.stringify(
+            entries
+              .map((entry) => `${entry.name.trim().toLowerCase()}|${String(entry.count)}`)
+              .sort(),
+          );
+        if (rosterKey(data.monsters) !== rosterKey(target.data.monsters)) {
+          throw new Error(
+            'prose-only redesign: the draft rewrote the monster roster (names or counts differ) — ' +
+              'a prose redesign must copy the roster verbatim. Nothing was changed; re-run the prose pass.',
+          );
+        }
+        const nextName = draftName.trim();
+        const nextAliases =
+          nextName.toLowerCase() === target.name.trim().toLowerCase() ||
+          target.aliases.some((alias) => alias.trim().toLowerCase() === nextName.toLowerCase())
+            ? target.aliases
+            : [...target.aliases, target.name];
+        await updateArtifact(
+          target.id,
+          {
+            name: nextName,
+            summary: asString(draft.summary),
+            body: asString(draft.body),
+            aliases: nextAliases,
+          },
+          { source: 'persona', runId },
+        );
+        const step = this.finishStep(steps[stepIndex], withNotice({ artifactId: target.id }, null));
+        await updateRun(runId, { resultArtifactId: target.id });
+        return { step, artifactId: target.id };
+      }
       const modelAlias = draftName.trim();
-      const aliases =
-        modelAlias.toLowerCase() === target.name.trim().toLowerCase() ||
-        target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
+      // The prose checkbox (two-button regeneration): ticked, the draft's
+      // name REPLACES the target's (the old name becomes an alias, so links
+      // keep resolving); unticked, the default name-preserving alias
+      // behavior holds — the Smith charter for singles is unchanged.
+      const renamed = input.encounterRedesignName === true &&
+        modelAlias.toLowerCase() !== target.name.trim().toLowerCase();
+      const aliases = renamed
+        ? [
+          ...target.aliases.filter(
+            (alias) => alias.trim().toLowerCase() !== modelAlias.toLowerCase(),
+          ),
+          ...(target.aliases.some(
+            (alias) => alias.trim().toLowerCase() === target.name.trim().toLowerCase(),
+          )
+            ? []
+            : [target.name]),
+        ]
+        : modelAlias.toLowerCase() === target.name.trim().toLowerCase() ||
+            target.aliases.some((alias) => alias.trim().toLowerCase() === modelAlias.toLowerCase())
           ? target.aliases
           : [...target.aliases, modelAlias];
       // In-place fill reconciliation (docs/11 D12; packing amended by the
@@ -4154,6 +4587,9 @@ export class RunEngine {
           summary: asString(draft.summary),
           body: asString(draft.body),
           aliases,
+          // The prose checkbox (two-button regeneration): a ticked redesign
+          // replaces the name; otherwise the target keeps its authored name.
+          ...(renamed ? { name: modelAlias } : {}),
           // Boundary re-validation also restores the encounter narrowing that
           // `data` (typed as the ArtifactData union) lost at runtime.
           data: encounterDataSchema.parse({
