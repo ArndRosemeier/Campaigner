@@ -5,6 +5,7 @@ import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { ModuleBusyError } from '@/llm/moduleGen';
+import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy';
 import { parseJsonReply } from '@/llm/jsonReply';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { debrisIssuesForFields } from '@/lib/encodingHygiene';
@@ -25,8 +26,10 @@ import { debrisIssuesForFields } from '@/lib/encodingHygiene';
  * - the reply runs the encodingHygiene debris scan — a hit rejects LOUDLY
  *   naming the debris (never silent repair, never persistence).
  * - ONE generation per module — a module whose forge is running, or that
- *   already has a canvas refine in flight, refuses with `ModuleBusyError`.
- *   Surfacing busy is the caller's job (toast); there is no queue.
+ *   already holds a canvas refine OR a canvas chat turn (the SHARED
+ *   `canvasBusy` registry — both surfaces serialize), refuses with
+ *   `ModuleBusyError`. Surfacing busy is the caller's job (toast); there
+ *   is no queue.
  * - stop/cancel supported through `signal` (user aborts are not errors).
  *
  * Streaming: the transport always streams; the reply is a strict JSON
@@ -57,9 +60,6 @@ export interface CanvasRefineInput {
   /** Cumulative extracted replacement text so far (overlay streaming). */
   onDelta?: ((textSoFar: string) => void) | undefined;
 }
-
-/** One canvas refine in flight per module — a second one is busy (loud). */
-const refinesInFlight = new Set<Id>();
 
 /**
  * The block paragraph containing the selection offsets (pure — the
@@ -170,14 +170,12 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
   if (input.signal?.aborted) {
     throw new DOMException('Aborted', 'AbortError');
   }
-  // ONE generation per module: the canvas refine registry is claimed
-  // SYNCHRONOUSLY at entry (before any await — two concurrent calls must
-  // never both pass the check), and the forge's own row state is the other
+  // ONE generation per module: the SHARED canvas generation registry
+  // (canvasBusy — refine + chat serialize on it) is claimed SYNCHRONOUSLY
+  // at entry (before any await — two concurrent calls must never both
+  // pass the check), and the forge's own row state is the other
   // authority: a module mid-generation refuses too.
-  if (refinesInFlight.has(input.moduleId)) {
-    throw new ModuleBusyError(input.moduleId);
-  }
-  refinesInFlight.add(input.moduleId);
+  claimModuleGeneration(input.moduleId);
   try {
     const instruction = input.instruction.trim();
     if (instruction === '') {
@@ -221,7 +219,7 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
     }
     return reply.replacement;
   } finally {
-    refinesInFlight.delete(input.moduleId);
+    releaseModuleGeneration(input.moduleId);
   }
 }
 
