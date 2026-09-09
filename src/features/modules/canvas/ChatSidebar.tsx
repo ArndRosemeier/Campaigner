@@ -38,9 +38,11 @@ import { cn } from '@/lib/utils';
  * with a mini before→after and the part it landed in, or failed with the
  * reason, the closest matching text, and a Report-to-LLM button — failures
  * are loud, never skipped). ONE conversation per module (docs/17 row 51).
- * Chat state is SESSION-ONLY (dies on reload); the DOC is the truth —
- * applied commands are editor transactions persisted through the split-save
- * (THE one part-text save path, only changed parts hit the row).
+ * Messages + outcomes persist on the module row and restore on canvas open
+ * as history (docs/17 row 57); the model selection stays session-only.
+ * The DOC is the truth for part text — applied commands are editor
+ * transactions persisted through the split-save (THE one part-text save
+ * path, only changed parts hit the row).
  *
  * Touch targets: every chat control is 44px (iPad-proportioned).
  */

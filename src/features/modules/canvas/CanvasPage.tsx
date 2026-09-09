@@ -69,6 +69,7 @@ import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
 import { CanvasPreview } from '@/features/modules/canvas/CanvasPreview';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
+import { flushChatPersist, hydrateChatFromThread } from '@/features/modules/canvas/chatPersist';
 import {
   resolveCanvasScrollTarget,
   type PlannedPart,
@@ -149,14 +150,29 @@ export function CanvasPage(): JSX.Element {
     }));
   }, [module]);
 
-  // Session version ledger, chat state and preview toggle: die on reload by
-  // design (Board staging precedent) and reset when the canvas's module
-  // changes (their keys embed the module id).
+  // Session version ledger and preview toggle: die on reload by design
+  // (Board staging precedent) and reset when the canvas's module changes
+  // (their keys embed the module id). The CHAT THREAD persists on the module
+  // row (docs/17 row 57): the store still resets per module, then hydrates
+  // from the row below — restored entries render as history and never touch
+  // the editor.
   useEffect(() => {
     useCanvasLedgerStore.getState().resetFor(moduleId);
     useCanvasChatStore.getState().resetFor(moduleId);
     useCanvasPreviewStore.getState().resetFor(moduleId);
+    return () => {
+      // A debounced thread write still pending at leave/unmount lands now.
+      void flushChatPersist();
+    };
   }, [moduleId]);
+
+  // Thread restore: once the module row arrives, hydrate the (just-reset)
+  // store from its persisted thread. Idempotent — a non-empty store (the
+  // user already chatted this session) always wins over the row.
+  useEffect(() => {
+    if (module === undefined || module === null) return;
+    hydrateChatFromThread(canvasChatKey(moduleId), module.chatThread);
+  }, [moduleId, module]);
 
   // Part text lives in the EDITOR (the doc string is the truth); the page
   // mirrors it only as a render trigger for the Save affordance and the

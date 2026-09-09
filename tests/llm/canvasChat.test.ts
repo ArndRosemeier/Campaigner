@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   CanvasChatParseError,
   MAX_COMMANDS_PER_REPLY,
-  MAX_CONTEXT_MESSAGES,
   buildCanvasChatPayload,
   canvasEditCommandSchema,
   chatProseSoFar,
@@ -26,6 +25,7 @@ import {
   splitPartsDocument,
 } from '@/domain/modulePartsDocument';
 import { ModuleBusyError, PRIOR_MODULES_TOTAL_CAP } from '@/llm/moduleGen';
+import type { ChatContentPart } from '@/llm/openrouter';
 import { refineModuleText } from '@/llm/canvasRefine';
 import { createCampaign } from '@/db/campaignRepo';
 import {
@@ -555,10 +555,18 @@ describe('renderChatGrounding (read-only block)', () => {
 });
 
 describe('buildCanvasChatPayload (context contract)', () => {
-  const history = Array.from({ length: MAX_CONTEXT_MESSAGES + 3 }, (_unused, index) => ({
+  // Owner-directed (ledger 57): the cap is gone — the entire conversation
+  // rides every request. 15 turns (odd count, either role first) exercises
+  // "more than the old 12-message tail" without asserting a magic number.
+  const history = Array.from({ length: 15 }, (_unused, index) => ({
     role: index % 2 === 0 ? ('user' as const) : ('assistant' as const),
     text: `turn ${String(index)}`,
   }));
+
+  /** The payload always carries plain strings — narrow the union for asserts. */
+  function textOf(message: { content: string | ChatContentPart[] }): string {
+    return typeof message.content === 'string' ? message.content : JSON.stringify(message.content);
+  }
 
   it('pins the CURRENT parts doc + the REFERENCE-ONLY grounding into the final user turn', () => {
     const messages = buildCanvasChatPayload({
@@ -578,7 +586,7 @@ describe('buildCanvasChatPayload (context contract)', () => {
     expect(last?.content).toContain('Instruction: make it rain');
   });
 
-  it('the grounding block rides OUTSIDE the message-tail policy (never trimmed)', () => {
+  it('the grounding block rides in the final turn, outside the history', () => {
     const messages = buildCanvasChatPayload({
       document: PART_0,
       grounding: 'Campaign: Ember',
@@ -590,18 +598,48 @@ describe('buildCanvasChatPayload (context contract)', () => {
     expect(last?.content).toContain('Campaign: Ember');
   });
 
-  it('caps the conversation tail and notes the omission', () => {
+  it('the FULL history rides every request — no cap, no omission note', () => {
     const messages = buildCanvasChatPayload({
       document: PART_0,
       grounding: 'Campaign: Ember',
       instruction: 'next',
       history,
     });
-    const userTurns = messages.filter((message) => message.role === 'user');
-    // 12 capped history user turns + the new turn (rough check below).
-    expect(userTurns.length).toBeLessThanOrEqual(MAX_CONTEXT_MESSAGES / 2 + 2);
-    expect(messages[1]?.role).toBe('system');
-    expect(messages[1]?.content).toContain('earlier message(s)');
+    // Every history turn rides in order (15 history + system + final turn).
+    expect(messages).toHaveLength(17);
+    for (const [index, entry] of history.entries()) {
+      const carried = messages[index + 1];
+      expect(carried?.role).toBe(entry.role);
+      expect(carried?.content).toContain(entry.text);
+    }
+    expect(messages[messages.length - 1]?.content).toContain('Instruction: next');
+    // Nothing is omitted, so no omission note exists anywhere.
+    for (const message of messages) {
+      expect(textOf(message)).not.toContain('earlier message(s)');
+      expect(textOf(message)).not.toContain('were omitted');
+    }
+  });
+
+  it('stale document snapshots are stripped from older turns; the current doc rides once, in the final turn', () => {
+    const stale = 'STALE-DOC-SNAPSHOT-aaa';
+    const current = 'CURRENT-DOC-bbb';
+    const messages = buildCanvasChatPayload({
+      document: current,
+      grounding: 'Campaign: Ember',
+      instruction: 'next',
+      history: [
+        { role: 'user', text: `first instruction\n<document>\n${stale}\n</document>` },
+        { role: 'assistant', text: 'Done.' },
+      ],
+    });
+    // The older turn keeps its instruction text, never the dead copy.
+    expect(messages[1]?.content).toContain('first instruction');
+    expect(messages[1]?.content).not.toContain(stale);
+    expect(messages[1]?.content).not.toContain('<document>');
+    // The current document rides exactly once — in the final turn.
+    const carriers = messages.filter((message) => textOf(message).includes(current));
+    expect(carriers).toHaveLength(1);
+    expect(carriers[0]?.role).toBe('user');
     expect(messages[messages.length - 1]?.content).toContain('Instruction: next');
   });
 

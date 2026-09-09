@@ -4,11 +4,13 @@ import type { CanvasEditCommand } from '@/llm/canvasChat';
 
 /**
  * Canvas chat state (08-MODULE-DESIGNER §Module canvas chat): the per-MODULE
- * conversation, command outcome cards and the session model selection —
- * STRICTLY SESSION-ONLY zustand (Board staging precedent, docs/08). Dies on
- * reload AND resets when the canvas's module changes (resetFor). The DOC is
- * the truth: chat messages are a review surface, never a persistence
- * layer — do not "fix" this with persistence.
+ * conversation, command outcome cards and the session model selection.
+ * Messages + outcomes PERSIST on the module row's `chatThread` field
+ * (docs/17 row 57 — written after each settled turn via `chatPersist`,
+ * restored on canvas open as history); the MODEL SELECTION stays
+ * session-only (Board staging precedent) and dies on reload. The DOC is
+ * still the truth for part text: applied commands are editor transactions
+ * persisted through the split-save.
  *
  * Keyed per MODULE (`canvasChatKey(moduleId)` — no part component, owner
  * direction in docs/17 row 51): ONE conversation per module; switching the

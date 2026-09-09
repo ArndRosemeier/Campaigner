@@ -880,7 +880,8 @@ rows 50 and 51.
   anything else fails loudly. The prompt states this convention explicitly.
 - **Read-only grounding (unconditional, UNCAPPED)**: every request carries a
   clearly-marked `<reference-only>` block, riding INSIDE the final user turn
-  (outside the `MAX_CONTEXT_MESSAGES` tail policy — never trimmed): the
+  (outside the persisted conversation history — carried fresh every turn,
+  never trimmed, never itself persisted): the
   campaign's `name` + `description` (`campaignRepo` read), the game system
   as `GAME_SYSTEM_LABELS[campaign.system]`, and ALL preceding modules' FULL
   text — the campaign's other modules in story order (createdAt ascending,
@@ -915,11 +916,16 @@ rows 50 and 51.
   comes from the TARGET part's CURRENT text in the live editor doc — and
   sends it through the normal send path (aider's "N SEARCH/REPLACE blocks
   failed to match! … Did you mean…" retry loop). One-shot per failure
-  (button flips to "Reported").
-- **Context history**: the last 12 messages (`MAX_CONTEXT_MESSAGES`); older
-  user turns are re-rendered instruction-only (stale doc blocks stripped), a
-  system note counts the omissions — the documented v1 trim policy (a note,
-  not an LLM summary). The grounding block rides outside this policy.
+  (button flips to "Reported"). A restored outcome (thread reloaded from the
+  row) reports the same way: the excerpt is cut from the CURRENT doc at
+  click time, so it re-resolves against what the document says now.
+- **Context history**: the FULL conversation rides every request — no cap,
+  no omission note (owner-directed 2026-09-09, ledger 57 — the
+  `MAX_CONTEXT_MESSAGES` 12-message tail policy is deleted). Older user
+  turns keep instruction text only: a stale `<document>` block surviving in
+  an older turn is stripped (full context must not ship dead copies of the
+  module — the current document rides once, in the final turn). The
+  grounding block rides outside the history, in that same final turn.
   Assistant history entries keep their raw replies so
   the model sees its own commands.
 - **Model**: the Settings `ModelInput` component reused in the sidebar;
@@ -932,12 +938,19 @@ rows 50 and 51.
   no mid-stream XML application in v1. Aborting mid-stream marks the partial
   reply `aborted` LOUDLY (card: "Stopped — nothing was applied"); no
   commands apply, nothing saves.
-- **State**: session-only zustand keyed per MODULE
-  (`{messages, outcomes, modelSelection}`, `canvasChatKey(moduleId)` — no
-  part component: ONE conversation per module) — dies on reload AND resets
-  on module change; the DOC is the truth and persistence rides the canvas's
+- **State**: the thread lives ON THE MODULE ROW as the additive inert
+  `chatThread` field (`{messages, outcomes}` persisted as history;
+  `canvasChatKey(moduleId)` — no part component: ONE conversation per
+  module; the model selection stays session-only). Written after each
+  SETTLED turn (debounced `chatPersist.scheduleChatPersist`; a write failure
+  toasts loudly but NEVER blocks chatting) and restored on canvas open —
+  restored messages + outcomes render as history and never auto-apply. No
+  Dexie version (the field rides backup and campaign export/import with the
+  rest of the row — exported modules carry their chat history, which is the
+  point) and never read by a generation prompt (module grounding reads
+  premise + parts only). Part-text persistence still rides the canvas's
   split-save (`saveWholeModuleDocument` → `edited: true` + promote scan,
-  ledger entry `Chat: …` per changed part); the chat never writes the row
+  ledger entry `Chat: …` per changed part); the chat never writes part text
   directly.
 - **Pre-flight**: a module with no planned parts (no spine/partPlan) fails
   LOUDLY before anything sends ("no parts to chat about — generate the

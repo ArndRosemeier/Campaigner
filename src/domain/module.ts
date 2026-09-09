@@ -191,6 +191,66 @@ export function entityKindFor(
   return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.kind;
 }
 
+/**
+ * The module canvas chat thread (08-MODULE-DESIGNER §Module canvas chat,
+ * docs/17 row 57): the persisted conversation — user instructions plus the
+ * assistant replies with their per-command outcome cards. Restored entries
+ * are HISTORY (they never auto-apply; a restored Report-to-LLM re-resolves
+ * against the live doc at click time). The canvas model selection is NOT
+ * part of this — it stays session-only.
+ *
+ * Additive `.default(...)` exactly like the `canvas` backfill: rows written
+ * before the thread parse at the read boundary with an empty thread — NO
+ * Dexie version bump, NO index changes. Inert by construction: no generation
+ * prompt reader may consult this field (module grounding reads premise +
+ * parts only), so it rides backup and campaign export/import with the rest
+ * of the row — exported modules carry their chat history, which is the
+ * point. Whole-doc offsets stored on outcomes (`from`/`to`/`failureFrom`)
+ * are history anchors only, never apply coordinates.
+ */
+export const moduleChatCommandSchema = z.object({
+  search: z.string(),
+  replace: z.string(),
+  all: z.boolean(),
+});
+
+export type ModuleChatCommand = z.infer<typeof moduleChatCommandSchema>;
+
+export const moduleChatOutcomeSchema = z.object({
+  kind: z.enum(['applied', 'failed']),
+  command: moduleChatCommandSchema,
+  targetParts: z
+    .array(z.object({ planIndex: z.number().int(), title: z.string() }))
+    .default([]),
+  occurrences: z.number().int().nullable().default(null),
+  from: z.number().int().nullable().default(null),
+  to: z.number().int().nullable().default(null),
+  before: z.string().nullable().default(null),
+  reason: z.string().nullable().default(null),
+  closest: z.string().nullable().default(null),
+  failureFrom: z.number().int().nullable().default(null),
+  reported: z.boolean().default(false),
+});
+
+export type ModuleChatOutcome = z.infer<typeof moduleChatOutcomeSchema>;
+
+export const moduleChatMessageSchema = z.object({
+  role: z.enum(['user', 'assistant']),
+  /** user: the instruction. assistant: the settled prose (raw on failure). */
+  text: z.string(),
+  /** assistant only: the canonical raw reply (prose + XML blocks). */
+  raw: z.string().nullable().default(null),
+  /** Settled only — a streaming turn is never persisted. */
+  status: z.enum(['ok', 'failed', 'aborted']).default('ok'),
+  /** failed: the loud error. */
+  error: z.string().nullable().default(null),
+  /** assistant only: command outcomes in reply order. */
+  outcomes: z.array(moduleChatOutcomeSchema).default([]),
+  createdAt: z.number().default(0),
+});
+
+export type ModuleChatMessage = z.infer<typeof moduleChatMessageSchema>;
+
 export const moduleSchema = z
   .object({
     ...BaseEntitySchema.shape,
@@ -260,6 +320,12 @@ export const moduleSchema = z
      * `.default(null)` — parse-on-read, no Dexie version, rides
      * backup/export with the rest of the row. */
     canvas: moduleCanvasSchema.nullable().default(null),
+    /** The persisted canvas chat thread (08 §Module canvas chat, docs/17
+     * row 57): messages AND outcomes as history. Additive `.default([])` —
+     * parse-on-read, no Dexie version, rides backup/export with the rest
+     * of the row. NEVER read by a generation prompt (module grounding
+     * reads premise + parts only). */
+    chatThread: z.array(moduleChatMessageSchema).default([]),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',

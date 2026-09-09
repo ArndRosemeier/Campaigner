@@ -16,6 +16,7 @@ import {
 } from '@/features/modules/canvas/chatStore';
 import { applyChatCommandsToDocument } from '@/features/modules/canvas/chatApply';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
+import { scheduleChatPersist } from '@/features/modules/canvas/chatPersist';
 
 /**
  * Canvas chat flow controller (08-MODULE-DESIGNER §Module canvas chat):
@@ -36,8 +37,12 @@ import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
  *   inside the chat flow,
  * - a user abort marks the partial reply `aborted` in place — a stop is
  *   not an error, but nothing is applied and the card says so.
- * Persistence rides THE one part-text save path (saveModulePartText, via
- * saveWholeModuleDocument) — the chat never writes the row directly.
+ * Persistence is two lanes: PART TEXT rides THE one part-text save path
+ * (saveModulePartText, via saveWholeModuleDocument) — the chat never writes
+ * part text directly — and the THREAD (messages + outcomes) persists on the
+ * module row's `chatThread` field after every SETTLED turn (debounced via
+ * `chatPersist.scheduleChatPersist`; a write failure toasts loudly but
+ * never blocks chatting).
  */
 
 export interface ChatTurnOptions {
@@ -203,6 +208,11 @@ export async function runChatTurn(options: ChatTurnOptions, instruction: string)
     }
   } finally {
     useCanvasChatStore.getState().setInFlight(options.key, false);
+    // Write-after-settled-turn: the turn landed above as ok / failed /
+    // aborted (or never landed for pre-flight throws — then the store is
+    // unchanged and the writer is a no-op). Debounced; failures toast
+    // loudly inside the writer and never reach the caller.
+    scheduleChatPersist(options.moduleId, options.key);
   }
 }
 

@@ -78,9 +78,6 @@ export type CanvasEditCommand = z.infer<typeof canvasEditCommandSchema>;
 /** Loud cap: more commands than this in one reply fails the whole reply. */
 export const MAX_COMMANDS_PER_REPLY = 40;
 
-/** Conversation tail cap: at most this many messages ride one request. */
-export const MAX_CONTEXT_MESSAGES = 12;
-
 /** Window (chars) of current-text context around a failure point. */
 export const FAILURE_EXCERPT_RADIUS = 300;
 
@@ -767,14 +764,16 @@ export function composeFailureReport(input: {
 }
 
 /**
- * Builds the request payload: fixed system prompt + the conversation TAIL
- * (last `MAX_CONTEXT_MESSAGES` messages) + the new turn. History user
- * turns carry their instruction text only — the document block is
- * STRIPPED from older turns (stale snapshots must never ride along; the
- * current doc goes into the final turn only). When the tail was trimmed, a
- * note says so (documented v1 trim policy — a note, not an LLM summary).
- * The REFERENCE-ONLY grounding block rides INSIDE the final turn — outside
- * the tail policy, so it is never trimmed away (08 §Module canvas chat).
+ * Builds the request payload: fixed system prompt + the FULL conversation
+ * history (docs/17 row 57 — the 12-message cap is gone, owner-directed:
+ * the entire conversation rides every request; NOTHING is omitted, so no
+ * omission note exists) + the new turn. History user turns carry their
+ * instruction text only — a stale `<document>` block surviving in an older
+ * turn is STRIPPED (stale snapshots must never ride along; the current doc
+ * goes into the final turn exactly once). Assistant history entries keep
+ * their raw replies so the model sees its own commands. The REFERENCE-ONLY
+ * grounding block rides INSIDE the final turn — outside the history, so it
+ * is never trimmed away (08 §Module canvas chat).
  */
 export function buildCanvasChatPayload(input: {
   document: string;
@@ -782,21 +781,13 @@ export function buildCanvasChatPayload(input: {
   instruction: string;
   history: { role: 'user' | 'assistant'; text: string }[];
 }): ChatMessage[] {
-  const trimmed = input.history.slice(-MAX_CONTEXT_MESSAGES);
-  const omitted = input.history.length - trimmed.length;
   const messages: ChatMessage[] = [{ role: 'system', content: canvasChatSystemPrompt() }];
-  if (omitted > 0) {
-    messages.push({
-      role: 'system',
-      content: `[${String(omitted)} earlier message(s) of this conversation were omitted to fit the context — the document below is current.]`,
-    });
-  }
-  for (const entry of trimmed) {
+  for (const entry of input.history) {
     if (entry.role === 'user') {
       messages.push({
         role: 'user',
         content: entry.text.includes('<document>')
-          ? entry.text
+          ? stripStaleDocumentBlocks(entry.text)
           : `[earlier instruction] ${entry.text}`,
       });
     } else {
@@ -814,6 +805,17 @@ export function buildCanvasChatPayload(input: {
   return messages;
 }
 
+/**
+ * Removes stale `<document>…</document>` snapshots from an older history
+ * turn (pure). The surrounding instruction text is kept verbatim — only the
+ * dead copy of the module goes.
+ */
+export function stripStaleDocumentBlocks(text: string): string {
+  return text
+    .replace(/<document>[\s\S]*?<\/document>/g, '[earlier document omitted — the current document rides in the final turn]')
+    .trim();
+}
+
 // --- send engine ------------------------------------------------------------------
 
 export interface CanvasChatTurnInput {
@@ -825,7 +827,7 @@ export interface CanvasChatTurnInput {
    * parses fails the send loudly (`ModulePartsDocumentError`). */
   document: string;
   instruction: string;
-  /** Prior conversation (store order, oldest first) — tail-capped here. */
+  /** Prior conversation (store order, oldest first) — rides whole. */
   history: { role: 'user' | 'assistant'; text: string }[];
   /** The canvas model selection; falls back to Settings defaultChatModel. */
   model?: string | undefined;
