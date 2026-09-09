@@ -76,7 +76,10 @@ function transformChildren(node: WikiMdNode, insideLink: boolean): void {
     if (insideLink || child.type !== 'text' || typeof child.value !== 'string') continue;
     if (!child.value.includes('[[')) continue;
     const segments = splitWikiText(child.value);
-    if (segments.length <= 1) continue;
+    // A single segment means "no token" only when it is TEXT: a run that is
+    // exactly one token splits to a single WIKI segment and must still chip
+    // (bare `### [[Name]]` headings, solo `**[[Name]]**` lines).
+    if (!segments.some((segment) => segment.kind === 'wiki')) continue;
     const replacement = segments.map((segment): WikiMdNode =>
       segment.kind === 'text'
         ? { type: 'text', value: segment.value }
