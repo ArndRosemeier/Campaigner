@@ -4,24 +4,56 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule, moduleDocumentText, type Campaign, type Id, type StatBlock } from '@/domain';
+import {
+  createModule,
+  createPersona,
+  defaultSettings,
+  moduleDocumentText,
+  type Campaign,
+  type Id,
+  type StatBlock,
+} from '@/domain';
 import { listModulesByCampaign, saveModule } from '@/db/moduleRepo';
+import { saveSettings } from '@/db/settingsRepo';
 import { buildEntityBrief, stubKindCarriesPartyLevel } from '@/features/modules/persona-request';
 import {
+  fixedCastAdvisories,
   fixedCastForEncounter,
   fixedCastSectionFor,
   partLevelForMention,
 } from '@/llm/roomBudget';
+import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
+import { runParts } from '@/llm/moduleGen';
+import { chat } from '@/llm/openrouter';
+import type { ChatResult } from '@/llm/openrouter';
 import { extractWikiLinks, surroundingParagraphs } from '@/lib/wikilinks';
 import { clearDatabase } from '../db/helpers';
 
 /**
- * Fixed-cast glue, part 1 (docs/11): NPC drafts carry the structured level,
- * and encounter drafts pin already-drafted scene members as fixed cast.
- * (Part 2 — the finalize advisories and the prose rule — extends this file.)
+ * Fixed-cast glue (docs/11): NPC drafts carry the structured level, encounter
+ * drafts pin already-drafted scene members as fixed cast, finalize checks
+ * the cast landed (coverage + level-mismatch advisories, loud never
+ * blocking), and the prose writer names only constants in encounter scenes.
  */
 
+vi.mock('@/llm/openrouter', () => ({
+  chat: vi.fn(),
+  MissingApiKeyError: class MissingApiKeyError extends Error {},
+  OpenRouterError: class OpenRouterError extends Error {},
+}));
+
+vi.mock('@/search', async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...(actual as object), searchRules: vi.fn() };
+});
+
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+
+const chatMock = vi.mocked(chat);
+const { searchRules } = await import('@/search');
+const searchRulesMock = vi.mocked(searchRules);
+
+const TEST_MODEL = 'test/fixture-model';
 
 const HALVAR_STATS: StatBlock = {
   system: 'dnd5e',
@@ -140,6 +172,9 @@ async function seedWorld(): Promise<{ campaign: Campaign; moduleId: Id }> {
 
 beforeEach(async () => {
   await clearDatabase();
+  chatMock.mockReset();
+  searchRulesMock.mockReset();
+  searchRulesMock.mockResolvedValue([]);
 });
 
 describe('stubKindCarriesPartyLevel', () => {
@@ -251,4 +286,265 @@ describe('buildEntityBrief fixed cast', () => {
       buildEntityBrief('X', 'c', 'p', undefined),
     );
   });
+});
+
+describe('fixedCastAdvisories', () => {
+  const cast = [
+    { name: 'Halvar', level: '6', summary: 'Halvar — level 6, AC 15, HP 45', statBlock: null },
+    { name: 'Mira', level: undefined, summary: 'Mira (no stat block on file)', statBlock: null },
+  ];
+
+  it('flags a missing cast name, never a mismatch for the absent', () => {
+    const advisories = fixedCastAdvisories('The Howling Pit', cast, [{ name: 'Pit Goblin' }], 1);
+    expect(advisories).toHaveLength(2);
+    expect(advisories[0]).toContain('Fixed cast member "Halvar"');
+    expect(advisories[0]).toContain('missing from the roster');
+    expect(advisories[1]).toContain('Fixed cast member "Mira"');
+    expect(advisories.join(' ')).not.toContain('far from the party level');
+  });
+
+  it('flags a fielded cast member wildly off the party level', () => {
+    const advisories = fixedCastAdvisories(
+      'The Howling Pit',
+      cast,
+      [{ name: 'Halvar' }, { name: 'Mira' }],
+      1,
+    );
+    expect(advisories).toHaveLength(1);
+    expect(advisories[0]).toContain('Fixed cast member "Halvar"');
+    expect(advisories[0]).toContain('(level 6)');
+    expect(advisories[0]).toContain('party level (1)');
+    expect(advisories[0]).toContain('deliberate mismatches are legal');
+  });
+
+  it('stays quiet within one band step and without a party level', () => {
+    expect(
+      fixedCastAdvisories('The Howling Pit', cast, [{ name: 'Halvar' }, { name: 'Mira' }], 5),
+    ).toEqual([]);
+    // The boundary: two off is one band step (quiet), three off is wild.
+    expect(
+      fixedCastAdvisories('The Howling Pit', cast, [{ name: 'Halvar' }, { name: 'Mira' }], 4),
+    ).toEqual([]);
+    expect(
+      fixedCastAdvisories('The Howling Pit', cast, [{ name: 'Halvar' }, { name: 'Mira' }], 3),
+    ).toHaveLength(1);
+    expect(
+      fixedCastAdvisories('The Howling Pit', cast, [{ name: 'Halvar' }, { name: 'Mira' }], undefined),
+    ).toEqual([]);
+    expect(fixedCastAdvisories('The Howling Pit', [], [{ name: 'Halvar' }], 1)).toEqual([]);
+  });
+
+  it('matches roster names case-insensitively, ignoring blanks', () => {
+    expect(
+      fixedCastAdvisories('The Howling Pit', cast, [{ name: '  HALVAR ' }, { name: '' }, { name: 'mira' }], 1),
+    ).toHaveLength(1);
+  });
+});
+
+describe('Smith finalize fixed-cast advisories (full runs)', () => {
+  const GOBLIN_STATS: StatBlock = {
+    system: 'dnd5e',
+    level: '1',
+    size: 'Small',
+    creatureType: 'humanoid',
+    ac: 13,
+    acNote: '',
+    hp: 7,
+    hpFormula: '2d6',
+    speed: '30 ft.',
+    abilities: { str: 8, dex: 14, con: 10, int: 10, wis: 8, cha: 8 },
+    saves: '',
+    skills: '',
+    senses: '',
+    languages: '',
+    traits: [],
+    actions: [{ name: 'Scimitar', text: 'Melee Weapon Attack: +4 to hit.' }],
+    reactions: [],
+    legendary: [],
+    extras: {},
+  };
+
+  function smithPersona() {
+    return createPersona({
+      slug: 'encounter-smith-test',
+      name: 'Encounter Smith',
+      description: '',
+      systemPrompt: 'Design one encounter per request.',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+  }
+
+  function smithDraft(monsters: unknown) {
+    return {
+      text: JSON.stringify({
+        name: 'The Howling Pit',
+        summary: 'A pit fight.',
+        body: '# The Howling Pit\nThe pit gapes below.',
+        suggestedTags: [],
+        difficulty: 'medium',
+        levelHint: '1',
+        monsters,
+        terrain: 'A reeking pit.',
+        tactics: 'Swarm the rim.',
+        treasure: '',
+        locationKind: 'other',
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    };
+  }
+
+  async function runSmith(monsters: unknown) {
+    const { campaign, moduleId } = await seedWorld();
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'test-key' });
+    const persona = smithPersona();
+    const { db } = await import('@/db');
+    await db.personas.put(persona);
+    chatMock.mockResolvedValueOnce(smithDraft(monsters));
+    const runInput: StartRunInput = {
+      campaign,
+      persona,
+      autonomy: 'auto',
+      brief: 'A pit fight at level 1.',
+      pinnedChunkIds: [],
+      placementModuleId: moduleId,
+    };
+    const runId = await runEngine.startRun(runInput);
+    const run = await waitForRunStatus(runId);
+    return { campaign, run };
+  }
+
+  it('a roster missing the cast completes with the coverage advisory', async () => {
+    const { campaign, run } = await runSmith([
+      { name: 'Pit Goblin', count: 3, notes: 'Swarming', treasure: '', statBlock: GOBLIN_STATS },
+    ]);
+    expect(run.status).toBe('completed');
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    // seedWorld drafts a bare 'The Howling Pit' row (the self-exclusion
+    // belt); the run under test is the one carrying a roster.
+    const encounter = artifacts.find(
+      (artifact) =>
+        artifact.kind === 'encounter' &&
+        artifact.name === 'The Howling Pit' &&
+        artifact.data.monsters.length > 0,
+    );
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(encounter.data.budgetAdvisory).toContain('Fixed cast member "Halvar"');
+    expect(encounter.data.budgetAdvisory).toContain('missing from the roster');
+    expect(encounter.data.budgetAdvisory).not.toContain('far from the party level');
+    // The non-cast roster still materializes through the inline path as today.
+    expect(encounter.data.monsters.map((monster) => monster.name)).toEqual(['Pit Goblin']);
+    expect(encounter.data.monsters[0]?.source.type).toBe('npc-ref');
+  }, 30_000);
+
+  it('a wildly-off fielded cast member completes with the mismatch advisory', async () => {
+    const { campaign, run } = await runSmith([
+      { name: 'Halvar', count: 1, notes: 'Boss', treasure: '', statBlock: HALVAR_STATS },
+    ]);
+    expect(run.status).toBe('completed');
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    const encounter = artifacts.find(
+      (artifact) =>
+        artifact.kind === 'encounter' &&
+        artifact.name === 'The Howling Pit' &&
+        artifact.data.monsters.length > 0,
+    );
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(encounter.data.budgetAdvisory).toContain('Fixed cast member "Halvar"');
+    expect(encounter.data.budgetAdvisory).toContain('(level 6)');
+    expect(encounter.data.budgetAdvisory).toContain('party level (1)');
+    expect(encounter.data.budgetAdvisory).toContain('deliberate mismatches are legal');
+    // Halvar himself is fielded (no coverage advisory for him); Mira — the
+    // other scene member, absent from this roster — keeps hers.
+    expect(encounter.data.budgetAdvisory).not.toContain('"Halvar" is missing');
+    expect(encounter.data.budgetAdvisory).toContain('Fixed cast member "Mira" is missing');
+    // Finalize links the EXISTING Halvar row (one-entity-per-name reuse) —
+    // the as-is stats never duplicate or overwrite the landed NPC.
+    const halvars = artifacts.filter(
+      (artifact) => artifact.kind === 'npc' && artifact.name === 'Halvar',
+    );
+    expect(halvars).toHaveLength(1);
+    expect(encounter.data.monsters[0]?.source).toEqual({
+      type: 'npc-ref',
+      artifactId: halvars[0]?.id,
+    });
+  }, 30_000);
+});
+
+describe('partCall constants-only sentence', () => {
+  function partReply(): ChatResult {
+    return {
+      text:
+        'The ambush springs at the ford. The party fights through. '.repeat(6) +
+        ' Trials faced: [[Ember Ambush]].',
+      modelUsed: 'test-model',
+      fallback: null,
+    };
+  }
+
+  function normReply(): ChatResult {
+    return {
+      text: JSON.stringify({
+        entities: [
+          {
+            name: 'Ember Ambush',
+            canonical: 'Ember Ambush',
+            kind: 'encounter',
+            wants: ['seize the ford', 'hold the ford'],
+            conflictKind: 'combat',
+          },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    };
+  }
+
+  function partCallText(): string {
+    const call = chatMock.mock.calls.find((messages) =>
+      messages[0].some(
+        (message) =>
+          message.role === 'user' &&
+          typeof message.content === 'string' &&
+          message.content.includes('Write part'),
+      ),
+    );
+    if (call === undefined) throw new Error('no part call made');
+    const user = call[0].find((message) => message.role === 'user');
+    return typeof user?.content === 'string' ? user.content : '';
+  }
+
+  it('the part prompt names only fixed participants in encounter scenes', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const targetDraft = createModule({
+      campaignId: campaign.id,
+      title: 'The Target',
+      concept: 'target',
+      levelMin: 1,
+      levelMax: 2,
+      sizeDial: 'standard',
+      includePriorModules: false,
+    });
+    const target = await saveModule({
+      ...targetDraft,
+      spine: {
+        premise: 'The target premise.',
+        themes: [],
+        partPlan: [
+          { title: 'First', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+          { title: 'Second', levelBand: '2', synopsis: '', levelUpTrigger: '' },
+        ],
+      },
+      parts: [],
+    });
+    const { updateSettings } = await import('@/db/settingsRepo');
+    await updateSettings({ defaultChatModel: TEST_MODEL });
+    chatMock.mockResolvedValueOnce(partReply()).mockResolvedValueOnce(normReply());
+
+    await runParts(target.id, campaign, { planIndexes: [0] });
+
+    expect(partCallText()).toContain('name only the fixed participants');
+    expect(partCallText()).toContain('rank-and-file');
+  }, 30_000);
 });

@@ -1251,6 +1251,16 @@ constants, the rest stays automated.
   empty cast renders nothing — briefs without one stay byte-identical.
 - **No Dexie/schema changes**: the cast is brief-time derivation from
   in-batch results + module text, never stored.
+- **Finalize checks the cast landed**: after the roster finalizes
+  (`runFinalize`, Smith paths only — fresh creation and the in-place fill),
+  two advisories ride the existing advisory block (`data.budgetAdvisory` +
+  the step notice, the 'under' precedent) — cast-coverage (a fixed-cast name
+  absent from the roster: the prose said they fight, the roster does not)
+  and level-mismatch (a FIELDed cast member more than one band step off the
+  party level; absent members get the coverage advisory instead of this
+  one). Both loud, never blocking; unjudgeable states (no owning module, no
+  scene mention, empty cast, no party level, unreadable cast level) yield
+  nothing, never a failure.
 
 ### Deletion record — the marker path dies entirely (owner: all pixel
 read-back is unnecessary)

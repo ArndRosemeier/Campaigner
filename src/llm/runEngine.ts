@@ -71,6 +71,8 @@ import {
   checkRoomBudget,
   expectedRoomThreat,
   fillGradeStockingFor,
+  fixedCastAdvisories,
+  fixedCastForEncounter,
   partLevelForMention,
   partyLevelLine,
   reconcileRoomAssignments,
@@ -4192,6 +4194,37 @@ export class RunEngine {
     this.emit({ kind: 'run', runId, status: 'completed' });
   }
 
+  /**
+   * Fixed-cast finalize advisories (docs/11): after the roster finalizes,
+   * the encounter's scene members must have landed — a missing name
+   * (cast-coverage) or a wildly-off fielded level (level-mismatch) rides the
+   * existing advisory block (`data.budgetAdvisory` + the step notice, the
+   * 'under' precedent). Loud, never blocking: unjudgeable states (no owning
+   * module, module gone mid-flight, no scene mention, empty cast, no party
+   * level) yield no advisory, never a failure. Genuine IO errors propagate
+   * like every other finalize read (AGENTS rule 1 — no catch-and-continue).
+   */
+  private async fixedCastAdvisoriesFor(args: {
+    campaignId: Id;
+    moduleId: Id | null | undefined;
+    encounterName: string;
+    monsters: readonly { name: string }[];
+    levelHint: string;
+  }): Promise<string[]> {
+    const { campaignId, moduleId, encounterName, monsters, levelHint } = args;
+    if (moduleId === null || moduleId === undefined) return [];
+    const owner = await getModule(moduleId);
+    if (owner === undefined) return [];
+    const sceneContext = surroundingParagraphs(moduleDocumentText(owner), encounterName);
+    if (sceneContext === '') return [];
+    const pool = await listArtifactsByCampaign(campaignId);
+    const cast = fixedCastForEncounter(encounterName, sceneContext, pool, owner.id);
+    if (cast.length === 0) return [];
+    const partyLevel =
+      partLevelForMention(owner, encounterName) ?? parseRosterTargetLevel(levelHint);
+    return fixedCastAdvisories(encounterName, cast, monsters, partyLevel);
+  }
+
   private async runFinalize(
     runId: Id,
     stepIndex: number,
@@ -4339,6 +4372,28 @@ export class RunEngine {
         monsters,
       );
       data.monsters = monsters;
+    }
+
+    // Fixed-cast advisories (docs/11): the scene members the brief pinned
+    // (or the prose named, for runs outside the batch) must have landed in
+    // the finalized roster — coverage + level mismatches ride the advisory
+    // block, loud, never blocking. Fresh creations only here; the in-place
+    // fill below computes the same checks on its own path.
+    let fixedCastNotice: string | null = null;
+    if (kind === 'encounter' && 'monsters' in data && input.targetArtifactId === undefined) {
+      const castAdvisories = await this.fixedCastAdvisoriesFor({
+        campaignId: input.campaign.id,
+        moduleId: input.placementModuleId ?? null,
+        encounterName: asString(draft.name).trim(),
+        monsters: data.monsters,
+        levelHint: data.levelHint,
+      });
+      if (castAdvisories.length > 0) {
+        data.budgetAdvisory = [data.budgetAdvisory, ...castAdvisories]
+          .filter((part) => part !== '')
+          .join(' ');
+        fixedCastNotice = castAdvisories.join(' ');
+      }
     }
 
     // Review personas finalize as a continuity report note linked to the
@@ -4599,6 +4654,22 @@ export class RunEngine {
         }
         budgetAdvisory = advisories.join(' ');
       }
+      // Fixed-cast advisories (docs/11): the same checks as fresh creations,
+      // riding the same advisory block + notice (which the update below
+      // persists). The prose-only path above returns earlier and persists
+      // the roster byte-identically — untouched.
+      const castAdvisories = await this.fixedCastAdvisoriesFor({
+        campaignId: input.campaign.id,
+        moduleId: target.moduleId,
+        encounterName: target.name,
+        monsters: data.monsters,
+        levelHint: asString(draft.levelHint),
+      });
+      if (castAdvisories.length > 0) {
+        budgetAdvisory = [budgetAdvisory, ...castAdvisories]
+          .filter((part) => part !== '')
+          .join(' ');
+      }
       await updateArtifact(
         target.id,
         {
@@ -4712,10 +4783,15 @@ export class RunEngine {
     // declined or the step produced nothing — the notice says so visibly,
     // never fabricating a placeholder stat block (AGENTS rule 1).
     const statblockNotice = statblockExtraNotice(kind, input.extras, data);
+    // Fixed-cast advisories ride the step notice alongside the statblock
+    // note (the artifact row carries them on `data.budgetAdvisory` above).
+    const notice =
+      [statblockNotice, fixedCastNotice].filter((part) => part !== null && part !== '').join(' ') ||
+      null;
 
     const step = this.finishStep(
       steps[stepIndex],
-      withNotice({ artifactId: artifact.id }, null, statblockNotice),
+      withNotice({ artifactId: artifact.id }, null, notice),
     );
     await updateRun(runId, { resultArtifactId: artifact.id });
     return { step, artifactId: artifact.id };

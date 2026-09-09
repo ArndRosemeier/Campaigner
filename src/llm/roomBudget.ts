@@ -541,6 +541,63 @@ export function fixedCastSectionFor(cast: readonly FixedCastMember[]): string | 
   ].join('\n');
 }
 
+/**
+ * Fixed-cast finalize advisories (docs/11, pure): after the roster
+ * finalizes, two checks ride the existing advisory block/seam
+ * (`data.budgetAdvisory`, the 'under' precedent) — both loud, never
+ * blocking, neither fails anything:
+ *
+ * - cast-coverage: a fixed-cast name absent from the roster (the encounter
+ *   was supposed to feature them — prose said so, the roster does not).
+ * - level-mismatch: a FIELDed cast member (present in the roster) whose
+ *   level sits more than one band step (`ROOM_BUDGET_OVER_MARGIN`) off the
+ *   party level. Absent members get the coverage advisory instead of this
+ *   one — their level matters once they actually fight. Deliberate
+ *   mismatches stay legal: the brief stated levels honestly, this flags
+ *   them loudly.
+ *
+ * Unjudgeable states yield nothing: no party level (unmentioned encounter,
+ * digit-free hint) or an unreadable cast level is a legitimate state, never
+ * a failure.
+ */
+export function fixedCastAdvisories(
+  encounterName: string,
+  cast: readonly FixedCastMember[],
+  roster: readonly { name: string }[],
+  partyLevel: number | undefined,
+): string[] {
+  const advisories: string[] = [];
+  const rosterNames = new Set(
+    roster.map((entry) => entry.name.trim().toLowerCase()).filter((name) => name !== ''),
+  );
+  for (const member of cast) {
+    const key = member.name.trim().toLowerCase();
+    if (key === '') continue;
+    const fielded = rosterNames.has(key);
+    if (!fielded) {
+      advisories.push(
+        `Fixed cast member "${member.name}" is missing from the roster of "${encounterName}" — ` +
+          `the module prose names them as a participant ([[${member.name}]] shares the encounter's scene), ` +
+          'but no roster entry carries that name. Add them by hand or regenerate the encounter.',
+      );
+      continue;
+    }
+    if (partyLevel === undefined) continue;
+    const castLevel = parseBudgetLevel(member.level);
+    if (
+      castLevel.kind === 'level' &&
+      Math.abs(castLevel.value - partyLevel) > ROOM_BUDGET_OVER_MARGIN
+    ) {
+      advisories.push(
+        `Fixed cast member "${member.name}" (level ${String(castLevel.value)}) is far from the party ` +
+          `level (${String(partyLevel)}) for "${encounterName}" — deliberate mismatches are legal, ` +
+          "but review this fight's difficulty by hand.",
+      );
+    }
+  }
+  return advisories;
+}
+
 // --- Roster level resolution -------------------------------------------------
 export interface BriefLevelLookups {
   /** Chunk stat blocks by id (the retrieval pool + roster citations). */

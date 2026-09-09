@@ -1320,6 +1320,7 @@ async function partCall(
         : '- REQUIREMENT — no clean resolution: end this part with a cost, a revelation, or a new pressure — never with every side satisfied. Satisfaction is rationed to the finale.',
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
       '- Encounters live in separate encounter artifacts — in the prose, set up the scene and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
+      '- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.',
     ].join('\n'),
     options.extraInstruction === '' ? null : `Additional instruction from the GM: ${options.extraInstruction}`,
   ]

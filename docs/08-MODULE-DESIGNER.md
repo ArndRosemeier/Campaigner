@@ -284,7 +284,12 @@ For part i, the user message contains:
      and links it as `[[Encounter Name]]` — no monster roster with counts,
      no tactics or terrain rules, no battle map or ASCII map (those belong
      to the linked encounter artifact, designed by the encounter pipeline
-     from the prose mention).
+     from the prose mention),
+   - in encounter scenes, name ONLY the fixed participants (the boss, the
+     duelist, the negotiator — `[[Halvar]]`): rank-and-file fighters stay
+     anonymous and undescribed by name (no names, no counts), so the
+     encounter pipeline casts them (11-ENCOUNTER-GENERATOR §Fixed cast —
+     every invented name becomes an artifact the pipeline must honor).
 
 **Encounter-floor gate (hard):** after the parts loop AND the
 name-normalization pass, but BEFORE the ready write, `runParts` counts the
