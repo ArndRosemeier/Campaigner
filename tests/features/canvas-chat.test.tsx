@@ -207,6 +207,11 @@ async function openSidebar(
     await user.click(await screen.findByTestId('canvas-chat-toggle'));
   }
   expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+  // The canvas opens in preview by default — these flows drive the editor.
+  if (screen.queryByTestId('canvas-preview') !== null) {
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+  }
+  await screen.findByTestId('canvas-editor');
 }
 
 /** Types an instruction and sends it; drains the detached chat chain. */
@@ -637,7 +642,13 @@ describe('canvas chat sidebar (page flows)', () => {
     // The sidebar is open from the start now — the row write's live-query
     // cascade must land inside act (console guard).
     await actDrained(() => patchModule(world.moduleId, { status: 'generating', errorMessage: '' }));
-    await openSidebar(user);
+    // Generating disables the preview toggle (viewBusy) — the canvas stays
+    // in preview, and that is where the send must stay disabled.
+    if (screen.queryByTestId('canvas-chat') === null) {
+      await user.click(await screen.findByTestId('canvas-chat-toggle'));
+    }
+    expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
     // The send affordance is disabled while the module generates (the
     // queue-less ONE-generation-per-module rule surfaced in the UI).
     const input = screen.getByTestId('canvas-chat-input');

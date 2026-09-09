@@ -311,12 +311,14 @@ describe('route smoke sweep', () => {
     expect(document.querySelector('.react-flow__attribution')).not.toBeNull();
   });
 
-  it('module canvas route mounts with the whole-module editor (no part selector)', async () => {
+  it('module canvas route mounts with chat + rendered preview side by side (no part selector)', async () => {
     renderAppAt(canvasPath(world.campaignId, world.moduleId));
 
     expect(await screen.findByTestId('module-canvas', {}, { timeout: 10_000 })).toBeInTheDocument();
     expect(screen.queryByTestId('canvas-part-select')).not.toBeInTheDocument();
-    expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
+    // Preview is the DEFAULT view: rendered preview + live chat, editor one click away.
+    expect(await screen.findByTestId('canvas-preview')).toBeInTheDocument();
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
     // Chat co-editor (front door): OPEN by default; the toggle collapses it.
     expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
     expect(screen.getByLabelText('Chat model')).toBeInTheDocument();

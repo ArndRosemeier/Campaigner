@@ -77,9 +77,14 @@ function historyFor(key: string): { role: 'user' | 'assistant'; text: string }[]
  * Runs one chat turn. Throws BEFORE any message lands for pre-flight
  * guards (busy / empty instruction / missing view / no planned parts) —
  * those are the caller's toasts. Everything after the user message lands
- * becomes a message-card outcome (see the loudness map above).
+ * becomes a message-card outcome (see the loudness map above). Resolves
+ * with the post-turn doc + the last applied range (the last-replacement
+ * highlight; null when nothing applied).
  */
-export async function runChatTurn(options: ChatTurnOptions, instruction: string): Promise<void> {
+export async function runChatTurn(
+  options: ChatTurnOptions,
+  instruction: string,
+): Promise<{ doc: string; lastApplied: { from: number; to: number } | null }> {
   const text = instruction.trim();
   if (text === '') {
     throw new Error('the chat instruction is empty');
@@ -181,7 +186,9 @@ export async function runChatTurn(options: ChatTurnOptions, instruction: string)
           label: `Chat: ${text.slice(0, 60)}`,
         });
       }
+      return { doc: options.view.state.doc.toString(), lastApplied: applied.lastApplied };
     }
+    return { doc: options.view.state.doc.toString(), lastApplied: null };
   } catch (error) {
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
     if (options.signal.aborted) {
@@ -193,7 +200,7 @@ export async function runChatTurn(options: ChatTurnOptions, instruction: string)
         text: prose,
         error: 'stopped — the reply was cut off and nothing was applied',
       });
-      return;
+      return { doc: options.view.state.doc.toString(), lastApplied: null };
     }
     const message = error instanceof Error ? error.message : String(error);
     useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
@@ -206,6 +213,7 @@ export async function runChatTurn(options: ChatTurnOptions, instruction: string)
       // Surface busy through the caller's toast too (canvasRefine surface).
       throw error;
     }
+    return { doc: options.view.state.doc.toString(), lastApplied: null };
   } finally {
     useCanvasChatStore.getState().setInFlight(options.key, false);
     // Write-after-settled-turn: the turn landed above as ok / failed /
@@ -245,7 +253,7 @@ export function reportChatOutcome(
   options: ChatTurnOptions,
   messageId: string,
   outcome: CanvasChatOutcome,
-): Promise<void> {
+): Promise<{ doc: string; lastApplied: { from: number; to: number } | null }> {
   useCanvasChatStore.getState().markOutcomeReported(options.key, messageId, outcome.id);
   const report = composeReportTurn(options, {
     errorText: outcome.reason ?? 'the edit command failed',
@@ -256,7 +264,10 @@ export function reportChatOutcome(
 }
 
 /** Report a FAILED REPLY (parse/transport card) back to the LLM. */
-export function reportChatMessage(options: ChatTurnOptions, message: CanvasChatMessage): Promise<void> {
+export function reportChatMessage(
+  options: ChatTurnOptions,
+  message: CanvasChatMessage,
+): Promise<{ doc: string; lastApplied: { from: number; to: number } | null }> {
   const report = composeReportTurn(options, {
     errorText: message.error ?? 'the reply could not be parsed',
     command: null,

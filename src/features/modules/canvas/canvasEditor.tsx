@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { JSX } from 'react';
 import CodeMirror from '@uiw/react-codemirror';
 import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
@@ -8,6 +8,12 @@ import type { AnyArtifact, Id } from '@/domain';
 import { canvasTheme } from '@/features/modules/canvas/canvasTheme';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
 import { wikiLinkDecorations } from '@/features/modules/canvas/wikiDecorations';
+import {
+  lastReplacementDecorations,
+  lastReplacementField,
+  setLastReplacementEffect,
+  type LastReplacement,
+} from '@/features/modules/canvas/lastReplacement';
 import {
   acceptSuggestionEffect,
   canvasShowPreviousField,
@@ -47,6 +53,13 @@ export interface CanvasEditorProps {
   onSuggestionInvalidated?: () => void;
   /** The suggestion field changed (propose/stream/accept/drop) — page mirror. */
   onSuggestionsChanged?: () => void;
+  /**
+   * The last chat replacement (whole-doc offsets + post-apply doc
+   * identity) — renders as a background mark while the live doc is
+   * byte-identical to the stored string. Chat only; refine keeps its own
+   * ghost affordances.
+   */
+  replacement?: LastReplacement | null | undefined;
 }
 
 export function CanvasEditor({
@@ -57,12 +70,33 @@ export function CanvasEditor({
   onSuggestionAccepted,
   onSuggestionInvalidated,
   onSuggestionsChanged,
+  replacement,
 }: CanvasEditorProps): JSX.Element {
   useEffect(() => {
     return () => {
       activeCanvasView.current = null;
     };
   }, []);
+
+  // The last-replacement mark is page state; mirror it into the field
+  // (the field itself re-checks the doc identity before rendering, so a
+  // lagging page can never leave a stale mark).
+  const replacementRef = useRef(replacement ?? null);
+  replacementRef.current = replacement ?? null;
+  useEffect(() => {
+    const view = activeCanvasView.current;
+    if (view === null) return;
+    const current = view.state.field(lastReplacementField, false) ?? null;
+    const next = replacementRef.current;
+    if (
+      current?.from === next?.from &&
+      current?.to === next?.to &&
+      current?.doc === next?.doc
+    ) {
+      return;
+    }
+    view.dispatch({ effects: setLastReplacementEffect.of(next) });
+  }, [replacement]);
 
   return (
     <div
@@ -80,6 +114,10 @@ export function CanvasEditor({
         basicSetup={false}
         onCreateEditor={(view) => {
           activeCanvasView.current = view;
+          const initial = replacementRef.current;
+          if (initial !== null) {
+            view.dispatch({ effects: setLastReplacementEffect.of(initial) });
+          }
         }}
         extensions={[
           canvasTheme,
@@ -92,8 +130,10 @@ export function CanvasEditor({
           // so a missing field would silently render nothing.
           canvasSuggestionField,
           canvasShowPreviousField,
+          lastReplacementField,
           wikiLinkDecorations(artifacts, moduleId),
           suggestionDecorations(),
+          lastReplacementDecorations(),
           EditorView.updateListener.of((update) => {
             const accepted: string[] = [];
             for (const tr of update.transactions) {

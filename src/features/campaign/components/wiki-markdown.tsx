@@ -32,6 +32,13 @@ export interface WikiMarkdownProps {
    */
   onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
   className?: string | undefined;
+  /**
+   * Last-replacement highlight (canvas preview): offsets into `value`
+   * (the part's text) marking the text the chat just replaced. Rendered as
+   * a `<mark>` around that slice; OMITTED (never an empty range) ⇒ the
+   * reader output is byte-identical to the unhighlighted render.
+   */
+  highlight?: { from: number; to: number } | undefined;
 }
 
 const KIND_CHIP_CLASSES: Readonly<Record<ArtifactKind, string>> = {
@@ -52,6 +59,7 @@ export function WikiMarkdown({
   onOpenArtifact,
   onStub,
   className,
+  highlight,
 }: WikiMarkdownProps): JSX.Element {
   const components = useMemo(
     () => ({
@@ -59,6 +67,50 @@ export function WikiMarkdown({
     }),
     [artifacts, moduleId, onOpenArtifact, onStub],
   );
+
+  // Last-replacement highlight (canvas preview only): the value is split at
+  // the part-relative offsets so the replaced slice renders inside a <mark>.
+  // The split is on the markdown SOURCE — a mid-token boundary may re-chunk
+  // its formatting, which is acceptable for a transient highlight. Without
+  // the prop the single-render path below runs byte-identical.
+  const from = highlight === undefined ? null : Math.max(0, Math.min(value.length, highlight.from));
+  const to = highlight === undefined ? null : Math.max(0, Math.min(value.length, highlight.to));
+  if (from !== null && to !== null && to > from) {
+    return (
+      <div className={className}>
+        {value.slice(0, from) !== '' && (
+          <Markdown
+            remarkPlugins={[remarkWikiLinks]}
+            urlTransform={wikiUrlTransform}
+            components={components}
+          >
+            {value.slice(0, from)}
+          </Markdown>
+        )}
+        <mark
+          data-testid="replacement-highlight"
+          className="rounded-sm bg-amber-300/40 dark:bg-amber-400/25"
+        >
+          <Markdown
+            remarkPlugins={[remarkWikiLinks]}
+            urlTransform={wikiUrlTransform}
+            components={components}
+          >
+            {value.slice(from, to)}
+          </Markdown>
+        </mark>
+        {value.slice(to) !== '' && (
+          <Markdown
+            remarkPlugins={[remarkWikiLinks]}
+            urlTransform={wikiUrlTransform}
+            components={components}
+          >
+            {value.slice(to)}
+          </Markdown>
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className={className}>

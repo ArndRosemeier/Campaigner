@@ -179,6 +179,16 @@ async function renderCanvas(): Promise<void> {
   await flushAsyncUpdates();
 }
 
+/** The canvas opens in preview by default — editor flows enter Edit first. */
+async function enterEditMode(
+  user: ReturnType<typeof userEvent.setup>,
+): Promise<void> {
+  if (screen.queryByTestId('canvas-preview') !== null) {
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+  }
+  await screen.findByTestId('canvas-editor');
+}
+
 /** One deterministic doc edit through the live editor view (act-wrapped —
  * the page mirrors the doc into React state on every change). */
 function editDoc(from: number, to: number, insert: string): void {
@@ -218,8 +228,10 @@ async function runInstruction(
 
 describe('canvas whole-document editor', () => {
   it('mounts ONE whole-module document (all planned parts, scaffolding, byte-exact) — no part selector', async () => {
+    const user = userEvent.setup();
     await renderCanvas();
-        expect(screen.getByTestId('canvas-module-title')).toHaveTextContent('The Drowned Vault');
+    await enterEditMode(user);
+    expect(screen.getByTestId('canvas-module-title')).toHaveTextContent('The Drowned Vault');
     // No selector anywhere.
     expect(screen.queryByTestId('canvas-part-select')).not.toBeInTheDocument();
     // The editor doc IS the assembled whole-module document (byte-exact).
@@ -240,38 +252,67 @@ describe('canvas whole-document editor', () => {
     await flushAsyncUpdates();
   });
 
-  it('deep links are SCROLL targets: ?part=<n> scrolls to that section, ?part=premise to the top', async () => {
-    const first = renderAppAt(canvasPath(world.campaignId, world.moduleId, 1));
-    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
-    await waitFor(() => {
-      expect(lastCanvasScroll.current?.target).toBe('doc');
+  it('deep links are SCROLL targets in preview-default (and in Edit after the toggle)', async () => {
+    const user = userEvent.setup();
+    const scrolled: Element[] = [];
+    const scrollSpy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(function (
+      this: Element,
+    ) {
+      scrolled.push(this);
     });
-    const doc = activeCanvasView.current?.state.doc.toString() ?? '';
-    const label2 = '[Part 2 of 3 — The Flooded Nave]';
-    expect(lastCanvasScroll.current?.offset).toBe(doc.indexOf(`\n\n==========\n\n${label2}\n`) + '\n\n==========\n\n'.length);
-    first.unmount();
+    try {
+      // ?part=1 lands directly in preview (the default view): the preview
+      // article carries the `part-<n>` anchor id and is scrolled to.
+      const first = renderAppAt(canvasPath(world.campaignId, world.moduleId, 1));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      expect(await screen.findByTestId('canvas-preview-part-1')).toBeInTheDocument();
+      await waitFor(() => {
+        expect(scrolled).toContain(document.getElementById('part-1'));
+      });
+      // Toggling to Edit re-runs the scroll for the editor section.
+      await enterEditMode(user);
+      await waitFor(() => {
+        expect(lastCanvasScroll.current?.target).toBe('doc');
+      });
+      const doc = activeCanvasView.current?.state.doc.toString() ?? '';
+      const label2 = '[Part 2 of 3 — The Flooded Nave]';
+      expect(lastCanvasScroll.current?.offset).toBe(doc.indexOf(`\n\n==========\n\n${label2}\n`) + '\n\n==========\n\n'.length);
+      first.unmount();
 
-    // premise → top; the reader's #part-<n> hash works the same way.
-    const second = renderAppAt(canvasPath(world.campaignId, world.moduleId, 'premise'));
-    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
-    await waitFor(() => {
-      expect(lastCanvasScroll.current).toEqual({ target: 'top', offset: 0 });
-    });
-    second.unmount();
+      // premise → top; the reader's #part-<n> hash works the same way.
+      // (Fresh session toggle per render — the Edit toggle above persists
+      // per module, so reset to the first-open default.)
+      useCanvasPreviewStore.setState({ ownerModuleId: null, openByModule: {} });
+      const second = renderAppAt(canvasPath(world.campaignId, world.moduleId, 'premise'));
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      expect(await screen.findByTestId('canvas-preview')).toBeInTheDocument();
+      await enterEditMode(user);
+      await waitFor(() => {
+        expect(lastCanvasScroll.current).toEqual({ target: 'top', offset: 0 });
+      });
+      second.unmount();
 
-    const third = renderAppAt(`/c/${world.campaignId}/m/${world.moduleId}/canvas#part-0`);
-    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
-    await waitFor(() => {
-      expect(lastCanvasScroll.current).toEqual({ target: 'doc', offset: 0 });
-    });
-    // The whole document is there regardless of the scroll target.
-    expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
-    third.unmount();
-    await flushAsyncUpdates();
+      useCanvasPreviewStore.setState({ ownerModuleId: null, openByModule: {} });
+      const third = renderAppAt(`/c/${world.campaignId}/m/${world.moduleId}/canvas#part-0`);
+      await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
+      await waitFor(() => {
+        expect(scrolled).toContain(document.getElementById('part-0'));
+      });
+      await enterEditMode(user);
+      await waitFor(() => {
+        expect(lastCanvasScroll.current).toEqual({ target: 'doc', offset: 0 });
+      });
+      third.unmount();
+      await flushAsyncUpdates();
+    } finally {
+      scrollSpy.mockRestore();
+    }
   });
 
   it('manual Save is a split-save: only the parts whose text changed hit the save path', async () => {
+    const user = userEvent.setup();
     await renderCanvas();
+    await enterEditMode(user);
     // Edit part 1's text AND part 3's (previously empty) section.
     const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
     const part0From = sections[0]?.textFrom ?? 0;
@@ -308,7 +349,9 @@ describe('canvas whole-document editor', () => {
   });
 
   it('an unchanged empty section saves nothing; scaffolding edits that break the parse fail the save LOUD', async () => {
+    const user = userEvent.setup();
     await renderCanvas();
+    await enterEditMode(user);
     // Break the scaffolding: remove the first delimiter line.
     const doc = activeCanvasView.current?.state.doc.toString() ?? '';
     const firstDelimiter = doc.indexOf('\n\n==========\n\n');
@@ -336,7 +379,9 @@ describe('canvas whole-document editor', () => {
   });
 
   it('a failed part save is loud per part: toast names the part, the other part lands, ledger reflects reality', async () => {
+    const user = userEvent.setup();
     await renderCanvas();
+    await enterEditMode(user);
     const sections = splitPartsDocument(WHOLE_DOC, PART_PLAN);
     const part0From = sections[0]?.textFrom ?? 0;
     const part2From = sections[2]?.textFrom ?? 0;
@@ -372,6 +417,7 @@ describe('canvas whole-document editor', () => {
   it('leaving with unsaved edits demands the explicit discard confirm', async () => {
     const user = userEvent.setup();
     await renderCanvas();
+    await enterEditMode(user);
     editDoc(0, 3, 'XXX');
 
     await user.click(screen.getByRole('button', { name: /Reader/ }));
@@ -399,6 +445,7 @@ describe('canvas whole-document editor', () => {
   it('deep links while dirty just scroll (no guard) — the doc is one document', async () => {
     const user = userEvent.setup();
     await renderCanvas();
+    await enterEditMode(user);
     editDoc(0, 3, 'XXX');
     // A same-page deep link (?part=2) is not a navigation away: no guard.
     await user.click(screen.getByTestId('canvas-preview-toggle')); // toggling needs no guard either
@@ -418,6 +465,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     const user = userEvent.setup();
     mockChatReply(REFINE_TEXT);
     await renderCanvas();
+    await enterEditMode(user);
     selectSpan(PART0_FROM + 4, PART0_FROM + 9); // "party" in part 1's section
 
     await runInstruction(user, 'canvas-refine-selection', 'make the bargain harder');
@@ -454,6 +502,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     const NEW_PART = 'Brand new stormy part text.';
     mockChatReply(NEW_PART);
     await renderCanvas();
+    await enterEditMode(user);
 
     await runInstruction(user, 'canvas-rewrite-part', 'make it stormy', 'Part 2: The Flooded Nave');
 
@@ -497,6 +546,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     const user = userEvent.setup();
     mockChatReply('whatever');
     await renderCanvas();
+    await enterEditMode(user);
     await user.click(screen.getByTestId('canvas-rewrite-part'));
     const dialog = await screen.findByTestId('canvas-instruction-dialog');
     await user.type(within(dialog).getByTestId('canvas-instruction-input'), 'make it stormy');
@@ -511,6 +561,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     const user = userEvent.setup();
     mockChatReply('The watch begins in fog.');
     await renderCanvas();
+    await enterEditMode(user);
     await runInstruction(user, 'canvas-rewrite-part', 'write the watch', 'Part 3: The Long Watch');
     await screen.findByTestId('canvas-wholepart-preview', {}, { timeout: 5_000 });
     await user.click(screen.getByTestId('canvas-proposal-apply'));
@@ -526,6 +577,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     const user = userEvent.setup();
     mockChatReply(REFINE_TEXT);
     await renderCanvas();
+    await enterEditMode(user);
     selectSpan(PART0_FROM + 4, PART0_FROM + 9);
     await runInstruction(user, 'canvas-refine-selection', 'make the bargain harder');
     await screen.findByTestId('canvas-suggestion-ghost', {}, { timeout: 5_000 });
@@ -567,6 +619,7 @@ describe('canvas AI actions (cursor plays no role)', () => {
     const user = userEvent.setup();
     mockChatReply(REFINE_TEXT);
     await renderCanvas();
+    await enterEditMode(user);
     selectSpan(PART0_FROM + 4, PART0_FROM + 9);
     await runInstruction(user, 'canvas-refine-selection', 'tighten');
     await screen.findByTestId('canvas-suggestion-ghost', {}, { timeout: 5_000 });
@@ -610,12 +663,23 @@ describe('canvas AI actions (cursor plays no role)', () => {
 });
 
 describe('canvas preview (reader parity)', () => {
+  it('is the DEFAULT view: preview + chat side by side, editor one click away (Edit)', async () => {
+    await renderCanvas();
+    // No toggle click: the preview is already there (store untouched —
+    // undefined ⇒ open), the editor unmounted, the chat beside it.
+    expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
+    expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
+    expect(screen.getByTestId('canvas-chat')).toBeInTheDocument();
+    expect(useCanvasPreviewStore.getState().openByModule[world.moduleId]).toBeUndefined();
+    // The Edit affordance stays prominent — one click back to the document.
+    expect(screen.getByTestId('canvas-preview-toggle')).toHaveTextContent('Edit');
+  });
+
   it('renders the scaffolding-stripped parts through WikiMarkdown with clickable chips', async () => {
     const user = userEvent.setup();
     await renderCanvas();
-    await user.click(screen.getByTestId('canvas-preview-toggle'));
 
-    // The editor is hidden; the preview is in.
+    // Already in preview (the default view): the editor is hidden.
     expect(screen.queryByTestId('canvas-editor')).not.toBeInTheDocument();
     expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
     // Scaffolding stripped: no delimiter/label chrome, but the part texts render.
@@ -630,7 +694,7 @@ describe('canvas preview (reader parity)', () => {
     expect(chip).toHaveAttribute('data-wiki-name', 'Keeper Ilse');
     await user.click(chip);
     expect(await screen.findByTestId('peek-modal')).toBeInTheDocument();
-    // Toggle back: the editor returns with the doc intact.
+    // Toggle to Edit: the editor returns with the doc intact.
     await user.click(screen.getByTestId('canvas-preview-toggle'));
     expect(screen.queryByTestId('canvas-preview')).not.toBeInTheDocument();
     expect(screen.getByTestId('canvas-editor')).toBeInTheDocument();
@@ -641,9 +705,8 @@ describe('canvas preview (reader parity)', () => {
   it('an empty planned part previews as explicitly unwritten; a broken scaffolding previews the loud reason', async () => {
     const user = userEvent.setup();
     await renderCanvas();
-    await user.click(screen.getByTestId('canvas-preview-toggle'));
     expect(within(screen.getByTestId('canvas-preview-part-2')).getByText(/Nothing written yet/)).toBeInTheDocument();
-    await user.click(screen.getByTestId('canvas-preview-toggle'));
+    await enterEditMode(user);
 
     // Break the scaffolding, then preview again: the splitter's reason shows.
     const doc = activeCanvasView.current?.state.doc.toString() ?? '';
@@ -658,12 +721,18 @@ describe('canvas preview (reader parity)', () => {
   it('the preview toggle is session state keyed per module (like the chat open state)', async () => {
     const user = userEvent.setup();
     await renderCanvas();
+    // Default-open without a stored toggle…
     expect(useCanvasPreviewStore.getState().openByModule[world.moduleId]).toBeUndefined();
+    expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
+    // …the toggle overrides per session: Edit stores false…
     await user.click(screen.getByTestId('canvas-preview-toggle'));
-    expect(useCanvasPreviewStore.getState().openByModule[world.moduleId]).toBe(true);
+    expect(screen.queryByTestId('canvas-preview')).not.toBeInTheDocument();
+    expect(useCanvasPreviewStore.getState().openByModule[world.moduleId]).toBe(false);
     // No persist middleware anywhere on the store (session-only).
     expect((useCanvasPreviewStore as unknown as { persist?: unknown }).persist).toBeUndefined();
+    // …and back to Preview stores true.
     await user.click(screen.getByTestId('canvas-preview-toggle'));
-    expect(useCanvasPreviewStore.getState().openByModule[world.moduleId]).toBe(false);
+    expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
+    expect(useCanvasPreviewStore.getState().openByModule[world.moduleId]).toBe(true);
   });
 });

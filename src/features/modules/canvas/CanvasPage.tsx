@@ -92,6 +92,17 @@ import {
   useCanvasLedgerStore,
   type CanvasVersionEntry,
 } from '@/features/modules/canvas/canvasStore';
+import {
+  reportSnapshotMessage,
+  reportSnapshotOutcome,
+  runSnapshotChatTurn,
+  type SnapshotChatTurnResult,
+} from '@/features/modules/canvas/snapshotChat';
+import type {
+  CanvasChatMessage,
+  CanvasChatOutcome,
+} from '@/features/modules/canvas/chatStore';
+import type { LastReplacement } from '@/features/modules/canvas/lastReplacement';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
@@ -120,11 +131,17 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * part's section range. Proposals render as suggestions (never mutations);
  * acceptance IS persistence (split-save + session version ledger).
  *
- * Preview (header toggle, session-only per module): hides the editor and
- * renders the per-part texts (scaffolding stripped) through the shared
- * `WikiMarkdown` with the reader pool — reader parity by construction. It
- * captures the doc at toggle time; while it is open every writing surface
- * is disabled, so the editor doc is untouched.
+ * Preview (header toggle, session-only per module, OPEN BY DEFAULT on
+ * first open): hides the editor and renders the per-part texts (scaffolding
+ * stripped) through the shared `WikiMarkdown` — the reader's exact renderer
+ * with the reader pool — filling its pane (no centered narrow measure). The
+ * chat sidebar persists beside it and stays FULLY LIVE in preview: sends
+ * run against the preview SNAPSHOT STRING (the editor is unmounted — the
+ * v3 contract, never remounted hidden) via the shared split + the existing
+ * per-part ladder, persist through the existing split-save, and re-render
+ * the preview. Preview-applied edits have NO undo (no CM history while the
+ * editor is unmounted — documented caveat). Returning to Edit remounts the
+ * editor from the latest snapshot through the existing mountDoc path.
  */
 
 const EMPTY_LEDGER: readonly CanvasVersionEntry[] = [];
@@ -237,14 +254,27 @@ export function CanvasPage(): JSX.Element {
   const [showPrevious, setShowPrevious] = useState(false);
 
   // Chat sidebar visibility + preview toggle — session-only, keyed per
-  // MODULE (the toggle state dies on reload; the sidebar itself defaults
-  // OPEN — front door — and `?chat=open` arrivals force it open).
+  // MODULE (both die on reload). The chat sidebar defaults OPEN (front
+  // door); the PREVIEW defaults OPEN on first open (`openByModule`
+  // undefined ⇒ true) — the canvas lands as chat + rendered preview side
+  // by side, and the Edit affordance stays one click away.
   const chatKey = canvasChatKey(moduleId);
   const chatOpen = useCanvasChatStore((store) => store.module(chatKey).open);
-  const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? false);
-  // The preview renders the doc AS OF THE TOGGLE (captured once — the
-  // editor is hidden and all writing surfaces disabled while it is open).
+  const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? true);
+  // The preview renders the doc AS OF THE TOGGLE (captured once) — or, on
+  // first open (no toggle yet), the assembled/mount doc. While the preview
+  // is open the chat applies to this SNAPSHOT STRING (the editor is
+  // unmounted): every preview turn rewrites it, persists through the
+  // split-save, and re-renders from it.
   const [previewDoc, setPreviewDoc] = useState<string | null>(null);
+  const previewSource = previewDoc ?? mountDoc ?? initialDoc;
+  // Last-replacement highlight (both surfaces): whole-doc offsets plus the
+  // post-apply doc string identity — SET ONLY by chat application (the LAST
+  // command's FIRST applied range). Renders while the current doc text is
+  // byte-identical to the stored string: the editor mark and the preview
+  // <mark> both gate on identity, and hand edits clear the page state.
+  const [lastReplacement, setLastReplacement] = useState<LastReplacement | null>(null);
+  const previewAbortRef = useRef<AbortController | null>(null);
   // The peek modal behind the preview's resolved chips (reader affordance).
   const [peekArtifact, setPeekArtifact] = useState<AnyArtifact | null>(null);
 
@@ -261,13 +291,40 @@ export function CanvasPage(): JSX.Element {
   );
 
   // Deep links are SCROLL targets (no scope, no remount): `?part=` /
-  // `#part-<n>` scroll the editor to that part's section, `premise` and the
-  // no-target default scroll to the top. Re-applies on location change.
+  // `#part-<n>` scroll the editor to that part's section (or the preview
+  // article when landing directly in preview — the default view), `premise`
+  // and the no-target default scroll to the top. Re-applies on location
+  // change.
+  // The scroll targets live inside the ready branch (editor / preview) but
+  // the module row can arrive BEFORE the campaign/artifacts rows — a first
+  // run against the Loading fallback would find nothing and (no dep
+  // changing afterwards) silently drop the scroll. `contentReady` re-runs
+  // the effect once the content actually commits.
+  const contentReady =
+    campaign !== undefined &&
+    module !== undefined &&
+    artifacts !== undefined &&
+    globalArtifacts !== undefined;
   useEffect(() => {
-    if (initialDoc === null || mountedModuleId !== moduleId) return;
+    if (!contentReady || initialDoc === null || mountedModuleId !== moduleId) return;
     lastCanvasScroll.current = null;
     const target = resolveCanvasScrollTarget(location.search, location.hash, plans);
     if (target === null) return;
+    if (previewOpen) {
+      // The editor is unmounted — scroll the preview article (each carries
+      // its `part-<n>` anchor id, the reader-hash contract).
+      if (target.kind === 'premise') {
+        // jsdom has no Element.scrollTo (only scrollIntoView is stubbed in
+        // tests/setup.ts) — the optional call keeps this test-safe.
+        const scroller = document.querySelector('[data-testid="canvas-preview"]') as unknown as {
+          scrollTo?: ((options?: ScrollToOptions) => void) | undefined;
+        } | null;
+        scroller?.scrollTo?.({ top: 0 });
+        return;
+      }
+      document.getElementById(`part-${String(target.planIndex)}`)?.scrollIntoView({ block: 'start' });
+      return;
+    }
     if (target.kind === 'premise') {
       lastCanvasScroll.current = { target: 'top', offset: 0 };
       activeCanvasView.current?.dispatch({
@@ -293,7 +350,7 @@ export function CanvasPage(): JSX.Element {
     activeCanvasView.current?.dispatch({
       effects: EditorView.scrollIntoView(offset, { y: 'start' }),
     });
-  }, [location.search, location.hash, initialDoc, mountedModuleId, moduleId, plans]);
+  }, [contentReady, location.search, location.hash, initialDoc, mountedModuleId, moduleId, plans, previewOpen, previewSource]);
 
   const ledgerByPart = useCanvasLedgerStore((state) => state.byPart);
 
@@ -335,6 +392,34 @@ export function CanvasPage(): JSX.Element {
   const wholeProposal = suggestions.find((entry) => entry.wholePart);
   const aiBlocked = busy || refineInFlight || wholeProposal !== undefined;
   const viewBusy = busy || refineInFlight || suggestions.length > 0;
+
+  // The preview highlight: the whole-doc replacement mapped onto its
+  // part's range (identity-gated — a hand edit, proposal accept or next
+  // apply clears/replaces the page state, and a broken scaffolding simply
+  // shows no highlight while the preview shows its loud reason).
+  let previewHighlight: { planIndex: number; from: number; to: number } | null = null;
+  if (
+    lastReplacement !== null &&
+    previewSource !== null &&
+    previewSource === lastReplacement.doc &&
+    lastReplacement.to > lastReplacement.from
+  ) {
+    try {
+      const highlightSections = splitPartsDocument(previewSource, currentModule.spine.partPlan);
+      const highlightSection = highlightSections.find(
+        (section) => lastReplacement.from >= section.textFrom && lastReplacement.to <= section.textTo,
+      );
+      if (highlightSection !== undefined) {
+        previewHighlight = {
+          planIndex: highlightSection.planIndex,
+          from: lastReplacement.from - highlightSection.textFrom,
+          to: lastReplacement.to - highlightSection.textFrom,
+        };
+      }
+    } catch {
+      // Broken scaffolding: no highlight — the preview shows the loud reason.
+    }
+  }
 
   function syncSuggestions(): void {
     const view = activeCanvasView.current;
@@ -571,16 +656,174 @@ export function CanvasPage(): JSX.Element {
     syncSuggestions();
   }
 
+  /**
+   * Lands a settled preview chat turn in page state: the snapshot (and the
+   * editor mirror + save baseline, so the leave-guard stays honest) advances
+   * to the post-turn doc, and the last-replacement highlight is set from the
+   * last command's first applied range. A turn that applied nothing leaves
+   * the existing highlight alone (identity-gated either way).
+   */
+  function applyPreviewTurnResult(result: SnapshotChatTurnResult): void {
+    if (result.docChanged) {
+      setPreviewDoc(result.doc);
+      setBaselineDoc(result.doc);
+      setDocText(result.doc);
+    }
+    if (result.lastApplied !== null) {
+      setLastReplacement({
+        doc: result.doc,
+        from: result.lastApplied.from,
+        to: result.lastApplied.to,
+      });
+    }
+  }
+
+  function snapshotTurnOptions(): {
+    key: string;
+    modelSelection: string | null;
+    hasPlannedParts: boolean;
+  } {
+    const key = canvasChatKey(moduleId);
+    return {
+      key,
+      modelSelection: useCanvasChatStore.getState().module(key).modelSelection,
+      hasPlannedParts: plans.length > 0,
+    };
+  }
+
+  /**
+   * Preview-mode chat send: the turn runs against the preview SNAPSHOT
+   * STRING (no view — the editor is unmounted) through the same protocol +
+   * ladder, persists through the existing split-save, and re-renders the
+   * preview. A scaffolding-broken snapshot fails the send LOUDLY through
+   * the existing `ModulePartsDocumentError` path (failed card). Busy
+   * rethrows for the sidebar's toast (canvasRefine surface).
+   */
+  async function handlePreviewSend(text: string): Promise<void> {
+    const source = previewDoc ?? mountDoc ?? initialDoc;
+    if (source === null) {
+      toastError('The preview is not ready — try again', new Error('canvas preview snapshot missing'));
+      return;
+    }
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    try {
+      const options = snapshotTurnOptions();
+      const result = await runSnapshotChatTurn(
+        {
+          moduleId,
+          key: options.key,
+          hasPlannedParts: options.hasPlannedParts,
+          doc: source,
+          modelSelection: options.modelSelection,
+          signal: controller.signal,
+        },
+        text,
+      );
+      applyPreviewTurnResult(result);
+    } finally {
+      if (previewAbortRef.current === controller) previewAbortRef.current = null;
+    }
+  }
+
+  /** Preview-mode Report-to-LLM for a failed OUTCOME (excerpt from the CURRENT snapshot). */
+  function handlePreviewReportOutcome(messageId: string, outcome: CanvasChatOutcome): void {
+    const source = previewDoc ?? mountDoc ?? initialDoc;
+    if (source === null) {
+      toastError('The preview is not ready — try again', new Error('canvas preview snapshot missing'));
+      return;
+    }
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    const options = snapshotTurnOptions();
+    void reportSnapshotOutcome(
+      {
+        moduleId,
+        key: options.key,
+        hasPlannedParts: options.hasPlannedParts,
+        doc: source,
+        modelSelection: options.modelSelection,
+        signal: controller.signal,
+      },
+      messageId,
+      outcome,
+    )
+      .then(applyPreviewTurnResult)
+      .catch((error: unknown) => {
+        if (error instanceof ModuleBusyError) {
+          toastError('A generation is already running for this module — wait for it or stop it first', error);
+        } else {
+          toastError('Chat failed', error);
+        }
+      })
+      .finally(() => {
+        if (previewAbortRef.current === controller) previewAbortRef.current = null;
+      });
+  }
+
+  /** Preview-mode Report-to-LLM for a failed REPLY (excerpt from the CURRENT snapshot). */
+  function handlePreviewReportMessage(message: CanvasChatMessage): void {
+    const source = previewDoc ?? mountDoc ?? initialDoc;
+    if (source === null) {
+      toastError('The preview is not ready — try again', new Error('canvas preview snapshot missing'));
+      return;
+    }
+    const controller = new AbortController();
+    previewAbortRef.current = controller;
+    const options = snapshotTurnOptions();
+    void reportSnapshotMessage(
+      {
+        moduleId,
+        key: options.key,
+        hasPlannedParts: options.hasPlannedParts,
+        doc: source,
+        modelSelection: options.modelSelection,
+        signal: controller.signal,
+      },
+      message,
+    )
+      .then(applyPreviewTurnResult)
+      .catch((error: unknown) => {
+        if (error instanceof ModuleBusyError) {
+          toastError('A generation is already running for this module — wait for it or stop it first', error);
+        } else {
+          toastError('Chat failed', error);
+        }
+      })
+      .finally(() => {
+        if (previewAbortRef.current === controller) previewAbortRef.current = null;
+      });
+  }
+
+  /**
+   * Editor-mode turn settled: the doc already holds the edits (CM6
+   * transactions with normal history — undoable); only the highlight is
+   * page state.
+   */
+  function handleEditorTurnApplied(doc: string, lastApplied: { from: number; to: number } | null): void {
+    if (lastApplied !== null) {
+      setLastReplacement({ doc, from: lastApplied.from, to: lastApplied.to });
+    }
+  }
+
   function togglePreview(): void {
     const next = !previewOpen;
     if (next) {
       const view = activeCanvasView.current;
-      if (view === null) return;
-      setPreviewDoc(view.state.doc.toString());
+      if (view !== null) {
+        setPreviewDoc(view.state.doc.toString());
+      } else if (previewSource !== null) {
+        // First open (the preview is the default view — the editor never
+        // mounted): render from the assembled/mount doc.
+        setPreviewDoc(previewSource);
+      } else {
+        return;
+      }
     } else {
-      // Return from the preview: the editor remounts — hand it the
-      // toggle-time snapshot so unsaved edits survive the round trip.
-      setMountDoc(previewDoc ?? mountDoc ?? initialDoc);
+      // Return from the preview: the editor remounts — hand it the LATEST
+      // snapshot (preview turns rewrote it) through the existing mountDoc
+      // path, so unsaved edits and preview-applied edits survive.
+      setMountDoc(previewSource ?? mountDoc ?? initialDoc);
       setPreviewDoc(null);
     }
     useCanvasPreviewStore.getState().setOpen(moduleId, next);
@@ -759,6 +1002,20 @@ export function CanvasPage(): JSX.Element {
             hasPlannedParts={plans.length > 0}
             pool={pool}
             aiBusy={aiBlocked}
+            previewOpen={previewOpen}
+            onPreviewSend={(text) => handlePreviewSend(text)}
+            onPreviewReportOutcome={(messageId, outcome) => {
+              handlePreviewReportOutcome(messageId, outcome);
+            }}
+            onPreviewReportMessage={(message) => {
+              handlePreviewReportMessage(message);
+            }}
+            onPreviewStop={() => {
+              previewAbortRef.current?.abort();
+            }}
+            onEditorTurnApplied={(doc, applied) => {
+              handleEditorTurnApplied(doc, applied);
+            }}
           />
         )}
         <div className="flex min-h-0 flex-1 flex-col">
@@ -821,12 +1078,13 @@ export function CanvasPage(): JSX.Element {
               </Button>
             </div>
           )}
-          {previewOpen && previewDoc !== null ? (
+          {previewOpen && previewSource !== null ? (
             <CanvasPreview
-              doc={previewDoc}
+              doc={previewSource}
               module={currentModule}
               artifacts={pool}
               moduleId={currentModule.id}
+              highlight={previewHighlight}
               onOpenArtifact={(artifact) => {
                 setPeekArtifact(artifact);
               }}
@@ -838,7 +1096,16 @@ export function CanvasPage(): JSX.Element {
                 initialMarkdown={mountDoc ?? initialDoc}
                 artifacts={pool}
                 moduleId={currentModule.id}
-                onChange={setDocText}
+                replacement={lastReplacement}
+                onChange={(doc) => {
+                  setDocText(doc);
+                  // The mark renders only on doc identity: any edit that
+                  // moves the text away from the stored post-apply string
+                  // (hand edit, proposal accept, next apply) clears it.
+                  setLastReplacement((previous) =>
+                    previous !== null && doc !== previous.doc ? null : previous,
+                  );
+                }}
                 onSuggestionAccepted={(id) => {
                   void handleSuggestionAccepted(id);
                 }}

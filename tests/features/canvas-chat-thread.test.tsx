@@ -163,6 +163,11 @@ async function openSidebar(
     await user.click(await screen.findByTestId('canvas-chat-toggle'));
   }
   expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+  // The canvas opens in preview by default — these flows drive the editor.
+  if (screen.queryByTestId('canvas-preview') !== null) {
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+  }
+  await screen.findByTestId('canvas-editor');
 }
 
 /** Types an instruction and sends it; drains the detached chat chain. */

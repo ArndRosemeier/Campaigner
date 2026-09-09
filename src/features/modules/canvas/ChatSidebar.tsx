@@ -19,7 +19,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { ModelInput } from '@/features/settings/model-input';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
-import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import {
   canvasChatKey,
   useCanvasChatStore,
@@ -54,12 +53,40 @@ export interface ChatSidebarProps {
   pool: readonly AnyArtifact[];
   /** Module generating / refine in flight / block proposal pending. */
   aiBusy: boolean;
+  /** Preview mode: the editor is unmounted, so sends + reports ride the
+   * preview snapshot through the page's snapshot turn runner (the chat is
+   * fully live in preview — same protocol, same outcome cards). */
+  previewOpen: boolean;
+  onPreviewSend: ((text: string) => Promise<void>) | undefined;
+  onPreviewReportOutcome:
+    | ((messageId: string, outcome: CanvasChatOutcome) => void)
+    | undefined;
+  onPreviewReportMessage: ((message: CanvasChatMessage) => void) | undefined;
+  /**
+   * Editor-mode turn settled (applied or not): the page sets the
+   * last-replacement highlight from the post-turn doc + range.
+   */
+  onEditorTurnApplied:
+    | ((doc: string, lastApplied: { from: number; to: number } | null) => void)
+    | undefined;
+  /** Preview-mode Stop: aborts the page-owned snapshot turn. */
+  onPreviewStop: (() => void) | undefined;
 }
 
-export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSidebarProps): JSX.Element {
+export function ChatSidebar({
+  moduleId,
+  hasPlannedParts,
+  pool,
+  aiBusy,
+  previewOpen,
+  onPreviewSend,
+  onPreviewReportOutcome,
+  onPreviewReportMessage,
+  onEditorTurnApplied,
+  onPreviewStop,
+}: ChatSidebarProps): JSX.Element {
   const chatKey = canvasChatKey(moduleId);
   const state = useCanvasChatStore((store) => store.byModule[chatKey]);
-  const previewOpen = useCanvasPreviewStore((store) => store.openByModule[moduleId] ?? false);
   const settings = useLiveQuery(() => readSettings(), []);
   const [input, setInput] = useState('');
   const abortRef = useRef<AbortController | null>(null);
@@ -75,9 +102,28 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
   const inFlight = state?.inFlight ?? false;
   const effectiveModel = modelSelection ?? settings?.defaultChatModel ?? '';
   const canBrowse = settings !== undefined && settings.openRouterApiKey !== '';
-  const sendDisabled = aiBusy || inFlight || previewOpen || input.trim() === '';
+  const sendDisabled = aiBusy || inFlight || input.trim() === '';
 
   async function send(text: string): Promise<void> {
+    // Preview mode: the editor is unmounted — the turn runs against the
+    // preview snapshot through the page (no view needed).
+    if (previewOpen) {
+      if (onPreviewSend === undefined) {
+        toastError('The editor is not ready — try again', new Error('canvas chat needs a preview snapshot'));
+        return;
+      }
+      setInput('');
+      try {
+        await onPreviewSend(text);
+      } catch (error) {
+        if (error instanceof ModuleBusyError) {
+          toastError('A generation is already running for this module — wait for it or stop it first', error);
+        } else {
+          toastError('Chat failed', error);
+        }
+      }
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     setInput('');
@@ -92,13 +138,15 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
           view,
         },
         text,
-      ));
+      ).then((result) => {
+        onEditorTurnApplied?.(result.doc, result.lastApplied);
+      }));
     if (abortRef.current === controller) abortRef.current = null;
   }
 
-  /** Every turn (send + report) needs the live view; busy rethrows from the
+  /** Every editor turn (send + report) needs the live view; busy rethrows from the
    * controller and toasts here (canvasRefine's surface). */
-  async function guardedTurn(run: (view: EditorView) => Promise<void>): Promise<void> {
+  async function guardedTurn(run: (view: EditorView) => Promise<unknown>): Promise<void> {
     const view = activeCanvasView.current;
     if (view === null) {
       toastError('The editor is not ready — try again', new Error('canvas chat needs the editor view'));
@@ -116,6 +164,12 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
   }
 
   function onReportOutcome(messageId: string, outcome: CanvasChatOutcome): void {
+    // Preview mode: the excerpt is cut from the CURRENT snapshot at click
+    // time (restored outcomes re-resolve the same way).
+    if (previewOpen) {
+      onPreviewReportOutcome?.(messageId, outcome);
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     void guardedTurn((view) =>
@@ -130,10 +184,16 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
         },
         messageId,
         outcome,
-      ));
+      ).then((result) => {
+        onEditorTurnApplied?.(result.doc, result.lastApplied);
+      }));
   }
 
   function onReportMessage(message: CanvasChatMessage): void {
+    if (previewOpen) {
+      onPreviewReportMessage?.(message);
+      return;
+    }
     const controller = new AbortController();
     abortRef.current = controller;
     void guardedTurn((view) =>
@@ -182,7 +242,7 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
           <p className="rounded-lg border border-dashed p-3 text-sm text-muted-foreground">
             Ask for edits in plain language — the whole module is in context, so edits can land in
             any part. The assistant answers with prose and edit commands (<code>&lt;edit&gt;</code>{' '}
-            blocks) that are applied to the document — each one its own undo step, and only the
+            blocks) that are applied to the document{previewOpen ? ' (no undo in preview)' : ' — each one its own undo step'}, and only the
             changed parts are saved to the module row.
           </p>
         ) : (
@@ -205,12 +265,12 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
           </div>
         )}
       </div>
-      {previewOpen ? (
-        <div className="border-t p-3 text-sm text-muted-foreground">
-          The editor is hidden in preview — switch back to Edit to continue the chat.
-        </div>
-      ) : (
-        <div className="flex items-end gap-2 border-t p-3">
+      {previewOpen && (
+        <p className="border-t px-3 pt-2 text-xs text-muted-foreground">
+          Preview mode: edits apply to the preview and save to the module row — with no undo.
+        </p>
+      )}
+      <div className="flex items-end gap-2 border-t p-3">
           <Textarea
             aria-label="Chat message"
             data-testid="canvas-chat-input"
@@ -230,7 +290,11 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
               aria-label="Stop chat reply"
               data-testid="canvas-chat-stop"
               onClick={() => {
-                abortRef.current?.abort();
+                if (previewOpen) {
+                  onPreviewStop?.();
+                } else {
+                  abortRef.current?.abort();
+                }
               }}
             >
               <BanIcon aria-hidden />
@@ -252,7 +316,6 @@ export function ChatSidebar({ moduleId, hasPlannedParts, pool, aiBusy }: ChatSid
             </Button>
           )}
         </div>
-      )}
     </aside>
   );
 }

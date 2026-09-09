@@ -84,6 +84,13 @@ export interface ApplyChatCommandsResult {
   /** True when any command changed the doc (caller persists via the
    * split-save; unchanged parts never hit the row). */
   docChanged: boolean;
+  /** The LAST command's FIRST applied range in POST-apply whole-document
+   * coordinates (the last-replacement highlight) — null when nothing
+   * applied. A replace writes `command.replace` over the matched span, so
+   * the new text is `[from, from + replace.length)`; a fill writes
+   * `newText` at the section start. Valid in the doc as of the last
+   * command (no later command shifts it). */
+  lastApplied: { from: number; to: number } | null;
 }
 
 /**
@@ -105,6 +112,7 @@ export function applyChatCommandsToDocument(input: {
   const { view } = input;
   const outcomes: CanvasChatOutcome[] = [];
   let docChanged = false;
+  let lastApplied: { from: number; to: number } | null = null;
 
   /** Fresh per-part sections of the CURRENT doc (ranges included). */
   const currentSections = (): ModulePartsSection[] =>
@@ -163,6 +171,7 @@ export function applyChatCommandsToDocument(input: {
         userEvent: 'canvas.chat.apply',
       });
       docChanged = true;
+      lastApplied = { from: section.textFrom, to: section.textFrom + resolution.newText.length };
       outcomes.push(
         appliedOutcome(
           command,
@@ -221,6 +230,10 @@ export function applyChatCommandsToDocument(input: {
     }
     view.dispatch({ changes, userEvent: 'canvas.chat.apply' });
     docChanged = true;
+    const firstRange = perPart[0]?.docRanges[0];
+    if (firstRange !== undefined) {
+      lastApplied = { from: firstRange.from, to: firstRange.from + command.replace.length };
+    }
     for (const applied of perPart) {
       outcomes.push(
         appliedOutcome(
@@ -234,5 +247,5 @@ export function applyChatCommandsToDocument(input: {
       );
     }
   }
-  return { outcomes, docChanged };
+  return { outcomes, docChanged, lastApplied };
 }
