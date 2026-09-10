@@ -6,6 +6,7 @@ import {
   BanIcon,
   CircleAlertIcon,
   CircleCheckIcon,
+  EraserIcon,
   LoaderCircleIcon,
   MessageSquareTextIcon,
   SendHorizonalIcon,
@@ -14,6 +15,16 @@ import {
 import type { AnyArtifact, Id } from '@/domain';
 import { readSettings } from '@/db/settingsRepo';
 import { ModuleBusyError } from '@/llm/moduleGen';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ModelInput } from '@/features/settings/model-input';
@@ -26,7 +37,8 @@ import {
   type CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
 import { reportChatMessage, reportChatOutcome, runChatTurn } from '@/features/modules/canvas/chatController';
-import { toastError } from '@/lib/toast';
+import { clearModuleChat } from '@/features/modules/canvas/clearChat';
+import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 /**
@@ -42,6 +54,16 @@ import { cn } from '@/lib/utils';
  * The DOC is the truth for part text — applied commands are editor
  * transactions persisted through the split-save (THE one part-text save
  * path, only changed parts hit the row).
+ *
+ * CLEAR CHAT (panel header → alert-dialog confirm): returns ONE module's chat
+ * to a pristine state — the live conversation, the persisted thread on the
+ * row, this module's SESSION Versions ledger and the last-replacement
+ * highlight (`clearChat.clearModuleChat` + the page's `onChatCleared`). It
+ * NEVER touches the module's document text: applied chat edits are saved
+ * content and reverting text is the Versions ledger's job — the dialog copy
+ * says both halves out loud. While a reply is in flight (or any canvas AI
+ * action is live for the module) the control REFUSES LOUDLY with a toast
+ * instead of clearing under a running turn.
  *
  * Touch targets: every chat control is 44px (iPad-proportioned).
  */
@@ -71,6 +93,12 @@ export interface ChatSidebarProps {
     | undefined;
   /** Preview-mode Stop: aborts the page-owned snapshot turn. */
   onPreviewStop: (() => void) | undefined;
+  /**
+   * The chat was cleared (all three store/row slices are already pristine):
+   * the page drops its `lastReplacement` state, which is what removes the
+   * highlight from BOTH surfaces (the editor's CM6 mark and the preview wash).
+   */
+  onChatCleared: (() => void) | undefined;
 }
 
 export function ChatSidebar({
@@ -84,11 +112,13 @@ export function ChatSidebar({
   onPreviewReportMessage,
   onEditorTurnApplied,
   onPreviewStop,
+  onChatCleared,
 }: ChatSidebarProps): JSX.Element {
   const chatKey = canvasChatKey(moduleId);
   const state = useCanvasChatStore((store) => store.byModule[chatKey]);
   const settings = useLiveQuery(() => readSettings(), []);
   const [input, setInput] = useState('');
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
@@ -142,6 +172,43 @@ export function ChatSidebar({
         onEditorTurnApplied?.(result.doc, result.lastApplied);
       }));
     if (abortRef.current === controller) abortRef.current = null;
+  }
+
+  /**
+   * Confirms Clear chat (panel header): the three store/row slices go
+   * through `clearModuleChat`, the page then drops its highlight state.
+   *
+   * REFUSE LOUDLY, never cancel-then-clear: while the chat reply for this
+   * module is in flight — or any canvas AI action is live (`aiBusy`: the
+   * module generating, a refine streaming, a block proposal pending) — a
+   * clear could not promise the pristine state it advertises (the running
+   * action would land its own message/ledger entry moments later), so the
+   * action is refused with a toast and NOTHING is cleared. A failed row
+   * write is the same shape: `clearModuleChat` throws before touching the
+   * live store, the toast names it, and the conversation is intact.
+   */
+  async function confirmClearChat(): Promise<void> {
+    setClearConfirmOpen(false);
+    if (inFlight || aiBusy) {
+      toastError(
+        inFlight
+          ? 'A chat reply is still in flight — stop it or let it settle before clearing the chat'
+          : 'A canvas AI action is running for this module — wait for it or stop it first',
+        new Error('canvas chat clear refused while the module is busy'),
+      );
+      return;
+    }
+    try {
+      await clearModuleChat({ moduleId, key: chatKey });
+    } catch (error) {
+      toastError(
+        'Could not clear the chat — nothing was cleared; the saved thread is still on the module',
+        error,
+      );
+      return;
+    }
+    onChatCleared?.();
+    toastSuccess('Chat cleared — the module text was not changed');
   }
 
   /** Every editor turn (send + report) needs the live view; busy rethrows from the
@@ -221,6 +288,18 @@ export function ChatSidebar({
         <MessageSquareTextIcon aria-hidden className="size-4 text-muted-foreground" />
         <span className="font-heading text-sm font-semibold">Chat co-editor</span>
         {inFlight && <LoaderCircleIcon aria-hidden className="size-3.5 animate-spin text-muted-foreground" />}
+        <Button
+          variant="ghost"
+          size="xs"
+          className="ml-auto"
+          data-testid="canvas-chat-clear"
+          onClick={() => {
+            setClearConfirmOpen(true);
+          }}
+        >
+          <EraserIcon aria-hidden data-icon="inline-start" />
+          Clear chat
+        </Button>
       </div>
       <div className="border-b px-3 py-2.5">
         <ModelInput
@@ -329,6 +408,35 @@ export function ChatSidebar({
             </Button>
           )}
         </div>
+      <AlertDialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
+        <AlertDialogContent data-testid="canvas-chat-clear-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear this module&apos;s chat?</AlertDialogTitle>
+            <AlertDialogDescription data-testid="canvas-chat-clear-description">
+              Cleared: this module&apos;s conversation and its outcome cards — in this session and in
+              the saved thread on the module — plus this module&apos;s session Versions list and the
+              last-replacement highlight.
+              <span className="mt-2 block font-medium text-foreground">
+                NOT cleared: the module&apos;s DOCUMENT TEXT. Edits the chat already applied are
+                saved content — this is not an undo, and the text will not roll back. To put text
+                back, restore a version from Versions (session-only by design).
+              </span>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="canvas-chat-clear-cancel">Keep chat</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              data-testid="canvas-chat-clear-confirm"
+              onClick={() => {
+                void confirmClearChat();
+              }}
+            >
+              Clear chat
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </aside>
   );
 }

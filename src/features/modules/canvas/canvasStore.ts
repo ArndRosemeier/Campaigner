@@ -16,7 +16,9 @@ import { create } from 'zustand';
  *
  * Scope guard: the ledger clears when the page's module changes (resetFor),
  * matching the board store's owner model. Part switching KEEPS the other
- * parts' ledgers within the session.
+ * parts' ledgers within the session. `clearModule` drops ONE module's
+ * ledgers on demand (the canvas chat's Clear-chat control) — every part of
+ * that module, nothing of any other.
  */
 
 export interface CanvasVersionEntry {
@@ -50,6 +52,15 @@ interface CanvasLedgerState {
   /** Clears the ledger when the canvas page's module changes (Board precedent). */
   resetFor: (moduleId: string) => void;
   append: (key: string, entry: CanvasLedgerEntryInput) => void;
+  /**
+   * Drops EVERY part's ledger for ONE module — the Clear-chat control
+   * (docs/08 §Module canvas chat): the Versions dropdown returns to its
+   * truthful empty state for that module. Keys are `${moduleId}#<planIndex>`,
+   * so another module's session ledger is structurally untouched; sequence
+   * numbering restarts at 1 for the cleared module (the ledger is session
+   * review state, never history).
+   */
+  clearModule: (moduleId: string) => void;
 }
 
 export const useCanvasLedgerStore = create<CanvasLedgerState>((set, get) => ({
@@ -58,6 +69,17 @@ export const useCanvasLedgerStore = create<CanvasLedgerState>((set, get) => ({
   resetFor: (moduleId) => {
     if (get().ownerModuleId === moduleId) return;
     set({ ownerModuleId: moduleId, byPart: {} });
+  },
+  clearModule: (moduleId) => {
+    const prefix = `${moduleId}#`;
+    set((state) => {
+      const byPart: Record<string, CanvasPartLedger> = {};
+      for (const [key, ledger] of Object.entries(state.byPart)) {
+        if (key.startsWith(prefix)) continue;
+        byPart[key] = ledger;
+      }
+      return { byPart };
+    });
   },
   append: (key, entry) => {
     set((state) => {

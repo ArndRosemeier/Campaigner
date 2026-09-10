@@ -1,4 +1,4 @@
-import type { ModuleChatMessage } from '@/domain';
+import type { Id, ModuleChatMessage } from '@/domain';
 import { patchModule } from '@/db/moduleRepo';
 import {
   newChatId,
@@ -22,6 +22,9 @@ import { toastError } from '@/lib/toast';
  * - No Dexie version: the field rides `patchModule` (read-modify-write
  *   inside the tx, so a concurrent part save cannot be lost) and travels
  *   with backup / campaign export-import automatically.
+ * - Cleared on demand by the chat's Clear-chat control through the SAME
+ *   write seam (`clearPersistedChatThread` — see its contract for the
+ *   row-first / loud-failure rules).
  */
 
 export const CHAT_PERSIST_DEBOUNCE_MS = 600;
@@ -130,6 +133,28 @@ export function scheduleChatPersist(moduleId: string, key: string): void {
       void fireChatPersist(key);
     }, CHAT_PERSIST_DEBOUNCE_MS),
   );
+}
+
+/**
+ * Clears the PERSISTED thread for ONE module — the Clear-chat control
+ * (docs/08 §Module canvas chat): the row's `chatThread` goes back to `[]`
+ * through the SAME `patchModule` write the debounced writer uses (no second
+ * persistence path, no Dexie version bump).
+ *
+ * Two deliberate differences from the debounced `fireChatPersist`:
+ * - the write is AWAITED and its failure PROPAGATES (the caller toasts and
+ *   the clear is cancelled). A swallowed failure would leave the in-memory
+ *   conversation wiped while the row still carried it — the whole thread
+ *   would come straight back on the next canvas open;
+ * - a pending debounced write for this key is CANCELLED first: its trailing
+ *   fire would re-serialize the store as it was before the clear.
+ */
+export async function clearPersistedChatThread(moduleId: Id, key: string): Promise<void> {
+  const pendingTimer = pendingTimers.get(key);
+  if (pendingTimer !== undefined) clearTimeout(pendingTimer);
+  pendingTimers.delete(key);
+  pendingModules.delete(key);
+  await patchModule(moduleId, { chatThread: [] });
 }
 
 /** Writes any pending thread now (unmount flush, tests). Never throws. */

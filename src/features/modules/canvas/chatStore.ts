@@ -101,6 +101,14 @@ interface CanvasChatStoreState {
   setOpen: (key: string, open: boolean) => void;
   setModelSelection: (key: string, model: string | null) => void;
   setInFlight: (key: string, inFlight: boolean) => void;
+  /**
+   * Drops ONE module's conversation + outcome cards (the Clear-chat control,
+   * docs/08 §Module canvas chat). Only the MESSAGES go: the sidebar's open
+   * state and the model selection are surface preferences, and `inFlight`
+   * belongs to the turn lifecycle — the control refuses to clear while a
+   * reply is in flight, so this never strands a running turn.
+   */
+  clearModule: (key: string) => void;
   addMessage: (key: string, message: CanvasChatMessage) => void;
   updateMessage: (key: string, messageId: string, patch: Partial<CanvasChatMessage>) => void;
   markOutcomeReported: (key: string, messageId: string, outcomeId: string) => void;
@@ -160,6 +168,14 @@ export const useCanvasChatStore = create<CanvasChatStoreState>((set, get) => ({
       byModule: {
         ...state.byModule,
         [key]: { ...(state.byModule[key] ?? EMPTY_STATE), inFlight },
+      },
+    }));
+  },
+  clearModule: (key) => {
+    set((state) => ({
+      byModule: {
+        ...state.byModule,
+        [key]: { ...(state.byModule[key] ?? EMPTY_STATE), messages: [] },
       },
     }));
   },

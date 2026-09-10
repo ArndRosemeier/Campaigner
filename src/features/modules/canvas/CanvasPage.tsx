@@ -1016,6 +1016,13 @@ export function CanvasPage(): JSX.Element {
             onEditorTurnApplied={(doc, applied) => {
               handleEditorTurnApplied(doc, applied);
             }}
+            onChatCleared={() => {
+              // Clear chat (ChatSidebar): the thread + this module's session
+              // ledger are already pristine — the highlight is PAGE state, so
+              // dropping it here is what removes the mark from BOTH surfaces
+              // (the editor's CM6 field and the preview wash).
+              setLastReplacement(null);
+            }}
           />
         )}
         <div className="flex min-h-0 flex-1 flex-col">

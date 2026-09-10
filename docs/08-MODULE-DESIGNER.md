@@ -1010,6 +1010,39 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   split-save (`saveWholeModuleDocument` → `edited: true` + promote scan,
   ledger entry `Chat: …` per changed part); the chat never writes part text
   directly.
+- **Clear chat** (owner-directed: "i do need a clear chat option to get back
+  to a pristine state"): the panel header's **Clear chat** control returns ONE
+  module's chat to a pristine state behind a destructive-styled confirm
+  (`canvas/clearChat.ts`) — in one action it clears (1) the live conversation
+  + outcome cards (`chatStore.clearModule`), (2) the persisted thread on the
+  module row (`chatPersist.clearPersistedChatThread` → the SAME
+  `patchModule({chatThread: []})` write the debounced writer uses; a pending
+  debounce for that key is cancelled first), (3) that module's SESSION version
+  ledger — every part of it (`canvasStore.clearModule`; keys are
+  `moduleId#planIndex`, so another module's ledger is structurally untouched;
+  seq numbering restarts) — and (4) the last-replacement highlight (the page
+  drops its `lastReplacement` state, which is what removes the editor mark AND
+  the preview wash). The ROW WRITE GOES FIRST and is awaited: its failure
+  cancels the whole action (nothing half-cleared, nothing restored from the
+  row on the next open). What it does NOT clear, and the dialog copy says so
+  in as many words: the module's DOCUMENT text — chat edits already applied
+  are saved content, this control is NOT an undo, and reverting text is the
+  Versions ledger's job. While a chat reply is in flight, or any canvas AI
+  action is live for the module (generating / refining / a pending proposal),
+  the control REFUSES LOUDLY with a toast instead of clearing under a running
+  turn — there is no cancel-then-clear path (owner report: a running turn
+  would land its own message + ledger entry moments later, so a clear under it
+  could not promise the pristine state it advertises). Everything else about
+  the module survives: the document, the open state and the session model
+  selection (surface preferences, not conversation state) + other modules'
+  threads, ledgers and highlights.
+  **Truthfulness note (the session-only ledger)**: the thread outlives the
+  session but the ledger does not, by design — so a canvas reopened on a
+  previous session's thread can legitimately show applied edits while the
+  Versions dropdown reads "Nothing accepted yet" and Save stays disabled (the
+  doc matches the row). That gap is the documented price of a session-scoped
+  ledger (never persist it, docs/18 §4), not a bug to chase: Clear chat is
+  the way back to a pristine state.
 - **Pre-flight**: a module with no planned parts (no spine/partPlan) fails
   LOUDLY before anything sends ("no parts to chat about — generate the
   module first" — controller pre-flight toast + the engine's send-time
