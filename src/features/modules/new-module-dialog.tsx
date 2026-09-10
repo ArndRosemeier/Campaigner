@@ -108,7 +108,41 @@ export interface NewModuleDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+/**
+ * The dialog is MOUNTED PER CAMPAIGN: the state, the refs and the prefill all
+ * belong to ONE campaign, so the key is the campaign id. Switching campaign
+ * while the dialog is open remounts the inner component instead of leaving a
+ * mounted dialog showing the campaign it was opened in.
+ *
+ * Why a remount rather than an effect that notices the change: every piece of
+ * this dialog's state (the controlled fields, the pristine defaults the
+ * "an edit already happened" test compares against, the last-read seed, the
+ * draft the debounced save and the close/unmount flush write from) is
+ * per-campaign, and the values a React effect still sees in the commit where
+ * the campaign changed are the PREVIOUS campaign's. A remount resets all of
+ * them at once, in the one place React already guarantees the ordering — the
+ * old mount's unmount flush still runs first, so the previous campaign's draft
+ * is saved under its own tag before the new mount seeds from the new campaign's
+ * tag. An effect-based reset would have to re-derive that ordering by hand
+ * (state, refs and the flush's own ref) in the same commit.
+ */
 export function NewModuleDialog({
+  campaign,
+  open,
+  onOpenChange,
+}: NewModuleDialogProps): JSX.Element {
+  return (
+    <NewModuleDialogContent
+      key={campaign.id}
+      campaign={campaign}
+      open={open}
+      onOpenChange={onOpenChange}
+    />
+  );
+}
+
+/** The dialog body: one instance per open dialog per campaign (see above). */
+function NewModuleDialogContent({
   campaign,
   open,
   onOpenChange,
@@ -188,7 +222,8 @@ export function NewModuleDialog({
     void persist(draftRef.current);
   }, [persist]);
 
-  // Seed once per OPEN. The stored draft is prefilled only when its campaign
+  // Seed once per OPEN (and once per MOUNT — the campaign is a mount identity,
+  // see `NewModuleDialog`). The stored draft is prefilled only when its campaign
   // tag matches the campaign being created in; another campaign's draft is
   // left untouched and this dialog opens at its defaults.
   const seedDraft = useCallback(
@@ -230,7 +265,13 @@ export function NewModuleDialog({
     // wrote is still in the row — nothing is lost, and the next open prefills).
     if (touchedRef.current) return;
     seedDraft(settings.newModuleDraft);
-  }, [open, settings, seedDraft]);
+    // `campaign.id` is a dependency because the seed is campaign-scoped: the
+    // pristine defaults this effect arms the "an edit already happened" test
+    // with are that campaign's, and `seedDraft`'s tag check reads it. Inside
+    // one mount it cannot change (the campaign is the mount key), so the extra
+    // runs are idempotent: the reset block above is guarded by "first pass of
+    // this open", and the seed itself is guarded by `seededRef`.
+  }, [open, settings, seedDraft, campaign.id]);
 
   // Debounced save on every change — gated on the seed so the pre-seed empty
   // state can never overwrite a stored draft. The first post-seed pass only

@@ -144,8 +144,8 @@ const ALLOWED_NOISE: readonly {
   },
   {
     file: /new-module-draft\.test\./,
-    message: /The above error occurred in the <NewModuleDialog> component/,
-    why: 'the corrupt-draft test deliberately stores a draft that no longer validates and renders the dialog on it, to prove the failure reaches the error boundary instead of half-prefilling the form; React logs the caught render error, and that log IS the expected trace of the loud failure under test.',
+    message: /The above error occurred in the <NewModuleDialog(Content)?> component/,
+    why: 'the corrupt-draft test deliberately stores a draft that no longer validates and renders the dialog on it, to prove the failure reaches the error boundary instead of half-prefilling the form; React logs the caught render error, and that log IS the expected trace of the loud failure under test. The component name is optional because the dialog is mounted through a per-campaign wrapper (`NewModuleDialog` → `NewModuleDialogContent`), so React names the inner component.',
   },
   {
     file: /ingestFiles\.test\./,

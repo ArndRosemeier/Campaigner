@@ -66,7 +66,9 @@ class Boundary extends Component<{ children: ReactNode }, { message: string | nu
   }
 }
 
-/** A harness that can close and REOPEN the dialog (the prefill contract). */
+/** A harness that can close and REOPEN the dialog (the prefill contract), and
+ * can SWITCH the campaign under a mounted dialog (the campaign-identity
+ * contract: the draft is tagged, so the dialog is mounted per campaign). */
 function Harness({ campaign }: { campaign: Campaign }): JSX.Element {
   const [open, setOpen] = useState(true);
   return (
@@ -175,6 +177,73 @@ describe('the draft round-trips through the settings row', () => {
     const settings = await actDrained(() => readSettings());
     expect(settings.newModuleDraft?.campaignId).toBe(other.id);
     expect(settings.newModuleDraft?.concept).toBe('Belongs to the other campaign.');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('re-prefills when the campaign changes under a MOUNTED dialog', async () => {
+    const other = await seedCampaign('Other');
+    const mine = await seedCampaign('Mine');
+    await updateSettings({
+      newModuleDraft: {
+        ...defaultNewModuleDraft(mine.id),
+        concept: 'Mine, and only mine.',
+        tone: 'grim',
+      },
+    });
+
+    // Opened in the WRONG campaign first: the other campaign's tag means
+    // nothing is prefilled (the dialog sits at its own defaults).
+    const { rerender } = render(<Harness campaign={other} />);
+    await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+    expect(screen.getByLabelText('Concept')).toHaveValue('');
+
+    // The campaign changes while the dialog stays open: the new campaign's
+    // (matching) draft lands — a mounted dialog never keeps showing the
+    // campaign it was opened in. (The dialog is mounted PER CAMPAIGN, so this
+    // is a REMOUNT: re-find the dialog instead of holding the old node.)
+    rerender(<Harness campaign={mine} />);
+    const switched = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+    await waitFor(() => {
+      expect(within(switched).getByLabelText('Concept')).toHaveValue('Mine, and only mine.');
+    });
+    expect(within(switched).getByLabelText('Tone (optional)')).toHaveValue('grim');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('never re-tags the previous campaign’s draft when the campaign changes', async () => {
+    const mine = await seedCampaign('Mine');
+    const other = await seedCampaign('Other');
+    await updateSettings({
+      newModuleDraft: {
+        ...defaultNewModuleDraft(mine.id),
+        concept: 'Mine, and only mine.',
+      },
+    });
+
+    const { rerender } = render(<Harness campaign={mine} />);
+    const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('Concept')).toHaveValue('Mine, and only mine.');
+    });
+
+    // Switch away: the shown values belong to `mine` and must not follow the
+    // dialog into `other` (they would otherwise be re-tagged and prefilled as
+    // the other campaign's draft on the next open). The remount shows the new
+    // campaign's own defaults.
+    rerender(<Harness campaign={other} />);
+    const switched = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+    expect(within(switched).getByLabelText('Concept')).toHaveValue('');
+
+    // Past the debounce window: the switch itself writes nothing, and the
+    // stored draft still belongs to the campaign that authored it.
+    await actDrained(async () => {
+      await new Promise((resolve) => {
+        setTimeout(resolve, 700);
+      });
+    });
+    const settings = await readSettings();
+    expect(settings.newModuleDraft?.campaignId).toBe(mine.id);
+    expect(settings.newModuleDraft?.concept).toBe('Mine, and only mine.');
     await flushAsyncUpdates();
   }, 30_000);
 
