@@ -280,7 +280,8 @@ per-scene field set over a prose-only instruction (docs/17 row 73).
 `classicSceneFieldBullets()` and `PART_SCENE_VARIATION_DEMANDS` now live in
 `src/llm/promptStyles.ts` and are rendered into the CLASSIC template. That is
 also why the Story style has no field list at all: the block is what Classic
-says, and a style is free to say something else (row 86).
+says, and a style is free to say something else (row 86) — the Freestyle style
+goes further and prescribes no shape of any kind (§Freestyle).
 
 **It is a DOCUMENT-FORMAT convention, not a schema.** The block lives in the
 part's markdown, so there is no schema change, no Dexie version, no migration
@@ -418,9 +419,83 @@ verbatim; `Story` writes the part as the story the GM plays — beats whose shap
 the model chooses, no ordered field list — while keeping the contract, the
 heading-with-`[[link]]` requirement (the encounter floor counts canonical
 `[[encounter]]` links, so a beat named only in passing prose would be invisible
-to the gate) and the floor clauses byte-identical to Classic's. A built-in
-cannot be edited at all; `Duplicate` is the way in, and a style derived from
-another keeps `basedOn` and a `Reset to source`.
+to the gate) and the floor clauses byte-identical to Classic's; `Freestyle`
+(owner request, docs/17 row 87) prescribes no shape at all — see §Freestyle
+below, and the owner's stated expectation for it, verbatim: *"i do think that
+freestyle really is where front line models will shine and small models will
+struggle. Front line models profit from being unconstrained."* A built-in cannot be edited at all; `Duplicate` is the way in, and a
+style derived from another keeps `basedOn` and a `Reset to source`.
+
+### Freestyle — the shape-free experiment (owner request, docs/17 row 87)
+
+**What the owner asked for, verbatim:** *"i see classic and story as options. I
+would like you to add a 'Freestyle' option where just the setting and the
+technology is explained and the goal to make this a noteworthy and fun module to
+play, no actual structure given on top of that. I want to experiment with that.
+All artefact types and the encounter floor still need to be explained."*
+
+**What its PARTS section carries — three things, and nothing else.**
+
+1. **The setting**: every context placeholder the other built-ins use
+   (`{{campaign}}`, `{{modulePremise}}`, `{{themes}}`, `{{allParts}}`,
+   `{{partHeading}}`, `{{partSynopsis}}`, `{{partEndCondition}}`,
+   `{{previousPart}}`, `{{ruleExcerpts}}`, `{{glossary}}`, `{{campaignIndex}}`,
+   `{{priorModules}}`, `{{additionalInstruction}}`). A part prompt without them
+   writes a different module than the planner approved.
+2. **The technology** — what this app is and what it does with the text, which
+   is not creative preference: the text is what a GM runs a table from; every
+   proper noun written as a `[[wiki-link]]` becomes a real artifact the app
+   builds out, with its own generated details and its own generated images; the
+   six artifact kinds are each explained (`npc` a person or creature the party
+   meets, `location` a place, `event` a non-combat scene, `faction` an
+   organization, `note` anything else, `encounter` a FIGHT) together with what
+   the app builds per kind — an **encounter** gets a battle map, a monster
+   roster and mob-portrait images, an **event** gets an illustration and nothing
+   else, and every artifact can carry generated images and details; player
+   characters are not the module's to write and `plotarc` is not an entity kind
+   the module declares; and the **encounter floor**, whose numbers and wording
+   arrive through `{{contract.floor}}` — the template never restates, rounds or
+   softens them, because a style that repeated the numbers could disagree with
+   the gate that counts them. What an encounter IS versus an event (a
+   negotiation, hazard, puzzle, investigation or chase is an event) is stated
+   there too: that distinction is the technology the floor depends on.
+3. **The goal**: make this a noteworthy and fun module to play.
+
+**What it deliberately OMITS — the point of the style.** No field list, no
+beat-heading template, no "write the part as …" instruction, and none of the
+craft-discipline bullets Classic and Story carry (no "two visible approaches",
+no "end the part with two threads", no "every conflict ends with a cost", no
+one-new-entity-per-scene rule, no finale-aware closing demand). Those are the
+other styles' creative prescriptions; the owner wants to see what the model does
+without them.
+
+**Where the form is stated, and what that does NOT change.** Classic and Story
+carry the heading-with-`[[link]]` requirement as a FORMAT rule; Freestyle states
+the same underlying app behaviour as TECHNOLOGY and lets the model choose the
+form: the app builds an artifact from every linked name, and it counts a part's
+encounters from the wiki-linked names whose recorded entity kind is `encounter`
+(`encounterNamesIn` / `countModuleEncounters`) — so a fight becomes countable by
+being named, linked and declared with that kind, which is why the spine declares
+entity kinds and why the contract's own link rules ask for `[[Encounter Name]]`.
+That boundary — a fight written only inside a sentence, never named or linked, is
+invisible to the count — is PRE-EXISTING for every style, not something Freestyle
+introduces (docs/05 §Screen: Module reader, docs/18 §4). **The encounter floor
+itself is identical for all three styles**: the same `{{contract.floor}}` clauses,
+verbatim, with the module's own numbers. Freestyle weakens nothing, and no claim
+is made that a freestyle part complies with the floor differently.
+
+**The SPINE section is Classic's, verbatim — a judgement call reported for the
+owner's veto.** The planner's reply is a JSON contract (`partPlan`), its
+instruction is already conflict-first rather than formulaic, and the part plan is
+scaffolding the owner does not read, while the part text is what he is
+experimenting with. Freestyling the planner too is a follow-up he can ask for.
+
+**The contract layer is untouched for all three styles** — the reply format, the
+GM address rule, the wiki-link and canonical-spelling rules, the mechanics
+clause, encounter casting, the length target and the floor clauses are injected
+exactly as before. Freestyle drops none of them, and no contract value changed:
+Classic's byte identity (`tests/llm/promptStyles-classic-identity.test.ts`) still
+guards every module the owner already has.
 
 **A module RECORDS the style it was written in** — id, name, version and the
 full `templateText` on its row (`domain/module.promptStyle`, additive and
