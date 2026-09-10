@@ -16,6 +16,7 @@ import { fixedCastForEncounter, partLevelForMention } from '@/llm/roomBudget';
 import { surroundingParagraphs } from '@/lib/wikilinks';
 import { mapWithConcurrency } from '@/lib/parallel';
 import { toastError } from '@/lib/toast';
+import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { useProgressStore } from '@/lib/progress';
 
 /**
@@ -38,6 +39,15 @@ import { useProgressStore } from '@/lib/progress';
  * the batch — the other runs finish, and every entity without a produced
  * artifact is reported loudly (toast + the failed runs in the Runs tab).
  * Progress rides the shared dock (`module-entities-<moduleId>-<kind>`).
+ *
+ * A CANCELLED run is not a failure: the engine cancelled it because the user
+ * asked for a stop (`runEngine.cancelAllActive`, the dock's Stop all), so its
+ * entity is WITHDRAWN — no `failed` entry, no red toast, nothing said about
+ * it. The first withdrawn run also ends the pool: a stopped orchestration
+ * must not start its next unit, so the remaining targets are never launched
+ * (the epoch consulted at the worker entry, `lib/stopEpoch`). Before that,
+ * the pool recorded a cancelled run as a per-entity failure, which is how a
+ * stop turned into "3 of 5 npcs failed to generate" toasts about nothing.
  */
 
 /** Humanized run-step names for the progress detail line. */
@@ -125,6 +135,9 @@ export interface EntityBatchResult {
  */
 export async function runEntityBatch(input: RunEntityBatchInput): Promise<EntityBatchResult> {
   const { module, campaign, kind, targets } = input;
+  // The epoch this batch belongs to: consulted at every worker entry, so a
+  // stop withdraws the remaining targets instead of launching them.
+  const epoch = getStopEpoch();
   const moduleTag = moduleTagFor(module.title);
   const moduleText = moduleDocumentText(module);
   const jobId = `module-entities-${module.id}-${kind}`;
@@ -139,7 +152,14 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   // In-flight entities for the dock detail: name → current run step label.
   const inFlight = new Map<string, string | null>();
   let completed = 0;
+  // Set once the first run comes back 'cancelled' (user stop): no further
+  // target is launched and the dock says so instead of claiming progress.
+  let withdrawn = false;
   const updateDetail = (): void => {
+    if (withdrawn) {
+      progressUpdate(jobId, { detail: 'Stopped by the user' });
+      return;
+    }
     const parts = [...inFlight.entries()].slice(0, 3).map(([name, label]) =>
       `"${name}"${label === null ? '' : ` — ${label}`}`,
     );
@@ -181,6 +201,10 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     const castPool = kind === 'encounter' ? await listArtifactsByCampaign(campaign.id) : [];
 
     await mapWithConcurrency(targets, limit, async (target) => {
+      // Between units: the pool takes the next target only while no stop has
+      // landed since this batch started. A stop that arrives while a run is
+      // in flight is handled below (the outcome comes back 'cancelled').
+      if (stoppedSince(epoch)) return;
       inFlight.set(target.name, null);
       updateDetail();
       try {
@@ -218,6 +242,17 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         const runId = await runEngine.startRun(runInput);
         runNames.set(runId, target.name);
         const outcome = await waitForRunStatus(runId);
+        if (outcome.status === 'cancelled') {
+          // WITHDRAWN, not failed (mirrors jobQueue's silent 'cancelled'
+          // JobOutcome): the user stopped this generation, so there is no
+          // failure to report and no artifact to expect. Stop the pool too —
+          // every later target would just start a run that is already doomed.
+          if (!withdrawn) {
+            withdrawn = true;
+            updateDetail();
+          }
+          return;
+        }
         if (outcome.status === 'completed' && outcome.resultArtifactId !== null) {
           producedIds.push(outcome.resultArtifactId);
           generated.push(target.name);

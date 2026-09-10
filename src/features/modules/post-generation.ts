@@ -9,6 +9,7 @@ import { runEntityBatch } from '@/features/modules/entity-batch';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { errorMessage } from '@/lib/errors';
+import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
@@ -42,6 +43,17 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * enumerates away already-imaged mobs — re-running a full pass can never
  * double-generate. Failures are loud per job (toasts + the Runs tab) and
  * never stop the remaining automation.
+ *
+ * A STOP does (owner report: "Stop all should stop all generations, but it
+ * only stops the current type loop"). This sweep is the longest-lived
+ * orchestration in the app — several kinds, each a full batch, then three
+ * enqueue blocks — and a cancelled unit inside it looks like a finished one
+ * (the kind loop's batch returns normally, and a cancelled parts pass leaves
+ * the module `'ready'`, which is exactly the status the automation gates
+ * read). So the sweep captures the app-level stop epoch at entry
+ * (`lib/stopEpoch`) and consults it between units: before every kind, and
+ * before every enqueue block. Nothing it was about to start can outlive the
+ * user's stop.
  */
 
 /** Configured kinds in the domain's stable order (encounters last).
@@ -122,6 +134,10 @@ function encountersNeedingMobPortraits(
  * no-op when the module has nothing configured (or was deleted mid-run).
  */
 export async function runModulePostGeneration(moduleId: Id, campaign: Campaign): Promise<void> {
+  // The epoch this pass belongs to (see the doc comment): captured ONCE, at
+  // entry, so every guard below answers "did a Stop all land while this
+  // automation was running?" — and keeps answering yes for the rest of it.
+  const epoch = getStopEpoch();
   try {
     const module = await getModule(moduleId);
     if (module === undefined) return;
@@ -143,6 +159,11 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
     let generatedCount = 0;
     if (autoGenerateKinds.length > 0 && module.entityNamesNormalized) {
       for (const kind of orderedKinds(autoGenerateKinds)) {
+        // Between units: a stop during the previous kind ends the sweep —
+        // the cancelled batch returned normally (its per-entity outcome is
+        // WITHDRAWN, not a failure), so without this guard the loop would
+        // cheerfully start the next kind's batch.
+        if (stoppedSince(epoch)) return;
         const artifacts = await listArtifactsByCampaign(module.campaignId);
         const names = namesOfKind(module, kind).filter(
           (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact === undefined,
@@ -171,6 +192,14 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
     // produced some.
     const artifacts = await listArtifactsByCampaign(module.campaignId);
     const settings = await getSettings();
+
+    // The enqueue half of the sweep is one unit too: a stop is not a reason
+    // to hand the queues fresh work (they would start a fresh pump for it —
+    // the pump exits on cancelAll, but any later enqueue starts a new one).
+    // Checked ONCE, before the whole enqueue half: the batches above are the
+    // long part, and the three blocks below are a single stretch of
+    // enqueueing.
+    if (stoppedSince(epoch)) return;
 
     // 2) Images — one loud skip when the image API is off (never a silent
     // drop of the configured automation, never a wall of per-entity errors).
@@ -226,6 +255,9 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
       // enqueue, and the failures aggregate into ONE loud toast.
       const failedPortraits: string[] = [];
       for (const encounter of portraitTargets) {
+        // The portrait batch awaits per encounter (it reads the roster), so a
+        // stop landing mid-loop must end it here, not after the last one.
+        if (stoppedSince(epoch)) break;
         try {
           portraitJobs += (await enqueueMobPortraits(encounter, module.campaignId)).enqueued;
         } catch (error) {

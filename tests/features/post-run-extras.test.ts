@@ -14,6 +14,7 @@ import { updateSettings } from '@/db/settingsRepo';
 import type { Campaign, Persona } from '@/domain';
 import { createModule } from '@/domain';
 import { runEngine, encounterRunAdapters } from '@/llm/runEngine';
+import { bumpStopEpoch } from '@/lib/stopEpoch';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { seedBuiltInPersonas } from '@/db/seed';
@@ -203,6 +204,53 @@ describe('post-run extras', () => {
       expect(artifact?.coverImageId).not.toBeNull();
     });
     // The completed run was not reopened by the extras execution.
+    expect((await getRun(runId))?.status).toBe('completed');
+  }, 20000);
+
+  it('enqueues nothing for a run that completed after a stop (the epoch gate)', async () => {
+    // Owner report: "Stop all should stop all generations, but it only stops
+    // the current type loop". A run already finishing when the sweep
+    // snapshotted the engine registry still lands here as 'completed' — its
+    // automatic battlemap and portraits must NOT be enqueued after the user
+    // pressed Stop all (a queue's cancelAll exits its pump, but any later
+    // enqueue starts a fresh one). The run row itself stays completed.
+    const { campaignId, personaId } = await seed();
+    // Chat stays pending so the run is still in flight when the stop lands.
+    let _releaseChat: (() => void) | undefined;
+    chatMock.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          _releaseChat = () => {
+            resolve({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+          };
+        }),
+    );
+
+    const runId = await runEngine.startRun({
+      ...RUN_INPUT(campaignId, personaId),
+      extras: { image: true, statBlock: false, mobPortraits: false, battlemap: false },
+    });
+    await waitFor(() => {
+      expect(chatMock).toHaveBeenCalled();
+    });
+    // The user stops while the run is finishing…
+    bumpStopEpoch();
+    // …then the run completes normally.
+    await waitFor(() => {
+      expect(_releaseChat).toBeDefined();
+    });
+    _releaseChat?.();
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // Nothing was handed to the queues after the stop.
+    expect(useMobPortraitQueue.getState().queued).toEqual([]);
+    expect(useMobPortraitQueue.getState().active).toEqual([]);
+    expect(useEncounterMapQueue.getState().queued).toEqual([]);
+    expect(useEncounterMapQueue.getState().active).toEqual([]);
+    // The finished run is untouched — a stop is not a run failure.
     expect((await getRun(runId))?.status).toBe('completed');
   }, 20000);
 

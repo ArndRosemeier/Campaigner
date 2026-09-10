@@ -36,6 +36,17 @@
  *
  * This module subscribes to run completion ONCE (module scope, imported
  * from main.tsx — no component re-subscribes per run).
+ *
+ * A STOP wins over the subscription (owner report: "Stop all should stop all
+ * generations, but it only stops the current type loop"): a run that was
+ * ALREADY completing when the sweep snapshotted the engine registry still
+ * lands here as `completed`, and enqueueing its battlemap/portraits after the
+ * user pressed Stop all would start fresh queue work the stop supposedly
+ * ended (a queue's `cancelAll` exits its pump, but any later `enqueue` starts
+ * a new one). The epoch is captured when the completion arrives and consulted
+ * before every enqueue, so post-stop completions enqueue nothing — the run
+ * row itself is untouched and stays exactly as completed as the engine left
+ * it.
  */
 import type { Id, PersonaRun } from '@/domain';
 import { getAnyArtifact } from '@/db/artifactRepo';
@@ -52,6 +63,7 @@ import {
   isEncounterMapPending,
   useEncounterMapQueue,
 } from '@/features/modules/encounter-map-queue';
+import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { toastError } from '@/lib/toast';
 
 runEngine.on((event) => {
@@ -64,6 +76,10 @@ runEngine.on((event) => {
 });
 
 async function runPostCreateExtras(runId: Id): Promise<void> {
+  // The epoch of the completion we are reacting to. A stop that landed while
+  // this run was finishing (or while the reads below were in flight) means
+  // the user asked for no more generation — nothing here enqueues.
+  const epoch = getStopEpoch();
   const run = await getRun(runId);
   if (run === undefined) return;
   const artifact = run.resultArtifactId === null
@@ -79,12 +95,13 @@ async function runPostCreateExtras(runId: Id): Promise<void> {
     }
     // Encounter-mode personas (Cartographer) produce the map inside their
     // own run — enqueuing would double-book the same encounter.
-    if (persona.mode !== 'encounter') {
+    if (persona.mode !== 'encounter' && !stoppedSince(epoch)) {
       await enqueueAutomaticBattlemap(run, artifact);
     }
   }
 
   if (run.runExtras == null || artifact === undefined) return;
+  if (stoppedSince(epoch)) return;
   if (run.runExtras.image) {
     enqueueArtifactPortrait(artifact, run.campaignId);
   }

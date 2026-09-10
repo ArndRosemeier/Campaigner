@@ -7,7 +7,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import { createModule } from '@/domain';
-import { createModuleAndRun, retrySpine } from '@/llm/moduleGen';
+import { cancelModuleGen, createModuleAndRun, retrySpine } from '@/llm/moduleGen';
 import { clearDatabase } from '../db/helpers';
 import type { ChatResult } from '@/llm/openrouter';
 import { useProgressStore } from '@/lib/progress';
@@ -231,5 +231,47 @@ describe('autoApproveSpine (unattended pass 0 → pass 1)', () => {
     expect(done?.errorMessage).toBe('');
     expect(runModulePostGenerationMock).toHaveBeenCalledTimes(1);
     expect(runModulePostGenerationMock).toHaveBeenCalledWith(saved.id, campaign);
+  }, 20000);
+
+  it('does not fire the post-generation automation after a CANCELLED parts pass', async () => {
+    // The owner's bug, at its source: a cancel leaves the module row 'ready'
+    // with parts present (so Retry stays available), which is byte-identical
+    // to a completed pass — so the status alone made the automation tail
+    // start the whole post-generation sweep about a second after the user
+    // pressed Stop all.
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(AUTO_SPINE), modelUsed: 'test-model', fallback: null }) // pass 0
+      .mockResolvedValueOnce({ text: JSON.stringify(AUTO_NORMALIZATION), modelUsed: 'test-model', fallback: null }) // spine entities
+      .mockImplementationOnce(() => {
+        // The stop lands while the FIRST part is being written.
+        cancelModuleGen(moduleId);
+        return Promise.resolve(partMarkdown('cancelled-part'));
+      });
+    let moduleId = '';
+
+    moduleId = await createModuleAndRun(campaign, {
+      campaignId: campaign.id,
+      title: 'Cancelled Tower',
+      concept: 'A tower whose parts pass the user stopped.',
+      levelMin: 1,
+      levelMax: 2,
+      tone: '',
+      sizeDial: 'sketch',
+      autoApproveSpine: true,
+    });
+
+    await waitFor(
+      async () => {
+        const row = await getModule(moduleId);
+        // A cancelled pass leaves the row resumable: 'ready' (or 'draft' when
+        // no part landed) — never 'generating', never 'failed'.
+        expect(row?.status).not.toBe('generating');
+      },
+      { timeout: 15_000 },
+    );
+
+    // The cancelled pass must NOT be read as a completed one by the tail.
+    expect(runModulePostGenerationMock).not.toHaveBeenCalled();
   }, 20000);
 });

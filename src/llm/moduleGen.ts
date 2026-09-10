@@ -21,6 +21,7 @@ import { runModulePostGeneration } from '@/features/modules/post-generation';
 import { toastError } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
+import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { modulePath } from '@/app/routes';
 import { z } from 'zod';
 
@@ -108,6 +109,19 @@ function isAbort(error: unknown): boolean {
  * cancel-vs-failure reads this helper with the run's own signal, so a stop
  * can never be misread as a part failure that lets the chain advance.
  */
+/**
+ * The loop-boundary stop check ("a stopped orchestration must not start its
+ * next unit"). A helper rather than an inline `signal.aborted` test: the
+ * control-flow narrowing from the loop guards above would make a later inline
+ * test look statically dead, while at RUNTIME the signal is aborted by an
+ * external event (the user's Stop all) at any await point.
+ */
+function throwIfStopped(signal: AbortSignal): void {
+  if (signal.aborted) {
+    throw new DOMException('Module generation was cancelled', 'AbortError');
+  }
+}
+
 function isCancel(error: unknown, signal: AbortSignal): boolean {
   if (signal.aborted) return true;
   return isAbort(error);
@@ -912,6 +926,30 @@ export async function runParts(
   campaign: Campaign,
   options: PartsRunOptions = {},
 ): Promise<Module> {
+  return (await runPartsPass(moduleId, campaign, options)).module;
+}
+
+/**
+ * What a parts pass returned (workflow wrappers only). `aborted` is the
+ * distinction the automation tail needs and the persisted row CANNOT carry:
+ * a cancelled pass leaves parts in place and the module row at `'ready'` (so
+ * the Retry buttons stay available — the cancellation contract), which is
+ * byte-identical to a completed pass. Reading that status as "completed"
+ * started the post-generation sweep right after a user pressed Stop all
+ * (the owner's bug: "it only stops the current type loop").
+ */
+export interface PartsPassResult {
+  module: Module;
+  /** True when a cancel ended the pass (parts stay, row stays resumable). */
+  aborted: boolean;
+}
+
+/** The pass body: see `runParts`, which is the only public entry. */
+async function runPartsPass(
+  moduleId: Id,
+  campaign: Campaign,
+  options: PartsRunOptions = {},
+): Promise<PartsPassResult> {
   const controller = controllerFor(moduleId);
   // App-wide progress dock (00-OVERVIEW): parts are a known-length list, so
   // the bar fills per part and the detail names the part being written.
@@ -998,6 +1036,11 @@ export async function runParts(
       progress.update(jobId, { progress: index / total });
     }
 
+    // A stop that ended the LAST part leaves no next loop iteration to guard:
+    // without this check the pass would fire its post-pass normalization call
+    // for a module the user just stopped. Same quiet rewind as the loop
+    // guard — the outer catch reads the signal, so it lands as `aborted`.
+    throwIfStopped(controller.signal);
     progress.update(jobId, { progress: 1, detail: 'Normalizing entity names…' });
     // Entity name normalization (fix-01): one call after the parts land —
     // canonical names, kinds, link rewrites and aliases. A failure is
@@ -1144,9 +1187,9 @@ export async function runParts(
         new Error(floorMessage),
       );
       await patchModule(moduleId, { status: 'failed', errorMessage: floorMessage });
-      return (await getModule(moduleId)) ?? gated;
+      return { module: (await getModule(moduleId)) ?? gated, aborted: false };
     }
-    return await patchModule(moduleId, { status: 'ready', errorMessage: '' });
+    return { module: await patchModule(moduleId, { status: 'ready', errorMessage: '' }), aborted: false };
   } catch (error) {
     if (isCancel(error, controller.signal)) {
       // Parts already written stay; the interrupted part keeps its slot
@@ -1158,7 +1201,12 @@ export async function runParts(
           status: module.parts.length > 0 ? 'ready' : 'draft',
         });
       }
-      return (await getModule(moduleId)) ?? (await requireModule(moduleId));
+      // `aborted` is what tells the automation tail apart from a completed
+      // pass — the 'ready' row above is identical in both cases.
+      return {
+        module: (await getModule(moduleId)) ?? (await requireModule(moduleId)),
+        aborted: true,
+      };
     }
     await failModule(moduleId, error, controller.signal);
     throw error;
@@ -1899,10 +1947,17 @@ export function normalizePartMarkdown(raw: string): string {
  * spine checkpoint (`autoApproveSpine`) — the unattended tail of the flow.
  */
 async function runAutomatedParts(moduleId: Id, campaign: Campaign): Promise<void> {
-  const finished = await runParts(moduleId, campaign).catch(() => undefined);
-  // The encounter-floor gate (or a cancel) can leave the module short of
-  // ready — automation follows a COMPLETED parts pass only.
-  if (finished?.status !== 'ready') return;
+  // The stop epoch of the pass that ran BEFORE any automation could fire:
+  // a stop landing during the pass must not be turned into a fresh sweep by
+  // this tail (~1s later, and the pass waited on a long generation itself).
+  const epoch = getStopEpoch();
+  const finished = await runPartsPass(moduleId, campaign).catch(() => undefined);
+  // Automation follows a COMPLETED parts pass: a floor-gated pass is not
+  // ready, a CANCELLED pass is `aborted` (its row stays 'ready' with parts
+  // present, so the status alone cannot tell the two apart), and a stop that
+  // landed mid-pass disqualifies the tail outright.
+  if (finished === undefined || finished.aborted || stoppedSince(epoch)) return;
+  if (finished.module.status !== 'ready') return;
   // Post-generation automation (opt-in, module row) — fired by the engine
   // because this path has no user interaction to trigger it. The
   // orchestrator is idempotent, loud on its own, and never imports this
@@ -1923,10 +1978,13 @@ export async function approveSpineAndRun(
   await patchModule(moduleId, { spine });
   // LINKS hook: a user-edited spine may link another module's entities.
   await promoteSecondModuleUses(moduleId, [spine.premise]);
-  const finished = await runParts(moduleId, campaign).catch(() => undefined);
-  // A floor-gated (or cancelled) parts pass leaves the module short of
-  // ready — the automation follows a COMPLETED pass only.
-  if (finished?.status !== 'ready') return;
+  const epoch = getStopEpoch();
+  const finished = await runPartsPass(moduleId, campaign).catch(() => undefined);
+  // A floor-gated pass is not ready and a CANCELLED one is `aborted` (its
+  // row still says 'ready' so Retry stays available) — automation follows a
+  // COMPLETED pass, and never follows a stop.
+  if (finished === undefined || finished.aborted || stoppedSince(epoch)) return;
+  if (finished.module.status !== 'ready') return;
   void runModulePostGeneration(moduleId, campaign);
 }
 
@@ -1963,10 +2021,15 @@ export async function generateMissingParts(moduleId: Id, campaign: Campaign): Pr
       return part?.status !== 'ready';
     });
   if (indexes.length === 0) return;
-  const finished = await runParts(moduleId, campaign, { planIndexes: indexes }).catch(() => undefined);
-  // A floor-gated (or cancelled) parts pass leaves the module short of
-  // ready — the automation follows a COMPLETED pass only.
-  if (finished?.status !== 'ready') return;
+  const epoch = getStopEpoch();
+  const finished = await runPartsPass(moduleId, campaign, { planIndexes: indexes }).catch(
+    () => undefined,
+  );
+  // A floor-gated pass is not ready and a CANCELLED one is `aborted` (its
+  // row still says 'ready' so Retry stays available) — automation follows a
+  // COMPLETED pass, and never follows a stop.
+  if (finished === undefined || finished.aborted || stoppedSince(epoch)) return;
+  if (finished.module.status !== 'ready') return;
   void runModulePostGeneration(moduleId, campaign);
 }
 
