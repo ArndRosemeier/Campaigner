@@ -222,6 +222,31 @@ describe('runModulePostGeneration', () => {
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30_000);
 
+  it('generates a module-owned entity when the recorded name matches a party member (docs/17 row 69)', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await seedModule(campaign.id);
+    // The recorded npc name happens to equal a player character's: the party
+    // is invisible to module creation, so this is NOT a resolved name — the
+    // automation must produce the module's own entity.
+    const pc = await createArtifact({ campaignId: campaign.id, kind: 'pc', name: 'Kael' });
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(npcDraft), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(npcStatblock), modelUsed: 'test-model', fallback: null });
+
+    await runModulePostGeneration(module.id, campaign);
+
+    const artifacts = await listArtifactsByCampaign(campaign.id);
+    const generated = artifacts.filter((artifact) => artifact.kind === 'npc');
+    expect(generated.map((artifact) => artifact.name)).toEqual(['Kael']);
+    expect(generated[0]?.moduleId).toBe(module.id);
+    // The player's character is untouched — no alias, no scope change.
+    const after = artifacts.find((artifact) => artifact.id === pc.id);
+    expect(after?.kind).toBe('pc');
+    expect(after?.aliases).toEqual([]);
+    expect(after?.moduleId).toBeNull();
+    expect(after?.currentRevision).toBe(1);
+  }, 30_000);
+
   it('enqueues image jobs for resolved entities of the configured kinds (no image yet)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await seedModule(campaign.id, {

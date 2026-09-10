@@ -13,6 +13,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import type { Campaign, EntityKind, Id } from '@/domain';
+import { moduleCreationPool } from '@/domain';
 import { artifactRepo } from '@/db';
 import { classifyEntityName } from '@/llm/moduleGen';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -104,7 +105,13 @@ export function StubPopover({
     if (recordedKind !== undefined) return;
     let alive = true;
     listArtifactsByCampaign(campaign.id)
-      .then(async (artifacts) => {
+      .then(async (rows) => {
+        // Hand-typed-name classification is module creation: the candidate set
+        // is the module-creation pool (docs/17 row 69) — the Party is
+        // invisible, so a name equal to a player character's becomes a NEW
+        // module-owned entity. Deliberately linking a PC stays available
+        // through "Use existing entity…", which is an explicit user choice.
+        const artifacts = moduleCreationPool(rows);
         const classified = await classifyEntityName(
           state.name,
           contextParagraphs,
@@ -138,7 +145,7 @@ export function StubPopover({
     if (canonicalArtifactName === null) return;
     setBusy(true);
     try {
-      const artifacts = await listArtifactsByCampaign(campaign.id);
+      const artifacts = moduleCreationPool(await listArtifactsByCampaign(campaign.id));
       const artifact = artifacts.find(
         (candidate) => candidate.name.trim().toLowerCase() === canonicalArtifactName.trim().toLowerCase(),
       );

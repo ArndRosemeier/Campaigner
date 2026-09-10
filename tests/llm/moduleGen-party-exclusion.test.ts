@@ -4,17 +4,25 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { saveModule } from '@/db/moduleRepo';
+import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import {
   createModule,
   moduleCreationPool,
+  modulePartSchema,
+  moduleSpineSchema,
   MODULE_CREATION_EXCLUDED_KINDS,
   visibleToModuleCreation,
   type Campaign,
   type Id,
 } from '@/domain';
-import { campaignCastContext, runParts, runSpine } from '@/llm/moduleGen';
+import {
+  campaignCastContext,
+  classifyNewModuleEntityNames,
+  normalizeModuleEntityNames,
+  runParts,
+  runSpine,
+} from '@/llm/moduleGen';
 import { buildEntityBrief } from '@/features/modules/persona-request';
 import { fixedCastForEncounter, PARTY_SIZE, partyLevelLine } from '@/llm/roomBudget';
 import { renderChatGrounding } from '@/llm/canvasChat';
@@ -55,6 +63,8 @@ vi.mock('@/lib/toast', () => ({
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
+const { toastError } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
 
 const TEST_MODEL = 'test/fixture-model';
 
@@ -176,6 +186,21 @@ function promptContaining(marker: string): string {
     if (text.includes(marker)) return text;
   }
   throw new Error(`no chat call carried "${marker}"`);
+}
+
+/**
+ * The artifact lines of a normalization prompt's "Existing campaign artifacts"
+ * index. The whole prompt also carries the names being classified (they are
+ * the module's own text), so the exclusion has to be read off the INDEX — the
+ * list of entities the model is told a name may refer to.
+ */
+function artifactIndexOf(prompt: string): string[] {
+  const marker =
+    'Existing campaign artifacts (a name matching one of these refers to that artifact):\n';
+  const start = prompt.indexOf(marker);
+  if (start === -1) throw new Error('the prompt carries no artifact index');
+  const rest = prompt.slice(start + marker.length);
+  return (rest.split('\n\n')[0] ?? '').split('\n');
 }
 
 beforeEach(async () => {
@@ -329,4 +354,132 @@ describe('party-derived context that must not regress', () => {
     expect(block).toContain('Previous modules of this campaign');
     expect(block).toContain('Old part text.');
   });
+});
+
+/** A normalized module whose text mentions the given wiki-link names. */
+async function seedNormalizedModule(
+  moduleId: Id,
+  names: readonly string[],
+): Promise<void> {
+  const links = names.map((name) => `[[${name}]]`).join(' and ');
+  await patchModule(moduleId, {
+    status: 'ready',
+    entityNamesNormalized: true,
+    entityKinds: [],
+    entityRewriteProposals: null,
+    spine: moduleSpineSchema.parse({
+      premise: 'The bell rings beneath the harbor and nobody admits to ringing it.',
+      themes: [],
+      partPlan: [
+        { title: 'The Sunken Quarter', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+      ],
+    }),
+    parts: [
+      modulePartSchema.parse({
+        planIndex: 0,
+        markdown: `The tide pulls back and ${links} wait under the flooded nave, counting the steps down.`,
+        status: 'ready',
+        errorMessage: '',
+        edited: false,
+      }),
+    ],
+  });
+}
+
+describe('name classification never resolves onto the Party', () => {
+  it('an incremental run classifies a PC-named mention instead of treating it as resolved', async () => {
+    const { campaign, moduleId } = await seedWorld();
+    await seedNormalizedModule(moduleId, [PC_NAME]);
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: PC_NAME, canonical: PC_NAME, kind: 'npc', wants: [], conflictKind: null }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const report = await classifyNewModuleEntityNames(moduleId);
+
+    // Before the exclusion this name resolved to the PC artifact, so the run
+    // had nothing to classify and no record was ever written for it.
+    expect(report).toEqual({ classified: [PC_NAME], failed: false });
+    const row = await getModule(moduleId);
+    expect(row?.entityKinds.map((entry) => `${entry.name}:${entry.kind}`)).toEqual([
+      `${PC_NAME}:npc`,
+    ]);
+    // The candidate list the model saw carried no party member.
+    expect(artifactIndexOf(promptContaining('Existing campaign artifacts'))).not.toContain(PC_NAME);
+    // What happened instead: a NEW module-owned entity record. The player's
+    // character is untouched — no alias, no revision.
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const pc = (await listArtifactsByCampaign(campaign.id)).find(
+      (artifact) => artifact.kind === 'pc' && artifact.name === PC_NAME,
+    );
+    expect(pc?.aliases).toEqual([]);
+    expect(pc?.currentRevision).toBe(1);
+    expect(pc?.moduleId).toBeNull();
+  }, 30000);
+
+  it('the full pass keeps the Party out of its artifact index and records the name as its own entity', async () => {
+    const { campaign, moduleId } = await seedWorld();
+    await seedNormalizedModule(moduleId, [PC_NAME]);
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: PC_NAME, canonical: PC_NAME, kind: 'npc', wants: [], conflictKind: null }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await normalizeModuleEntityNames(moduleId);
+
+    const index = artifactIndexOf(promptContaining('Existing campaign artifacts'));
+    expect(index).toContain(SHARED_NPC);
+    expect(index).not.toContain(PC_NAME);
+    const row = await getModule(moduleId);
+    expect(row?.entityNamesNormalized).toBe(true);
+    expect(row?.entityKinds.map((entry) => entry.name)).toContain(PC_NAME);
+    expect(row?.entityRewriteProposals).toBeNull();
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const pc = (await listArtifactsByCampaign(campaign.id)).find(
+      (artifact) => artifact.kind === 'pc' && artifact.name === PC_NAME,
+    );
+    expect(pc?.aliases).toEqual([]);
+  }, 30000);
+
+  it('a verdict that tries to fold a name onto a party member fails LOUDLY, writing no alias', async () => {
+    const { campaign, moduleId } = await seedWorld();
+    await seedNormalizedModule(moduleId, ['Serren']);
+    // The PC's full name is not in the module text: this verdict tries to make
+    // the player's character the canonical target — the pre-exclusion behavior
+    // accepted it (the name was an artifact), added the alias and rewrote the
+    // link onto the party.
+    const foldOntoPc = {
+      text: JSON.stringify({
+        entities: [
+          { name: 'Serren', canonical: SECOND_PC_NAME, kind: 'npc', wants: [], conflictKind: null },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    };
+    chatMock.mockResolvedValue(foldOntoPc);
+
+    const report = await classifyNewModuleEntityNames(moduleId);
+
+    expect(report).toEqual({ classified: [], failed: true });
+    // Two calls: the verdict + the one stated repair retry — then the loud
+    // failure path the repo already has (recorded on the row + toasted).
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const row = await getModule(moduleId);
+    expect(row?.entityNamesNormalized).toBe(false);
+    expect(row?.entityNormalizationError).not.toBe('');
+    expect(row?.entityKinds).toEqual([]);
+    expect(toastErrorMock).toHaveBeenCalled();
+    const { listArtifactsByCampaign } = await import('@/db/artifactRepo');
+    const pc = (await listArtifactsByCampaign(campaign.id)).find(
+      (artifact) => artifact.name === SECOND_PC_NAME,
+    );
+    expect(pc?.aliases).toEqual([]);
+  }, 30000);
 });

@@ -34,7 +34,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { AnyArtifact, Campaign, Module } from '@/domain';
-import { entityKindFor } from '@/domain';
+import { entityKindFor, moduleCreationPool } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
@@ -151,6 +151,14 @@ export function useModuleEntities(
   artifacts: readonly AnyArtifact[],
 ): { entries: EntityEntry[]; documents: { where: string; markdown: string }[] } {
   return useMemo(() => {
+    // The panel is a MODULE-CREATION surface (its unresolved rows are the
+    // batch work queue and its observation feeds the classification run), so
+    // it resolves against the module-creation pool: the Party is invisible
+    // here (docs/17 row 69). A separate-named PC mention therefore reads as
+    // unresolved — the module gets its own entity instead of silently binding
+    // to a player character. Reading surfaces (reader chips, chat) still
+    // resolve against the full pool.
+    const pool = moduleCreationPool(artifacts);
     const documents = [
       { where: 'premise', markdown: module.spine?.premise ?? '' },
       ...module.parts
@@ -162,7 +170,7 @@ export function useModuleEntities(
       (link) => link.name,
     );
     const entries = names.map((name) => {
-      const resolution = resolveWikiLink(name, artifacts, { moduleId: module.id });
+      const resolution = resolveWikiLink(name, pool, { moduleId: module.id });
       const occurrences = countOccurrences(name, documents);
       const firstDoc = documents.find((document) =>
         countOccurrences(name, [document]).length > 0,

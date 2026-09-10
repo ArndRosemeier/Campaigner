@@ -236,6 +236,23 @@ describe('useModuleEntities', () => {
     expect(rows[3]).toHaveAttribute('data-total', '1');
     expect(rows[4]).toHaveAttribute('data-total', '1');
   });
+
+  it('resolves against the module-creation pool — a party member stays invisible (docs/17 row 69)', () => {
+    const campaignId = newId();
+    const mira = buildArtifact({ campaignId, kind: 'pc', name: 'Mira' });
+    const kael = buildArtifact({ campaignId, kind: 'npc', name: 'Kael' });
+
+    render(<EntriesHarness module={moduleFixture(campaignId)} artifacts={[mira, kael]} />);
+
+    const rows = screen.getAllByTestId('hook-entry');
+    const rowFor = (name: string): HTMLElement | undefined =>
+      rows.find((row) => row.textContent === name);
+    // The panel is the batch work queue: [[Mira]] names no module entity even
+    // though a campaign row carries that name, so it stays work to do; the NPC
+    // resolves exactly as before.
+    expect(rowFor('Mira')).toHaveAttribute('data-resolved', 'false');
+    expect(rowFor('Kael')).toHaveAttribute('data-resolved', 'true');
+  });
 });
 
 describe('EntityPanel', () => {

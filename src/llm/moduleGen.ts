@@ -290,7 +290,11 @@ export async function runSpine(
       nextSpine: ModuleSpine,
       nextKinds: ModuleEntityKind[],
     ): Promise<Module> => {
-      const artifacts = await listArtifactsByCampaign(campaign.id);
+      // Name normalization is a module-creation pass: its artifact index is
+      // the module-creation pool (docs/17 row 69), so a name that happens to
+      // match a player character can never be resolved onto the Party — it
+      // becomes a NEW module-owned entity instead.
+      const artifacts = moduleCreationPool(await listArtifactsByCampaign(campaign.id));
       const artifactNames = artifacts.map((artifact) => artifact.name);
       const spineNames = nextKinds.map((entry) => entry.name);
       let normalizedKinds: ModuleEntityKind[] = [];
@@ -1652,7 +1656,11 @@ export async function normalizeModuleEntityNames(
   // inside a parts pass (whose own entry snapshot covers the generated text,
   // not this rewrite). Loud on failure, before any write.
   await snapshotModuleVersion(moduleId, 'normalization', 'Normalize entity names');
-  const artifacts = await listArtifactsByCampaign(module.campaignId);
+  // The candidate set is the module-creation pool (docs/17 row 69): the
+  // verdicts may neither resolve a generated name onto a player character nor
+  // add an alias to a `pc` row (the same list feeds the alias/rewrite
+  // application below).
+  const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
   const artifactNames = artifacts.map((artifact) => artifact.name);
   const { text } = moduleNormalizationDocument(module);
   const names = extractWikiLinks(text).map((link) => link.name);
@@ -1756,7 +1764,12 @@ export async function classifyNewModuleEntityNames(moduleId: Id): Promise<NewEnt
       'Entity names are not normalized for the current text — run the normalization pass first',
     );
   }
-  const artifacts = await listArtifactsByCampaign(module.campaignId);
+  // The resolution candidate set is the module-creation pool (docs/17 row
+  // 69): a name matching a player character does NOT count as resolved, so a
+  // generated NPC that happens to share a PC's name is classified like any
+  // other new name and becomes a NEW module-owned entity — module creation
+  // never quietly binds itself to a party member.
+  const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
   const artifactNames = artifacts.map((artifact) => artifact.name);
   const { text } = moduleNormalizationDocument(module);
   const textNames = extractWikiLinks(text).map((link) => link.name);
@@ -1933,6 +1946,10 @@ async function applyNormalizationVerdict(
  * Single-name normalization for hand-typed names (fix-01): the stub popover
  * asks which canonical entity the name refers to (and its kind) before
  * creating anything. Same contract and retry policy as the batched pass.
+ *
+ * `artifactNames` is the MODULE-CREATION pool's names (`moduleCreationPool`,
+ * docs/17 row 69) — never a raw campaign list, or the verdict could resolve a
+ * module entity onto a player character.
  */
 export async function classifyEntityName(
   name: string,

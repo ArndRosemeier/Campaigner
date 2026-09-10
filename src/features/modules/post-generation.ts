@@ -1,5 +1,5 @@
 import type { AnyArtifact, Artifact, Campaign, EntityKind, Id, Module } from '@/domain';
-import { ENTITY_KINDS, entityKindFor, moduleDocumentText } from '@/domain';
+import { ENTITY_KINDS, entityKindFor, moduleCreationPool, moduleDocumentText } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -170,7 +170,11 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
         // WITHDRAWN, not a failure), so without this guard the loop would
         // cheerfully start the next kind's batch.
         if (stoppedSince(epoch)) return;
-        const artifacts = await listArtifactsByCampaign(module.campaignId);
+        // The batch target set is the module-creation pool (docs/17 row 69):
+        // a recorded name that happens to match a player character does NOT
+        // count as resolved, so it is generated as a NEW module-owned entity
+        // instead of silently binding the module to the Party.
+        const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
         const names = namesOfKind(module, kind).filter(
           (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact === undefined,
         );
@@ -195,8 +199,9 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
     }
 
     // Current artifacts for the queue targets — the batches above may have
-    // produced some.
-    const artifacts = await listArtifactsByCampaign(module.campaignId);
+    // produced some. The module-creation pool (docs/17 row 69): image targets
+    // are module entities, never the Party.
+    const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
     const settings = await getSettings();
 
     // The enqueue half of the sweep is one unit too: a stop is not a reason

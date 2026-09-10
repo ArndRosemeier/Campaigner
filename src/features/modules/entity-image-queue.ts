@@ -1,4 +1,5 @@
 import type { AnyArtifact, Id } from '@/domain';
+import { moduleCreationPool } from '@/domain';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { listArtifactsByCampaign, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
@@ -67,7 +68,10 @@ async function processJob(
   if (!settings.imagesEnabled) {
     throw new Error('Image generation is disabled — enable it in Settings');
   }
-  const artifacts = await listArtifactsByCampaign(job.campaignId);
+  // Module creation never references the Party (docs/17 row 69): a job name
+  // that matches only a `pc` row has no module entity to illustrate — it fails
+  // loudly below instead of attaching a generated cover to a player character.
+  const artifacts = moduleCreationPool(await listArtifactsByCampaign(job.campaignId));
   const artifact = resolveWikiLink(job.name, artifacts, {
     moduleId: job.moduleId,
   }).artifact;
