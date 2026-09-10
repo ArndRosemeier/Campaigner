@@ -38,7 +38,14 @@ import {
   sortInitiativeOrder,
   visibleFighterTokenIds,
 } from '@/domain/battle/initiative';
-import { resizeVeilFromEdge, veilCellPx, type VeilEdge } from '@/domain/battle/veil';
+import {
+  MARKER_HIT_PAD_PX,
+  markerUnderPoint,
+  resizeVeilFromEdge,
+  veilCellPx,
+  type MarkerGeometry,
+  type VeilEdge,
+} from '@/domain/battle/veil';
 import {
   battleGridStyle,
   snapAxisToGrid,
@@ -1044,6 +1051,10 @@ export function BattleSurface(): JSX.Element {
     const kind = gesture.kind;
     const targetId = gesture.targetId;
     const drag = takePendingDrag();
+    // The tap's board point before the reset below clears the machine. The
+    // arm snapshots the piece center and every owned move refreshes it, so
+    // for a sub-threshold release this is the piece under the finger.
+    const tappedAt = gesture.currentBoard;
     // Reset FIRST: the machine is idle before any commit/select work, so a
     // re-entrant release finds idle and no-ops instead of double-committing.
     gestureRef.current = resetGesture();
@@ -1057,6 +1068,25 @@ export function BattleSurface(): JSX.Element {
       if (kind === 'token') {
         setSelectedTokenId(targetId);
         setSelectedVeilId(null);
+        return;
+      }
+      // Veil tap PASS-THROUGH (ledger 65): a TRANSPARENT veil clicks through
+      // to the room-key marker its pad covers — markers stay BELOW the veils
+      // with `z-index: auto` (469f058), so the veil body would otherwise win
+      // hit-testing and a covered-but-keyed room's key would be unreachable
+      // without lifting the veil. FOG keeps blocking: it is opaque and its
+      // body stays the only way to select it. Resolution is pure geometry
+      // (`markerUnderPoint`), never `elementFromPoint` — jsdom does not
+      // hit-test, so a DOM read could not be pinned by a test.
+      if (kind === 'veil' && tappedAt !== null) {
+        const tapped = battle?.board.veils.find((entry) => entry.id === targetId);
+        if (tapped?.kind === 'veil') {
+          const roomId = markerUnderPoint(markersRef.current, tappedAt, contentSize);
+          if (roomId !== null) {
+            setSelectedKeyRoomId(roomId);
+            setSelectedVeilId(null);
+          }
+        }
       }
       return;
     }
@@ -1531,6 +1561,24 @@ export function BattleSurface(): JSX.Element {
     () => layoutRooms.filter((entry) => entry.room.key !== '' || entry.room.keyTreasure !== ''),
     [layoutRooms],
   );
+  // The marker pads the veil tap PASS-THROUGH resolves against (ledger 65) —
+  // the SAME geometry the buttons below render at (normalized center + the
+  // 44px pad). Mirrored into a ref for the release handler, which closes over
+  // its render's locals: a tap whose pointerdown predates a layout edit must
+  // still resolve against the last RENDERED pads, never a stale snapshot.
+  const markerGeometry = useMemo<MarkerGeometry[]>(
+    () => keyedRooms.map((entry) => ({
+      roomId: entry.room.id,
+      x: entry.marker.x,
+      y: entry.marker.y,
+      padPx: MARKER_HIT_PAD_PX,
+    })),
+    [keyedRooms],
+  );
+  const markersRef = useRef<MarkerGeometry[]>([]);
+  useEffect(() => {
+    markersRef.current = markerGeometry;
+  }, [markerGeometry]);
   // The Path rail (complex sites, GM-only advisory aid): rooms in the
   // layout's stored path order (the room-array order is the fallback —
   // packAttempt rotates rooms, so the array cannot be trusted). The CURRENT
@@ -1641,13 +1689,13 @@ export function BattleSurface(): JSX.Element {
           <SwordsIcon aria-hidden data-icon="inline-start" />
           Initiative
         </Button>
-        <Button size="sm" variant="outline" onClick={() => {
+        <Button size="sm" variant="outline" data-testid="veil-tool" onClick={() => {
           addVeil('veil');
         }} disabled={playerSafe}>
           <ShieldIcon aria-hidden data-icon="inline-start" />
           Veil
         </Button>
-        <Button size="sm" variant="outline" onClick={() => {
+        <Button size="sm" variant="outline" data-testid="fog-tool" onClick={() => {
           addVeil('fog');
         }} disabled={playerSafe}>
           Fog
@@ -2544,13 +2592,23 @@ interface VeilViewProps {
 }
 
 /**
- * A veil/fog rectangle at a ~10% tint, ALWAYS (M5-D amendment 2026-09-06):
- * the veil marks unexplored ground and hides mob tokens in player view — it
- * must not blind the GM to their own map. The fog keeps its light tint and
- * the veil its dark one so the kind stays readable at the same strength.
+ * The two veil kinds render and behave DISTINCTLY (ledger 65 — owner-directed,
+ * supersedes the 8fa7abd 10%-in-both-views rule): **fog is opaque and blocks**
+ * (a solid rectangle; a sub-threshold tap on it selects it and stops there) and
+ * **veil is transparent and clicks through** (its body still owns the drag/
+ * resize/select stream, but a tap that lands inside a room-key marker's hit pad
+ * opens that marker — see `markerUnderPoint`). Keyed off `kind`, which already
+ * encodes the seeder's fog intent, so every existing AND newly seeded row lights
+ * up with no data migration and NO new field.
+ *
+ * Why the earlier "never blind the GM" reasoning was overridden: the GM is not
+ * blinded — tokens paint ABOVE the veils by DOM order, and fog stays revealable
+ * ("Reveal next room"), draggable, and deletable. Opaque fog is the mechanic's
+ * whole point; a 10% tint made fog and veil the same thing on screen.
+ *
  * Selection and dragging read via outline + lift (ring / z-20, mirroring the
- * token drag lift) — never opacity swings. The solid amber resize handles
- * carry the resize affordance, so the translucent fill hides nothing.
+ * token drag lift) — never opacity swings (and never an `opacity-*` class: the
+ * fills are solid/alpha-free, pinned by the veil presentation test).
  */
 function VeilView({
   veil,
@@ -2574,7 +2632,9 @@ function VeilView({
     <div
       className={cn(
         'absolute -translate-x-1/2 -translate-y-1/2 touch-none',
-        veil.kind === 'fog' ? 'bg-zinc-200/10' : 'bg-black/10',
+        // Fog: OPAQUE and blocking. Veil: transparent, alpha-free (never an
+        // `opacity-*` class — selection/dragging must not swing the fill).
+        veil.kind === 'fog' ? 'bg-zinc-300' : 'bg-black/10',
         (selected || dragging) && 'ring-2 ring-amber-400',
         dragging && 'z-20',
         dragging ? 'cursor-grabbing' : undefined,

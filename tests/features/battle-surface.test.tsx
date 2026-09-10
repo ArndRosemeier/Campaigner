@@ -167,6 +167,13 @@ function statBlock(over: Partial<StatBlock> = {}): StatBlock {
 
 let campaignId = '';
 
+// The GM-only key/treasure strings the player-safe DOM contract pins as
+// ABSENT from `document.body` — module scope because `seedKeyedBattle`
+// (the keyed-room seed helper) also reads them.
+const KEY_TEXT = 'Cracked doors hang off one hinge.';
+const KEY_TREASURE = 'Fallen banner: 15 gp';
+const MOB_TREASURE = 'Pouch: 5 gp, a bone key';
+
 class ResizeObserverStub {
   callback: ResizeObserverCallback;
   constructor(callback: ResizeObserverCallback) {
@@ -342,6 +349,67 @@ async function currentBattle(moduleId: string) {
     return row;
   });
   return battle;
+}
+
+/** A battle seeded from an encounter WITH a layout (2 keyed rooms) and a
+ *  treasure-carrying roster row. packRooms keeps attempt-0 order. */
+async function seedKeyedBattle(): Promise<{ moduleId: string; encounterId: string }> {
+  const pc1 = await addPc('Serren', 20);
+  void pc1;
+  const roomA = newId();
+  const roomB = newId();
+  const layout = packRooms({
+    theme: 'Ash temple',
+    aspect: '4:3',
+    entryRoomId: roomA,
+    rosterCounts: [1],
+    rooms: [
+      {
+        id: roomA,
+        name: 'Entry',
+        description: '',
+        size: 'small',
+        monsterIndexes: [],
+        adjacentRoomIds: [roomB],
+        key: KEY_TEXT,
+        keyTreasure: KEY_TREASURE,
+      },
+      {
+        id: roomB,
+        name: 'Sanctum',
+        description: '',
+        size: 'medium',
+        monsterIndexes: [0],
+        adjacentRoomIds: [roomA],
+        key: '',
+        keyTreasure: '',
+      },
+    ],
+  });
+  const encounter = await createArtifact({
+    campaignId,
+    kind: 'encounter',
+    name: 'Temple ambush',
+    data: {
+      difficulty: 'hard',
+      levelHint: '4',
+      monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: MOB_TREASURE, source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'complex',
+      budgetAdvisory: '',
+    },
+  });
+  const module = await saveModule(
+    createModule({ campaignId, title: 'Keyed Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
+  );
+  await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+  return { moduleId: module.id, encounterId: encounter.id };
 }
 
 describe('layout-anchored grid rendering', () => {
@@ -622,11 +690,91 @@ describe('veil presentation', () => {
     await flushAsyncUpdates();
     expectTint(screen.getByTestId('battle-veil'));
     expect(screen.getByTestId('battle-veil').className).toContain('ring-2');
-    // Player view gets the same ~10% base — the veil never blinds anyone.
+    // Player view gets the same ~10% base — the transparent veil never blinds
+    // anyone (the OPAQUE fog is the other kind; see the next test).
     const user = userEvent.setup();
     await user.click(screen.getByTestId('player-safe-toggle'));
     await flushAsyncUpdates();
     expectTint(screen.getByTestId('battle-veil'));
+  });
+
+  it('renders fog OPAQUE and veil transparent, keyed off kind, in both views (ledger 65 supersession)', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [
+          { id: newId(), kind: 'fog', x: 0.25, y: 0.25, widthCells: 2, heightCells: 2 },
+          { id: newId(), kind: 'veil', x: 0.7, y: 0.7, widthCells: 2, heightCells: 2 },
+        ],
+      });
+      await flushAsyncUpdates();
+    });
+    const elFor = (kind: 'fog' | 'veil'): HTMLElement => {
+      const el = screen
+        .getAllByTestId('battle-veil')
+        .find((node) => node.getAttribute('data-veil-kind') === kind);
+      if (el === undefined) throw new Error(`no ${kind} veil rendered`);
+      return el;
+    };
+    // The kind attribute is the switch the contract keys off — first pinned here.
+    expect(screen.getAllByTestId('battle-veil')).toHaveLength(2);
+    const expectKinds = (): void => {
+      // Fog: a SOLID rectangle — a non-transparent fill class with no `/alpha`
+      // suffix, and never an `opacity-*` class (the fill may not be walked back).
+      const fog = elFor('fog');
+      expect(fog.className).toContain('bg-zinc-300');
+      expect(fog.className).not.toMatch(/opacity-\d/);
+      for (const cls of fog.className.split(/\s+/)) {
+        expect(cls).not.toMatch(/^bg-zinc-300\//);
+      }
+      // Veil: still the transparent ~10% tint (its job is plain cover).
+      const veil = elFor('veil');
+      expect(veil.className).toContain('bg-black/10');
+      expect(veil.className).not.toMatch(/opacity-\d/);
+    };
+    expectKinds();
+    // The owner asked for a rectangle that reads as opaque on their OWN board,
+    // so GM view and player view render the very same distinction — never a
+    // mode-dependent fill.
+    await userEvent.setup().click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expect(screen.getAllByTestId('battle-veil')).toHaveLength(2);
+    expectKinds();
+  });
+
+  it('the two toolbar tools stay distinct: veil-tool mints a veil, fog-tool mints a fog', async () => {
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, { ...seeded.board, veils: [] });
+      await flushAsyncUpdates();
+    });
+    // No testid existed before ledger 65, so a test could not click either
+    // tool — the distinction the owner reported broken was unpinnable.
+    const user = userEvent.setup();
+    await user.click(screen.getByTestId('veil-tool'));
+    await flushAsyncUpdates();
+    await user.click(screen.getByTestId('fog-tool'));
+    await flushAsyncUpdates();
+    const kinds = (await currentBattle(moduleId)).board.veils.map((veil) => veil.kind);
+    expect(kinds).toEqual(['veil', 'fog']);
+    // Each minted veil renders with ITS kind's fill.
+    expect(screen.getAllByTestId('battle-veil')).toHaveLength(2);
+    const byKind = new Map(
+      screen.getAllByTestId('battle-veil').map((el) => [el.getAttribute('data-veil-kind'), el]),
+    );
+    expect(byKind.get('fog')?.className).toContain('bg-zinc-300');
+    expect(byKind.get('veil')?.className).toContain('bg-black/10');
   });
 
   it('gives veil resize handles a 44px touch target and drag-resizes with one commit (T2a/T2b unified)', async () => {
@@ -684,6 +832,138 @@ describe('veil presentation', () => {
     expect(after.heightCells).toBe(2);
     expect(after.x).toBeCloseTo(0.345, 9);
     expect(after.y).toBe(0.3);
+  });
+});
+
+describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
+  async function seedMarkerBattle(): Promise<{
+    moduleId: string;
+    markerX: number;
+    markerY: number;
+  }> {
+    const { moduleId, encounterId } = await seedKeyedBattle();
+    const encounter = await getAnyArtifact(encounterId);
+    if (encounter?.kind !== 'encounter' || encounter.data.layout == null) {
+      throw new Error('layout missing');
+    }
+    const roomA = encounter.data.layout.rooms.find((room) => room.name === 'Entry');
+    const mobsRect = roomA?.mobsRect;
+    if (roomA === undefined || mobsRect === undefined) throw new Error('room A missing its mobsRect');
+    // Room A is the KEYED room (Entry) and only Sanctum spawns mobs, so the
+    // seeded board's single fog veil never covers room A: park a GM-drawn
+    // TRANSPARENT veil exactly over the marker's pad. The veil body then owns
+    // pointerdown (markers sit BELOW it — DOM order, no z-index), which is
+    // exactly the state the pass-through exists for.
+    const markerX = (mobsRect.x + mobsRect.w / 2) / encounter.data.layout.gridW;
+    const markerY = (mobsRect.y + mobsRect.h / 2) / encounter.data.layout.gridH;
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [
+          ...seeded.board.veils,
+          { id: newId(), kind: 'veil', x: markerX, y: markerY, widthCells: 2, heightCells: 2 },
+        ],
+      });
+      await flushAsyncUpdates();
+    });
+    return { moduleId, markerX, markerY };
+  }
+
+  /** The veil body the tap lands on — the LAST veil, i.e. the parked one. */
+  function parkedVeil(): HTMLElement {
+    const veils = screen.getAllByTestId('battle-veil');
+    const veil = veils[veils.length - 1];
+    if (veil === undefined) throw new Error('no veil rendered');
+    return veil;
+  }
+
+  const frameX = (fx: number): number => contentRect.left + fx * contentRect.width;
+  const frameY = (fy: number): number => contentRect.top + fy * contentRect.height;
+
+  it('a tap on a TRANSPARENT veil inside a marker pad opens that room’s key', async () => {
+    const { moduleId, markerX, markerY } = await seedMarkerBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('room-key-card')).toBeNull();
+    const veil = parkedVeil();
+    expect(veil.getAttribute('data-veil-kind')).toBe('veil');
+    // Down and up at the marker centre: the veil body takes the grab (it is
+    // painted above the pad), and the release is a tap (0px, way below the
+    // 8px threshold) whose point lands inside the 44px pad.
+    fireEvent.pointerDown(veil, { pointerId: 11, clientX: frameX(markerX), clientY: frameY(markerY) });
+    fireEvent.pointerUp(veil, { pointerId: 11, clientX: frameX(markerX), clientY: frameY(markerY) });
+    await flushAsyncUpdates();
+    // The key opened…
+    const card = screen.getByTestId('room-key-card');
+    expect(within(card).getByText('Room A — Entry')).toBeInTheDocument();
+    // …AND the veil is not merely selected (the old behavior this replaces).
+    expect(screen.queryByTestId('delete-veil')).toBeNull();
+    expect(veil.className).not.toContain('ring-2');
+    // Nothing was committed: a tap never writes.
+    expect((await currentBattle(moduleId)).board.veils).toHaveLength(2);
+  });
+
+  it('the SAME tap on a FOG blocks: no key opens, the fog is selected instead', async () => {
+    const { moduleId, markerX, markerY } = await seedMarkerBattle();
+    const seeded = await currentBattle(moduleId);
+    const parked = seeded.board.veils[seeded.board.veils.length - 1];
+    if (parked === undefined) throw new Error('parked veil missing');
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: seeded.board.veils.map((veil) =>
+          veil.id === parked.id ? { ...veil, kind: 'fog' as const } : veil,
+        ),
+      });
+      await flushAsyncUpdates();
+    });
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    const fog = parkedVeil();
+    expect(fog.getAttribute('data-veil-kind')).toBe('fog');
+    fireEvent.pointerDown(fog, { pointerId: 12, clientX: frameX(markerX), clientY: frameY(markerY) });
+    fireEvent.pointerUp(fog, { pointerId: 12, clientX: frameX(markerX), clientY: frameY(markerY) });
+    await flushAsyncUpdates();
+    // Fog is opaque and blocks: the identical tap reaches NOTHING behind it —
+    // no key card — and behaves exactly as before (the fog is selected).
+    expect(screen.queryByTestId('room-key-card')).toBeNull();
+    expect(screen.getByTestId('delete-veil')).toBeInTheDocument();
+    expect(fog.className).toContain('ring-2');
+  });
+
+  it('a veil tap OUTSIDE every marker pad still selects the veil and reaches delete-veil', async () => {
+    const { moduleId, markerX, markerY } = await seedMarkerBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    // Move the parked veil out from under room A's pad (its own center), so
+    // the tap misses: the pass-through is a pad test, never a plain "is
+    // there any marker on this board" test.
+    const parkedId = (await currentBattle(moduleId)).board.veils.slice(-1)[0]?.id;
+    if (parkedId === undefined) throw new Error('parked veil missing');
+    const battle = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(battle.id, {
+        ...battle.board,
+        veils: battle.board.veils.map((veil) =>
+          veil.id === parkedId ? { ...veil, x: markerX + 0.4, y: markerY } : veil,
+        ),
+      });
+      await flushAsyncUpdates();
+    });
+    const veil = parkedVeil();
+    const atX = markerX + 0.4;
+    fireEvent.pointerDown(veil, { pointerId: 13, clientX: frameX(atX), clientY: frameY(markerY) });
+    fireEvent.pointerUp(veil, { pointerId: 13, clientX: frameX(atX), clientY: frameY(markerY) });
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('room-key-card')).toBeNull();
+    // The veil is selected, exactly as before ledger 65.
+    expect(veil.className).toContain('ring-2');
+    const deleteButton = screen.getByTestId('delete-veil');
+    await userEvent.setup().click(deleteButton);
+    await flushAsyncUpdates();
+    expect(screen.queryByTestId('delete-veil')).toBeNull();
+    expect((await currentBattle(moduleId)).board.veils.some((entry) => entry.id === parkedId)).toBe(false);
   });
 });
 
@@ -3042,71 +3322,6 @@ describe('rail free-roll dice button (GM-only)', () => {
 });
 
 describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
-  const KEY_TEXT = 'Cracked doors hang off one hinge.';
-  const KEY_TREASURE = 'Fallen banner: 15 gp';
-  const MOB_TREASURE = 'Pouch: 5 gp, a bone key';
-
-  /** A battle seeded from an encounter WITH a layout (2 keyed rooms) and a
-   *  treasure-carrying roster row. packRooms keeps attempt-0 order. */
-  async function seedKeyedBattle(): Promise<{ moduleId: string; encounterId: string }> {
-    const pc1 = await addPc('Serren', 20);
-    void pc1;
-    const roomA = newId();
-    const roomB = newId();
-    const layout = packRooms({
-      theme: 'Ash temple',
-      aspect: '4:3',
-      entryRoomId: roomA,
-      rosterCounts: [1],
-      rooms: [
-        {
-          id: roomA,
-          name: 'Entry',
-          description: '',
-          size: 'small',
-          monsterIndexes: [],
-          adjacentRoomIds: [roomB],
-          key: KEY_TEXT,
-          keyTreasure: KEY_TREASURE,
-        },
-        {
-          id: roomB,
-          name: 'Sanctum',
-          description: '',
-          size: 'medium',
-          monsterIndexes: [0],
-          adjacentRoomIds: [roomA],
-          key: '',
-          keyTreasure: '',
-        },
-      ],
-    });
-    const encounter = await createArtifact({
-      campaignId,
-      kind: 'encounter',
-      name: 'Temple ambush',
-      data: {
-        difficulty: 'hard',
-        levelHint: '4',
-        monsters: [{ name: 'Cultist', count: 1, notes: '', treasure: MOB_TREASURE, source: { type: 'inline', statBlock: statBlock({ hp: 22 }) } }],
-        terrain: '',
-        tactics: '',
-        treasure: '',
-        mapImageId: null,
-        layout,
-        preset: 'standard',
-        locationKind: 'other',
-        siteShape: 'complex',
-        budgetAdvisory: '',
-      },
-    });
-    const module = await saveModule(
-      createModule({ campaignId, title: 'Keyed Module', concept: '', levelMin: 1, levelMax: 5, sizeDial: 'sketch' }),
-    );
-    await seedBattleFromEncounter(campaignId, module.id, encounter.id);
-    return { moduleId: module.id, encounterId: encounter.id };
-  }
-
   it('GM view: key markers render at the room mobsRect CENTER (D11 fix) and tapping one opens the key card in the rail', async () => {
     const { moduleId, encounterId } = await seedKeyedBattle();
     await renderSurface(moduleId);
@@ -3169,6 +3384,34 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     expect(screen.getByTestId('room-key-card')).toBeInTheDocument();
   });
 
+  it('a seeded encounter’s room fogs render OPAQUE in both views (the owner’s "no fogged rooms" report)', async () => {
+    const { moduleId } = await seedKeyedBattle();
+    await renderSurface(moduleId);
+    await flushAsyncUpdates();
+    // Seeded room veils are already `kind: 'fog'` (layout D4) — which is why
+    // the owner saw "no fogged rooms": the kind was there, the FILL was not.
+    const seeded = await currentBattle(moduleId);
+    expect(seeded.board.veils.length).toBeGreaterThan(0);
+    expect(seeded.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
+    const fogEls = (): HTMLElement[] => {
+      const els = screen
+        .getAllByTestId('battle-veil')
+        .filter((el) => el.getAttribute('data-veil-kind') === 'fog');
+      expect(els).toHaveLength(seeded.board.veils.length);
+      return els;
+    };
+    const expectOpaque = (): void => {
+      for (const el of fogEls()) {
+        expect(el.className).toContain('bg-zinc-300');
+        expect(el.className).not.toMatch(/opacity-\d/);
+      }
+    };
+    expectOpaque();
+    await userEvent.setup().click(screen.getByTestId('player-safe-toggle'));
+    await flushAsyncUpdates();
+    expectOpaque();
+  });
+
   it('paints room-key markers BELOW veils and tokens (no z-10, DOM order decides hit-testing)', async () => {
     const { moduleId } = await seedKeyedBattle();
     await renderSurface(moduleId);
@@ -3185,6 +3428,14 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     expect(followers.length).toBeGreaterThan(0);
     for (const node of followers) {
       expect(marker.compareDocumentPosition(node) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+    // The veil bodies keep their `data-gesture-grab` hit areas — the tap
+    // pass-through (ledger 65) never moves the marker layer or drops the
+    // grab: reachability comes from the tap resolving under the veil, NOT
+    // from z-index or from reordering (the 469f058 contract above).
+    for (const veil of screen.getAllByTestId('battle-veil')) {
+      expect(veil.getAttribute('data-gesture-grab')).toMatch(/^veil:/);
+      expect(veil.className).not.toMatch(/\bz-\d/);
     }
     // The demoted marker still opens the key card (badge affordance kept).
     fireEvent.click(marker);

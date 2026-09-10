@@ -45,10 +45,13 @@ import {
   visibleFighterTokenIds,
 } from '@/domain/battle/initiative';
 import {
+  MARKER_HIT_PAD_PX,
+  markerUnderPoint,
   portraitCoveredByVeil,
   resizeVeilFromEdge,
   veilCellPx,
   veilSpanNorm,
+  type MarkerGeometry,
 } from '@/domain/battle/veil';
 import { resizeEffectFromEdge } from '@/domain/battle/effect';
 import {
@@ -450,6 +453,72 @@ describe('veils', () => {
     expect(
       portraitCoveredByVeil({ ...token, shape: 'circle', color: '#ff0000' }, covering, 64, cellPx, boardPx, boardPx),
     ).toBe(false);
+  });
+});
+
+describe('marker hit pads under a veil tap (ledger 65 pass-through)', () => {
+  // The content frame the surface converts pointers against — 800×450 in the
+  // surface tests' aspect-fitted board. A 44px pad is 0.055 wide and 0.0978
+  // tall in that frame (px pad ÷ frame px), so the two axes are NOT equal.
+  const content = { w: 800, h: 450 };
+
+  function marker(roomId: string, x: number, y: number, padPx = MARKER_HIT_PAD_PX): MarkerGeometry {
+    return { roomId, x, y, padPx };
+  }
+
+  it('resolves a point inside a pad, and the frame’s own pad size is 44px', () => {
+    expect(MARKER_HIT_PAD_PX).toBe(44);
+    const markers = [marker('room-a', 0.5, 0.5)];
+    // Centre, and a hair inside each edge (the pad spans ±0.0275 in x and
+    // ±0.0489 in y for an 800×450 frame).
+    expect(markerUnderPoint(markers, { x: 0.5, y: 0.5 }, content)).toBe('room-a');
+    expect(markerUnderPoint(markers, { x: 0.4726, y: 0.5 }, content)).toBe('room-a');
+    expect(markerUnderPoint(markers, { x: 0.5274, y: 0.5 }, content)).toBe('room-a');
+    expect(markerUnderPoint(markers, { x: 0.5, y: 0.4512 }, content)).toBe('room-a');
+    expect(markerUnderPoint(markers, { x: 0.5, y: 0.5488 }, content)).toBe('room-a');
+  });
+
+  it('rejects a point a hair OUTSIDE the pad on every side', () => {
+    const markers = [marker('room-a', 0.5, 0.5)];
+    expect(markerUnderPoint(markers, { x: 0.4724, y: 0.5 }, content)).toBeNull();
+    expect(markerUnderPoint(markers, { x: 0.5276, y: 0.5 }, content)).toBeNull();
+    expect(markerUnderPoint(markers, { x: 0.5, y: 0.451 }, content)).toBeNull();
+    expect(markerUnderPoint(markers, { x: 0.5, y: 0.549 }, content)).toBeNull();
+  });
+
+  it('uses the frame’s own aspect: the pad is wider in normalized y than in x', () => {
+    // The same normalized offset is OUTSIDE on the narrow axis and INSIDE on
+    // the tall one — the pad is a screen-space square, not a normalized one.
+    const markers = [marker('room-a', 0.5, 0.5)];
+    expect(markerUnderPoint(markers, { x: 0.47, y: 0.5 }, content)).toBeNull();
+    expect(markerUnderPoint(markers, { x: 0.5, y: 0.47 }, content)).toBe('room-a');
+  });
+
+  it('treats the pad edge as HALF-OPEN (the rectsOverlap convention)', () => {
+    const markers = [marker('room-a', 0.5, 0.5)];
+    const right = 0.5 + MARKER_HIT_PAD_PX / 2 / content.w;
+    expect(markerUnderPoint(markers, { x: right - 1e-9, y: 0.5 }, content)).toBe('room-a');
+    expect(markerUnderPoint(markers, { x: right, y: 0.5 }, content)).toBeNull();
+  });
+
+  it('returns the FIRST covering marker, and null when no marker covers the point', () => {
+    const markers = [marker('room-a', 0.5, 0.5), marker('room-b', 0.9, 0.9)];
+    expect(markerUnderPoint(markers, { x: 0.5, y: 0.5 }, content)).toBe('room-a');
+    expect(markerUnderPoint(markers, { x: 0.9, y: 0.9 }, content)).toBe('room-b');
+    expect(markerUnderPoint(markers, { x: 0.7, y: 0.5 }, content)).toBeNull();
+  });
+
+  it('resolves nothing on an empty marker list or an unmounted frame', () => {
+    expect(markerUnderPoint([], { x: 0.5, y: 0.5 }, content)).toBeNull();
+    // A board with no real size has no markers either — never a NaN/Infinity
+    // pad that would swallow every tap.
+    expect(markerUnderPoint([marker('room-a', 0.5, 0.5)], { x: 0.5, y: 0.5 }, { w: 0, h: 0 })).toBeNull();
+  });
+
+  it('fails loud on a non-positive pad instead of silently covering nothing', () => {
+    expect(() => markerUnderPoint([marker('room-a', 0.5, 0.5, 0)], { x: 0.5, y: 0.5 }, content)).toThrow(
+      /pad must be positive/i,
+    );
   });
 });
 

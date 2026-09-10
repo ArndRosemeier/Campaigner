@@ -157,3 +157,60 @@ function rectsOverlap(
 ): boolean {
   return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
 }
+
+/**
+ * The room-key marker hit pad, in CSS px — the badge stays 24px (`size-6`)
+ * but its button carries a 44px (`size-11`) transparent pad (the sanctioned
+ * veil-handle affordance). The surface passes this in so the resolver below
+ * stays a pure function of geometry, never a DOM read.
+ */
+export const MARKER_HIT_PAD_PX = 44;
+
+/** One room-key marker's tap target: the CENTER (normalized board coords,
+ * the same frame `BattleVeil.x/y` lives in) plus its pad edge in CSS px. */
+export interface MarkerGeometry {
+  roomId: string;
+  x: number;
+  y: number;
+  padPx: number;
+}
+
+/**
+ * Which room-key marker's hit pad covers a point — the veil tap PASS-THROUGH
+ * (ledger 65).
+ *
+ * A transparent (`kind: 'veil'`) veil is plain cover: its body still owns the
+ * pointer stream (drag/resize/select), but a sub-threshold TAP on it must
+ * reach the room-key marker the pad covers, because markers stay BELOW the
+ * veils with `z-index: auto` (the 469f058 fix) and only DOM order decides
+ * hit-testing — the veil body wins it. Fog (`kind: 'fog'`) never asks: it is
+ * opaque and blocks, and its body is the only way to select it.
+ *
+ * PURE over already-computed geometry, deliberately NOT `elementFromPoint`:
+ * jsdom does not hit-test (docs/08 §Testing), so a DOM hit-test could not be
+ * pinned by a test and would be an unverifiable claim. The point and the
+ * marker centers are both normalized to the content frame; the px pad divides
+ * by that frame's layout size. Pads are tested in the documented half-open
+ * convention (`a.left < b.right && a.right > b.left`, `rectsOverlap`).
+ */
+export function markerUnderPoint(
+  markers: readonly MarkerGeometry[],
+  point: { x: number; y: number },
+  content: { w: number; h: number },
+): string | null {
+  if (!(content.w > 0) || !(content.h > 0)) return null;
+  for (const marker of markers) {
+    if (!(marker.padPx > 0)) {
+      throw new Error(`Marker hit pad must be positive, got ${String(marker.padPx)}`);
+    }
+    const halfX = marker.padPx / 2 / content.w;
+    const halfY = marker.padPx / 2 / content.h;
+    if (
+      point.x > marker.x - halfX && point.x < marker.x + halfX &&
+      point.y > marker.y - halfY && point.y < marker.y + halfY
+    ) {
+      return marker.roomId;
+    }
+  }
+  return null;
+}
