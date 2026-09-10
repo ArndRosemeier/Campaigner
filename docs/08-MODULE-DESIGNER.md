@@ -73,6 +73,25 @@ editor header as a chip input next to tags ("also known as").
   listing the candidates.
 - Renaming an artifact must offer (dialog): "Add old name as alias" (default
   on) so existing module text keeps resolving. No text rewriting.
+- **The Party is invisible to module creation** (owner-ratified, docs/17 row
+  69, verbatim: "The creator is referring to players in the party. The party
+  should not be visible to module creation."). Every artifact list a
+  module-creation step receives — the shared cast block, the "Existing
+  campaign entities/artifacts" prompt indexes, the name-classification
+  candidate set and the name-resolution sets of the panel, the post-parts
+  batches and the stub popover — is the **module-creation pool**: ONE domain
+  constant (`MODULE_CREATION_EXCLUDED_KINDS` → `visibleToModuleCreation` /
+  `moduleCreationPool`, `src/domain/artifact.ts`, mirroring
+  `BULK_REMOVE_EXCLUDED_KINDS`), never a scattered `kind !== 'pc'`. Why: a PC
+  is AUTHORED BY THE PLAYERS — feeding `pc` rows in made generated modules
+  address the players by name and resolved generated names back onto their
+  characters. `resolveWikiLink` itself is UNCHANGED: reading surfaces (the
+  reader's chips, the wiki-graph, the module chat grounding) still resolve the
+  owner's own prose against the full pool, so a premise that names a party
+  member keeps its link. Do not "fix" that back — this rule is about artifact
+  visibility to GENERATION, not about censoring the owner's text, and the
+  party-derived LEVEL context (`partyLevelLine`) plus the npc-only fixed cast
+  stay exactly as they are.
 
 ### Reader (`/c/:campaignId/m/:moduleId`, feature `/src/features/modules/`)
 
@@ -165,14 +184,17 @@ Progress/state live on the Module row itself (statuses above), observed via
 Input: concept, levelMin/Max, tone, sizeDial, campaign (name, system,
 description), and — when the campaign has artifacts — a compact index of
 existing artifacts (name, kind, one-line summary; cap 60 entries) so the
-module can reuse the campaign's world. **Opt-in continuity:** when the module
+module can reuse the campaign's world. The index (and the cast list below) is
+the module-creation pool: **the Party (`kind: 'pc'`) is excluded** (docs/17
+row 69) — a PC is authored, not campaign setting content to reuse. **Opt-in continuity:** when the module
 row has `includePriorModules` (set at creation), the prompt additionally
 carries the campaign's other modules — premise + written part texts, drafts
 included, ordered oldest first, per-part/per-module/total char caps, oldest
 dropped first on overflow — labeled as settled history to continue, never
 retcon. The section is omitted when the flag is off (default) or no other
 module has any text. Both passes also carry the shared campaign cast
-list (`campaignCastContext`: moduleId-null rows, names+kinds, 60-name
+list (`campaignCastContext`: campaign-scoped NON-`pc` rows — the Party is
+excluded, docs/17 row 69 — names+kinds, 60-name
 cap, ~2.4k chars inside the 24k total) so follow-ups reuse promoted
 names exactly instead of inventing duplicates.
 
@@ -263,7 +285,9 @@ For part i, the user message contains:
      by the reader), read-aloud text as blockquotes,
    - **wiki-link every proper noun** (NPCs, locations, factions, artifacts,
      monsters) as `[[Name]]`, consistently reusing exact names from earlier
-     parts and the campaign index,
+     parts and the campaign index (the index is the module-creation pool — no
+     party member is ever listed, docs/17 row 69; a generated name that
+     happens to match a PC's becomes the module's OWN entity),
    - target length by sizeDial: sketch ≈ 400–700 words, standard ≈ 800–1500,
      detailed ≈ 1500–2500 (soft targets, stated in the prompt),
    - REQUIREMENT — this part's encounter share (stated with the concrete
@@ -583,10 +607,28 @@ text's UNCLASSIFIED names from the same fresh read its buckets use
 (`useModuleEntities` → `domain/entityNormalization.unclassifiedEntityNames`):
 wiki-link names that (a) do not resolve to an artifact yet, (b) have no
 record, and (c) are not already answered for by a pending consent proposal.
+"Resolve" is read against the **module-creation pool** — the Party is
+excluded (docs/17 row 69), so a name equal to a player character's is work
+the module still owes, never a name already covered.
 The derivation is a pure function of the observed text, so EVERY
 text-changing path is covered by one wiring — no per-event hooks exist — and
 nothing is dispatched by a render: a re-render, a tab switch or a second
 visit classifies nothing and duplicates nothing.
+
+**The name collision with the Party.** The pool exclusion is what makes a
+generated name that happens to equal a PC's safe: the classification cannot
+pick the player's character (it is neither a listed name, a recorded name nor
+an artifact), so the name maps to itself, gets a NEW module-owned record and
+is batch-generated as the module's own artifact — inside the module's own
+text the module-tier row then wins resolution. The player's row is never
+touched (no alias, no revision, no scope change). A model that tries to fold
+the name onto the PC anyway is rejected by the existing contract validator
+(`validateNormalizationReply`'s "neither a listed name, a recorded entity
+name, nor an existing artifact"), retried once with the violation stated, and
+then recorded as a loud failure on the module row — the panel's Retry owns
+recovery. Deliberately linking a PC remains available through the stub
+popover's explicit "Use existing entity…" picker (a user act, never a silent
+verdict).
 
 **The action: "Classify N new names".** The toolbar shows the count and one
 button (premise/parts, in first-mention order, no per-name work); the click
