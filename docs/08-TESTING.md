@@ -132,6 +132,118 @@ Rules:
   Assert the settled value with `waitFor`, never the first frame after the
   reopen, and never a fixed sleep.
 
+### 1a. Race cures — the index (docs/18 §4 carries the same seams)
+
+What the entries above and below have in common is a rule, not a bag of tricks.
+A test may only assert a state the product GUARANTEES at that point; if the
+guarantee holds only while the machine is fast enough, the test is racing a
+clock and will fail on someone else's gate instead of its own.
+
+**The order of work is fixed.** Reproduce first: make the suspected cause
+DETERMINISTIC by DELAYING it (the `89e5d71` method — inject the delay at the
+read or the write your root cause names, and the failure appears on demand),
+then show the test failing on the CURRENT head, and only then cure — by waiting
+for the settled state the product actually has, never with a fixed sleep, never
+with a widened timeout (a fixed sleep hides the race behind a number; a widened
+timeout only makes the failure rarer). Then prove BOTH directions: with the cause
+delayed the un-cured test fails and the cured one passes, repeatably. A flake
+that will not reproduce is reported as unreproduced — not grounds for a
+speculative edit.
+
+**How the failures in this section were originally seen, and how they are proved
+now.** They surfaced while four writers gated this repo concurrently on one
+8-core box — a condition we deliberately no longer create: `AGENTS.md` §Host
+hygiene forbids synthetic load and N-way suite hammering, because that is what
+drove the shared host to a load average of ~106 and starved the owner's tools.
+"The box is not a test fixture." So the evidence recorded here is the
+delay-injection reproduction plus SEQUENTIAL repetition of the affected files;
+a single green run at `--maxWorkers 2` is not evidence for this class, and
+neither is a green run produced by loading the machine.
+
+- **A debounced write is pinned by GATING THE WRITE, not by racing its window.**
+  `canvas-chat-thread.test.tsx > writes the thread after each settled turn`
+  asserted `expect(row?.chatThread).toHaveLength(0)` after two chat turns, to
+  pin that the thread is persisted on the debounce and not immediately. It held
+  only while BOTH turns settled inside `CHAT_PERSIST_DEBOUNCE_MS` (600ms):
+  `scheduleChatPersist` arms ONE timer per module and a later turn REUSES the
+  pending timer instead of restarting it, so the window is measured from the
+  FIRST settled turn. Measured with an instrumented probe on this head
+  (unloaded): turn 1 scheduled the write at +483ms, turn 2 settled at +1571ms —
+  the write had already landed the first turn's two messages, and the assertion
+  read 2 entries instead of 0. On a fast machine the two turns land inside the
+  window and it passes, which is why it read as a phantom regression in whoever's
+  slice happened to be gating. This is a TEST-side race and the product was NOT
+  changed: persisting on the first settled turn and refreshing on the next is the
+  debounce working, and a human who pauses mid-conversation is not owed an
+  unwritten thread. Cure: `armWriteGate()` holds the next `scheduleChatPersist`
+  behind a promise that the test releases only AFTER the row read, so "nothing
+  persisted yet" is asserted while the write provably has not been scheduled.
+  Revert-proof by DELAY: with the gate disabled and a 900ms pause between the two
+  turns (longer than the window — the delayed cause made concrete) the test fails
+  6/6 with `to have a length of +0 but got 2`, and passes 6/6 with only the cure
+  added; six sequential runs each way, one process at a time.
+  Two traps found while curing it. (a) Holding the DB READ cannot gate this
+  write: the pending write is performed by a TIMER, which a held read hands the
+  event loop (measured: the held read still returned the written 2-entry row).
+  Holding a read is the right tool for a write the code under test AWAITS (the
+  prefill entry above), not for a write a timer performs. (b) Fake timers cannot
+  be used either: fake-indexeddb's own request queue rides `setTimeout`, so
+  `vi.useFakeTimers()` wedges the database and the test times out — and
+  `vi.useFakeTimers()` does not intercept a timer created before it was called
+  (both measured).
+- **A raw read that sits where an awaited write's cascade lands needs
+  `actDrained`; the `act` warning it produces is the console guard doing its job,
+  not a product bug.** `new-module-draft.test.tsx > persists the newest edit after
+  the debounce window` failed in a concurrent gate with "An update to
+  NewModuleDialogContent inside a test was not wrapped in act(...)". The dialog
+  holds the stored draft in a `useLiveQuery`, so the debounced settings WRITE
+  re-emits that query and re-renders the mounted dialog. `readSettings()` is a
+  single Dexie `get`: a row that is already cached resolves with no event-loop
+  turn at all, so the write lands harmlessly after the read — and the moment the
+  read is slow enough, the write arrives DURING it, with no act scope anywhere,
+  which is the warning. Reproduced at the exact site by delaying that read (the
+  only change): with the read held 700ms the un-cured test failed 2/2 with the
+  act warning while the cured one passed 2/2, and with NO delay the same un-cured
+  test passed 2/2 — the delay is the whole difference. Cure: the settings reads in
+  this file that sit where the debounced write (or a reopen's flushed write, or a
+  campaign switch's unmount flush) can land run inside `actDrained`; assertions
+  are unchanged in strength. One comment in the file records the inverse result
+  so it is not "fixed" by mistake: a raw read INSIDE an `async` `waitFor`
+  callback is NOT a leak site, because RTL's `asyncWrapper` disables the act
+  environment for the whole `waitFor`.
+  The same shape to look for everywhere: a bare `await` of a
+  `get*`/`list*`/`read*` repo call with a write in flight from the same flow. It
+  is invisible on an idle machine, which is why a green local run proves nothing
+  about it.
+- **A dialog's confirm/decline closes on an exit TIMER, and the write it fires
+  cascades on the same queue: settle the close, then drain every raw read.**
+  `entity-panel.test.tsx > applies stored proposals to the documents current text
+  on confirm` failed with **36** leaked entries and `> drops the proposals on
+  decline — nothing is rewritten` with 1, all of them "An update to `DialogRoot` /
+  `DialogPortal` / `DialogBackdrop` inside a test was not wrapped in act(...)" —
+  Base UI's popup teardown (the shape `0466dc9` and `07a84bd` already cured
+  elsewhere in this file). Both tests clicked `entity-proposals-apply` /
+  `-decline`, which closes the dialog at once and lets the write run
+  fire-and-forget, and then read raw rows immediately: the popup's exit timers
+  and the row write's live-query cascade landed inside those bare awaits. The
+  same shape leaked `module-canvas.test.tsx > after a successful save the header
+  goes back to the passive "Saved" state` ("An update to **CanvasPage** ...") —
+  a save, then a bare row read. Reproduced at the exact site by delaying the
+  post-click row read: **50ms** of delay was already enough — the un-cured test
+  failed 2/2 with the SAME 36 entries the gate had reported, 250ms the same, and
+  with no delay it passed 2/2 (the delay is the whole difference); the cured
+  sequence passed 3/3 at 50ms and 250ms. Cure, in the documented order: `waitFor`
+  the closed dialog's testid to be ABSENT, then run every raw row read through
+  `actDrained` (`getModule`, `listModuleVersions`, and module-canvas's post-save
+  read). No assertion changed and no product file was touched.
+
+Two shapes that were tested and RULED OUT, so they are not "fixed" by mistake:
+- a raw Dexie read inside an `async` `waitFor` callback is deliberately exempt
+  (see above) — `entity-panel`'s orphan-sweep tests read that way and are fine;
+- delaying the SWEEP's write by up to 400ms produced no warning, because the
+  `waitFor` wrapper drains a macrotask before restoring the act environment. The
+  leak lives in the reads AFTER a resolved `waitFor`, not in the write.
+
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 
 Twelve tests that render the **real app shell + router** against one seeded
