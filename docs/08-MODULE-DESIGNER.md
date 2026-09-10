@@ -950,10 +950,18 @@ list row. Screen text is docs/05 §Module canvas; implementation in
     ledger, and toasts the number of rows that actually went. **Clear chat
     stays exactly as landed** and does NOT clear the durable stack: undo
     history is not chat state, and the two controls stay independent.
-  - **Deletion**: deleting a module removes its versions in the same
-    transaction (they describe a document that no longer exists). The
-    campaign-level wipes (Clear workspace / remove all generated content) do
-    not sweep them — accepted, recorded in docs/18 §5.
+  - **Deletion**: EVERY path that deletes module rows removes their versions in
+    the SAME transaction (they describe a document that no longer exists, and
+    nothing could ever list, restore or prune them again) through the ONE
+    `moduleVersionRepo.deleteModuleVersionsForModules(moduleIds)` seam
+    (docs/18 §2.1): `deleteModule` with its own id, and the bulk deletes —
+    `deleteCampaign`, **Clear workspace** and **remove all generated content** —
+    with their campaign's module ids re-listed INSIDE their transaction right
+    before the module rows go. The campaign wipes also collect rows whose
+    module row is already gone (`pruneOrphanedModuleVersions` — residue a
+    pre-seam build left; a version row carries no `campaignId`, so only that
+    global door can reach them). Undo history is therefore never "kept
+    content": the wipes' copy says so, and no version row outlives its module.
 - **Leave guard, not scope guard** (v3): leaving the page with unsaved edits
   or a pending proposal demands the explicit discard confirm — session
   staging dies on reload AND on leave; the saved row is never touched by
