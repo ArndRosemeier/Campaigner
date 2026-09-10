@@ -564,6 +564,67 @@ summary toast. The background image queue likewise generates up to
 writers' room personas, the encounter pipeline's stages) stay strictly
 sequential.
 
+### Names the text picks up later (the record gate is a TEXT gate)
+
+Every batch bucket is keyed by a RECORD (`module.entityKinds`) — never a
+client heuristic. The creation-time pass records the names of the text it
+saw, so at creation every mentioned name has one and every kind has its
+button. A LATER text change does not: a chat turn (editor or preview), a
+hand edit through the one part-text save path, a board rewrite, a part
+generation whose own pass never ran (a cancelled parts run), or a
+durable-version restore can all introduce wiki-link names no pass has seen.
+Such a name has no record, therefore no bucket and no button — the owner's
+report: "after module creation there are buttons to detail all NPCs etc.
+Please make those available again when coming back from a chat (chat can
+introduce new ones)".
+
+**The observation point (one, event-free).** The panel derives the module
+text's UNCLASSIFIED names from the same fresh read its buckets use
+(`useModuleEntities` → `domain/entityNormalization.unclassifiedEntityNames`):
+wiki-link names that (a) do not resolve to an artifact yet, (b) have no
+record, and (c) are not already answered for by a pending consent proposal.
+The derivation is a pure function of the observed text, so EVERY
+text-changing path is covered by one wiring — no per-event hooks exist — and
+nothing is dispatched by a render: a re-render, a tab switch or a second
+visit classifies nothing and duplicates nothing.
+
+**The action: "Classify N new names".** The toolbar shows the count and one
+button (premise/parts, in first-mention order, no per-name work); the click
+runs `llm/moduleGen.classifyNewModuleEntityNames` — the SAME machinery as
+the post-parts pass (same prompt builder, with the module's recorded
+canonicals as the legal canonical vocabulary; same JSON contract, validator
+and one stated retry; same mechanical application), narrowed to the names
+that have no record. Failure semantics are the pass's, deliberately: the
+error is RECORDED on the row with `entityNamesNormalized: false` — which
+closes the batch gate and shows the panel's Retry — plus a toast; nothing is
+guessed, and no name is silently dropped. The run refuses to start while the
+row says the text is not normalized (the full pass owns that state) and the
+panel keeps the affordance disabled while the module is generating (its own
+pass records the names when the parts land).
+
+**Consent is unchanged (fix-01).** Generated (unedited) parts take the link
+rewrites immediately; hand-edited parts and the premise become stored
+proposals for the review dialog — and chat-applied parts ARE hand-edited
+(the one part-text save path stamps `edited: true`), so a variant a chat turn
+introduced is folded only after the user accepts it there. A review already
+pending is preserved (unioned, deduped by document + from → to), never
+replaced. A run that rewrites text also takes the durable pre-change
+snapshot first, like every other normalization pass (docs/18 §2.3).
+
+**Idempotency.** The record write is APPEND-ONLY: a canonical that already
+has a record keeps it byte-identical (never re-keyed, never duplicated), so
+repeating the run — or chatting again — changes nothing; a run with nothing
+to classify makes no model call, writes nothing and adds no durable version
+row; another module's records and text are never touched.
+
+**Why the click and not an automatic pass on display** (considered, decided):
+an auto-run would spend a model call on any fresh view of a module with an
+unrecorded name without the user asking — the owner's own documented stance
+against unrequested LLM calls (docs/17 row 9) — and would classify without a
+visible consent step. The click is ONE action for all new names, and the
+affordance sits exactly where the buttons it unlocks appear. Auto-dispatch is
+a one-line change at the same observation point if the owner prefers it.
+
 ### Post-generation automation (module row flags)
 
 The New Module dialog's "After the parts are written" grid persists four
