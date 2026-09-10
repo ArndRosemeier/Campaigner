@@ -481,10 +481,11 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 - **A bestiary creature row is a wiki-link identity, not an authoring slot.**
   An `npc` artifact carrying `data.monsterChunkId` is ONE campaign-scoped row
   per cited rulebook chunk — shared by every encounter citing the creature,
-  stats resolved through it, one shared portrait — so it counts as a DEFINED
-  entity for `resolveWikiLink` and the entity paths must never treat it as a
-  generation target. ALL classification, refusal copy, the authored-text
-  detector and its repair live in
+  stats resolved through it, one shared portrait — so `resolveWikiLink` still
+  resolves a name to it (display is untouched: reader chips, the tree, rosters
+  and battle seeding keep working exactly as before) and the entity paths must
+  never treat it as a generation target. ALL classification, refusal copy, the
+  authored-text detector and its repair live in
   `src/features/campaign/creature-row-guard.ts` (the predicate itself is
   `db/mobArtifacts.isMobArtifact`); the artifact editor disables its AI action
   for such a row with the reason in `title`, `entity-batch.alignEntityName`
@@ -493,6 +494,32 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   found on one is reported and cleared only by the explicit two-step repair,
   which leaves name, aliases, marker, stat block, images, cover, tags, links and
   scope untouched. Never a second interpretation of "creature row" (ledger 81).
+- **The module entity view asks "does this name have an authored, DETAILED
+  entity of its own?" — never "does anything resolve?"** The ONE verdict is
+  `features/modules/detailed-entity.ts` (`detailedEntityVerdict` /
+  `hasDetailedEntity`, read over the resolution's own winning-tier candidates;
+  the creature-row half is `isMobArtifact`, never a second reading of the
+  marker), and exactly TWO seams read it: `use-module-entities.useModuleEntities`
+  (the entity panel's rows, buckets, "N detailed · M mentioned" line and batch
+  work queue) and `post-generation.batchTargets` (the sweep's target set — and
+  through it the "Generate everything" / "Resume automatic module creation"
+  deviation, so a confirmation can never promise work the sweep skips). A name
+  whose only row is a bestiary creature row is therefore NOT detailed: the panel
+  offers it as work (the row carries a `bestiary only` marker whose title and
+  screen-reader sentence name the shared row and the remedy), the batch and the
+  automation generate the module's OWN `npc` of that exact name (module-owned
+  from birth, so the module tier then prefers it and the reader shows it too),
+  and the shared creature row comes out byte-identical. Boundaries, deliberate:
+  `imageTargets` keeps its own resolution semantics (an image job attaches to
+  whatever row the name resolves to; the panel's images mode refuses a
+  not-detailed row with "Detail this entity first"), the wiki-link tier rule
+  (`resolveWikiLink`, module tier beats campaign tier) is untouched everywhere,
+  and a name whose winning tier contains an authored row is detailed even when a
+  creature row is the resolution's own winner (answering "not detailed" there
+  would generate a duplicate beside an authored entity). Consequence worth
+  knowing: a creature-only name with no recorded kind now also reads as
+  unclassified in the panel (the classification pass is how a name becomes
+  batchable). Ledger 82.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 
