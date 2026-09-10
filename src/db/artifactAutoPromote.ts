@@ -4,8 +4,12 @@ import {
   getAnyArtifact,
   listArtifactsByCampaign,
   listArtifactsByModule,
+  listGlobalArtifacts,
 } from '@/db/artifactRepo';
+import { listDeliverablesByCampaign } from '@/db/deliverableRepo';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
+import { rosterArtifactIds } from '@/db/mobArtifacts';
+import { outlineArtifactIds } from '@/db/orphanSweep';
 import { db } from '@/db/db';
 import { buildWikiGraph } from '@/domain/wikiGraph';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
@@ -21,6 +25,12 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * state: promotion IS `adoptIntoCampaign`, the only sanctioned scope changer
  * path (via `moveScope`), reused verbatim — never a parallel scope writer.
  *
+ * ONE exception, owner-ratified 2026-09-09 (docs/18 §3, ledger 67): a
+ * CAMPAIGN-LEVEL use (no using module) refuses to adopt another module's row
+ * — see `promoteArtifactForModuleUse`. "Second module" means a second module,
+ * and a row's ownership is not something an unrelated campaign-level save may
+ * silently take.
+ *
  * Every helper here is idempotent: an already campaign-level row is a no-op,
  * so repeated saves/scans never churn revisions or re-toast.
  */
@@ -31,8 +41,20 @@ export const PROMOTION_TOAST_NAME_CAP = 3;
 /**
  * Compares one artifact's owner against the using module and promotes on
  * mismatch. Returns the promoted row, or null when nothing moved (already
- * campaign-level, or owned by the using module itself). A null using module
- * is a campaign-level use — any module owner mismatches and promotes.
+ * campaign-level, or owned by the using module itself).
+ *
+ * A NULL using module is the CAMPAIGN-LEVEL EXCEPTION (owner-ratified
+ * 2026-09-09; docs/18 §3, ledger 67): it REFUSES to adopt another module's
+ * row. Module prose, a roster and a battle each name the module that wrote
+ * them, so "a second module uses this" is a real second use; a campaign-level
+ * save carries no such evidence — it is the ABSENCE of a module, not a second
+ * one — and quietly taking a row out of the module that owns it (where the
+ * module's own wiki-links resolve it and where `deleteModule`'s keep/cascade
+ * can still see it) is not a use the owner asked for. The use itself still
+ * succeeds and the refusal is LOUD, naming the artifact, the owning module and
+ * the deliberate remedy. Nothing moves, so `null` is returned exactly as for
+ * a no-op.
+ *
  * Throws loudly on a failed promote (AGENTS rule 1): the caller decides
  * whether the outer write still lands.
  */
@@ -46,8 +68,29 @@ export async function promoteArtifactForModuleUse(
   }
   if (artifact.campaignId === null) return null;
   if (artifact.moduleId === null) return null;
-  if (userModuleId !== null && artifact.moduleId === userModuleId) return null;
+  if (userModuleId === null) {
+    await refuseCampaignLevelAdoption(artifact);
+    return null;
+  }
+  if (artifact.moduleId === userModuleId) return null;
   return adoptIntoCampaign(artifactId);
+}
+
+/**
+ * The campaign-level refusal's user-visible surface (AGENTS rule 2 — a caught
+ * condition never ends in `console.error` alone): artifact, owner and remedy.
+ * The roster scan dedupes by artifact id, so one row is named once per scan.
+ */
+async function refuseCampaignLevelAdoption(artifact: AnyArtifact): Promise<void> {
+  const owner = artifact.moduleId === null ? undefined : await getModule(artifact.moduleId);
+  const ownerLabel =
+    owner === undefined
+      ? `a module that no longer exists (${artifact.moduleId ?? 'unknown'})`
+      : `the module “${owner.title}”`;
+  toastError(
+    `«${artifact.name}» stays owned by ${ownerLabel} — a campaign-level use never adopts a module's artifact. ` +
+      'Adopt it from the artifact editor to share it, or delete that module and promote it from the delete dialog.',
+  );
 }
 
 /**
@@ -133,24 +176,13 @@ export async function promoteSecondModuleUses(
   return promoted;
 }
 
-/** Artifact ids a roster entry points at (npc-ref / rulebook mob rows). */
-function rosterArtifactIds(monsters: readonly MonsterEntry[]): Id[] {
-  const ids: Id[] = [];
-  for (const monster of monsters) {
-    if (monster.source.type === 'npc-ref') ids.push(monster.source.artifactId);
-    else if (monster.source.type === 'rulebook' && monster.source.mobArtifactId !== undefined) {
-      ids.push(monster.source.mobArtifactId);
-    }
-  }
-  return ids;
-}
-
 /**
  * ROSTER/BATTLE hook — every encounter `data.monsters` write and every
  * battle seed/spawn funnels its referenced artifact ids through here. The
  * encounter/battle module mismatching an artifact's owner promotes it.
- * `encounterModuleId: null` is a campaign-level use: any module owner
- * mismatches.
+ * `encounterModuleId: null` is a campaign-level use: it REFUSES to adopt
+ * another module's rows (the owner-ratified campaign-level exception above) —
+ * the roster write still lands, and each refusal is named loudly.
  */
 export async function promoteRosterUses(
   encounterModuleId: Id | null,
@@ -181,7 +213,7 @@ export async function promoteRosterUses(
   return promoted;
 }
 
-export type ReferenceVia = 'link' | 'roster' | 'battle';
+export type ReferenceVia = 'link' | 'relation' | 'roster' | 'battle' | 'outline';
 
 export interface ReferencedOwnedArtifact {
   artifact: AnyArtifact;
@@ -191,10 +223,22 @@ export interface ReferencedOwnedArtifact {
 /**
  * DELETE support — every module-owned artifact of `moduleId` that is
  * referenced from OUTSIDE the module. No stored index exists: the reference
- * set unions the wiki-link graph edges, the encounter roster scan
- * (npc-ref + mobArtifactId), and the battle token/seed-fighter scan.
- * References from the module's OWN encounters/battles do not count — those
- * rows die with the module under cascade.
+ * set unions the wiki-link graph edges, artifact `links[]` (the Relations
+ * editor), artifact BODY wiki-links, the encounter roster scan
+ * (npc-ref + mobArtifactId), the battle token/seed-fighter scan and
+ * deliverable outline artifact nodes. References from the module's OWN
+ * encounters/battles do not count — those rows die with the module under
+ * cascade.
+ *
+ * The pool is the READER'S pool: campaign rows PLUS the global library
+ * (`listGlobalArtifacts`), because a published encounter can cite this
+ * module's row and the reader resolves library chips for every campaign. A
+ * missing kind here is not a cosmetic gap: the dialog's third state is the
+ * only warning before a cascade, so every kind of reference it cannot see is
+ * a row destroyed while something still points at it.
+ *
+ * The outline walk is `orphanSweep.outlineArtifactIds` — the sweep's own
+ * guard reading, not a second interpretation of the deliverable outline.
  */
 export async function modulesReferencingOwnedArtifacts(
   moduleId: Id,
@@ -216,7 +260,10 @@ export async function modulesReferencingOwnedArtifacts(
   // Links: wiki-graph edges from OTHER modules into owned nodes. Uncapped —
   // the delete dialog must see every reference, not a ranked sample
   // (campaignGrounding.ts precedent for uncapped graph use).
-  const pool: readonly AnyArtifact[] = await listArtifactsByCampaign(campaignId);
+  const pool: readonly AnyArtifact[] = [
+    ...(await listArtifactsByCampaign(campaignId)),
+    ...(await listGlobalArtifacts()),
+  ];
   const modules: readonly Module[] = await listModulesByCampaign(campaignId);
   const graph = buildWikiGraph(modules, pool, { cap: Number.POSITIVE_INFINITY });
   for (const edge of graph.edges) {
@@ -224,13 +271,41 @@ export async function modulesReferencingOwnedArtifacts(
   }
 
   // Roster: npc-ref / mobArtifactId entries on encounters OUTSIDE the module
-  // (campaign-level included — they survive the delete).
+  // (campaign-level and library rows included — they survive the delete).
   for (const row of pool) {
     if (row.kind !== 'encounter' || row.moduleId === moduleId) continue;
     for (const id of rosterArtifactIds(row.data.monsters)) {
       if (ownedIds.has(id)) mark(id, 'roster');
     }
   }
+
+  // Per-artifact references: the hand-curated `links[]` (Relations), and
+  // wiki-link tokens in another artifact's BODY — the reader renders chips
+  // from both, and `buildWikiGraph` reads module prose only, so neither is
+  // visible to the edge scan above. The row's own module is the resolution
+  // context (its module-tier entities win, exactly as the reader resolves).
+  for (const row of pool) {
+    if (row.moduleId === moduleId) continue;
+    for (const link of row.links) {
+      if (ownedIds.has(link.targetId)) mark(link.targetId, 'relation');
+    }
+    for (const link of extractWikiLinks(row.body)) {
+      const hit = resolveWikiLink(
+        link.name,
+        pool,
+        row.moduleId === null ? undefined : { moduleId: row.moduleId },
+      ).artifact;
+      if (hit !== undefined && ownedIds.has(hit.id)) mark(hit.id, 'link');
+    }
+  }
+
+  // Deliverable outline nodes: the campaign's outlines may carry a module row
+  // as a chapter/part node (the orphan sweep guards exactly this).
+  const outlineIds = new Set<Id>();
+  for (const deliverable of await listDeliverablesByCampaign(campaignId)) {
+    outlineArtifactIds(deliverable.outline, outlineIds);
+  }
+  for (const id of outlineIds) mark(id, 'outline');
 
   // Battles: live tokens + frozen seed-fighter rows on OTHER modules' boards.
   const battles = await db.battles.where('campaignId').equals(campaignId).toArray();

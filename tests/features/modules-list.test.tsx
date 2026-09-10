@@ -11,7 +11,7 @@ import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign, getCampaign } from '@/db/campaignRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
-import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
+import { createModule, encounterDataSchema, modulePartSchema, moduleSpineSchema, newId, type Id } from '@/domain';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
@@ -457,6 +457,60 @@ describe('ModulesListPage', () => {
     // the long trailing drain absorbs the exit transition's timed updates.
     expect(await actDrained(() => getCampaign(campaign.id))).toMatchObject({ description: '' });
     await flushAsyncUpdates(60);
+  }, 20_000);
+});
+
+describe('ModulesListPage delete dialog blast radius (cited mob artifacts)', () => {
+  it('names the shared mob artifacts its encounters cite as a reference, never as owned', async () => {
+    const user = userEvent.setup();
+    const { campaignId, draftId } = await seedModules();
+    // ONE campaign-scoped mob artifact (rulebook-cited creature), cited by an
+    // encounter the draft module owns: a REFERENCE the cascade never touches.
+    const mob = await createArtifact({
+      campaignId,
+      kind: 'npc',
+      name: 'Goblin Boss',
+      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: newId() },
+    });
+    await createArtifact({
+      campaignId,
+      moduleId: draftId,
+      kind: 'encounter',
+      name: 'Mill Ambush',
+      data: encounterDataSchema.parse({
+        difficulty: 'medium',
+        levelHint: '3',
+        monsters: [
+          {
+            name: 'Goblin Boss',
+            count: 2,
+            notes: '',
+            treasure: '',
+            source: { type: 'rulebook', chunkId: newId(), mobArtifactId: mob.id },
+          },
+        ],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      }),
+    });
+    renderAppAt(modulesPath(campaignId));
+    await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
+
+    await user.click(screen.getByRole('button', { name: 'Delete Vault of Whispers' }));
+    const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
+    const census = await within(confirm).findByTestId('delete-module-cited-mobs', {}, { timeout: 5_000 });
+    expect(census).toHaveTextContent('Goblin Boss');
+    expect(census).toHaveTextContent('shared creature');
+    // Honest wording: a reference, not an owned artifact.
+    expect(census).toHaveTextContent('not part of this module');
+    await flushAsyncUpdates();
   }, 20_000);
 });
 

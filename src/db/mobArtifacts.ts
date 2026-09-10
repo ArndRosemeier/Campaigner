@@ -1,4 +1,4 @@
-import type { Id, MonsterEntry, MonsterSource, NpcArtifact, StatBlock } from '@/domain';
+import type { AnyArtifact, Id, MonsterEntry, MonsterSource, NpcArtifact, StatBlock } from '@/domain';
 import { moduleTagFor } from '@/domain/module';
 import {
   adoptIntoCampaign,
@@ -6,6 +6,7 @@ import {
   getArtifact,
   getAnyArtifact,
   listArtifactsByCampaign,
+  listArtifactsByModule,
   stampModuleOwnership,
   updateArtifact,
   type RevisionMeta,
@@ -49,6 +50,77 @@ export async function findMobArtifactByChunk(
     (artifact): artifact is NpcArtifact =>
       artifact.kind === 'npc' && artifact.data.monsterChunkId === chunkId,
   );
+}
+
+/** True when the row is a mob artifact (an `npc` carrying the chunk marker). */
+export function isMobArtifact(artifact: AnyArtifact): artifact is NpcArtifact {
+  return artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined;
+}
+
+/**
+ * The artifact ids a roster points at: `npc-ref` entries plus rulebook entries
+ * carrying the mob-artifact stamp. ONE reader for every roster consumer (the
+ * auto-promote ROSTER/BATTLE hook and the delete-dialog citation census) —
+ * never a second interpretation of `MonsterEntry.source`.
+ */
+export function rosterArtifactIds(monsters: readonly MonsterEntry[]): Id[] {
+  const ids: Id[] = [];
+  for (const monster of monsters) {
+    if (monster.source.type === 'npc-ref') ids.push(monster.source.artifactId);
+    else if (monster.source.type === 'rulebook' && monster.source.mobArtifactId !== undefined) {
+      ids.push(monster.source.mobArtifactId);
+    }
+  }
+  return ids;
+}
+
+/** What one module's encounters CITE (never what the module owns). */
+export interface ModuleMobCitations {
+  /** The distinct cited rows, name-sorted. */
+  artifacts: NpcArtifact[];
+  /** The module's encounters whose rosters carry at least one citation. */
+  citingEncounters: string[];
+}
+
+/**
+ * The module-delete dialog's blast-radius census: the distinct MOB artifacts
+ * (rulebook-cited creatures — ONE campaign-scoped `npc` row per campaign per
+ * cited chunk, docs/11 D5) that the encounters OWNED BY `moduleId` cite.
+ *
+ * This is a REFERENCE count, deliberately NOT an ownership count: those rows
+ * are campaign-level by design (they must outlive any single module, and
+ * stamping `moduleId` on them would break the one-artifact-per-chunk identity),
+ * so `deleteModule` neither deletes nor releases them — the module's encounters
+ * go, their citations stop existing, and the rows simply stay. Naming the
+ * number before the click is what makes the cascade's real reach visible.
+ *
+ * `listArtifactsByModule` answers the ownership question; this answers the
+ * citation one, and the caller renders the two as separate sentences.
+ */
+export async function countMobArtifactsCitedByModule(moduleId: Id): Promise<ModuleMobCitations> {
+  const module = await getModule(moduleId);
+  if (module === undefined) {
+    throw new Error(`mob citations: module ${moduleId} no longer exists`);
+  }
+  const owned = await listArtifactsByModule(moduleId);
+  const citedIds = new Set<Id>();
+  const citingEncounters: string[] = [];
+  for (const artifact of owned) {
+    if (artifact.kind !== 'encounter') continue;
+    const ids = rosterArtifactIds(artifact.data.monsters);
+    if (ids.length === 0) continue;
+    citingEncounters.push(artifact.name);
+    for (const id of ids) citedIds.add(id);
+  }
+  if (citedIds.size === 0) return { artifacts: [], citingEncounters: [] };
+  // The parsed campaign pool (the repo's own read boundary) — the cited rows
+  // are campaign-scoped mob artifacts, so nothing else can be the target.
+  const pool = await listArtifactsByCampaign(module.campaignId);
+  const artifacts = pool
+    .filter(isMobArtifact)
+    .filter((artifact) => citedIds.has(artifact.id))
+    .sort((a, b) => a.name.localeCompare(b.name));
+  return { artifacts, citingEncounters };
 }
 
 /**

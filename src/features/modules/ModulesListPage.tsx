@@ -22,12 +22,24 @@ import { getCampaign } from '@/db/campaignRepo';
 import { listArtifactsByModule } from '@/db/artifactRepo';
 import { modulesReferencingOwnedArtifacts, type ReferencedOwnedArtifact } from '@/db/artifactAutoPromote';
 import { deleteModule } from '@/db/moduleRepo';
+import { countMobArtifactsCitedByModule, type ModuleMobCitations } from '@/db/mobArtifacts';
 import { useModules } from '@/features/modules/hooks';
 import { GenerateModuleCoverButton, ModuleCoverThumb } from '@/features/covers/cover-art';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 import { EditCampaignDialog } from '@/features/campaign/components/edit-campaign-dialog';
 import { useProgressStore } from '@/lib/progress';
 import { toastError, toastSuccess } from '@/lib/toast';
+
+/** Reference kinds the delete scan reports, in the dialog's own words. A
+ * total map (not a ternary chain): every new `ReferenceVia` member must state
+ * its user-facing wording instead of silently rendering as "a battle". */
+const REFERENCE_VIA_LABELS: Readonly<Record<ReferencedOwnedArtifact['via'], string>> = {
+  link: 'a wiki-link',
+  relation: 'an artifact relation',
+  roster: 'an encounter roster',
+  battle: 'a battle',
+  outline: 'a deliverable outline',
+};
 
 /**
  * Module list (08-MODULE-DESIGNER M4-B): the campaign's modules with status
@@ -61,6 +73,18 @@ export function ModulesListPage(): JSX.Element {
     return (await listArtifactsByModule(deleteTarget.id)).length;
   }, [deleteTarget]);
   /**
+   * Shared mob artifacts the target's encounters CITE (rulebook-cited
+   * creatures: ONE campaign-scoped row per cited chunk, docs/11 D5). A
+   * REFERENCE, never ownership — the cascade does not touch them and must
+   * not: they outlive the module by design. Counted so the dialog states the
+   * blast radius before the click.
+   */
+  const citedMobs = useLiveQuery(async () => {
+    if (deleteTarget === null) return null;
+    if ((await listArtifactsByModule(deleteTarget.id)).length === 0) return null;
+    return countMobArtifactsCitedByModule(deleteTarget.id);
+  }, [deleteTarget]);
+  /**
    * Owned artifacts referenced from OUTSIDE the delete target (auto-promote
    * reference scan: wikilinks, rosters, battle tokens), LIVE like the count.
    * Non-empty switches the dialog to its third state: promote-and-keep the
@@ -75,6 +99,7 @@ export function ModulesListPage(): JSX.Element {
   // the dialog branches below stay total.
   const owned: number | null = ownedCount ?? null;
   const refs: ReferencedOwnedArtifact[] | null = referenced ?? null;
+  const cited: ModuleMobCitations | null = citedMobs ?? null;
 
   /** Runs one delete branch (10-MILESTONE-6 D5): the user picked what happens
    * to the owned artifacts; the module row always goes. */
@@ -295,13 +320,25 @@ export function ModulesListPage(): JSX.Element {
                     ? ` ${String(refs.length)} owned artifact${refs.length === 1 ? ' is' : 's are'} still used outside this module — deleting would strand those references. Choose what happens:`
                     : ` This module owns ${String(owned)} artifact${owned === 1 ? '' : 's'}. Choose what happens to them:`}
             </AlertDialogDescription>
+            {cited !== null && cited.artifacts.length > 0 && (
+              <p className="text-sm text-muted-foreground" data-testid="delete-module-cited-mobs">
+                Its encounters also cite {String(cited.artifacts.length)} shared creature
+                {cited.artifacts.length === 1 ? '' : 's'} ({cited.artifacts
+                  .slice(0, 3)
+                  .map((artifact) => `“${artifact.name}”`)
+                  .join(', ')}
+                {cited.artifacts.length > 3 ? ` and ${String(cited.artifacts.length - 3)} more` : ''}).
+                Those are campaign-level references, not part of this module — deleting it never
+                removes them.
+              </p>
+            )}
           </AlertDialogHeader>
           {refs !== null && refs.length > 0 && (
             <ul className="max-h-40 overflow-y-auto rounded-md border px-3 py-2 text-sm" data-testid="delete-module-referenced-list">
               {refs.map((entry) => (
                 <li key={entry.artifact.id} className="truncate">
                   “{entry.artifact.name}” ({entry.artifact.kind}) — used by{' '}
-                  {entry.via === 'link' ? 'a wiki-link' : entry.via === 'roster' ? 'an encounter roster' : 'a battle'}
+                  {REFERENCE_VIA_LABELS[entry.via]}
                 </li>
               ))}
             </ul>

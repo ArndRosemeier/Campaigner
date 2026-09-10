@@ -2,11 +2,19 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact as createArtifactRow, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createModule } from '@/db/moduleRepo';
-import { findMobArtifactByChunk, getOrCreateMobArtifact, inventedCreatureAppearance, inventedCreatureMarker, materializeInventedCreatureArtifact, spawnMobArtifactIntoModule } from '@/db/mobArtifacts';
+import {
+  countMobArtifactsCitedByModule,
+  findMobArtifactByChunk,
+  getOrCreateMobArtifact,
+  inventedCreatureAppearance,
+  inventedCreatureMarker,
+  materializeInventedCreatureArtifact,
+  spawnMobArtifactIntoModule,
+} from '@/db/mobArtifacts';
 import { createRulebook } from '@/db/rulebookRepo';
 import { createModule as createModuleSchema, encounterDataSchema, monsterSourceSchema, newId, npcDataSchema, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
 import { db } from '@/db/db';
@@ -394,6 +402,110 @@ describe('materializeInventedCreatureArtifact', () => {
     ).toHaveLength(2);
   });
 });
+
+/**
+ * The delete dialog's citation census (module-delete blast radius): the
+ * shared campaign-scoped mob artifacts a module's OWN encounters cite are a
+ * REFERENCE, never ownership — `deleteModule` never touches them (they must
+ * outlive any single module), so the dialog has to name the number itself.
+ */
+describe('countMobArtifactsCitedByModule (delete-dialog census)', () => {
+  /** One module-owned encounter whose roster cites the given plan entries. */
+  function encounterData(monsters: unknown[]) {
+    return encounterDataSchema.parse({
+      difficulty: 'medium',
+      levelHint: '3',
+      monsters,
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+    });
+  }
+
+  it('counts the cited mob artifacts of this module only, never another module\'s encounters', async () => {
+    const { chunkId } = await seedGoblinChunk();
+    const vault = await createModule(
+      createModuleSchema({ campaignId, title: 'The Sunless Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const mill = await createModule(
+      createModuleSchema({ campaignId, title: 'The Old Mill', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    const mobId = await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
+    await createArtifactRow({
+      campaignId,
+      moduleId: vault.id,
+      kind: 'encounter',
+      name: 'Vault Ambush',
+      data: encounterData([
+        {
+          name: 'Goblin Boss',
+          count: 2,
+          notes: '',
+          treasure: '',
+          source: monsterSourceSchema.parse({ type: 'rulebook', chunkId, mobArtifactId: mobId }),
+        },
+      ]),
+    });
+    // Another module's encounter citing the SAME mob is not this module's
+    // citation — the census reads owned encounters only.
+    await createArtifactRow({
+      campaignId,
+      moduleId: mill.id,
+      kind: 'encounter',
+      name: 'Mill Ambush',
+      data: encounterData([
+        {
+          name: 'Goblin Boss',
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: monsterSourceSchema.parse({ type: 'rulebook', chunkId, mobArtifactId: mobId }),
+        },
+      ]),
+    });
+
+    const cited = await countMobArtifactsCitedByModule(vault.id);
+    expect(cited.artifacts.map((artifact) => artifact.id)).toEqual([mobId]);
+    expect(cited.artifacts[0]?.name).toBe('Goblin Boss');
+    expect(cited.citingEncounters).toEqual(['Vault Ambush']);
+    // The row is campaign-level: NOTHING was adopted by the census read.
+    expect((await getArtifact(mobId))?.moduleId).toBeNull();
+  });
+
+  it('is empty for a module with no citing encounter, and ignores uncited (inline/none) rosters', async () => {
+    const vault = await createModule(
+      createModuleSchema({ campaignId, title: 'Quiet Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    expect(await countMobArtifactsCitedByModule(vault.id)).toEqual({
+      artifacts: [],
+      citingEncounters: [],
+    });
+    await createArtifactRow({
+      campaignId,
+      moduleId: vault.id,
+      kind: 'encounter',
+      name: 'Statless Brawl',
+      data: encounterData([
+        { name: 'Nobody', count: 1, notes: '', treasure: '', source: { type: 'none' } },
+      ]),
+    });
+    expect(await countMobArtifactsCitedByModule(vault.id)).toEqual({
+      artifacts: [],
+      citingEncounters: [],
+    });
+  });
+
+  it('fails loudly for a deleted module instead of reporting a phantom zero', async () => {
+    await expect(countMobArtifactsCitedByModule(newId())).rejects.toThrow('no longer exists');
+  });
+});
+
 /**
  * Race window pin (F5): the scan + create run in ONE rw transaction, so
  * concurrent get-or-creates for the same chunk serialize on it and converge
