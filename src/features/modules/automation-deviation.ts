@@ -1,4 +1,4 @@
-import type { AnyArtifact, Artifact, EntityKind, Id, Module } from '@/domain';
+import type { AnyArtifact, Artifact, EntityKind, Id, Module, ModuleAutomationIntent } from '@/domain';
 import { moduleCreationPool } from '@/domain';
 import { unclassifiedModuleNames } from '@/llm/moduleGen';
 import {
@@ -45,10 +45,14 @@ import {
  * member's name) would otherwise let the button promise work the sweep skips, or
  * hide work it would run.
  *
- * LEGACY ROWS STAY INERT: `automationIntent === null` (every row written before
- * the field) yields an EMPTY deviation, so the control never appears — intent may
- * never be inferred from a legacy row's own automation fields, which describe
- * what the engine did rather than what the owner asked for (docs/17 row 71).
+ * LEGACY ROWS STAY INERT **when the target is the recorded intent**:
+ * `automationIntent === null` (every row written before the field) yields an
+ * EMPTY deviation, so the canvas's intent-bound control never appears — intent
+ * may never be inferred from a legacy row's own automation fields, which
+ * describe what the engine did rather than what the owner asked for (docs/17
+ * row 71). A caller that passes an EXPLICIT target (row 80's "Generate
+ * everything") is not inferring anything: it states the target, so a legacy row
+ * is served fully rather than refused.
  */
 
 /** One configured kind with the names still missing for it. */
@@ -171,14 +175,28 @@ export function deviationLines(deviation: AutomationDeviation): string[] {
  * (the same list `runModulePostGeneration` enumerates) — the module-creation
  * pool is applied here, in the one place, so no caller can hand this a different
  * pool than the sweep reads.
+ *
+ * `target` is the OPTIONAL explicit automation target (docs/17 row 80). Omitted,
+ * the deviation compares the live state against the module row's RECORDED
+ * `automationIntent` — the canvas's "Resume automatic module creation", and a
+ * legacy row (no recorded intent) stays inert as it always did. Given, the
+ * deviation compares the live state against THAT target and the recorded intent
+ * is not consulted at all: the entity sidebar's "Generate everything" control
+ * passes `FULL_AUTOMATION_TARGET`, which is why a legacy row (every module
+ * created before the field existed) gets served instead of refused. One
+ * derivation, two targets — the detectors below are the sweep's own either way,
+ * so a confirmation can never promise work the sweep would skip or hide work it
+ * would run.
  */
 export function deriveAutomationDeviation(
   module: Module,
   campaignArtifacts: readonly Artifact[],
+  target?: ModuleAutomationIntent,
 ): AutomationDeviation {
-  const intent = module.automationIntent;
-  // Legacy row: nothing was recorded, so nothing may be inferred (docs/17 row
-  // 71) — the deviation is empty and the control stays away.
+  const intent = target ?? module.automationIntent;
+  // Legacy row, no explicit target: nothing was recorded, so nothing may be
+  // inferred (docs/17 row 71) — the deviation is empty and the control stays
+  // away.
   if (intent === null) return emptyDeviation();
   const artifacts = moduleCreationPool(campaignArtifacts);
 
@@ -219,6 +237,11 @@ export function deriveAutomationDeviation(
  * app writes them apart, so this returns a message only for a row that cannot be
  * trusted, and the resume then refuses LOUDLY instead of guessing which of the
  * two is the owner's wish.
+ *
+ * ONLY the recorded-intent path consults it (docs/17 row 80). A caller that
+ * passes an EXPLICIT target — the entity sidebar's "Generate everything" — never
+ * reads those row fields for the sweep either, so there is nothing that could
+ * drift from the confirmation and the check is deliberately not applied there.
  */
 export function automationIntentDrift(module: Module): string | null {
   const intent = module.automationIntent;

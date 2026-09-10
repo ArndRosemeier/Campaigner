@@ -1,4 +1,12 @@
-import type { AnyArtifact, Artifact, Campaign, EntityKind, Id, Module } from '@/domain';
+import type {
+  AnyArtifact,
+  Artifact,
+  Campaign,
+  EntityKind,
+  Id,
+  Module,
+  ModuleAutomationIntent,
+} from '@/domain';
 import { ENTITY_KINDS, entityKindFor, moduleCreationPool, moduleDocumentText } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
@@ -64,6 +72,25 @@ import { toastError, toastSuccess } from '@/lib/toast';
 export function orderedKinds(configured: readonly EntityKind[]): EntityKind[] {
   return ENTITY_KINDS.filter((kind) => configured.includes(kind));
 }
+
+/**
+ * The FULL automation target — every entity kind for details AND for images,
+ * battle maps on, mob portraits on (docs/17 row 80). The entity sidebar's
+ * "Generate everything" control passes this to the sweep and derives its
+ * confirmation against it, so the sidebar describes exactly the work the sweep
+ * would run. Both lists are the `ENTITY_KINDS` enum itself, so a kind added to
+ * the domain is covered here without touching this file.
+ *
+ * It is NOT a recorded intent: `automationIntent` records what the owner
+ * checked at creation (docs/17 row 71) and stays byte-identical — this constant
+ * is a caller-supplied TARGET, never written to the module row.
+ */
+export const FULL_AUTOMATION_TARGET: ModuleAutomationIntent = {
+  autoGenerateKinds: [...ENTITY_KINDS],
+  autoImageKinds: [...ENTITY_KINDS],
+  autoGenerateBattlemaps: true,
+  autoGenerateMobImages: true,
+};
 
 /** Wiki-link names of the module whose recorded kind is `kind`, deduped. */
 function namesOfKind(module: Module, kind: EntityKind): string[] {
@@ -149,9 +176,24 @@ export function encountersNeedingMobPortraits(
 /**
  * Runs the configured automation for one module. Fire-and-forget safe: an
  * unexpected throw is toasted, never left as an unhandled rejection. A
- * no-op when the module has nothing configured (or was deleted mid-run).
+ * no-op when there is nothing configured (or the module was deleted mid-run).
+ *
+ * `target` is the OPTIONAL explicit automation target (docs/17 row 80). When
+ * it is omitted the sweep reads the module ROW's own automation fields
+ * (`autoGenerateKinds` / `autoImageKinds` / `autoGenerateBattlemaps` /
+ * `autoGenerateMobImages`) exactly as it always did — the creation-time call
+ * site and "Resume automatic module creation" are byte-identical. When it is
+ * given, the sweep runs THAT target and never touches the row's fields: they
+ * remain the persisted record of what the owner asked creation to automate
+ * (docs/17 row 71), and a temporary write would corrupt that meaning. The
+ * entity sidebar's "Generate everything" control passes
+ * `FULL_AUTOMATION_TARGET`.
  */
-export async function runModulePostGeneration(moduleId: Id, campaign: Campaign): Promise<void> {
+export async function runModulePostGeneration(
+  moduleId: Id,
+  campaign: Campaign,
+  target?: ModuleAutomationIntent,
+): Promise<void> {
   try {
     const module = await getModule(moduleId);
     if (module === undefined) return;
@@ -167,7 +209,7 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
     // it.
     const epoch = getStopEpoch();
     const { autoGenerateKinds, autoImageKinds, autoGenerateBattlemaps, autoGenerateMobImages } =
-      module;
+      target ?? module;
     if (
       autoGenerateKinds.length === 0 &&
       autoImageKinds.length === 0 &&
