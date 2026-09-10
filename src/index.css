@@ -206,3 +206,53 @@
   height: 100% !important;
   pointer-events: none;
 }
+
+/* Fog, the opaque blocking veil kind (09-MILESTONE-5 M5-D, fog-cloud
+   amendment): an animated CLOUD, never a flat slab. Owner report, verbatim:
+   "Right now its just a white opaque rectangle. I would like this to be
+   grey-ish and animated, cloudy with some contrast, not just mushy."
+
+   OPAQUE IS THE MECHANIC (ledger 65): fog hides map area, so every layer here
+   is an alpha-free grey and the element carries no `opacity-*`, no
+   `mix-blend-mode` and no element-level transparency — the map must never
+   read through it. The cloud look comes from `background-blend-mode`, which
+   blends ONLY this element's own background layers (never the board behind
+   it), and from the neutral edges of each layer: `lighten` leaves the
+   backdrop untouched where a layer is black, `darken` leaves it untouched
+   where a layer is white, so the base grey survives and the tiles have no
+   visible seam (the drift can therefore loop forever).
+
+   NO per-frame JavaScript and no timers: the whole animation is one CSS
+   `background-position` drift on three layered radial gradients (the cheap
+   class of solution — a battle map can hold many fog rects). Motion only, no
+   opacity or geometry change, so it can never fight the selection ring, the
+   drag lift or the tap threshold. `prefers-reduced-motion: reduce` stops the
+   drift and keeps the cloud: a static cloud, never "no fog". */
+.battle-fog-cloud {
+  background-color: #a1a1aa;
+  background-image:
+    radial-gradient(closest-side circle at 32% 28%, #fafafa 0%, #e4e4e7 44%, #000000 100%),
+    radial-gradient(closest-side circle at 74% 70%, #f4f4f5 0%, #d4d4d8 48%, #000000 100%),
+    radial-gradient(closest-side circle at 52% 88%, #3f3f46 0%, #71717a 46%, #ffffff 100%);
+  background-size: 74% 78%, 88% 70%, 132% 96%;
+  background-repeat: repeat;
+  background-blend-mode: lighten, lighten, darken;
+  animation: battle-fog-drift 52s linear infinite;
+}
+
+/* Three layers, three speeds and directions — the parallax is what makes the
+   mass read as cloud in motion instead of one sliding texture. */
+@keyframes battle-fog-drift {
+  from {
+    background-position: 0 0, 0 0, 0 0;
+  }
+  to {
+    background-position: 190px -130px, -150px 170px, 95px 75px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .battle-fog-cloud {
+    animation: none;
+  }
+}

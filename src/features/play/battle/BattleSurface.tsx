@@ -2594,21 +2594,26 @@ interface VeilViewProps {
 /**
  * The two veil kinds render and behave DISTINCTLY (ledger 65 — owner-directed,
  * supersedes the 8fa7abd 10%-in-both-views rule): **fog is opaque and blocks**
- * (a solid rectangle; a sub-threshold tap on it selects it and stops there) and
- * **veil is transparent and clicks through** (its body still owns the drag/
+ * (a sub-threshold tap on it selects it and stops there) and **veil is
+ * transparent and clicks through** (its body still owns the drag/
  * resize/select stream, but a tap that lands inside a room-key marker's hit pad
- * opens that marker — see `markerUnderPoint`). Keyed off `kind`, which already
- * encodes the seeder's fog intent, so every existing AND newly seeded row lights
- * up with no data migration and NO new field.
+ * opens that marker — see `markerUnderPoint`). Keyed off `kind`, which is the
+ * ONE switch: a veil is plain cover, fog is an opaque blank, and a GENERATED
+ * cover over a mob area is seeded as a veil (`veilsFromSpawnClusters`).
  *
  * Why the earlier "never blind the GM" reasoning was overridden: the GM is not
  * blinded — tokens paint ABOVE the veils by DOM order, and fog stays revealable
  * ("Reveal next room"), draggable, and deletable. Opaque fog is the mechanic's
  * whole point; a 10% tint made fog and veil the same thing on screen.
  *
- * Selection and dragging read via outline + lift (ring / z-20, mirroring the
- * token drag lift) — never opacity swings (and never an `opacity-*` class: the
- * fills are solid/alpha-free, pinned by the veil presentation test).
+ * Fog's fill is the `battle-fog-cloud` class (index.css): an animated, layered
+ * grey cloud, opaque and alpha-free, animated purely in CSS. It used to be the
+ * flat `bg-zinc-300` slab the owner reported as "a white opaque rectangle …
+ * mushy". Its motion is background-position only — no opacity, no geometry —
+ * so selection and dragging still read via outline + lift (ring / z-20,
+ * mirroring the token drag lift) and can never swing the fill. No `opacity-*`
+ * class on either kind; the fills are alpha-free, pinned by the veil
+ * presentation tests.
  */
 function VeilView({
   veil,
@@ -2632,9 +2637,11 @@ function VeilView({
     <div
       className={cn(
         'absolute -translate-x-1/2 -translate-y-1/2 touch-none',
-        // Fog: OPAQUE and blocking. Veil: transparent, alpha-free (never an
-        // `opacity-*` class — selection/dragging must not swing the fill).
-        veil.kind === 'fog' ? 'bg-zinc-300' : 'bg-black/10',
+        // Fog: OPAQUE and blocking — the animated grey cloud in index.css,
+        // never a flat slab. Veil: transparent, alpha-free. Neither kind ever
+        // carries an `opacity-*` class (selection/dragging must not swing the
+        // fill), and the cloud animates background-position only.
+        veil.kind === 'fog' ? 'battle-fog-cloud' : 'bg-black/10',
         (selected || dragging) && 'ring-2 ring-amber-400',
         dragging && 'z-20',
         dragging ? 'cursor-grabbing' : undefined,

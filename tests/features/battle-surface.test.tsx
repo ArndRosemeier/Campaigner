@@ -1,5 +1,8 @@
 import 'fake-indexeddb/auto';
 
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -725,14 +728,15 @@ describe('veil presentation', () => {
     // The kind attribute is the switch the contract keys off — first pinned here.
     expect(screen.getAllByTestId('battle-veil')).toHaveLength(2);
     const expectKinds = (): void => {
-      // Fog: a SOLID rectangle — a non-transparent fill class with no `/alpha`
-      // suffix, and never an `opacity-*` class (the fill may not be walked back).
+      // Fog: the ANIMATED CLOUD class — an opaque, layered, animated fill
+      // (index.css) and never an `opacity-*` class (the fill may not be
+      // walked back to a see-through tint, and selection must not swing it).
+      // The cloud's own layers/gradients/reduced-motion guard are pinned by
+      // the dedicated 'fog renders as a layered animated cloud' test.
       const fog = elFor('fog');
-      expect(fog.className).toContain('bg-zinc-300');
+      expect(fog.className).toContain('battle-fog-cloud');
+      expect(fog.className).not.toContain('bg-zinc-300');
       expect(fog.className).not.toMatch(/opacity-\d/);
-      for (const cls of fog.className.split(/\s+/)) {
-        expect(cls).not.toMatch(/^bg-zinc-300\//);
-      }
       // Veil: still the transparent ~10% tint (its job is plain cover).
       const veil = elFor('veil');
       expect(veil.className).toContain('bg-black/10');
@@ -746,6 +750,67 @@ describe('veil presentation', () => {
     await flushAsyncUpdates();
     expect(screen.getAllByTestId('battle-veil')).toHaveLength(2);
     expectKinds();
+  });
+
+  it('renders fog as a layered, animated cloud — never the flat slab the owner reported', async () => {
+    // Owner report, verbatim: "Right now its just a white opaque rectangle. I
+    // would like this to be grey-ish and animated, cloudy with some contrast,
+    // not just mushy." The rendered class is the pin's first half (a revert to
+    // the old `bg-zinc-300` slab fails here); the second half reads the rule
+    // itself, because the look lives in CSS and jsdom does not compute it.
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, {
+        ...seeded.board,
+        veils: [{ id: newId(), kind: 'fog', x: 0.3, y: 0.3, widthCells: 3, heightCells: 3 }],
+      });
+      await flushAsyncUpdates();
+    });
+    const fog = screen.getByTestId('battle-veil');
+    expect(fog.getAttribute('data-veil-kind')).toBe('fog');
+    expect(fog.className).toContain('battle-fog-cloud');
+    expect(fog.className).not.toContain('bg-zinc-300');
+    expect(fog.className).not.toMatch(/opacity-\d/);
+
+    const css = readFileSync(resolve(import.meta.dirname, '..', '..', 'src', 'index.css'), 'utf8');
+    const rule = /\.battle-fog-cloud\s*\{([^}]*)\}/.exec(css)?.[1];
+    if (rule === undefined) throw new Error('the .battle-fog-cloud rule is gone');
+    // Layered (the "not just mushy" ask): three blended gradient layers …
+    expect([...rule.matchAll(/gradient\(/g)].length).toBeGreaterThanOrEqual(3);
+    expect(rule).toContain('background-image');
+    expect(rule).toContain('background-blend-mode');
+    // … drifting on a pure-CSS animation (no per-frame JS, no timers) …
+    expect(rule).toContain('animation: battle-fog-drift');
+    // … and OPAQUE, alpha-free greys: the fog still hides the map area
+    // (ledger 65 — the cloud is a look, never a tint).
+    expect(rule).toMatch(/background-color:\s*#[0-9a-f]{6}/i);
+    expect(rule).not.toMatch(/rgba\(|hsla\(|\/\s*0?\.\d/);
+    expect(rule).not.toContain('opacity');
+    // It must never touch positioning/stacking: the veil is positioned by the
+    // board (absolute + % offsets) and the markers-below-veils paint order
+    // depends on z-index staying auto — an unlayered `position`/`z-index` here
+    // would win the cascade and break hit-testing.
+    expect(rule).not.toContain('position');
+    expect(rule).not.toContain('z-index');
+
+    const keyframes = /@keyframes battle-fog-drift\s*\{([\s\S]*?)\n\}/.exec(css)?.[1];
+    if (keyframes === undefined) throw new Error('the battle-fog-drift keyframes are gone');
+    // Motion is background-position only — never opacity or geometry, so the
+    // animation cannot fight the selection ring or the drag lift.
+    expect(keyframes).toContain('background-position');
+    expect(keyframes).not.toContain('opacity');
+
+    const reduced = /@media \(prefers-reduced-motion: reduce\)\s*\{([\s\S]*?)\n\}/.exec(css)?.[1];
+    if (reduced === undefined) throw new Error('the prefers-reduced-motion guard is gone');
+    // Static cloud, never "no fog": the guard stops the drift and nothing else.
+    expect(reduced).toContain('.battle-fog-cloud');
+    expect(reduced).toContain('animation: none');
+    expect(reduced).not.toContain('background');
   });
 
   it('the two toolbar tools stay distinct: veil-tool mints a veil, fog-tool mints a fog', async () => {
@@ -773,7 +838,7 @@ describe('veil presentation', () => {
     const byKind = new Map(
       screen.getAllByTestId('battle-veil').map((el) => [el.getAttribute('data-veil-kind'), el]),
     );
-    expect(byKind.get('fog')?.className).toContain('bg-zinc-300');
+    expect(byKind.get('fog')?.className).toContain('battle-fog-cloud');
     expect(byKind.get('veil')?.className).toContain('bg-black/10');
   });
 
