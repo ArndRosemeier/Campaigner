@@ -73,8 +73,26 @@ function namesOfKind(module: Module, kind: EntityKind): string[] {
     .filter((name) => entityKindFor(module.entityKinds, name) === kind);
 }
 
+/**
+ * Batch targets: wiki-link names of the module whose recorded kind is `kind`
+ * and that resolve to NO artifact in the module-creation pool — the exact set
+ * the entity batch is given (docs/17 row 69: a name matching a player character
+ * does NOT count as resolved, so it becomes the module's own entity instead of
+ * silently binding the module to the Party). Exported so the "Resume automatic
+ * module creation" deviation can list the SAME work the sweep would do.
+ */
+export function batchTargets(
+  module: Module,
+  artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
+  kind: EntityKind,
+): string[] {
+  return namesOfKind(module, kind).filter(
+    (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact === undefined,
+  );
+}
+
 /** Image targets: resolved entities of a configured kind without an image. */
-function imageTargets(module: Module, artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>, kind: EntityKind): string[] {
+export function imageTargets(module: Module, artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>, kind: EntityKind): string[] {
   return namesOfKind(module, kind).filter((name) => {
     const artifact = resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact;
     if (artifact === undefined) return false;
@@ -83,7 +101,7 @@ function imageTargets(module: Module, artifacts: Awaited<ReturnType<typeof listA
 }
 
 /** Map targets: module-owned encounters without a generated layout + map. */
-function encountersNeedingMaps(
+export function encountersNeedingMaps(
   module: Module,
   artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
 ): { id: Id; name: string }[] {
@@ -107,7 +125,7 @@ function encountersNeedingMaps(
  * queue's own one-per-creature-kind dedupe + skip-if-imaged make an enqueue
  * re-run a no-op.
  */
-function encountersNeedingMobPortraits(
+export function encountersNeedingMobPortraits(
   module: Module,
   artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
 ): (AnyArtifact & { kind: 'encounter' })[] {
@@ -175,9 +193,7 @@ export async function runModulePostGeneration(moduleId: Id, campaign: Campaign):
         // count as resolved, so it is generated as a NEW module-owned entity
         // instead of silently binding the module to the Party.
         const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
-        const names = namesOfKind(module, kind).filter(
-          (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact === undefined,
-        );
+        const names = batchTargets(module, artifacts, kind);
         if (names.length === 0) continue;
         const result = await runEntityBatch({
           module,

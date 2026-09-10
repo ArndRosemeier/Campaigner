@@ -129,9 +129,27 @@ export interface ModuleProblemSet {
   reported: UnresolvedLinkProblem[];
 }
 
-/** `true` when the module text has any problem (the button's visibility). */
+/** `true` when the module text has any problem at all (the DERIVED answer). */
 export function moduleHasProblems(set: ModuleProblemSet): boolean {
   return set.problems.length > 0;
+}
+
+/**
+ * `true` when the module text has a problem this action can REWRITE — the
+ * visibility rule for "Fix module problems".
+ *
+ * Why not `moduleHasProblems` (the whole set): the other detected problems are
+ * UNRESOLVED wiki-links, and the reader's own chip calls them "not detailed
+ * yet" — they are entity work, which the owner placed OUTSIDE this action
+ * (verbatim: *"This is about the module text, not entities. Entities are
+ * automated in other ways."*). A button that appeared because of missing
+ * entities would be entity work wearing a text label, and it would open a
+ * dialog with nothing to rewrite. The detected unresolved links are still
+ * reported in the confirmation (never hidden), and the entity half has its own
+ * action: "Resume automatic module creation".
+ */
+export function hasRewritableProblems(set: ModuleProblemSet): boolean {
+  return set.repairable.length > 0;
 }
 
 /** "Part 2 — Under the Docks" (the confirmation names parts by number+title). */

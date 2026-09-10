@@ -1854,6 +1854,35 @@ export interface NewEntityClassification {
 }
 
 /**
+ * The names the module TEXT carries that still have no record: no
+ * `entityKinds` entry, not resolved by the pool, and not already covered by a
+ * held consent proposal (`domain/entityNormalization.unclassifiedEntityNames`).
+ *
+ * PURE observation, ONE derivation for every surface that needs it: the entity
+ * panel's bucket observation (`useModuleEntities` + the panel's own read), the
+ * incremental classification pass below, and the "Resume automatic module
+ * creation" deviation (which has to know whether the text names work no batch
+ * can even see yet). `artifacts` must be the MODULE-CREATION pool
+ * (`moduleCreationPool`) — the Party is invisible to module creation (docs/17
+ * row 69), so a name matching a player character is an unrecorded name here
+ * like any other.
+ */
+export function unclassifiedModuleNames(
+  module: Module,
+  artifacts: readonly AnyArtifact[],
+): string[] {
+  const names = extractWikiLinks(moduleDocumentText(module)).map((link) => link.name);
+  return unclassifiedEntityNames({
+    entityKinds: module.entityKinds,
+    names,
+    resolvedNames: names.filter(
+      (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact !== undefined,
+    ),
+    proposals: module.entityRewriteProposals,
+  });
+}
+
+/**
  * Incremental classification for names the module text picked up AFTER the
  * last pass (08 §M4-C "names the text picks up later", docs/17 row 64).
  *
@@ -1899,15 +1928,7 @@ export async function classifyNewModuleEntityNames(moduleId: Id): Promise<NewEnt
   const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
   const artifactNames = artifacts.map((artifact) => artifact.name);
   const { text } = moduleNormalizationDocument(module);
-  const textNames = extractWikiLinks(text).map((link) => link.name);
-  const targets = unclassifiedEntityNames({
-    entityKinds: module.entityKinds,
-    names: textNames,
-    resolvedNames: textNames.filter(
-      (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact !== undefined,
-    ),
-    proposals: module.entityRewriteProposals,
-  });
+  const targets = unclassifiedModuleNames(module, artifacts);
   // Nothing observed that lacks a record: no call, no write, no toast — the
   // idempotent no-op a repeated click (or a second observation) must be.
   if (targets.length === 0) return { classified: [], failed: false };
