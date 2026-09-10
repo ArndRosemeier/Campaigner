@@ -12,17 +12,26 @@ import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
 import { createModule } from '@/domain';
 import { stopAllGenerations } from '@/features/progress/stop-all-generations';
+import { useCoverImageQueue } from '@/features/covers/cover-image-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
+import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import { useProgressStore } from '@/lib/progress';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
 
 /**
- * Stop-all generations (owner request): ONE sweep over the job queues, the
- * in-flight run-engine runs and the module forge. Non-destructive — stopped
- * runs stay resumable ('cancelled'), queue jobs settle silently, and the
- * summary toast reports the distinct stopped count.
+ * Stop-all generations (owner request): ONE sweep over the FOUR job queues
+ * (mob portraits, entity images, encounter maps, covers), the in-flight
+ * run-engine runs and the module forge. Non-destructive — stopped runs stay
+ * resumable ('cancelled'), queue jobs settle silently, and the summary toast
+ * reports the distinct stopped count.
+ *
+ * The count pin in the mixed-work case is deliberately EXACT: every surface
+ * the sweep claims to cover must contribute, so a surface that silently stops
+ * being swept (the cover queue was the real miss — it had a working
+ * `cancelAll` and was simply never called) fails this test instead of
+ * under-reporting to the user.
  */
 
 vi.mock('@/llm/moduleGen', () => ({ cancelModuleGen: vi.fn() }));
@@ -77,6 +86,8 @@ beforeEach(async () => {
   toastErrorMock.mockReset();
   useMobPortraitQueue.getState().reset();
   useEntityImageQueue.getState().reset();
+  useEncounterMapQueue.getState().reset();
+  useCoverImageQueue.getState().reset();
   useProgressStore.getState().reset();
   chatMock.mockImplementation((_messages, opts) => holdUntilAborted(_messages, opts));
   generateImagesMock.mockImplementation((_prompt, _count, opts) => holdUntilAborted(_prompt, opts));
@@ -84,7 +95,11 @@ beforeEach(async () => {
 
 describe('stopAllGenerations', () => {
   it('stops mixed active work — queue jobs, the in-flight run, the module forge — and reports the count', async () => {
-    const campaign = await createCampaign({ name: 'Stop all', system: 'dnd5e' });
+    const campaign = await createCampaign({
+      name: 'Stop all',
+      system: 'dnd5e',
+      description: 'A drowned harbor town, its bell tower still ringing under the tide.',
+    });
     const module = await saveModule(createModule({
       campaignId: campaign.id,
       title: 'The Drowned Vault',
@@ -107,6 +122,13 @@ describe('stopAllGenerations', () => {
     useEntityImageQueue.getState().enqueue([
       { campaignId: campaign.id, moduleId: module.id, name: 'Kael' },
     ]);
+    // The fourth queue: a cover generation, the surface the sweep used to
+    // leave running (working `cancelAll`, never called). A CAMPAIGN cover
+    // keeps this case on the fixture it already has — the prompt draft needs
+    // real grounding text, which the module fixture does not carry.
+    useCoverImageQueue.getState().enqueue([
+      { kind: 'campaign', campaignId: campaign.id, name: campaign.name },
+    ]);
     const personas = await listPersonas();
     const smith = personas.find((persona) => persona.slug === 'npc-smith');
     if (smith === undefined) throw new Error('npc-smith persona missing');
@@ -126,13 +148,15 @@ describe('stopAllGenerations', () => {
     await waitFor(() => {
       expect(useMobPortraitQueue.getState().active).toHaveLength(1);
       expect(useEntityImageQueue.getState().active).toHaveLength(1);
+      expect(useCoverImageQueue.getState().active).toHaveLength(1);
     });
 
     const result = await stopAllGenerations();
 
-    // 2 queue jobs + 1 in-flight run + 1 module forge — distinct units.
-    expect(result).toEqual({ stopped: 4 });
-    expect(toastSuccessMock).toHaveBeenCalledWith('Stopped 4 generations');
+    // 3 queue jobs (mob portrait, entity image, cover) + 1 in-flight run +
+    // 1 module forge — distinct units.
+    expect(result).toEqual({ stopped: 5 });
+    expect(toastSuccessMock).toHaveBeenCalledWith('Stopped 5 generations');
     expect(toastInfoMock).not.toHaveBeenCalled();
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(useMobPortraitQueue.getState().active).toEqual([]);
@@ -141,6 +165,11 @@ describe('stopAllGenerations', () => {
     expect(useEntityImageQueue.getState().active).toEqual([]);
     expect(useEntityImageQueue.getState().queued).toEqual([]);
     expect(useEntityImageQueue.getState().failed).toEqual([]);
+    // The cover queue settles silently too — no failed entry for a job the
+    // user just stopped.
+    expect(useCoverImageQueue.getState().active).toEqual([]);
+    expect(useCoverImageQueue.getState().queued).toEqual([]);
+    expect(useCoverImageQueue.getState().failed).toEqual([]);
     const run = (await listRunsByCampaign(campaign.id)).find((row) => row.id === runId);
     expect(run?.status).toBe('cancelled');
     expect(cancelModuleGenMock).toHaveBeenCalledWith(module.id);

@@ -33,7 +33,7 @@ const nodeTestGlobs = [
   'tests/domain/{itemData,module,pc-artifact,settings-onboarding,wikiGraph}.test.ts',
   // lib (8 of 13 — file-picker/globalErrors touch window, imageAspect/
   // imageIntake use canvas, graphLayout renders)
-  'tests/lib/{equal,exportImport,mdToPdfmake,modulePdf,parallel,pdfExport,progress,wikilinks}.test.ts',
+  'tests/lib/{equal,exportImport,mdToPdfmake,modulePdf,parallel,pdfExport,progress,stopEpoch,wikilinks}.test.ts',
   // ingest (all 11, incl. packs/)
   'tests/ingest/**/*.test.ts',
   // search (both), bestiary roster (bestiary-roster.tsx renders)

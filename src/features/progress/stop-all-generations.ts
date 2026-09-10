@@ -4,8 +4,10 @@ import { chainRunner } from '@/llm/chainRunner';
 import { cancelModuleGen } from '@/llm/moduleGen';
 import { runEngine } from '@/llm/runEngine';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
+import { useCoverImageQueue } from '@/features/covers/cover-image-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
+import { bumpStopEpoch } from '@/lib/stopEpoch';
 import { toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
@@ -16,15 +18,22 @@ import { toastInfo, toastSuccess } from '@/lib/toast';
  * semantics as the per-run Stop), a cancelled spine-only module rewinds to
  * 'draft', a cancelled chain ends as 'cancelled' — nothing is deleted.
  *
- * It lives in features/progress (NOT lib) because the three job queues are
+ * It lives in features/progress (NOT lib) because the four job queues are
  * feature-level stores and the layer map forbids lib → features imports;
  * cross-feature imports are the established pattern (post-run-extras).
  *
+ * Cancelling units is only HALF of "stop all": a stopped ORCHESTRATION must
+ * not start its next unit (owner report: the button "only stops the current
+ * type loop"). The sweep therefore bumps the app-level stop epoch FIRST
+ * (`lib/stopEpoch`), which seals the "no new units" gate for the whole sweep
+ * — the post-generation kind sweep, the entity-batch pool, the parts-pass
+ * automation tail and `post-run-extras` each consult it between units.
+ *
  * What "all generations" covers, and what it deliberately does not:
- * - the three job queues (mob portraits, entity images, encounter maps) —
- *   cancelAll reuses the per-job dequeue semantics, so a withdrawn map job
- *   still cancels its unattended run through the queue's own
- *   `runEngine.cancel` wiring;
+ * - the FOUR job queues (mob portraits, entity images, encounter maps,
+ *   module/campaign covers) — cancelAll reuses the per-job dequeue
+ *   semantics, so a withdrawn map job still cancels its unattended run
+ *   through the queue's own `runEngine.cancel` wiring;
  * - every IN-FLIGHT run-engine run (solo runs, Writers'-Room chain steps,
  *   entity-batch runs) via the engine's controller registry — PAUSED runs
  *   (awaiting_user / needs_review) are not generating and are left alone;
@@ -33,7 +42,9 @@ import { toastInfo, toastSuccess } from '@/lib/toast';
  * - a module forge mid-spine/mid-parts (`cancelModuleGen` for every module
  *   row whose persisted status is 'generating').
  * NOT covered (not generations, no cancel seam): PDF builds and backup
- * jobs — their dock entries keep running.
+ * jobs — their dock entries keep running. Also NOT swept: the cross-campaign
+ * shared mob-portrait cache worker (the sweep aborts LOCAL participation
+ * only) and the queues' FAILED retry lists (user-recoverable state).
  *
  * The returned count is the number of DISTINCT stopped units — a map job and
  * its underlying run count once (the queues are drained BEFORE the run sweep,
@@ -42,6 +53,13 @@ import { toastInfo, toastSuccess } from '@/lib/toast';
  * registry when the sweep snapshots it).
  */
 export async function stopAllGenerations(): Promise<{ stopped: number }> {
+  // Seal the "no new units" gate FIRST (lib/stopEpoch): every orchestration
+  // mid-flight captured the previous epoch, so from here on nothing they were
+  // about to launch can start — not the next kind of the post-generation
+  // sweep, not another entity-batch target, not an automation enqueue, not
+  // the parts-pass automation tail waiting out its ~1s debounce.
+  bumpStopEpoch();
+
   // The chain flag goes down FIRST so the chain cannot start its next step
   // while the sweep below runs (its in-flight step run, if any, is swept by
   // the run-engine pass — the chain itself then only counts when no run of
@@ -56,10 +74,11 @@ export async function stopAllGenerations(): Promise<{ stopped: number }> {
   // Queues first (see the count note above): aborting a job's signal makes
   // its body cancel its own run and settle silently — never a 'failed' toast
   // for a job the user just stopped.
-  const [mobJobs, entityJobs, mapJobs] = await Promise.all([
+  const [mobJobs, entityJobs, mapJobs, coverJobs] = await Promise.all([
     useMobPortraitQueue.getState().cancelAll(),
     useEntityImageQueue.getState().cancelAll(),
     useEncounterMapQueue.getState().cancelAll(),
+    useCoverImageQueue.getState().cancelAll(),
   ]);
 
   const cancelledRunIds = await runEngine.cancelAllActive();
@@ -79,7 +98,8 @@ export async function stopAllGenerations(): Promise<{ stopped: number }> {
   const chainStopped =
     chainWasRunning && !chainRunIds.some((id) => cancelledRunIds.includes(id)) ? 1 : 0;
 
-  const stopped = mobJobs + entityJobs + mapJobs + cancelledRunIds.length + moduleForges + chainStopped;
+  const stopped =
+    mobJobs + entityJobs + mapJobs + coverJobs + cancelledRunIds.length + moduleForges + chainStopped;
   if (stopped === 0) {
     toastInfo('Nothing was running');
   } else {
