@@ -89,12 +89,51 @@ describe('deleteModule — transaction atomicity', () => {
       }),
     );
     const owned = await createArtifact({ campaignId, moduleId: module.id, kind: 'npc', name: 'Kael' });
+    const beforeRevisions = (await listRevisions(owned.id)).length;
 
     await deleteModule(module.id, 'keep');
 
     expect(await getModule(module.id)).toBeUndefined();
     expect((await getArtifact(owned.id))?.moduleId).toBeNull();
     expect((await getArtifact(owned.id))?.campaignId).toBe(campaignId);
+    // The bulk release writes the SAME revisioned scope change a single move
+    // writes (docs/18 §2.1 `releaseModuleOwnership`), inside this tx.
+    expect((await listRevisions(owned.id)).length).toBe(beforeRevisions + 1);
+  });
+
+  it("'keep' rolls the whole release back when the module delete fails after it", async () => {
+    const campaignId = newId();
+    const module = await createModule(
+      createModuleSchema({
+        campaignId,
+        title: 'Tide Gate',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const owned = await createArtifact({ campaignId, moduleId: module.id, kind: 'npc', name: 'Kael' });
+    const beforeRevisions = (await listRevisions(owned.id)).length;
+    // The module row delete is made to explode: it runs AFTER the release in
+    // the same transaction, so a release that leaked out of the tx would
+    // leave campaign-level rows belonging to a module that still exists.
+    const modules = (await import('@/db/db')).db.modules;
+    const originalDelete = modules.delete.bind(modules);
+    const target = modules as unknown as { delete: (key: string) => Promise<void> };
+    target.delete = async (key: string) => {
+      if (key === module.id) throw new Error('simulated module delete failure');
+      await originalDelete(key);
+    };
+    try {
+      await expect(deleteModule(module.id, 'keep')).rejects.toThrow(/simulated module delete failure/);
+    } finally {
+      target.delete = originalDelete;
+    }
+
+    expect(await getModule(module.id)).toBeDefined();
+    expect((await getArtifact(owned.id))?.moduleId).toBe(module.id);
+    expect((await listRevisions(owned.id)).length).toBe(beforeRevisions);
   });
 
   it("'promote-referenced' shares outside-referenced rows and cascades the rest", async () => {

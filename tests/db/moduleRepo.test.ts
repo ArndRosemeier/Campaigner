@@ -216,6 +216,9 @@ describe('moduleRepo', () => {
       });
       await createArtifact({ campaignId, kind: 'note', name: 'Free note' });
 
+      const before = await getArtifact(owned.id);
+      const beforeRevisions = (await listRevisions(owned.id)).length;
+
       await deleteModule(created.id, 'keep');
 
       expect(await getModule(created.id)).toBeUndefined();
@@ -223,6 +226,15 @@ describe('moduleRepo', () => {
       expect(released?.moduleId).toBeNull();
       // The campaign anchor survives the release.
       expect(released?.campaignId).toBe(campaignId);
+      // The release rides the SANCTIONED scope seam (docs/18 §2.1), so it is
+      // a revisioned scope change like any single move — not a raw
+      // `modify({moduleId: null})` that no history records.
+      expect(released?.currentRevision).toBe((before?.currentRevision ?? 0) + 1);
+      const revisions = await listRevisions(owned.id);
+      expect(revisions.length).toBe(beforeRevisions + 1);
+      expect(revisions[0]?.snapshot.moduleId).toBeNull();
+      // A scope change is a real save: the row's `updatedAt` moves with it.
+      expect(released?.updatedAt).toBeGreaterThanOrEqual(before?.updatedAt ?? 0);
       expect((await listArtifactsByCampaignRows(campaignId)).map((row) => row.name).sort()).toEqual([
         'Free note',
         'Kael',

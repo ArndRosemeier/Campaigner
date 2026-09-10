@@ -563,13 +563,20 @@ function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id
  * zip image binaries keyed by archive path.
  *
  * Reference rewriting (M3-E): artifact `moduleId`s follow the module re-id
- * map (an artifact whose module is NOT in the export — a v1 file whose
- * modules were never exported — demotes to campaign level, documented in
- * 07-MILESTONE-3 M3-E); battle tokens/`encounterArtifactId`, run
+ * map; battle tokens/`encounterArtifactId`, run
  * result/target artifacts and deliverable outline nodes follow the artifact
  * re-id map, falling back to the original id when the target was outside a
  * selection export. The dependency manifest and `missingImages` are metadata
  * only (no tables) — validated, not imported.
+ *
+ * An artifact whose module is NOT in the export is decided BY VERSION, never
+ * by an any-case fallback: a v1 file (pre-M3-E, whose `modules` table never
+ * traveled) demotes to campaign level — the documented legacy rescue
+ * (07-MILESTONE-3 M3-E), and the ONE exception, pinned by test; any other
+ * version THROWS loudly, exactly like the battle path below for the identical
+ * breakage. Silently demoting there would MOVE a module's artifact out of its
+ * module (a scope change only the explicit `moveScope` family may make) and
+ * hide a corrupt or hand-edited export behind a plausible-looking row.
  *
  * Dependency enforcement (M3-E slice B): unless `options.dependencyPolicy`
  * is `'import-anyway'`, the manifest is checked against the local library
@@ -692,6 +699,28 @@ export async function importExport(
         const artifactId = crypto.randomUUID();
         artifactIds.set(exported.id, artifactId);
         const { revisions, ...artifactFields } = exported;
+        // A module-owned artifact whose module is NOT in the export is a
+        // BREAK, not a scope preference — the two cases are told apart by the
+        // file's own version (v1 predates modules entirely; every v2 export
+        // carries the campaign's modules, `buildCampaignExport`).
+        const exportedModuleId = artifactFields.moduleId;
+        const remappedModuleId =
+          exportedModuleId === null ? null : (moduleIds.get(exportedModuleId) ?? null);
+        if (
+          exportedModuleId !== null &&
+          remappedModuleId === null &&
+          parsed.version !== 1
+        ) {
+          // Loud, exactly like the battle path below for the identical
+          // breakage (AGENTS rule 1): silently demoting the row to campaign
+          // scope would move a module's artifact out of its module — the one
+          // thing only the explicit scope moves may do — and hide a
+          // corrupt/edited export behind a plausible-looking row.
+          throw new Error(
+            `Import references the module ${exportedModuleId} of artifact "${artifactFields.name}", ` +
+              'which is outside the export',
+          );
+        }
         await db.artifacts.add(
           artifactSchema.parse({
             ...artifactFields,
@@ -700,10 +729,11 @@ export async function importExport(
               : {}),
             id: artifactId,
             campaignId: newCampaignId,
-            moduleId:
-              artifactFields.moduleId === null
-                ? null
-                : (moduleIds.get(artifactFields.moduleId) ?? null),
+            // v1 ONLY: a pre-M3-E file whose artifacts were module-owned on
+            // the source side but whose `modules` table never traveled
+            // demotes to campaign level — the documented legacy rescue
+            // (07-MILESTONE-3 M3-E), kept and tested as the one exception.
+            moduleId: remappedModuleId,
             createdAt: stamp,
             updatedAt: stamp,
           }),

@@ -590,6 +590,66 @@ describe('export v2', () => {
     expect(new TextDecoder().decode(restored?.bytes ?? new Uint8Array())).toBe('cover-bytes');
   });
 
+  it('THROWS when a module-owned artifact names a module outside the export (v2)', async () => {
+    const campaign = await createCampaign({ name: 'Broken refs', system: 'dnd5e' });
+    const orphanRef = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Stray' });
+    // A moduleId pointing at a row this export does not carry: a hand-edited
+    // or corrupt file. Silently demoting it to campaign scope would move a
+    // module's artifact out of its module — the battle path 20 lines below
+    // throws for the identical breakage.
+    await db.artifacts.update(orphanRef.id, { moduleId: newId() });
+    const exported = await buildCampaignExport(campaign.id);
+    const json = JSON.parse(JSON.stringify(exported)) as Record<string, unknown>;
+    json.modules = [];
+
+    await expect(importExport(json)).rejects.toThrow(
+      /references the module .* of artifact "Stray", which is outside the export/,
+    );
+    // Zero rows written: the failure happens inside the one transaction.
+    expect(await listCampaigns()).toHaveLength(1);
+  });
+
+  it('still DEMOTES a module-owned artifact to campaign level on a v1 file (the documented rescue)', async () => {
+    const campaign = await createCampaign({ name: 'Legacy ownership', system: 'dnd5e' });
+    const module = await saveModuleRow(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Warren',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        tone: '',
+        sizeDial: 'standard',
+      }),
+    );
+    const owned = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Grimm',
+    });
+    const exported = await buildCampaignExport(campaign.id);
+    const v1 = JSON.parse(JSON.stringify(exported)) as Record<string, unknown>;
+    // The pre-M3-E shape: version 1, no modules table at all — the artifact's
+    // moduleId has nowhere to point, so it demotes (07-MILESTONE-3 M3-E).
+    v1.version = 1;
+    delete v1.modules;
+    delete v1.battles;
+    delete v1.runs;
+    delete v1.deliverables;
+    delete v1.dependencies;
+
+    const result = await importExport(v1);
+
+    expect(result.createdArtifacts).toBe(1);
+    expect(await listModulesByCampaign(result.campaignId)).toHaveLength(0);
+    const imported = (
+      await db.artifacts.where('campaignId').equals(result.campaignId).toArray()
+    ).find((row) => row.name === 'Grimm');
+    expect(imported?.moduleId).toBeNull();
+    expect(imported?.id).not.toBe(owned.id);
+  });
+
   it('still parses v1 files (no v2 tables, version 1)', async () => {
     const campaign = await createCampaign({ name: 'Legacy', system: 'dnd5e' });
     await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Old note' });

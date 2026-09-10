@@ -23,6 +23,8 @@ import {
   globalArtifactKindSchema,
   globalArtifactSchema,
 } from '@/domain';
+import type { Table } from 'dexie';
+
 import { db } from '@/db/db';
 import { parseBattleRow, scrubArtifactFromBattles } from '@/db/battleRepo';
 import { isBattleEmpty } from '@/db/fighterStats';
@@ -301,21 +303,38 @@ export async function attachImagesToArtifact(
   });
 }
 
+/**
+ * The tables a sanctioned scope transition needs (docs/18 §2.1: `moveScope` is
+ * the ONLY path that may change `campaignId`/`moduleId`). Callers that must
+ * release ownership INSIDE a larger transaction (deleteModule's 'keep' branch)
+ * open their outer scope over at least these tables and hand it in, so the
+ * release runs in the same scope instead of a second, unsanctioned raw write.
+ */
+export interface ScopeTx {
+  artifacts: Table<AnyArtifact, Id>;
+  revisions: Table<ArtifactRevision, Id>;
+  images: Table<StoredImage, Id>;
+}
+
 /** Applies a scope transition (module move, adoption, publication) as a
  * revisioned save — the ONLY path that may change `campaignId`/`moduleId`
- * (10-MILESTONE-6 B/C). Content fields are untouched. */
+ * (10-MILESTONE-6 B/C). Content fields are untouched. `tx` lets one caller
+ * (the delete dialog's 'keep' branch) run a BULK release inside its own rw
+ * transaction — the transition stays this function, never an inlined
+ * `table.modify({moduleId: null})` that skips the revision contract. */
 async function moveScope(
   id: Id,
   changes: { campaignId?: Id | null; moduleId?: Id | null },
   meta: RevisionMeta = USER_SAVE,
   images?: { anchor: Id | null },
+  tx?: ScopeTx,
 ): Promise<AnyArtifact> {
   // `db.images` joins the transaction when the move re-anchors its images
   // (adopt/publish): a crash between the row move and the image re-anchor
   // would desynchronize scopes — a library image stranded in a campaign's
   // prune scope (permanent blob loss via pruneUnreferencedImages) or a
   // campaign image the old campaign's prune can no longer see.
-  return db.transaction('rw', [db.artifacts, db.revisions, db.images], async () => {
+  const scope = async (): Promise<AnyArtifact> => {
     const current = await db.artifacts.get(id);
     if (!current) throw new NotFoundError('Artifact', id);
     if (images !== undefined) {
@@ -335,7 +354,39 @@ async function moveScope(
     });
     await writeRevision(next, meta);
     return next;
+  };
+  if (tx !== undefined) return scopeInTx(tx, id, changes, meta, images);
+  return db.transaction('rw', [db.artifacts, db.revisions, db.images], scope);
+}
+
+/** The in-transaction half of a scope transition: everything `scope` does,
+ * reading the row through the caller's own transaction instead of opening a
+ * second one (a bulk release inside `deleteModule`'s scope). */
+async function scopeInTx(
+  tx: ScopeTx,
+  id: Id,
+  changes: { campaignId?: Id | null; moduleId?: Id | null },
+  meta: RevisionMeta,
+  images?: { anchor: Id | null },
+): Promise<AnyArtifact> {
+  const current = await tx.artifacts.get(id);
+  if (!current) throw new NotFoundError('Artifact', id);
+  if (images !== undefined) {
+    const imageIds =
+      current.coverImageId !== null
+        ? [...current.imageIds, current.coverImageId]
+        : current.imageIds;
+    await reanchorImages(imageIds, images.anchor);
+  }
+  const next = anyArtifactSchema.parse({
+    ...current,
+    ...changes,
+    currentRevision: current.currentRevision + 1,
+    updatedAt: Date.now(),
   });
+  await tx.artifacts.put(next);
+  await tx.revisions.put(revisionRowFor(next, meta));
+  return next;
 }
 
 /**
@@ -881,7 +932,15 @@ export async function deleteArtifactsOfKind(
  * overlapping saves serialize instead of clobbering revision numbers.
  */
 async function writeRevision(valid: AnyArtifact, meta: RevisionMeta): Promise<void> {
-  const revision: ArtifactRevision = {
+  await db.artifacts.put(valid);
+  await db.revisions.put(revisionRowFor(valid, meta));
+  await trimRevisions(valid.id);
+}
+
+/** One revision snapshot row for a written artifact (the writeRevision shape,
+ * extracted so the in-transaction scope path records the SAME row). */
+function revisionRowFor(valid: AnyArtifact, meta: RevisionMeta): ArtifactRevision {
+  return {
     ...stampNewEntity(valid.updatedAt),
     artifactId: valid.id,
     revision: valid.currentRevision,
@@ -889,9 +948,28 @@ async function writeRevision(valid: AnyArtifact, meta: RevisionMeta): Promise<vo
     source: meta.source,
     runId: meta.runId ?? null,
   };
-  await db.artifacts.put(valid);
-  await db.revisions.put(revision);
-  await trimRevisions(valid.id);
+}
+
+/**
+ * Bulk release of ONE module's rows into plain campaign ownership, inside the
+ * caller's transaction (deleteModule's 'keep' branch). ONE shape for the whole
+ * release, exactly as a single release writes it: `moduleId: null`, a bumped
+ * `currentRevision`, a fresh `updatedAt` and the matching revision snapshot.
+ * This is `moveScope` (the only sanctioned scope writer, docs/18 §2.1) applied
+ * per row — never a raw `table.modify({moduleId: null})`, which would leave a
+ * scope change that no revision records and no undo can see.
+ *
+ * Ordering is deterministic (the caller passes the module's rows sorted by
+ * name) so a mid-release failure rolls back to the same state every time; the
+ * whole thing rides the caller's transaction, so a failure releases NOTHING.
+ */
+export async function releaseModuleOwnership(
+  artifacts: readonly Artifact[],
+  tx: ScopeTx,
+): Promise<void> {
+  for (const artifact of artifacts) {
+    await moveScope(artifact.id, { moduleId: null }, USER_SAVE, undefined, tx);
+  }
 }
 
 /** Deletes the oldest revisions beyond the per-artifact cap. */

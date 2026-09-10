@@ -220,10 +220,19 @@ play mechanic and re-anchors battles:
   freezes. `spawnMobArtifactIntoModule` promotes (shared) on second-module
   spawn instead of moving.
 - **Delete**: `modulesReferencingOwnedArtifacts` unions wiki-graph edges
-  (uncapped `buildWikiGraph`) + roster npc-ref/mobArtifactId scan + battle
-  token/seed-fighter scan (no stored index). The list dialog grows a third
-  state listing referenced artifacts: [Promote & keep referenced, cascade
-  rest] vs [Force-delete all]. Keep/cascade branches unchanged.
+  (uncapped `buildWikiGraph`) + artifact `links[]` relations + artifact-body
+  wiki-links + roster npc-ref/mobArtifactId scan + battle token/seed-fighter
+  scan + deliverable outline nodes, over the READER'S pool (campaign rows plus
+  the global library, so a published encounter's citation counts); no stored
+  index. The list dialog grows a third state listing referenced artifacts:
+  [Promote & keep referenced, cascade rest] vs [Force-delete all]. Keep does
+  NOT bypass the scope seam: it releases through
+  `artifactRepo.releaseModuleOwnership` (`moveScope` per row, inside the
+  delete's transaction — a revision snapshot and a fresh `updatedAt` per
+  released row), and the dialog additionally states a REFERENCE census of the
+  shared campaign-scoped mob artifacts the module's encounters cite
+  (`mobArtifacts.countMobArtifactsCitedByModule`) — those rows are
+  campaign-level by design and the cascade never touches them.
 - **Failures** surface loudly (toast); a failed promote never leaves a
   half-moved row (`moveScope` is one transaction).
 

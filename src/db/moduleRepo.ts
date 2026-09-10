@@ -1,7 +1,11 @@
 import type { Id, Module, ModulePart, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
 import { moduleSchema } from '@/domain';
 import { db } from '@/db/db';
-import { deleteArtifact, listArtifactsByModule } from '@/db/artifactRepo';
+import {
+  deleteArtifact,
+  listArtifactsByModule,
+  releaseModuleOwnership,
+} from '@/db/artifactRepo';
 import { deleteImageIfUnreferenced } from '@/db/imageRepo';
 import { deleteModuleVersionsForModules } from '@/db/moduleVersionRepo';
 import { NotFoundError } from '@/lib/errors';
@@ -206,8 +210,17 @@ export async function deleteModule(
       if (ownedArtifacts === 'keep') {
         // Module-owned rows carry the module's campaignId, so clearing the
         // module binding drops them back into plain campaign ownership with
-        // their images/links/revisions untouched.
-        await db.artifacts.where('moduleId').equals(id).modify({ moduleId: null });
+        // their content/images/links untouched. The release rides the
+        // SANCTIONED scope seam (`releaseModuleOwnership` → `moveScope`, the
+        // only writer allowed to change scope, docs/18 §2.1) inside THIS
+        // transaction: one revision snapshot + a fresh `updatedAt` per row,
+        // so the change is visible in the artifact's history and a failure
+        // releases nothing (the rows come from the in-tx re-list above).
+        await releaseModuleOwnership(ownedRows, {
+          artifacts: db.artifacts,
+          revisions: db.revisions,
+          images: db.images,
+        });
         await db.modules.delete(id);
         return;
       }
