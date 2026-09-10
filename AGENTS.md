@@ -97,11 +97,31 @@ used:
 The session list holds in-flight work only — a short list is a correct
 list (stale sessions caused real confusion before: a finished pack agent
 was mistaken for pending work, a stopped agent lingered for days).
+Retiring is part of the work, not cleanup to do later: the dispatcher
+audits the registry (and the branch list) at every landing verification
+and whenever the owner asks — an unrun audit is why 57 stale branches were
+once found by the owner instead of the agent.
 
 - Delete a probe session as soon as its report is consumed.
 - Delete a writer session only after its landing is verified on
-  `origin/main` (by commit SHA), then retire its worktree (`git worktree
-  remove --force` + `prune`). Never delete a running writer.
+  `origin/main` (by commit SHA). Never delete a running writer.
+- A BLOCKED writer is deleted once its reasoning is captured where it
+  matters (a follow-up brief, a doc line, the owner report) and the
+  salvage check below confirms it wrote nothing. "No landing to wait
+  for" is not a reason to leave it listed.
+- **Retire the branch, not just the worktree.** A verified landing means:
+  the session is deleted, `git worktree remove --force` + `git worktree
+  prune`, AND the writer's branch is deleted. Local branches: delete.
+  Remote branches: shared state — delete only with the owner's explicit
+  go-ahead, and record every deleted tip SHA in the report as the
+  recovery pointer.
+- **Safe-delete test (branches):** a branch is deletable when `git log
+  --oneline main..<branch>` is empty. If it is NOT empty, do not delete
+  and do not assume loss — the branch may be a superseded iteration whose
+  content landed under rewritten history (real case: one commit outside
+  `main` whose feature was already in `main` under different commits).
+  Verify content (`git diff --stat main...<branch>` + grep for the
+  feature in `main`), then delete and report the tip SHA.
 - A silent writer (no report, session gone quiet): salvage-check BEFORE
   deleting — `git log` on its branch for unpushed commits, worktree
   status for uncommitted work. Verify against `origin/main`; never assume
