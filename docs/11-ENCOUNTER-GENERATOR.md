@@ -1589,7 +1589,12 @@ data model, run-engine threading, UI, docs); the gate at completion is
   the queue; retry re-runs only the failed job. The module itself ships under
   a hard encounter floor (docs/08 §M4-B): at least one distinct named
   encounter per level, allocated per part band — counted from the prose
-  wiki-links, never from generated artifacts.
+  wiki-links, never from generated artifacts. The floor's number is the
+  MODULE's own recorded guardrail (docs/08 §Editable encounter floor): the
+  owner may raise it per module in the New Module dialog's Advanced
+  disclosure, and may turn it off entirely — this seam's own vocabulary
+  (conflict kinds, the declared mix, encounter artifacts, maps and rosters)
+  is untouched by that setting.
 - An uploaded-map encounter (no layout) behaves exactly as today.
 - Room keys & mob treasure (D9): a generated brief's room keys persist on
   the finalized layout rooms through packing rotation and the staging

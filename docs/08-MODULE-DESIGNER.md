@@ -209,10 +209,13 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
   combat, social, exploration, discovery, and recovery according to the story
   and the group's enjoyment. Let the fiction and pacing decide the exact
   structure rather than filling a quota mechanically.
-- REQUIREMENT — encounter floor: name at least **one distinct encounter per
-  level** of the module's range (levels X–Y → at least N distinct encounters
-  across the module), with each part naming at least as many encounters as
-  the levels its band covers. Every planned encounter declares its conflict
+- REQUIREMENT — encounter floor: name at least **`perLevel` distinct
+  encounters per level** of the module's range (levels X–Y → at least N
+  distinct encounters across the module), with each part naming at least as
+  many encounters as the levels its band covers. `perLevel` is the module's
+  own recorded floor (default 1), never a hard-coded one — see §Editable
+  encounter floor below; the same number renders this clause, the spine repair
+  retry, the per-part share and the gate. Every planned encounter declares its conflict
   STRUCTURALLY on its entity record: exactly **two mutually exclusive wants**
   (`wants: [a, b]` — if both sides could plausibly agree, it is not an
   encounter yet) and one **conflict kind** (combat, hazard, chase, social,
@@ -253,7 +256,9 @@ second failure → module `status:'failed'` + errorMessage (loud, per AGENTS
 rule 1).
 
 **Spine encounter gate:** after the spine saves, zero `kind: "encounter"`
-records OR a declared mix missing combat / hazard-or-chase / social trigger
+records (only when the module's floor is ENABLED — a disabled floor makes an
+encounter-free spine legitimate) OR a declared mix missing combat /
+hazard-or-chase / social trigger
 ONE repair retry on the escalated model (a corrected spine that declares
 encounters with wants + kinds); a second defective record fails the spine
 loudly — a zero-encounter or mix-broken draft never parks on the checkpoint.
@@ -291,9 +296,10 @@ For part i, the user message contains:
    - target length by sizeDial: sketch ≈ 400–700 words, standard ≈ 800–1500,
      detailed ≈ 1500–2500 (soft targets, stated in the prompt),
    - REQUIREMENT — this part's encounter share (stated with the concrete
-     number): name at least as many distinct encounters as the levels the
-     part's band covers, as `[[Encounter Name]]` wiki-links; encounters
-     named in other parts do not count toward this part's share,
+     number): name at least `perLevel × levels in the band` distinct
+     encounters, as `[[Encounter Name]]` wiki-links; encounters
+     named in other parts do not count toward this part's share. The item is
+     omitted entirely when the module's floor is disabled,
     - the planner's declared encounters (names, opposed wants, kinds) ride
       the prompt as the conflict brief: stage each in its declared kind,
       keep the opposed wants irreconcilable inside the part (negotiation
@@ -317,7 +323,10 @@ For part i, the user message contains:
 
 **Encounter-floor gate (hard):** after the parts loop AND the
 name-normalization pass, but BEFORE the ready write, `runParts` counts the
-floor on the normalized canonicals (`countModuleEncounters` — pure: the set
+floor on the normalized canonicals — against **the module's own recorded floor**
+(`encounterFloorGuardrailFor`, §Editable encounter floor; a disabled floor
+demands 0 and no band is ever deficient, so the gate and its repair are
+inert) (`countModuleEncounters` — pure: the set
 of lowercased `extractWikiLinks(moduleDocumentText)` targets whose recorded
 kind is `"encounter"` against levelCount, allocated per band with
 `levelsInLevelBand`; bands `1`, `2-3`, `2–3`, `2 - 3` parse, unparseable = 1;
@@ -369,6 +378,50 @@ Per-part **"Rewrite…"** button (also for successful parts): optional user
 instruction appended, regenerates just that part with the same context recipe
 (prior part = current text of part i−1). Overwrites the part's markdown —
 confirm dialog when the part was hand-edited since generation.
+
+### Editable encounter floor (numeric, Advanced)
+
+The floor is the one prompt requirement the owner can change without editing
+prompt copy (owner decision, docs/17 row 70). It is deliberately a
+**numerical** interface — two controls behind the New Module dialog's
+**Advanced — encounter guardrails** disclosure:
+
+- **Encounter floor** (on by default) — off means no minimum count of named
+  encounters at all: the prompt clause, the spine gate, the floor gate and the
+  floor repair all disappear together.
+- **Per level** (default 1, integers 0..10) — how many distinct encounters each
+  level of the range must yield.
+
+ONE source of truth, `src/domain/module.ts`: `encounterFloorGuardrailSchema`
+(`{ enabled, perLevel }`, integers, min 0, and `enabled ⇒ perLevel ≥ 1` — a
+disabled floor may carry 0). Every consumer reads the resolved value
+`encounterFloorGuardrailFor(module)` **from the module row** — the spine prompt
+builder, the spine gate and its repair retry, the parts gate, the floor repair
+and the per-part instruction — so a repair, a retry or a later pass months on
+judges the module by the rules it was created with, never by whatever a dialog
+shows today. `countModuleEncounters(module, floor?)` and
+`assertEncounterFloor(module, floor?)` are pure and default to the module's own
+recorded floor.
+
+Rendered prose is derived from the numbers (`encounterCountWord`): `perLevel: 1`
+renders "at least one distinct encounter per level"; 2 renders "at least two
+distinct encounters per level" and "→ at least 4 distinct encounters across the
+module" for a 2-level range; the failure message states the doubled requirement
+("needs 4 distinct named encounters … needs 2, names 1"). At the default every
+rendered string and threshold is **byte-identical** to the pre-config behavior,
+held by the golden fixtures in `tests/fixtures/encounterGuardrails/` (captured
+by rendering the pre-change builders at 89e5d71).
+
+**Storage:** the choice is recorded ON THE MODULE ROW in
+`encounterFloorGuardrail` (additive optional, `null` = not recorded = today's
+default floor), so the row is self-describing and no settings change can
+retroactively alter a module's rules. No Dexie version bump is needed (a
+nullable optional field parses old rows as `null`).
+
+Not configurable, by design: the encounter conflict-kind vocabulary, the
+declared-mix rule and the undeclared-kind check. The undeclared-kind rule is
+data integrity (no classifier may guess a kind), and the mix vocabulary is its
+own seam with its own arc.
 
 ### Tone dial (banned resolutions)
 
@@ -427,6 +480,25 @@ prose starts). The spine's opening detail names the stage as one large design
 call and sets the minutes-long expectation up front, so the quiet stretch is
 not read as a hang. The dialog never blocks on the LLM. A failed first spine
 shows its recorded error in the reader with an in-place **Retry spine draft**.
+
+**Persisted draft** (owner request, docs/17 row 70): every value the dialog
+holds — the concept included — is saved to the settings row's
+`newModuleDraft`, TAGGED with the campaign it was written in, so deleting a
+module and trying again (or resetting and starting over) does not cost a retype.
+The write is debounced (500 ms) on change, flushed synchronously when the run
+starts and when the dialog closes/mounts away, and never fired before the
+stored draft has been seeded (a pre-seed empty state can never overwrite a
+stored draft). A draft written in another campaign is neither prefilled nor
+overwritten. **Reset to defaults** (footer) restores the dialog's own defaults
+and overwrites the stored draft — a prefill with no way out would be a trap.
+The two campaign wipes ("Remove all generated content", "Clear workspace") KEEP
+the draft on purpose (it is authored input and retry is the feature);
+`deleteCampaign` clears it, because the campaign it is tagged for is gone. A
+stored draft that no longer validates fails the settings read LOUDLY (no silent
+half-prefill).
+
+**Advanced — encounter guardrails**: the two floor controls (§Editable
+encounter floor above), recorded on the module row at creation.
 
 ---
 
@@ -1293,7 +1365,10 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
 - ~~No numeric entity quotas exist anywhere in the new UI.~~ Struck:
   the encounter floor is a hard numeric quota — a module whose document
   names fewer distinct encounters than its level count (allocated per band)
-  fails loudly instead of shipping ready (see the floor gate above).
+  fails loudly instead of shipping ready (see the floor gate above). The ONE
+  exception is the floor itself, which the owner may retune per module in the
+  New Module dialog's Advanced disclosure (a numeric control — the requirement
+  is a quota, and a quota is a number, docs/17 row 70).
 
 ## Non-goals
 
