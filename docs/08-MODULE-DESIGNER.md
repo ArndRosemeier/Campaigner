@@ -811,7 +811,88 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   parses fails the save loudly with the splitter's reason and the editor
   keeps its text. **Restore** re-proposes an older per-part version as a
   block replace over THAT part's current section range — it rides undo and
-  the split-save like any proposal; there is no side-door write.
+  the split-save like any proposal; there is no side-door write. Every
+  origin-'ai' save ALSO takes the durable pre-change snapshot first (see
+  §Simple undo below) — the session ledger is session review state, the
+  durable stack is the undo.
+- **Simple undo — DURABLE whole-document versions, taken BEFORE every AI
+  change** (owner-directed: "There is no undo in chat right now. I would
+  like to have a simple one. Before each AI change, simply save the whole
+  content in a version. Make an option under versions to clear all previous
+  versions."; ledger 63, docs/18 §2.3):
+  - **What a version is**: ONE row per AI change holding the WHOLE module
+    parts document BYTE-EXACT as it stood immediately before that change —
+    the same text `assembleModulePartsDocument` builds and
+    `splitPartsDocument` splits (`==========` separators, `[Part <n> of
+    <total> — <title>]` labels, every planned part, spine premise excluded).
+    Never a second document format: a restore re-splits the stored string
+    against the CURRENT plan through the existing split/save seam.
+  - **DURABLE by owner decision**: the rows live in Dexie (`moduleVersions`,
+    schema v19 — additive table, no migration; a pre-v19 database simply has
+    no undo history and the first AI change starts the stack) and survive
+    reload. This is deliberate revision history, created for AI changes ONLY
+    — the per-part session ledger keeps its own SESSION-ONLY semantics
+    (`canvasStore.ts` header: do not "fix" that with persistence) and the two
+    stacks are separate and parallel, each labelled honestly in the menu.
+  - **When** — ONE shared seam, `snapshotModuleVersion(moduleId, source,
+    label)` (`db/moduleVersionRepo.ts`), called immediately BEFORE the AI
+    write, never after. Covered paths: canvas AI saves through
+    `saveWholeModuleDocument` with `origin: 'ai'` — the editor chat batch, the
+    preview-snapshot chat batch, an accepted **Refine**/**Rewrite** proposal,
+    and a restore (session or durable); `runParts` at ENTRY (`llm/moduleGen.ts`)
+    — full generation, "generate missing parts", a single-part
+    rewrite/regenerate (the reader's Rewrite and the board's staged rewrite
+    both ride it), and the floor-repair rewrites inside the pass; each
+    `normalizeModuleEntityNames` pass (its own snapshot — it rewrites link
+    targets inside generated part text); and the entity panel's consented
+    apply of stored normalization rewrites (`entity-panel.tsx`). An
+    `origin: 'ai'` save that names no source THROWS and writes nothing: an
+    AI change whose pre-state could not be recorded must not land (AGENTS 1),
+    and the throw surfaces through the caller's existing loud path.
+  - **When NOT** — manual typing is never snapshotted: the reader's hand edit,
+    the canvas's manual **Save** (origin `'user'`) and CM6's own history cover
+    hand edits; a hand edit is not an AI change. The board's Apply/Discard of a
+    staged rewrite is likewise not snapshotted: the engine's own write was
+    already captured at the pass entry, and Discard restores exactly the text
+    that snapshot holds.
+  - **Labels are honest** — what the change is about to do: `Chat: <opening
+    words of the instruction>`, `Refine: …`, `Rewrite: …`, `Rewrite part 2 —
+    Under the Docks: make it flood`, `Generate parts`, `Generate 2 missing
+    parts`, `Normalize entity names`, `Apply name-normalization rewrites`,
+    `Restore from <time>`. The menu shows the label, the source and a
+    timestamp, newest first; the group header states the semantics ("the whole
+    document as it was BEFORE each AI change").
+  - **Bounded, never silently** — `MODULE_VERSION_CAP` = 25 versions per
+    module; the OLDEST is pruned in the same transaction as the insert, and
+    the menu states the retention ("keeping the most recent 25"). No dedupe
+    and no coalescing: an AI change that ended up writing nothing still
+    leaves its pre-state snapshot (restoring it is a harmless no-op) rather
+    than a silent hole in the history. `createdAt` is strictly increasing per
+    module, so "newest" is never a coin flip between two snapshots taken in
+    the same millisecond.
+  - **Restore** — the durable entry is validated against the CURRENT part plan
+    first: a version saved under a different plan (a re-drafted spine) would
+    produce a document whose scaffold labels lie, so it is refused LOUDLY
+    ("saved for a different part plan") instead of proposed. A valid one rides
+    the SAME proposal machinery as every other AI change — a block replace
+    over the whole document, accept = one undo unit → the split-save — never a
+    side-door row write; the restored text is byte-identical to the snapshot
+    (test-pinned). A restore is itself an AI save, so it snapshots the
+    pre-restore document: a wrong restore is recoverable. Restore needs the
+    mounted editor (the suggestion machinery is CM6 state): in preview the
+    click says so LOUDLY instead of silently doing nothing.
+  - **Clear all previous versions** — an item in the same Versions menu,
+    destructive-confirmed (AlertDialog, the Clear-chat conventions): it clears
+    ONLY that module's durable stack (module-keyed — another module's versions
+    survive), takes NO snapshot first (that would immediately re-create what
+    was just cleared), touches no document text, the thread or the session
+    ledger, and toasts the number of rows that actually went. **Clear chat
+    stays exactly as landed** and does NOT clear the durable stack: undo
+    history is not chat state, and the two controls stay independent.
+  - **Deletion**: deleting a module removes its versions in the same
+    transaction (they describe a document that no longer exists). The
+    campaign-level wipes (Clear workspace / remove all generated content) do
+    not sweep them — accepted, recorded in docs/18 §5.
 - **Leave guard, not scope guard** (v3): leaving the page with unsaved edits
   or a pending proposal demands the explicit discard confirm — session
   staging dies on reload AND on leave; the saved row is never touched by
@@ -963,10 +1044,11 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   then the snapshot + highlight advance and the preview re-renders;
   return-to-Edit remounts the latest snapshot through the existing mountDoc
   path; a scaffolding-broken snapshot fails the send loudly through the
-  existing error path. DOCUMENTED CAVEAT (no UI apology): preview-applied
-  chat edits have NO undo — there is no CM history while the editor
-  is unmounted. Outcome cards are unchanged (before→after still shown
-  per command).
+  existing error path. NO CM6 history exists for preview-applied chat edits
+  (the editor is unmounted, so nothing to undo with Mod-z) — their undo is
+  the DURABLE pre-change snapshot taken before the turn (§Simple undo above),
+  restored from the Versions menu. Outcome cards are unchanged (before→after
+  still shown per command).
 - **Report-to-LLM loop** (first-class): the button composes a user turn —
   the error, the failed command verbatim, and the current text around the
   failure point (`composeFailureReport`, ±300 chars) — where the excerpt
@@ -1026,23 +1108,30 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   cancels the whole action (nothing half-cleared, nothing restored from the
   row on the next open). What it does NOT clear, and the dialog copy says so
   in as many words: the module's DOCUMENT text — chat edits already applied
-  are saved content, this control is NOT an undo, and reverting text is the
-  Versions ledger's job. While a chat reply is in flight, or any canvas AI
+  are saved content, this control is NOT an undo — and the DURABLE version
+  stack (§Simple undo above), which is precisely where reverting text now
+  lives: undo history is not chat state, so "Clear all previous versions"
+  (a separate, separately confirmed control in the Versions menu) is the only
+  thing that empties it. While a chat reply is in flight, or any canvas AI
   action is live for the module (generating / refining / a pending proposal),
   the control REFUSES LOUDLY with a toast instead of clearing under a running
   turn — there is no cancel-then-clear path (owner report: a running turn
   would land its own message + ledger entry moments later, so a clear under it
   could not promise the pristine state it advertises). Everything else about
-  the module survives: the document, the open state and the session model
-  selection (surface preferences, not conversation state) + other modules'
-  threads, ledgers and highlights.
+  the module survives: the document, its durable versions, the open state and
+  the session model selection (surface preferences, not conversation state) +
+  other modules' threads, ledgers, versions and highlights.
   **Truthfulness note (the session-only ledger)**: the thread outlives the
-  session but the ledger does not, by design — so a canvas reopened on a
-  previous session's thread can legitimately show applied edits while the
-  Versions dropdown reads "Nothing accepted yet" and Save stays disabled (the
-  doc matches the row). That gap is the documented price of a session-scoped
-  ledger (never persist it, docs/18 §4), not a bug to chase: Clear chat is
-  the way back to a pristine state.
+  session but the SESSION ledger does not, by design — so a canvas reopened on
+  a previous session's thread can legitimately show applied edits while the
+  session group in the Versions dropdown reads "Nothing accepted yet" and Save
+  stays disabled (the doc matches the row). That gap is the documented price
+  of a session-scoped ledger (never persist it, docs/18 §4), not a bug to
+  chase, and it is no longer a hole in the user's ability to go back: the
+  DURABLE group above it lists that session's AI pre-change snapshots, which
+  survive the reload (docs/18 §2.3). The two groups are labelled so they can
+  never be mistaken for each other; Clear chat is still the way back to a
+  pristine conversation.
 - **Pre-flight**: a module with no planned parts (no spine/partPlan) fails
   LOUDLY before anything sends ("no parts to chat about — generate the
   module first" — controller pre-flight toast + the engine's send-time
