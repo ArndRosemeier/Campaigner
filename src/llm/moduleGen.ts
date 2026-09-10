@@ -2414,6 +2414,13 @@ export async function discardSpine(moduleId: Id): Promise<void> {
  * user's styles. Both failure modes are loud and name the offender: an
  * unreadable styles field, an id that resolves to nothing, and a template that
  * fails validation all throw here (nothing is created, nothing is written).
+ *
+ * This — the CREATION path — is the ONLY place the app default is consulted for
+ * a module's style (docs/17 row 88): a module that already EXISTS composes from
+ * the style it RECORDED (`promptStyleForModule`), and a module that recorded
+ * none keeps resolving to Classic by provenance, so changing the default can
+ * never re-voice an existing module on a resume, a repair or a per-part
+ * regeneration.
  */
 async function resolveCreationPromptStyle(
   requestedId?: string,

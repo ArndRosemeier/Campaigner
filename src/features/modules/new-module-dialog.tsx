@@ -30,7 +30,7 @@ import {
   defaultNewModuleDraft,
   ENTITY_KINDS,
   MODULE_SIZE_LABELS,
-  PROMPT_STYLE_CLASSIC_ID,
+  PROMPT_STYLE_FREESTYLE_ID,
 } from '@/domain';
 import { modulePath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
@@ -206,7 +206,12 @@ function NewModuleDialogContent({
     const settings = await readSettings();
     return readPromptStyleCatalog(settings.defaultPromptStyleId);
   }, []);
-  const appDefaultStyleId = catalog?.defaultStyleId ?? PROMPT_STYLE_CLASSIC_ID;
+  // The catalog's own default is the settings value; the fallback below is only
+  // what the select shows for the sub-second window before the read lands (the
+  // built-ins ship in code), so it is the PRODUCT default a fresh app resolves
+  // to (docs/17 row 88) — never Classic, which is now only the PROVENANCE
+  // reading of a module that recorded no style.
+  const appDefaultStyleId = catalog?.defaultStyleId ?? PROMPT_STYLE_FREESTYLE_ID;
   const styleOptions = catalog === undefined ? [] : catalogStyles(catalog);
   const draftRef = useRef<NewModuleDraft>(defaultNewModuleDraft(campaign.id));
   // Seeded once per open: an edit made while the settings row was still

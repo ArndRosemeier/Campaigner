@@ -423,8 +423,49 @@ to the gate) and the floor clauses byte-identical to Classic's; `Freestyle`
 (owner request, docs/17 row 87) prescribes no shape at all — see §Freestyle
 below, and the owner's stated expectation for it, verbatim: *"i do think that
 freestyle really is where front line models will shine and small models will
-struggle. Front line models profit from being unconstrained."* A built-in cannot be edited at all; `Duplicate` is the way in, and a
+struggle. Front line models profit from being unconstrained."* **That
+expectation was then revised by his own test, and the record shows the
+sequence.** His words, verbatim: *"I have new information. I am using a very
+cheap but new model and its doing fine. Thats why. I like this style better."*
+So the expectation is **NOT confirmed**: he ran Freestyle on a cheap but NEW
+model and it performed well, and the variable that showed up is how new the
+model is, not what it costs. This is his own observation of his own run, not a
+measurement by us. Nothing in this doc, the code or the tests may state or imply
+that cheap/small models struggle with Freestyle, or that Freestyle needs a
+front-line model. **Freestyle is what a FRESH app now defaults to** (docs/17 row
+88): he preferred the output, so the product default moved — see §Default
+writing style below. A built-in cannot be edited at all; `Duplicate` is the way in, and a
 style derived from another keeps `basedOn` and a `Reset to source`.
+
+### Default writing style (owner request, docs/17 row 88)
+
+**Freestyle is the PRODUCT default.** The owner generated with it, on a cheap but
+new model, it did fine, and he liked the output better — so a fresh app starts
+there. Two layers carry it and they are the only two that moved:
+`defaultSettings().defaultPromptStyleId` (what a brand-new app's settings row is
+born with) and the zod default on that field (what a row, or a backup, that does
+not STORE the field reads back as — the pre-styles-arc shape). The New Module
+dialog's own fallback for the window before the catalog read lands is the same
+constant. `PROMPT_STYLE_FREESTYLE_ID` (`src/domain/promptStyle.ts`) is the ONE
+spelling of the id; the built-in's entry uses it too.
+
+**An explicitly STORED `defaultPromptStyleId` is honored verbatim and never
+rewritten** — a stored `'classic'` is data, so there is no migration, no Dexie
+version bump and no upgrade normalization for it, and the Settings page's **Make
+default** is the one explicit way to change it. A row written before the styles
+arc simply has no stored value and therefore picks up the product default.
+
+**The resolution order, and the invariant that makes this safe.** A module's
+style is resolved in exactly one order: **the module's recorded style → and, when
+nothing was recorded, Classic by PROVENANCE** (`promptStyleForModule`). The app
+default is NOT a rung of that ladder: it is consulted only where no style has
+been recorded for the module being CREATED (`resolveCreationPromptStyle`, the
+creation path). Every module the owner already has was written under Classic, so
+this is what keeps a resume, a repair and a per-part regeneration composing
+exactly the prompt they composed before — pinned by
+`tests/llm/promptStyles-default-style.test.ts`, which renders a legacy row (no
+`promptStyle` key in Dexie) against the byte-identity fixture with the app
+default sitting on Freestyle.
 
 ### Freestyle — the shape-free experiment (owner request, docs/17 row 87)
 
@@ -495,7 +536,9 @@ GM address rule, the wiki-link and canonical-spelling rules, the mechanics
 clause, encounter casting, the length target and the floor clauses are injected
 exactly as before. Freestyle drops none of them, and no contract value changed:
 Classic's byte identity (`tests/llm/promptStyles-classic-identity.test.ts`) still
-guards every module the owner already has.
+guards every module the owner already has. **Freestyle is also what a fresh app
+now defaults to** (docs/17 row 88) — §Default writing style above: that changes
+what a NEW module is created in, never what an existing one is read as.
 
 **A module RECORDS the style it was written in** — id, name, version and the
 full `templateText` on its row (`domain/module.promptStyle`, additive and
@@ -521,7 +564,9 @@ change one byte of the default path.
 **Storage decision.** Styles live on the SETTINGS row (`promptStyles`,
 `defaultPromptStyleId`), not in a Dexie table: no version bump and no migration
 golden to re-derive, the app default is a settings preference anyway (one read
-seam instead of two), the row already carries a comparable per-feature object
+seam instead of two) — and moving that preference's DEFAULT to Freestyle (docs/17
+row 88, §Default writing style above) cost exactly two values for that reason —
+the row already carries a comparable per-feature object
 (`newModuleDraft`) with its own read carve-out, and backup/export already
 carries the settings row. The hazard — a settings write clobbering a field it
 does not own — is closed in `settingsRepo.updateSettings`, which carries such a

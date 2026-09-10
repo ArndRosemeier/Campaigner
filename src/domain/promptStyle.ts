@@ -388,8 +388,25 @@ export const modulePromptStyleSchema = z.object({
 
 export type ModulePromptStyle = z.infer<typeof modulePromptStyleSchema>;
 
-/** The style id a fresh install (and every module created before styles) uses. */
+/**
+ * The style id every module created before styles existed was written in — and
+ * therefore the id `promptStyleForModule` resolves a module with NO recorded
+ * style to, as PROVENANCE. It is NOT the product default any more (docs/17 row
+ * 88).
+ */
 export const PROMPT_STYLE_CLASSIC_ID = 'classic';
+
+/**
+ * The PRODUCT default module prompt style (owner request, docs/17 row 88): the
+ * value a FRESH app's settings row is born with, the value a stored row that
+ * never carried the field resolves to, and what a reset-to-defaults lands on.
+ * It is deliberately separate from `PROMPT_STYLE_CLASSIC_ID`: Classic stays the
+ * honest reading of a module with no recorded style (that text existed when the
+ * module was written), while this id is only ever reachable where NO style has
+ * been recorded for the module being CREATED. See `resolveCreationPromptStyle`
+ * (`src/llm/moduleGen.ts`).
+ */
+export const PROMPT_STYLE_FREESTYLE_ID = 'freestyle';
 
 // --- Template parsing and validation ----------------------------------------
 

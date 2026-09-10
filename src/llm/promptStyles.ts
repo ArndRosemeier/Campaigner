@@ -1,5 +1,6 @@
 import {
   PROMPT_STYLE_CLASSIC_ID,
+  PROMPT_STYLE_FREESTYLE_ID,
   PROMPT_STYLE_SECTION_MARKERS,
   type ModulePromptStyle,
   type PromptStyle,
@@ -440,7 +441,10 @@ function storyPartsSection(): string {
  * part prompt); and the freestyle style, as a JUDGEMENT CALL the owner can veto
  * (docs/17 row 87): the planner's reply is a JSON contract, its instruction is
  * not formulaic, and the plan is scaffolding rather than the text the owner
- * reads — freestyling the planner too is a follow-up he can ask for.
+ * reads — freestyling the planner too is a follow-up he can ask for. Freestyle
+ * is also the PRODUCT default for a fresh app (docs/17 row 88) — the owner's
+ * choice after generating with it — while the SPINE section it inherits stays
+ * the planner's.
  */
 export const BUILTIN_PROMPT_STYLES: readonly PromptStyle[] = [
   {
@@ -462,7 +466,7 @@ export const BUILTIN_PROMPT_STYLES: readonly PromptStyle[] = [
     updatedAt: 0,
   },
   {
-    id: 'freestyle',
+    id: PROMPT_STYLE_FREESTYLE_ID,
     name: 'Freestyle',
     origin: 'builtin',
     version: 1,
@@ -501,6 +505,14 @@ export function modulePromptStyleOf(style: PromptStyle): ModulePromptStyle {
  * failures; this is not a failure). The consequence is pinned by test: a legacy
  * row composes the byte-identical classic prompt it would have composed before
  * this feature, so a resumed legacy module's new parts match its existing ones.
+ *
+ * The resolution ORDER is therefore: the module's RECORDED style → and, when
+ * nothing was recorded, Classic by PROVENANCE. The app default
+ * (`settings.defaultPromptStyleId`, today Freestyle — docs/17 row 88) is
+ * deliberately NOT reachable from here: it is the style a module that does not
+ * exist yet is CREATED in (`resolveCreationPromptStyle`, `src/llm/moduleGen.ts`),
+ * and consulting it here would silently re-voice every module written before
+ * styles existed on the next resume, repair or per-part regeneration.
  */
 export function promptStyleForModule(module: {
   promptStyle?: ModulePromptStyle | null | undefined;

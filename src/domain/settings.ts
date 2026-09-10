@@ -13,7 +13,7 @@ import {
   moduleSizeDialSchema,
 } from '@/domain/module';
 import {
-  PROMPT_STYLE_CLASSIC_ID,
+  PROMPT_STYLE_FREESTYLE_ID,
   userPromptStyleSchema,
 } from '@/domain/promptStyle';
 
@@ -376,13 +376,22 @@ export const settingsSchema = z.object({
    */
   newModuleDraft: newModuleDraftSchema.nullable().default(null),
   /**
-   * The app-default module prompt style (docs/17 row 86): the id a New Module
-   * dialog preselects, overridable per module. A genuine preference, so it has
-   * a default — and an id that no longer resolves fails LOUDLY where it is used
-   * (the dialog and the creation path name it) rather than quietly falling back
-   * to another voice.
+   * The app-default module prompt style (docs/17 rows 86 and 88): the id a New
+   * Module dialog preselects, overridable per module. A genuine preference, so
+   * it has a default — and an id that no longer resolves fails LOUDLY where it
+   * is used (the dialog and the creation path name it) rather than quietly
+   * falling back to another voice.
+   *
+   * The product default is FREESTYLE (owner request, docs/17 row 88): a FRESH
+   * app is born with it, and a stored row that predates the styles arc (the
+   * field ABSENT, so this zod default applies) reads back as it too. A stored
+   * value — including a stored `'classic'` — is honored VERBATIM and never
+   * rewritten; there is no migration and no version bump for it. Reachable ONLY
+   * where no style has been recorded for the module being created: a module's
+   * own recorded style always wins, and a module with no recorded style keeps
+   * resolving to Classic by provenance (`promptStyleForModule`, docs/17 row 86).
    */
-  defaultPromptStyleId: z.string().min(1).default(PROMPT_STYLE_CLASSIC_ID),
+  defaultPromptStyleId: z.string().min(1).default(PROMPT_STYLE_FREESTYLE_ID),
   /**
    * The user's own module prompt styles. Built-ins are NOT stored here (they
    * ship in code and are immutable); this is authored content, so the app
@@ -428,7 +437,7 @@ export function defaultSettings(): Settings {
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
     newModuleDraft: null,
-    defaultPromptStyleId: PROMPT_STYLE_CLASSIC_ID,
+    defaultPromptStyleId: PROMPT_STYLE_FREESTYLE_ID,
     promptStyles: [],
   };
 }

@@ -2,7 +2,7 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL } from '@/domain';
+import { DEFAULT_CHAT_MODEL, DEFAULT_EMBEDDING_MODEL, PROMPT_STYLE_FREESTYLE_ID } from '@/domain';
 import { getSettings, readSettings, saveSettings, updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
 import { clearDatabase } from './helpers';
@@ -21,6 +21,11 @@ describe('settingsRepo', () => {
     expect(settings.embeddingsEnabled).toBe(false);
     expect(settings.fallbackChatModel).toBe('');
     expect(settings.fallbackImageModel).toBe('');
+    // The PRODUCT default module prompt style for a fresh app is Freestyle
+    // (owner request, docs/17 row 88): he generated with it and liked the output
+    // better. A stored value — a stored 'classic' included — is honored
+    // verbatim; this line is only about what a brand-new row is born with.
+    expect(settings.defaultPromptStyleId).toBe(PROMPT_STYLE_FREESTYLE_ID);
     expect(await db.settings.count()).toBe(1);
   });
 
