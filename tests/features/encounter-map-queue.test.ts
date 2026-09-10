@@ -24,8 +24,24 @@ vi.mock('@/llm/openrouter', () => ({
 }));
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
+// Fill-grade draw (docs/11 D12 amendment): pinned so the brief's
+// stocking-cap verdicts are deterministic. Unpinned, the per-run
+// `drawFillGrade()` draw moves the complex cap under the fixed fixtures —
+// a low draw turns attempt 1 into a cap repair that consumes the NEXT mock
+// in line (the locate step's shape), failing the run ~25-35% of the time.
+// Same seam as the run-engine suites (mockReturnValue(70): every fixture
+// room ships inside its band AND under the cap first attempt).
+import type * as domainArtifact from '@/domain/artifact';
+
+vi.mock('@/domain/artifact', async (importOriginal) => {
+  const actual = await importOriginal<typeof domainArtifact>();
+  return { ...actual, drawFillGrade: vi.fn(actual.drawFillGrade) };
+});
+
 const chatMock = vi.mocked(chat);
 const toastErrorMock = vi.mocked(toastError);
+const { drawFillGrade } = await import('@/domain/artifact');
+const drawFillGradeMock = vi.mocked(drawFillGrade);
 const STATBLOCK = {
   system: 'dnd5e', level: '1', size: 'Medium', creatureType: 'humanoid', ac: 12,
   acNote: '', hp: 7, hpFormula: '2d6', speed: '30 ft.',
@@ -81,11 +97,43 @@ const FULL_MARKS = {
   ],
 };
 
+/**
+ * A single-arena brief whose one room is OVER its challenge band (ogre
+ * levels against a targetLevel-4 room): attempt 1 lands a repairable
+ * budget issue, exercising the brief's designed repair turn. Brief-shaped
+ * (and therefore a valid repair reply too) — a retry here never cascades
+ * into a shape error.
+ */
+const OVER_BRIEF = {
+  name: 'Ogre Pit',
+  summary: 'An ogre in a pit.',
+  body: '# Ogre Pit\nOne ogre, one pit.',
+  difficulty: 'deadly',
+  levelHint: '4',
+  terrain: '',
+  tactics: '',
+  treasure: '',
+  theme: 'pit',
+  styleNotes: '',
+  negative: '',
+  monsters: [
+    { name: 'Ogre', count: 1, notes: '', treasure: '', statBlock: { ...STATBLOCK, level: '10' } },
+  ],
+  rooms: [
+    { name: 'Pit', description: '', size: 'medium', monsterIndexes: [0], adjacentRoomIndexes: [], key: '', keyTreasure: '', targetLevel: 4 },
+  ],
+  entryRoomIndex: 0,
+};
+
 beforeEach(async () => {
   await clearDatabase();
   useEncounterMapQueue.getState().reset();
   useProgressStore.getState().reset();
   chatMock.mockReset().mockResolvedValue({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+  // Grade 70: COMPLEX_BRIEF ships 16 creature-levels against a 19.5 cap
+  // with every room inside its band — first-attempt green, deterministically.
+  drawFillGradeMock.mockReset();
+  drawFillGradeMock.mockReturnValue(70);
   toastErrorMock.mockReset();
   vi.spyOn(encounterRunAdapters, 'renderSchematic').mockReturnValue({ dataUrl: 'data:image/png;base64,schematic', width: 240, height: 180 });
   vi.spyOn(encounterRunAdapters, 'generateImages').mockResolvedValue({ images: [new Blob(['map'])], costUsd: null, cappedToOne: false, modelUsed: 'test-image-model', fallback: null, filteredCount: 0 });
@@ -218,6 +266,10 @@ describe('module encounter map queue', () => {
     expect(hallAfter.data.preset).toBe('standard');
     expect(hallAfter.data.layout?.gridW).toBe(24);
     expect(hallAfter.data.layout?.gridH).toBe(18);
+    // Retry-proof property: the pinned grade held — exactly one brief call
+    // per job, no repair turn ever consumed a mock (a repair would eat the
+    // hall's BRIEF for the dungeon's second attempt and cascade).
+    expect(chatMock).toHaveBeenCalledTimes(2);
   }, 30000);
 
   it('maps a complex job through the vision path when the setting says vision (no per-run steering in the queue)', async () => {
@@ -260,6 +312,60 @@ describe('module encounter map queue', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]?.steps.map((step) => step.name)).toEqual(['brief', 'vision-map', 'finalize']);
     expect(runs[0]?.dungeonMapPath).toBeNull();
+    // Retry-proof property: the pinned grade held — the brief passed first
+    // attempt and the locate consumed its own marks (a budget repair would
+    // eat FULL_MARKS as a brief and reject the step).
+    expect(chatMock).toHaveBeenCalledTimes(2);
+  }, 30000);
+
+  it('an over-budget brief uses the designed repair turn and still maps green (retry path, not feared)', async () => {
+    const campaign = await createCampaign({ name: 'Queue Repair', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    // Pinned single (standard preset, single shape): the roster pin resolves
+    // the ogre's level from the TARGET's own inline source, so the room
+    // ships over its band whatever the mock carries — attempt 1 is
+    // repairable by design.
+    const pit = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Ogre Pit',
+      data: {
+        difficulty: '', levelHint: '4',
+        monsters: [{ name: 'Ogre', count: 1, notes: '', treasure: '', source: { type: 'inline', statBlock: { ...STATBLOCK, system: 'dnd5e' as const, level: '10' } } }],
+        terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null,
+        preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '',
+      },
+    });
+    // Brief-valid content all the way down: attempt AND the repair turn both
+    // draw from this default, so the retry can never exhaust into a shape
+    // error — it settles green with the loud advisory instead.
+    chatMock.mockResolvedValue({ text: JSON.stringify(OVER_BRIEF), modelUsed: 'test-model', fallback: null });
+    useEncounterMapQueue.getState().enqueue([
+      { campaignId: campaign.id, moduleId: pit.moduleId, artifactId: pit.id, name: pit.name },
+    ]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+      expect(useEncounterMapQueue.getState().failed).toEqual([]);
+    }, { timeout: 15000 });
+    // Attempt 1 hit the over-budget issue; the single designed repair turn
+    // re-ran the brief and the bounded loop shipped loud instead of failing.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const after = await getArtifact(pit.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter rows disappeared');
+    expect(after.data.layout).not.toBeNull();
+    expect(after.data.mapImageId).not.toBeNull();
+    expect(after.data.budgetAdvisory).toContain('over its challenge budget');
+    const runs = await listRunsByCampaign(campaign.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe('completed');
   }, 30000);
 
   it('exposes the no-double-work guards: pending job and already-mapped checks', async () => {
