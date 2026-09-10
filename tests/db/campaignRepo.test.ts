@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/domain';
 import {
@@ -10,8 +10,13 @@ import {
   listCampaigns,
   updateCampaign,
 } from '@/db/campaignRepo';
+import {
+  countModuleVersions,
+  listModuleVersions,
+  listOrphanedModuleVersions,
+} from '@/db/moduleVersionRepo';
 import { db } from '@/db/db';
-import { clearDatabase, expectNotFound } from './helpers';
+import { clearDatabase, expectNotFound, seedModuleVersion } from './helpers';
 
 describe('campaignRepo', () => {
   beforeEach(clearDatabase);
@@ -186,5 +191,101 @@ describe('deleteCampaign cascade completeness', () => {
     const unrelated = await addCampaign({ name: 'Unrelated', system: 'dnd5e' });
     await deleteCampaign(unrelated.id);
     expect((await db.settings.get('settings'))?.lastModule?.moduleId).toBe(keptModule.id);
+  });
+});
+
+/**
+ * The deleted campaign's modules take their durable document versions with
+ * them (docs/18 §2.1/§2.3 simple undo): the ids are enumerated INSIDE the
+ * delete transaction right before the module delete, through the ONE sweep
+ * seam — so a version row can never outlive the module it describes, and a
+ * failure after the sweep rolls modules and versions back together.
+ */
+describe('deleteCampaign — durable module versions go with the modules', () => {
+  beforeEach(clearDatabase);
+
+  it("sweeps the deleted campaign's version rows and leaves another campaign intact", async () => {
+    const { createModule } = await import('@/db/moduleRepo');
+    const { createModule: buildModule } = await import('@/domain');
+
+    const campaign = await addCampaign({ name: 'Undo', system: 'dnd5e' });
+    const other = await addCampaign({ name: 'Neighbour', system: 'dnd5e' });
+    const first = await createModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'Doomed Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const second = await createModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'Second Doomed',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const kept = await createModule(
+      buildModule({
+        campaignId: other.id,
+        title: 'Kept Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    await seedModuleVersion(first.id, 'Chat: one');
+    await seedModuleVersion(first.id, 'Chat: two');
+    await seedModuleVersion(second.id, 'Generate parts');
+    await seedModuleVersion(kept.id, 'Chat: other campaign');
+
+    await deleteCampaign(campaign.id);
+
+    expect(await countModuleVersions(first.id)).toBe(0);
+    expect(await countModuleVersions(second.id)).toBe(0);
+    // Another campaign's undo history is structurally untouched.
+    const survivor = await listModuleVersions(kept.id);
+    expect(survivor.map((entry) => entry.label)).toEqual(['Chat: other campaign']);
+    // Repo-level: NO version row anywhere points at a module that is gone.
+    expect(await listOrphanedModuleVersions()).toEqual([]);
+  });
+
+  it('a failure after the module delete rolls the modules AND their versions back together', async () => {
+    const { createModule } = await import('@/db/moduleRepo');
+    const { createModule: buildModule } = await import('@/domain');
+
+    const campaign = await addCampaign({ name: 'Rollback versions', system: 'dnd5e' });
+    const module = await createModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'Doomed Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    await seedModuleVersion(module.id, 'Chat: pre-failure one');
+    await seedModuleVersion(module.id, 'Chat: pre-failure two');
+
+    // The campaign-row delete is the transaction's LAST step, well after the
+    // version sweep and the module-row delete: both being intact afterwards
+    // is the transaction's doing, never a sweep that simply never ran.
+    const campaignsDeleteSpy = vi
+      .spyOn(db.campaigns, 'delete')
+      .mockRejectedValueOnce(new Error('simulated post-sweep failure'));
+
+    await expect(deleteCampaign(campaign.id)).rejects.toThrow(/simulated post-sweep failure/);
+    campaignsDeleteSpy.mockRestore();
+
+    expect(await db.modules.get(module.id)).toBeDefined();
+    expect(await countModuleVersions(module.id)).toBe(2);
+    expect(await listOrphanedModuleVersions()).toEqual([]);
   });
 });

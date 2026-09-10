@@ -7,7 +7,10 @@ import { createModule, deleteModule, saveModule } from '@/db/moduleRepo';
 import {
   clearModuleVersions,
   countModuleVersions,
+  deleteModuleVersionsForModules,
   listModuleVersions,
+  listOrphanedModuleVersions,
+  pruneOrphanedModuleVersions,
   snapshotModuleVersion,
 } from '@/db/moduleVersionRepo';
 import { db } from '@/db/db';
@@ -218,5 +221,52 @@ describe("deleteModule withholds no versions of its own module", () => {
 
     expect(await countModuleVersions(moduleId)).toBe(0);
     expect(await countModuleVersions(other.id)).toBe(1);
+  });
+});
+
+/**
+ * The ONE sweep every module-deleting path rides (docs/18 §2.1) and its
+ * orphan door: `deleteModule` passes its own id, the campaign-scoped bulk
+ * deletes pass the ids they re-listed inside their transaction, and rows
+ * whose module row is already gone are reachable ONLY through the orphan
+ * query (a version row carries no `campaignId`, and the id to sweep with is
+ * exactly what is missing).
+ */
+describe('deleteModuleVersionsForModules — the one sweep, plus the orphan door', () => {
+  it('sweeps exactly the named modules and returns how many rows went', async () => {
+    const other = await seedModule(campaignId, 'The Second Vault', 'Other text.');
+    await snapshotModuleVersion(moduleId, 'chat', 'Chat: first');
+    await snapshotModuleVersion(other.id, 'chat', 'Chat: other one');
+    await snapshotModuleVersion(other.id, 'chat', 'Chat: other two');
+
+    expect(await deleteModuleVersionsForModules([moduleId])).toBe(1);
+
+    expect(await countModuleVersions(moduleId)).toBe(0);
+    // The unnamed module keeps its whole stack: the sweep is module-keyed.
+    expect(await countModuleVersions(other.id)).toBe(2);
+    // No ids is an honest no-op (a campaign with no modules has nothing to
+    // sweep and must not touch another campaign's rows).
+    expect(await deleteModuleVersionsForModules([])).toBe(0);
+  });
+
+  it('reports and collects rows whose module row is already gone, keeping live stacks', async () => {
+    const other = await seedModule(campaignId, 'The Second Vault', 'Other text.');
+    await snapshotModuleVersion(moduleId, 'chat', 'Chat: live');
+    await snapshotModuleVersion(other.id, 'chat', 'Chat: other');
+    // The residue a pre-sweep wipe left: the module row is gone, the stack
+    // stayed. Nothing could ever list, restore or prune it again.
+    const residue = await seedModule(campaignId, 'The Third Vault', 'Third text.');
+    await snapshotModuleVersion(residue.id, 'chat', 'Chat: residue');
+    await db.modules.delete(residue.id);
+
+    expect(await listOrphanedModuleVersions()).toEqual([residue.id]);
+
+    expect(await pruneOrphanedModuleVersions()).toBe(1);
+    expect(await listOrphanedModuleVersions()).toEqual([]);
+    // Live modules are untouched by the orphan door.
+    expect(await countModuleVersions(moduleId)).toBe(1);
+    expect(await countModuleVersions(other.id)).toBe(1);
+    // Idempotent: a second prune is an honest zero.
+    expect(await pruneOrphanedModuleVersions()).toBe(0);
   });
 });

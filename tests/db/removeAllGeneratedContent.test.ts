@@ -21,6 +21,11 @@ import {
 import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
 import { createImage } from '@/db/imageRepo';
 import { createModule } from '@/db/moduleRepo';
+import {
+  countModuleVersions,
+  listModuleVersions,
+  listOrphanedModuleVersions,
+} from '@/db/moduleVersionRepo';
 import { createPersona } from '@/db/personaRepo';
 import { createRun } from '@/db/runRepo';
 import { createDeliverable } from '@/db/deliverableRepo';
@@ -33,7 +38,7 @@ import {
   type Id,
   type StatBlock,
 } from '@/domain';
-import { clearDatabase, expectNotFound } from './helpers';
+import { clearDatabase, expectNotFound, seedModuleVersion } from './helpers';
 
 /**
  * Fresh-generation wipe (owner-ordered "remove all"): `removeAllGeneratedContent`
@@ -397,6 +402,50 @@ describe('removeAllGeneratedContent — count honesty', () => {
   });
 });
 
+describe('removeAllGeneratedContent — durable module versions go with their modules', () => {
+  it("sweeps every wiped module's version rows and leaves another campaign intact", async () => {
+    const campaign = await addCampaign({ name: 'Undo', system: 'dnd5e' });
+    const other = await addCampaign({ name: 'Neighbour', system: 'dnd5e' });
+    const first = await makeModule(campaign.id, 'Ember Vault');
+    const second = await makeModule(campaign.id, 'Second Vault');
+    const kept = await makeModule(other.id, 'Kept Vault');
+    await seedModuleVersion(first, 'Chat: one');
+    await seedModuleVersion(first, 'Chat: two');
+    await seedModuleVersion(second, 'Generate parts');
+    await seedModuleVersion(kept, 'Chat: other campaign');
+
+    const removed = await removeAllGeneratedContent(campaign.id);
+
+    expect(removed.modules).toBe(2);
+    expect(await db.modules.get(first)).toBeUndefined();
+    expect(await countModuleVersions(first)).toBe(0);
+    expect(await countModuleVersions(second)).toBe(0);
+    // Another campaign's undo history is structurally untouched.
+    const survivor = await listModuleVersions(kept);
+    expect(survivor.map((entry) => entry.label)).toEqual(['Chat: other campaign']);
+    // Repo-level: NO version row anywhere points at a module that is gone.
+    expect(await listOrphanedModuleVersions()).toEqual([]);
+  });
+
+  it('collects version rows whose module row is already gone (residue from a pre-sweep wipe)', async () => {
+    const campaign = await addCampaign({ name: 'Residue', system: 'dnd5e' });
+    const live = await makeModule(campaign.id, 'Live Vault');
+    const residue = await makeModule(campaign.id, 'Vault wiped by an older build');
+    await seedModuleVersion(residue, 'Chat: orphaned');
+    await seedModuleVersion(live, 'Chat: live');
+    // The state a pre-sweep wipe left behind: module row gone, its version
+    // rows stayed. No module-keyed sweep can reach them (the id is what is
+    // missing), so the orphan door has to.
+    await db.modules.delete(residue);
+    expect(await listOrphanedModuleVersions()).toEqual([residue]);
+
+    await removeAllGeneratedContent(campaign.id);
+
+    expect(await listOrphanedModuleVersions()).toEqual([]);
+    expect(await db.moduleVersions.count()).toBe(0);
+  });
+});
+
 describe('removeAllGeneratedContent — failure discipline', () => {
   it('a mid-wipe failure rolls the whole wipe back and rejects loudly', async () => {
     const campaign = await addCampaign({ name: 'Rollback', system: 'dnd5e' });
@@ -436,6 +485,31 @@ describe('removeAllGeneratedContent — failure discipline', () => {
     expect((await listRevisions(second.id)).length).toBeGreaterThan(0);
     expect(await getArtifact(pc)).toBeDefined();
     expect(await getCampaign(campaign.id)).toBeDefined();
+  });
+
+  it('a failure after the module delete rolls the modules AND their versions back together', async () => {
+    const campaign = await addCampaign({ name: 'Rollback versions', system: 'dnd5e' });
+    const moduleId = await makeModule(campaign.id, 'Ember Vault');
+    await seedModuleVersion(moduleId, 'Chat: pre-failure one');
+    await seedModuleVersion(moduleId, 'Chat: pre-failure two');
+
+    // The injected failure lands AFTER the version sweep and the module-row
+    // delete: the settings read is this wipe's next-to-last step (only the
+    // image prune follows), and nothing else in the transaction reads
+    // settings. Both being intact afterwards is therefore the transaction's
+    // doing, never a sweep that simply never ran.
+    const settingsSpy = vi
+      .spyOn(db.settings, 'get')
+      .mockRejectedValueOnce(new Error('simulated post-sweep failure'));
+
+    await expect(removeAllGeneratedContent(campaign.id)).rejects.toThrow(
+      /simulated post-sweep failure/,
+    );
+    settingsSpy.mockRestore();
+
+    expect(await db.modules.get(moduleId)).toBeDefined();
+    expect(await countModuleVersions(moduleId)).toBe(2);
+    expect(await listOrphanedModuleVersions()).toEqual([]);
   });
 
   it('throws NotFoundError for an unknown campaign instead of reporting a no-op', async () => {

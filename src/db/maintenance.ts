@@ -3,6 +3,10 @@ import Dexie from 'dexie';
 import { db } from '@/db/db';
 import { deleteArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { listModulesByCampaign } from '@/db/moduleRepo';
+import {
+  deleteModuleVersionsForModules,
+  pruneOrphanedModuleVersions,
+} from '@/db/moduleVersionRepo';
 import { pruneUnreferencedImages } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
@@ -63,6 +67,13 @@ export interface ClearedWorkspaceCounts {
  * and library artifacts (global, never campaign-keyed); every other
  * campaign's rows (the `campaignId` sweeps cannot see them).
  *
+ * The modules' durable document versions (docs/18 §2.3 simple undo) go WITH
+ * their modules — undo history is not kept content, and a version describes a
+ * document that no longer exists. They die in the SAME transaction as the
+ * module delete, through the ONE sweep seam (§2.1), with the module ids
+ * re-listed inside the transaction right before the delete, plus the seam's
+ * orphan door for rows whose module is already gone.
+ *
  * Transaction discipline mirrors `removeAllGeneratedContent`: in-flight
  * module passes abort BEFORE the transaction opens (a native-promise dynamic
  * import must never gap a Dexie scope), then ONE `rw` transaction over every
@@ -93,6 +104,7 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       db.settings,
       db.runs,
       db.deliverables,
+      db.moduleVersions,
     ],
     async () => {
       const campaign = await db.campaigns.get(campaignId);
@@ -106,7 +118,9 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
         kindCounts.set(artifact.kind, (kindCounts.get(artifact.kind) ?? 0) + 1);
       }
       const battles = await db.battles.where('campaignId').equals(campaignId).toArray();
-      const moduleCount = await db.modules.where('campaignId').equals(campaignId).count();
+      // Re-listed (not counted) so the same read yields the ids the version
+      // sweep needs — the count is unchanged and equally in-tx honest.
+      const modules = await db.modules.where('campaignId').equals(campaignId).toArray();
       const runCount = await db.runs.where('campaignId').equals(campaignId).count();
       const deliverableCount = await db.deliverables.where('campaignId').equals(campaignId).count();
 
@@ -121,6 +135,13 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       // them; runs point at deleted artifacts/modules — all would dangle, so
       // all go (deleteCampaign precedent, minus the campaign row itself).
       await db.battles.where('campaignId').equals(campaignId).delete();
+      // The modules' durable document versions go with their modules (docs/18
+      // §2.3 simple undo): SAME transaction, through the ONE sweep seam
+      // (§2.1) — a failed clear leaves modules AND versions intact — plus the
+      // orphan door for rows whose module is already gone (residue a
+      // pre-sweep wipe left; only the global query can reach those).
+      await deleteModuleVersionsForModules(modules.map((module) => module.id));
+      await pruneOrphanedModuleVersions();
       await db.modules.where('campaignId').equals(campaignId).delete();
       await db.runs.where('campaignId').equals(campaignId).delete();
       await db.deliverables.where('campaignId').equals(campaignId).delete();
@@ -140,7 +161,7 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
           .map(([kind, count]) => ({ kind, count }))
           .sort((a, b) => a.kind.localeCompare(b.kind)),
         artifacts: artifacts.length,
-        modules: moduleCount,
+        modules: modules.length,
         battles: battles.length,
         runs: runCount,
         deliverables: deliverableCount,

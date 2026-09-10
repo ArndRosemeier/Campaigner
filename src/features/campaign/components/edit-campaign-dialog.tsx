@@ -337,9 +337,10 @@ export function EditCampaignDialog({
           <AlertDialogTitle>Clear the workspace of “{campaign.name}”?</AlertDialogTitle>
           <AlertDialogDescription>
             This permanently deletes everything under this campaign — every artifact (including
-            the Party), every module, every battle, run and outline. Only the campaign itself
-            stays, so generation can restart from its premise. Type the campaign name exactly
-            to confirm.
+            the Party), every module, every battle, run and outline, and the saved document
+            versions behind those modules (the Versions menu’s undo history). Only the campaign
+            itself stays, so generation can restart from its premise. Type the campaign name
+            exactly to confirm.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex flex-col gap-1.5">

@@ -3,6 +3,7 @@ import { moduleSchema } from '@/domain';
 import { db } from '@/db/db';
 import { deleteArtifact, listArtifactsByModule } from '@/db/artifactRepo';
 import { deleteImageIfUnreferenced } from '@/db/imageRepo';
+import { deleteModuleVersionsForModules } from '@/db/moduleVersionRepo';
 import { NotFoundError } from '@/lib/errors';
 import { deleteBattlesByModule } from '@/db/battleRepo';
 
@@ -193,8 +194,9 @@ export async function deleteModule(
       // The durable document versions belong to the module row itself
       // (docs/18 §2.3 simple undo): no branch keeps them — they describe a
       // document that no longer exists, and nothing could ever prune them
-      // again. Same transaction, so a failed delete leaves them intact.
-      await db.moduleVersions.where('moduleId').equals(id).delete();
+      // again. They die through the ONE sweep seam (§2.1), nested in this
+      // scope, so a failed delete leaves them intact.
+      await deleteModuleVersionsForModules([id]);
       // The TopBar last-module shortcut must not outlive the module it
       // points at — a stale shortcut navigates to a dead reader route.
       const settings = await db.settings.get('settings');

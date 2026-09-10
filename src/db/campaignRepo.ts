@@ -8,6 +8,10 @@ import {
 import { db } from '@/db/db';
 import { deleteArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { listModulesByCampaign } from '@/db/moduleRepo';
+import {
+  deleteModuleVersionsForModules,
+  pruneOrphanedModuleVersions,
+} from '@/db/moduleVersionRepo';
 import { pruneUnreferencedImages } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
 
@@ -67,6 +71,13 @@ export async function updateCampaign(id: string, patch: CampaignPatch): Promise<
  * these tables key on `campaignId` directly, so leaving them behind would
  * strand permanent orphans that every backup re-exports forever.
  *
+ * The modules' durable document versions (docs/18 §2.3 simple undo) go with
+ * them in the SAME transaction — the module ids are enumerated from the rows
+ * INSIDE it, immediately before the module delete, through the ONE sweep seam
+ * and its orphan door (§2.1), so a version row can never outlive the document
+ * it describes (and a failure rolls the modules AND their stacks back
+ * together).
+ *
  * The TopBar's last-module shortcut is cleared when it pointed into this
  * campaign — a stale shortcut would navigate to a deleted module's reader
  * route (dead route).
@@ -84,6 +95,7 @@ export async function deleteCampaign(id: string): Promise<void> {
       db.battles,
       db.deliverables,
       db.settings,
+      db.moduleVersions,
     ],
     async () => {
       const artifacts = await db.artifacts.where('campaignId').equals(id).toArray();
@@ -95,6 +107,17 @@ export async function deleteCampaign(id: string): Promise<void> {
       await db.artifacts.where('campaignId').equals(id).delete();
       await db.runs.where('campaignId').equals(id).delete();
       await db.images.where('campaignId').equals(id).delete();
+      // Module rows re-listed INSIDE the transaction: the ids the version
+      // sweep needs are the ones that exist at delete time (docs/18 §2.1) —
+      // after this delete they are unrecoverable, and the tx holds
+      // `db.modules`, so no concurrent insert can land between the two.
+      const modules = await db.modules.where('campaignId').equals(id).toArray();
+      await deleteModuleVersionsForModules(modules.map((module) => module.id));
+      // Plus rows whose module is already gone (residue from a pre-sweep
+      // wipe): a version row carries no `campaignId`, so only the global
+      // orphan door can reach them — garbage by definition, no campaign owns
+      // a module that does not exist.
+      await pruneOrphanedModuleVersions();
       await db.modules.where('campaignId').equals(id).delete();
       await db.battles.where('campaignId').equals(id).delete();
       await db.deliverables.where('campaignId').equals(id).delete();
@@ -193,6 +216,12 @@ export interface RemovedContentCounts {
  * Images: orphaned campaign blobs prune through the existing
  * `pruneUnreferencedImages` path, which only ever scans this campaign's rows
  * — library/global images are structurally unreachable and survive.
+ *
+ * Durable module versions (docs/18 §2.3 simple undo): the modules this wipe
+ * removes take their version rows with them, in the SAME transaction, through
+ * the ONE sweep seam and its orphan door (§2.1) — the ids are re-listed
+ * inside the transaction right before the module delete. Undo history is not
+ * "kept content": a version describes a document whose module is gone.
  */
 export async function removeAllGeneratedContent(campaignId: string): Promise<RemovedContentCounts> {
   // Abort in-flight spine/parts passes first (deleteModule precedent): they
@@ -218,6 +247,7 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       db.settings,
       db.runs,
       db.deliverables,
+      db.moduleVersions,
     ],
     async () => {
       const campaign = await db.campaigns.get(campaignId);
@@ -232,7 +262,11 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
         kindCounts.set(artifact.kind, (kindCounts.get(artifact.kind) ?? 0) + 1);
       }
       const battles = await db.battles.where('campaignId').equals(campaignId).toArray();
-      const moduleCount = await db.modules.where('campaignId').equals(campaignId).count();
+      // Re-listed (not counted) so the same read yields the ids the version
+      // sweep needs — and the count stays in-tx honest (deleteModule
+      // precedent): a module that landed after the dialog opened is wiped by
+      // the same pass, versions included.
+      const modules = await db.modules.where('campaignId').equals(campaignId).toArray();
       const runCount = await db.runs.where('campaignId').equals(campaignId).count();
       const deliverableCount = await db.deliverables.where('campaignId').equals(campaignId).count();
 
@@ -247,6 +281,14 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       // modules and encounters they were seeded from (deleteArtifact only
       // scrubs tokens — a PC-only board would linger without this sweep).
       await db.battles.where('campaignId').equals(campaignId).delete();
+      // The modules' durable document versions belong to the module rows
+      // (docs/18 §2.3 simple undo): they die in the SAME transaction as the
+      // delete through the ONE sweep seam (§2.1) — a failed wipe leaves both
+      // untouched — plus the orphan door for rows whose module is already
+      // gone (residue a pre-sweep wipe left; no campaignId on a version row,
+      // so only the global query can reach them).
+      await deleteModuleVersionsForModules(modules.map((module) => module.id));
+      await pruneOrphanedModuleVersions();
       await db.modules.where('campaignId').equals(campaignId).delete();
       // Runs point at deleted artifacts/modules (targetArtifactId /
       // placementModuleId) and deliverables belong to deleted modules (their
@@ -270,7 +312,7 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
           .sort((a, b) => a.kind.localeCompare(b.kind)),
         artifacts: doomed.length,
         pcsKept: artifacts.length - doomed.length,
-        modules: moduleCount,
+        modules: modules.length,
         battles: battles.length,
         runs: runCount,
         deliverables: deliverableCount,

@@ -1,3 +1,5 @@
+import type { IndexableType } from 'dexie';
+
 import type { Id, ModuleDocumentVersion, ModuleVersionSource } from '@/domain';
 import {
   assembleModulePartsDocument,
@@ -33,6 +35,13 @@ import { NotFoundError } from '@/lib/errors';
  * Bounded growth: at most `MODULE_VERSION_CAP` rows per module, the OLDEST
  * pruned in the same transaction as the insert; the menu states the retention
  * and the Clear-all door empties ONE module's stack (never another's).
+ *
+ * Death has ONE implementation too (docs/18 §2.1): `deleteModuleVersionsForModules`
+ * is called by every path that removes module rows — `deleteModule` and the
+ * three campaign-scoped bulk deletes — each of them inside its own delete
+ * transaction, plus `pruneOrphanedModuleVersions` for rows whose module row
+ * is already gone (residue a pre-sweep wipe left). The menu's per-module
+ * Clear-all door is a separate, module-keyed scope (`clearModuleVersions`).
  */
 
 /**
@@ -88,6 +97,95 @@ export async function snapshotModuleVersion(
     }
     return version;
   });
+}
+
+/**
+ * The ONE place durable version rows die (docs/18 §2.1 "Delete a module /
+ * campaign / artifact"): every path that removes a module row calls this with
+ * the ids it is about to remove — `deleteModule` with its own id, and the
+ * campaign-scoped bulk deletes (`deleteCampaign`,
+ * `removeAllGeneratedContent`, `deleteCampaignWorkspace`) with their
+ * campaign's module ids. The rows describe a document whose module is gone:
+ * nothing could ever list, restore or prune them again.
+ *
+ * The ids are the CALLER's job and must be read in the SAME transaction that
+ * deletes the module rows (docs/18 §2.1): the rows are gone afterwards, so a
+ * post-hoc enumeration is impossible — and a Dexie `rw` transaction that
+ * holds `db.modules` blocks any concurrent transaction that could insert a
+ * module row, so nothing can slip in between that enumeration and this sweep
+ * (the same in-tx re-list discipline as the wipes' recount). There is no
+ * campaign-scoped query to use instead: `moduleVersions` carries no
+ * `campaignId` (`moduleId` is the only key a row has), and adding one would
+ * be a Dexie version for a delete-only concern.
+ *
+ * JOINING transaction: the `rw` scope is `db.moduleVersions` alone, so from
+ * inside a larger transaction this is a nested SUB-set scope that commits or
+ * rolls back WITH it (a failed wipe leaves modules AND versions intact —
+ * never a half-state) and standalone it is its own atomic delete.
+ */
+export async function deleteModuleVersionsForModules(moduleIds: readonly Id[]): Promise<number> {
+  if (moduleIds.length === 0) return 0;
+  return db.transaction('rw', db.moduleVersions, async () => {
+    return db.moduleVersions
+      .where('moduleId')
+      .anyOf([...moduleIds])
+      .delete();
+  });
+}
+
+/**
+ * Module ids that still hold durable version rows but have NO module row —
+ * garbage by definition (a version row is only ever written for an existing
+ * module: `snapshotModuleVersion` throws `NotFoundError` for a missing one),
+ * and unreachable by any module-keyed sweep because the id to sweep with is
+ * exactly what is gone.
+ *
+ * It exists for residue: a database wiped by a build that predates the
+ * `deleteModuleVersionsForModules` seam (docs/18 §2.1) kept the rows of the
+ * modules that wipe removed, and neither the module id nor the campaign can
+ * be recovered from them (`moduleVersions` carries no `campaignId`). The
+ * campaign-scoped wipes call `pruneOrphanedModuleVersions` alongside their
+ * own sweep, which is the only door that can reach these rows.
+ *
+ * Companion read of the sweep below (same live-module arbiters): a module id
+ * with version rows and no module row. Sorted for deterministic reporting.
+ */
+export async function listOrphanedModuleVersions(): Promise<Id[]> {
+  // Distinct index keys, never the rows themselves: the sweep only needs the
+  // ids, and a version row carries a WHOLE module document (`docText`) —
+  // materializing the stack to collect ids would read megabytes for nothing.
+  const versionModuleIds = await db.moduleVersions.orderBy('moduleId').uniqueKeys();
+  const liveModuleIds = await db.modules.toCollection().primaryKeys();
+  const live = new Set(uuidKeysOf(liveModuleIds, 'modules.id'));
+  return uuidKeysOf(versionModuleIds, 'moduleVersions.moduleId')
+    .filter((moduleId) => !live.has(moduleId))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+/**
+ * Dexie types index keys as `IndexableType`; every key this seam reads is a
+ * uuid STRING (the version schema's `moduleId`, the module row's primary
+ * key). A non-string key means a corrupt row: fail loudly instead of
+ * stringify-ing it into a bogus id or silently dropping it out of the orphan
+ * set (AGENTS rule 1 — never a quiet fallback at a boundary).
+ */
+function uuidKeysOf(keys: readonly IndexableType[], what: string): Id[] {
+  return keys.map((key) => {
+    if (typeof key !== 'string') {
+      throw new Error(`${what} holds a non-string key (${typeof key}) — the row is corrupt`);
+    }
+    return key;
+  });
+}
+
+/**
+ * Collects the rows `listOrphanedModuleVersions` reports by riding the ONE
+ * sweep (never a second delete of its own) and returns how many went. Intended
+ * to be called inside the caller's transaction (the campaign wipes do): the
+ * query and the delete then share one rollback scope.
+ */
+export async function pruneOrphanedModuleVersions(): Promise<number> {
+  return deleteModuleVersionsForModules(await listOrphanedModuleVersions());
 }
 
 /**
