@@ -1,5 +1,20 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
-import { createModule, ENCOUNTER_CONFLICT_KINDS, entityKindFor, moduleCreationPool, moduleDocumentText, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS, type EncounterConflictKind } from '@/domain';
+import {
+  createModule,
+  ENCOUNTER_CONFLICT_KINDS,
+  encounterCountWord,
+  encounterFloorGuardrailFor,
+  encounterFloorPerPart,
+  encounterFloorTotal,
+  entityKindFor,
+  moduleCreationPool,
+  moduleDocumentText,
+  moduleEntityKindSchema,
+  moduleSpineSchema,
+  MODULE_SIZE_WORD_TARGETS,
+  type EncounterConflictKind,
+  type EncounterFloorGuardrail,
+} from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
@@ -334,8 +349,13 @@ export async function runSpine(
     // declared mix gets ONE repair retry on the escalated model — a
     // corrected spine that declares encounters with wants + kinds. A second
     // defective record fails the spine loudly (never a silent draft).
+    // Floor guarding is read from the MODULE ROW here (its recorded floor, or
+    // today's default) — the same numbers that rendered the prompt this reply
+    // answered, so the gate can never judge a different rule than the one asked
+    // for. With the floor disabled, declaring no encounters is not a defect.
+    const spineFloor = encounterFloorGuardrailFor(saved);
     const spineEncounterDefect = (module: Module): string | null => {
-      if (!module.entityKinds.some((entry) => entry.kind === 'encounter')) {
+      if (spineFloor.enabled && !module.entityKinds.some((entry) => entry.kind === 'encounter')) {
         return 'declares no encounters';
       }
       try {
@@ -346,15 +366,19 @@ export async function runSpine(
       }
     };
     if (spineEncounterDefect(saved) !== null) {
-      const levelCount = saved.levelMax - saved.levelMin + 1;
+      // The floor half of the requirement is rendered from the module's own
+      // numbers; when the floor is disabled the defect is a mix defect, so this
+      // half is simply absent from the sentence.
+      const floorHalf = floorRepairRequirement(spineFloor, saved);
       const { text: retryRaw } = await chat(
         [
           ...messages,
           {
             role: 'user',
             content:
-              `Your spine ${spineEncounterDefect(saved) ?? 'declares no encounters'}, but the module requires at least one distinct encounter per level ` +
-              `(levels ${String(saved.levelMin)}–${String(saved.levelMax)} → at least ${String(levelCount)} encounters). ` +
+              `Your spine ${spineEncounterDefect(saved) ?? 'declares no encounters'}` +
+              (floorHalf === null ? '' : `, ${floorHalf}`) +
+              `. ` +
               `Reply with corrected JSON only (same schema): keep the premise, themes and part plan, and declare every planned encounter ` +
               `in entities with kind "encounter", each under a distinctive, stable name — each with exactly the two mutually exclusive wants driving the scene ` +
               `and one conflict kind (combat, hazard, chase, social, puzzle, or exploration). The declared mix must include ` +
@@ -488,6 +512,64 @@ export const MODULE_TONE_BANS: Readonly<Record<string, readonly string[]>> = {
 };
 
 /** The tone entry's bans for a free-text module tone (exact match, case-insensitive). */
+/**
+ * The encounter-floor clause for the spine prompt, or `null` when the module's
+ * floor is disabled (then the prompt carries no floor requirement at all).
+ *
+ * The ONE source of truth for the wording: the numbers the owner set in the New
+ * Module dialog flow straight into this sentence, and the gate that judges the
+ * reply reads the same numbers (`countModuleEncounters`). At the default
+ * (`enabled: true, perLevel: 1`) this renders byte-for-byte the pre-config copy.
+ */
+function floorClause(floor: EncounterFloorGuardrail, module: Module): string | null {
+  if (!floor.enabled) return null;
+  const levelCount = module.levelMax - module.levelMin + 1;
+  const total = encounterFloorTotal(floor, levelCount);
+  return (
+    `REQUIREMENT — encounter floor: name at least ${encounterCountWord(floor.perLevel)} distinct ` +
+    `encounter${floor.perLevel === 1 ? '' : 's'} per level of this module's range ` +
+    `(levels ${String(module.levelMin)}–${String(module.levelMax)} → at least ${String(total)} distinct encounters across the module), ` +
+    'with each part naming at least as many encounters as the levels its band covers.'
+  );
+}
+
+/** The per-part floor instruction, or `null` when the floor is disabled. */
+function perPartFloorClause(levelBand: string, levels: number, required: number): string | null {
+  if (required <= 0) return null;
+  return (
+    `REQUIREMENT — encounter floor for this part (levels ${levelBand}: ${String(levels)} level(s)): ` +
+    `name at least ${String(required)} distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, ` +
+    `each a scene with meaningful risk and player agency — combat, hazard, chase, social conflict, or another tactical set piece. ` +
+    `Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.`
+  );
+}
+
+/** The spine repair-retry requirement for a short floor, or `null` when the
+ * floor is disabled (a disabled floor is never a spine defect). */
+function floorRepairRequirement(floor: EncounterFloorGuardrail, module: Module): string | null {
+  if (!floor.enabled) return null;
+  const levelCount = module.levelMax - module.levelMin + 1;
+  return (
+    `but the module requires at least ${encounterCountWord(floor.perLevel)} distinct ` +
+    `encounter${floor.perLevel === 1 ? '' : 's'} per level ` +
+    `(levels ${String(module.levelMin)}–${String(module.levelMax)} → at least ${String(encounterFloorTotal(floor, levelCount))} encounters)`
+  );
+}
+
+/** The floor repair instruction for one short part, or `null` when the floor is
+ * disabled (there is nothing to repair). */
+function floorRepairInstruction(target: PartEncounterCount): string | null {
+  if (target.required <= 0) return null;
+  return (
+    `Encounter floor repair: this part covers levels ${target.levelBand} ` +
+    `(${String(target.required)} level(s)) and must name at least ${String(target.required)} ` +
+    `distinct encounter(s) in its markdown as [[Encounter Name]] wiki-links — scenes with meaningful risk ` +
+    `and player agency (combat, hazard, chase, social conflict, or another tactical set piece). ` +
+    `It currently names ${String(target.found)}. Add the missing encounters; keep the part's story, ` +
+    `characters and continuity intact. Encounters already named in other parts do not count toward this part's share. `
+  );
+}
+
 export function toneBansFor(tone: string): readonly string[] | null {
   return MODULE_TONE_BANS[tone.trim().toLowerCase()] ?? null;
 }
@@ -636,6 +718,21 @@ async function spineMessages(
   // Tone dial teeth (08 §M4-B): bans on HOW scenes resolve, never on
   // register or mood — the prose palette stays fully open.
   const toneBans = [...MODULE_TONE_GENERIC_BANS, ...(toneBansFor(module.tone) ?? [])];
+  // The module's OWN floor drives this clause (its recorded value, or today's
+  // default) — the same numbers the gate below judges the reply against.
+  const spineFloor = encounterFloorGuardrailFor(module);
+  const floorRequirement = floorClause(spineFloor, module);
+  // With the floor off there is no floor requirement, but the structural /
+  // declaration / escalation sentences that shared the bullet stay.
+  const spineFloorItem =
+    '- ' +
+    (floorRequirement === null ? '' : `${floorRequirement} `) +
+    'Every planned encounter declares its conflict STRUCTURALLY: exactly two mutually exclusive wants — if both sides could plausibly agree, it is not an encounter yet — ' +
+    'and one conflict kind: combat, hazard, chase, social, puzzle, or exploration. ' +
+    'Place encounters deliberately in the parts where they make narrative and gameplay sense, vary their kind and intensity ' +
+    '— the declared mix MUST include at least one outright combat, one hazard-or-chase, and one social conflict where someone must come out worse ' +
+    '(the mix is gated from these declarations at generation time, so declare kinds honestly) — ' +
+    'and reserve climactic encounters for an earned escalation. Never pad the module with repetitive or disposable encounters.';
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
     `Module concept: ${module.concept}`,
@@ -648,15 +745,7 @@ async function spineMessages(
       '- Every level in the range must be covered by exactly one part.',
       '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up).',
       '- Think like an experienced GM designing for real players: prioritize fun, meaningful choices, varied pacing, memorable moments, clear stakes, and challenges that are exciting without feeling arbitrary or hopeless. Balance combat, social, exploration, discovery, and recovery according to the story and the group’s enjoyment. Let the fiction and pacing decide the exact structure rather than filling a quota mechanically.',
-      '- REQUIREMENT — encounter floor: name at least one distinct encounter per level of this module\'s range ' +
-        `(levels ${module.levelMin}–${module.levelMax} → at least ${levelCount} distinct encounters across the module), ` +
-        'with each part naming at least as many encounters as the levels its band covers. ' +
-        'Every planned encounter declares its conflict STRUCTURALLY: exactly two mutually exclusive wants — if both sides could plausibly agree, it is not an encounter yet — ' +
-        'and one conflict kind: combat, hazard, chase, social, puzzle, or exploration. ' +
-        'Place encounters deliberately in the parts where they make narrative and gameplay sense, vary their kind and intensity ' +
-        '— the declared mix MUST include at least one outright combat, one hazard-or-chase, and one social conflict where someone must come out worse ' +
-        '(the mix is gated from these declarations at generation time, so declare kinds honestly) — ' +
-        'and reserve climactic encounters for an earned escalation. Never pad the module with repetitive or disposable encounters.',
+      spineFloorItem,
       '- Structural conflict governs HOW scenes resolve, never what they feel like: no tone, register, or subject matter is restricted by these requirements. ' +
         `Never resolve a scene by any of these banned resolutions: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
       '- Introduce as many locations, NPCs, factions, notes, and encounters as the story needs — you are not required to detail any of them in the spine. Give every planned encounter a distinctive, stable name and declare it with kind "encounter" in entities when introduced, WITH its "wants" pair (the two irreconcilable wants) and its "conflictKind". When the module references an encounter in prose, use a wiki-link ([[Encounter Name]]) so it can be resolved into an encounter artifact later.',
@@ -765,10 +854,14 @@ function encounterNamesIn(
  * encounter set against levelCount, allocated per band — each part's
  * markdown must name at least `levelsInLevelBand` encounters. A part with no
  * written row counts 0. sizeDial-independent; the 4× ceiling stays advisory
- * and is never counted here (over-quota never fails).
+ * and is never counted here (over-quota never fails). The FLOOR is the
+ * module's own recorded guardrail (or today's default when it recorded none).
  */
-export function countModuleEncounters(module: Module): EncounterFloorReport {
-  const required = Math.max(1, module.levelMax - module.levelMin + 1);
+export function countModuleEncounters(
+  module: Module,
+  floor: EncounterFloorGuardrail = encounterFloorGuardrailFor(module),
+): EncounterFloorReport {
+  const required = encounterFloorTotal(floor, module.levelMax - module.levelMin + 1);
   const perPart: PartEncounterCount[] = (module.spine?.partPlan ?? []).map((plan, planIndex) => {
     const part = module.parts.find((entry) => entry.planIndex === planIndex);
     const found = part === undefined ? 0 : encounterNamesIn(part.markdown, module.entityKinds).size;
@@ -776,12 +869,14 @@ export function countModuleEncounters(module: Module): EncounterFloorReport {
       planIndex,
       title: plan.title,
       levelBand: plan.levelBand,
-      required: levelsInLevelBand(plan.levelBand),
+      required: encounterFloorPerPart(floor, levelsInLevelBand(plan.levelBand)),
       found,
     };
   });
   const found = encounterNamesIn(moduleDocumentText(module), module.entityKinds).size;
-  const deficient = perPart.filter((entry) => entry.found < entry.required);
+  // A disabled floor has no shortfall: `required` is 0 and no band is deficient,
+  // so every gate built on this report passes by construction.
+  const deficient = floor.enabled ? perPart.filter((entry) => entry.found < entry.required) : [];
   return { found, required, perPart, deficient };
 }
 
@@ -807,8 +902,11 @@ export function encounterFloorMessage(report: EncounterFloorReport): string {
  * any band allocation). The runParts gate catches the report itself for the
  * repair pass; this is the fail-loud verdict shared by the gate and tests.
  */
-export function assertEncounterFloor(module: Module): void {
-  const report = countModuleEncounters(module);
+export function assertEncounterFloor(
+  module: Module,
+  floor: EncounterFloorGuardrail = encounterFloorGuardrailFor(module),
+): void {
+  const report = countModuleEncounters(module, floor);
   if (report.found < report.required || report.deficient.length > 0) {
     throw new Error(encounterFloorMessage(report));
   }
@@ -1076,13 +1174,18 @@ async function runPartsPass(
     // Good parts are preserved (no rollback — parts are individually
     // regenerable); callers skip the post-generation automation on failure.
     const scope = new Set(planIndexes);
+    // The FLOOR this run enforces comes from the module row (its recorded
+    // guardrail, or today's default) — the same numbers the spine pass asked
+    // for, so a repair and a later retry judge by the module's own rules rather
+    // than by whatever the dialog shows today.
+    const partsFloor = encounterFloorGuardrailFor(await requireModule(moduleId));
     // A full run owns the whole-module total; a subset run (single-part
     // rewrite/retry) owns only its parts' band shares — it can neither fix
     // nor answer for the rest of the module.
     const isFullRun = (module: Module): boolean =>
       module.spine?.partPlan.every((_, index) => scope.has(index)) ?? false;
     const inScopeTargets = (module: Module): PartEncounterCount[] => {
-      const report = countModuleEncounters(module);
+      const report = countModuleEncounters(module, partsFloor);
       const deficient = report.deficient.filter((entry) => scope.has(entry.planIndex));
       if (deficient.length > 0) return deficient;
       // Full run whose bands are met but whose total repeats across parts:
@@ -1093,7 +1196,7 @@ async function runPartsPass(
       return [];
     };
     const isFloorBlocking = (module: Module): boolean => {
-      const report = countModuleEncounters(module);
+      const report = countModuleEncounters(module, partsFloor);
       if (isFullRun(module)) return report.found < report.required || report.deficient.length > 0;
       return report.deficient.some((entry) => scope.has(entry.planIndex));
     };
@@ -1115,16 +1218,20 @@ async function runPartsPass(
         // no-clean-resolution rule everywhere else, full-price satisfaction
         // on the closing part.
         const repairIsFinale = target.planIndex === current.spine.partPlan.length - 1;
+        const floorInstruction = floorRepairInstruction(target);
+        // A disabled floor never yields a repair target, so this is a loud
+        // invariant rather than a fallback: reaching it would mean a target was
+        // computed for a floor that demands nothing.
+        if (floorInstruction === null) {
+          throw new Error(
+            `Encounter floor repair was requested for "${target.title}" while the module's floor is disabled`,
+          );
+        }
         try {
           await generatePart(moduleId, current, target.planIndex, campaign, floorRepairModel, {
             signal: controller.signal,
             extraInstruction:
-              `Encounter floor repair: this part covers levels ${target.levelBand} ` +
-              `(${String(target.required)} level(s)) and must name at least ${String(target.required)} ` +
-              `distinct encounter(s) in its markdown as [[Encounter Name]] wiki-links — scenes with meaningful risk ` +
-              `and player agency (combat, hazard, chase, social conflict, or another tactical set piece). ` +
-              `It currently names ${String(target.found)}. Add the missing encounters; keep the part's story, ` +
-              `characters and continuity intact. Encounters already named in other parts do not count toward this part's share. ` +
+              floorInstruction +
               `Honor declared encounters (declared kind, irreconcilable opposed wants — negotiation may cost, never dissolve the opposition), ` +
               (repairIsFinale
                 ? `and this is the FINALE: satisfaction is allowed at full price — every want met is paid for visibly.`
@@ -1166,7 +1273,7 @@ async function runPartsPass(
       });
       gated = await requireModule(moduleId);
     }
-    const floorReport = countModuleEncounters(gated);
+    const floorReport = countModuleEncounters(gated, partsFloor);
     // The declared mix is gated from the records (08 §M4-B): authored
     // declarations, never a classifier — an undeclared kind fails loudly
     // instead of defaulting. The spine gate already enforced the mix at plan
@@ -1186,7 +1293,9 @@ async function runPartsPass(
       // When only the mix failed, the count copy must not claim a shortfall.
       let floorMessage = isFloorBlocking(gated)
         ? encounterFloorMessage(floorReport)
-        : 'Encounter floor met, but the declared mix drifted from the plan.';
+        : partsFloor.enabled
+          ? 'Encounter floor met, but the declared mix drifted from the plan.'
+          : 'The declared mix drifted from the plan.';
       if (mixDefect !== null) floorMessage += ` ${mixDefect}`;
       if (!gated.entityNamesNormalized) {
         floorMessage +=
@@ -1392,6 +1501,19 @@ async function partCall(
     campaignCastContext(artifacts),
   );
 
+  // This part's floor share, rendered from the MODULE's own guardrail: the
+  // number of encounters the part must name, and the instruction asking for
+  // them. A disabled floor drops the instruction (and the gate above drops the
+  // repair), so the two can never disagree.
+  const bandLevels = levelsInLevelBand(plan.levelBand);
+  const partFloorRequirement = perPartFloorClause(
+    plan.levelBand,
+    bandLevels,
+    encounterFloorPerPart(encounterFloorGuardrailFor(module), bandLevels),
+  );
+  // The list item keeps its bullet, and is DROPPED entirely when the floor is
+  // off (the guard above then has no repair target either).
+  const partFloorItem = partFloorRequirement === null ? null : `- ${partFloorRequirement}`;
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
     `Module premise:\n${spine.premise}`,
@@ -1414,7 +1536,7 @@ async function partCall(
       '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters. Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
       '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token — write [[Halmund]]s Haus, not [[Halmunds]] Haus (English genitive: [[Halmund]]\'s tower). Never bake roles or titles into the token — write [[Halmund|the guard Halmund]], not [[Guard Halmund]]. Use [[Name|display]] whenever the surface text must differ from the canonical name. The same rules apply in any language.',
       `- Target length for this part: ${MODULE_SIZE_WORD_TARGETS[module.sizeDial]} (soft target).`,
-      `- REQUIREMENT — encounter floor for this part (levels ${plan.levelBand}: ${String(levelsInLevelBand(plan.levelBand))} level(s)): name at least ${String(levelsInLevelBand(plan.levelBand))} distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, each a scene with meaningful risk and player agency — combat, hazard, chase, social conflict, or another tactical set piece. Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.`,
+      partFloorItem,
       conflictBrief,
       '- REQUIREMENT — honor the declared encounters above: stage each in its declared conflict kind (a declared combat is fought, a declared social conflict costs someone), keep the opposed wants irreconcilable inside this part — negotiation may cost, never dissolve the opposition — and never resolve a scene by a banned resolution (both sides fully met; the other side talked out of its want; a costless split of the difference; a hidden third option satisfying everyone).',
       isFinale

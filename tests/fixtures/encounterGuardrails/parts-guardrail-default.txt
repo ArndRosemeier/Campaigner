@@ -1,0 +1,13 @@
+Writing instructions:
+- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).
+- Read-aloud text goes in blockquotes.
+- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters. Reuse the exact names of entities from earlier parts and the campaign index, consistently.
+- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token — write [[Halmund]]s Haus, not [[Halmunds]] Haus (English genitive: [[Halmund]]'s tower). Never bake roles or titles into the token — write [[Halmund|the guard Halmund]], not [[Guard Halmund]]. Use [[Name|display]] whenever the surface text must differ from the canonical name. The same rules apply in any language.
+- Target length for this part: 800–1500 words (soft target).
+- REQUIREMENT — encounter floor for this part (levels 1: 1 level(s)): name at least 1 distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, each a scene with meaningful risk and player agency — combat, hazard, chase, social conflict, or another tactical set piece. Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.
+
+- REQUIREMENT — honor the declared encounters above: stage each in its declared conflict kind (a declared combat is fought, a declared social conflict costs someone), keep the opposed wants irreconcilable inside this part — negotiation may cost, never dissolve the opposition — and never resolve a scene by a banned resolution (both sides fully met; the other side talked out of its want; a costless split of the difference; a hidden third option satisfying everyone).
+- REQUIREMENT — no clean resolution: end this part with a cost, a revelation, or a new pressure — never with every side satisfied. Satisfaction is rationed to the finale.
+- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.
+- Encounters live in separate encounter artifacts — in the prose, set up the scene and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).
+- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.

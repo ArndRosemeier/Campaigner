@@ -158,6 +158,131 @@ export const ENCOUNTER_CONFLICT_KINDS = [
 
 export type EncounterConflictKind = (typeof ENCOUNTER_CONFLICT_KINDS)[number];
 
+/**
+ * The EDITABLE part of the encounter floor (owner decision, docs/17).
+ *
+ * The module-creation flow's floor guardrail used to be a hard-coded sentence
+ * in the spine prompt plus a hard-coded threshold in the gates. The owner wants
+ * the guardrail to stay — it is what keeps a module from shipping encounter-free
+ * — but to be changeable without editing prompt copy, behind an Advanced
+ * disclosure in the New Module dialog. Editing PROSE was explicitly rejected, so
+ * this is a NUMERICAL interface: `perLevel` (encounters per level of the module's
+ * range) and an on/off switch. Those two numbers are the ONE source of truth:
+ * they render the prompt clause in the spine pass, its repair retry, the parts
+ * pass and the per-part instruction, AND they set the thresholds and copy of the
+ * floor validator — a value can never disagree with the gate it configures.
+ *
+ * Under the defaults (`enabled: true, perLevel: 1`) every rendered string and
+ * every threshold is byte-identical to the pre-config behavior; the golden test
+ * is the regression contract for that.
+ *
+ * Deliberately floor-ONLY: the encounter conflict-kind vocabulary and the
+ * declared-mix rule are their own seam with their own gate, untouched here.
+ *
+ * Integers only (a fractional encounter count is meaningless), min 0, and the
+ * refine keeps `enabled: false` honest — a disabled floor may carry
+ * `perLevel: 0`, while an ENABLED floor always demands at least one encounter
+ * per level. Recorded per module (see `moduleSchema.encounterFloorGuardrail`),
+ * so a repair or retry months later reads the module's own rules.
+ */
+export const encounterFloorGuardrailSchema = z
+  .object({
+    /** false = no floor at all: no clause in the prompt, no gate, no repair. */
+    enabled: z.boolean().default(true),
+    /** Distinct encounters required per level of the module's range. */
+    perLevel: z.number().int().min(0).default(1),
+  })
+  .refine((floor) => !floor.enabled || floor.perLevel >= 1, {
+    message: 'perLevel must be >= 1 when the encounter floor is enabled',
+    path: ['perLevel'],
+  });
+
+export type EncounterFloorGuardrail = z.infer<typeof encounterFloorGuardrailSchema>;
+
+/** The floor enforced when nothing was configured: one distinct named encounter
+ * per level of the module's range — today's behavior, unchanged. */
+export function defaultEncounterFloorGuardrail(): EncounterFloorGuardrail {
+  return { enabled: true, perLevel: 1 };
+}
+
+/**
+ * The floor a module enforces: its OWN recorded value when present, today's
+ * default otherwise (the row field is additive optional, so a module written
+ * before it behaves exactly as before). The ONE resolver every consumer uses —
+ * the spine prompt builder, the spine gate, the parts gate, the repair
+ * instructions — so all of them read the module's rules rather than whatever a
+ * dialog happens to show later (docs/18 §2.2).
+ */
+export function encounterFloorGuardrailFor(module: {
+  encounterFloorGuardrail?: EncounterFloorGuardrail | null | undefined;
+}): EncounterFloorGuardrail {
+  return module.encounterFloorGuardrail ?? defaultEncounterFloorGuardrail();
+}
+
+/** English number words for the small counts a floor expresses (0..10); larger
+ * counts fall back to digits, which read fine ("at least 12 distinct
+ * encounters"). */
+const COUNT_WORDS = [
+  'zero',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+] as const;
+
+/** `<count>` as a word for 0..10, digits above — the floor's prose renders
+ * `perLevel: 1` as "one", exactly as the pre-config copy did. */
+export function encounterCountWord(count: number): string {
+  return COUNT_WORDS[count] ?? String(count);
+}
+
+/** Total distinct named encounters the floor demands across a module range. */
+export function encounterFloorTotal(floor: EncounterFloorGuardrail, levelCount: number): number {
+  return floor.enabled ? Math.max(1, levelCount * floor.perLevel) : 0;
+}
+
+/** Encounters one part must name, for a band covering `levels` levels. */
+export function encounterFloorPerPart(floor: EncounterFloorGuardrail, levels: number): number {
+  return floor.enabled ? Math.max(1, levels * floor.perLevel) : 0;
+}
+
+/**
+ * The automation the owner asked for when a module was created (recorded INTENT
+ * for a later "Resume automatic module creation" surface).
+ *
+ * This is a RECORD, not a computation: the four values are exactly what the
+ * creation run used — captured onto the row in the same flow that starts the
+ * run, never re-read from a dialog later. A later session derives whether the
+ * real state has DEVIATED from this intent (for example: the intent asked for
+ * images and an artifact still has none); **no `hasProblems` / `deviates` flag
+ * is stored, and none may be added** — a stored verdict goes stale the moment
+ * the owner fixes or re-breaks the module, while the intent it is compared
+ * against stays true. Derive, never cache.
+ *
+ * Additive optional: `null` (every row written before this field) means
+ * "nothing recorded" and stays INERT — no surface may infer intent from a
+ * legacy row's automation fields, because those describe what the engine did,
+ * not what the owner asked for.
+ *
+ * The four fields mirror the module row's own automation fields and are typed
+ * from THIS schema (`satisfies` in `createModule`), so the recorded intent can
+ * never drift from what the sweep reads.
+ */
+export const moduleAutomationIntentSchema = z.object({
+  autoGenerateKinds: z.array(z.enum(ENTITY_KINDS)),
+  autoImageKinds: z.array(z.enum(ENTITY_KINDS)),
+  autoGenerateBattlemaps: z.boolean(),
+  autoGenerateMobImages: z.boolean(),
+});
+
+export type ModuleAutomationIntent = z.infer<typeof moduleAutomationIntentSchema>;
+
 /** One model-recorded entity type: a wiki-link name and its kind. */
 export const moduleEntityKindSchema = z.object({
   /** The name as first written in the module text (wiki-link form). For
@@ -327,6 +452,30 @@ export const moduleSchema = z
     /** Opt-in unattended generation: the pass-0 spine is approved as-is and
      * pass 1 starts immediately — the spine checkpoint never stops the flow. */
     autoApproveSpine: z.boolean().default(false),
+    /**
+     * The module's OWN encounter floor, recorded at creation (see
+     * `encounterFloorGuardrailSchema`). Additive optional: `null` — every row
+     * written before the field, and every module created without an explicit
+     * choice — means TODAY'S DEFAULT FLOOR, so existing modules behave exactly
+     * as before. Nullable rather than defaulted on purpose: the recorded value
+     * must be able to say "the owner chose nothing", and
+     * `encounterFloorGuardrailFor` is the ONE resolver that turns that into the
+     * default.
+     *
+     * Every consumer reads it from the MODULE ROW — never from the dialog or
+     * from settings: this pass's prompt and gate, the floor repair, a retry, and
+     * a later pass months on all use the rules the module was created with.
+     */
+    encounterFloorGuardrail: encounterFloorGuardrailSchema.nullable().default(null),
+    /**
+     * What the owner asked for at creation: recorded INTENT for a later
+     * "Resume automatic module creation" surface (see
+     * `moduleAutomationIntentSchema`). Written by `createModule` in the same
+     * flow that starts the run. `null` on every row written before the field —
+     * legacy modules stay inert — and NO deviation flag is ever stored beside
+     * it (the future surface derives deviation from the live state).
+     */
+    automationIntent: moduleAutomationIntentSchema.nullable().default(null),
     /** The module's cover image (list thumb / reader hero / module-PDF
      * fallback), or null. Additive `.default(null)` mirrors the v2 upgrade
      * backfill, so rows written before covers parse at the read boundary —
@@ -372,6 +521,12 @@ export interface NewModule {
   autoGenerateMobImages?: boolean;
   /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
   autoApproveSpine?: boolean;
+  /**
+   * The encounter floor this module enforces (see
+   * `encounterFloorGuardrailSchema`). Omitted or undefined = not recorded =
+   * today's default floor, exactly as before.
+   */
+  encounterFloorGuardrail?: EncounterFloorGuardrail;
 }
 
 export function createModule(input: NewModule): Module {
@@ -379,6 +534,17 @@ export function createModule(input: NewModule): Module {
   if (input.levelMin < 1 || input.levelMax < input.levelMin) {
     throw new Error('Invalid level range: max must be >= min and both within 1–20');
   }
+  // The owner's four automation choices, exactly as handed in: these are BOTH
+  // the row's automation fields AND the recorded intent, so the intent a later
+  // session compares against is byte-for-byte what the sweep runs. The omitted
+  // case resolves to []/false on the row (unchanged behavior) and records that
+  // as the intent — "nothing was asked for", never "unknown".
+  const automationIntent = {
+    autoGenerateKinds: input.autoGenerateKinds ?? [],
+    autoImageKinds: input.autoImageKinds ?? [],
+    autoGenerateBattlemaps: input.autoGenerateBattlemaps ?? false,
+    autoGenerateMobImages: input.autoGenerateMobImages ?? false,
+  } satisfies ModuleAutomationIntent;
   return moduleSchema.parse({
     ...stamp,
     campaignId: input.campaignId,
@@ -399,11 +565,13 @@ export function createModule(input: NewModule): Module {
     entityNormalizationError: '',
     entityRewriteProposals: null,
     includePriorModules: input.includePriorModules ?? false,
-    autoGenerateKinds: input.autoGenerateKinds ?? [],
-    autoImageKinds: input.autoImageKinds ?? [],
-    autoGenerateBattlemaps: input.autoGenerateBattlemaps ?? false,
-    autoGenerateMobImages: input.autoGenerateMobImages ?? false,
+    autoGenerateKinds: automationIntent.autoGenerateKinds,
+    autoImageKinds: automationIntent.autoImageKinds,
+    autoGenerateBattlemaps: automationIntent.autoGenerateBattlemaps,
+    autoGenerateMobImages: automationIntent.autoGenerateMobImages,
     autoApproveSpine: input.autoApproveSpine ?? false,
+    encounterFloorGuardrail: input.encounterFloorGuardrail ?? null,
+    automationIntent,
   });
 }
 
