@@ -18,6 +18,7 @@ import {
   defaultSettings,
   modulePartSchema,
   moduleSpineSchema,
+  splitPartsDocument,
   type Id,
 } from '@/domain';
 import { activeCanvasView } from '@/features/modules/canvas/canvasView';
@@ -282,7 +283,10 @@ describe('"Fix module problems" on the canvas', () => {
 
     await mountCanvas();
 
+    // Healthy text AND nothing missing: neither control appears (the module
+    // records no automation intent, so there is nothing to resume either).
     expect(screen.queryByTestId('canvas-fix-problems')).toBeNull();
+    expect(screen.queryByTestId('canvas-resume-automation')).toBeNull();
   }, 30_000);
 
   it('appears when the text falls short, and its confirmation names the parts it will rewrite', async () => {
@@ -336,6 +340,18 @@ describe('"Fix module problems" on the canvas', () => {
     expect(fixSnapshot).toBeDefined();
     expect(fixSnapshot?.docText).toContain('PART-TWO: The drowned cathedral waits');
     expect(fixSnapshot?.docText).not.toContain('PART-TWO-REPAIRED');
+    // …and it is RESTORABLE: it passes the restore door's own gate (the stored
+    // document must split against the CURRENT part plan, which is what
+    // `restoreDurableVersion` checks before proposing) and its part 2 is the
+    // pre-repair text byte-for-byte.
+    const plan = (await getModule(world.moduleId))?.spine?.partPlan ?? [];
+    const snapshotParts = splitPartsDocument(fixSnapshot?.docText ?? '', plan);
+    expect(snapshotParts.find((part) => part.planIndex === 1)?.text).toContain(
+      'PART-TWO: The drowned cathedral waits',
+    );
+    expect(snapshotParts.find((part) => part.planIndex === 1)?.text).not.toContain(
+      'PART-TWO-REPAIRED',
+    );
     // The canvas re-seeded from the row: the preview shows the repaired text.
     expect(screen.getByTestId('canvas-preview')).toHaveTextContent('PART-TWO-REPAIRED');
     // The floor is met now, so the control is gone without a reload.
