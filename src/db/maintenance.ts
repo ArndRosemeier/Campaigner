@@ -151,6 +151,11 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       if (settings?.lastModule?.campaignId === campaignId) {
         await db.settings.update('settings', { lastModule: null });
       }
+      // KEPT ON PURPOSE: the New Module draft (settings `newModuleDraft`) — a
+      // full reset is exactly when the owner wants their concept back, and the
+      // draft is authored input, not workspace output. Its campaign tag still
+      // matches (the campaign row is the one thing a clear keeps).
+      // `deleteCampaign` is the path that clears it.
       // Final image sweep: catches blobs orphaned by the battle/deliverable
       // deletes above that no per-artifact prune saw. The kept campaign row's
       // cover stays pinned (referencedImageIds reads it).

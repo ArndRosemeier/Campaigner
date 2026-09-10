@@ -125,6 +125,13 @@ export async function deleteCampaign(id: string): Promise<void> {
       if (settings?.lastModule?.campaignId === id) {
         await db.settings.update('settings', { lastModule: null });
       }
+      // The New Module draft is TAGGED with its campaign (settings
+      // `newModuleDraft`, docs/17): the campaign it was written for is being
+      // deleted, so the draft goes with it — leaving it would strand a record
+      // whose tag can never match again.
+      if (settings?.newModuleDraft?.campaignId === id) {
+        await db.settings.update('settings', { newModuleDraft: null });
+      }
       await db.campaigns.delete(id);
     },
   );
@@ -302,6 +309,13 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       if (settings?.lastModule?.campaignId === campaignId) {
         await db.settings.update('settings', { lastModule: null });
       }
+      // KEPT ON PURPOSE: the New Module draft (settings `newModuleDraft`) is
+      // NOT cleared here. "Remove all generated content" exists so generation
+      // can restart clean, and the draft is what makes restarting cheap — the
+      // owner retries the module that just went away without retyping the
+      // concept. It holds no generated content, and its campaign tag still
+      // matches. (Clear workspace keeps it too; `deleteCampaign` clears it,
+      // because there the campaign itself is gone.)
       // Final image sweep: catches blobs orphaned by the battle/deliverable
       // deletes above (covers, battlemaps) that no per-artifact prune saw.
       const imagesPruned = await pruneUnreferencedImages(campaignId);

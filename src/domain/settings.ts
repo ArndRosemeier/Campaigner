@@ -6,6 +6,12 @@ import {
   encounterMapAspectSchema,
   encounterPresetSchema,
 } from '@/domain/encounterMap/schema';
+import {
+  defaultEncounterFloorGuardrail,
+  encounterFloorGuardrailSchema,
+  ENTITY_KINDS,
+  moduleSizeDialSchema,
+} from '@/domain/module';
 
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
@@ -151,6 +157,83 @@ export const lastModuleSchema = z
 
 export type LastModule = z.infer<typeof lastModuleSchema>;
 
+/**
+ * The New Module dialog's persisted draft (owner request, docs/17): every value
+ * the dialog holds — concept included — so a module creation can be retried, or
+ * restarted after a reset, without retyping it.
+ *
+ * ONE entry, TAGGED with its campaign, overwritten when the owner starts a
+ * module in another campaign, and prefilled only when the tag matches the
+ * campaign being created in. A per-campaign MAP would leak nothing either, but
+ * it would add a second record shape that every delete path (`deleteCampaign`,
+ * `removeAllGeneratedContent`, `deleteCampaignWorkspace`) would have to sweep —
+ * exactly the orphan class this repo has spent two arcs closing. A single
+ * tagged entry has nothing to orphan.
+ *
+ * Every value is validated with the schema the DIALOG itself uses: kind arrays
+ * through the real `ENTITY_KINDS` enum (so a removed artifact kind can never
+ * resurrect through a stale draft), the size dial through `moduleSizeDialSchema`,
+ * the levels through the same 1..20 integer bounds and the `levelMax >= levelMin`
+ * refine, and the Advanced floor through the domain schema — a stored draft that
+ * no longer validates fails the settings parse LOUDLY rather than silently
+ * half-prefilling the dialog.
+ *
+ * The two campaign WIPES deliberately KEEP the draft ("Remove all generated
+ * content" and "Clear workspace"): retry-after-reset is the whole point of the
+ * feature, and the draft is authored input, not generated content.
+ * `deleteCampaign` clears it — the campaign it was tagged for is gone.
+ */
+export const newModuleDraftSchema = z
+  .object({
+    /** The campaign this draft was written in — the prefill tag. */
+    campaignId: z.uuid(),
+    concept: z.string(),
+    levelMin: z.number().int().min(1).max(20),
+    levelMax: z.number().int().min(1).max(20),
+    tone: z.string(),
+    sizeDial: moduleSizeDialSchema,
+    includePriorModules: z.boolean(),
+    autoApproveSpine: z.boolean(),
+    autoGenerateKinds: z.array(z.enum(ENTITY_KINDS)),
+    autoImageKinds: z.array(z.enum(ENTITY_KINDS)),
+    autoGenerateBattlemaps: z.boolean(),
+    autoGenerateMobImages: z.boolean(),
+    /** The Advanced floor editor's numbers — part of the draft so a retry
+     * starts from the same rules the deleted attempt used. */
+    encounterFloorGuardrail: encounterFloorGuardrailSchema,
+  })
+  .refine((draft) => draft.levelMax >= draft.levelMin, {
+    message: 'levelMax must be >= levelMin',
+    path: ['levelMax'],
+  });
+
+export type NewModuleDraft = z.infer<typeof newModuleDraftSchema>;
+
+/**
+ * The draft the dialog opens with when nothing (or another campaign's draft) is
+ * stored — the dialog's own initial state, unchanged. `campaignId` is the
+ * campaign the dialog is being used in.
+ */
+export function defaultNewModuleDraft(campaignId: string): NewModuleDraft {
+  return {
+    campaignId,
+    concept: '',
+    levelMin: 1,
+    levelMax: 3,
+    tone: '',
+    sizeDial: 'standard',
+    includePriorModules: false,
+    autoApproveSpine: false,
+    autoGenerateKinds: [],
+    autoImageKinds: [],
+    // The master battlemap switch is ON by default; mob portraits stay opt-in
+    // (both owner decisions, unchanged — see the dialog).
+    autoGenerateBattlemaps: true,
+    autoGenerateMobImages: false,
+    encounterFloorGuardrail: defaultEncounterFloorGuardrail(),
+  };
+}
+
 export const settingsSchema = z.object({
   id: z.literal(SETTINGS_ID),
   /** '' when unset. */
@@ -267,6 +350,15 @@ export const settingsSchema = z.object({
   onboarding: onboardingSchema.default({ status: 'fresh', stepState: [] }),
   /** Last-used module shortcut (see lastModuleSchema above). */
   lastModule: lastModuleSchema,
+  /**
+   * The New Module dialog's persisted draft (see newModuleDraftSchema above).
+   * `null` = nothing stored yet. Required-but-nullable exactly like
+   * `lastModule`: the settings read paths merge over `defaultSettings()`, so a
+   * row (or a backup) written before the field parses as `null`, while a
+   * CORRUPT stored draft fails the parse LOUDLY — this path never falls back to
+   * defaults (AGENTS rules 1/3, the settingsRepo convention).
+   */
+  newModuleDraft: newModuleDraftSchema.nullable().default(null),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -299,5 +391,6 @@ export function defaultSettings(): Settings {
     retiredSessionNotesRemoved: 0,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
+    newModuleDraft: null,
   };
 }

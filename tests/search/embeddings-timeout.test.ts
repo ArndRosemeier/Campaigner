@@ -40,6 +40,7 @@ const SETTINGS = {
   language: 'en' as const,
   onboarding: { status: 'fresh' as const, stepState: [] },
   lastModule: null,
+  newModuleDraft: null,
 };
 
 beforeEach(async () => {

@@ -52,6 +52,7 @@ const SETTINGS_BASE = {
   retiredSessionNotesRemoved: 0,
   onboarding: { status: 'fresh' as const, stepState: [] },
   lastModule: null,
+  newModuleDraft: null,
 };
 
 beforeEach(async () => {
