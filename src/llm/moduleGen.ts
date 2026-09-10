@@ -439,19 +439,14 @@ export function parseSpineEntities(raw: string): ModuleEntityKind[] {
 }
 
 /**
- * Banned resolutions per module tone (08 §M4-B tone dial): prohibitions on
- * HOW scenes resolve, never on register or mood — the prose palette stays
- * fully open (murder clown and grieving revenge both clear every gate).
- * The planner prompt renders the generic bans plus the module tone's entry;
- * an unlisted (free-text) tone gets the generic bans only.
+ * Outcome limits per module tone (08 §M4-B tone dial): what a matching tone
+ * rules out, never a register or a mood — the prose palette stays fully open
+ * (murder clown and grieving revenge both clear every gate). The planner
+ * prompt states the universal demand positively (a cost, a loss, or a new
+ * problem) and then renders this module tone's 2-3 limits; an unlisted
+ * (free-text) tone carries no ban list at all, because the universal demand
+ * already names every frictionless resolution these entries used to forbid.
  */
-export const MODULE_TONE_GENERIC_BANS: readonly string[] = [
-  'Both sides leave with their wants fully met.',
-  'The opposing side abandons its want because the party argues well or asks earnestly.',
-  'A compromise that divides the difference with no cost to anyone.',
-  'A hidden third option that satisfies every side at once.',
-];
-
 export const MODULE_TONE_BANS: Readonly<Record<string, readonly string[]>> = {
   heroic: [
     'The confrontation is won by a bystander sacrifice the party never chose.',
@@ -689,9 +684,11 @@ async function spineMessages(
   const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
 
   const levelCount = module.levelMax - module.levelMin + 1;
-  // Tone dial teeth (08 §M4-B): bans on HOW scenes resolve, never on
-  // register or mood — the prose palette stays fully open.
-  const toneBans = [...MODULE_TONE_GENERIC_BANS, ...(toneBansFor(module.tone) ?? [])];
+  // Tone dial teeth (08 §M4-B): the module's tone rules out a few OUTCOMES,
+  // never a register or a mood — the prose palette stays fully open. The
+  // universal demand (a cost, a loss, or a new problem) is stated positively
+  // in the prompt itself, so these are the only hard bans it carries.
+  const toneBans = toneBansFor(module.tone) ?? [];
   // The module's OWN floor drives this clause (its recorded value, or today's
   // default) — the same numbers the gate below judges the reply against.
   const spineFloor = encounterFloorGuardrailFor(module);
@@ -701,8 +698,7 @@ async function spineMessages(
   const spineFloorItem =
     '- ' +
     (floorRequirement === null ? '' : `${floorRequirement} `) +
-    'Place encounters deliberately in the parts where they make narrative and gameplay sense, vary their intensity ' +
-    'and reserve climactic encounters for an earned escalation. Never pad the module with repetitive or disposable encounters.';
+    'Place encounters deliberately in the parts where they make narrative and gameplay sense, and reserve climactic encounters for an earned escalation.';
   const instruction = [
     `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
     `Module concept: ${module.concept}`,
@@ -713,15 +709,29 @@ async function spineMessages(
       'Design the module spine. Cover the whole level range with parts, in order:',
       `- Default one part per level; you MAY merge adjacent levels into one part when the story is better served (levels ${module.levelMin}–${module.levelMax} → about ${levelCount} parts or fewer).`,
       '- Every level in the range must be covered by exactly one part.',
-      '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up).',
-      '- Think like an experienced GM designing for real players: prioritize fun, meaningful choices, varied pacing, memorable moments, clear stakes, and challenges that are exciting without feeling arbitrary or hopeless. Balance combat, social, exploration, discovery, and recovery according to the story and the group’s enjoyment. Let the fiction and pacing decide the exact structure rather than filling a quota mechanically.',
+      '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up). Write the synopsis as a GM-facing note with scene-level substance: the situation, the actors, the stakes, and at least one concrete scene the part contains.',
+      '- Think like an experienced GM: prioritize meaningful choices, varied pacing, clear stakes, and challenges that are exciting without feeling arbitrary. Let the fiction and pacing decide the structure — never a quota.',
       spineFloorItem,
-      '- Structural conflict governs HOW scenes resolve, never what they feel like: no tone, register, or subject matter is restricted by these requirements. ' +
-        `Never resolve a scene by any of these banned resolutions: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
-      '- Introduce as many locations, NPCs, factions, notes, events, and encounters as the story needs — you are not required to detail any of them in the spine. Give every scene a distinctive, stable name and declare it with its kind in entities when introduced. When the module references a scene in prose, use a wiki-link ([[Scene Name]]) so it can be resolved into its artifact later.',
+      '- Conflict first: the situation is contested by someone — a faction, an NPC, a predator, a rival party, or the place itself — and who carries that conflict may shift as the module runs. Not every module has an antagonist; every module has a conflict.',
+      '- Every situation offers at least two VISIBLE approaches that differ in cost or consequence, so nothing resolves on a single route and no part is a passive wait for the plot. Two rolls toward the same outcome are one approach: the difference must be one the players can see before they commit.',
+      '- State in the premise how the situation can resolve, and keep every part equal to what the premise promises — a promised siege arrives, a promised traitor is present and reachable.',
+      '- Give each faction an order of battle — wants, needs, preferred tactics, fears, when it flees — and advance its own plan between parts whether or not the party engages it. Every returnable location gets a line of what has changed since.',
+      '- If an antagonist exists, the party meets their agents, aftereffects or evidence from the first part — never a villain held back for the finale.',
+      '- Every encounter and every location carries one concrete particular that could not be swapped out unchanged (a named river, a debt, a smell, a rule of the place): an opponent the party cannot tell apart from the last one is meaningless combat, and interchangeable scenery is the same failure more slowly.',
+      '- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.',
+      '- Opportunistic threats (a predator, a bandit group, a patrol) belong to the situation: each one advances or reveals a faction’s plan instead of appearing as filler. Exploring is never punished as such — wherever it leads, the interesting thing found there must be worth the risk.',
+      '- Structural conflict governs HOW scenes resolve, never what they feel like — no tone, register or subject matter is restricted here. ' +
+        'Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option. Satisfaction is rationed to the finale.' +
+        (toneBans.length === 0
+          ? ''
+          : ` This module’s tone rules out these outcomes, each because it would erase the choice that produced it: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`),
+      '- When the party defeats, bypasses or changes something, that change persists and is visible when they return: a beaten antagonist stays beaten unless the fiction earned the return, and no NPC finds, captures or sets back the party by fiat.',
+      '- Introduce as many locations, NPCs, factions, notes, events and encounters as the story needs — none of them must be detailed here. Give every scene a distinctive, stable name, declare it with its kind in entities, and wiki-link it in prose ([[Scene Name]]) so it can be resolved into its artifact later.',
       '- An "encounter" is a FIGHT: initiative, a battle map with terrain, and a monster roster with images. Anything that is not a fight — a negotiation, a hazard, a puzzle, an investigation, a ritual, a chase — is an "event" instead: it gets an illustration and no battle map, no monsters, no roster. Never declare a non-combat scene as an encounter, and never hide a fight inside an event. A hazard or a puzzle still carries meaningful risk and player agency — only its artifact differs.',
-      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a non-combat scene the party plays through — a negotiation, hazard, puzzle, investigation, or chase; same shape as a location), "faction" (an organization or group), "encounter" (a fight — a scene resolved in initiative with a battle map and a monster roster), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title. Reuse existing campaign entities by their exact names when they fit; do not invent duplicates to fill out the encounter floor.',
+      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a non-combat scene the party plays through; same shape as a location), "faction" (an organization or group), "encounter" (a fight — a battle map and a monster roster), or "note" (anything else — items, rumors, mysteries, plot devices). One entry per named entity, one canonical spelling — a person is listed once, not once per role or title. Reuse existing campaign entities by exact name; never duplicate one to fill the floor.',
       '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
+      '- Before you answer, the three things that do not bend: (1) every situation has at least two visible approaches that differ in cost or consequence — no single-route conclusions; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible when they return.',
+      "- The user's premise, tone, level range and size are FIXED INPUT. Do not restate, extend, soften or contradict them. If a structural requirement cannot be met inside the user's premise, change the STRUCTURE (the part plan, which faction carries the conflict, where the conflict starts) — never the premise. If you believe the premise makes a requirement impossible, satisfy the requirement anyway and say what you changed in the structure notes.",
     ].join('\n'),
     extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
     'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter" }] } — partPlan length 1..20, one entity entry per named entity with its kind.',
@@ -1114,8 +1124,8 @@ async function runPartsPass(
         const current = await requireModule(moduleId);
         if (current.spine === null) throw new Error('The spine was removed mid-generation');
         // Satisfaction is rationed to the finale: the repair carries the
-        // no-clean-resolution rule everywhere else, full-price satisfaction
-        // on the closing part.
+        // resolution shape everywhere else, full-price satisfaction on the
+        // closing part.
         const repairIsFinale = target.planIndex === current.spine.partPlan.length - 1;
         const floorInstruction = floorRepairInstruction(target);
         // A disabled floor never yields a repair target, so this is a loud
@@ -1133,7 +1143,7 @@ async function runPartsPass(
               floorInstruction +
               (repairIsFinale
                 ? `This is the FINALE: satisfaction is allowed at full price — every want met is paid for visibly.`
-                : `End the part with a cost, a revelation, or a new pressure — never with every side satisfied.`),
+                : `End the part with a cost, a revelation, or a new pressure that carries into the next part.`),
             onToken: undefined,
             onReasoning: undefined,
             onActivity: undefined,
@@ -1392,19 +1402,27 @@ async function partCall(
     [
       'Writing instructions:',
       '- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).',
-      '- Read-aloud text goes in blockquotes.',
+      '- Each location opens with one or two sentences of sensory, present-tense description, then a short GM block: who is here, what they want right now, what they do if the party acts, and where the leads point. Read-aloud text stays inside blockquotes and stays that short, so the GM can run the scene without reading a page aloud.',
+      '- Every situation in this part offers at least two VISIBLE approaches that differ in cost or consequence — two rolls toward the same outcome are one approach. Nothing resolves on a single route.',
+      '- Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option.',
+      '- When the party defeats, bypasses or changes something, write the change into the fiction so it is still visible when they look again — nothing they accomplished is undone off-screen, and nobody locates or captures them by fiat.',
       '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters — and every scene ([[Encounter Name]] for a fight, [[Event Name]] for anything else). Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
-      '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token — write [[Halmund]]s Haus, not [[Halmunds]] Haus (English genitive: [[Halmund]]\'s tower). Never bake roles or titles into the token — write [[Halmund|the guard Halmund]], not [[Guard Halmund]]. Use [[Name|display]] whenever the surface text must differ from the canonical name. The same rules apply in any language.',
+      '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token ([[Halmund]]s Haus, not [[Halmunds]] Haus — English genitive: [[Halmund]]\'s tower) and never bake a role or title into it ([[Halmund|the guard Halmund]], not [[Guard Halmund]]). Use [[Name|display]] when the surface text must differ. Same rules in any language.',
       `- Target length for this part: ${MODULE_SIZE_WORD_TARGETS[module.sizeDial]} (soft target).`,
       partFloorItem,
-      '- Never resolve a scene by a banned resolution (both sides fully met; the other side talked out of its want; a costless split of the difference; a hidden third option satisfying everyone).',
       isFinale
         ? '- This is the FINALE: satisfaction is allowed here, at full price — every want met must be paid for visibly in loss, consequence, or foregone alternative.'
-        : '- REQUIREMENT — no clean resolution: end this part with a cost, a revelation, or a new pressure — never with every side satisfied. Satisfaction is rationed to the finale.',
+        : '- End this part with a cost, a revelation, or a new pressure that carries into the next part — never with every side satisfied. Satisfaction is rationed to the finale.',
+      '- If an antagonist exists, keep their agents, aftereffects or evidence on the page from here on — never hold the villain back for the finale.',
+      '- Show one faction advancing its own plan in this part, whether or not the party engages it; when the party returns to a place they have been, open with what has changed since.',
+      '- Every encounter and every location in this part carries one concrete particular that could not be swapped out unchanged: an opponent the party cannot tell apart from the last one is meaningless combat.',
+      '- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.',
+      '- Opportunistic threats (a predator, a patrol, a bandit group) advance or reveal a faction’s plan instead of appearing as filler, and exploring is never punished as such — whatever the party finds must be worth the risk it took.',
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
       '- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
       '- A scene that is NOT a fight is an event: link it as [[Event Name]] and write the whole scene here — who is present, what they want right now, what they do if the party acts, where the leads point. An event gets an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.',
       '- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.',
+      '- Before you answer, the three things that do not bend in this part: (1) at least two visible approaches per situation, differing in cost or consequence, so nothing resolves on a single route; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible.',
     ].join('\n'),
     options.extraInstruction === '' ? null : `Additional instruction from the GM: ${options.extraInstruction}`,
   ]

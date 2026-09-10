@@ -18,7 +18,6 @@ import {
 import { normalizationReplySchema } from '@/domain/entityNormalization';
 import {
   MODULE_TONE_BANS,
-  MODULE_TONE_GENERIC_BANS,
   parseSpineEntities,
   runParts,
   runSpine,
@@ -183,7 +182,7 @@ describe('the retired mix machinery is unreachable', () => {
 });
 
 describe('tone dial teeth', () => {
-  it('enumerates 2-3 banned resolutions per tone value (outcome bans only)', () => {
+  it('keeps 2-3 outcome limits per tone value — the only hard bans the prompt carries', () => {
     for (const [tone, bans] of Object.entries(MODULE_TONE_BANS)) {
       expect(tone).not.toBe('');
       expect(bans.length).toBeGreaterThanOrEqual(2);
@@ -193,10 +192,12 @@ describe('tone dial teeth', () => {
         expect(ban.trim()).not.toBe('');
       }
     }
-    expect(MODULE_TONE_GENERIC_BANS.length).toBeGreaterThanOrEqual(2);
+    // The universal demand is stated positively in the prompt, so there is no
+    // generic ban list any more: an untoned module carries no ban at all.
+    expect(MODULE_TONE_BANS['']).toBeUndefined();
   });
 
-  it('matches tones case-insensitively, unknown tones get null (generic bans only)', () => {
+  it('matches tones case-insensitively, unknown tones get no ban list', () => {
     expect(toneBansFor('  HORROR ')).toEqual(MODULE_TONE_BANS.horror);
     expect(toneBansFor('eerie')).toBeNull();
     expect(toneBansFor('')).toBeNull();
@@ -305,7 +306,7 @@ describe('a plan that declares no kinds and no wants (mocked chat)', () => {
 
     // The encounter/event boundary (08 §M4-B, superseded): an encounter IS a
     // fight — battle map + monster roster — and everything else is an event.
-    expect(prompt).toContain('locations, NPCs, factions, notes, events, and encounters');
+    expect(prompt).toContain('locations, NPCs, factions, notes, events and encounters');
     expect(prompt).toContain('An "encounter" is a FIGHT');
     expect(prompt).toContain('battle map with terrain, and a monster roster with images');
     expect(prompt).toContain('is an "event" instead');
@@ -317,6 +318,61 @@ describe('a plan that declares no kinds and no wants (mocked chat)', () => {
     expect(normalizationPrompt).toContain('"encounter" = a FIGHT');
     expect(normalizationPrompt).toContain('"event" = a non-combat scene the party plays through');
     expect(normalizationPrompt).toContain('if no fight happens, it is an event');
+
+    // The conflict contract (Slice 3, AMENDMENT 1): a live situation with
+    // visible approaches, not a plot the party watches.
+    expect(prompt).toContain('every module has a conflict');
+    expect(prompt).toContain('at least two VISIBLE approaches that differ in cost or consequence');
+    expect(prompt).toContain('State in the premise how the situation can resolve');
+    expect(prompt).toContain('Give each faction an order of battle');
+    expect(prompt).toContain('never a villain held back for the finale');
+    expect(prompt).toContain('one concrete particular that could not be swapped out unchanged');
+    expect(prompt).toContain('no NPC ally is more intimately bound to the plot than they are');
+    expect(prompt).toContain('Exploring is never punished as such');
+    expect(prompt).toContain('one concrete scene the part contains');
+
+    // The resolution contract is stated POSITIVELY, never as a ban list…
+    expect(prompt).toContain('Every conflict ends with someone worse off, a cost paid, or a new problem opened');
+    expect(prompt).toContain('that change persists and is visible when they return');
+    expect(prompt).not.toContain('banned resolution');
+    // …and an untoned module carries no outcome ban at all (the universal
+    // demand already names every frictionless resolution).
+    expect(prompt).not.toContain('rules out these outcomes');
+
+    // The three non-negotiables are restated LAST, immediately before the
+    // reply format (which must stay last for structured output), and the
+    // user's premise is pinned as fixed input.
+    const restatement = prompt.indexOf('Before you answer, the three things that do not bend:');
+    expect(restatement).toBeGreaterThan(prompt.indexOf('Every conflict ends with someone worse off'));
+    expect(restatement).toBeGreaterThan(prompt.indexOf('An "encounter" is a FIGHT'));
+    expect(prompt.indexOf('Reply with ONLY a JSON object')).toBeGreaterThan(restatement);
+    expect(prompt).toContain(
+      "The user's premise, tone, level range and size are FIXED INPUT. Do not restate, extend, soften or contradict them. " +
+        "If a structural requirement cannot be met inside the user's premise, change the STRUCTURE (the part plan, " +
+        'which faction carries the conflict, where the conflict starts) — never the premise. ' +
+        'If you believe the premise makes a requirement impossible, satisfy the requirement anyway and say what you changed in the structure notes.',
+    );
+  }, 20000);
+
+  it('spine: a matching tone renders its 2-3 outcome limits after the positive demand', async () => {
+    const { campaign, moduleId } = await seedModule(1, 2, 'horror');
+    chatMock
+      .mockResolvedValueOnce(spineReply(PLAIN_ENTITIES))
+      .mockResolvedValueOnce(
+        normReply([
+          { name: 'Warden Bellamy', kind: 'npc' },
+          { name: 'Ember Trial', kind: 'encounter' },
+        ]),
+      );
+
+    await runSpine(moduleId, campaign);
+
+    const prompt = userPromptOf(0);
+    const shape = prompt.indexOf('Every conflict ends with someone worse off');
+    const limits = prompt.indexOf('This module’s tone rules out these outcomes');
+    expect(shape).toBeGreaterThan(-1);
+    expect(limits).toBeGreaterThan(shape);
+    for (const ban of MODULE_TONE_BANS.horror ?? []) expect(prompt).toContain(ban);
   }, 20000);
 
   it('parts: a full run over such a plan ships ready with no repair', async () => {
@@ -344,9 +400,12 @@ describe('a plan that declares no kinds and no wants (mocked chat)', () => {
     expect(prompt).not.toContain('Declared encounters');
     expect(prompt).not.toContain('declared conflict kind');
     expect(prompt).not.toContain('opposed wants');
-    // The banned resolutions survived the removal (a scene still must cost
-    // someone something).
-    expect(prompt).toContain('banned resolution');
+    // The resolution contract is stated POSITIVELY (AMENDMENT 2: the required
+    // output shape, not a list of prohibitions), and it is restated LAST.
+    expect(prompt).toContain('Every conflict ends with someone worse off, a cost paid, or a new problem opened');
+    expect(prompt).toContain('at least two VISIBLE approaches that differ in cost or consequence');
+    expect(prompt).not.toContain('Never resolve a scene by a banned resolution');
+    expect(prompt).toContain('Before you answer, the three things that do not bend in this part');
     // …and so did the encounter/event boundary: a non-fight is an event, with
     // an illustration and no map, monsters or roster.
     expect(prompt).toContain('A scene that is NOT a fight is an event');
@@ -361,7 +420,7 @@ describe('a plan that declares no kinds and no wants (mocked chat)', () => {
     chatMock.mockResolvedValue(prose('PART', 'Ember Trial'));
     await runParts(moduleId, campaign, { planIndexes: [0] });
     const first = userPromptOf(0);
-    expect(first).toContain('no clean resolution');
+    expect(first).toContain('End this part with a cost, a revelation, or a new pressure');
     expect(first).not.toContain('FINALE');
 
     chatMock.mockClear();
@@ -370,7 +429,7 @@ describe('a plan that declares no kinds and no wants (mocked chat)', () => {
     const finale = userPromptOf(0);
     expect(finale).toContain('FINALE');
     expect(finale).toContain('full price');
-    expect(finale).not.toContain('no clean resolution');
+    expect(finale).not.toContain('End this part with a cost, a revelation, or a new pressure');
   }, 20000);
 
   it('spine repair names the floor only (no wants, no kinds, no mix)', async () => {
