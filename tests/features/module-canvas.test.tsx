@@ -247,8 +247,81 @@ describe('canvas whole-document editor', () => {
     await waitFor(() => {
       expect(document.querySelector('[data-wiki-name="Keeper Ilse"]')).not.toBeNull();
     });
-    // No unsaved edits yet: Save disabled.
-    expect(screen.getByTestId('canvas-save')).toBeDisabled();
+    // No unsaved edits yet: the header offers NO Save control at all — a
+    // passive "Saved" indicator instead. A permanently greyed-out Save reads
+    // as broken or leftover (chat applies and accepted proposals persist
+    // immediately, so in that workflow the doc always matches the row and
+    // the button would never once light up). Pinned positively, including
+    // the non-interactive shape: a span, never a disabled button.
+    expect(screen.queryByTestId('canvas-save')).not.toBeInTheDocument();
+    const savedIndicator = screen.getByTestId('canvas-saved-indicator');
+    expect(savedIndicator.tagName).toBe('SPAN');
+    expect(savedIndicator).toHaveTextContent('Saved');
+    expect(savedIndicator).not.toHaveAttribute('role');
+    expect(savedIndicator).not.toHaveAttribute('title');
+    expect(savedIndicator.querySelector('[aria-hidden]')).not.toBeNull();
+    await flushAsyncUpdates();
+  });
+
+  it('after a successful save the header goes back to the passive "Saved" state', async () => {
+    const user = userEvent.setup();
+    await renderCanvas();
+    await enterEditMode(user);
+    // Pristine: the indicator, no control.
+    expect(screen.getByTestId('canvas-saved-indicator')).toHaveTextContent('Saved');
+    expect(screen.queryByTestId('canvas-save')).not.toBeInTheDocument();
+    // A hand edit in a PART (never the scaffolding) is the only thing that
+    // offers Save…
+    editDoc(PART0_FROM, PART0_FROM + 3, 'XXX');
+    expect(screen.getByTestId('canvas-save')).toBeEnabled();
+    expect(screen.queryByTestId('canvas-saved-indicator')).not.toBeInTheDocument();
+    act(() => {
+      screen.getByTestId('canvas-save').click();
+    });
+    // …and once it lands the header settles back to the passive state.
+    await waitFor(() => {
+      expect(screen.getByTestId('canvas-saved-indicator')).toHaveTextContent('Saved');
+    });
+    expect(screen.queryByTestId('canvas-save')).not.toBeInTheDocument();
+    // The save really landed, so the indicator is not claiming a state the
+    // row is not in (a failed or no-op save would leave the button right
+    // there — the assertion above would not be vacuous, it would fail).
+    expect(toastSuccessMock).toHaveBeenCalledWith('Module saved');
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    const row = await getModule(world.moduleId);
+    expect(row?.parts.find((entry) => entry.planIndex === 0)?.markdown).toBe(
+      `XXX${PART_0_TEXT.slice(3)}`,
+    );
+    await flushAsyncUpdates();
+  });
+
+  it('unsaved hand edits keep the Save button in EVERY view, and a blocked Save states its reason in title', async () => {
+    const user = userEvent.setup();
+    await renderCanvas();
+    await enterEditMode(user);
+    editDoc(PART0_FROM, PART0_FROM + 3, 'XXX');
+    expect(screen.getByTestId('canvas-save')).toBeEnabled();
+
+    // Preview only UNMOUNTS the editor — the hand edits are still unsaved, so
+    // the button stays (disabled) and says why instead of vanishing or going
+    // silently dead.
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+    expect(await screen.findByTestId('canvas-preview')).toBeInTheDocument();
+    expect(screen.queryByTestId('canvas-saved-indicator')).not.toBeInTheDocument();
+    const blocked = screen.getByTestId('canvas-save');
+    expect(blocked).toBeDisabled();
+    expect(blocked).toHaveAttribute(
+      'title',
+      'Preview is read-only. Switch to Edit (the header toggle) to save your edits.',
+    );
+
+    // Back in Edit the same pending edits offer the live button again — and a
+    // live button carries no "why is this dead" tooltip.
+    await user.click(screen.getByTestId('canvas-preview-toggle'));
+    await screen.findByTestId('canvas-editor');
+    const live = screen.getByTestId('canvas-save');
+    expect(live).toBeEnabled();
+    expect(live).not.toHaveAttribute('title');
     await flushAsyncUpdates();
   });
 

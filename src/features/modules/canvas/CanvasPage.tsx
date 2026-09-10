@@ -6,6 +6,7 @@ import { Link, useBlocker, useLocation, useParams } from 'react-router-dom';
 import {
   ArrowLeftIcon,
   BanIcon,
+  CircleCheckIcon,
   EyeIcon,
   HistoryIcon,
   LoaderCircleIcon,
@@ -1372,18 +1373,40 @@ export function CanvasPage(): JSX.Element {
               Stop proposal
             </Button>
           )}
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={!dirty || saving || busy || previewOpen}
-            data-testid="canvas-save"
-            onClick={() => {
-              void saveDoc('user', 'Manual edit', 'Module saved');
-            }}
-          >
-            <SaveIcon aria-hidden data-icon="inline-start" />
-            {saving ? 'Saving…' : 'Save'}
-          </Button>
+          {saving || dirty ? (
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={saving || busy || previewOpen}
+              title={saving ? undefined : (saveBlockedReason(busy, previewOpen) ?? undefined)}
+              data-testid="canvas-save"
+              onClick={() => {
+                void saveDoc('user', 'Manual edit', 'Module saved');
+              }}
+            >
+              <SaveIcon aria-hidden data-icon="inline-start" />
+              {saving ? 'Saving…' : 'Save'}
+            </Button>
+          ) : (
+            /*
+             * Nothing to save: a PASSIVE indicator, not a disabled button. A
+             * control that is always greyed out here reads as broken or
+             * leftover even when it is behaving correctly — chat applies and
+             * accepted proposals persist immediately, so the doc matches the
+             * row and the owner never has a state where clicking would help.
+             * Deliberately NOT a live region: this text is present on mount
+             * and swaps back in after every save, so announcing it would fire
+             * on renders the owner never caused. `role="status"` here would
+             * also make an ordinary label interrupt whatever is being read.
+             */
+            <span
+              className="flex items-center gap-1.5 px-2 text-xs text-muted-foreground"
+              data-testid="canvas-saved-indicator"
+            >
+              <CircleCheckIcon aria-hidden className="size-3.5" />
+              Saved
+            </span>
+          )}
         </div>
       </header>
 
@@ -1758,6 +1781,21 @@ export function CanvasPage(): JSX.Element {
       </AlertDialog>
     </div>
   );
+}
+
+/**
+ * Why the header's Save button is disabled at a moment when the doc DOES
+ * hold unsaved edits (null = it is live). The same convention as
+ * `derivedActionBlockedReason`: a disabled control states its honest reason
+ * in `title` instead of leaving the owner to guess why it does nothing.
+ * `saving` is not here — that state renders "Saving…" rather than a reason.
+ * Only reachable while `dirty`: with nothing to save the header shows the
+ * passive "Saved" indicator and no button at all.
+ */
+function saveBlockedReason(busy: boolean, previewOpen: boolean): string | null {
+  if (busy) return 'The module is generating right now — wait for it (or press Stop).';
+  if (previewOpen) return 'Preview is read-only. Switch to Edit (the header toggle) to save your edits.';
+  return null;
 }
 
 function MissingCanvas({ message, campaignId }: { message: string; campaignId: string }): JSX.Element {
