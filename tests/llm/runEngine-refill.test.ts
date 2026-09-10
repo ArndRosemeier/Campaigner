@@ -7,6 +7,8 @@ import { createCampaign } from '@/db/campaignRepo';
 import {
   createArtifact,
   getArtifact,
+  listArtifactsByCampaign,
+  listRevisions,
   updateArtifact,
 } from '@/db/artifactRepo';
 import { createModule as createModuleRow } from '@/db/moduleRepo';
@@ -46,10 +48,22 @@ vi.mock('@/search', () => ({
   searchRules: vi.fn(),
 }));
 
+// The toast seam is mocked so a loud refusal can be pinned at BOTH surfaces it
+// must reach (AGENTS rule 2: the run row is one, the toast the other) — never
+// `console.error` alone.
+vi.mock('@/lib/toast', () => ({
+  toastError: vi.fn(),
+  toastErrorPersistent: vi.fn(),
+  toastSuccess: vi.fn(),
+  toastInfo: vi.fn(),
+}));
+
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 const { searchRules } = await import('@/search');
 const searchMock = vi.mocked(searchRules);
+const { toastError } = await import('@/lib/toast');
+const toastErrorMock = vi.mocked(toastError);
 
 const NPC_DRAFT = {
   name: 'Kael Ashbound',
@@ -185,6 +199,7 @@ beforeEach(async () => {
   searchMock.mockReset();
   searchMock.mockResolvedValue([]);
   chatMock.mockReset();
+  toastErrorMock.mockReset();
 });
 
 afterEach(() => {
@@ -395,6 +410,163 @@ describe('empty-content rejection (loud, at every layer)', () => {
     const after = await getArtifact(targetId);
     expect(after?.body).toBe('# Kael\nHand-written content.');
     expect(after?.summary).toBe('Authored summary.');
+  }, 30000);
+});
+
+/**
+ * The creature-row refill guard — the WRITE chokepoint (owner-reported
+ * data-integrity bug).
+ *
+ * A bestiary creature row is a real `npc` artifact carrying the additive
+ * `data.monsterChunkId` marker: ONE campaign-scoped row per cited rulebook
+ * chunk, pointed at by every encounter that cites the creature, with battle
+ * seeding resolving its stats through it. An in-place smith refill targeting
+ * one wrote invented prose onto it, and `mergeRefillData` PRESERVES the marker
+ * — so the row kept the creature's identity and name while describing some
+ * other character, in text every citing encounter shares. finalize now refuses
+ * at DESTINATION RESOLUTION, before any write of any branch: the row is left
+ * byte-identical and the run fails loudly (run row + toastError).
+ *
+ * `isMobArtifact` is the ONE classification of "creature row" — the same
+ * predicate the artifact editor's refusal and the entity paths read.
+ */
+describe('creature-row refill guard (the write chokepoint)', () => {
+  it('refuses a refill onto a bestiary creature row by name and leaves the row byte-identical', async () => {
+    const { campaign } = await seedCampaignOnly();
+    const persona = await seedPersona();
+    const chunkId = newId();
+    // A campaign-level creature row, born the way `getOrCreateMobArtifact`
+    // births one (empty authored text, stat source = the chunk). The
+    // owner-reported case: campaign-scoped, so the refill's grounding said
+    // `not-module-owned` and the smith invented a stranger.
+    const creature = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Goblin Warrior',
+      aliases: ['Goblin'],
+      tags: ['bestiary', 'goblinoid'],
+      links: [],
+      summary: '',
+      body: '',
+      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: chunkId },
+    });
+    const before = await getArtifact(creature.id);
+    const revisionsBefore = await listRevisions(creature.id);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ ...NPC_DRAFT, name: 'Goblin Warrior' }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun(INPUT(campaign, persona, creature.id));
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+
+    // Loud at BOTH surfaces, with the creature and the reason named: the run
+    // row (the Runs tab) AND the toast.
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('In-place refill refused');
+    expect(run?.errorMessage).toContain('Goblin Warrior');
+    expect(run?.errorMessage).toContain('bestiary creature');
+    expect(run?.errorMessage).toContain('not an authored NPC');
+    expect(toastErrorMock).toHaveBeenCalledTimes(1);
+    expect(toastErrorMock.mock.calls[0]?.[0]).toContain('Goblin Warrior');
+    expect(toastErrorMock.mock.calls[0]?.[0]).toContain('bestiary creature');
+
+    // BYTE-IDENTICAL: no write reached the row (nothing written, no revision)
+    // and every field the refill would have overwritten is pinned.
+    const after = await getArtifact(creature.id);
+    expect(after).toEqual(before);
+    expect(after?.name).toBe('Goblin Warrior');
+    expect(after?.aliases).toEqual(['Goblin']);
+    expect(after?.summary).toBe('');
+    expect(after?.body).toBe('');
+    if (after?.kind !== 'npc') throw new Error('the creature row is not an npc');
+    expect(after.data.appearance).toBe('');
+    expect(after.data.personality).toBe('');
+    expect(after.data.monsterChunkId).toBe(chunkId);
+    expect(after.data.statBlock).toBeNull();
+    expect(after.coverImageId).toBeNull();
+    expect(after.imageIds).toEqual([]);
+    expect(after.tags).toEqual(['bestiary', 'goblinoid']);
+    expect(after.links).toEqual([]);
+    expect(after.campaignId).toBe(campaign.id);
+    expect(after.moduleId).toBeNull();
+    expect(await listRevisions(creature.id)).toEqual(revisionsBefore);
+    // No stray copy of the "other NPC" was created either.
+    expect(await listArtifactsByCampaign(campaign.id)).toHaveLength(1);
+    // The model DID run (this is a refusal at the write, not a run that never
+    // started) — a resume or a programmatic target can still reach it.
+    expect(chatMock).toHaveBeenCalled();
+  }, 30000);
+
+  it('refuses a module-owned creature row too (the guard is not the module grounding)', async () => {
+    const { campaign, moduleId } = await seed();
+    const persona = await seedPersona();
+    const creature = await createArtifact({
+      campaignId: campaign.id,
+      moduleId,
+      kind: 'npc',
+      name: 'Cinder Bat',
+      summary: '',
+      body: '',
+      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: newId() },
+    });
+    const before = await getArtifact(creature.id);
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ ...NPC_DRAFT, name: 'Cinder Bat' }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun(INPUT(campaign, persona, creature.id));
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('Cinder Bat');
+    expect(await getArtifact(creature.id)).toEqual(before);
+  }, 30000);
+
+  it('still refills a legitimate npc row — the npc-ref roster shape (stat block, no chunk marker)', async () => {
+    const { campaign } = await seedCampaignOnly();
+    const persona = await seedPersona();
+    // The shape `materializeMonsterNpc` births for an uncited monster:
+    // kind npc, inline stat block, NO `monsterChunkId` marker. It is a real
+    // artifact (a roster `npc-ref` points at it), so it refills normally.
+    const rosterEntry = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Materialized Marla',
+      summary: 'A drafted scene member.',
+      body: '',
+      data: { appearance: '', personality: '', statBlock: NPC_STATBLOCK },
+    });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ ...NPC_DRAFT, name: 'Materialized Marla' }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun(INPUT(campaign, persona, rosterEntry.id));
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    const after = await getArtifact(rosterEntry.id);
+    expect(after?.name).toBe('Materialized Marla');
+    expect(after?.summary).toBe(NPC_DRAFT.summary);
+    expect(after?.body).toBe(NPC_DRAFT.body);
+    if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(after.data.appearance).toBe(NPC_DRAFT.appearance);
+    expect(after.data.personality).toBe(NPC_DRAFT.personality);
+    // The curated stat block survives (the draft skipped its statblock step)
+    // and no creature marker was invented.
+    expect(after.data.statBlock?.hp).toBe(22);
+    expect(after.data.monsterChunkId).toBeUndefined();
+    expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
 });
 

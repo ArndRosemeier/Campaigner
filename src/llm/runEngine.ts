@@ -48,7 +48,8 @@ import {
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { contentIdentityFor } from '@/domain/encounterResolve';
-import { carryMobCoversForward, getOrCreateMobArtifact } from '@/db/mobArtifacts';
+import { carryMobCoversForward, getOrCreateMobArtifact, isMobArtifact } from '@/db/mobArtifacts';
+import { creatureRowAiRefusal } from '@/features/campaign/creature-row-guard';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
 import { convergeBoardsToRegeneratedMap } from '@/db/battleRepo';
@@ -5006,6 +5007,29 @@ export class RunEngine {
       }
       const target = await getAnyArtifact(input.targetArtifactId);
       if (target === undefined) throw new Error('The artifact to fill no longer exists');
+      // Bestiary creature rows are never a generation's write destination (the
+      // refill chokepoint). A creature row is a real `npc` artifact carrying
+      // the additive `data.monsterChunkId` marker — ONE campaign-scoped row per
+      // cited rulebook chunk, pointed at by EVERY encounter that cites the
+      // creature, with battle seeding resolving its stats through it and its
+      // portrait cached globally. `isMobArtifact` is the ONLY classification of
+      // "creature row" (shared with the artifact editor's refusal and the
+      // entity paths) — never a second predicate.
+      //
+      // Owner-reported bug this closes: a smith refill targeting such a row
+      // wrote invented prose onto it, and `mergeRefillData` preserved the
+      // marker — so the row kept the creature's identity and name while
+      // describing a DIFFERENT character, in text every citing encounter
+      // shares. Refused at DESTINATION RESOLUTION, before any write of any
+      // branch below: the row is left byte-identical. The throw fails the run
+      // loudly (run row `errorMessage` + toastError, AGENTS rules 1-2) — never
+      // a silent skip that would leave the owner staring at an unchanged row.
+      // Campaign-level creature rows are exactly the ones
+      // `targetModuleGrounding` calls `not-module-owned`, which is why the
+      // unguarded refill ran with no module context and invented a stranger.
+      if (isMobArtifact(target)) {
+        throw new Error(`In-place refill refused: ${creatureRowAiRefusal(target.name)}`);
+      }
       if (kind === 'encounter' && target.kind === 'encounter') {
       if (!('monsters' in data)) {
         throw new Error('In-place generation produced no monster roster to fill the encounter with');
