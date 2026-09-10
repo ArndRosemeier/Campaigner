@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
@@ -17,10 +17,23 @@ import {
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
-import type { Campaign, EntityKind, ModuleSizeDial, NewModule } from '@/domain';
-import { ENTITY_KINDS, MODULE_SIZE_LABELS } from '@/domain';
+import type {
+  Campaign,
+  EncounterFloorGuardrail,
+  EntityKind,
+  ModuleSizeDial,
+  NewModule,
+  NewModuleDraft,
+} from '@/domain';
+import {
+  defaultEncounterFloorGuardrail,
+  defaultNewModuleDraft,
+  ENTITY_KINDS,
+  MODULE_SIZE_LABELS,
+} from '@/domain';
 import { modulePath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
+import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { createModuleAndRun } from '@/llm/moduleGen';
 import { toastError } from '@/lib/toast';
 
@@ -30,6 +43,21 @@ import { toastError } from '@/lib/toast';
  * continuity checkbox. Creates the Module row and navigates to the reader
  * immediately — the spine draft runs there, with its live streaming card,
  * Stop button and progress dock; the dialog never blocks on the LLM.
+ *
+ * PERSISTED DRAFT (owner request, docs/17): every value this dialog holds —
+ * concept included — is saved to the settings row's `newModuleDraft`, tagged
+ * with the campaign it was written in. Reopening the dialog in that campaign
+ * prefills it, so a module creation can be retried (or restarted after a
+ * reset) without retyping. The write is debounced on change and flushed
+ * synchronously when the run starts and when the dialog closes; the tag means
+ * another campaign's draft is never prefilled here. `Reset to defaults` is the
+ * escape hatch — a prefill with no way out is its own trap.
+ *
+ * ADVANCED — numeric encounter floor (owner decision, docs/17): how many
+ * encounters per level the generator must name is a NUMBER, rendered into the
+ * prompt clauses AND into the floor gate (one source of truth in the domain).
+ * The value chosen here is recorded ON THE MODULE ROW at creation, so a later
+ * pass, repair or retry uses the module's own rules.
  */
 
 const SIZES: readonly ModuleSizeDial[] = ['sketch', 'standard', 'detailed'];
@@ -43,6 +71,36 @@ const KIND_LABELS: Readonly<Record<EntityKind, string>> = {
   note: 'Note',
   encounter: 'Encounter',
 };
+
+/** How long after the last edit the draft lands on the settings row. */
+const DRAFT_DEBOUNCE_MS = 500;
+
+/**
+ * Field-by-field equality for two drafts. Used to tell "the form still shows
+ * the dialog's pristine defaults" (nothing to save, nothing to defend) from "a
+ * user edit already happened" — an array-compare through `every` because the
+ * kind lists are the only non-primitive fields.
+ */
+function draftsEqual(a: NewModuleDraft, b: NewModuleDraft): boolean {
+  const sameKinds = (left: readonly EntityKind[], right: readonly EntityKind[]): boolean =>
+    left.length === right.length && left.every((kind, index) => kind === right[index]);
+  return (
+    a.campaignId === b.campaignId &&
+    a.concept === b.concept &&
+    a.levelMin === b.levelMin &&
+    a.levelMax === b.levelMax &&
+    a.tone === b.tone &&
+    a.sizeDial === b.sizeDial &&
+    a.includePriorModules === b.includePriorModules &&
+    a.autoApproveSpine === b.autoApproveSpine &&
+    sameKinds(a.autoGenerateKinds, b.autoGenerateKinds) &&
+    sameKinds(a.autoImageKinds, b.autoImageKinds) &&
+    a.autoGenerateBattlemaps === b.autoGenerateBattlemaps &&
+    a.autoGenerateMobImages === b.autoGenerateMobImages &&
+    a.encounterFloorGuardrail.enabled === b.encounterFloorGuardrail.enabled &&
+    a.encounterFloorGuardrail.perLevel === b.encounterFloorGuardrail.perLevel
+  );
+}
 
 export interface NewModuleDialogProps {
   campaign: Campaign;
@@ -76,14 +134,180 @@ export function NewModuleDialog({
   // encounter this module creates (post-generation.ts). Off by default —
   // image work stays explicit per module.
   const [autoGenerateMobImages, setAutoGenerateMobImages] = useState(false);
+  // Advanced (08 §M4-B, amended): the module's numeric encounter floor,
+  // recorded on the row at creation.
+  const [encounterFloorGuardrail, setEncounterFloorGuardrail] = useState<EncounterFloorGuardrail>(
+    defaultEncounterFloorGuardrail(),
+  );
   const [starting, setStarting] = useState(false);
+
+  // The stored draft (pure read — never `getSettings`, which writes). Held in
+  // a ref as well: `flush` (run start, dialog close) must save the CURRENT
+  // values without re-subscribing every render.
+  const settings = useLiveQuery(() => readSettings(), []);
+  const draftRef = useRef<NewModuleDraft>(defaultNewModuleDraft(campaign.id));
+  // Seeded once per open: an edit made while the settings row was still
+  // loading must never be overwritten by the arriving prefill.
+  const seededRef = useRef(false);
+  // The dialog's own defaults for THIS open — the yardstick for "the user has
+  // already changed something" before the prefill lands.
+  const pristineRef = useRef<NewModuleDraft>(defaultNewModuleDraft(campaign.id));
+  // True once any value differs from those defaults: the arriving prefill is
+  // then SKIPPED for this open (the user's typing wins) instead of clobbering it.
+  const touchedRef = useRef(false);
+  const wasOpenRef = useRef(false);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // True only once a render has SEEN the seeded values: the debounced-save
+  // effect must never write the pre-seed empty state over a stored draft.
+  const seededSettledRef = useRef(false);
+
+  /**
+   * Persists the draft NOW (validated at the settings boundary). A failure is
+   * LOUD (AGENTS 2) but never blocks creating the module — the draft is a
+   * convenience, not the artifact.
+   */
+  const persist = useCallback(async (draft: NewModuleDraft): Promise<void> => {
+    try {
+      await updateSettings({ newModuleDraft: draft });
+    } catch (error) {
+      toastError('The New Module draft could not be saved', error);
+    }
+  }, []);
+
+  /** Cancels the pending debounce and persists the current draft immediately. */
+  const flush = useCallback((): void => {
+    if (timerRef.current !== null) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    // Nothing to save: the prefill has not landed and the user changed nothing,
+    // so the form still shows this dialog's pristine defaults — writing now
+    // would overwrite the STORED draft with them (closing a just-opened dialog
+    // must never erase a prefill it had not read yet).
+    if (!seededRef.current && !touchedRef.current) return;
+    void persist(draftRef.current);
+  }, [persist]);
+
+  // Seed once per OPEN. The stored draft is prefilled only when its campaign
+  // tag matches the campaign being created in; another campaign's draft is
+  // left untouched and this dialog opens at its defaults.
+  const seedDraft = useCallback(
+    (stored: NewModuleDraft | null | undefined): void => {
+      const matches = stored?.campaignId === campaign.id;
+      const draft = matches ? stored : defaultNewModuleDraft(campaign.id);
+      draftRef.current = draft;
+      setConcept(draft.concept);
+      setLevelMin(draft.levelMin);
+      setLevelMax(draft.levelMax);
+      setTone(draft.tone);
+      setSizeDial(draft.sizeDial);
+      setIncludePriorModules(draft.includePriorModules);
+      setAutoApproveSpine(draft.autoApproveSpine);
+      setAutoGenerateKinds([...draft.autoGenerateKinds]);
+      setAutoImageKinds([...draft.autoImageKinds]);
+      setAutoGenerateBattlemaps(draft.autoGenerateBattlemaps);
+      setAutoGenerateMobImages(draft.autoGenerateMobImages);
+      setEncounterFloorGuardrail(draft.encounterFloorGuardrail);
+    },
+    [campaign.id],
+  );
+
+  useEffect(() => {
+    if (!open) {
+      wasOpenRef.current = false;
+      return;
+    }
+    if (!wasOpenRef.current) {
+      wasOpenRef.current = true;
+      seededRef.current = false;
+      pristineRef.current = defaultNewModuleDraft(campaign.id);
+      touchedRef.current = false;
+    }
+    if (seededRef.current || settings === undefined) return;
+    seededRef.current = true;
+    // The settings row arrived after the user already started editing: their
+    // values stand and the prefill is skipped for this open (the draft they
+    // wrote is still in the row — nothing is lost, and the next open prefills).
+    if (touchedRef.current) return;
+    seedDraft(settings.newModuleDraft);
+  }, [open, settings, seedDraft]);
+
+  // Debounced save on every change — gated on the seed so the pre-seed empty
+  // state can never overwrite a stored draft. The first post-seed pass only
+  // arms the gate (the state is seeded from here on, so the values below are
+  // the stored ones).
+  useEffect(() => {
+    const next: NewModuleDraft = {
+      campaignId: campaign.id,
+      concept,
+      levelMin,
+      levelMax: Math.max(levelMax, levelMin),
+      tone,
+      sizeDial,
+      includePriorModules,
+      autoApproveSpine,
+      autoGenerateKinds: [...autoGenerateKinds],
+      autoImageKinds: [...autoImageKinds],
+      autoGenerateBattlemaps,
+      autoGenerateMobImages,
+      encounterFloorGuardrail,
+    };
+    // The ref always mirrors what the form shows, so `flush` saves the CURRENT
+    // values no matter when it runs.
+    draftRef.current = next;
+    if (!seededRef.current) {
+      // Prefill not read yet: a value that differs from the pristine defaults
+      // is a user edit, and it must survive the arriving prefill.
+      if (!draftsEqual(next, pristineRef.current)) touchedRef.current = true;
+      return;
+    }
+    if (!seededSettledRef.current) {
+      seededSettledRef.current = true;
+      return;
+    }
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null;
+      void persist(draftRef.current);
+    }, DRAFT_DEBOUNCE_MS);
+  }, [
+    campaign.id,
+    concept,
+    levelMin,
+    levelMax,
+    tone,
+    sizeDial,
+    includePriorModules,
+    autoApproveSpine,
+    autoGenerateKinds,
+    autoImageKinds,
+    autoGenerateBattlemaps,
+    autoGenerateMobImages,
+    encounterFloorGuardrail,
+    persist,
+  ]);
+
+  // Unmount (route change, campaign switch) must not lose the last edit.
+  useEffect(() => flush, [flush]);
+
+  const handleOpenChange = useCallback(
+    (next: boolean): void => {
+      // Closing the dialog flushes: the last edit survives even if it landed
+      // inside the debounce window.
+      if (!next) flush();
+      onOpenChange(next);
+    },
+    [flush, onOpenChange],
+  );
+
+  /** Reset to the dialog's own defaults (prefill's escape hatch). */
+  function resetToDefaults(): void {
+    seedDraft(null);
+  }
 
   // The opt-in continuity checkbox is only meaningful when some other module
   // of this campaign actually carries authored text (premise or parts).
-  const priorModules = useLiveQuery(
-    () => listModulesByCampaign(campaign.id),
-    [campaign.id],
-  );
+  const priorModules = useLiveQuery(() => listModulesByCampaign(campaign.id), [campaign.id]);
   const hasPriorText = (priorModules ?? []).some(
     (module) =>
       (module.spine?.premise ?? '') !== '' || module.parts.some((part) => part.markdown !== ''),
@@ -97,18 +321,35 @@ export function NewModuleDialog({
     setList: (next: EntityKind[]) => void,
     kind: EntityKind,
   ): void {
-    setList(
-      list.includes(kind) ? list.filter((entry) => entry !== kind) : [...list, kind],
-    );
+    setList(list.includes(kind) ? list.filter((entry) => entry !== kind) : [...list, kind]);
+  }
+
+  /**
+   * One guardrail count: integers only, never below `min` (0 everywhere except
+   * an enabled floor, which needs at least 1). A cleared/invalid field falls
+   * back to `min` instead of writing NaN — the stored value is always a valid
+   * integer, so a draft can never come back invalid.
+   */
+  function guardrailCountInput(
+    min: number,
+    write: (current: EncounterFloorGuardrail, value: number) => EncounterFloorGuardrail,
+  ): (event: { target: { value: string } }) => void {
+    return (event): void => {
+      const parsed = Number.parseInt(event.target.value, 10);
+      const value = Number.isNaN(parsed) ? min : Math.max(min, parsed);
+      setEncounterFloorGuardrail((current) => write(current, value));
+    };
   }
 
   async function start(): Promise<void> {
     setStarting(true);
     try {
+      // The draft is saved BEFORE the navigation: a run started now survives a
+      // reload, and the deleted-module retry later finds these exact values.
+      flush();
       // Fully-specified creation input (the dialog always sends a tone).
       // `createModuleAndRun` forwards this object verbatim to `createModule`,
-      // so the additive automation fields ride along even where that
-      // wrapper's inline input type lags the domain's `NewModule`.
+      // so the additive automation fields and the guardrails ride along.
       const input: NewModule & { tone: string } = {
         campaignId: campaign.id,
         title: 'New Module',
@@ -123,6 +364,7 @@ export function NewModuleDialog({
         autoImageKinds,
         autoGenerateBattlemaps,
         autoGenerateMobImages,
+        encounterFloorGuardrail,
       };
       const moduleId = await createModuleAndRun(campaign, input);
       onOpenChange(false);
@@ -138,13 +380,13 @@ export function NewModuleDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-lg" data-testid="new-module-dialog">
         <DialogHeader>
           <DialogTitle>New Module</DialogTitle>
           <DialogDescription>
-            The spine (premise + part plan) is drafted first and shown for your approval; parts
-            are written afterwards, one per level band.
+            The spine (premise + part plan) is drafted first and shown for your approval; parts are
+            written afterwards, one per level band.
           </DialogDescription>
         </DialogHeader>
 
@@ -210,8 +452,7 @@ export function NewModuleDialog({
               ))}
             </div>
             <p className="text-xs text-muted-foreground">
-              Target part length: sketch ≈ 400–700 words, standard ≈ 800–1500, detailed ≈
-              1500–2500.
+              Target part length: sketch ≈ 400–700 words, standard ≈ 800–1500, detailed ≈ 1500–2500.
             </p>
           </div>
 
@@ -304,11 +545,10 @@ export function NewModuleDialog({
               <div className="flex flex-col gap-0.5">
                 <Label htmlFor="module-auto-battlemaps">Generate encounter battlemaps</Label>
                 <p className="text-xs text-muted-foreground">
-                  Automatic and on by default: every encounter this module creates (or
-                  already has without a battlemap) gets an unattended map run with the
-                  campaign's defaults — aspect from Settings, the dungeon tier only for
-                  dungeon encounters. Untick to keep battlemaps manual (needs image
-                  generation in Settings).
+                  Automatic and on by default: every encounter this module creates (or already has
+                  without a battlemap) gets an unattended map run with the campaign's defaults —
+                  aspect from Settings, the dungeon tier only for dungeon encounters. Untick to keep
+                  battlemaps manual (needs image generation in Settings).
                 </p>
               </div>
             </div>
@@ -324,11 +564,10 @@ export function NewModuleDialog({
               <div className="flex flex-col gap-0.5">
                 <Label htmlFor="module-auto-mob-images">Generate encounter mob images</Label>
                 <p className="text-xs text-muted-foreground">
-                  Every encounter this module creates queues a portrait for its
-                  rulebook-cited roster creatures — one per creature kind, grounded in
-                  the cited stat-block entry and canonically cached, so the same
-                  creature reuses its portrait everywhere (needs image generation in
-                  Settings).
+                  Every encounter this module creates queues a portrait for its rulebook-cited
+                  roster creatures — one per creature kind, grounded in the cited stat-block entry
+                  and canonically cached, so the same creature reuses its portrait everywhere (needs
+                  image generation in Settings).
                 </p>
               </div>
             </div>
@@ -339,10 +578,91 @@ export function NewModuleDialog({
               entity panel.
             </p>
           </div>
+
+          <details className="rounded-md border p-2" data-testid="module-guardrails-advanced">
+            <summary className="cursor-pointer text-sm font-medium select-none">
+              Advanced — encounter guardrails
+            </summary>
+            <div className="flex flex-col gap-3 pt-3">
+              <p className="text-xs text-muted-foreground">
+                How many encounters the generator must name per level of the module. This number is
+                written into the generation prompt AND enforced when the module is generated — it is
+                recorded on this module, so its later rewrites and retries keep using it. The default
+                is today's value: one distinct encounter per level.
+              </p>
+
+              <div className="flex items-start gap-2">
+                <Checkbox
+                  id="guardrail-floor-enabled"
+                  data-testid="guardrail-floor-enabled"
+                  checked={encounterFloorGuardrail.enabled}
+                  onCheckedChange={(checked) => {
+                    setEncounterFloorGuardrail((current) => ({
+                      perLevel: checked ? Math.max(1, current.perLevel) : 0,
+                      enabled: checked,
+                    }));
+                  }}
+                />
+                <div className="flex flex-1 items-center justify-between gap-2">
+                  <div className="flex flex-col gap-0.5">
+                    <Label htmlFor="guardrail-floor-enabled">Encounter floor</Label>
+                    <p className="text-xs text-muted-foreground">
+                      Off = no minimum count of named encounters at all.
+                    </p>
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <Label htmlFor="guardrail-floor-per-level" className="text-xs">
+                      Per level
+                    </Label>
+                    <Input
+                      id="guardrail-floor-per-level"
+                      data-testid="guardrail-floor-per-level"
+                      type="number"
+                      min={0}
+                      max={10}
+                      className="w-20 text-center"
+                      disabled={!encounterFloorGuardrail.enabled}
+                      value={encounterFloorGuardrail.perLevel}
+                      onChange={guardrailCountInput(0, (current, value) => ({
+                        enabled: current.enabled,
+                        perLevel: value,
+                      }))}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                data-testid="guardrail-reset"
+                onClick={() => {
+                  setEncounterFloorGuardrail(defaultEncounterFloorGuardrail());
+                }}
+              >
+                Reset to today's defaults
+              </Button>
+            </div>
+          </details>
         </div>
 
         <DialogFooter>
-          <Button variant="outline" onClick={() => { onOpenChange(false); }}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            data-testid="new-module-reset"
+            onClick={resetToDefaults}
+          >
+            Reset to defaults
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => {
+              handleOpenChange(false);
+            }}
+          >
             Cancel
           </Button>
           <Button disabled={!canStart} onClick={() => void start()} data-testid="start-module">
@@ -404,7 +724,6 @@ function LevelStepper({
           variant="outline"
           size="icon-sm"
           aria-label={`Increase ${label}`}
-          disabled={value >= 20}
           onClick={() => {
             onChange(clamp(value + 1));
           }}
