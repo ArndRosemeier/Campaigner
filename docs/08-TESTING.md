@@ -236,13 +236,51 @@ neither is a green run produced by loading the machine.
   the closed dialog's testid to be ABSENT, then run every raw row read through
   `actDrained` (`getModule`, `listModuleVersions`, and module-canvas's post-save
   read). No assertion changed and no product file was touched.
+- **The write that feeds a mounted live query is DRAINED, not awaited bare — the
+  cascade lands wherever the next bare `await` is, and the open dialog's own
+  internals ride along with it.** This is the unidentified flake two independent
+  full-suite runs reported as `1 failed | 2726 passed` (236 files) with the
+  failing test's name lost to output truncation. It is
+  `canvas-module-actions.test.tsx > "Resume automatic module creation" on the
+  canvas > is a no-op with an honest notice when the confirmation is stale`, and
+  the failure text the truncation ate is
+  `Error: Console noise leaked into canvas-module-actions.test.tsx > is a no-op
+  with an honest notice when the confirmation is stale (36 entries)`, whose first
+  six entries are "An update to `AlertDialogRoot` / `DialogPortal` /
+  `DialogBackdrop` / `DialogPopup` inside a test was not wrapped in act(...)"
+  under `CanvasPage.tsx:134`. The test opens the resume confirm and then lands the
+  work "by other means" with a bare `await saveModule(...)`. That write re-emits
+  `useModule`'s live query, and the setState that follows is `CanvasPage` itself —
+  instrumenting `tests/setup.ts` for one run to print a stack at the warning shows
+  `dexie-react-hooks … observable.subscribe … next` → `scheduleUpdateOnFiber` →
+  `CanvasPage` — after which the re-render wakes the open dialog's Base UI
+  internals and they schedule updates of their own. On an idle machine the whole
+  cascade lands inside the act-wrapped `user.click` that follows; the moment the
+  host is busy enough for it to land in the bare await instead, the guard fails
+  the test. Green in isolation 3/3 before the cure, which is why repetition alone
+  never found it — the delay is the whole difference. Reproduced at the exact site
+  by delaying the cause (one extra bare await right after the write): the un-cured
+  test failed **9/9** (8 runs with the single `CanvasPage` entry, 1 with 37
+  entries carrying the four dialog components) and the cured one passed **9/9**
+  under the same injection; cure = the write goes through `actDrained`. Assertions
+  unchanged, no product file touched.
 
 Two shapes that were tested and RULED OUT, so they are not "fixed" by mistake:
 - a raw Dexie read inside an `async` `waitFor` callback is deliberately exempt
   (see above) — `entity-panel`'s orphan-sweep tests read that way and are fine;
 - delaying the SWEEP's write by up to 400ms produced no warning, because the
   `waitFor` wrapper drains a macrotask before restoring the act environment. The
-  leak lives in the reads AFTER a resolved `waitFor`, not in the write.
+  leak lives in the reads AFTER a resolved `waitFor`, not in the write;
+- in the stale-confirmation test above, nothing BEFORE the write is a site: the
+  raw `getModule` read two lines earlier and the trailing raw
+  `listArtifactsByCampaign` read were each given 250ms of delay on their own and
+  left the test green 4/4 — nothing is pending before the write, and the
+  `waitFor` before the trailing read has already drained the close. The delay
+  that does fail (9/9) is the one placed between the write and the act-wrapped
+  click, i.e. inside the write's own cascade window; draining that write removes
+  the cascade, so no other bare await in this test needs a wrapper. The drain
+  belongs on the step that CAUSES the cascade, not on every await in the test (a
+  cure that wraps everything is a cure that hides the next cause).
 
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 
