@@ -136,9 +136,17 @@ fixture. Binding rules:
    loading the machine. "Prove it under load" in a brief means "prove the
    race is gone deterministically"; the dispatcher must say exactly that and
    must never invite unbounded parallelism.
-3. **Gates are bounded**: `pnpm test -- --maxWorkers=2` per concurrent
-   writer, one suite run at a time, no overnight loops, no background job
-   left pumping when a turn ends.
+3. **Gates are bounded**: the ONLY correct bounded form is
+   `pnpm exec vitest run --maxWorkers=2`. `pnpm test -- --maxWorkers=2` does
+   NOT bound anything — the literal `--` makes vitest treat the flag as a
+   positional argument, so the config default (6 workers) applies and a file
+   filter after the `--` is ignored entirely (verified twice: a 2-minute
+   `pnpm test -- --maxWorkers=2 --version` ran the suite instead of printing
+   a version, and a single-file filter ran all 235 files). Every brief that
+   prescribed the broken form was silently running 6 workers per gate, which
+   is a large part of how the incident above happened. One suite run at a
+   time per writer, no overnight loops, no background job left pumping when
+   a turn ends.
 4. **Nothing outlives the writer.** Scratch harnesses live under that
    writer's own `/tmp/<worktree>` directory, every process it starts is
    foreground or killed before it reports, and load-generating scripts are
