@@ -148,7 +148,7 @@ describe('encounter map layout engine', () => {
     expect(issues).toContain('corridors must be one cell wide');
   });
 
-  it('places every roster instance in its room and derives one exact fog veil per room', () => {
+  it('places every roster instance in its room and derives one exact veil per room', () => {
     const layout = packRooms(brief());
     const placements = placeMonsters(layout, [{ count: 2 }, { count: 1 }]);
     expect(placements).toHaveLength(3);
@@ -163,7 +163,7 @@ describe('encounter map layout engine', () => {
       const mobs = room.mobsRect;
       if (mobs === undefined) throw new Error(`room ${room.id} missing mobsRect`);
       expect(veil).toMatchObject({
-        kind: 'fog',
+        kind: 'veil',
         widthCells: mobs.w,
         heightCells: mobs.h,
       });
@@ -172,7 +172,7 @@ describe('encounter map layout engine', () => {
     }
   });
 
-  describe('veilsFromSpawnClusters (one fog veil per monster spawn group)', () => {
+  describe('veilsFromSpawnClusters (one veil per monster spawn group)', () => {
     /** A room's mobsRect cells in the row-major order placeMonsters deals from. */
     function mobsCells(room: LayoutRoom): { x: number; y: number }[] {
       const mobs = room.mobsRect;
@@ -219,7 +219,7 @@ describe('encounter map layout engine', () => {
       }
       for (const veil of veils) {
         expect(battleVeilSchema.parse(veil)).toEqual(veil);
-        expect(veil.kind).toBe('fog');
+        expect(veil.kind).toBe('veil');
         expect(Number.isInteger(veil.widthCells) && veil.widthCells >= VEIL_MIN_CELLS).toBe(true);
         expect(Number.isInteger(veil.heightCells) && veil.heightCells >= VEIL_MIN_CELLS).toBe(true);
       }
@@ -255,7 +255,7 @@ describe('encounter map layout engine', () => {
       if (merged === undefined) throw new Error('merged choir veil missing');
       expect(merged.id).toBe(multiB);
       expect(merged.roomId).toBe(multiB);
-      expect(merged.kind).toBe('fog');
+      expect(merged.kind).toBe('veil');
       expect(new Set(veils.map((veil) => veil.id)).size).toBe(veils.length);
       // Probe-mapped: every placement cell of BOTH groups lies inside the
       // single merged veil (same row-major deal order as placeMonsters,
@@ -325,7 +325,7 @@ describe('encounter map layout engine', () => {
       const veil = veils[0];
       if (veil === undefined) throw new Error('merged veil missing');
       // Union of the per-group covers [3,7)x[3,6) and [5,9)x[3,6).
-      expect(veil).toMatchObject({ id: roomId, kind: 'fog', roomId, widthCells: 6, heightCells: 3 });
+      expect(veil).toMatchObject({ id: roomId, kind: 'veil', roomId, widthCells: 6, heightCells: 3 });
       expect(veil.x).toBe((3 + 6 / 2) / layout.gridW);
       expect(veil.y).toBe((3 + 3 / 2) / layout.gridH);
       const covered = veilCells(veil, layout);
@@ -416,7 +416,7 @@ describe('encounter map layout engine', () => {
       expect(veils).toHaveLength(1);
       const veil = veils[0];
       if (veil === undefined) throw new Error('merged veil missing');
-      expect(veil).toMatchObject({ id: roomId, kind: 'fog', roomId, widthCells: 5, heightCells: 4 });
+      expect(veil).toMatchObject({ id: roomId, kind: 'veil', roomId, widthCells: 5, heightCells: 4 });
       expect(veil.x).toBe((0 + 5 / 2) / layout.gridW);
       expect(veil.y).toBe((0 + 4 / 2) / layout.gridH);
       const covered = veilCells(veil, layout);
@@ -897,7 +897,7 @@ describe('encounter map layout engine', () => {
       expect(validateEncounterLayout(layout, Array(10).fill(1) as number[])).toEqual([]);
       const veils = veilsFromRooms(layout);
       expect(veils).toHaveLength(10);
-      expect(veils.every((veil) => veil.kind === 'fog')).toBe(true);
+      expect(veils.every((veil) => veil.kind === 'veil')).toBe(true);
     });
 
   });

@@ -240,7 +240,7 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Run battle',
         markdown:
-          '"Battle table" (reader header) opens the full-screen board for the module\'s live encounter; encounter rows offer "Run battle" to seed it — mobs drop onto the map with HP, PCs stage at the entry zone, fog covers each room\'s monsters, initiative rolls on enable. Player view strips secrets from the DOM; "Back to module" exits in one click.',
+          '"Battle table" (reader header) opens the full-screen board for the module\'s live encounter; encounter rows offer "Run battle" to seed it — mobs drop onto the map with HP, PCs stage at the entry zone, a veil covers each room\'s monsters (player view drops those tokens from the DOM until the cover lifts), initiative rolls on enable. Player view strips secrets from the DOM; "Back to module" exits in one click.',
       },
       {
         heading: 'Print',

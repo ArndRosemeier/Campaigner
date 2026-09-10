@@ -338,13 +338,18 @@ export async function seedBattleFromEncounter(
           side: entryRoom.entrance.side,
         };
   // Spawn-group veils (docs/11 D4): EVERY monster spawn group is covered by
-  // default — one fog veil per `monsterIndexes` entry, including the spawn
+  // default — one VEIL per `monsterIndexes` entry, including the spawn
   // room's groups (the old spawn-room exemption is gone: the party starts in
-  // the spawn room, but its monsters still begin veiled). Each veil covers
-  // its spawn area plus a one-cell margin (the cover convention in
-  // `veilsFromSpawnClusters`) so the GM can grab and resize it around the
+  // the spawn room, but its monsters still begin veiled). A generated cover
+  // over a mob area is a veil, never a fog (fog-cloud arc, owner-directed):
+  // the veil's transparent body leaves the map readable, its taps pass
+  // through to the room-key marker an opaque fog used to swallow, and player
+  // view removes the covered mob tokens from the DOM — that REMOVAL is the
+  // hiding mechanic, never the fill. Fog stays GM-drawn and blocking. Each
+  // veil covers its spawn area plus a one-cell margin (the cover convention
+  // in `veilsFromSpawnClusters`) so the GM can grab and resize it around the
   // tokens; same-room covers sharing ground merge to one veil at seed (the
-  // overlap merge — adjacent same-room spawns veil as a single fog, never a
+  // overlap merge — adjacent same-room spawns veil as a single cover, never a
   // purposeless stack). A room with no monster groups seeds no veil; a SINGLE site
   // therefore seeds exactly its spawn groups' veils instead of zero. The
   // room's first group keeps `id = room.id` so the Path rail's "Reveal next

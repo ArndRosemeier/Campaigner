@@ -578,6 +578,20 @@ export function placeMonsters(
   return placements;
 }
 
+/**
+ * One veil per room over that room's `mobsRect` (the legacy helper, beside
+ * the per-group `veilsFromSpawnClusters` below).
+ *
+ * KIND (fog-cloud arc, owner-directed): a generated cover over a MOB AREA is
+ * a **veil**, never a fog. A veil is plain cover — a transparent tint whose
+ * taps pass through to the room-key marker beneath it, while player view
+ * REMOVES the veiled mob tokens from the DOM (that removal, never the fill,
+ * is the hiding mechanic). Fog stays the opaque, blocking kind for
+ * GM-drawn blanks. The veil record type is one kind-discriminated shape, so
+ * this is the single switch: nothing downstream special-cases the generated
+ * covers' kind (coverage, initiative pruning and the Path rail are all
+ * kind-agnostic — see the ledger-65 seam).
+ */
 export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
   const issues = validateEncounterLayout(layout);
   if (issues.length > 0) throw new EncounterLayoutError(issues);
@@ -591,7 +605,7 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
     }
     return {
       id: room.id,
-      kind: 'fog',
+      kind: 'veil',
       x: (room.mobsRect.x + room.mobsRect.w / 2) / layout.gridW,
       y: (room.mobsRect.y + room.mobsRect.h / 2) / layout.gridH,
       widthCells: room.mobsRect.w,
@@ -601,7 +615,7 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
 }
 
 /**
- * One fog veil per monster spawn GROUP (docs/11 D4, owner-ratified): each
+ * One veil per monster spawn GROUP (docs/11 D4, owner-ratified): each
  * room's `mobsRect` is split per `monsterIndexes` entry — in the owner's
  * group order — into the cell bounding box of that group's `placeMonsters`
  * cells (the same row-major `mobsRect` enumeration, sliced by the roster
@@ -622,10 +636,11 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
  * this module must not change the surface): the room's FIRST group keeps
  * `id = room.id`, so the rail's "Reveal next room" still resolves and lifts
  * the room's primary veil; later groups mint fresh ids and every group veil
- * carries `roomId = room.id` for the room resolution. All veils are kind
- * `'fog'` in the `battleVeilSchema` shape (int cells ≥ VEIL_MIN_CELLS holds
- * because every emitted group owns at least one placement cell, and the
- * margin only grows the span).
+ * carries `roomId = room.id` for the room resolution. All seeded covers are
+ * kind `'veil'` in the `battleVeilSchema` shape (fog-cloud arc: a cover over
+ * a mob area is plain cover — see `veilsFromRooms`; int cells ≥
+ * VEIL_MIN_CELLS holds because every emitted group owns at least one
+ * placement cell, and the margin only grows the span).
  *
  * OVERLAP MERGE (owner-observed stacked veils): same-room groups own
  * CONTIGUOUS runs of one mobsRect, so consecutive groups always own adjacent
@@ -634,7 +649,7 @@ export function veilsFromRooms(layout: EncounterLayout): BattleVeil[] {
  * on top, painting above (DOM order) with no staged-reveal purpose. Same-room
  * covers that OVERLAP (share at least one cell) therefore merge into one veil
  * — the bounding box of the union, re-clamped to the board — keeping the
- * first-emitted identity (`id = room.id`, `roomId = room.id`), kind fog.
+ * first-emitted identity (`id = room.id`, `roomId = room.id`), kind veil.
  * Disjoint same-room covers stay separate (staged reveal still works), and
  * cross-room covers NEVER merge (room-id rail semantics untouched). Net
  * effect: single-room adjacent spawns seed exactly one veil; spatially
@@ -768,9 +783,16 @@ export function veilsFromSpawnClusters(
   // bounding box (first-emitted identity — the room id — survives, so the
   // rail's room-id resolution is untouched). The union only grows the span,
   // so VEIL_MIN_CELLS still holds for every merged veil.
+  // KIND: a generated cover over a MOB AREA is a VEIL, never a fog (fog-cloud
+  // arc, owner-directed) — plain cover whose tint is transparent, whose taps
+  // pass through to the room-key marker beneath it, and whose mob tokens
+  // player view removes from the DOM. Fog stays the opaque blocking kind for
+  // GM-drawn blanks; `kind` is the ONE switch and nothing downstream
+  // special-cases the seeded kind (coverage, initiative pruning and the Path
+  // rail are kind-agnostic).
   return mergeVeilCovers(covers, layout.gridW, layout.gridH).map((cover) => ({
     id: cover.veilId,
-    kind: 'fog',
+    kind: 'veil',
     x: (cover.rect.x + cover.rect.w / 2) / layout.gridW,
     y: (cover.rect.y + cover.rect.h / 2) / layout.gridH,
     widthCells: cover.rect.w,

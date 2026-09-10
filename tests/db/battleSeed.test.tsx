@@ -334,10 +334,11 @@ describe('roster expansion', () => {
     // Group veils (docs/11 D4): the spawn room (Gate) has no groups so it
     // seeds none, while the Barracks' two ADJACENT groups (Goblins + Ogre own
     // a contiguous run) merge at seed — their +1-margin covers share ground,
-    // so exactly ONE fog veil seeds, keeping the room id for the Path rail.
+    // so exactly ONE veil seeds, keeping the room id for the Path rail. A
+    // generated mob cover is kind 'veil' (fog-cloud arc), never a fog.
     const spawnRoomOfLayout = layout.rooms.find((room) => room.spawn);
     expect(battle.board.veils).toHaveLength(1);
-    expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
+    expect(battle.board.veils.every((veil) => veil.kind === 'veil')).toBe(true);
     const primary = battle.board.veils.find((veil) => veil.id === roomB);
     expect(primary?.roomId).toBe(roomB);
     expect(battle.board.veils.some((veil) => veil.id === spawnRoomOfLayout?.id || veil.roomId === spawnRoomOfLayout?.id)).toBe(false);
@@ -718,7 +719,7 @@ describe('entrance-anchored staging (adjudicated)', () => {
     // resolves it for "Reveal next room".
     expect(battle.board.veils.some((veil) => veil.id === spawn.id)).toBe(true);
     expect(battle.board.veils).toHaveLength(2);
-    expect(battle.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
+    expect(battle.board.veils.every((veil) => veil.kind === 'veil')).toBe(true);
   });
 
   it('seeds a single-room site with its spawn-group veil (no more zero-veil singles)', async () => {
@@ -735,7 +736,7 @@ describe('entrance-anchored staging (adjudicated)', () => {
     const encounter = await addEncounter({ monsters, layout });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     expect(battle.board.veils).toHaveLength(1);
-    expect(battle.board.veils[0]).toMatchObject({ id: arenaId, kind: 'fog', roomId: arenaId });
+    expect(battle.board.veils[0]).toMatchObject({ id: arenaId, kind: 'veil', roomId: arenaId });
   });
 
   it('keeps legacy behavior byte-identical when the layout has no entrance', async () => {
@@ -763,7 +764,7 @@ describe('entrance-anchored staging (adjudicated)', () => {
     // stays byte-identical.
     expect(battle.board.veils).toHaveLength(1);
     const farRoom = legacy.rooms.find((room) => !room.spawn);
-    expect(battle.board.veils[0]).toMatchObject({ id: farRoom?.id, kind: 'fog', roomId: farRoom?.id });
+    expect(battle.board.veils[0]).toMatchObject({ id: farRoom?.id, kind: 'veil', roomId: farRoom?.id });
     expect(battle.board.veils.every((veil) => veil.id !== spawn.id)).toBe(true);
   });
 });

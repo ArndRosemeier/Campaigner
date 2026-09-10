@@ -965,6 +965,80 @@ describe('veil tap pass-through to the room-key markers (ledger 65)', () => {
     expect(screen.queryByTestId('delete-veil')).toBeNull();
     expect((await currentBattle(moduleId)).board.veils.some((entry) => entry.id === parkedId)).toBe(false);
   });
+
+  it('a SEEDED mob cover passes the tap through to its room’s key (the opaque fog used to swallow it)', async () => {
+    // The consequence of the fog-cloud arc that is NOT cosmetic: a generated
+    // cover's marker sits at its room's mobsRect CENTRE — inside the cover
+    // body by construction — and markers stay BELOW veils (DOM order, no
+    // z-index). While the seeded kind was the opaque, blocking `fog` that
+    // marker was unreachable by tap; as a plain cover the same tap passes
+    // through and opens the key. One room, keyed AND mobbed, mobsRect filled
+    // by a single group (count 6 of the small room's 12 mobsRect cells) so
+    // the seeded cover's body covers the marker pad.
+    const pc1 = await addPc('Serren', 20);
+    void pc1;
+    const roomId = newId();
+    const layout = packRooms({
+      theme: 'Veiled crypt',
+      aspect: '4:3',
+      entryRoomId: roomId,
+      rosterCounts: [6],
+      rooms: [
+        { id: roomId, name: 'Crypt', description: '', size: 'small', monsterIndexes: [0], adjacentRoomIds: [], key: KEY_TEXT, keyTreasure: '' },
+      ],
+    });
+    const encounter = await createArtifact({
+      campaignId,
+      kind: 'encounter',
+      name: 'Veiled crypt',
+      data: {
+        difficulty: '',
+        levelHint: '',
+        monsters: [{ name: 'Ghoul', count: 6, notes: '', treasure: '', source: { type: 'inline', statBlock: statBlock({ hp: 12 }) } }],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    const module = await saveModule(
+      createModule({ campaignId, title: 'Crypt Module', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
+    );
+    await seedBattleFromEncounter(campaignId, module.id, encounter.id);
+    await renderSurface(module.id);
+    await flushAsyncUpdates();
+    const room = layout.rooms[0];
+    const mobs = room?.mobsRect;
+    if (mobs === undefined) throw new Error('room missing mobsRect');
+    const markerX = (mobs.x + mobs.w / 2) / layout.gridW;
+    const markerY = (mobs.y + mobs.h / 2) / layout.gridH;
+    const seeded = await currentBattle(module.id);
+    expect(seeded.board.veils).toHaveLength(1);
+    const cover = seeded.board.veils[0];
+    if (cover === undefined) throw new Error('seeded cover missing');
+    expect(cover.kind).toBe('veil');
+    // The cover body really does sit over the marker's own point.
+    expect(cover.x).toBeCloseTo((mobs.x + mobs.w / 2) / layout.gridW, 6);
+    expect(cover.y).toBeCloseTo((mobs.y + mobs.h / 2) / layout.gridH, 6);
+    const coverEl = screen.getByTestId('battle-veil');
+    expect(coverEl.getAttribute('data-veil-kind')).toBe('veil');
+    expect(screen.queryByTestId('room-key-card')).toBeNull();
+    fireEvent.pointerDown(coverEl, { pointerId: 21, clientX: frameX(markerX), clientY: frameY(markerY) });
+    fireEvent.pointerUp(coverEl, { pointerId: 21, clientX: frameX(markerX), clientY: frameY(markerY) });
+    await flushAsyncUpdates();
+    const card = screen.getByTestId('room-key-card');
+    expect(within(card).getByText(KEY_TEXT)).toBeInTheDocument();
+    // The cover is not merely selected, and a tap never writes: the mobs stay
+    // covered until the GM lifts the veil (drag it, or "Reveal next room").
+    expect(screen.queryByTestId('delete-veil')).toBeNull();
+    expect(coverEl.className).not.toContain('ring-2');
+    expect((await currentBattle(module.id)).board.veils).toHaveLength(1);
+  });
 });
 
 describe('zoom controls touch targets (T4)', () => {
@@ -3384,32 +3458,36 @@ describe('room keys + mob treasure on the surface (owner-ratified arc)', () => {
     expect(screen.getByTestId('room-key-card')).toBeInTheDocument();
   });
 
-  it('a seeded encounter’s room fogs render OPAQUE in both views (the owner’s "no fogged rooms" report)', async () => {
+  it('a seeded encounter’s mob covers are VEILS, rendering the plain-cover tint in both views', async () => {
     const { moduleId } = await seedKeyedBattle();
     await renderSurface(moduleId);
     await flushAsyncUpdates();
-    // Seeded room veils are already `kind: 'fog'` (layout D4) — which is why
-    // the owner saw "no fogged rooms": the kind was there, the FILL was not.
+    // A generated cover over a MOB AREA is a veil, never a fog (fog-cloud
+    // arc, owner-directed: "the mobs should be covered by a veil, not fog").
+    // The hiding mechanic is player view REMOVING the covered mob tokens from
+    // the DOM, never the fill — kind-agnostic coverage, so the seeded kind is
+    // free to be the transparent one.
     const seeded = await currentBattle(moduleId);
     expect(seeded.board.veils.length).toBeGreaterThan(0);
-    expect(seeded.board.veils.every((veil) => veil.kind === 'fog')).toBe(true);
-    const fogEls = (): HTMLElement[] => {
+    expect(seeded.board.veils.every((veil) => veil.kind === 'veil')).toBe(true);
+    const coverEls = (): HTMLElement[] => {
       const els = screen
         .getAllByTestId('battle-veil')
-        .filter((el) => el.getAttribute('data-veil-kind') === 'fog');
+        .filter((el) => el.getAttribute('data-veil-kind') === 'veil');
       expect(els).toHaveLength(seeded.board.veils.length);
       return els;
     };
-    const expectOpaque = (): void => {
-      for (const el of fogEls()) {
-        expect(el.className).toContain('bg-zinc-300');
+    const expectPlainCover = (): void => {
+      for (const el of coverEls()) {
+        expect(el.className).toContain('bg-black/10');
+        expect(el.className).not.toContain('bg-zinc-300');
         expect(el.className).not.toMatch(/opacity-\d/);
       }
     };
-    expectOpaque();
+    expectPlainCover();
     await userEvent.setup().click(screen.getByTestId('player-safe-toggle'));
     await flushAsyncUpdates();
-    expectOpaque();
+    expectPlainCover();
   });
 
   it('paints room-key markers BELOW veils and tokens (no z-10, DOM order decides hit-testing)', async () => {
@@ -3630,10 +3708,11 @@ describe('site shape on the surface (docs/11 D11)', () => {
 
   it('a single site seeds its spawn-group veil (no more zero-veil singles) and starts at the entrance cell', async () => {
     const { battle, layout, spawn } = await seedSingleSite(true);
-    // One room, one spawn group ⇒ exactly one fog group veil (id = room id),
-    // covering the group's spawn cells — the old zero-veil exemption is gone.
+    // One room, one spawn group ⇒ exactly one veil (id = room id), covering
+    // the group's spawn cells — the old zero-veil exemption is gone, and a
+    // generated mob cover is kind 'veil' (fog-cloud arc), never a fog.
     expect(battle.board.veils).toHaveLength(1);
-    expect(battle.board.veils[0]).toMatchObject({ id: spawn.id, kind: 'fog', roomId: spawn.id });
+    expect(battle.board.veils[0]).toMatchObject({ id: spawn.id, kind: 'veil', roomId: spawn.id });
     // The party starts AT the entrance cell when the layout carries one.
     if (spawn.entrance == undefined) throw new Error('packed arena has no entrance');
     expect(battle.board.stagingGround?.x).toBeCloseTo((spawn.entrance.x + 0.5) / layout.gridW, 9);
@@ -3643,7 +3722,7 @@ describe('site shape on the surface (docs/11 D11)', () => {
   it('a single site without an entrance seeds its group veil and starts at the room mobsRect center', async () => {
     const { battle, spawn, layout } = await seedSingleSite(false);
     expect(battle.board.veils).toHaveLength(1);
-    expect(battle.board.veils[0]).toMatchObject({ id: spawn.id, kind: 'fog', roomId: spawn.id });
+    expect(battle.board.veils[0]).toMatchObject({ id: spawn.id, kind: 'veil', roomId: spawn.id });
     const spawnMobs = spawn.mobsRect;
     if (spawnMobs === undefined) throw new Error('spawn room missing mobsRect');
     expect(battle.board.stagingGround?.x).toBeCloseTo((spawnMobs.x + spawnMobs.w / 2) / layout.gridW, 9);
