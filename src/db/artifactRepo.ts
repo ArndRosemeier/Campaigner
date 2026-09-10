@@ -5,14 +5,18 @@ import {
   createArtifact as buildArtifact,
   newId,
   stampNewEntity,
+  ARTIFACT_KIND_LABELS,
+  BULK_REMOVE_EXCLUDED_KINDS,
   type AnyArtifact,
   type Artifact,
   type ArtifactData,
+  type ArtifactKind,
   type ArtifactPatch,
   type ArtifactRevision,
   type CreateArtifactInput,
   type GlobalArtifact,
   type Id,
+  type MonsterEntry,
   type RevisionSource,
   type StoredImage,
   MAX_REVISIONS_PER_ARTIFACT,
@@ -20,13 +24,15 @@ import {
   globalArtifactSchema,
 } from '@/domain';
 import { db } from '@/db/db';
-import { scrubArtifactFromBattles } from '@/db/battleRepo';
+import { parseBattleRow, scrubArtifactFromBattles } from '@/db/battleRepo';
+import { isBattleEmpty } from '@/db/fighterStats';
 import {
   buildStoredImage,
   deleteImageIfUnreferenced,
   deleteUnreferencedImages,
   pruneUnreferencedImages,
   reanchorImages,
+  referencedImageIds,
   type NewStoredImage,
 } from '@/db/imageRepo';
 import { NotFoundError } from '@/lib/errors';
@@ -665,6 +671,207 @@ export async function deleteArtifact(id: Id): Promise<void> {
   for (const imageId of globalImagesToRecheck) {
     await deleteImageIfUnreferenced(imageId);
   }
+}
+
+/**
+ * What a per-region bulk delete takes with it. The confirm dialog renders a
+ * LIVE prediction of these numbers (`describeArtifactKindRemoval`); the
+ * execute path re-derives them INSIDE its transaction and returns what
+ * actually went (05-UI §Left pane — Campaign tree; docs/18 §2.1).
+ */
+export interface ArtifactKindRemovalCounts {
+  kind: ArtifactKind;
+  /** Campaign-level artifacts of that kind — module-owned rows are out of reach. */
+  artifacts: number;
+  /** Revision-history rows that go with them (no undo exists for artifacts). */
+  revisions: number;
+  /** Surviving artifacts whose link list loses a target (the cascade scrubs them). */
+  backLinkedArtifacts: number;
+  /** Battle tokens scrubbed from this campaign's boards. */
+  battleTokensScrubbed: number;
+  /** Boards that empty out and delete themselves after the scrub. */
+  battlesDeleted: number;
+  /** Boards left without their seeding encounter (`encounterArtifactId` dangles —
+   * the battle surface says so in as many words, "Seeded encounter no longer exists."). */
+  battleProvenancesLost: number;
+  /** Campaign image blobs the cascade frees (nothing else references them). */
+  imagesPruned: number;
+  /** Surviving encounter roster entries left citing a deleted row (`npc-ref` /
+   * `mobArtifactId`): they resolve to the loud `missing ref` badge (docs/11,
+   * `resolveMonsterEntry`) — the delete never rewrites an encounter's roster. */
+  rosterRefsDangling: number;
+}
+
+/** The kinds a per-region bulk delete refuses (domain constant: the Party). */
+function assertBulkRemovableKind(kind: ArtifactKind): void {
+  if (BULK_REMOVE_EXCLUDED_KINDS.includes(kind)) {
+    throw new Error(
+      `${ARTIFACT_KIND_LABELS[kind]} has no per-region remove-all — the Party is protected content, and "Clear workspace" in Edit campaign is the only path that deletes it.`,
+    );
+  }
+}
+
+/**
+ * Read-only core of the per-region remove-all: the rows a kind sweep would
+ * take, plus the counts that describe what goes with them. Runs outside a
+ * transaction (the confirm's live census) AND inside the delete's own
+ * transaction (the in-tx re-list), so the two can never drift.
+ */
+async function inspectKindRemoval(
+  campaignId: Id,
+  kind: ArtifactKind,
+): Promise<{ doomed: Artifact[]; counts: ArtifactKindRemovalCounts }> {
+  // Campaign-scoped, campaign-LEVEL rows only: `plainRows` in the tree are
+  // `moduleId === null`, and module-owned rows (plus module documents,
+  // module entity records and module versions) are deliberately out of reach.
+  const owned = await listArtifactsByCampaign(campaignId);
+  const doomed = owned.filter(
+    (artifact) => artifact.kind === kind && artifact.moduleId === null,
+  );
+  const counts: ArtifactKindRemovalCounts = {
+    kind,
+    artifacts: doomed.length,
+    revisions: 0,
+    backLinkedArtifacts: 0,
+    battleTokensScrubbed: 0,
+    battlesDeleted: 0,
+    battleProvenancesLost: 0,
+    imagesPruned: 0,
+    rosterRefsDangling: 0,
+  };
+  if (doomed.length === 0) return { doomed, counts };
+  const doomedIds = new Set(doomed.map((artifact) => artifact.id));
+
+  const [revisions, survivors, battles, campaignImages, referencedAfter] = await Promise.all([
+    db.revisions.where('artifactId').anyOf([...doomedIds]).count(),
+    // Every surviving artifact, ANY scope: the cascade's link scrub is
+    // global (`deleteArtifact` scans `db.artifacts`), so a library row or
+    // another campaign's row that links here is rewritten too — and counted
+    // here, because that rewrite is the surprising half of this delete.
+    db.artifacts.toCollection().toArray(),
+    db.battles.where('campaignId').equals(campaignId).toArray(),
+    db.images.where('campaignId').equals(campaignId).toArray(),
+    // The image reference set as it will be once the doomed rows (and their
+    // revision snapshots) are gone — the same coverage scan the prune uses,
+    // so the confirm's number is the prune's number.
+    referencedImageIds(campaignId, doomedIds),
+  ]);
+
+  counts.revisions = revisions;
+  for (const row of survivors) {
+    if (doomedIds.has(row.id)) continue;
+    if (row.links.some((link) => doomedIds.has(link.targetId))) {
+      counts.backLinkedArtifacts += 1;
+    }
+    if (row.kind !== 'encounter') continue;
+    const roster = (row.data as { monsters?: MonsterEntry[] }).monsters;
+    if (!Array.isArray(roster)) continue;
+    for (const entry of roster) {
+      const source = entry.source;
+      const cited =
+        source.type === 'npc-ref'
+          ? source.artifactId
+          : source.type === 'rulebook'
+            ? source.mobArtifactId
+            : undefined;
+      if (cited !== undefined && doomedIds.has(cited)) counts.rosterRefsDangling += 1;
+    }
+  }
+  for (const row of battles) {
+    const battle = parseBattleRow(row);
+    if (
+      battle.encounterArtifactId !== null &&
+      doomedIds.has(battle.encounterArtifactId)
+    ) {
+      counts.battleProvenancesLost += 1;
+    }
+    const doomedTokens = battle.board.tokens.filter(
+      (token) => token.artifactId !== null && doomedIds.has(token.artifactId),
+    );
+    if (doomedTokens.length === 0) continue;
+    counts.battleTokensScrubbed += doomedTokens.length;
+    const kept = battle.board.tokens.filter(
+      (token) => token.artifactId === null || !doomedIds.has(token.artifactId),
+    );
+    if (isBattleEmpty({ ...battle, board: { ...battle.board, tokens: kept } })) {
+      counts.battlesDeleted += 1;
+    }
+  }
+  counts.imagesPruned = campaignImages.filter((image) => !referencedAfter.has(image.id)).length;
+  return { doomed, counts };
+}
+
+/**
+ * What removing every campaign-level artifact of ONE kind would take with it
+ * (the tree's per-region confirm reads this live, keyed on the open dialog).
+ * Display only: the execute path re-lists inside its own transaction, so
+ * these numbers never decide what goes.
+ */
+export async function describeArtifactKindRemoval(
+  campaignId: Id,
+  kind: ArtifactKind,
+): Promise<ArtifactKindRemovalCounts> {
+  assertBulkRemovableKind(kind);
+  const { counts } = await inspectKindRemoval(campaignId, kind);
+  return counts;
+}
+
+/**
+ * Per-region bulk delete (owner request: "remove all" beside the kind's `+`):
+ * removes every campaign-level artifact of ONE kind in ONE campaign and its
+ * generated detail — revision history, back-links pointing at it, battle
+ * tokens, freed blobs — while every other kind, the Party, module-owned rows,
+ * module documents and versions, and the global library survive untouched.
+ * The middle rung of the destructive ladder: per-item trash → THIS → "Remove
+ * all generated content" → "Clear workspace" (docs/18 §2.1).
+ *
+ * Shape: ONE `rw` transaction over exactly the tables `deleteArtifact` needs,
+ * the campaign's rows of that kind re-listed INSIDE it (a row created after
+ * the dialog opened is swept by the same pass and counted), then the frozen
+ * `deleteArtifact` per row — nested, and its scope is a subset, so it joins
+ * this transaction: any failure rolls the whole pass back loudly and no
+ * success toast can describe a partial run (AGENTS rule 1). Idempotent: zero
+ * rows is a success with honest zeros, not an error; an unknown campaign is
+ * loud, and `pc` is refused outright.
+ *
+ * Deliberately NOT scrubbed (audited, docs/18 §2.1 / the decision ledger):
+ * deliverable outline nodes (they render the loud "missing artifact"), run
+ * `targetArtifactId` / `contextArtifactIds` (rendered as no target; the
+ * context list simply omits the gone row), battle `seedFighters` rows (inert
+ * once their tokens are scrubbed) and encounter rosters (`npc-ref` /
+ * `mobArtifactId` — they fall back to the loud `missing ref` badge, and
+ * rewriting an authored roster behind the GM's back would be worse). All of
+ * these dangle identically through the per-item trash today.
+ */
+export async function deleteArtifactsOfKind(
+  campaignId: Id,
+  kind: ArtifactKind,
+): Promise<ArtifactKindRemovalCounts> {
+  assertBulkRemovableKind(kind);
+  return db.transaction(
+    'rw',
+    [db.artifacts, db.revisions, db.images, db.battles, db.modules, db.campaigns],
+    async () => {
+      const campaign = await db.campaigns.get(campaignId);
+      if (campaign === undefined) throw new NotFoundError('Campaign', campaignId);
+      // In-tx re-list (deleteModule / wipe doctrine): rows that landed after
+      // the confirm counted are swept too, and the returned counts — which
+      // drive the success toast — describe what actually went.
+      const { doomed, counts } = await inspectKindRemoval(campaignId, kind);
+      if (doomed.length === 0) return counts;
+      // The two numbers no prediction can claim: images the per-row prunes
+      // free, and boards that emptied out and deleted themselves. Measured
+      // across the pass, in-tx, instead of guessed.
+      const imagesBefore = await db.images.where('campaignId').equals(campaignId).count();
+      const battlesBefore = await db.battles.where('campaignId').equals(campaignId).count();
+      for (const artifact of doomed) {
+        await deleteArtifact(artifact.id);
+      }
+      const imagesAfter = await db.images.where('campaignId').equals(campaignId).count();
+      const battlesAfter = await db.battles.where('campaignId').equals(campaignId).count();
+      return { ...counts, imagesPruned: imagesBefore - imagesAfter, battlesDeleted: battlesBefore - battlesAfter };
+    },
+  );
 }
 
 /**

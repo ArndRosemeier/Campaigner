@@ -28,9 +28,11 @@ import { stampNewEntity } from '@/domain/entity';
 /**
  * Legacy-row guard at the Dexie boundary: zod fills the schema defaults for
  * fields the stored row lacks. A corrupt row fails loudly here (AGENTS rule
- * 3) instead of crashing a render with an `undefined` field.
+ * 3) instead of crashing a render with an `undefined` field. Exported for
+ * read-only callers that must judge a stored row exactly as the scrub path
+ * judges it (`artifactRepo.inspectKindRemoval`'s census).
  */
-function parseBattleRow(row: Battle): Battle {
+export function parseBattleRow(row: Battle): Battle {
   return battleSchema.parse(row);
 }
 

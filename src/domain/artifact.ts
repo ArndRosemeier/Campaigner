@@ -42,6 +42,19 @@ export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
   plotarc: 'Plot Arcs',
 };
 
+/**
+ * Kinds with NO per-region "remove all" action in the campaign tree (05-UI
+ * §Left pane — Campaign tree). ONE constant, read by the tree (button
+ * presence) AND by `artifactRepo.deleteArtifactsOfKind` (loud refusal), so
+ * the exclusion is a property of the kind taxonomy instead of a scattered
+ * `kind !== 'pc'` check that could drift.
+ *
+ * Why `pc`: the Party is AUTHORED, not generated — `removeAllGeneratedContent`
+ * protects it explicitly, and the sanctioned way to take the Party is the
+ * Edit-campaign "Clear workspace" hammer (docs/05 §Clear workspace).
+ */
+export const BULK_REMOVE_EXCLUDED_KINDS: readonly ArtifactKind[] = ['pc'];
+
 /** Singular labels, for badges and toasts ("NPC created"). */
 export const ARTIFACT_KIND_SINGULAR: Readonly<Record<ArtifactKind, string>> = {
   pc: 'PC',

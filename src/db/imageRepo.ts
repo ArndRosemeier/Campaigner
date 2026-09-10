@@ -192,14 +192,28 @@ async function referencedImageIdsGlobal(): Promise<Set<Id>> {
  * SCOPE CONTRACT: reads `artifacts`, `revisions`, `battles`, `modules` and
  * `campaigns` — every caller transaction scope must include all five (a
  * read on a table the scope omits throws "object store not found").
+ *
+ * `excludeArtifactIds` is the PREDICTION switch, used by exactly one caller:
+ * `artifactRepo.describeArtifactKindRemoval` renders the per-region
+ * remove-all confirm, which must state how many blobs the cascade frees —
+ * i.e. the reference set as it will be once those artifacts and their
+ * revision snapshots are gone. The coverage rules stay HERE (one scan, never
+ * a second copy tuned for a dialog): the exclusion only filters which rows
+ * the scan sees. Display only — no delete path passes it, so what gets
+ * pruned is still decided in-transaction by the unrouted scan.
  */
-export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
-  const [artifacts, revisions, battles, modules, campaign] = await Promise.all([
+export async function referencedImageIds(
+  campaignId: Id,
+  excludeArtifactIds?: ReadonlySet<Id>,
+): Promise<Set<Id>> {
+  const [ownedRows, revisions, battles, modules, campaign] = await Promise.all([
     db.artifacts.where('campaignId').equals(campaignId).toArray(),
     (async () => {
-      const artifactIds = (await db.artifacts.where('campaignId').equals(campaignId).toArray()).map(
-        (artifact) => artifact.id,
-      );
+      const artifactIds = (
+        await db.artifacts.where('campaignId').equals(campaignId).toArray()
+      )
+        .filter((artifact) => excludeArtifactIds?.has(artifact.id) !== true)
+        .map((artifact) => artifact.id);
       if (artifactIds.length === 0) return [];
       const rows = await db.revisions.where('artifactId').anyOf(artifactIds).toArray();
       return rows;
@@ -209,6 +223,12 @@ export async function referencedImageIds(campaignId: Id): Promise<Set<Id>> {
     db.campaigns.get(campaignId),
   ]);
   const referenced = new Set<Id>();
+  // The exclusion strips exactly the rows whose delete is being PREVIEWED —
+  // their live references and (below) their revision snapshots' references.
+  const artifacts =
+    excludeArtifactIds === undefined
+      ? ownedRows
+      : ownedRows.filter((artifact) => !excludeArtifactIds.has(artifact.id));
   for (const artifact of artifacts) {
     for (const id of artifact.imageIds) referenced.add(id);
     if (artifact.coverImageId !== null) referenced.add(artifact.coverImageId);
