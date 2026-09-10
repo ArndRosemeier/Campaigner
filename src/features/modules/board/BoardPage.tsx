@@ -124,10 +124,15 @@ export function BoardPage(): JSX.Element {
     });
   }, [moduleId, flushGhosts]);
   useEffect(() => {
+    // The cleanup clears the buffer THIS effect was mounted with: the ref's
+    // value is read once here, never at teardown time (exhaustive-deps). The
+    // Map is created once by `useRef` and never replaced, so this is the same
+    // object `flushGhosts` and the event sink above write to.
+    const buffers = ghostBuffers.current;
     return () => {
       if (ghostRaf.current !== null) cancelAnimationFrame(ghostRaf.current);
       ghostRaf.current = null;
-      ghostBuffers.current.clear();
+      buffers.clear();
     };
   }, [moduleId]);
 
