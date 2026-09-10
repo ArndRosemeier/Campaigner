@@ -431,7 +431,15 @@ function PriorCardBody({
  * Module-level nodeTypes map, declared AFTER the components it references
  * and created exactly once per module load — React Flow warns (and re-mounts
  * nodes) when the object identity churns.
+ *
+ * react-refresh cannot fast-refresh this file because of the export below:
+ * that is accepted here rather than split out, because the map's VALUES are
+ * the memoized cards declared above — it is the registry half of those
+ * components (React Flow's nodeTypes idiom), and its module-scope identity is
+ * the whole contract. A separate module would import the cards back and could
+ * only drift from them.
  */
+// eslint-disable-next-line react-refresh/only-export-components -- the registry's values are this file's own memoized card components, declared with it on purpose; a sibling file would have to import them back and could silently drift out of sync.
 export const boardNodeTypes: NodeTypes = {
   premise: PremiseCardNode,
   part: PartCardNode,
