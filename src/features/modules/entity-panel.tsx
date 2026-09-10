@@ -51,7 +51,8 @@ import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
-import { normalizeModuleEntityNames } from '@/llm/moduleGen';
+import { classifyNewModuleEntityNames, normalizeModuleEntityNames } from '@/llm/moduleGen';
+import { unclassifiedEntityNames } from '@/domain/entityNormalization';
 import {
   STUB_KINDS,
   type StubKind,
@@ -105,6 +106,14 @@ function adoptArtifact(artifact: AnyArtifact): void {
  * banner with the error and a Retry; stored rewrite proposals (hand-edited
  * text / premise) show a review banner whose confirm dialog applies the
  * rewrites to the documents' CURRENT text.
+ *
+ * Names the text picked up LATER (08 §M4-C, docs/17 row 64): the buckets read
+ * the RECORDS, so a name no pass has seen (a chat turn, a hand edit, a board
+ * rewrite, a version restore) has no button. The fresh read of the module text
+ * names those names and offers ONE "Classify N new names" action — the same
+ * normalization pass as at creation, consent rule included — after which the
+ * kind's batch button is back. The observation is what triggers the offer, so
+ * every text-changing event is covered without per-event wiring.
  *
  * IMAGES mode (M4-C, module-mode-as-play): the "Images" button swaps the row
  * stars for checkboxes — checked = the entity has an image, indeterminate =
@@ -210,6 +219,8 @@ export function EntityPanel({
   const [proposalsOpen, setProposalsOpen] = useState(false);
   /** fix-01: the normalization pass is running (Retry / manual run). */
   const [normalizing, setNormalizing] = useState(false);
+  /** fix-01: the incremental classification of names the text picked up later. */
+  const [classifying, setClassifying] = useState(false);
 
   /** fix-01: the batch gate — no batch generation before the pass succeeded. */
   const batchGateOpen = module.entityNamesNormalized;
@@ -239,6 +250,27 @@ export function EntityPanel({
     list.push(entry);
     unresolvedByKind.set(kind, list);
   }
+
+  // Names the record gate cannot batch yet — the OBSERVATION POINT (08 §M4-C
+  // "names the text picks up later", docs/17 row 64). It is a pure function of
+  // the FRESH read of the module row's text (the same `useModuleEntities`
+  // derivation the buckets above read), so EVERY event that changes module
+  // text is covered by one wiring: a chat apply (editor or preview), a hand
+  // edit, a board rewrite, a part generation/regeneration, a durable-version
+  // restore. Nothing is dispatched from a render — the observed names only
+  // gate the toolbar's "Classify N new names" affordance, and a re-render or a
+  // tab switch can therefore never classify, duplicate a record or duplicate a
+  // button.
+  const unclassified = useMemo(
+    () =>
+      unclassifiedEntityNames({
+        entityKinds: module.entityKinds,
+        names: entries.map((entry) => entry.name),
+        resolvedNames: entries.filter((entry) => entry.resolved).map((entry) => entry.name),
+        proposals: module.entityRewriteProposals,
+      }),
+    [entries, module.entityKinds, module.entityRewriteProposals],
+  );
 
   // Focused / unfocused groups (08 §M4-C), each in the current sort order.
   // Focus matches are case-insensitive — wiki-links resolve that way.
@@ -292,6 +324,33 @@ export function EntityPanel({
       toastError('Entity name normalization failed — retry from the entity panel', error);
     } finally {
       setNormalizing(false);
+    }
+  }
+
+  /**
+   * fix-01 records for names the text picked up later (08 §M4-C): sends ONLY
+   * the observed unrecorded names through the SAME normalization machinery the
+   * creation-time pass uses — never a client heuristic — so their records
+   * appear and the kind's batch button comes back. Failures are recorded on
+   * the module row (gate closed) + toasted inside the pass; a throw here is
+   * the belt for pre-flight refusals.
+   */
+  async function classifyNewNames(): Promise<void> {
+    setClassifying(true);
+    try {
+      const result = await classifyNewModuleEntityNames(module.id);
+      if (result.failed) return; // recorded + toasted by the pass
+      toastSuccess(
+        result.classified.length === 0
+          ? 'No new entity names to classify'
+          : `Classified ${String(result.classified.length)} new entity name${
+              result.classified.length === 1 ? '' : 's'
+            }`,
+      );
+    } catch (error) {
+      toastError('Could not classify the new entity names', error);
+    } finally {
+      setClassifying(false);
     }
   }
 
@@ -630,6 +689,27 @@ export function EntityPanel({
                 </Button>
               );
             })}
+            {batchGateOpen && unclassified.length > 0 && (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={classifying || normalizing || module.status === 'generating'}
+                title={
+                  module.status === 'generating'
+                    ? 'The module is generating — its own normalization pass records the names when the parts land.'
+                    : 'Classify the names this text picked up since the last pass (one model call, the same pass as at creation) — their batch buttons then appear.'
+                }
+                data-testid="entity-classify-new"
+                onClick={() => {
+                  void classifyNewNames();
+                }}
+              >
+                <SparklesIcon aria-hidden data-icon="inline-start" />
+                {classifying
+                  ? 'Classifying…'
+                  : `Classify ${String(unclassified.length)} new name${unclassified.length === 1 ? '' : 's'}`}
+              </Button>
+            )}
             {!batchGateOpen && (
               <Button
                 variant="ghost"
@@ -683,6 +763,16 @@ export function EntityPanel({
           {batchGateReason !== undefined && (
             <p className="border-b px-3 py-1.5 text-[11px] text-muted-foreground" data-testid="batch-gate-reason">
               {batchGateReason}
+            </p>
+          )}
+          {batchGateOpen && unclassified.length > 0 && (
+            <p
+              className="border-b px-3 py-1.5 text-[11px] text-muted-foreground"
+              data-testid="entity-classify-hint"
+            >
+              {String(unclassified.length)} unresolved name
+              {unclassified.length === 1 ? ' has' : 's have'} no recorded type yet — classify them to
+              get their batch buttons.
             </p>
           )}
 

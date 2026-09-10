@@ -1,6 +1,6 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
 import { createModule, ENCOUNTER_CONFLICT_KINDS, entityKindFor, moduleDocumentText, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS, type EncounterConflictKind } from '@/domain';
-import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
+import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
@@ -12,7 +12,7 @@ import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { repairModel } from '@/llm/modelFallback';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
-import { extractWikiLinks, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
+import { extractWikiLinks, resolveWikiLink, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
 import { debrisIssuesForFields } from '@/lib/encodingHygiene';
 // The engine triggers the module's own post-generation automation (the
 // unattended paths have no UI to do it); the orchestrator never imports this
@@ -1409,16 +1409,46 @@ async function partCall(
 const NORMALIZE_CONTEXT_CAP = 400;
 
 /**
+ * The module's normalization documents (fix-01): the premise plus every part
+ * in plan order — the ONE derivation the full pass and the incremental
+ * classification run share, so both classify the same text the entity panel
+ * observes (`useModuleEntities` derives its names from exactly these
+ * documents).
+ */
+function moduleNormalizationDocument(module: Module): {
+  documents: { where: string; markdown: string }[];
+  text: string;
+} {
+  const documents = [
+    { where: 'premise', markdown: module.spine?.premise ?? '' },
+    ...module.parts
+      .slice()
+      .sort((a, b) => a.planIndex - b.planIndex)
+      .map((part) => ({ where: `part-${String(part.planIndex)}`, markdown: part.markdown })),
+  ];
+  return { documents, text: documents.map((document) => document.markdown).join('\n\n') };
+}
+
+/**
  * The shared normalization prompt (fix-01): the model — which wrote the text
  * — decides per listed name which canonical entity it refers to, and states
  * the canonical entity's kind. One contract for the post-parts pass, the
- * spine's entity list, and single hand-typed names.
+ * spine's entity list, single hand-typed names, and the incremental run.
  */
 function normalizationMessages(
   requests: readonly { name: string; context: string }[],
   artifactNames: readonly string[],
   premise: string,
-  options: { requireEncounterDeclarations?: boolean } = {},
+  options: {
+    requireEncounterDeclarations?: boolean;
+    /**
+     * Incremental runs only: the canonical spellings the module already
+     * records. A new variant may refer to one of them, so the model must be
+     * able to name it (the vocabulary of legal canonicals widens by exactly
+     * these recorded names — never by anything the model invents).
+     */
+    recordedNames?: readonly string[];
+  } = {},
 ): ChatMessage[] {
   const lines = requests.map((request) => {
     const context = request.context.replaceAll('\n', ' ').trim();
@@ -1428,14 +1458,20 @@ function normalizationMessages(
     artifactNames.length === 0
       ? null
       : `Existing campaign artifacts (a name matching one of these refers to that artifact):\n${artifactNames.join('\n')}`;
+  const recorded = options.recordedNames ?? [];
+  const recordedIndex =
+    recorded.length === 0
+      ? null
+      : `Entity names already recorded for this module (canonical spellings — a new name that refers to one of these entities maps onto that exact spelling):\n${recorded.join('\n')}`;
   const instruction = [
     `Module premise for context:\n${premise}`,
     'For each entity name below, decide which canonical entity it refers to.',
     index,
+    recordedIndex,
     [
       'Rules:',
       '- One entry per listed name; the "name" field spelled exactly as listed; no extra entries; no invented names.',
-      '- "canonical" is the exact spelling of the entity this name refers to: the name itself, another listed name (the canonical form of a variant), or an existing artifact\'s exact name. Never a name that appears nowhere in the inputs. Canonical spellings are final — never A → B when B maps elsewhere.',
+      `- "canonical" is the exact spelling of the entity this name refers to: the name itself, another listed name (the canonical form of a variant)${recorded.length === 0 ? '' : ', one of the already-recorded entity names listed above'}, or an existing artifact's exact name. Never a name that appears nowhere in the inputs. Canonical spellings are final — never A → B when B maps elsewhere.`,
       '- Merge only when confident the names refer to the same entity (same person, place, organization, or thing). A role or title attached to the same person ("Guard Halmund" / "Harbormaster Ilse") maps onto the person\'s canonical name; similar names for different beings never merge.',
       '- A name that exactly matches an existing artifact\'s name maps to itself.',
       '- "kind" describes the canonical entity: "npc" = a person or creature the party meets; "location" = a place; "event" = a social/non-combat occasion (same shape as a location); "faction" = an organization or group; "encounter" = a named combat or tactical set piece; "note" = anything else (items, rumors, mysteries, plot devices).',
@@ -1471,7 +1507,10 @@ async function normalizationCall(
   model: string,
   names: readonly string[],
   artifactNames: readonly string[],
-  options: { requireEncounterDeclarations?: boolean } = {},
+  options: {
+    requireEncounterDeclarations?: boolean;
+    canonicalNames?: readonly string[];
+  } = {},
 ): Promise<NormalizationEntry[]> {
   const settings = await getSettings();
   const base = {
@@ -1539,14 +1578,7 @@ export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
   await snapshotModuleVersion(moduleId, 'normalization', 'Normalize entity names');
   const artifacts = await listArtifactsByCampaign(module.campaignId);
   const artifactNames = artifacts.map((artifact) => artifact.name);
-  const documents = [
-    { where: 'premise', markdown: module.spine?.premise ?? '' },
-    ...module.parts
-      .slice()
-      .sort((a, b) => a.planIndex - b.planIndex)
-      .map((part) => ({ where: `part-${String(part.planIndex)}`, markdown: part.markdown })),
-  ];
-  const text = documents.map((document) => document.markdown).join('\n\n');
+  const { text } = moduleNormalizationDocument(module);
   const names = extractWikiLinks(text).map((link) => link.name);
 
   // Pass start: the previous state is invalid for the current text — batch
@@ -1589,18 +1621,145 @@ export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
   await applyNormalizationVerdict(moduleId, module, artifacts, verdicts);
 }
 
+/** What one incremental classification run did (the entity panel's report). */
+export interface NewEntityClassification {
+  /** The new names this run sent through the pass (empty = nothing to do, or
+   * a failure — see `failed`). */
+  classified: string[];
+  /** True when the pass failed: the failure is RECORDED on the module row
+   * (gate closed) and toasted; the panel's Retry owns the recovery. */
+  failed: boolean;
+}
+
+/**
+ * Incremental classification for names the module text picked up AFTER the
+ * last pass (08 §M4-C "names the text picks up later", docs/17 row 64).
+ *
+ * The gap it closes: every batch bucket is built from the kinds the generator
+ * RECORDED, and the post-parts pass records the names of the text it saw. A
+ * later text change — a chat turn, a hand edit, a board rewrite, a durable
+ * version restore — can introduce wiki-link names no pass has seen, so those
+ * names have no record and no batch button ("Generate N npcs" disappears for
+ * them). The panel observes that state (the same derivation its buckets use)
+ * and offers this run.
+ *
+ * It is the SAME normalization machinery, never a second classifier: the same
+ * prompt builder, the same JSON contract + validator + one repair retry, the
+ * same mechanical application, and the same consent rule for text rewrites
+ * (generated parts apply immediately; hand-edited parts and the premise become
+ * stored proposals for the panel's review — chat-applied text is hand-edited
+ * by definition, the one part-text save path stamps `edited: true`). Its input
+ * is narrowed to the names that have no record yet and do not resolve, and its
+ * record write is APPEND-ONLY (`mergeNewEntityRecords`): names already recorded
+ * are untouched, so repeating the run — or chatting again — can neither
+ * duplicate a record nor re-key one, and another module's rows are untouched.
+ *
+ * Failure semantics are the full pass's, deliberately (never swallowed): the
+ * error is recorded with `entityNamesNormalized: false` — which CLOSES the
+ * batch gate (nothing is batchable-with-a-guess, no name is silently dropped)
+ * — plus a toast, and the panel's Retry (the full pass) is the recovery.
+ *
+ * Refuses to run when the row's names are not normalized: the records may be
+ * stale for the whole text, and the full pass owns that state.
+ */
+export async function classifyNewModuleEntityNames(moduleId: Id): Promise<NewEntityClassification> {
+  const module = await requireModule(moduleId);
+  if (!module.entityNamesNormalized) {
+    throw new Error(
+      'Entity names are not normalized for the current text — run the normalization pass first',
+    );
+  }
+  const artifacts = await listArtifactsByCampaign(module.campaignId);
+  const artifactNames = artifacts.map((artifact) => artifact.name);
+  const { text } = moduleNormalizationDocument(module);
+  const textNames = extractWikiLinks(text).map((link) => link.name);
+  const targets = unclassifiedEntityNames({
+    entityKinds: module.entityKinds,
+    names: textNames,
+    resolvedNames: textNames.filter(
+      (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact !== undefined,
+    ),
+    proposals: module.entityRewriteProposals,
+  });
+  // Nothing observed that lacks a record: no call, no write, no toast — the
+  // idempotent no-op a repeated click (or a second observation) must be.
+  if (targets.length === 0) return { classified: [], failed: false };
+
+  // Durable pre-change snapshot (docs/18 §2.3 simple undo): the verdicts
+  // rewrite wiki-link targets inside part text, so this is an AI change to the
+  // parts document exactly like every other normalization pass — captured
+  // before the first write, loud if it cannot be recorded.
+  await snapshotModuleVersion(moduleId, 'normalization', 'Classify new entity names');
+
+  const settings = await getSettings();
+  // The model may map a new variant onto a canonical the module already
+  // records (that name is neither a listed input nor an artifact) — the
+  // vocabulary of legal canonicals widens by exactly those recorded names.
+  const recordedNames = module.entityKinds.map((entry) => entry.name);
+  let verdicts: NormalizationEntry[];
+  try {
+    verdicts = await normalizationCall(
+      normalizationMessages(
+        targets.map((name) => ({
+          name,
+          context: surroundingParagraphs(text, name, NORMALIZE_CONTEXT_CAP),
+        })),
+        artifactNames,
+        module.spine?.premise ?? '',
+        // These verdicts read prose, so encounter verdicts author their own
+        // declarations (08 §M4-B) — identical to the post-parts pass.
+        { requireEncounterDeclarations: true, recordedNames },
+      ),
+      settings.defaultChatModel,
+      targets,
+      artifactNames,
+      { requireEncounterDeclarations: true, canonicalNames: recordedNames },
+    );
+  } catch (error) {
+    const message = errorMessage(error);
+    await patchModule(moduleId, { entityNamesNormalized: false, entityNormalizationError: message });
+    toastError('Entity name normalization failed — retry from the entity panel', error);
+    return { classified: [], failed: true };
+  }
+
+  // Applied to the row as it stands NOW: the model call takes seconds and a
+  // hand edit can land inside it (a stale parts array must never be written
+  // back).
+  await applyNormalizationVerdict(
+    moduleId,
+    await requireModule(moduleId),
+    artifacts,
+    verdicts,
+    'incremental',
+  );
+  return { classified: targets, failed: false };
+}
+
 /**
  * Applies a validated verdict mechanically (fix-01): rewrites generated text,
- * holds proposals for hand-edited text and the premise, records aliases,
- * replaces `entityKinds`. The canonical spelling written into tokens/records
- * is the listed or artifact spelling of the entity the model chose — the
- * verdict itself is never altered.
+ * holds proposals for hand-edited text and the premise, records aliases, and
+ * writes `entityKinds`. The canonical spelling written into tokens/records is
+ * the listed or artifact spelling of the entity the model chose — the verdict
+ * itself is never altered.
+ *
+ * Two record modes, one mechanical application:
+ * - `'replace'` (the full pass): `entityKinds` BECOMES the canonical records of
+ *   this verdict — the pass saw every name of the text, so a variant-keyed
+ *   record from an earlier text must not survive it;
+ * - `'incremental'` (names the text picked up later): the verdict covered only
+ *   the unrecorded names, so the records of names already on the row are kept
+ *   BYTE-IDENTICAL and only genuinely new canonicals are appended
+ *   (`mergeNewEntityRecords` — no re-keying, no duplicate, the fix-01
+ *   no-duplicate guarantee the batch buckets read), and a review already
+ *   pending for hand-edited text is preserved rather than replaced
+ *   (`mergeEntityRewriteProposals`).
  */
 async function applyNormalizationVerdict(
   moduleId: Id,
   module: Module,
   artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
   verdicts: readonly NormalizationEntry[],
+  mode: 'replace' | 'incremental' = 'replace',
 ): Promise<void> {
   const listedSpelling = new Map<string, string>();
   for (const entry of verdicts) listedSpelling.set(entry.name.trim().toLowerCase(), entry.name.trim());
@@ -1664,12 +1823,22 @@ async function applyNormalizationVerdict(
     }
   }
 
+  const records =
+    mode === 'incremental'
+      ? mergeNewEntityRecords(module.entityKinds, canonicalEntityRecords(verdicts))
+      : canonicalEntityRecords(verdicts);
+  const nextProposals =
+    mode === 'incremental'
+      ? mergeEntityRewriteProposals(module.entityRewriteProposals, proposals)
+      : proposals.length > 0
+        ? proposals
+        : null;
   await patchModule(moduleId, {
     parts: appliedParts,
-    entityKinds: canonicalEntityRecords(verdicts),
+    entityKinds: records,
     entityNamesNormalized: true,
     entityNormalizationError: '',
-    entityRewriteProposals: proposals.length > 0 ? proposals : null,
+    entityRewriteProposals: nextProposals,
   });
 }
 

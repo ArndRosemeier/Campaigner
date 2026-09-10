@@ -14,6 +14,7 @@ import {
   campaignCastContext,
   CAMPAIGN_CAST_NAME_CAP,
   classifyEntityName,
+  classifyNewModuleEntityNames,
   createModuleAndRun,
   generateMissingParts,
   moduleGenEvents,
@@ -985,6 +986,215 @@ describe('entity name normalization (fix-01)', () => {
       'Module generation failed: encounter floor not met',
       expect.any(Error),
     );
+  }, 20000);
+});
+
+describe('incremental classification of names the text picked up later (08 §M4-C)', () => {
+  /** A module whose last pass succeeded: `Kael` recorded, gate open. */
+  async function seedNormalizedModule(): Promise<{ campaign: Campaign; moduleId: Id }> {
+    const seeded = await seedModule();
+    await seedSpine(seeded.moduleId);
+    await seedReadyPart(seeded.moduleId, 0, partWithNames('PART-ONE', ['Kael']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Kael', kind: 'npc' }]));
+    await normalizeModuleEntityNames(seeded.moduleId);
+    chatMock.mockClear();
+    return seeded;
+  }
+
+  it('records ONLY the new names, leaves the recorded ones byte-identical and never calls twice', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    const before = await getModule(moduleId);
+    const recordedKael = before?.entityKinds[0];
+    expect(recordedKael?.name).toBe('Kael');
+    // A later text change (any event: chat, hand edit, rewrite, restore).
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    const result = await classifyNewModuleEntityNames(moduleId);
+
+    expect(result).toEqual({ classified: ['Harbormaster Vex'], failed: false });
+    const after = await getModule(moduleId);
+    // Untouched and not re-keyed (identity is the domain helper's unit pin;
+    // a row read re-parses, so compare values here).
+    expect(after?.entityKinds[0]).toEqual(recordedKael);
+    expect(after?.entityKinds.map((entry) => entry.name)).toEqual(['Kael', 'Harbormaster Vex']);
+    expect(after?.entityKinds[1]?.kind).toBe('npc');
+    expect(after?.entityNamesNormalized).toBe(true);
+    expect(after?.entityNormalizationError).toBe('');
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    // The pass was asked about the NEW names only; the recorded canonical rode
+    // along as the (legal) vocabulary, never as a name to answer for.
+    const prompt = userMessagesOf(0);
+    expect(prompt).toContain('Harbormaster Vex');
+    expect(prompt).toContain('Entity names already recorded for this module');
+    expect(prompt).not.toContain('- Kael');
+
+    // Idempotent: a second run has nothing to classify — no call, no write.
+    const again = await classifyNewModuleEntityNames(moduleId);
+    expect(again).toEqual({ classified: [], failed: false });
+    expect(chatMock).toHaveBeenCalledTimes(1);
+    expect((await getModule(moduleId))?.entityKinds).toEqual(after?.entityKinds);
+  }, 20000);
+
+  it('folds a new variant onto a RECORDED canonical without a duplicate record (held as a proposal)', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    // The variant arrives in hand-edited text (the one part-text save path
+    // stamps `edited: true` — a chat-applied part is exactly this case).
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Warden Kael']), {
+      edited: true,
+    });
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: 'Warden Kael', canonical: 'Kael', kind: 'npc' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const result = await classifyNewModuleEntityNames(moduleId);
+
+    expect(result).toEqual({ classified: ['Warden Kael'], failed: false });
+    const after = await getModule(moduleId);
+    // No second record for the variant, and the canonical's record is intact.
+    expect(after?.entityKinds.map((entry) => entry.name)).toEqual(['Kael']);
+    // The rewrite waits for consent — the edited text is NOT touched.
+    expect(after?.entityRewriteProposals).toEqual([
+      { planIndex: 0, replacements: [{ from: 'Warden Kael', to: 'Kael' }] },
+    ]);
+    expect(after?.parts[0]?.markdown).toContain('[[Warden Kael]]');
+    expect(after?.entityNamesNormalized).toBe(true);
+  }, 20000);
+
+  it('preserves a review the user has not answered and unions the new rewrites', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await patchModule(moduleId, {
+      entityRewriteProposals: [{ planIndex: -1, replacements: [{ from: 'the Bell', to: 'Bell' }] }],
+    });
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Warden Kael']), {
+      edited: true,
+    });
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: 'Warden Kael', canonical: 'Kael', kind: 'npc' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    expect((await getModule(moduleId))?.entityRewriteProposals).toEqual([
+      { planIndex: -1, replacements: [{ from: 'the Bell', to: 'Bell' }] },
+      { planIndex: 0, replacements: [{ from: 'Warden Kael', to: 'Kael' }] },
+    ]);
+  }, 20000);
+
+  it('records the failure, closes the gate and adds NO record when the reply is invalid twice', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    const before = await getModule(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    // Answers for the wrong name — invalid after the one stated retry.
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ entities: [{ name: 'Ghost', canonical: 'Ghost', kind: 'npc' }] }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const result = await classifyNewModuleEntityNames(moduleId);
+
+    expect(result).toEqual({ classified: [], failed: true });
+    const after = await getModule(moduleId);
+    // Nothing guessed: no record for the unverified name, the existing record
+    // survives, and the gate is CLOSED with the error recorded (loud).
+    expect(after?.entityKinds).toEqual(before?.entityKinds);
+    expect(after?.entityNamesNormalized).toBe(false);
+    expect(after?.entityNormalizationError).toContain('invented a name');
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(userMessagesOf(1)).toContain('Your previous reply was invalid');
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Entity name normalization failed — retry from the entity panel',
+      expect.any(Error),
+    );
+  }, 20000);
+
+  it('refuses to run while the row still says the text is not normalized (the full pass owns that)', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    await patchModule(moduleId, { entityNamesNormalized: false });
+    chatMock.mockClear();
+
+    await expect(classifyNewModuleEntityNames(moduleId)).rejects.toThrow(
+      'Entity names are not normalized for the current text',
+    );
+    expect(chatMock).not.toHaveBeenCalled();
+  }, 20000);
+
+  it('leaves another module of the same campaign untouched', async () => {
+    const { campaign, moduleId } = await seedNormalizedModule();
+    const other = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Other Bell',
+        concept: 'A second module in the same campaign.',
+        levelMin: 1,
+        levelMax: 2,
+        sizeDial: 'sketch',
+      }),
+    );
+    await patchModule(other.id, {
+      spine: moduleSpineSchema.parse(VALID_SPINE),
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          markdown: 'The bells of [[Kael]] ring.',
+          status: 'ready',
+          errorMessage: '',
+          edited: false,
+        }),
+      ],
+      entityKinds: [{ name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null }],
+      entityNamesNormalized: true,
+    });
+    const otherBefore = await getModule(other.id);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    const otherAfter = await getModule(other.id);
+    expect(otherAfter?.entityKinds).toEqual(otherBefore?.entityKinds);
+    expect(otherAfter?.parts).toEqual(otherBefore?.parts);
+    expect(otherAfter?.entityNamesNormalized).toBe(true);
+    expect(otherAfter?.entityRewriteProposals).toBeNull();
+    // The classified module keeps its own record set.
+    expect((await getModule(moduleId))?.entityKinds.map((entry) => entry.name)).toEqual([
+      'Kael',
+      'Harbormaster Vex',
+    ]);
+  }, 20000);
+
+  it('snapshots the pre-change document before it writes — and not at all when there is nothing to do', async () => {
+    const { moduleId } = await seedNormalizedModule();
+    expect((await listModuleVersions(moduleId)).length).toBeGreaterThan(0);
+    const versionsBefore = (await listModuleVersions(moduleId)).length;
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Kael', 'Harbormaster Vex']));
+    const before = await getModule(moduleId);
+    chatMock.mockResolvedValueOnce(normalizationReply([{ name: 'Harbormaster Vex', kind: 'npc' }]));
+
+    await classifyNewModuleEntityNames(moduleId);
+
+    const versions = await listModuleVersions(moduleId);
+    expect(versions).toHaveLength(versionsBefore + 1);
+    expect(versions[0]?.source).toBe('normalization');
+    expect(versions[0]?.label).toBe('Classify new entity names');
+    const captured = assembleModulePartsDocument({
+      partPlan: before?.spine?.partPlan ?? [],
+      parts: before?.parts ?? [],
+    }).document;
+    expect(versions[0]?.docText).toBe(captured);
+
+    // The no-op run (nothing unclassified) must not add a version row.
+    await classifyNewModuleEntityNames(moduleId);
+    expect(await listModuleVersions(moduleId)).toHaveLength(versionsBefore + 1);
   }, 20000);
 });
 

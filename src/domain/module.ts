@@ -181,6 +181,28 @@ export const moduleEntityKindSchema = z.object({
 
 export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
 
+/**
+ * How many recorded entities one module row carries (`entityKinds` schema
+ * cap). The incremental classification pass reads it too: appending past the
+ * cap throws LOUDLY there rather than dropping a record — a dropped record is
+ * a silently un-batchable name (08 §M4-C).
+ */
+export const MODULE_ENTITY_KIND_CAP = 400;
+
+/**
+ * fix-01 consent record: the wiki-link target rewrites a HELD verdict wants
+ * applied to ONE document (`planIndex` −1 = the premise), stored on the module
+ * row while the panel's review banner awaits the user's decision. Named here
+ * (not inline in `moduleSchema`) so the normalization seams that derive and
+ * merge proposals share one type.
+ */
+export const entityRewriteProposalSchema = z.object({
+  planIndex: z.number().int(),
+  replacements: z.array(z.object({ from: z.string(), to: z.string() })),
+});
+
+export type EntityRewriteProposal = z.infer<typeof entityRewriteProposalSchema>;
+
 /** Case-insensitive lookup of a recorded entity kind (undefined = unknown). */
 export function entityKindFor(
   entityKinds: readonly ModuleEntityKind[],
@@ -269,7 +291,7 @@ export const moduleSchema = z
     errorMessage: z.string(),
     /** Entity types the generator recorded for names it introduced
      * (08 §M4-C). Names typed by the user later have no record here. */
-    entityKinds: z.array(moduleEntityKindSchema).max(400).default([]),
+    entityKinds: z.array(moduleEntityKindSchema).max(MODULE_ENTITY_KIND_CAP).default([]),
     /** Names focused in play — the entity panel's top group (08 §M4-C). */
     focusedEntities: z.array(z.string()).max(400).default([]),
     /** How the entity panel orders entities (08 §M4-C). */
@@ -283,12 +305,7 @@ export const moduleSchema = z
     /** fix-01: held rewrites for hand-edited parts (planIndex −1 = premise)
      * awaiting the user's consent in the panel; null = nothing pending. */
     entityRewriteProposals: z
-      .array(
-        z.object({
-          planIndex: z.number().int(),
-          replacements: z.array(z.object({ from: z.string(), to: z.string() })),
-        }),
-      )
+      .array(entityRewriteProposalSchema)
       .nullable()
       .default(null),
     /** Opt-in continuity (08 §M4-B): when true, the spine and parts passes
