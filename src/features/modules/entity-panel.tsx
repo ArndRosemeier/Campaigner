@@ -33,7 +33,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { AnyArtifact, Campaign, Module } from '@/domain';
+import type { AnyArtifact, Campaign, Id, Module } from '@/domain';
 import { entityKindFor } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
@@ -48,8 +48,15 @@ import {
   type ModuleOrphanRow,
 } from '@/features/modules/entity-orphans';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
+import {
+  deriveAutomationDeviation,
+  deviationLines,
+  deviationWorkCount,
+} from '@/features/modules/automation-deviation';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
+import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
+import { resumeEverything } from '@/features/modules/resume-automation';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
 import { classifyNewModuleEntityNames, normalizeModuleEntityNames } from '@/llm/moduleGen';
 import { unclassifiedEntityNames } from '@/domain/entityNormalization';
@@ -62,7 +69,7 @@ import {
   type EntityEntry,
 } from '@/features/modules/use-module-entities';
 import { rewriteWikiLinkTargets } from '@/lib/wikilinks';
-import { toastError, toastSuccess } from '@/lib/toast';
+import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 import { RunBattleButton } from '@/features/play/run-battle';
 import { cn } from '@/lib/utils';
 
@@ -119,10 +126,43 @@ function adoptArtifact(artifact: AnyArtifact): void {
  * generation (one image per entity, attached as cover); unchecking a QUEUED
  * entity just removes it from the queue, while unchecking an entity WITH an
  * image asks for confirmation before deleting it.
+ *
+ * "Generate everything" (docs/17 row 80): the toolbar's bulk fill, derived per
+ * render against the FULL automation target (every entity kind for details and
+ * images, battle maps and mob portraits) rather than the module's RECORDED
+ * intent. It is the same pipeline, sweep and detectors as the canvas's "Resume
+ * automatic module creation" — so a module created before `automationIntent`
+ * existed, or one whose creation automated only some kinds, is finished here.
+ * With nothing missing it renders a passive statement instead of a permanently
+ * disabled button; while a run is in flight it is disabled with the reason in
+ * `title`. It never rewrites the module text.
  */
 
 /** What the checkbox shows for an entity in images mode. */
 type EntityImageState = 'has' | 'queued' | 'none';
+
+/**
+ * True while a generation of THIS module's artifacts is in flight: the module's
+ * own parts pass (`module.status === 'generating'`, checked by the caller), or
+ * this module's queued/active entity-image or encounter-map jobs — the two
+ * queues the post-generation sweep fills, read through the SAME store
+ * subscriptions the panel's image checkboxes already use (no parallel
+ * subscription). Queued AND active count: a job waiting its turn is work this
+ * control would double-book.
+ */
+function useModuleQueuesBusy(moduleId: Id): boolean {
+  const imageJobs = useEntityImageQueue(
+    (state) =>
+      state.queued.some((job) => job.moduleId === moduleId) ||
+      state.active.some((job) => job.moduleId === moduleId),
+  );
+  const mapJobs = useEncounterMapQueue(
+    (state) =>
+      state.queued.some((job) => job.moduleId === moduleId) ||
+      state.active.some((job) => job.moduleId === moduleId),
+  );
+  return imageJobs || mapJobs;
+}
 
 export interface EntityPanelProps {
   module: Module;
@@ -172,6 +212,9 @@ export function EntityPanel({
   const [normalizing, setNormalizing] = useState(false);
   /** fix-01: the incremental classification of names the text picked up later. */
   const [classifying, setClassifying] = useState(false);
+  /** "Generate everything" (docs/17 row 80): the confirmation / the run. */
+  const [generateAllOpen, setGenerateAllOpen] = useState(false);
+  const [generatingAll, setGeneratingAll] = useState(false);
 
   /** fix-01: the batch gate — no batch generation before the pass succeeded. */
   const batchGateOpen = module.entityNamesNormalized;
@@ -222,6 +265,90 @@ export function EntityPanel({
       }),
     [entries, module.entityKinds, module.entityRewriteProposals],
   );
+
+  // "Generate everything" (owner request, verbatim: "In the entities sidebar i
+  // would like to have a button 'generate everything' that just fills all
+  // generation gaps. All entity details, all images, encounters, maps in
+  // encounters... everything thats missing. Same way as its triggered in module
+  // generation."; docs/17 row 80). The target is the FULL automation target —
+  // every entity kind for details AND images, battle maps and mob portraits on —
+  // NOT the module's recorded `automationIntent`: that record is what the owner
+  // asked CREATION to automate, and a module created before the field existed
+  // (or created with only some kinds ticked) must still be finished here.
+  //
+  // The work is the EXISTING sweep through the EXISTING detectors, so this
+  // derivation is what the confirmation lists and exactly what the run does:
+  // additive (never regenerate what exists), no text rewrite, no scene created.
+  // The control's visibility is this derived answer — never a stored flag (it
+  // would go stale on the first hand edit, which is the state this exists for)
+  // and never a permanently disabled button: with nothing missing it renders a
+  // passive statement instead.
+  const fullTargetDeviation = useMemo(
+    () => deriveAutomationDeviation(module, artifacts, FULL_AUTOMATION_TARGET),
+    [module, artifacts],
+  );
+  const generateAllWork = deviationWorkCount(fullTargetDeviation);
+
+  /** True while ANY generation of this module's artifacts is in flight: the
+   * module's own parts pass, or this module's queued/active image or encounter
+   * map jobs (the sweep's own queues). */
+  const generateAllLive = useModuleQueuesBusy(module.id);
+
+  /**
+   * Why "Generate everything" is disabled right now (null = it is not) — the
+   * `saveBlockedReason` / `derivedActionBlockedReason` house convention: a
+   * disabled control states its honest reason in `title` instead of leaving the
+   * owner to guess. A module whose parts pass has not finished is named here as
+   * well, with the honest remedy (the text path) rather than a silent re-entry
+   * that the seam would refuse anyway.
+   */
+  function generateAllBlockedReason(): string | null {
+    if (generatingAll) return 'Generating…';
+    if (module.status === 'generating') {
+      return 'The module is generating right now — wait for it (or press Stop).';
+    }
+    if (generateAllLive) {
+      return 'A generation for this module is already running — wait for it (or press Stop all in the progress dock).';
+    }
+    if (module.status === 'failed') {
+      return `This module's parts pass did not finish (status: failed${module.errorMessage === '' ? '' : ` — ${module.errorMessage}`}) — fix the text first ("Fix module problems" or a hand edit); a module whose parts did not land has nothing to automate.`;
+    }
+    if (module.status !== 'ready') {
+      return `This module is not ready to finish (status: ${module.status}) — its parts pass has not completed, so there is nothing to automate yet.`;
+    }
+    return null;
+  }
+
+  const generateAllBlocked = generateAllBlockedReason();
+
+  /**
+   * The confirmed "Generate everything": the SAME pipeline as "Resume automatic
+   * module creation", with the full target instead of the recorded intent
+   * (`resumeEverything`) — the classification pass and the normalization pass
+   * first where the text needs them, then the sweep. Every refusal is toasted by
+   * the seam itself; this wrapper only reports the outcome, so a run is never
+   * silent. The module ROW's automation fields are never written, and the text
+   * is never touched.
+   */
+  async function runGenerateEverything(): Promise<void> {
+    if (generatingAll) return;
+    setGenerateAllOpen(false);
+    setGeneratingAll(true);
+    try {
+      const report = await resumeEverything(module.id, campaign);
+      if (report.stopped) {
+        toastInfo(
+          'Generation stopped — everything that was already generated is kept; run it again to fill what is left.',
+        );
+      } else if (report.empty && report.refused === null) {
+        toastInfo('Nothing is missing any more — the module already has every artifact, image and map.');
+      }
+    } catch (error) {
+      toastError('Could not generate everything for this module', error);
+    } finally {
+      setGeneratingAll(false);
+    }
+  }
 
   // Focused / unfocused groups (08 §M4-C), each in the current sort order.
   // Focus matches are case-insensitive — wiki-links resolve that way.
@@ -588,6 +715,37 @@ export function EntityPanel({
               <ImageIcon aria-hidden data-icon="inline-start" />
               Images
             </Button>
+            {generateAllWork > 0 ? (
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={generateAllBlocked !== null}
+                title={
+                  generateAllBlocked ??
+                  'Fill every generation gap of this module: entity details, images, encounter battle maps and mob portraits. Only what is missing is generated — the module text is never rewritten.'
+                }
+                data-testid="generate-everything"
+                onClick={() => {
+                  setGenerateAllOpen(true);
+                }}
+              >
+                <SparklesIcon aria-hidden data-icon="inline-start" />
+                {generatingAll
+                  ? 'Generating…'
+                  : `Generate everything (${String(generateAllWork)})`}
+              </Button>
+            ) : (
+              // Never a permanently disabled button (docs/17: a control that can
+              // never light up is indistinguishable from a broken one) — with
+              // nothing missing the control's place shows the state instead.
+              <span
+                className="text-[11px] text-muted-foreground"
+                title="Generate everything — this module has no artifact, image or map gap right now"
+                data-testid="generate-everything-none"
+              >
+                Nothing missing
+              </span>
+            )}
             {encountersNeedingMaps.length > 0 && (
               <Button
                 variant="outline"
@@ -958,6 +1116,50 @@ export function EntityPanel({
               }}
             >
               {sweeping ? 'Deleting…' : 'Delete orphans'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+      {/* "Generate everything" (docs/17 row 80): the confirmation names what is
+          MISSING — exactly the work the sweep would do, from the sweep's own
+          detectors — and states the boundary honestly: this fills artifacts
+          derived from text that already exists and never rewrites the text, so a
+          scene the prose stages without an encounter never becomes a fight
+          scene here (that is "Fix module problems" on the canvas, which repairs
+          the text). */}
+      <AlertDialog open={generateAllOpen} onOpenChange={setGenerateAllOpen}>
+        <AlertDialogContent data-testid="generate-everything-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Generate everything that is missing?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Only what is missing is generated, additively — nothing that already exists is
+              re-generated, re-detailed or overwritten. Entity details for every kind are batched
+              first, then images, encounter battle maps and mob portraits; the jobs run in the
+              background and appear in the progress dock, where Stop all ends them. The module TEXT
+              is never rewritten and no scene is created: a fight the prose stages without an
+              encounter of its own is the canvas&apos;s &quot;Fix module problems&quot; territory, not
+              this control.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul
+            className="list-disc space-y-1 pl-5 text-sm"
+            data-testid="generate-everything-list"
+          >
+            {deviationLines(fullTargetDeviation).map((line) => (
+              <li key={line} data-testid="generate-everything-line">
+                {line}
+              </li>
+            ))}
+          </ul>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="generate-everything-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="generate-everything-confirm"
+              onClick={() => {
+                void runGenerateEverything();
+              }}
+            >
+              Generate everything
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
