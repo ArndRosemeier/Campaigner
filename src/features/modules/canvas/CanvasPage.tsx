@@ -13,9 +13,11 @@ import {
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
   PencilIcon,
+  PlayIcon,
   SaveIcon,
   Trash2Icon,
   WandSparklesIcon,
+  WrenchIcon,
 } from 'lucide-react';
 
 import { modulePath, modulesPath } from '@/app/routes';
@@ -61,11 +63,20 @@ import {
   savedVersionsNoun,
   splitPartsDocument,
   type AnyArtifact,
+  type Campaign,
   type Module,
   type ModuleDocumentVersion,
   type ModuleVersionSource,
 } from '@/domain';
-import { cancelModuleGen, ModuleBusyError } from '@/llm/moduleGen';
+import { cancelModuleGen, ModuleBusyError, repairModuleEncounterFloor } from '@/llm/moduleGen';
+import { getModule } from '@/db/moduleRepo';
+import {
+  deriveAutomationDeviation,
+  deviationIsEmpty,
+  deviationLines,
+} from '@/features/modules/automation-deviation';
+import { deriveModuleProblems } from '@/features/modules/module-problems';
+import { resumeModuleAutomation } from '@/features/modules/resume-automation';
 import { enclosingBlockOf, refineModuleText } from '@/llm/canvasRefine';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModule, useModuleVersions } from '@/features/modules/hooks';
@@ -315,6 +326,19 @@ export function CanvasPage(): JSX.Element {
   const [peekArtifact, setPeekArtifact] = useState<AnyArtifact | null>(null);
   // "Clear all previous versions" (the Versions menu's destructive door).
   const [versionsClearOpen, setVersionsClearOpen] = useState(false);
+  // The TWO derived controls (docs/05 §Module canvas, docs/08 §M4-B-3): each
+  // opens a confirmation that names exactly what it will do, and each is
+  // USER-INVOKED only — nothing on this page runs them on render, on open or on
+  // a timer.
+  const [fixOpen, setFixOpen] = useState(false);
+  const [fixRunning, setFixRunning] = useState(false);
+  const [resumeOpen, setResumeOpen] = useState(false);
+  const [resumeRunning, setResumeRunning] = useState(false);
+  // Bumped whenever a ROW rewrite has to reach the editor (the repair, the
+  // resume's normalization): the editor is keyed by module + epoch, so a row
+  // rewrite remounts it from the fresh document instead of leaving a stale doc
+  // whose next Save would write the old text back over the repair.
+  const [docEpoch, setDocEpoch] = useState(0);
   // The DURABLE version stack (docs/18 §2.3 simple undo): live, so a snapshot
   // taken by any AI path (canvas, chat, generation, normalization) or a clear
   // shows up here without a reload. `undefined` = still loading.
@@ -411,6 +435,9 @@ export function CanvasPage(): JSX.Element {
     return <MissingCanvas message="This module does not exist (it may have been deleted)." campaignId={campaignId} />;
   }
   const currentModule: Module = module;
+  // Explicitly narrowed: the handlers below are hoisted function declarations,
+  // for which TS's control-flow narrowing of `campaign` does not survive.
+  const currentCampaign: Campaign = campaign;
   if (currentModule.spine === null || currentModule.spine.partPlan.length === 0 || initialDoc === null) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
@@ -431,6 +458,29 @@ export function CanvasPage(): JSX.Element {
 
   const busy = currentModule.status === 'generating';
   const pool = [...artifacts, ...globalArtifacts];
+  // The two controls' visibility, DERIVED per render on purpose: neither is a
+  // stored flag (a flag would go stale on the first hand edit — the exact state
+  // the resume exists for), and both answer their question from the row that is
+  // live right now. Cheap: a wiki-link scan over the module's text plus a walk
+  // of the campaign's artifacts.
+  //
+  // "Fix module problems" turns on only for a problem a TEXT REWRITE can fix
+  // (the encounter floor). The unresolved links it also detects are the READER's
+  // "not detailed yet" chips — entity work, which the owner placed outside this
+  // action ("This is about the module text, not entities"), so they are reported
+  // in the confirmation and never turn this control on.
+  const problemSet = deriveModuleProblems(currentModule, pool);
+  const fixableProblems = problemSet.repairable;
+  // "Resume automatic module creation" turns on when the live state falls short
+  // of the RECORDED intent (`automationIntent`) — entities by kind, images,
+  // battle maps, mob portraits. Legacy rows recorded no intent and stay inert.
+  const deviation = deriveAutomationDeviation(currentModule, artifacts);
+  const resumable = !deviationIsEmpty(deviation);
+  // Both actions rewrite the module's text/state ON DISK, so they are disabled
+  // while the editor holds unsaved edits (an honest reason, shown as the
+  // button's title), while a proposal is pending (a remount would drop it) and
+  // while the module is generating.
+  const derivedBlocked = derivedActionBlockedReason();
   const wholeProposal = suggestions.find((entry) => entry.wholePart);
   const aiBlocked = busy || refineInFlight || wholeProposal !== undefined;
   const viewBusy = busy || refineInFlight || suggestions.length > 0;
@@ -967,6 +1017,105 @@ export function CanvasPage(): JSX.Element {
     }
   }
 
+  /**
+   * Why the two derived controls are disabled right now (null = they are not).
+   * One function, so the button's `title` always tells the owner the honest
+   * reason instead of leaving a dead control to be guessed at.
+   */
+  function derivedActionBlockedReason(): string | null {
+    if (busy) return 'The module is generating right now — wait for it (or press Stop).';
+    if (refineInFlight) return 'A refine is running.';
+    if (suggestions.length > 0) return 'Accept or discard the pending proposal first.';
+    if (saving) return 'A save is in flight.';
+    if (dirty) {
+      return 'Save or discard your edits first — this action rewrites the module text on disk, not the editor copy.';
+    }
+    return null;
+  }
+
+  /**
+   * Re-seeds the page's document state from a module row rewritten OUTSIDE the
+   * editor ("Fix module problems" rewriting part text, the resume's name
+   * normalization). The editor owns the session's document, so without this the
+   * canvas would keep a stale doc whose next Save writes the OLD text back over
+   * the repair; the doc epoch remounts the editor from the fresh row.
+   */
+  function reseedFromRow(row: Module): void {
+    if (row.spine === null || row.spine.partPlan.length === 0) return;
+    const assembled = assembleModulePartsDocument({
+      partPlan: row.spine.partPlan,
+      parts: row.parts,
+    });
+    setInitialDoc(assembled.document);
+    setBaselineDoc(assembled.document);
+    setMountDoc(assembled.document);
+    setDocText(assembled.document);
+    setPreviewDoc(previewOpen ? assembled.document : null);
+    setLastReplacement(null);
+    setDocEpoch((epoch) => epoch + 1);
+  }
+
+  /**
+   * "Fix module problems" — rewrites ONLY the parts the confirmation named, for
+   * the check it named, through the EXISTING floor-repair seam (one attempt per
+   * part, a durable whole-document snapshot first, `toastError` if a repair
+   * still fails). The scope is passed from the confirmation; the seam re-derives
+   * it against the live row, so it can only ever rewrite LESS than promised.
+   */
+  async function handleFixProblems(): Promise<void> {
+    if (fixRunning) return;
+    setFixOpen(false);
+    setFixRunning(true);
+    try {
+      const outcome = await repairModuleEncounterFloor(
+        currentModule.id,
+        currentCampaign,
+        fixableProblems.map((problem) => problem.planIndex),
+      );
+      const row = await getModule(currentModule.id);
+      if (row !== undefined) reseedFromRow(row);
+      // Every other outcome is toasted by the seam itself (which parts it
+      // rewrote, which failed, and whether the floor is met). The one silent
+      // case is a scope that closed between the confirmation and the run: say so
+      // rather than appear to have done nothing.
+      if (outcome.attempted.length === 0 && outcome.skipped.length > 0) {
+        toastInfo(
+          'Nothing to fix any more — those parts already meet the encounter floor (the text changed since the confirmation opened). Nothing was rewritten.',
+        );
+      }
+    } catch (error) {
+      toastError('Could not fix the module problems', error);
+    } finally {
+      setFixRunning(false);
+    }
+  }
+
+  /**
+   * "Resume automatic module creation" — generates ONLY what the confirmation
+   * listed as missing, additively, through the existing post-generation sweep.
+   * The resume captures the stop epoch at entry, so "Stop all" during it stops
+   * it; every refusal reason is toasted by the seam itself.
+   */
+  async function handleResumeAutomation(): Promise<void> {
+    if (resumeRunning) return;
+    setResumeOpen(false);
+    setResumeRunning(true);
+    try {
+      const report = await resumeModuleAutomation(currentModule.id, currentCampaign);
+      const row = await getModule(currentModule.id);
+      if (row !== undefined) reseedFromRow(row);
+      if (report.empty && report.refused === null) {
+        toastInfo(
+          'Nothing is missing any more — the module already has everything creation was asked to automate.',
+        );
+      }
+    } catch (error) {
+      toastError('Could not resume automatic module creation', error);
+    } finally {
+      setResumeRunning(false);
+    }
+  }
+
   function togglePreview(): void {
     const next = !previewOpen;
     if (next) {
@@ -1077,6 +1226,36 @@ export function CanvasPage(): JSX.Element {
             <NotebookPenIcon aria-hidden data-icon="inline-start" />
             Rewrite part
           </Button>
+          {fixableProblems.length > 0 && (
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={derivedBlocked !== null || fixRunning}
+              title={derivedBlocked ?? 'Rewrite the parts whose text falls short of the encounter floor'}
+              data-testid="canvas-fix-problems"
+              onClick={() => {
+                setFixOpen(true);
+              }}
+            >
+              <WrenchIcon aria-hidden data-icon="inline-start" />
+              {fixRunning ? 'Fixing…' : 'Fix module problems'}
+            </Button>
+          )}
+          {resumable && (
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={derivedBlocked !== null || resumeRunning}
+              title={derivedBlocked ?? 'Generate only what creation was asked to automate and the module does not have yet'}
+              data-testid="canvas-resume-automation"
+              onClick={() => {
+                setResumeOpen(true);
+              }}
+            >
+              <PlayIcon aria-hidden data-icon="inline-start" />
+              {resumeRunning ? 'Resuming…' : 'Resume automatic module creation'}
+            </Button>
+          )}
           <DropdownMenu>
             <DropdownMenuTrigger
               render={
@@ -1312,7 +1491,7 @@ export function CanvasPage(): JSX.Element {
           ) : (
             <div className="flex min-h-0 flex-1 flex-col p-4">
               <CanvasEditor
-                key={currentModule.id}
+                key={`${currentModule.id}:${String(docEpoch)}`}
                 initialMarkdown={mountDoc ?? initialDoc}
                 artifacts={pool}
                 moduleId={currentModule.id}
@@ -1469,6 +1648,89 @@ export function CanvasPage(): JSX.Element {
           </AlertDialogContent>
         </AlertDialog>
       )}
+
+      {/* "Fix module problems": the confirmation NAMES what it will rewrite —
+          which parts, which check, and that the current text is snapshotted
+          first — plus the problems it detected and will NOT touch (they are
+          entity work, and they never turn this control on). */}
+      <AlertDialog open={fixOpen} onOpenChange={setFixOpen}>
+        <AlertDialogContent data-testid="canvas-fix-problems-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Fix module problems?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This rewrites the module TEXT only — no entities, no images. One attempt per part, and
+              the text as it is now is saved as a version first, so it can be restored from Versions.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2 text-sm">
+            <p className="font-medium">It will rewrite:</p>
+            <ul className="list-disc space-y-1 pl-5" data-testid="canvas-fix-problems-list">
+              {fixableProblems.map((problem) => (
+                <li key={`fix-${String(problem.planIndex)}`} data-testid="canvas-fix-problem">
+                  {problem.label}
+                </li>
+              ))}
+            </ul>
+            {problemSet.reported.length > 0 && (
+              <>
+                <p className="font-medium">Also detected, not fixed here (entity work):</p>
+                <ul className="list-disc space-y-1 pl-5" data-testid="canvas-fix-problems-reported">
+                  {problemSet.reported.map((problem) => (
+                    <li key={`reported-${problem.name}`} data-testid="canvas-fix-reported">
+                      {problem.label}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="canvas-fix-problems-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="canvas-fix-problems-confirm"
+              onClick={() => {
+                void handleFixProblems();
+              }}
+            >
+              Fix module problems
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* "Resume automatic module creation": the confirmation names what is
+          MISSING (derived from the recorded intent) and states that only that
+          is generated. */}
+      <AlertDialog open={resumeOpen} onOpenChange={setResumeOpen}>
+        <AlertDialogContent data-testid="canvas-resume-automation-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Resume automatic module creation?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Only what is missing is generated, additively — nothing that already exists is
+              re-generated, re-detailed or overwritten. The jobs run in the background and appear in
+              the progress dock; Stop all ends them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <ul className="list-disc space-y-1 pl-5 text-sm" data-testid="canvas-resume-automation-list">
+            {deviationLines(deviation).map((line) => (
+              <li key={line} data-testid="canvas-resume-automation-line">
+                {line}
+              </li>
+            ))}
+          </ul>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="canvas-resume-automation-cancel">Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="canvas-resume-automation-confirm"
+              onClick={() => {
+                void handleResumeAutomation();
+              }}
+            >
+              Resume automatic module creation
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={versionsClearOpen} onOpenChange={setVersionsClearOpen}>
         <AlertDialogContent data-testid="canvas-versions-clear-dialog">
