@@ -21,6 +21,7 @@ import {
   ARTIFACT_KINDS,
   ARTIFACT_KIND_LABELS,
   ARTIFACT_KIND_SINGULAR,
+  BULK_REMOVE_EXCLUDED_KINDS,
   type AnyArtifact,
   type Artifact,
   type ArtifactKind,
@@ -31,6 +32,7 @@ import {
 } from '@/domain';
 import { defaultArtifactName } from '@/domain';
 import { exportSingleArtifact } from '@/features/campaign/components/export-dialog';
+import { RemoveKindDialog } from '@/features/campaign/components/remove-kind-dialog';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
 import { ImageThumb } from '@/features/images/image-thumb';
 import {
@@ -140,6 +142,7 @@ export function CampaignTree({
   /** "Add old name as alias" (default on) so module wiki-links keep resolving. */
   const [renameKeepAlias, setRenameKeepAlias] = useState(true);
   const [deleteTarget, setDeleteTarget] = useState<AnyArtifact | null>(null);
+  const [removeKind, setRemoveKind] = useState<ArtifactKind | null>(null);
   const [publishTarget, setPublishTarget] = useState<Artifact | null>(null);
   const [adoptTarget, setAdoptTarget] = useState<GlobalArtifact | null>(null);
   const [closedGroups, setClosedGroups] = useState<ReadonlySet<string>>(new Set());
@@ -208,6 +211,22 @@ export function CampaignTree({
     [filtered, scopes.campaign],
   );
   const libraryRows = scopes.global ? filteredGlobals : [];
+
+  // Presence rule for the per-region "remove all" below: the region's own row
+  // SOURCE — campaign-level rows, scope toggle respected — counted WITHOUT
+  // the text filter, because the action is not filter-scoped (it removes
+  // every campaign-level row of that kind, and the confirm names how many).
+  // A filtered region whose rows are hidden still offers it; a region with no
+  // rows at all never does.
+  const plainKindCounts = useMemo(() => {
+    const counts = new Map<ArtifactKind, number>();
+    if (!scopes.campaign) return counts;
+    for (const artifact of artifacts) {
+      if (artifact.moduleId !== null) continue;
+      counts.set(artifact.kind, (counts.get(artifact.kind) ?? 0) + 1);
+    }
+    return counts;
+  }, [artifacts, scopes.campaign]);
 
   async function handleReanchor(artifact: Artifact): Promise<void> {
     try {
@@ -479,6 +498,29 @@ export function CampaignTree({
                 >
                   <PlusIcon aria-hidden />
                 </Button>
+                {/* Per-region "remove all" (05-UI §Left pane — Campaign tree):
+                    the middle rung of the destructive ladder. Presence rules:
+                    a kind with campaign-level rows of its own offers it (the
+                    count ignores the text FILTER — the action is not
+                    filter-scoped, and the confirm names the true total); the
+                    Party never does (`BULK_REMOVE_EXCLUDED_KINDS` — the seam
+                    refuses it too); the Library group (separate,
+                    `campaignId === null` rows) never does. */}
+                {!BULK_REMOVE_EXCLUDED_KINDS.includes(kind) &&
+                  (plainKindCounts.get(kind) ?? 0) > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="text-muted-foreground hover:text-destructive"
+                      data-testid={`remove-all-${kind}`}
+                      aria-label={`Remove all ${ARTIFACT_KIND_LABELS[kind]}`}
+                      onClick={() => {
+                        setRemoveKind(kind);
+                      }}
+                    >
+                      <Trash2Icon aria-hidden />
+                    </Button>
+                  )}
               </div>
               <CollapsibleContent>
                 {items.length === 0 ? (
@@ -627,8 +669,7 @@ export function CampaignTree({
         onOpenChange={(open) => {
           if (!open) setDeleteTarget(null);
         }}
-      >
-        {deleteTarget !== null && (
+      >        {deleteTarget !== null && (
           <AlertDialogContent>
             <AlertDialogHeader>
               <AlertDialogTitle>Delete “{deleteTarget.name}”?</AlertDialogTitle>
@@ -643,6 +684,17 @@ export function CampaignTree({
           </AlertDialogContent>
         )}
       </AlertDialog>
+
+      {removeKind !== null && (
+        <RemoveKindDialog
+          campaignId={campaignId}
+          kind={removeKind}
+          open
+          onOpenChange={(open) => {
+            if (!open) setRemoveKind(null);
+          }}
+        />
+      )}
     </aside>
   );
 }

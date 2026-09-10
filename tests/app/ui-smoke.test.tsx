@@ -205,12 +205,16 @@ describe('route smoke sweep', () => {
       { timeout: 5_000 },
     );
 
-    // Collapsing a section hides its rows but keeps the count badge.
-    await user.click(screen.getByRole('button', { name: /NPCs/ }));
+    // Collapsing a section hides its rows but keeps the count badge. The name
+    // is ANCHORED to the start: the region header now also carries a "Remove
+    // all NPCs" button (per-region remove-all, docs/18 §2.1), which a bare
+    // /NPCs/ matched as well.
+    const npcSection = screen.getByRole('button', { name: /^NPCs/ });
+    await user.click(npcSection);
     await waitFor(() => {
       expect(screen.queryByText('Gorim')).not.toBeInTheDocument();
     });
-    await user.click(screen.getByRole('button', { name: /NPCs/ }));
+    await user.click(npcSection);
     expect(await screen.findByText('Gorim')).toBeInTheDocument();
 
     // Hovering a row renders the summary tooltip (anchors the tooltip to the
