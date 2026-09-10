@@ -860,32 +860,37 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
 - Encounters produced here are module-owned (`moduleId`, M6-B semantics) and
   battle-ready via the module view's Run battle.
 
-## Conflict-kind vocabulary (shared with the Module Designer)
+## What an encounter IS (retired: the conflict-kind vocabulary)
 
-The module pipeline declares every planned encounter's scene kind on its
-entity record (`conflictKind` — 08 §M4-B), using this vocabulary — the shared
-scene-kind language between the module planner (which declares with it) and
-encounter production (which builds to it), so the plan and the artifact mean
-the same thing:
+**Retired 2026-09 (owner decision, docs/17 row 72).** The `conflictKind` enum
+(combat / hazard / chase / social / puzzle / exploration), the encounter `wants`
+pair and the declared-mix gate that consumed them are GONE from the module
+pipeline: the gate had no consumer beyond the declarations it demanded, so it
+measured the planner's wording rather than the module (08 §M4-B-1). There is no
+shared scene-kind enum any more — `ENCOUNTER_CONFLICT_KINDS` no longer exists —
+and this generator builds exactly one thing, so it needs no such vocabulary to
+aim at.
 
-- **combat** — the scene is decided by fighting (a Smith encounter proper).
-- **hazard** — the scene is decided against an environment, trap, or
-  affliction (no opposing want — the "want" pair names what the party risks
-  against what the hazard threatens).
-- **chase** — the scene is decided by pursuit or escape; counts with hazard
-  for the declared mix (hazard-or-chase).
-- **social** — the scene is decided by leverage, and someone must come out
-  worse (a negotiation that could end with everyone satisfied is not an
-  encounter — see 08 §M4-B incompatible wants).
-- **puzzle** — the scene is decided by deduction or mechanism; allowed,
-  never satisfies the gated mix.
-- **exploration** — the scene is decided by discovery under pressure;
-  allowed, never satisfies the gated mix.
+**An encounter is a FIGHT.** It is the scene the party resolves in initiative,
+on a battle map, against a monster roster with images — precisely what this
+generator produces (brief → layout → map → mob portraits). Anything that is not
+a fight belongs to the module as an `event` instead: a negotiation, a hazard, a
+puzzle, an investigation, a ritual, a chase. An event gets an illustration and
+nothing else — **no battle map, no monsters, no roster** — and it never enters
+this pipeline: `post-generation.ts` filters map and mob-portrait targets by
+`kind === 'encounter'` on the artifact, so a non-fight scene cannot be handed a
+map or a roster by the automation.
 
-The mix gate counts the planner's declarations (plus post-parts verdicts
-for prose-invented scenes), never a classifier over prose — the signal is
-authored. Single source of the enum: `ENCOUNTER_CONFLICT_KINDS`
-(`src/domain/module.ts`).
+What that means for the seam:
+- The module planner declares a scene as `kind: 'encounter'` only when a fight
+  happens, and the normalization prompt classifies by what the party DOES in the
+  scene, never by how dangerous it sounds (08 §M4-B-1).
+- Danger, risk and player agency are NOT the discriminator and are NOT lost: a
+  hazardous crossing or a tense negotiation is as dangerous as it ever was, it
+  is simply written as an `event`.
+- Conflict quality ("is the situation actually contested") is prompt discipline
+  in the module prompts, never a check here: a check over prose would need a
+  classifier guessing at a gate, which this repo forbids.
 
 ## Cost & latency (per encounter, indicative)
 
@@ -1592,9 +1597,10 @@ data model, run-engine threading, UI, docs); the gate at completion is
   wiki-links, never from generated artifacts. The floor's number is the
   MODULE's own recorded guardrail (docs/08 §Editable encounter floor): the
   owner may raise it per module in the New Module dialog's Advanced
-  disclosure, and may turn it off entirely — this seam's own vocabulary
-  (conflict kinds, the declared mix, encounter artifacts, maps and rosters)
-  is untouched by that setting.
+  disclosure, and may turn it off entirely — what an encounter IS (a fight:
+  encounter artifacts, maps and rosters — §What an encounter IS) is untouched
+  by that setting, and the retired conflict-kind/mix vocabulary no longer
+  exists in either seam (docs/17 row 72).
 - An uploaded-map encounter (no layout) behaves exactly as today.
 - Room keys & mob treasure (D9): a generated brief's room keys persist on
   the finalized layout rooms through packing rotation and the staging

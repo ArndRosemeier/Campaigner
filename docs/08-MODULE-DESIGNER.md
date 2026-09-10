@@ -179,6 +179,88 @@ it is a distinct two-pass flow; reuse only `chat()` from `openrouter.ts`.
 Progress/state live on the Module row itself (statuses above), observed via
 `useLiveQuery`; streaming tokens via the existing in-memory emitter pattern.
 
+> **Superseded 2026-09 (owner decision, docs/17 row 72):** the conflict-kind
+> vocabulary, the encounter `wants` pair and the declared-mix gate described
+> below are GONE — §M4-B-1 states what a scene is and what conflict is demanded
+> now, and why the mechanism was removed. The encounter FLOOR in this section is
+> unchanged, owner-ratified and still binding.
+
+### M4-B-1 — What a scene IS, and what conflict is demanded (supersedes the declaration machinery)
+
+**Retired (docs/17 row 72).** Every encounter record used to carry
+`wants: [a, b]` (exactly two mutually exclusive wants) and a `conflictKind`
+(combat | hazard | chase | social | puzzle | exploration), and generation gated
+the module's DECLARED MIX on them: at least one outright combat, one
+hazard-or-chase, one social conflict. The mechanism had no consumer — the only
+readers of the two fields were the validators that demanded them and the prompts
+that echoed them back. It counted the planner's own claims, so a spine that
+declared the right three words passed while shipping any prose at all, and it
+was never owner-ratified as a rule. Removed: `ENCOUNTER_CONFLICT_KINDS` /
+`EncounterConflictKind`, both record fields, `encounterMixReport` /
+`encounterMixMessage` / `assertEncounterMix` and the `>= 1` mix thresholds,
+`requireEncounterDeclarations` and the planner's canonical carry-over of the
+declarations, the "declares no conflict kind" / "declares N wants" failures, and
+every prompt clause about declaring kinds or mix (spine prompt, spine repair,
+parts prompt, floor repair, normalization). Stored rows that still carry the two
+keys are read through the non-strict schemas, which strip them — no migration
+ceremony, the owner's testing-phase stance (docs/17 row 72).
+
+**What a scene is, now stated in the prompts (never gated):**
+- An `encounter` is a FIGHT: initiative, a battle map with terrain, a monster
+  roster with images. Anything that is not a fight — a negotiation, a hazard, a
+  puzzle, an investigation, a ritual, a chase — is an `event`: an illustration,
+  and no battle map, no monsters, no roster. The artifact pipeline already
+  behaved this way (`post-generation.ts` generates maps and mob portraits only
+  for `kind: 'encounter'` artifacts, and offers illustrations per configured
+  kind, `event` included); the prompts now say it, and the normalization prompt
+  classifies by what the party DOES in the scene, never by how dangerous it
+  sounds.
+
+**What conflict is demanded of the SITUATION (prompt discipline):**
+- The situation is contested by someone — a faction, an NPC, a predator, a
+  rival party, or the place itself — and who carries that conflict may shift as
+  the module runs. Not every module has an antagonist; every module has a
+  conflict.
+- At least two VISIBLE approaches per situation, differing in cost or
+  consequence: nothing resolves on a single route, and no part is a passive wait
+  for the plot. Two rolls toward the same outcome are one approach.
+- The premise states how the situation can resolve, and every part equals what
+  the premise promises; a synopsis carries the situation, the actors, the
+  stakes and at least one concrete scene (richer synopsis text — no schema
+  change).
+- Factions carry an order of battle (wants, needs, preferred tactics, fears,
+  when it flees) and advance their own plan between parts whether or not the
+  party engages; every returnable location carries a line of what has changed.
+- An antagonist is visible from the first part — agents, aftereffects,
+  evidence — never held back for the finale.
+- Resolution shape, stated positively: every conflict ends with someone worse
+  off, a cost paid, or a new problem opened — the losing side is bought, beaten
+  or outmaneuvered, never talked out of its want; a compromise costs a party
+  something it needed; the resolution is built from what the party found and
+  did, never revealed as an unearned third option. Satisfaction is rationed to
+  the finale, at full price.
+- Persistence: what the party defeats, bypasses or changes stays changed and
+  stays visible when they return; nobody locates, captures or sets the party
+  back by fiat.
+- Anti-generic: every encounter and every location carries one concrete
+  particular that could not be swapped out unchanged (an opponent the party
+  cannot tell apart from the last one is meaningless combat); no NPC ally is
+  more intimately bound to the plot than the PCs are; opportunistic threats
+  advance or reveal a faction's plan; exploring is never punished as such.
+- The user's premise, tone, level range and size are FIXED INPUT: a structural
+  requirement is met by changing the structure (the part plan, which faction
+  carries the conflict, where it starts), never the premise.
+- No ratio demands, ever: no combat/non-combat percentage, no scenes-per-part
+  quota, no art-per-page — the same class of error as the retired mix gate.
+
+**Boundary (binding).** Only the FLOOR is machine-checked. "The story is not
+kumbaya", "the conflict is interesting", "the clue inference is fair" and "the
+pacing works" cannot be validated without a classifier guessing at prose, which
+this repo forbids (AGENTS rules 1 and 3). The demands above are prompt
+discipline plus the owner's read of the spine checkpoint. A pure check in the
+floor's family (for example counting links) may only be PROPOSED, never built
+silently.
+
 ### Pass 0 — Spine (one call, JSON)
 
 Input: concept, levelMin/Max, tone, sizeDial, campaign (name, system,
@@ -203,65 +285,66 @@ Prompt requirements (verbatim intent, exact wording up to implementer):
   the model MAY merge adjacent levels into one part when the story is better
   served** (so 1–10 → ~8–10 parts, 1–2 → 1–2 parts). Every level in the range
   must be covered by exactly one part, in order.
-- Think like an experienced GM designing for real players: prioritize fun,
-  meaningful choices, varied pacing, memorable moments, clear stakes, and
-  challenges that are exciting without feeling arbitrary or hopeless. Balance
-  combat, social, exploration, discovery, and recovery according to the story
-  and the group's enjoyment. Let the fiction and pacing decide the exact
-  structure rather than filling a quota mechanically.
+- Think like an experienced GM: prioritize meaningful choices, varied pacing,
+  clear stakes, and challenges that are exciting without feeling arbitrary. Let
+  the fiction and pacing decide the structure — never a quota.
 - REQUIREMENT — encounter floor: name at least **`perLevel` distinct
   encounters per level** of the module's range (levels X–Y → at least N
   distinct encounters across the module), with each part naming at least as
   many encounters as the levels its band covers. `perLevel` is the module's
   own recorded floor (default 1), never a hard-coded one — see §Editable
   encounter floor below; the same number renders this clause, the spine repair
-  retry, the per-part share and the gate. Every planned encounter declares its conflict
-  STRUCTURALLY on its entity record: exactly **two mutually exclusive wants**
-  (`wants: [a, b]` — if both sides could plausibly agree, it is not an
-  encounter yet) and one **conflict kind** (combat, hazard, chase, social,
-  puzzle, or exploration — the vocabulary shared with the Encounter Smith,
-  docs/11). Place encounters deliberately in the parts where they make
-  narrative and gameplay sense, vary their kind and intensity — the declared
-  mix MUST include at least one outright combat, one hazard-or-chase, and one
-  social conflict where someone must come out worse (the mix is GATED from
-  these declarations at generation time — counted, never classified — so
-  declare kinds honestly) — and reserve climactic encounters for an earned
-  escalation. Never pad the module with repetitive or disposable encounters.
-  The 4× ceiling stays advisory and never fails.
-- Structural conflict governs HOW scenes resolve, never what they feel like:
-  no tone, register, or subject matter is restricted — murder clown and
-  grieving revenge both clear every gate. The planner prompt carries banned
-  resolutions (generic + the module tone's entry, see the tone dial below):
-  prohibitions on outcomes, never on mood.
-- Introduce as many locations, NPCs, factions, notes, and encounters as the
-  story needs — you are not required to detail any of them in the spine. Give
-  every planned encounter a distinctive, stable name, declare it as
-  `kind: "encounter"` in `entities`, and reference it in prose with a
-  wiki-link (`[[Encounter Name]]`) so it can be resolved into an encounter
+  retry, the per-part share and the gate. An encounter is a fight (battle map
+  and monster roster), so a negotiation, hazard, puzzle, investigation or chase
+  is an `event` instead and does not count. Place encounters deliberately in
+  the parts where they make narrative and gameplay sense, and reserve climactic
+  encounters for an earned escalation. The 4× ceiling stays advisory and never
+  fails.
+- The conflict contract (§M4-B-1): the situation is contested and who carries
+  the conflict may shift; at least two VISIBLE approaches per situation
+  differing in cost or consequence; the premise states how the situation can
+  resolve and parts equal what the premise promises; factions carry an order of
+  battle and advance between parts; an antagonist is visible from the first
+  part; every conflict ends with someone worse off, a cost paid, or a new
+  problem opened; what the party changes persists and stays visible; one
+  concrete particular per encounter and location; no NPC ally more intimately
+  bound to the plot than the PCs; the user's premise is FIXED INPUT.
+- Structural conflict governs HOW scenes resolve, never what they feel like —
+  no tone, register or subject matter is restricted here (murder clown and
+  grieving revenge both clear every gate). A matching module tone adds its own
+  2–3 outcome limits (see the tone dial below); the universal demand is stated
+  positively, so an untoned module carries no ban list at all.
+- The three non-negotiables are restated LAST in the prompt, immediately before
+  the reply-format line (which stays last for structured output).
+- Introduce as many locations, NPCs, factions, notes, events and encounters as
+  the story needs — none of them must be detailed here. Give every scene a
+  distinctive, stable name, declare it with its kind in `entities`, and
+  wiki-link it in prose (`[[Scene Name]]`) so it can be resolved into its
   artifact later.
-- Reuse existing campaign entities by their exact names when they fit; do not
-  invent duplicates to fill out the encounter floor.
+- An `encounter` is a FIGHT (initiative, battle map, monster roster); anything
+  not a fight is an `event` (illustration, no map, no monsters, no roster).
+- Reuse existing campaign entities by their exact name; never duplicate one to
+  fill the encounter floor.
 
 Output zod `ModuleSpineSchema` (premise, themes, partPlan with all four
-fields; partPlan length 1..20) **plus `entities: [{ name, kind, wants,
-conflictKind }]`** — the model declares each entity's kind
-(npc/location/event/faction/note/encounter) when it invents the name, and
-every encounter ALSO declares its two mutually exclusive wants and one
-conflict kind; the record is stored as `module.entityKinds` and drives
-chip preselects and batch buckets (a missing/incomplete list fails the
-spine loudly — no client-side heuristic ever decides a type; an encounter
-missing its wants pair or kind fails the same way, never defaulted).
+fields; partPlan length 1..20) **plus `entities: [{ name, kind }]`** — the
+model declares each entity's kind (npc/location/event/faction/note/encounter)
+when it invents the name; the record is stored as `module.entityKinds` and
+drives chip preselects and batch buckets (a missing/incomplete list fails the
+spine loudly — no client-side heuristic ever decides a type). `absorbed` is
+filled by normalization, not by the model.
 `responseFormat:'json'`, same invalid-JSON-retry-once policy as personas;
 second failure → module `status:'failed'` + errorMessage (loud, per AGENTS
 rule 1).
 
-**Spine encounter gate:** after the spine saves, zero `kind: "encounter"`
-records (only when the module's floor is ENABLED — a disabled floor makes an
-encounter-free spine legitimate) OR a declared mix missing combat /
-hazard-or-chase / social trigger
-ONE repair retry on the escalated model (a corrected spine that declares
-encounters with wants + kinds); a second defective record fails the spine
-loudly — a zero-encounter or mix-broken draft never parks on the checkpoint.
+**Spine encounter gate (floor-only):** after the spine saves, zero
+`kind: "encounter"` records — only when the module's floor is ENABLED (a
+disabled floor makes an encounter-free spine legitimate, and the gate carries a
+loud invariant throw if it is ever reached with the floor off) — triggers ONE
+repair retry on the escalated model asking for the named encounters; a second
+encounter-free spine fails loudly, so a zero-encounter draft never parks on the
+checkpoint. The declared mix is not checked: it does not exist any more
+(§M4-B-1).
 
 **Checkpoint (default): the spine is shown for approval** — editable premise
 textarea and part-plan table (edit titles/synopses/bands, add/remove/reorder
@@ -287,34 +370,57 @@ For part i, the user message contains:
    `includePriorModules` is set) — cross-module continuity for the prose,
 7. writing instructions:
    - free-form GM-facing markdown, `##`/`###` headings allowed (H1 is added
-     by the reader), read-aloud text as blockquotes,
+     by the reader),
+   - each location opens with one or two sentences of sensory, present-tense
+     description, then a short GM block: who is here, what they want right now,
+     what they do if the party acts, where the leads point. Read-aloud text
+     stays inside blockquotes and stays that short (§M4-B-1),
+   - every situation offers at least two VISIBLE approaches differing in cost or
+     consequence — nothing resolves on a single route,
+   - every conflict ends with someone worse off, a cost paid, or a new problem
+     opened (the positively stated resolution shape — the frictionless
+     resolutions are named as its inverse, not as a ban list),
+   - what the party defeats, bypasses or changes is written into the fiction so
+     it stays visible; nothing they accomplished is undone off-screen and
+     nobody locates or captures them by fiat,
    - **wiki-link every proper noun** (NPCs, locations, factions, artifacts,
-     monsters) as `[[Name]]`, consistently reusing exact names from earlier
-     parts and the campaign index (the index is the module-creation pool — no
-     party member is ever listed, docs/17 row 69; a generated name that
-     happens to match a PC's becomes the module's OWN entity),
+     monsters) AND every scene (`[[Encounter Name]]` for a fight, `[[Event
+     Name]]` for anything else) as `[[Name]]`, consistently reusing exact names
+     from earlier parts and the campaign index (the index is the module-creation
+     pool — no party member is ever listed, docs/17 row 69; a generated name
+     that happens to match a PC's becomes the module's OWN entity),
    - target length by sizeDial: sketch ≈ 400–700 words, standard ≈ 800–1500,
      detailed ≈ 1500–2500 (soft targets, stated in the prompt),
    - REQUIREMENT — this part's encounter share (stated with the concrete
      number): name at least `perLevel × levels in the band` distinct
-     encounters, as `[[Encounter Name]]` wiki-links; encounters
-     named in other parts do not count toward this part's share. The item is
-     omitted entirely when the module's floor is disabled,
-    - the planner's declared encounters (names, opposed wants, kinds) ride
-      the prompt as the conflict brief: stage each in its declared kind,
-      keep the opposed wants irreconcilable inside the part (negotiation
-      may cost, never dissolve the opposition),
-    - REQUIREMENT — no clean resolution on non-finale parts: end with a
-      cost, a revelation, or a new pressure — never with every side
-      satisfied. Satisfaction is rationed to the finale, at full price
-      (every want met is paid for visibly),
+     encounters, as `[[Encounter Name]]` wiki-links, each a fight staged where
+     a battle map and a monster roster make sense; encounters named in other
+     parts do not count toward this part's share. The item is omitted entirely
+     when the module's floor is disabled,
+   - the finale is the one part where satisfaction is allowed, at full price
+     (every want met is paid for visibly); every other part ends with a cost, a
+     revelation, or a new pressure that carries into the next part,
+   - an antagonist's agents, aftereffects or evidence stay on the page; one
+     faction advances its own plan in the part whether or not the party engages
+     it, and a return to a known place opens with what has changed since,
+   - one concrete particular per encounter and location that could not be
+     swapped out unchanged; the PCs stay the protagonists (no NPC ally more
+     intimately bound to the plot than they are, no NPC solving what the party
+     came to solve),
+   - opportunistic threats (a predator, a patrol, a bandit group) advance or
+     reveal a faction's plan; exploring is never punished as such,
+   - the three non-negotiables are restated LAST in the writing instructions,
    - no stat blocks in the prose — mechanics belong to linked entities;
      reference DCs/checks inline where natural,
-   - REFERENCE encounters, never author them: the prose sets up the scene
-     and links it as `[[Encounter Name]]` — no monster roster with counts,
-     no tactics or terrain rules, no battle map or ASCII map (those belong
-     to the linked encounter artifact, designed by the encounter pipeline
-     from the prose mention),
+   - REFERENCE encounters, never author them: the prose sets up the FIGHT and
+     links it as `[[Encounter Name]]` — no monster roster with counts, no
+     tactics or terrain rules, no battle map or ASCII map (those belong to the
+     linked encounter artifact, designed by the encounter pipeline from the
+     prose mention),
+   - a scene that is NOT a fight is an event: linked as `[[Event Name]]` and
+     written whole in the prose (who is present, what they want, what they do if
+     the party acts, where the leads point) — an event gets an illustration and
+     no battle map, monsters or roster, because none is generated for it,
    - in encounter scenes, name ONLY the fixed participants (the boss, the
      duelist, the negotiator — `[[Halvar]]`): rank-and-file fighters stay
      anonymous and undescribed by name (no names, no counts), so the
@@ -331,18 +437,14 @@ of lowercased `extractWikiLinks(moduleDocumentText)` targets whose recorded
 kind is `"encounter"` against levelCount, allocated per band with
 `levelsInLevelBand`; bands `1`, `2-3`, `2–3`, `2 - 3` parse, unparseable = 1;
 reuse counts; the 4× ceiling stays advisory and never fails high;
-sizeDial-independent). The pass ALSO checks the declared mix on the records
-(`assertEncounterMix` — pure: the AUTHOR declarations, never a classifier;
-an encounter record with no declared kind fails loudly instead of
-defaulting). Each deficient part in the run's scope gets ONE
+sizeDial-independent). The pass checks NOTHING else: the declared mix and its
+validator are gone (§M4-B-1). Each deficient part in the run's scope gets ONE
 repair rewrite via the `rewritePart` engine (`generatePart`) on the
-escalated model — the repair carries the honor-declarations and
-no-clean-resolution rules (finale-aware: the closing part may satisfy at
-full price) — hand-edited parts are never touched (they fail loud
-instead) — then the pass re-normalizes and recounts. A full run owns the
-whole-module total AND the mix; a subset run (single-part rewrite/retry)
-owns only its parts' band shares (the mix is a whole-module property).
-Still short →
+escalated model — the repair carries the resolution shape (finale-aware: the
+closing part may satisfy at full price) — hand-edited parts are never touched
+(they fail loud instead) — then the pass re-normalizes and recounts. A full run
+owns the whole-module total; a subset run (single-part rewrite/retry) owns only
+its parts' band shares. Still short →
 module `status:'failed'` with an `errorMessage` naming the deficient part
 titles/bands + `toastError`; good parts are preserved (no rollback — parts
 are individually regenerable, and a failed repair restores the pre-repair
@@ -407,10 +509,10 @@ Rendered prose is derived from the numbers (`encounterCountWord`): `perLevel: 1`
 renders "at least one distinct encounter per level"; 2 renders "at least two
 distinct encounters per level" and "→ at least 4 distinct encounters across the
 module" for a 2-level range; the failure message states the doubled requirement
-("needs 4 distinct named encounters … needs 2, names 1"). At the default every
-rendered string and threshold is **byte-identical** to the pre-config behavior,
-held by the golden fixtures in `tests/fixtures/encounterGuardrails/` (captured
-by rendering the pre-change builders at 89e5d71).
+("needs 4 distinct named encounters … needs 2, names 1"). The failure message is held
+byte-identical by `floor-message-default.txt`; the prompt-clause fixtures
+(`spine-`/`parts-guardrail-default.txt`) are captured from the live builders and
+change deliberately when the prompt contract changes (docs/17 row 72).
 
 **Storage:** the choice is recorded ON THE MODULE ROW in
 `encounterFloorGuardrail` (additive optional, `null` = not recorded = today's
@@ -418,24 +520,28 @@ default floor), so the row is self-describing and no settings change can
 retroactively alter a module's rules. No Dexie version bump is needed (a
 nullable optional field parses old rows as `null`).
 
-Not configurable, by design: the encounter conflict-kind vocabulary, the
-declared-mix rule and the undeclared-kind check. The undeclared-kind rule is
-data integrity (no classifier may guess a kind), and the mix vocabulary is its
-own seam with its own arc.
+Not configurable, by design: nothing else about a scene. What a scene IS
+(encounter = fight, everything else = event) and how conflicted the situation
+must be are prompt discipline, not dials — a count can be gated, a story cannot
+(§M4-B-1 boundary).
 
-### Tone dial (banned resolutions)
+### Tone dial (outcome limits)
 
-`tone` stays free text (dialog input, may be `''`). When it names one of
-the canonical values below (case-insensitive), the planner prompt carries
-that value's banned resolutions IN ADDITION to the generic bans; an
-unlisted tone gets the generic bans only. Every ban prohibits an OUTCOME —
-never register, mood, or subject matter. The prose palette stays fully
-open: murder clown and grieving revenge both clear every gate.
+`tone` stays free text (dialog input, may be `''`). When it names one of the
+canonical values below (case-insensitive), the planner prompt renders that
+value's outcome limits AFTER the universal demand. Every limit names an
+OUTCOME — never register, mood, or subject matter. The prose palette stays
+fully open: murder clown and grieving revenge both clear every gate.
 
-Generic bans (every module): both sides leave with their wants fully met;
-the opposing side abandons its want because the party argues well or asks
-earnestly; a compromise that divides the difference with no cost to anyone;
-a hidden third option that satisfies every side at once.
+The universal demand is stated positively (docs/17 row 72): every conflict ends
+with someone worse off, a cost paid, or a new problem opened — the losing side
+is bought, beaten or outmaneuvered, never talked out of its want; a compromise
+costs a party something it needed; the resolution is built from what the party
+found and did, never revealed as an unearned third option. That sentence is the
+inverse of the four frictionless resolutions the old
+`MODULE_TONE_GENERIC_BANS` list forbade, so the list is gone: a matching tone
+carries its own 2–3 limits (the only hard bans the prompt carries, each with the
+reason attached), and an untoned module carries no ban list at all.
 
 - heroic: the confrontation is won by a bystander sacrifice the party never
   chose; the villain yields the moment the party demonstrates superior
@@ -456,9 +562,8 @@ a hidden third option that satisfies every side at once.
   price of the outcome lands on someone uninvolved instead of on whoever
   chose it.
 
-Single source: `MODULE_TONE_BANS` / `MODULE_TONE_GENERIC_BANS`
-(`src/llm/moduleGen.ts`) — the prompt renders from the constant, this
-section documents it.
+Single source: `MODULE_TONE_BANS` (`src/llm/moduleGen.ts`) — the prompt renders
+from the constant, this section documents it.
 
 ### Creation UI
 
