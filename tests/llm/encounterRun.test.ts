@@ -21,7 +21,7 @@ import {
   type Persona,
   type StatBlock,
 } from '@/domain';
-import { createModule as persistModule } from '@/db/moduleRepo';
+import { createModule as persistModule, deleteModule } from '@/db/moduleRepo';
 import { sha256Hex } from '@/lib/hash';
 import { runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
@@ -476,6 +476,145 @@ describe('encounter runs (M3-B)', () => {
     const resolved = await resolveMonsterEntryWithRepos(monsters[1]);
     expect(resolved.origin).toBe('NPC: Cultist');
     expect(resolved.statBlock?.hp).toBe(9);
+  });
+
+  /**
+   * Scope of inline-statblock materialization (the owner-reported "NPCs
+   * survived the deleted module" defect): `materializeMonsterNpc` created
+   * every materialized mob at CAMPAIGN level even when the run was placed in
+   * a module, so deleteModule's cascade — which re-lists owned rows through
+   * the `moduleId` index — neither counted nor disposed of them.
+   */
+  it('materializes inline-statblock mobs in the PLACEMENT module, and the cascade deletes them', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const module = await persistModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Sunless Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A bridge ambush for level 5',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+      placementModuleId: module.id,
+    });
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    const encounter = await getArtifact((await getRun(runId))?.resultArtifactId ?? '');
+    expect(encounter?.moduleId).toBe(module.id);
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+    // The cited monster stays a chunk-cited rulebook source; the uncited one
+    // materialized into an npc row the module OWNS.
+    expect(encounter.data.monsters[1]?.source.type).toBe('npc-ref');
+    const source = encounter.data.monsters[1]?.source;
+    if (source?.type !== 'npc-ref') throw new Error('not an npc-ref source');
+    const mob = await getArtifact(source.artifactId);
+    expect(mob?.kind).toBe('npc');
+    expect(mob?.moduleId).toBe(module.id);
+
+    await deleteModule(module.id, 'cascade');
+
+    expect(await getArtifact(encounter.id)).toBeUndefined();
+    expect(await getArtifact(source.artifactId)).toBeUndefined();
+  });
+
+  it('a campaign-level run still materializes campaign-scoped mobs (no regression)', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A bridge ambush for level 5',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    const encounter = await getArtifact((await getRun(runId))?.resultArtifactId ?? '');
+    expect(encounter?.moduleId).toBeNull();
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+    const source = encounter.data.monsters[1]?.source;
+    if (source?.type !== 'npc-ref') throw new Error('not an npc-ref source');
+    expect((await getArtifact(source.artifactId))?.moduleId).toBeNull();
+  });
+
+  it('reuse under placement prefers the module-owned twin and never re-scopes the row it links', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const module = await persistModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Sunless Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    // Two same-named rows across scopes: the module's own (identical entity)
+    // and a campaign-level twin. Placement must pick the owned one.
+    const owned = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Cultist',
+    });
+    const campaignLevel = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Cultist',
+    });
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    chatMock.mockResolvedValue({ text: JSON.stringify(DRAFT), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'A bridge ambush for level 5',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+      placementModuleId: module.id,
+    });
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    const encounter = await getArtifact((await getRun(runId))?.resultArtifactId ?? '');
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+    const source = encounter.data.monsters[1]?.source;
+    if (source?.type !== 'npc-ref') throw new Error('not an npc-ref source');
+    expect(source.artifactId).toBe(owned.id);
+    // Scope of both rows is untouched by the reuse (the owned twin received
+    // the inline block as a revisioned save; the campaign twin stayed put).
+    expect((await getArtifact(owned.id))?.moduleId).toBe(module.id);
+    expect((await getArtifact(campaignLevel.id))?.moduleId).toBeNull();
   });
 
   it('two runs citing the same chunk share ONE mob artifact (idempotent get-or-create per chunkId)', async () => {

@@ -106,12 +106,20 @@ mobs**, through four remaining holes:
   serves the fresh-draft creation *and* the in-place content run into an
   existing encounter — the remap becomes:
   - cited excerpt/roster chunk → `{ type: 'rulebook', chunkId }` (unchanged);
-  - inline stat block → **materialized**: a campaign-scoped `npc` artifact is
+  - inline stat block → **materialized**: an `npc` artifact is
     created through `createArtifact` (zod-parsed, `stampNewEntity`
     identity, revision-1 snapshot, revision meta `{source:'persona',
     runId}`) with `data.statBlock` set to the validated block, and the entry
     is written as `{ type: 'npc-ref', artifactId }`. The monster's tactical
     notes become the NPC's summary when non-empty; nothing else is invented.
+    **SUPERSEDED (scope)**: this bullet originally said *campaign-scoped*, and
+    `materializeMonsterNpc` really did create every materialized mob at
+    campaign level even when the run was placed in a module — a module's
+    inline-statblock mobs therefore survived `deleteModule` (docs/18 §2.1 seam
+    row "On-demand npc artifact …"). The row is now born in the RUN'S SCOPE:
+    `moduleId = input.placementModuleId` when the run was placed in a module,
+    campaign level otherwise; reuse prefers a same-named row the using module
+    already owns and NEVER re-scopes the row it links.
   - an NPC of the exact name (case-insensitive, trimmed) already in the
     campaign is **reused, not duplicated** (fix-01's one-entity-per-name
     rule): the entry links the existing artifact, and if that NPC has no

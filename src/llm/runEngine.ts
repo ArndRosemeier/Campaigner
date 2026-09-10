@@ -941,19 +941,33 @@ export async function rulebookSourceFor(
 
 /**
  * fix-02 (decision 1): materializes a Smith-drafted monster as a REAL NPC
- * artifact. The draft's zod-validated inline stat block becomes a
- * campaign-scoped `npc` artifact (created through the repo's
- * `createArtifact` — full schema parse, fresh `stampNewEntity` identity,
- * revision-1 snapshot, revision meta source 'persona' with the run id) and
- * the encounter entry links it via the existing `{type:'npc-ref'}` route, so
- * the mob resolves with a full block and seeds fighting tokens.
+ * artifact. The draft's zod-validated inline stat block becomes an `npc`
+ * artifact (created through the repo's `createArtifact` — full schema parse,
+ * fresh `stampNewEntity` identity, revision-1 snapshot, revision meta source
+ * 'persona' with the run id) and the encounter entry links it via the
+ * existing `{type:'npc-ref'}` route, so the mob resolves with a full block
+ * and seeds fighting tokens.
+ *
+ * SCOPE (supersedes fix-02's original "campaign-scoped" wording): the row is
+ * born in the run's PLACEMENT scope — `moduleId = input.placementModuleId`
+ * when the run was placed in a module, campaign level otherwise. The inline
+ * sites in this file (`runEncounterFinalize`, the generate finalize) carry
+ * placement the same way; omitting it here made every inline-statblock mob of
+ * a module-placed encounter campaign-scoped, so `deleteModule`'s cascade
+ * (which re-lists owned rows through the `moduleId` index) neither counted nor
+ * disposed of them — the owner's "NPCs survived the module" report.
  *
  * Reuse (fix-01's one-entity-per-name rule): an NPC of the exact name
  * (case-insensitive, trimmed) already in the campaign is linked instead of
  * duplicated — a statless twin receives the materialized block as a
  * revisioned persona save; an existing stat block is never overwritten.
- * Duplicate names inside one run collapse onto the first materialized
- * artifact via `cache`.
+ * Module placement prefers a same-named row the module ALREADY OWNS (that is
+ * the identical entity), so two same-named rows across scopes never make the
+ * choice arbitrary. Reuse NEVER re-scopes the row it links (`updateArtifact`
+ * pins scope fields anyway): an ownership change is a deliberate act through
+ * the `moveScope` family — a run must not silently adopt a row into (or out
+ * of) a module. Duplicate names inside one run collapse onto the first
+ * materialized artifact via `cache`.
  */
 async function materializeMonsterNpc(
   name: string,
@@ -971,9 +985,14 @@ async function materializeMonsterNpc(
   const cached = cache.get(key);
   if (cached !== undefined) return cached;
 
-  const existing = (await listArtifactsByCampaign(input.campaign.id)).find(
+  const placementModuleId = input.placementModuleId;
+  const namedRows = (await listArtifactsByCampaign(input.campaign.id)).filter(
     (artifact) => artifact.kind === 'npc' && artifact.name.trim().toLowerCase() === key,
   );
+  const existing =
+    (placementModuleId === undefined
+      ? undefined
+      : namedRows.find((artifact) => artifact.moduleId === placementModuleId)) ?? namedRows[0];
   if (existing !== undefined) {
     if (existing.kind !== 'npc') {
       throw new Error(`"${existing.name}" matched an NPC name lookup but is a ${existing.kind}`);
@@ -992,6 +1011,9 @@ async function materializeMonsterNpc(
   const created = await createArtifact(
     {
       campaignId: input.campaign.id,
+      // Placement scope, exactly like the encounter/generate create sites
+      // above: omitted (never `undefined`) for a campaign-level run.
+      ...(placementModuleId === undefined ? {} : { moduleId: placementModuleId }),
       kind: 'npc',
       name: trimmedName,
       summary: notes,
