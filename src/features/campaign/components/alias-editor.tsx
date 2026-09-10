@@ -12,6 +12,13 @@ export interface AliasEditorProps {
   aliases: readonly string[];
   onChange: (aliases: string[]) => void;
   placeholder?: string;
+  /** Read-only mode (a bestiary creature row: `features/campaign/creature-row-guard`).
+   * The aliases stay VISIBLE — they are part of the row's identity every
+   * wiki-link resolves through — but neither the add input nor the × buttons
+   * accept a change, and `readOnlyReason` says why in place. Never a silently
+   * dropped keystroke: the input is `readOnly` with the reason in its `title`. */
+  readOnly?: boolean;
+  readOnlyReason?: string | undefined;
 }
 
 /**
@@ -28,10 +35,13 @@ export function AliasEditor({
   aliases,
   onChange,
   placeholder = 'Add alias…',
+  readOnly = false,
+  readOnlyReason,
 }: AliasEditorProps) {
   const [draft, setDraft] = useState('');
 
   function commit(): void {
+    if (readOnly) return;
     const alias = draft.trim();
     setDraft('');
     if (alias === '') return;
@@ -43,6 +53,7 @@ export function AliasEditor({
   }
 
   function remove(alias: string): void {
+    if (readOnly) return;
     onChange(aliases.filter((existing) => existing !== alias));
   }
 
@@ -52,22 +63,27 @@ export function AliasEditor({
       {aliases.map((alias) => (
         <Badge key={alias} variant="secondary" className="gap-1">
           {alias}
-          <button
-            type="button"
-            aria-label={`Remove alias ${alias}`}
-            className="rounded-full outline-none hover:text-destructive"
-            onClick={() => {
-              remove(alias);
-            }}
-          >
-            <XIcon aria-hidden className="size-3" />
-          </button>
+          {!readOnly && (
+            <button
+              type="button"
+              aria-label={`Remove alias ${alias}`}
+              className="rounded-full outline-none hover:text-destructive"
+              onClick={() => {
+                remove(alias);
+              }}
+            >
+              <XIcon aria-hidden className="size-3" />
+            </button>
+          )}
         </Badge>
       ))}
       <Input
-        value={draft}
-        placeholder={placeholder}
+        value={readOnly ? '' : draft}
+        readOnly={readOnly}
+        title={readOnly ? readOnlyReason : undefined}
+        placeholder={readOnly ? 'Aliases are fixed for this row' : placeholder}
         aria-label="Add alias"
+        data-testid="alias-input"
         className="h-7 w-28 border-none bg-transparent px-1 text-xs shadow-none pointer-coarse:text-base dark:bg-transparent"
         onChange={(event) => {
           setDraft(event.target.value);

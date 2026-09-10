@@ -32,15 +32,26 @@ function TextAreaField({
   label,
   value,
   onChange,
+  readOnly = false,
+  readOnlyReason,
+  testId,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
+  /** Shared creature row: the field is readable but not editable, with the
+   * reason in `title` (never a silently dropped keystroke). */
+  readOnly?: boolean;
+  readOnlyReason?: string | undefined;
+  testId?: string;
 }) {
   return (
     <Field label={label}>
       <Textarea
         value={value}
+        readOnly={readOnly}
+        title={readOnly ? readOnlyReason : undefined}
+        data-testid={testId}
         className="min-h-[64px] text-sm pointer-coarse:text-base"
         onChange={(event) => {
           onChange(event.target.value);
@@ -58,9 +69,28 @@ export interface NpcFormProps {
   data: NpcArtifactData;
   onChange: (data: NpcArtifactData) => void;
   campaignSystem: GameSystem;
+  /** Bestiary creature row (`features/campaign/creature-row-guard`): appearance
+   * and personality are AUTHORED TEXT and are read-only there — the row is ONE
+   * shared row per rulebook creature whose content comes from the stat block
+   * and the portrait, so a hand-typed change would be refused by the write
+   * boundary anyway and the field says so instead of dropping keystrokes.
+   * Deliberately NOT the stat block: this prop never reaches it. */
+  authoredTextReadOnly?: boolean;
+  /** The reason each locked field carries in its own `title` (one per field, so
+   * neither says the other field's name). */
+  appearanceReadOnlyReason?: string | undefined;
+  personalityReadOnlyReason?: string | undefined;
 }
 
-export function NpcForm({ artifactName, data, onChange, campaignSystem }: NpcFormProps) {
+export function NpcForm({
+  artifactName,
+  data,
+  onChange,
+  campaignSystem,
+  authoredTextReadOnly = false,
+  appearanceReadOnlyReason,
+  personalityReadOnlyReason,
+}: NpcFormProps) {
   const [editingStatBlock, setEditingStatBlock] = useState(false);
 
   function patch(next: Partial<NpcArtifactData>): void {
@@ -76,6 +106,9 @@ export function NpcForm({ artifactName, data, onChange, campaignSystem }: NpcFor
       <TextAreaField
         label="Appearance"
         value={data.appearance}
+        readOnly={authoredTextReadOnly}
+        readOnlyReason={appearanceReadOnlyReason}
+        testId="npc-appearance"
         onChange={(appearance) => {
           patch({ appearance });
         }}
@@ -83,6 +116,9 @@ export function NpcForm({ artifactName, data, onChange, campaignSystem }: NpcFor
       <TextAreaField
         label="Personality"
         value={data.personality}
+        readOnly={authoredTextReadOnly}
+        readOnlyReason={personalityReadOnlyReason}
+        testId="npc-personality"
         onChange={(personality) => {
           patch({ personality });
         }}

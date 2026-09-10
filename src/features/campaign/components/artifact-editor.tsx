@@ -1,18 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { HistoryIcon, SparklesIcon, SwordsIcon } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
 
-import { artifactRepo } from '@/db';
+import { artifactRepo, campaignRepo } from '@/db';
 import { AdoptDialog } from '@/features/campaign/components/adopt-dialog';
 import { AliasEditor } from '@/features/campaign/components/alias-editor';
 import { adoptIntoCampaign, moveToModule } from '@/db/artifactRepo';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
-import { modulePath } from '@/app/routes';
+import { artifactPath, modulePath, modulesPath } from '@/app/routes';
 import { getModule } from '@/db/moduleRepo';
 import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
 import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
+import { generateSingleEntity } from '@/features/modules/entity-detail';
 import {
   ARTIFACT_KIND_SINGULAR,
   DUNGEON_MAP_PATH_LABELS,
@@ -74,11 +75,19 @@ import { TagEditor } from '@/features/campaign/components/tag-editor';
 import { useRevisions } from '@/features/campaign/hooks';
 import {
   clearCreatureRowAuthoredContent,
+  CreatureRowAuthoredWriteError,
   creatureLabel,
   creatureRowAiRefusal,
   creatureRowAuthoredFields,
+  creatureRowAuthoredInputReason,
+  creatureRowAuthoredReadOnlyNotice,
   creatureRowFieldList,
+  creatureRowNoModuleContextNotice,
+  creatureRowOwnNpcActionHint,
+  creatureRowOwnNpcActionLabel,
   isPollutedCreatureRow,
+  updateArtifactRefusingCreatureRowAuthored,
+  type CreatureRowAuthoredWriteField,
 } from '@/features/campaign/creature-row-guard';
 import { isMobArtifact } from '@/db/mobArtifacts';
 import { deepEqual } from '@/lib/equal';
@@ -197,9 +206,34 @@ export function ArtifactEditor({
   }, [draft]);
 
   /**
+   * Adopts a row the editor itself rewrote (the creature-row repair, or a
+   * refused creature-row authored write): the draft AND the last-saved snapshot
+   * move to the fresh row in one step, so the pending-autosave effect sees no
+   * difference and can never write the rejected text back. The artifact prop
+   * arriving from the parent's live query would do the same only while the
+   * draft has no unsaved edits — this closes the window where a half-typed edit
+   * coexists with a repair or a refusal.
+   */
+  const adoptExternalRow = useCallback((next: AnyArtifact): void => {
+    const serverDraft = draftFrom(next);
+    lastSavedRef.current = serverDraft;
+    setDraft(serverDraft);
+  }, []);
+
+  /**
    * Persists the draft if it differs from the last saved state. An empty
    * name (mid-edit) never reaches the DB — the previous name is kept until
    * a valid one is entered, so autosave can't fail on `z.string().min(1)`.
+   *
+   * THE WRITE BOUNDARY. Everything that persists from this file goes through
+   * `updateArtifactRefusingCreatureRowAuthored` — the autosave debounce, the
+   * form inputs, the blur flush and the unmount flush all funnel into this one
+   * function, so no per-input check has to be remembered. On a BESTIARY
+   * CREATURE row it refuses any authored change (summary, body,
+   * `data.appearance`, `data.personality`, name, aliases) with a loud toast and
+   * a byte-identical row, then puts the draft back on the row's real values so
+   * the surface cannot keep showing a rejected edit. Images, tags, relations
+   * and scope are untouched by that refusal and keep saving.
    */
   const saveDraft = useCallback(async (): Promise<boolean> => {
     const current = draftRef.current;
@@ -208,7 +242,7 @@ export function ArtifactEditor({
     if (deepEqual(effective, lastSavedRef.current)) return false;
     setSaveState('saving');
     try {
-      await artifactRepo.updateArtifact(artifact.id, draftPatch(effective));
+      await updateArtifactRefusingCreatureRowAuthored(artifact.id, draftPatch(effective));
       // ROSTER hook (monster-source picker commit path): the saved roster
       // may now cite another module's npc/mob artifact — a second-module use
       // promotes it to shared campaign ownership. Idempotent: already-shared
@@ -221,10 +255,18 @@ export function ArtifactEditor({
       return true;
     } catch (error) {
       setSaveState('error');
-      toastError('Autosave failed', error);
+      if (error instanceof CreatureRowAuthoredWriteError) {
+        adoptExternalRow(error.row);
+      }
+      toastError(
+        error instanceof CreatureRowAuthoredWriteError
+          ? `Refused to save authored text on the bestiary creature ${creatureLabel(error.row.name)}`
+          : 'Autosave failed',
+        error,
+      );
       return false;
     }
-  }, [artifact.id, artifact.moduleId]);
+  }, [artifact.id, artifact.moduleId, adoptExternalRow]);
 
   // Debounced autosave: every draft change restarts the 800 ms timer.
   useEffect(() => {
@@ -266,24 +308,27 @@ export function ArtifactEditor({
   }
 
   /**
-   * Adopts a row the editor itself rewrote (the creature-row repair): the
-   * draft AND the last-saved snapshot move to the fresh row in one step, so
-   * the pending-autosave effect sees no difference and can never write the
-   * cleared text back. The artifact prop arriving from the parent's live query
-   * would do the same only while the draft has no unsaved edits — this closes
-   * the window where a half-typed edit coexists with a repair.
+   * The one draft mutator every authored input writes through — the header
+   * fields, the AliasEditor, `MarkdownBody` and the kind forms all land here,
+   * and every change is persisted only by `saveDraft`'s guarded write above.
    */
-  const adoptExternalRow = useCallback((next: AnyArtifact): void => {
-    const serverDraft = draftFrom(next);
-    lastSavedRef.current = serverDraft;
-    setDraft(serverDraft);
-  }, []);
-
   function patchDraft(patch: Partial<CommonDraft>): void {
     setDraft((previous) => ({ ...previous, ...patch }));
   }
 
   const peekArtifact = campaignArtifacts.find((entry) => entry.id === peekedId);
+
+  /**
+   * A BESTIARY CREATURE row (`creature-row-guard`) is not an authoring slot:
+   * its name, aliases, summary, body, appearance and personality are rendered
+   * READ-ONLY with the reason IN PLACE (the notice below the header, plus each
+   * locked input's `title`), images and the portrait stay editable, and the
+   * save funnel refuses an authored change even if one reaches the draft by
+   * another route.
+   */
+  const creatureRow = isMobArtifact(artifact);
+  const creatureRowReadOnlyReason = (field: CreatureRowAuthoredWriteField): string | undefined =>
+    creatureRow ? creatureRowAuthoredInputReason(artifact.name, field) : undefined;
 
   return (
     <div className="flex h-full flex-col overflow-hidden" data-testid="artifact-editor">
@@ -293,6 +338,8 @@ export function ArtifactEditor({
             value={draft.name}
             aria-label="Artifact name"
             data-testid="artifact-name"
+            readOnly={creatureRow}
+            title={creatureRowReadOnlyReason('name')}
             className="h-8 border-none bg-transparent px-1 text-lg font-semibold shadow-none dark:bg-transparent"
             onChange={(event) => {
               patchDraft({ name: event.target.value });
@@ -345,6 +392,8 @@ export function ArtifactEditor({
         <AliasEditor
           name={draft.name}
           aliases={draft.aliases}
+          readOnly={creatureRow}
+          readOnlyReason={creatureRowReadOnlyReason('aliases')}
           onChange={(aliases) => {
             patchDraft({ aliases });
           }}
@@ -353,11 +402,17 @@ export function ArtifactEditor({
           value={draft.summary}
           placeholder="Summary (one line, shown in the tree tooltip)…"
           aria-label="Summary"
+          data-testid="artifact-summary"
+          readOnly={creatureRow}
+          title={creatureRowReadOnlyReason('summary')}
           className="h-7 border-none bg-transparent px-1 text-xs shadow-none pointer-coarse:text-base dark:bg-transparent"
           onChange={(event) => {
             patchDraft({ summary: event.target.value });
           }}
         />
+        {creatureRow && (
+          <CreatureRowAuthoringNotice artifact={artifact} campaignId={campaignId} />
+        )}
       </header>
 
       <ScrollArea className="min-h-0 flex-1">
@@ -367,6 +422,9 @@ export function ArtifactEditor({
             onChange={(body) => {
               patchDraft({ body });
             }}
+            readOnly={creatureRow}
+            readOnlyReason={creatureRowReadOnlyReason('body')}
+            textareaTestId="artifact-body"
             artifacts={campaignArtifacts}
             onOpenArtifact={(target) => {
               setPeekedId(target.id);
@@ -393,6 +451,9 @@ export function ArtifactEditor({
                   setDraft((previous) => ({ ...previous, kind: 'npc', data }));
                 }}
                 campaignSystem={campaignSystem}
+                authoredTextReadOnly={creatureRow}
+                appearanceReadOnlyReason={creatureRowReadOnlyReason('appearance')}
+                personalityReadOnlyReason={creatureRowReadOnlyReason('personality')}
               />
             )}
             {draft.kind === 'location' && (
@@ -578,6 +639,115 @@ function ContentAiSection({
         <SparklesIcon aria-hidden data-icon="inline-start" />
         {!hasContent ? 'Generate with AI' : armed ? 'Overwrite content — confirm?' : 'Regenerate with AI'}
       </Button>
+    </div>
+  );
+}
+
+/**
+ * The in-place reason a bestiary creature row's authored inputs are READ-ONLY,
+ * plus the CONSTRUCTIVE EXIT: where this row belongs to a module, an explicit
+ * action creates that module's OWN npc of this name through the existing
+ * per-entity generation chain (`features/modules/entity-detail.generateSingleEntity`,
+ * the 1-target entity batch — never a new creation seam) and opens it, because
+ * that artifact is where authored detail belongs.
+ *
+ * Where there is NO module context (a campaign-scoped creature row: the common
+ * case, and the only scope the workspace editor can be in — the workspace URL
+ * carries no module) the surface does NOT dead-end and does NOT pretend: it
+ * names the route that creates such an NPC (Modules → the module → its entity
+ * panel → Generate) and offers the plain navigation there, which is a
+ * navigation and is labelled as one.
+ *
+ * Copy comes from `creature-row-guard` (the ONE source of the rule); this
+ * component only decides where it is rendered and what the click does.
+ */
+function CreatureRowAuthoringNotice({
+  artifact,
+  campaignId,
+}: {
+  artifact: AnyArtifact;
+  campaignId: Id;
+}): JSX.Element {
+  const navigate = useNavigate();
+  const [running, setRunning] = useState(false);
+  const moduleId = artifact.moduleId;
+  const name = artifact.name;
+  const label = creatureLabel(name);
+
+  async function createOwnNpc(moduleId: Id): Promise<void> {
+    setRunning(true);
+    try {
+      // Read at click time (never a render-time subscription): the campaign is
+      // only needed for the run itself.
+      const campaign = await campaignRepo.getCampaign(campaignId);
+      if (campaign === undefined) {
+        toastError(
+          `Could not create this module's own NPC ${label}`,
+          new Error('the campaign no longer exists'),
+        );
+        return;
+      }
+      const result = await generateSingleEntity({ campaign, kind: 'npc', name, moduleId });
+      if (!result.ok) {
+        toastError(`Could not create this module's own NPC ${label}`, result.error);
+        return;
+      }
+      toastSuccess(`Created this module's own NPC ${label} — that artifact is where authored detail belongs`);
+      navigate(artifactPath(campaignId, result.artifactId));
+    } catch (error) {
+      toastError(`Could not create this module's own NPC ${label}`, error);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-md border border-amber-300/40 bg-amber-500/5 p-2"
+      data-testid="creature-row-authoring-notice"
+    >
+      <p className="text-xs text-muted-foreground" data-testid="creature-row-readonly-copy">
+        {creatureRowAuthoredReadOnlyNotice(name)}
+      </p>
+      {moduleId === null ? (
+        <p className="text-xs text-muted-foreground" data-testid="creature-row-no-module-context">
+          {creatureRowNoModuleContextNotice(name)}
+        </p>
+      ) : null}
+      <div className="flex flex-wrap items-center gap-2">
+        {moduleId === null ? (
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="creature-row-open-modules"
+            title={creatureRowNoModuleContextNotice(name)}
+            onClick={() => {
+              navigate(modulesPath(campaignId));
+            }}
+          >
+            Open the modules list
+          </Button>
+        ) : (
+          <>
+            <Button
+              variant="outline"
+              size="sm"
+              data-testid="creature-row-create-own-npc"
+              disabled={running}
+              title={running ? 'Generating this module’s own NPC — see the Runs tab' : undefined}
+              onClick={() => {
+                void createOwnNpc(moduleId);
+              }}
+            >
+              <SparklesIcon aria-hidden data-icon="inline-start" />
+              {running ? 'Creating…' : creatureRowOwnNpcActionLabel(name)}
+            </Button>
+            <span className="text-[11px] text-muted-foreground">
+              {creatureRowOwnNpcActionHint(name)}
+            </span>
+          </>
+        )}
+      </div>
     </div>
   );
 }

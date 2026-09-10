@@ -20,6 +20,12 @@ export interface MarkdownBodyProps {
   hideHeading?: boolean | undefined;
   /** Optional test id on the textarea (the part editor hosts sibling inputs). */
   textareaTestId?: string | undefined;
+  /** Read-only mode (a bestiary creature row:
+   * `features/campaign/creature-row-guard`): the body stays readable and the
+   * Preview toggle keeps working, but the textarea refuses keystrokes at the
+   * DOM and says why in `title` — never a silently dropped keystroke. */
+  readOnly?: boolean | undefined;
+  readOnlyReason?: string | undefined;
 }
 
 /**
@@ -35,6 +41,8 @@ export function MarkdownBody({
   onTextareaBlur,
   hideHeading = false,
   textareaTestId,
+  readOnly = false,
+  readOnlyReason,
 }: MarkdownBodyProps) {
   const [previewing, setPreviewing] = useState(false);
 
@@ -65,11 +73,15 @@ export function MarkdownBody({
       ) : (
         <Textarea
           value={value}
+          readOnly={readOnly}
+          title={readOnly ? readOnlyReason : undefined}
           onChange={(event) => {
             onChange(event.target.value);
           }}
           onBlur={onTextareaBlur}
-          placeholder="Free-text content, written in Markdown…"
+          placeholder={
+            readOnly ? 'The body is fixed for this shared creature row — see the note above.' : 'Free-text content, written in Markdown…'
+          }
           data-testid={textareaTestId}
           className="min-h-[240px] font-mono text-sm pointer-coarse:text-base"
         />

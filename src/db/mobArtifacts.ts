@@ -141,10 +141,14 @@ export async function countMobArtifactsCitedByModule(moduleId: Id): Promise<Modu
  * Global portrait read-through (docs/11 D5 amendment, slice A): pass
  * `options.fillCoverFromCache` to clone the cached canonical cover into a
  * still cover-less artifact AFTER the transaction commits (the clone is the
- * attach seam's own transaction — it cannot nest inside this one). Default
- * callers (runEngine finalize, battleSeed retro-fill, bestiary spawn) pass
- * nothing and behave byte-identically: the read-through is opt-in for the
- * portrait batch only, so generation stays manual-only everywhere else.
+ * attach seam's own transaction — it cannot nest inside this one). The flag is
+ * a cache-seam API with NO production caller any more: the portrait batch
+ * stopped passing it when its confirm became count-honest (a pre-cloned cover
+ * made a visible hole report as existing art, docs/17 row 83), and a cover-less
+ * citation is now a normal job whose canonical branch clones the populated slot
+ * — so the only remaining caller is the clone-seam test
+ * (`tests/features/mob-portrait-regen.test.ts`), and every production caller
+ * behaves as if the option did not exist.
  */
 export async function getOrCreateMobArtifact(
   campaignId: Id,
