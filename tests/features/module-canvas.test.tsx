@@ -21,7 +21,7 @@ import {
   splitPartsDocument,
 } from '@/domain/modulePartsDocument';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
 import {
   canvasLedgerKey,
@@ -288,7 +288,12 @@ describe('canvas whole-document editor', () => {
     // there — the assertion above would not be vacuous, it would fail).
     expect(toastSuccessMock).toHaveBeenCalledWith('Module saved');
     expect(toastErrorMock).not.toHaveBeenCalled();
-    const row = await getModule(world.moduleId);
+    // actDrained (docs/08 §Race cures): the save's row write re-fires the page's
+    // live queries and re-renders CanvasPage; a bare read here handed that
+    // re-render the event loop and leaked an act warning ("An update to
+    // CanvasPage inside a test was not wrapped in act(...)") in a concurrent
+    // full-suite gate.
+    const row = await actDrained(() => getModule(world.moduleId));
     expect(row?.parts.find((entry) => entry.planIndex === 0)?.markdown).toBe(
       `XXX${PART_0_TEXT.slice(3)}`,
     );
