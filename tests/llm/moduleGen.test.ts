@@ -475,6 +475,11 @@ describe('runParts', () => {
     // The tag decides the artifact pipeline: an ENCOUNTER gets a map and a
     // monster roster, an EVENT gets an illustration and nothing else.
     expect(prompt).toContain('tag it by what the scene is FOR');
+    // The scene's HEADING carries the wiki-link, because the encounter floor
+    // counts canonical `[[encounter]]` LINKS in the part text — a scene named
+    // only in passing prose would be invisible to it.
+    expect(prompt).toContain('### [[Scene Name]] — ENCOUNTER');
+    expect(prompt).toContain('Link every scene this way');
     // The "what changed" test is carried VERBATIM (the brief requires it).
     expect(prompt).toContain(
       'If you could honestly write "the situation is the same, now what do you do", this is not a scene — rewrite it or delete it.',
