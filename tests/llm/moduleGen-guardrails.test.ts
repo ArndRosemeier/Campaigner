@@ -105,25 +105,12 @@ const SPINE_PLAN = [
   },
 ];
 
-const MIX_SPINE = [
-  {
-    name: 'Ember Trial',
-    kind: 'encounter',
-    wants: ['seize the bell', 'keep the bell silent'],
-    conflictKind: 'combat',
-  },
-  {
-    name: 'Flood Trial',
-    kind: 'encounter',
-    wants: ['cross the drowned nave', 'hold the waters back'],
-    conflictKind: 'hazard',
-  },
-  {
-    name: 'Bell Trial',
-    kind: 'encounter',
-    wants: ['name the guilty warden', 'protect the wardens name'],
-    conflictKind: 'social',
-  },
+/** The spine's entity list. Name + kind only: the retired wants/conflict-kind
+ * declarations and the mix gate they fed are gone (08 §M4-B, superseded). */
+const SPINE_ENTITIES = [
+  { name: 'Ember Trial', kind: 'encounter' },
+  { name: 'Flood Trial', kind: 'encounter' },
+  { name: 'Bell Trial', kind: 'encounter' },
 ];
 
 function spineReply(entities: unknown[]): string {
@@ -164,12 +151,12 @@ async function seedModule(
 function queueSpineReplies(): void {
   chatMock
     .mockResolvedValueOnce({
-      text: spineReply(MIX_SPINE),
+      text: spineReply(SPINE_ENTITIES),
       modelUsed: 'test-model',
       fallback: null,
     })
     .mockResolvedValueOnce({
-      text: normReply(MIX_SPINE.map((entry) => ({ name: entry.name, kind: entry.kind }))),
+      text: normReply(SPINE_ENTITIES.map((entry) => ({ name: entry.name, kind: entry.kind }))),
       modelUsed: 'test-model',
       fallback: null,
     });
@@ -195,15 +182,10 @@ function promptContaining(anchor: string): string {
   return '';
 }
 
-const encounter = (
-  name: string,
-  conflictKind: ModuleEntityKind['conflictKind'],
-): ModuleEntityKind => ({
+const encounter = (name: string): ModuleEntityKind => ({
   name,
   kind: 'encounter',
   absorbed: [],
-  wants: ['a', 'b'],
-  conflictKind,
 });
 
 /** An in-memory module with a 2-part plan and given part marks (no DB). */
@@ -334,7 +316,7 @@ describe('custom floor: the number drives the prompt AND the gate', () => {
     const module = floorModule({
       floor: { enabled: true, perLevel: 2 },
       parts: [{ planIndex: 0, names: ['Ember Trial'] }],
-      entityKinds: [encounter('Ember Trial', 'combat')],
+      entityKinds: [encounter('Ember Trial')],
     });
     const report = countModuleEncounters(module);
     expect(report.required).toBe(4);
@@ -376,8 +358,10 @@ describe('custom floor: the number drives the prompt AND the gate', () => {
 
     const prompt = promptText(0);
     expect(prompt).not.toContain('REQUIREMENT — encounter floor');
-    // The declaration rules that shared the bullet survive a disabled floor.
-    expect(prompt).toContain('Every planned encounter declares its conflict STRUCTURALLY');
+    // The placement rules that shared the bullet survive a disabled floor.
+    expect(prompt).toContain('Place encounters deliberately');
+    // The retired declaration rules are gone from every floor setting.
+    expect(prompt).not.toContain('Every planned encounter declares its conflict STRUCTURALLY');
 
     // The gate: no required total, no deficient band, and the assertion passes
     // for an encounter-free module.

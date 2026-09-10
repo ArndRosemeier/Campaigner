@@ -41,8 +41,8 @@ afterEach(() => {
 describe('SpineCheckpoint entities line (fix-01)', () => {
   it('lists canonical entities with their kinds and absorbed variants', () => {
     const entityKinds: ModuleEntityKind[] = [
-      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'], wants: [], conflictKind: null },
-      { name: 'The Undercroft', kind: 'location', absorbed: [], wants: [], conflictKind: null },
+      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'] },
+      { name: 'The Undercroft', kind: 'location', absorbed: [] },
     ];
     render(
       <SpineCheckpoint

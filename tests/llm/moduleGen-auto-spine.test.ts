@@ -72,9 +72,9 @@ const AUTO_SPINE = {
     },
   ],
   entities: [
-    { name: 'The Midnight Inquiry', kind: 'encounter', wants: ['ask the midnight question', 'withhold the price'], conflictKind: 'combat' },
-    { name: 'The Stair Toll', kind: 'encounter', wants: ['climb the stair', 'count every step aloud'], conflictKind: 'hazard' },
-    { name: 'The Debtors Audience', kind: 'encounter', wants: ['name the debt', 'deny the debt'], conflictKind: 'social' },
+    { name: 'The Midnight Inquiry', kind: 'encounter' },
+    { name: 'The Stair Toll', kind: 'encounter' },
+    { name: 'The Debtors Audience', kind: 'encounter' },
   ],
 };
 
@@ -99,19 +99,11 @@ function partMarkdown(marker: string, ...encounters: string[]): ChatResult {
   };
 }
 
-/** Declared wants + kind per prose encounter (08 §M4-B: post-parts verdicts
- * author declarations; the trio covers the gated mix). */
-const AUTO_DECLARATIONS: Record<string, { wants: string[]; conflictKind: string }> = {
-  'First Trial': { wants: ['ask the first question', 'withhold the price'], conflictKind: 'combat' },
-  'Second Trial': { wants: ['climb the stair', 'count the steps aloud'], conflictKind: 'hazard' },
-  'Third Trial': { wants: ['name the debt', 'deny the debt'], conflictKind: 'social' },
-};
-
 /** Normalization reply mapping prose encounters to declared encounters. */
 function encounterNormalization(...names: string[]): ChatResult {
   return {
     text: JSON.stringify({
-      entities: names.map((name) => ({ name, canonical: name, kind: 'encounter', ...AUTO_DECLARATIONS[name] })),
+      entities: names.map((name) => ({ name, canonical: name, kind: 'encounter' })),
     }),
     modelUsed: 'test-model',
     fallback: null,

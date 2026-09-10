@@ -97,7 +97,7 @@ describe('canonicalEntityRecords', () => {
       entry('Halmund', 'Halmund', 'npc'),
     ]);
     expect(records).toEqual([
-      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'], wants: [], conflictKind: null },
+      { name: 'Halmund', kind: 'npc', absorbed: ['Guard Halmund', 'Halmunds'] },
     ]);
   });
 
@@ -115,7 +115,7 @@ describe('canonicalEntityRecords', () => {
       entry('Segele', 'Seggel', 'location'),
     ]);
     expect(records).toEqual([
-      { name: 'Seggel', kind: 'location', absorbed: ['the Seggel', 'Segele'], wants: [], conflictKind: null },
+      { name: 'Seggel', kind: 'location', absorbed: ['the Seggel', 'Segele'] },
     ]);
   });
 
@@ -125,8 +125,8 @@ describe('canonicalEntityRecords', () => {
       entry('Seggel', 'Seggel', 'location'),
     ]);
     expect(records).toEqual([
-      { name: 'Halmund', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
-      { name: 'Seggel', kind: 'location', absorbed: [], wants: [], conflictKind: null },
+      { name: 'Halmund', kind: 'npc', absorbed: [] },
+      { name: 'Seggel', kind: 'location', absorbed: [] },
     ]);
   });
 });
@@ -156,7 +156,7 @@ describe('validateNormalizationReply — incremental vocabulary', () => {
 
 describe('unclassifiedEntityNames', () => {
   const records = [
-    { name: 'Halmund', kind: 'npc' as const, absorbed: ['Halmunds'], wants: [], conflictKind: null },
+    { name: 'Halmund', kind: 'npc' as const, absorbed: ['Halmunds'] },
   ];
 
   it('names the text names that have no record — exact, case-insensitive, in order', () => {
@@ -206,7 +206,7 @@ describe('unclassifiedEntityNames', () => {
 
 describe('mergeNewEntityRecords', () => {
   const existing = [
-    { name: 'Halmund', kind: 'npc' as const, absorbed: [], wants: [], conflictKind: null },
+    { name: 'Halmund', kind: 'npc' as const, absorbed: [] },
   ];
 
   it('appends only new canonicals and leaves existing records byte-identical', () => {
@@ -214,8 +214,6 @@ describe('mergeNewEntityRecords', () => {
       name: 'Kael',
       kind: 'npc' as const,
       absorbed: [],
-      wants: [],
-      conflictKind: null,
     };
     const merged = mergeNewEntityRecords(existing, [added]);
     expect(merged).toEqual([...existing, added]);
@@ -224,9 +222,9 @@ describe('mergeNewEntityRecords', () => {
 
   it('never duplicates a canonical the module already records (case-insensitively)', () => {
     const merged = mergeNewEntityRecords(existing, [
-      { name: 'halmund', kind: 'faction', absorbed: [], wants: [], conflictKind: null },
-      { name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
-      { name: '  ', kind: 'note', absorbed: [], wants: [], conflictKind: null },
+      { name: 'halmund', kind: 'faction', absorbed: [] },
+      { name: 'Kael', kind: 'npc', absorbed: [] },
+      { name: '  ', kind: 'note', absorbed: [] },
     ]);
     expect(merged).toHaveLength(2);
     expect(merged[0]).toBe(existing[0]);
@@ -238,12 +236,10 @@ describe('mergeNewEntityRecords', () => {
       name: `Entity ${String(index)}`,
       kind: 'npc' as const,
       absorbed: [],
-      wants: [],
-      conflictKind: null,
     }));
     expect(() =>
       mergeNewEntityRecords(full, [
-        { name: 'One Too Many', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
+        { name: 'One Too Many', kind: 'npc', absorbed: [] },
       ]),
     ).toThrow(/past the 400-record cap/);
   });

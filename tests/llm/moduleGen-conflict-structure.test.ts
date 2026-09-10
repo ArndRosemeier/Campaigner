@@ -1,22 +1,22 @@
 import 'fake-indexeddb/auto';
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
-import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
+import { patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import {
   createModule,
+  moduleEntityKindSchema,
   moduleSpineSchema,
   type Campaign,
   type Id,
-  type ModuleEntityKind,
 } from '@/domain';
-import { canonicalEntityRecords, validateNormalizationReply } from '@/domain/entityNormalization';
+import { normalizationReplySchema } from '@/domain/entityNormalization';
 import {
-  assertEncounterMix,
-  encounterMixMessage,
-  encounterMixReport,
   MODULE_TONE_BANS,
   MODULE_TONE_GENERIC_BANS,
   parseSpineEntities,
@@ -28,10 +28,21 @@ import { clearDatabase } from '../db/helpers';
 import type { ChatResult } from '@/llm/openrouter';
 
 /**
- * Structural conflict requirements (08-MODULE-DESIGNER M4-B): incompatible
- * wants + declared conflict kinds on encounter records, the declared mix
- * gate, part-writer enforcement (wants/kind/no-clean-resolution), and tone
- * dial teeth (banned resolutions, never register/mood).
+ * The conflict contract after the retirement (08-MODULE-DESIGNER M4-B,
+ * superseded; docs/17): the conflict-kind vocabulary, the mutually exclusive
+ * `wants` pair, the declared mix and their gates are GONE. What a scene IS —
+ * a fight (an encounter) or anything else (an `event`) — is the planner's
+ * contract, and whether the story's conflict is real is prompt discipline: a
+ * check over prose would need a classifier guessing at a gate, which this repo
+ * forbids.
+ *
+ * What this file holds: the REMOVAL (nothing of the vocabulary is reachable,
+ * and a plan whose encounters declare nothing generates cleanly), the
+ * LEGACY-ROW tolerance (stored keys are stripped, never a parse failure, no
+ * migration), and the SURVIVORS that were never part of the mix machinery —
+ * the tone dial's banned resolutions and the finale's rationed satisfaction.
+ * The encounter FLOOR has its own suite
+ * (`moduleGen-encounter-floor.test.ts`) and is untouched.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -76,156 +87,98 @@ function spineRaw(entities: unknown[]): string {
   });
 }
 
-const COMBAT = { name: 'Ember Trial', kind: 'encounter', wants: ['seize the bell', 'keep the bell silent'], conflictKind: 'combat' };
-const HAZARD = { name: 'Flood Trial', kind: 'encounter', wants: ['cross the drowned nave', 'hold the waters back'], conflictKind: 'hazard' };
-const SOCIAL = { name: 'Bell Trial', kind: 'encounter', wants: ['name the guilty warden', 'protect the wardens name'], conflictKind: 'social' };
+/** A normalization reply mapping every listed name to itself. */
+function normReply(entries: { name: string; kind: string }[]): ChatResult {
+  return {
+    text: JSON.stringify({
+      entities: entries.map((entry) => ({
+        name: entry.name,
+        canonical: entry.name,
+        kind: entry.kind,
+      })),
+    }),
+    modelUsed: 'test-model',
+    fallback: null,
+  };
+}
 
-describe('parseSpineEntities declarations', () => {
-  it('parses encounter records carrying wants + kind', () => {
-    expect(parseSpineEntities(spineRaw([COMBAT]))).toEqual([
-      { ...COMBAT, absorbed: [] },
-    ]);
+/** The entity list of a plan that declares KINDS ONLY — no wants, no conflict
+ * kind (the shape the retired declaration validation used to reject loudly). */
+const PLAIN_ENTITIES = [
+  { name: 'Warden Bellamy', kind: 'npc' },
+  { name: 'Ember Trial', kind: 'encounter' },
+];
+
+describe('the retired mix machinery is unreachable', () => {
+  /** The generation path that used to carry the vocabulary, the declaration
+   * option and the mix counters. A grep-level pin: an import would otherwise
+   * linger and quietly re-open the seam. */
+  const SOURCES = [
+    'src/domain/module.ts',
+    'src/domain/entityNormalization.ts',
+    'src/llm/moduleGen.ts',
+    'src/features/modules/post-generation.ts',
+  ];
+  const RETIRED = [
+    /conflictKind\s*:/,
+    /\bwants\s*:/,
+    /ENCOUNTER_CONFLICT_KINDS/,
+    /EncounterConflictKind/,
+    /encounterMix/,
+    /requireEncounterDeclarations/,
+    /assertEncounterMix/,
+  ];
+
+  it('is not exported by the domain or the generator any more', async () => {
+    const domain = await import('@/domain');
+    const gen = await import('@/llm/moduleGen');
+    expect(Object.keys(domain)).not.toContain('ENCOUNTER_CONFLICT_KINDS');
+    for (const gone of ['assertEncounterMix', 'encounterMixReport', 'encounterMixMessage']) {
+      expect(Object.keys(gen)).not.toContain(gone);
+    }
+    // The record shape itself is name + kind + absorbed, nothing else.
+    expect(
+      Object.keys(moduleEntityKindSchema.parse({ name: 'Ember Trial', kind: 'encounter' })),
+    ).toEqual(['name', 'kind', 'absorbed']);
   });
 
-  it('parses non-encounters without declarations (defaults, never required)', () => {
-    expect(parseSpineEntities(spineRaw([{ name: 'Kael', kind: 'npc' }]))).toEqual([
-      { name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
-    ]);
+  it('names no conflict-kind / wants / mix identifier in the generation path', () => {
+    for (const file of SOURCES) {
+      const text = readFileSync(join(process.cwd(), file), 'utf8');
+      for (const pattern of RETIRED) {
+        expect(text, `${file} still matches ${String(pattern)}`).not.toMatch(pattern);
+      }
+    }
   });
 
-  it.each([
-    ['missing wants', { name: 'Ember Trial', kind: 'encounter', conflictKind: 'combat' }],
-    ['one want', { ...COMBAT, wants: ['seize the bell'] }],
-    ['three wants', { ...COMBAT, wants: ['a', 'b', 'c'] }],
-    ['blank wants', { ...COMBAT, wants: ['seize the bell', '  '] }],
-    ['missing kind', { ...COMBAT, conflictKind: null }],
-    ['foreign kind', { ...COMBAT, conflictKind: 'negotiation' }],
-  ])('rejects an encounter with %s (loud, never defaulted)', (_label, entity) => {
-    // Shape violations throw at the zod boundary; declaration gaps throw
-    // the declaration error — both loud, both on the retry-once path.
-    expect(() => parseSpineEntities(spineRaw([entity]))).toThrow(/declaration|too big|invalid option/i);
-  });
-});
+  it('strips the retired keys from stored records and normalization replies (no migration)', () => {
+    // The owner's testing-phase stance: no migration ceremony. These rows are
+    // simply READ through a non-strict schema, which drops the removed keys —
+    // an existing module is never a parse failure.
+    const record = moduleEntityKindSchema.parse({
+      name: 'Ember Trial',
+      kind: 'encounter',
+      wants: ['seize the bell', 'keep the bell silent'],
+      conflictKind: 'combat',
+    });
+    expect(record).toEqual({ name: 'Ember Trial', kind: 'encounter', absorbed: [] });
 
-describe('encounterMixReport / assertEncounterMix', () => {
-  const record = (name: string, conflictKind: ModuleEntityKind['conflictKind']): ModuleEntityKind => ({
-    name,
-    kind: 'encounter',
-    absorbed: [],
-    wants: ['a', 'b'],
-    conflictKind,
-  });
-
-  it('passes on combat + hazard-or-chase + social declarations', () => {
-    const kinds = [record('A', 'combat'), record('B', 'hazard'), record('C', 'social')];
-    expect(encounterMixReport(kinds).missing).toEqual([]);
-    expect(() => { assertEncounterMix(kinds); }).not.toThrow();
-  });
-
-  it('counts chase as hazard-or-chase', () => {
-    const kinds = [record('A', 'combat'), record('B', 'chase'), record('C', 'social')];
-    expect(encounterMixReport(kinds).missing).toEqual([]);
-  });
-
-  it('puzzle/exploration never satisfy the mix', () => {
-    const kinds = [record('A', 'puzzle'), record('B', 'exploration')];
-    expect(encounterMixReport(kinds).missing).toEqual(['combat', 'hazard-or-chase', 'social']);
-    expect(() => { assertEncounterMix(kinds); }).toThrow(/combat.*hazard-or-chase.*social/);
-  });
-
-  it('names the missing groups', () => {
-    const kinds = [record('A', 'combat'), record('B', 'combat')];
-    expect(() => { assertEncounterMix(kinds); }).toThrow(/hazard-or-chase/);
-    expect(() => { assertEncounterMix(kinds); }).toThrow(/social/);
-  });
-
-  it('fails LOUD on undeclared kinds (never a default)', () => {
-    const kinds = [record('A', 'combat'), record('Mystery', null)];
-    const report = encounterMixReport(kinds);
-    expect(report.undeclared).toEqual(['Mystery']);
-    expect(() => { assertEncounterMix(kinds); }).toThrow(/no declared conflict kind.*Mystery/);
-    expect(encounterMixMessage(report)).toContain('Mystery');
-  });
-
-  it('ignores non-encounter records', () => {
-    const kinds: ModuleEntityKind[] = [
-      { name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
-    ];
-    expect(encounterMixReport(kinds).total).toBe(0);
-  });
-});
-
-describe('canonicalEntityRecords declarations', () => {
-  it('keeps the verdicts own declarations on the canonical record', () => {
-    const records = canonicalEntityRecords([
-      { name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter', wants: ['a', 'b'], conflictKind: 'combat' },
-    ]);
-    expect(records).toEqual([
-      { name: 'Ember Trial', kind: 'encounter', absorbed: [], wants: ['a', 'b'], conflictKind: 'combat' },
-    ]);
-  });
-
-  it('carries planner declarations over name-only verdicts (spine path)', () => {
-    const records = canonicalEntityRecords(
-      [{ name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter' }],
-      [{ name: 'Ember Trial', kind: 'encounter', absorbed: [], wants: ['a', 'b'], conflictKind: 'combat' }],
-    );
-    expect(records[0]?.wants).toEqual(['a', 'b']);
-    expect(records[0]?.conflictKind).toBe('combat');
-  });
-
-  it('matches carry-over through absorbed variants and prefers fresh verdicts', () => {
-    const records = canonicalEntityRecords(
-      [{ name: 'The Ember', canonical: 'Ember Trial', kind: 'encounter', wants: ['x', 'y'], conflictKind: 'chase' }],
-      [{ name: 'Ember Trial', kind: 'encounter', absorbed: ['The Ember'], wants: ['stale', 'stale'], conflictKind: 'combat' }],
-    );
-    expect(records[0]?.wants).toEqual(['x', 'y']);
-    expect(records[0]?.conflictKind).toBe('chase');
-  });
-
-  it('leaves records without any declaration source empty (gate fails loud downstream)', () => {
-    const records = canonicalEntityRecords([
-      { name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter' },
-    ]);
-    expect(records[0]?.wants).toEqual([]);
-    expect(records[0]?.conflictKind).toBeNull();
-  });
-});
-
-describe('validateNormalizationReply encounter declarations', () => {
-  it('is opt-in: name-only encounter verdicts pass by default (spine path)', () => {
-    const violations = validateNormalizationReply(
-      ['Ember Trial'],
-      [{ name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter' }],
-      [],
-    );
-    expect(violations).toEqual([]);
-  });
-
-  it('requires wants + kind for encounters when enabled (post-parts path)', () => {
-    const missing = validateNormalizationReply(
-      ['Ember Trial'],
-      [{ name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter' }],
-      [],
-      { requireEncounterDeclarations: true },
-    );
-    expect(missing.some((v) => v.includes('2 wants') || v.includes('wants'))).toBe(true);
-    expect(missing.some((v) => v.includes('conflict kind'))).toBe(true);
-    const declared = validateNormalizationReply(
-      ['Ember Trial'],
-      [{ name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter', wants: ['a', 'b'], conflictKind: 'combat' }],
-      [],
-      { requireEncounterDeclarations: true },
-    );
-    expect(declared).toEqual([]);
-    // Non-encounters are never asked for declarations.
-    const npc = validateNormalizationReply(
-      ['Kael'],
-      [{ name: 'Kael', canonical: 'Kael', kind: 'npc' }],
-      [],
-      { requireEncounterDeclarations: true },
-    );
-    expect(npc).toEqual([]);
+    const reply = normalizationReplySchema.parse({
+      entities: [
+        {
+          name: 'Ember Trial',
+          canonical: 'Ember Trial',
+          kind: 'encounter',
+          wants: ['a', 'b'],
+          conflictKind: 'combat',
+        },
+      ],
+    });
+    expect(reply.entities[0]).toEqual({
+      name: 'Ember Trial',
+      canonical: 'Ember Trial',
+      kind: 'encounter',
+    });
   });
 });
 
@@ -250,7 +203,7 @@ describe('tone dial teeth', () => {
   });
 });
 
-describe('structural conflict gates (mocked chat)', () => {
+describe('a plan that declares no kinds and no wants (mocked chat)', () => {
   beforeEach(async () => {
     await clearDatabase();
     await updateSettings({ defaultChatModel: TEST_MODEL });
@@ -260,32 +213,28 @@ describe('structural conflict gates (mocked chat)', () => {
     chatMock.mockReset();
   });
 
-  async function seedModule(levelMin = 1, levelMax = 2, tone = ''): Promise<{ campaign: Campaign; moduleId: Id }> {
+  async function seedModule(
+    levelMin = 1,
+    levelMax = 2,
+    tone = '',
+  ): Promise<{ campaign: Campaign; moduleId: Id }> {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
-    const saved = await saveModule(createModule({
-      campaignId: campaign.id,
-      title: 'The Drowned Bell',
-      concept: 'A harbor bell that rings by itself beneath the water.',
-      levelMin,
-      levelMax,
-      tone,
-      sizeDial: 'standard',
-    }));
+    const saved = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Bell',
+        concept: 'A harbor bell that rings by itself beneath the water.',
+        levelMin,
+        levelMax,
+        tone,
+        sizeDial: 'standard',
+      }),
+    );
     return { campaign, moduleId: saved.id };
   }
 
   function spineReply(entities: unknown[]): ChatResult {
     return { text: spineRaw(entities), modelUsed: 'test-model', fallback: null };
-  }
-
-  function normReply(entries: { name: string; kind: string }[]): ChatResult {
-    return {
-      text: JSON.stringify({
-        entities: entries.map((entry) => ({ name: entry.name, canonical: entry.name, kind: entry.kind })),
-      }),
-      modelUsed: 'test-model',
-      fallback: null,
-    };
   }
 
   function userPromptOf(callIndex: number): string {
@@ -294,87 +243,19 @@ describe('structural conflict gates (mocked chat)', () => {
     return typeof content === 'string' ? content : '';
   }
 
-  it('spine gate: well-formed declarations with a broken mix → one repair naming the mix, then draft', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const brokenMix = [
-      { ...COMBAT },
-      { name: 'Second Skirmish', kind: 'encounter', wants: ['hold the gate', 'storm the gate'], conflictKind: 'combat' },
-    ];
-    chatMock
-      .mockResolvedValueOnce(spineReply(brokenMix))
-      .mockResolvedValueOnce(normReply([
-        { name: 'Ember Trial', kind: 'encounter' },
-        { name: 'Second Skirmish', kind: 'encounter' },
-      ]))
-      .mockResolvedValueOnce(spineReply([{ name: 'Warden Bellamy', kind: 'npc' }, COMBAT, HAZARD, SOCIAL]))
-      .mockResolvedValueOnce(normReply([
-        { name: 'Warden Bellamy', kind: 'npc' },
-        { name: 'Ember Trial', kind: 'encounter' },
-        { name: 'Flood Trial', kind: 'encounter' },
-        { name: 'Bell Trial', kind: 'encounter' },
-      ]));
+  /** Part prose with wiki-links to the given names (floor-satisfying text). */
+  function prose(marker: string, ...names: string[]): ChatResult {
+    return {
+      text:
+        `${marker}: The tide withdraws and the streets shine wet under a pale sun. `.repeat(4) +
+        (names.length === 0 ? '' : ` Trials: ${names.map((name) => `[[${name}]]`).join(', ')}.`),
+      modelUsed: 'test-model',
+      fallback: null,
+    };
+  }
 
-    const finished = await runSpine(moduleId, campaign);
-
-    expect(chatMock).toHaveBeenCalledTimes(4); // exactly one repair retry
-    expect(finished.status).toBe('draft');
-    expect(finished.entityKinds.filter((entry) => entry.kind === 'encounter')).toHaveLength(3);
-    // The repair nudge names the mix defect (authored kinds, honestly counted).
-    const repairPrompt = chatMock.mock.calls[2]?.[0].at(-1)?.content;
-    expect(typeof repairPrompt === 'string' && repairPrompt).toContain('hazard-or-chase');
-  }, 20000);
-
-  it('spine gate: mix still broken after the repair → loud spine failure', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const brokenMix = [
-      { ...COMBAT },
-      { name: 'Second Skirmish', kind: 'encounter', wants: ['hold the gate', 'storm the gate'], conflictKind: 'combat' },
-    ];
-    chatMock
-      .mockResolvedValueOnce(spineReply(brokenMix))
-      .mockResolvedValueOnce(normReply([
-        { name: 'Ember Trial', kind: 'encounter' },
-        { name: 'Second Skirmish', kind: 'encounter' },
-      ]))
-      .mockResolvedValueOnce(spineReply(brokenMix))
-      .mockResolvedValueOnce(normReply([
-        { name: 'Ember Trial', kind: 'encounter' },
-        { name: 'Second Skirmish', kind: 'encounter' },
-      ]));
-
-    await expect(runSpine(moduleId, campaign)).rejects.toThrow(/mix not met/);
-
-    expect((await getModule(moduleId))?.status).toBe('failed');
-    expect(chatMock).toHaveBeenCalledTimes(4); // exactly one repair retry
-  }, 20000);
-
-  it('spine prompt carries incompatible-wants, declarations, and the tone bans', async () => {
-    const { campaign, moduleId } = await seedModule(1, 2, 'horror');
-    chatMock
-      .mockResolvedValueOnce(spineReply([{ name: 'Warden Bellamy', kind: 'npc' }, COMBAT, HAZARD, SOCIAL]))
-      .mockResolvedValueOnce(normReply([
-        { name: 'Warden Bellamy', kind: 'npc' },
-        { name: 'Ember Trial', kind: 'encounter' },
-        { name: 'Flood Trial', kind: 'encounter' },
-        { name: 'Bell Trial', kind: 'encounter' },
-      ]));
-
-    await runSpine(moduleId, campaign);
-
-    const prompt = userPromptOf(0);
-    expect(prompt).toContain('mutually exclusive wants');
-    expect(prompt).toContain('conflict kind');
-    expect(prompt).toContain('the mix is gated from these declarations');
-    // Generic bans always render; the module tone's bans render on match.
-    for (const ban of MODULE_TONE_GENERIC_BANS) expect(prompt).toContain(ban);
-    for (const ban of MODULE_TONE_BANS.horror ?? []) expect(prompt).toContain(ban);
-  }, 20000);
-
-  it('part prompt carries declared wants/kind plus no-clean-resolution (finale rationed)', async () => {
-    const { campaign, moduleId } = await seedModule();
-    const saved = await getModule(moduleId);
-    if (saved === undefined) throw new Error('seed module is missing');
-    await patchModule(moduleId, {
+  function twoPartSpine(moduleId: Id): Promise<unknown> {
+    return patchModule(moduleId, {
       spine: moduleSpineSchema.parse({
         premise: 'A harbor town raised its bell.',
         themes: [],
@@ -383,30 +264,88 @@ describe('structural conflict gates (mocked chat)', () => {
           { title: 'The Drowned Cathedral', levelBand: '2', synopsis: 'Descent.', levelUpTrigger: 'Falls.' },
         ],
       }),
-      // Planner declarations the prose must honor.
       entityKinds: [
-        { name: 'Ember Trial', kind: 'encounter', absorbed: [], wants: ['seize the bell', 'keep the bell silent'], conflictKind: 'combat' },
-        { name: 'Bell Trial', kind: 'encounter', absorbed: [], wants: ['name the guilty warden', 'protect the wardens name'], conflictKind: 'social' },
+        { name: 'Ember Trial', kind: 'encounter', absorbed: [] },
+        { name: 'Flood Trial', kind: 'encounter', absorbed: [] },
       ],
     });
-    const prose = (marker: string): ChatResult => ({
-      text: `${marker}: The tide withdraws and the streets shine wet under a pale sun. `.repeat(4),
-      modelUsed: 'test-model',
-      fallback: null,
-    });
-    chatMock.mockResolvedValue(prose('PART'));
+  }
 
-    // Non-finale part: declarations + no-clean-resolution.
+  it('spine: an encounter record with no wants and no kind passes the gate untouched', async () => {
+    const { campaign, moduleId } = await seedModule();
+    chatMock
+      .mockResolvedValueOnce(spineReply(PLAIN_ENTITIES))
+      .mockResolvedValueOnce(
+        normReply([
+          { name: 'Warden Bellamy', kind: 'npc' },
+          { name: 'Ember Trial', kind: 'encounter' },
+        ]),
+      );
+
+    const finished = await runSpine(moduleId, campaign);
+
+    // Two calls: the spine and its name normalization. No repair retry — the
+    // records declare nothing and nothing is missing.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    expect(finished.status).toBe('draft');
+    expect(finished.errorMessage).toBe('');
+    expect(finished.entityKinds).toEqual([
+      { name: 'Warden Bellamy', kind: 'npc', absorbed: [] },
+      { name: 'Ember Trial', kind: 'encounter', absorbed: [] },
+    ]);
+
+    // The prompt asks for kinds and the floor, and for no declarations.
+    const prompt = userPromptOf(0);
+    expect(prompt).toContain('encounter floor');
+    expect(prompt).not.toContain('mutually exclusive wants');
+    expect(prompt).not.toContain('conflict kind');
+    expect(prompt).not.toContain('declared mix');
+    expect(prompt).not.toContain('"wants"');
+    expect(prompt).not.toContain('"conflictKind"');
+  }, 20000);
+
+  it('parts: a full run over such a plan ships ready with no repair', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await twoPartSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce(prose('PART-ONE', 'Ember Trial'))
+      .mockResolvedValueOnce(prose('PART-TWO', 'Flood Trial'))
+      .mockResolvedValueOnce(
+        normReply([
+          { name: 'Ember Trial', kind: 'encounter' },
+          { name: 'Flood Trial', kind: 'encounter' },
+        ]),
+      );
+
+    const finished = await runParts(moduleId, campaign);
+
+    // Two parts + one normalization: no floor repair, no mix failure.
+    expect(chatMock).toHaveBeenCalledTimes(3);
+    expect(finished.status).toBe('ready');
+    expect(finished.errorMessage).toBe('');
+
+    // The part prompt carries no declaration block any more.
+    const prompt = userPromptOf(0);
+    expect(prompt).not.toContain('Declared encounters');
+    expect(prompt).not.toContain('declared conflict kind');
+    expect(prompt).not.toContain('opposed wants');
+    // The banned resolutions survived the removal (a scene still must cost
+    // someone something).
+    expect(prompt).toContain('banned resolution');
+  }, 20000);
+
+  it('part prompt: the finale rations satisfaction, other parts never resolve clean', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await twoPartSpine(moduleId);
+
+    chatMock.mockResolvedValue(prose('PART', 'Ember Trial'));
     await runParts(moduleId, campaign, { planIndexes: [0] });
     const first = userPromptOf(0);
-    expect(first).toContain('seize the bell');
-    expect(first).toContain('keep the bell silent');
     expect(first).toContain('no clean resolution');
     expect(first).not.toContain('FINALE');
 
-    // Finale part: satisfaction allowed at full price, never rationed away.
     chatMock.mockClear();
-    chatMock.mockResolvedValue(prose('FINALE-PART'));
+    chatMock.mockResolvedValue(prose('FINALE-PART', 'Flood Trial'));
     await runParts(moduleId, campaign, { planIndexes: [1] });
     const finale = userPromptOf(0);
     expect(finale).toContain('FINALE');
@@ -414,46 +353,45 @@ describe('structural conflict gates (mocked chat)', () => {
     expect(finale).not.toContain('no clean resolution');
   }, 20000);
 
-  it('parts gate: floor met but mix drifted → loud mix failure naming the defect', async () => {
+  it('spine repair names the floor only (no wants, no kinds, no mix)', async () => {
     const { campaign, moduleId } = await seedModule();
-    await patchModule(moduleId, {
-      spine: moduleSpineSchema.parse({
-        premise: 'A harbor town raised its bell.',
-        themes: [],
-        partPlan: [
-          { title: 'The Sunken Quarter', levelBand: '1', synopsis: 'Arrival.', levelUpTrigger: 'Found.' },
-          { title: 'The Drowned Cathedral', levelBand: '2', synopsis: 'Descent.', levelUpTrigger: 'Falls.' },
-        ],
-      }),
-    });
-    const prose = (marker: string, ...names: string[]): ChatResult => ({
-      text: `${marker}: The tide withdraws and the streets shine wet under a pale sun. `.repeat(4) +
-        (names.length === 0 ? '' : ` Trials: ${names.map((name) => `[[${name}]]`).join(', ')}.`),
-      modelUsed: 'test-model',
-      fallback: null,
-    });
     chatMock
-      .mockResolvedValueOnce(prose('PART-ONE', 'Ember Trial'))
-      .mockResolvedValueOnce(prose('PART-TWO', 'Second Skirmish'))
-      // Post-parts verdicts declare two combats — the prose drifted from the
-      // planned mix (social/hazard never made the text).
-      .mockResolvedValueOnce({
-        text: JSON.stringify({
-          entities: [
-            { name: 'Ember Trial', canonical: 'Ember Trial', kind: 'encounter', wants: ['seize the bell', 'keep the bell silent'], conflictKind: 'combat' },
-            { name: 'Second Skirmish', canonical: 'Second Skirmish', kind: 'encounter', wants: ['hold the gate', 'storm the gate'], conflictKind: 'combat' },
-          ],
-        }),
-        modelUsed: 'test-model',
-        fallback: null,
-      });
+      .mockResolvedValueOnce(spineReply([{ name: 'Warden Bellamy', kind: 'npc' }]))
+      .mockResolvedValueOnce(normReply([{ name: 'Warden Bellamy', kind: 'npc' }]))
+      // The repair retry, whose reply finally declares an encounter.
+      .mockResolvedValueOnce(spineReply(PLAIN_ENTITIES))
+      .mockResolvedValueOnce(
+        normReply([
+          { name: 'Warden Bellamy', kind: 'npc' },
+          { name: 'Ember Trial', kind: 'encounter' },
+        ]),
+      );
 
-    const finished = await runParts(moduleId, campaign);
+    const finished = await runSpine(moduleId, campaign);
 
-    // Bands are met (1 encounter each) but the declared mix is combat-only:
-    // loud, never ready, defect named.
-    expect(finished.status).toBe('failed');
-    expect(finished.errorMessage).toContain('mix not met');
-    expect(finished.errorMessage).toContain('hazard-or-chase');
+    expect(chatMock).toHaveBeenCalledTimes(4);
+    expect(finished.status).toBe('draft');
+    expect(finished.entityKinds.map((entry) => entry.kind)).toEqual(['npc', 'encounter']);
+    const repair = chatMock.mock.calls[2]?.[0].at(-1)?.content;
+    const repairText = typeof repair === 'string' ? repair : '';
+    expect(repairText).toContain('declares no encounters');
+    // The repair nudge asks for a named encounter, never for a declaration.
+    expect(repairText).not.toContain('conflict kind');
+    expect(repairText).not.toContain('wants');
   }, 20000);
+
+  it('parseSpineEntities accepts any declared kind list and adds no declaration rule', () => {
+    expect(parseSpineEntities(spineRaw(PLAIN_ENTITIES))).toEqual([
+      { name: 'Warden Bellamy', kind: 'npc', absorbed: [] },
+      { name: 'Ember Trial', kind: 'encounter', absorbed: [] },
+    ]);
+    // A declaration that used to be REQUIRED is now ordinary input, ignored.
+    expect(
+      parseSpineEntities(
+        spineRaw([{ name: 'Ember Trial', kind: 'encounter', wants: ['a', 'b'], conflictKind: 'combat' }]),
+      ),
+    ).toEqual([{ name: 'Ember Trial', kind: 'encounter', absorbed: [] }]);
+    // A foreign kind is still a loud boundary failure (zod, not a gate).
+    expect(() => parseSpineEntities(spineRaw([{ name: 'X', kind: 'plotarc' }]))).toThrow();
+  });
 });

@@ -142,23 +142,6 @@ export const ENTITY_KINDS = ['npc', 'location', 'event', 'faction', 'note', 'enc
 export type EntityKind = (typeof ENTITY_KINDS)[number];
 
 /**
- * Structural conflict vocabulary (08 §M4-B): the declared kind of a planned
- * encounter scene. Authored by the generator on the entity record — never
- * inferred by a classifier at a gate. Shared with the Encounter Smith
- * (docs/11 §conflict-kind vocabulary).
- */
-export const ENCOUNTER_CONFLICT_KINDS = [
-  'combat',
-  'hazard',
-  'chase',
-  'social',
-  'puzzle',
-  'exploration',
-] as const;
-
-export type EncounterConflictKind = (typeof ENCOUNTER_CONFLICT_KINDS)[number];
-
-/**
  * The EDITABLE part of the encounter floor (owner decision, docs/17).
  *
  * The module-creation flow's floor guardrail used to be a hard-coded sentence
@@ -176,8 +159,11 @@ export type EncounterConflictKind = (typeof ENCOUNTER_CONFLICT_KINDS)[number];
  * every threshold is byte-identical to the pre-config behavior; the golden test
  * is the regression contract for that.
  *
- * Deliberately floor-ONLY: the encounter conflict-kind vocabulary and the
- * declared-mix rule are their own seam with their own gate, untouched here.
+ * Deliberately floor-ONLY: it counts named encounters and nothing else. What a
+ * scene IS (a fight, or an `event` instead) and whether the story's conflict is
+ * real are prompt discipline plus the owner's read of the spine checkpoint — a
+ * check over prose would need a classifier guessing at a gate, which this repo
+ * forbids (docs/08 §M4-B, docs/18 §2.2).
  *
  * Integers only (a fractional encounter count is meaningless), min 0, and the
  * refine keeps `enabled: false` honest — a disabled floor may carry
@@ -283,7 +269,16 @@ export const moduleAutomationIntentSchema = z.object({
 
 export type ModuleAutomationIntent = z.infer<typeof moduleAutomationIntentSchema>;
 
-/** One model-recorded entity type: a wiki-link name and its kind. */
+/**
+ * One model-recorded entity type: a wiki-link name and its kind.
+ *
+ * Rows written before the conflict-kind vocabulary was retired may still carry
+ * `wants` / `conflictKind` keys on their records. This schema is deliberately
+ * NOT strict, so zod STRIPS unknown keys on read: those keys are simply
+ * ignored, an old module parses and behaves exactly as it did, and no data
+ * migration is needed (owner decision, docs/17: the repo is in a testing
+ * phase — no migration ceremony for a shape change).
+ */
 export const moduleEntityKindSchema = z.object({
   /** The name as first written in the module text (wiki-link form). For
    * normalized records: the canonical spelling. */
@@ -292,16 +287,6 @@ export const moduleEntityKindSchema = z.object({
   /** fix-01: variant names this canonical entry absorbed (checkpoint
    * display only; the panel folds via rewritten links). Empty otherwise. */
   absorbed: z.array(z.string()).default([]),
-  /**
-   * Structural conflict declarations (08 §M4-B): for `kind: "encounter"`
-   * records, the two mutually exclusive wants driving the scene
-   * (`wants: [a, b]` — if both sides could plausibly agree, it is not an
-   * encounter yet) and the declared `conflictKind`. Non-encounter records
-   * leave both at their defaults; old rows parse via the defaults (no
-   * migration — parse-on-read).
-   */
-  wants: z.array(z.string()).max(2).default([]),
-  conflictKind: z.enum(ENCOUNTER_CONFLICT_KINDS).nullable().default(null),
 });
 
 export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;

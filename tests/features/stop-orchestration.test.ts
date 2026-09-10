@@ -105,8 +105,8 @@ async function seedModule(campaignId: string, overrides: Partial<Module> = {}): 
     status: 'ready',
     entityNamesNormalized: true,
     entityKinds: [
-      { name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
-      { name: 'Gor', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
+      { name: 'Kael', kind: 'npc', absorbed: [] },
+      { name: 'Gor', kind: 'npc', absorbed: [] },
     ],
     spine: moduleSpineSchema.parse({
       premise: 'The gate of [[Ember Crypt]] opens at dusk.',
@@ -244,8 +244,6 @@ describe('entity batch withdrawals', () => {
         name,
         kind: 'npc' as const,
         absorbed: [],
-        wants: [],
-        conflictKind: null,
       })),
     });
     await patchModule(module.id, {

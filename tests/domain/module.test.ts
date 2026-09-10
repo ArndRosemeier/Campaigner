@@ -41,10 +41,38 @@ describe('moduleSchema.entityKinds', () => {
     expect(record.absorbed).toEqual([]);
   });
 
-  it('defaults conflict declarations empty so pre-slice rows parse (no migration)', () => {
-    const record = moduleEntityKindSchema.parse({ name: 'Ember Trial', kind: 'encounter' });
-    expect(record.wants).toEqual([]);
-    expect(record.conflictKind).toBeNull();
+  it('ignores the retired conflict-declaration keys on stored rows (no migration)', () => {
+    // The conflict-kind vocabulary and the `wants` pair are GONE from the
+    // record shape. This schema is deliberately not strict, so a row written
+    // before the removal (still carrying `wants` / `conflictKind`) parses on
+    // read and the removed keys are dropped: an existing module is never a
+    // parse failure and nothing migrates the stored data (docs/17: the owner's
+    // testing-phase stance — no migration ceremony for a shape change).
+    const legacy = {
+      name: 'Ember Trial',
+      kind: 'encounter',
+      wants: ['seize the bell', 'keep the bell silent'],
+      conflictKind: 'combat',
+    };
+    const record = moduleEntityKindSchema.parse(legacy);
+    expect(record).toEqual({ name: 'Ember Trial', kind: 'encounter', absorbed: [] });
+    expect(Object.keys(record)).not.toContain('wants');
+    expect(Object.keys(record)).not.toContain('conflictKind');
+
+    // The same tolerance at the ROW boundary (the read path parses the whole
+    // module, not just the record).
+    const module = createModule({
+      campaignId: '00000000-0000-4000-8000-0000000000c9',
+      title: 'Legacy Module',
+      concept: '',
+      levelMin: 1,
+      levelMax: 3,
+      sizeDial: 'standard',
+    });
+    const parsed = moduleSchema.parse({ ...module, entityKinds: [legacy] });
+    expect(parsed.entityKinds).toEqual([
+      { name: 'Ember Trial', kind: 'encounter', absorbed: [] },
+    ]);
   });
 
   it('rejects records with empty names on a full row', () => {
@@ -122,8 +150,8 @@ describe('moduleSchema.autoGenerateMobImages', () => {
 
 describe('entityKindFor', () => {
   const records: ModuleEntityKind[] = [
-    { name: 'Harbormaster Ilse', kind: 'npc', absorbed: [], wants: [], conflictKind: null },
-    { name: 'The Undercroft', kind: 'location', absorbed: [], wants: [], conflictKind: null },
+    { name: 'Harbormaster Ilse', kind: 'npc', absorbed: [] },
+    { name: 'The Undercroft', kind: 'location', absorbed: [] },
   ];
 
   it('matches case-insensitively and trims', () => {

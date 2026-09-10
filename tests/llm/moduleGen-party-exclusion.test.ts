@@ -82,9 +82,9 @@ const OWNED_NPC = 'Owned Cave Sage';
 
 const SPINE_ENTITIES = [
   { name: SHARED_NPC, kind: 'npc' },
-  { name: 'The Ringing Below', kind: 'encounter', wants: ['ring the drowned bell', 'keep it silent'], conflictKind: 'combat' },
-  { name: 'The Flooded Stair', kind: 'encounter', wants: ['descend the stair', 'hold back the tide'], conflictKind: 'hazard' },
-  { name: 'The Wardens Confession', kind: 'encounter', wants: ['name the guilty warden', 'protect the wardens name'], conflictKind: 'social' },
+  { name: 'The Ringing Below', kind: 'encounter' },
+  { name: 'The Flooded Stair', kind: 'encounter' },
+  { name: 'The Wardens Confession', kind: 'encounter' },
 ] as const;
 
 const SPINE_REPLY = {
@@ -106,8 +106,6 @@ const SELF_NORMALIZATION = {
     name: entity.name,
     canonical: entity.name,
     kind: entity.kind,
-    wants: 'wants' in entity ? [...entity.wants] : [],
-    conflictKind: 'conflictKind' in entity ? entity.conflictKind : null,
   })),
 };
 
@@ -128,8 +126,6 @@ function partNormalizationReply(): ChatResult {
           name: 'The Ringing Below',
           canonical: 'The Ringing Below',
           kind: 'encounter',
-          wants: ['ring the drowned bell', 'keep it silent'],
-          conflictKind: 'combat',
         },
       ],
     }),
@@ -392,7 +388,7 @@ describe('name classification never resolves onto the Party', () => {
     await seedNormalizedModule(moduleId, [PC_NAME]);
     chatMock.mockResolvedValueOnce({
       text: JSON.stringify({
-        entities: [{ name: PC_NAME, canonical: PC_NAME, kind: 'npc', wants: [], conflictKind: null }],
+        entities: [{ name: PC_NAME, canonical: PC_NAME, kind: 'npc' }],
       }),
       modelUsed: 'test-model',
       fallback: null,
@@ -425,7 +421,7 @@ describe('name classification never resolves onto the Party', () => {
     await seedNormalizedModule(moduleId, [PC_NAME]);
     chatMock.mockResolvedValueOnce({
       text: JSON.stringify({
-        entities: [{ name: PC_NAME, canonical: PC_NAME, kind: 'npc', wants: [], conflictKind: null }],
+        entities: [{ name: PC_NAME, canonical: PC_NAME, kind: 'npc' }],
       }),
       modelUsed: 'test-model',
       fallback: null,
@@ -457,7 +453,7 @@ describe('name classification never resolves onto the Party', () => {
     const foldOntoPc = {
       text: JSON.stringify({
         entities: [
-          { name: 'Serren', canonical: SECOND_PC_NAME, kind: 'npc', wants: [], conflictKind: null },
+          { name: 'Serren', canonical: SECOND_PC_NAME, kind: 'npc' },
         ],
       }),
       modelUsed: 'test-model',

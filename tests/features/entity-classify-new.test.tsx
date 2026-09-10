@@ -77,7 +77,7 @@ const WHOLE_DOC = assembleModulePartsDocument({
 }).document;
 
 /** The recorded npc the generator knew about: unresolved, so it has a button. */
-const KAEL_RECORD = { name: 'Kael', kind: 'npc' as const, absorbed: [], wants: [], conflictKind: null };
+const KAEL_RECORD = { name: 'Kael', kind: 'npc' as const, absorbed: [] };
 
 let world: { campaignId: Id; moduleId: Id; campaign: Awaited<ReturnType<typeof createCampaign>> };
 

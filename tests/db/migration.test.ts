@@ -319,7 +319,7 @@ describe('v7 → v8 migration', () => {
     const { moduleSchema } = await import('@/domain');
     const parsed = moduleSchema.parse(module);
     expect(parsed.entityNamesNormalized).toBe(false);
-    expect(parsed.entityKinds).toEqual([{ name: 'Kael', kind: 'npc', absorbed: [], wants: [], conflictKind: null }]);
+    expect(parsed.entityKinds).toEqual([{ name: 'Kael', kind: 'npc', absorbed: [] }]);
 
     await db.delete();
   }, 20000);

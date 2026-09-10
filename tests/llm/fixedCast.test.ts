@@ -491,8 +491,6 @@ describe('partCall constants-only sentence', () => {
             name: 'Ember Ambush',
             canonical: 'Ember Ambush',
             kind: 'encounter',
-            wants: ['seize the ford', 'hold the ford'],
-            conflictKind: 'combat',
           },
         ],
       }),

@@ -683,7 +683,7 @@ describe('ModuleReaderPage', () => {
   it('preselects the kind the generator recorded without a classification call', async () => {
     const user = userEvent.setup();
     const { campaignId, moduleId } = await seedReaderModule({
-      entityKinds: [{ name: 'Missing Person', kind: 'faction', absorbed: [], wants: [], conflictKind: null }],
+      entityKinds: [{ name: 'Missing Person', kind: 'faction', absorbed: [] }],
     });
     renderAppAt(modulePath(campaignId, moduleId));
 
@@ -701,7 +701,7 @@ describe('ModuleReaderPage', () => {
   it('generates an entity IN PLACE from the popover — no navigation, chip resolves', async () => {
     const user = userEvent.setup();
     const { campaignId, moduleId } = await seedReaderModule({
-      entityKinds: [{ name: 'Missing Person', kind: 'note', absorbed: [], wants: [], conflictKind: null }],
+      entityKinds: [{ name: 'Missing Person', kind: 'note', absorbed: [] }],
     });
     chatMock.mockResolvedValueOnce({ text: JSON.stringify({
         name: 'Missing Person',
