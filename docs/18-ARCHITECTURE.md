@@ -225,7 +225,12 @@ column.
   entries exist (the two legacy `persona-run-ui`/`onboarding-wizard` ones
   were root-fixed and removed; `actDrained` is the standing cure, including
   under open Base UI dialogs whose transition rAF/unmount timers ride the
-  same queue). Leak prevention: `tests/helpers/flush.ts` — `actDrained`
+  same queue — and a **destructive-confirm dialog is settled (its testid
+  waited out of the document) before the test navigates or does raw store
+  reads**, since confirming closes it and Base UI unmounts the popup on an
+  exit timer whose teardown updates otherwise land outside act under
+  parallel-worker load; docs/08 §Console guard has the order and the
+  `07a84bd` precedent). Leak prevention: `tests/helpers/flush.ts` — `actDrained`
   wraps raw awaited steps that sit between act-wrapped ones;
   `flushAsyncUpdates` drains cascades before unwrapped reads and at test
   end. **Caveat:** never wrap paired `fireEvent` pointer

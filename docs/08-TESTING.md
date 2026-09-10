@@ -72,6 +72,24 @@ Rules:
   the best cure point (battle-surface's `currentBattle` actDrains for every
   caller), and a fixture that rewrites exported rows must respect schema
   invariants across the whole row (backup's random-order personas).
+- **A destructive-confirm dialog is settled before the test navigates or
+  reads raw stores.** Confirming closes the AlertDialog, and Base UI unmounts
+  the popup on an exit timer: while that exit is pending the popup is still
+  in the document (`data-closed`), and its teardown updates —
+  AlertDialogRoot → DialogPortal → DialogBackdrop → DialogPopup — plus the
+  destructive write's liveQuery cascade all land on the timed queue. Any bare
+  `await` in that window (a Dexie read, a store probe, a navigation
+  assertion) turns the queue outside act; under parallel-worker load the gap
+  widens and the guard fails the test with a burst of "An update to
+  AlertDialogRoot inside a test was not wrapped in act" entries (observed:
+  `clear-workspace.test.tsx`, 36 entries in one report, green in isolation).
+  Cure, in this order: `waitFor` the dialog's testid to be absent
+  (`queryByTestId(...)` → `not.toBeInTheDocument()`) right after the confirm
+  click, then run the raw reads inside `actDrained` — precedent
+  `entity-panel`'s orphan-sweep dialog (`07a84bd`), and the clear-workspace /
+  remove-all-generated confirms. The same applies while a confirm is simply
+  OPEN (open-dialog path above), and to a test that ends while the confirm is
+  still closing — end it with the settle plus a drain, not a bare assert.
 
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 

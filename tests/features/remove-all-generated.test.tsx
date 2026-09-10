@@ -11,6 +11,7 @@ import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createModule } from '@/db/moduleRepo';
 import { createModule as buildModule, type Campaign } from '@/domain';
 import { db } from '@/db/db';
+import { actDrained } from '../helpers/flush';
 import { clearDatabase } from '../db/helpers';
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
@@ -85,6 +86,17 @@ describe('EditCampaignDialog — remove all generated content', () => {
 
     await user.click(within(confirm).getByTestId('remove-all-confirm'));
 
+    // Destructive-confirm settle (docs/08 §Console guard): the wipe CLOSES the
+    // AlertDialog and Base UI unmounts the popup on an exit timer
+    // (AlertDialogRoot → DialogPortal → DialogBackdrop → DialogPopup updates).
+    // Wait for that exit before the raw store reads below — a bare await with
+    // the popup still closing hands those updates an outside-act window, the
+    // act warning the console guard fails on (precedent: clear-workspace /
+    // entity-panel's orphan-sweep dialog, 07a84bd).
+    await waitFor(() => {
+      expect(screen.queryByTestId('remove-all-confirm-dialog')).not.toBeInTheDocument();
+    });
+
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         expect.stringContaining('Removed 2 artifacts'),
@@ -95,10 +107,17 @@ describe('EditCampaignDialog — remove all generated content', () => {
     await waitFor(async () => {
       expect(await db.artifacts.where('campaignId').equals(campaign.id).count()).toBe(1);
     });
-    const survivors = await db.artifacts.where('campaignId').equals(campaign.id).toArray();
+    // actDrained on the raw reads (docs/08 §Console guard): the wipe's commit
+    // re-fires the panel's live queries, and the bare await re-opens the same
+    // outside-act window the closing dialog's timers ride.
+    const survivors = await actDrained(() =>
+      db.artifacts.where('campaignId').equals(campaign.id).toArray(),
+    );
     expect(survivors.map((row) => row.kind)).toEqual(['pc']);
-    expect(await getArtifact(survivors[0]?.id ?? '')).toBeDefined();
-    expect(await db.modules.where('campaignId').equals(campaign.id).count()).toBe(0);
+    expect(await actDrained(() => getArtifact(survivors[0]?.id ?? ''))).toBeDefined();
+    expect(await actDrained(() => db.modules.where('campaignId').equals(campaign.id).count())).toBe(
+      0,
+    );
   });
 
   it('says so when there is nothing generated to remove', async () => {

@@ -15,6 +15,7 @@ import { createModule as buildModule, type Campaign, type Id } from '@/domain';
 import type * as Maintenance from '@/db/maintenance';
 import { modulePath, workspacePath } from '@/app/routes';
 import { db } from '@/db/db';
+import { actDrained } from '../helpers/flush';
 import { clearDatabase } from '../db/helpers';
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
@@ -132,9 +133,16 @@ describe('EditCampaignDialog — clear workspace', () => {
 
     expect(deleteWorkspaceMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).not.toHaveBeenCalled();
-    // Nothing deleted: the workspace is intact.
-    expect(await db.artifacts.where('campaignId').equals(campaign.id).count()).toBe(3);
-    expect(await db.modules.where('campaignId').equals(campaign.id).count()).toBe(1);
+    // Nothing deleted: the workspace is intact. actDrained (docs/08 §Console
+    // guard): the confirm is still OPEN here, and an open Base UI dialog keeps
+    // its transition-reset rAF on the timed queue — a bare await hands it an
+    // outside-act window, so the raw store reads ride inside act.
+    expect(
+      await actDrained(() => db.artifacts.where('campaignId').equals(campaign.id).count()),
+    ).toBe(3);
+    expect(await actDrained(() => db.modules.where('campaignId').equals(campaign.id).count())).toBe(
+      1,
+    );
   });
 
   it('clears on the exact name, toasts the campaign, navigates out of deleted content, leaves no ghosts', async () => {
@@ -149,6 +157,18 @@ describe('EditCampaignDialog — clear workspace', () => {
     expect(confirmButton).not.toBeDisabled();
     await user.click(confirmButton);
 
+    // Destructive-confirm settle (docs/08 §Console guard): confirming CLOSES
+    // the AlertDialog, and Base UI unmounts the popup on an exit timer
+    // (AlertDialogRoot → DialogPortal → DialogBackdrop → DialogPopup updates).
+    // Nothing below waits for that exit unless we do it here: the raw Dexie
+    // reads and live queries then run while the popup is still mounted in its
+    // closing state, and any of those updates that lands during a bare await
+    // fires outside act — the act warning the console guard turns into a
+    // failure (precedent: entity-panel's orphan-sweep dialog, 07a84bd).
+    await waitFor(() => {
+      expect(screen.queryByTestId('clear-workspace-confirm-dialog')).not.toBeInTheDocument();
+    });
+
     // Loud success toast naming the campaign.
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(expect.stringContaining('Emberfall'));
@@ -162,10 +182,16 @@ describe('EditCampaignDialog — clear workspace', () => {
     await waitFor(() => {
       expect(screen.getByTestId('store-probes')).toHaveTextContent('0 modules, 0 artifacts');
     });
-    expect(await db.artifacts.where('campaignId').equals(campaign.id).count()).toBe(0);
-    expect(await db.modules.where('campaignId').equals(campaign.id).count()).toBe(0);
+    // actDrained on the raw store reads: the clear's commit re-fires every
+    // campaign live query, and the bare await re-opens the same window.
+    expect(
+      await actDrained(() => db.artifacts.where('campaignId').equals(campaign.id).count()),
+    ).toBe(0);
+    expect(await actDrained(() => db.modules.where('campaignId').equals(campaign.id).count())).toBe(
+      0,
+    );
     // The campaign row itself survives with its premise byte-identical.
-    const survivor = await getCampaign(campaign.id);
+    const survivor = await actDrained(() => getCampaign(campaign.id));
     expect(survivor?.name).toBe('Emberfall');
     expect(survivor?.description).toBe('A valley of ash.');
     expect(survivor?.system).toBe('dnd5e');
@@ -179,6 +205,12 @@ describe('EditCampaignDialog — clear workspace', () => {
     const confirm = await openClearConfirm();
     await user.type(within(confirm).getByTestId('clear-workspace-name'), 'Emberfall');
     await user.click(within(confirm).getByTestId('clear-workspace-confirm'));
+
+    // Settle the confirm's exit before the assertions below (docs/08 §Console
+    // guard) — the popup's close transition must not still be in flight here.
+    await waitFor(() => {
+      expect(screen.queryByTestId('clear-workspace-confirm-dialog')).not.toBeInTheDocument();
+    });
 
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(expect.stringContaining('Emberfall'));
