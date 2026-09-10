@@ -261,6 +261,105 @@ discipline plus the owner's read of the spine checkpoint. A pure check in the
 floor's family (for example counting links) may only be PROPOSED, never built
 silently.
 
+### M4-B-2 — The scene block: the document's scene grammar (owner decision, docs/17 row 73)
+
+**Why.** Every generated scene must arrive as a GM-usable BLOCK. This is the
+best-evidenced usability finding in the research behind this arc (multi-source
+practitioner consensus: a scene the GM can run from the page, rather than prose
+they must re-read and re-organize mid-session). The owner chose the full
+per-scene field set over a prose-only instruction (docs/17 row 73).
+
+**It is a DOCUMENT-FORMAT convention, not a schema.** The block lives in the
+part's markdown, so there is no schema change, no Dexie version, no migration
+and no second document format: the part text stays one ordinary markdown
+string in the ONE `assembleModulePartsDocument` / `splitPartsDocument` format
+(`domain/modulePartsDocument.ts`). Assembly, splitting, the canvas split-save,
+the byte-exact durable version snapshots and the reader's `WikiMarkdown`
+rendering all operate on the same text they always did, and the round-trip is
+pinned by test (`tests/features/scene-block-document.test.ts`).
+
+**The block, in this order** (the prompt carries exactly these labels —
+`PART_SCENE_FIELD_LABELS` in `src/llm/moduleGen.ts` is the one source, and the
+test asserts every label reaches the prompt):
+
+- **Scene heading + tag** — the scene's name as a wiki-link to its own entity,
+  plus its tag: `### [[Scene Name]] — ENCOUNTER` or `— EVENT`. ENCOUNTER = a
+  fight with stakes (battle map, monster roster, images); EVENT = everything
+  else (negotiation, chase, hazard, mystery, puzzle, investigation —
+  illustration only, no map, no monsters). Classified by what the scene is
+  FOR: combat being merely possible does not make a scene an ENCOUNTER. The
+  heading carries the LINK on purpose — the floor counts canonical
+  `[[encounter]]` links in the part text, so a scene named only in passing
+  prose would be invisible to the gate that is supposed to see it.
+- **Where** — a link to an existing location entity (`[[Place Name]]`); a
+  location is never invented inline.
+- **First impression** — EXACTLY one or two sentences, present tense, one
+  concrete sense plus one thing out of place. No history, no faction names, no
+  explanation of causes, and never the party's actions or feelings. Stated in
+  the prompt as the ONLY text a GM reads aloud; everything else on the block is
+  GM-facing.
+- **Who is here and what they want right now** — one clause per NPC present,
+  saying what that NPC wants in this scene. Each NPC speaks about what they
+  want and otherwise deflects or refuses.
+- **The situation** — the conflict already running when the party arrives, and
+  what it does in the next few minutes if nobody intervenes.
+- **What changed** — the one thing different from the previous scene's state,
+  and the cost the party pays to engage with it. The prompt carries the test
+  verbatim: *if you could honestly write "the situation is the same, now what
+  do you do", this is not a scene — rewrite it or delete it.*
+- **If the party acts** — 2–4 bullets of the form
+  `<a plausible party action> -> <what the opposition does>`. Different bullets
+  must lead to genuinely different outcomes; two routes reaching the same place
+  are one bullet.
+- **Secrets** — 0–2 per scene, each written ABSTRACT FROM WHERE IT IS FOUND so
+  a GM can move it; nothing the party NEEDS may be available from only one
+  place.
+- **Leads** — each lead names the entity it points at and why it is worth
+  following; a lead that points nowhere is deleted.
+- **Outcome** — graded: success, partial success and failure written
+  separately. Failure costs something specific AND moves the situation forward
+  (fail forward — a failed attempt is a new situation, never a dead end).
+
+**Part-level rules that ride with the block:** no scene may require one
+specific party action to proceed — if the party does nothing, the relevant
+faction simply advances its own plan; the text addresses the GM and never the
+players (the GM controls the world and everyone in it; what a player character
+does, says, thinks or feels is never authored — the "if the party acts" bullets
+are a GM-facing menu of plausible actions, not a script for the players); at
+most one new entity is introduced per scene and it is used in the scene that
+introduces it; and the part ends with at least two threads pointing into other
+parts.
+
+**ANTI-FORMULA RULE (binding requirement of the format, not a nicety).** The
+owner's explicit fear, verbatim: *"I dont want this to become formulaic. I fear
+that if we prompt this creativity gets lost."* The field set is a GM-facing
+SCAFFOLD, never a fill-in template, and the prompt says so in the SAME
+instruction block, immediately next to the field list
+(`PART_SCENE_VARIATION_DEMANDS` — test-pinned verbatim, so it cannot be quietly
+softened):
+
+- the block ORDERS information for the GM — it is not a form to fill in;
+- scenes differ from each other in length, shape and voice; any field may be a
+  single short line when the scene is small, and padding a field to look
+  complete is named as the failure;
+- no symmetric structure across scenes and no repeated beat pattern
+  (arrive → talk → fight) across the part or the module;
+- the fields never dictate what happens, and a scene with nothing at stake is
+  rewritten or deleted — never filled with prose to satisfy its labels.
+
+**What is NOT in this format, deliberately** (docs/17 row 73): no candidate
+slate of directions to pick from (the story is already seeded by a human idea
+and can be refined with the existing tools, and modules already have drafts with
+approval), no alternates field, and no code-checked cardinality — no "at least
+N routes per conclusion", no "at least two factions", no route-count or
+ratio demand of any kind. A count over prose needs a classifier guessing at a
+gate (§M4-B-1 boundary) and would make the output formulaic, which is the
+failure the owner named. Nothing in this section adds a runtime gate: the
+ENCOUNTER/EVENT tag is TEXT for now — maps, monsters and rosters are still
+decided by the entity's recorded `kind === 'encounter'` in the artifact
+pipeline (`post-generation` filters on it), and the encounter floor is
+untouched (§Editable encounter floor).
+
 ### Pass 0 — Spine (one call, JSON)
 
 Input: concept, levelMin/Max, tone, sizeDial, campaign (name, system,
@@ -371,10 +470,12 @@ For part i, the user message contains:
 7. writing instructions:
    - free-form GM-facing markdown, `##`/`###` headings allowed (H1 is added
      by the reader),
-   - each location opens with one or two sentences of sensory, present-tense
-     description, then a short GM block: who is here, what they want right now,
-     what they do if the party acts, where the leads point. Read-aloud text
-     stays inside blockquotes and stays that short (§M4-B-1),
+   - each scene with anything at stake is written as ONE labeled scene block,
+     with the fields in the order of §M4-B-2 (heading + ENCOUNTER/EVENT tag,
+     Where, First impression, Who is here and what they want right now, The
+     situation, What changed, If the party acts, Secrets, Leads, Outcome) —
+     and the anti-formula rule rides the SAME instruction block, immediately
+     after the field list (§M4-B-2, binding),
    - every situation offers at least two VISIBLE approaches differing in cost or
      consequence — nothing resolves on a single route,
    - every conflict ends with someone worse off, a cost paid, or a new problem
@@ -418,9 +519,9 @@ For part i, the user message contains:
      linked encounter artifact, designed by the encounter pipeline from the
      prose mention),
    - a scene that is NOT a fight is an event: linked as `[[Event Name]]` and
-     written whole in the prose (who is present, what they want, what they do if
-     the party acts, where the leads point) — an event gets an illustration and
-     no battle map, monsters or roster, because none is generated for it,
+     written as its whole block in the prose (§M4-B-2 — the block IS what an
+     event gets) — an event receives an illustration and no battle map,
+     monsters or roster, because none is generated for it,
    - in encounter scenes, name ONLY the fixed participants (the boss, the
      duelist, the negotiator — `[[Halvar]]`): rank-and-file fighters stay
      anonymous and undescribed by name (no names, no counts), so the
@@ -523,7 +624,13 @@ nullable optional field parses old rows as `null`).
 Not configurable, by design: nothing else about a scene. What a scene IS
 (encounter = fight, everything else = event) and how conflicted the situation
 must be are prompt discipline, not dials — a count can be gated, a story cannot
-(§M4-B-1 boundary).
+(§M4-B-1 boundary). The scene BLOCK's shape (§M4-B-2) is prompt discipline for
+the same reason: it is not a dial, it carries no count, and the only number in
+the format's family is the floor above. The narrow exception worth naming is
+the heading LINK itself: because the floor counts canonical `[[encounter]]`
+links in the part text, the format requires the scene's link in its heading —
+that is a link-syntax requirement serving the existing counter, not a new gate,
+and it changes neither the counter nor the floor.
 
 ### Tone dial (outcome limits)
 
