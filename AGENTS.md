@@ -91,6 +91,15 @@ used:
    report instead of resolving.
 4. Re-verify duty: whichever brief was written against an older HEAD
    re-verifies its findings at landing time.
+5. **Worktree setup (verified recipe).** Put the worktree under `/tmp`,
+   never inside the repo: an in-repo worktree gets swept into the main
+   tree's `eslint .` run and corrupts the other writer's gate. Symlinking
+   the main tree's `node_modules` does NOT work — 28 test files fail with
+   `Denied ID …/pdfjs-dist/legacy/build/pdf.worker.mjs?url` from Vite's
+   `server.fs.allow` while lint and typecheck still pass, so it reads as a
+   real regression. `pnpm install --offline` fails with
+   `ERR_PNPM_NO_OFFLINE_META`; a plain `pnpm install --frozen-lockfile`
+   succeeds in seconds from the local pnpm store.
 
 The **dispatcher is a writer for this purpose too**. An uncommitted edit of
 its own in the shared tree (rules or docs) makes a landing writer's `git
