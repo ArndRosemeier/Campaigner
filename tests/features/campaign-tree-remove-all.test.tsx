@@ -327,7 +327,21 @@ describe('CampaignTree — remove-all confirm', () => {
 
     await user.click(await screen.findByTestId('remove-all-npc'));
     const confirm = await screen.findByTestId('remove-all-npc-confirm');
-    await user.click(within(confirm).getByTestId('remove-all-npc-confirm-action'));
+    const action = within(confirm).getByTestId('remove-all-npc-confirm-action');
+    // The confirm action is DISABLED until the dialog's LIVE census resolves
+    // (remove-kind-dialog.tsx:128 — deliberate design: the numbers the user
+    // reads must be the campaign's current ones, so the gate must not be
+    // weakened). `findByTestId` resolves on the dialog's first paint, which is
+    // routinely BEFORE the census lands (measured: 10 of 20 consecutive
+    // unloaded runs saw the button disabled at first sight, opening 13–23ms
+    // later; under parallel-worker load that window widens). A `user.click` on
+    // a disabled button is a silent no-op — the mocked seam is never called,
+    // so the toastError assertion below times out with ZERO calls. Wait for the
+    // gate to open, then click.
+    await waitFor(() => {
+      expect(action).not.toBeDisabled();
+    });
+    await user.click(action);
 
     await waitFor(() => {
       expect(toastErrorMock).toHaveBeenCalledWith(
@@ -336,6 +350,11 @@ describe('CampaignTree — remove-all confirm', () => {
       );
     });
     expect(toastSuccessMock).not.toHaveBeenCalled();
+    // actDrained (docs/08 §Console guard): a FAILING pass toasts without
+    // closing the confirm (handleRemove only closes on success), so the dialog
+    // is still OPEN here — an open Base UI dialog keeps its transition-reset
+    // rAF on the timed queue, and a bare await hands it an outside-act window
+    // (the clear-workspace wrong-name case in 0466dc9).
     expect(await actDrained(() => db.artifacts.get(npc))).toBeDefined();
   });
 });

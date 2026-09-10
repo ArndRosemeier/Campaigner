@@ -275,7 +275,13 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   reads**, since confirming closes it and Base UI unmounts the popup on an
   exit timer whose teardown updates otherwise land outside act under
   parallel-worker load; docs/08 §Console guard has the order and the
-  `07a84bd` precedent). Leak prevention: `tests/helpers/flush.ts` — `actDrained`
+  `07a84bd` precedent). The same section holds the inverse case: a
+  **confirm action that is `disabled` until a live query resolves is waited
+  for (`waitFor` → `not.toBeDisabled()`) before it is clicked** — a click on
+  the still-disabled button is a silent no-op, so that test fails on a missing
+  call rather than on noise (the census window measured 13–23ms unloaded and
+  widens under load; the gate is deliberate design, never weakened for the
+  test). Leak prevention: `tests/helpers/flush.ts` — `actDrained`
   wraps raw awaited steps that sit between act-wrapped ones;
   `flushAsyncUpdates` drains cascades before unwrapped reads and at test
   end. **Caveat:** never wrap paired `fireEvent` pointer

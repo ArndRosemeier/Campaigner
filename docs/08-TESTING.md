@@ -90,6 +90,27 @@ Rules:
   remove-all-generated confirms. The same applies while a confirm is simply
   OPEN (open-dialog path above), and to a test that ends while the confirm is
   still closing — end it with the settle plus a drain, not a bare assert.
+- **A disabled-until-live-query confirm action is waited for, never clicked
+  blind.** The other half of the same class, and the one that fails with a
+  *missing call* rather than noise: the action is `disabled` until its live
+  census/count resolves (`remove-kind-dialog`'s `disabled={removing ||
+  census === null || census === undefined || census.artifacts === 0}`).
+  `findByTestId(dialog)` / `findByRole('alertdialog')` resolve on the dialog's
+  FIRST PAINT — routinely before that query lands — and a `user.click` on a
+  disabled button is a silent no-op, so the seam under test is never called and
+  the assertion times out with **zero** calls (observed:
+  `campaign-tree-remove-all.test.tsx > surfaces a failing seam through
+  toastError`, 1 of 5 full-suite runs; the test clicked the confirm action
+  straight after `findByTestId`). Measured window on an unloaded machine: 10 of
+  20 consecutive runs saw the action disabled at first sight, opening 13–23ms
+  later; with only the census delayed 300ms the un-cured test failed 6/6 with
+  zero `toastError` calls and 6/6 passed with the wait added. Cure: `await
+  waitFor(() => { expect(action).not.toBeDisabled(); })` before the click —
+  or `findByRole('button', { name })` on the settled label when the branch
+  itself is under test. The gate is deliberate design and must NOT be weakened
+  in the component; the wait belongs in the test. If the confirm stays OPEN
+  after the click (a FAILING pass toasts without closing it), its raw reads
+  still need `actDrained` per the open-dialog rule above.
 
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 
