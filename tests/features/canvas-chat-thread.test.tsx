@@ -28,6 +28,7 @@ import {
   useCanvasChatStore,
 } from '@/features/modules/canvas/chatStore';
 import type * as PartTextModule from '@/features/modules/partText';
+import type * as ChatPersistModule from '@/features/modules/canvas/chatPersist';
 import {
   assembleModulePartsDocument,
 } from '@/domain/modulePartsDocument';
@@ -49,6 +50,69 @@ vi.mock('@/lib/toast', () => ({
   toastSuccess: vi.fn(),
   toastInfo: vi.fn(),
 }));
+
+/**
+ * The debounced write is GATED BY THE TEST (docs/08 §Race cures). The
+ * write-after-settled-turn (`chatPersist.scheduleChatPersist`, called from the
+ * controller's settle path) is made to wait for this test, which resolves it only
+ * after the row has been read. So "nothing is persisted yet" is asserted while
+ * the write provably has not been SCHEDULED — on any machine, at any load.
+ *
+ * Why the gate and not a held DB read: holding a read cannot work here, because
+ * the pending write's own timer fires on the event loop (a held read hands it the
+ * loop). Why not fake timers: fake-indexeddb's own request queue rides the same
+ * timers, so a faked clock wedges the DB (measured: the suite times out).
+ *
+ * This is what the test used to race: with BOTH turns settling inside the 600ms
+ * window (a fast, unloaded box) the row was still empty at the read, and the
+ * assertion passed. On a box where the turns were more than one window apart the
+ * write had already fired and the row carried the FIRST turn's two messages —
+ * `toHaveLength(0)` failed on the clock, not on the code. Measured with an
+ * instrumented probe on this head: turn 1 scheduled the write at +483ms and turn
+ * 2 settled at +1571ms.
+ */
+let writeGate: { reached: Promise<void>; wait: Promise<void>; release: () => void } | null = null;
+
+/** Holds the next `scheduleChatPersist` until `waitForScheduledWrite` runs. */
+function armWriteGate(): void {
+  let reach!: () => void;
+  let release!: () => void;
+  writeGate = {
+    reached: new Promise<void>((resolve) => {
+      reach = resolve;
+    }),
+    wait: new Promise<void>((resolve) => {
+      release = resolve;
+    }),
+    release,
+  };
+  reach();
+}
+
+/** Releases the held write and waits until the settle path has reached it. */
+async function waitForScheduledWrite(): Promise<void> {
+  const gate = writeGate;
+  writeGate = null;
+  if (gate === null) {
+    // Not fatal: the test then races the debounce window again (the bug).
+    await flushAsyncUpdates();
+    return;
+  }
+  gate.release();
+  await gate.reached;
+}
+
+vi.mock('@/features/modules/canvas/chatPersist', async (importOriginal) => {
+  const actual = await importOriginal<typeof ChatPersistModule>();
+  return {
+    ...actual,
+    scheduleChatPersist: async (moduleId: string, key: string): Promise<void> => {
+      const gate = writeGate;
+      if (gate !== null) await gate.wait;
+      actual.scheduleChatPersist(moduleId, key);
+    },
+  };
+});
 
 vi.mock('@/llm/openrouter', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -143,6 +207,10 @@ async function seedModule(): Promise<void> {
 }
 
 beforeEach(async () => {
+  // The write gate is per test: a gate left armed (or left over) would make the
+  // next test's write wait for a release that never comes, and an un-armed one
+  // would silently put the debounce pin back to racing the window.
+  writeGate = null;
   await clearDatabase();
   vi.clearAllMocks();
   useCanvasChatStore.setState({ ownerModuleId: null, byModule: {} });
@@ -188,6 +256,7 @@ describe('canvas chat thread persistence', () => {
     await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
     await openSidebar(user);
 
+    armWriteGate();
     mockChatReply('Noted — rain it is.');
     await sendChat(user, 'remember the rain');
     mockChatReply(
@@ -205,9 +274,12 @@ describe('canvas chat thread persistence', () => {
     const [secondMessages] = chatMock.mock.calls[1] ?? [];
     expect(JSON.stringify(secondMessages)).toContain('remember the rain');
 
-    // Debounced: nothing lands until the flush, then the whole thread does.
+    // Debounced: nothing lands until the flush, then the whole thread does. The
+    // write is held at the gate, so the row is read while the write provably has
+    // not been scheduled — no race against the 600ms window (see the gate above).
     // (actDrained: the row write re-fires the page's live queries — the
     // cascade must land inside act, per the console guard.)
+    await waitForScheduledWrite();
     let row = await getModule(world.moduleId);
     expect(row?.chatThread).toHaveLength(0);
     row = await actDrained(async () => {
@@ -245,7 +317,9 @@ describe('canvas chat thread persistence', () => {
 
     // Restored history never auto-applies: the doc and the row are byte-identical.
     expect(activeCanvasView.current?.state.doc.toString()).toBe(WHOLE_DOC);
-    const rowAfter = await getModule(world.moduleId);
+    // actDrained (docs/08 §Race cures): the restore's hydration writes the store,
+    // and the page's live queries can re-render during this raw read.
+    const rowAfter = await actDrained(() => getModule(world.moduleId));
     expect(rowAfter?.parts.find((part) => part.planIndex === 0)?.markdown).toBe(PART_0_TEXT);
     expect(rowAfter?.parts.find((part) => part.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
     await flushAsyncUpdates();
