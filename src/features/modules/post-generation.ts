@@ -12,6 +12,7 @@ import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { enqueueMobPortraits } from '@/features/campaign/mob-portrait-queue';
+import { hasDetailedEntity } from '@/features/modules/detailed-entity';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { runEntityBatch } from '@/features/modules/entity-batch';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
@@ -31,6 +32,9 @@ import { toastError, toastSuccess } from '@/lib/toast';
  *    wiki-link entities of that kind are batch-detailed through the same
  *    headless chain as the entity panel's batch (08 §M4-C; gated on the
  *    name-normalization pass, the fix-01 guarantee against duplicates).
+ *    "Unresolved" is the panel's own verdict (`batchTargets`): a name with no
+ *    authored entity of its own — including one that only resolves to a shared
+ *    bestiary creature row.
  * 2. **Auto-generate images** — every resolved entity of a configured kind
  *    without an image is enqueued in the background image queue (one cover
  *    per entity). Runs AFTER the batches so newly generated artifacts are
@@ -102,11 +106,21 @@ function namesOfKind(module: Module, kind: EntityKind): string[] {
 
 /**
  * Batch targets: wiki-link names of the module whose recorded kind is `kind`
- * and that resolve to NO artifact in the module-creation pool — the exact set
- * the entity batch is given (docs/17 row 69: a name matching a player character
- * does NOT count as resolved, so it becomes the module's own entity instead of
- * silently binding the module to the Party). Exported so the "Resume automatic
- * module creation" deviation can list the SAME work the sweep would do.
+ * and that have NO authored, detailed entity of their own — the exact set the
+ * entity batch is given. "No entity of its own" is `hasDetailedEntity` (the
+ * panel's own verdict, `features/modules/detailed-entity`), so the two surfaces
+ * can never disagree:
+ *
+ * - docs/17 row 69: a name matching a player character does NOT count as
+ *   detailed, so it becomes the module's own entity instead of silently binding
+ *   the module to the Party;
+ * - a name whose only resolution is a shared bestiary creature row (an `npc`
+ *   carrying `data.monsterChunkId`) does NOT count either — the row is the
+ *   rulebook creature's own shared artifact, with no authored detail, so the
+ *   module gets ITS entity of that name (and the module tier then prefers it).
+ *
+ * Exported so the "Resume automatic module creation" deviation can list the
+ * SAME work the sweep would do.
  */
 export function batchTargets(
   module: Module,
@@ -114,11 +128,16 @@ export function batchTargets(
   kind: EntityKind,
 ): string[] {
   return namesOfKind(module, kind).filter(
-    (name) => resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact === undefined,
+    (name) => !hasDetailedEntity(resolveWikiLink(name, artifacts, { moduleId: module.id })),
   );
 }
 
-/** Image targets: resolved entities of a configured kind without an image. */
+/** Image targets: resolved entities of a configured kind without an image.
+ * Deliberately the RESOLUTION, not the detailed verdict above: an image job
+ * attaches to whatever row the name resolves to, and the panel's images mode
+ * already refuses a not-detailed row ("Detail this entity first"). Reading the
+ * detailed verdict here would silently stop illustrating a name the module
+ * legitimately resolves (docs/18 §4). */
 export function imageTargets(module: Module, artifacts: readonly AnyArtifact[], kind: EntityKind): string[] {
   return namesOfKind(module, kind).filter((name) => {
     const artifact = resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact;
@@ -232,8 +251,10 @@ export async function runModulePostGeneration(
         if (stoppedSince(epoch)) return;
         // The batch target set is the module-creation pool (docs/17 row 69):
         // a recorded name that happens to match a player character does NOT
-        // count as resolved, so it is generated as a NEW module-owned entity
-        // instead of silently binding the module to the Party.
+        // count as detailed, so it is generated as a NEW module-owned entity
+        // instead of silently binding the module to the Party — and neither
+        // does one that only resolves to a shared bestiary creature row
+        // (batchTargets, features/modules/detailed-entity).
         const artifacts = moduleCreationPool(await listArtifactsByCampaign(module.campaignId));
         const names = batchTargets(module, artifacts, kind);
         if (names.length === 0) continue;

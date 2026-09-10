@@ -55,6 +55,7 @@ import {
 } from '@/features/modules/automation-deviation';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
+import { creatureRowOnlyNotice } from '@/features/modules/detailed-entity';
 import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
 import { resumeEverything } from '@/features/modules/resume-automation';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
@@ -104,6 +105,15 @@ function adoptArtifact(artifact: AnyArtifact): void {
  * counts, the "N mentioned · M detailed" progress line, and the batch action
  * "Generate all unresolved of kind…". A resolved row opens the entity card
  * (peek modal); an unresolved row opens the stub popover.
+ *
+ * DETAILED means an authored entity of its OWN (`features/modules/detailed-entity`,
+ * docs/18 §4): a name that only resolves to a shared bestiary creature row — the
+ * ONE campaign `npc` row per cited rulebook chunk, whose portrait is cached
+ * globally — is NOT detailed. Such a row used to read as a defined entity while
+ * carrying nothing but that portrait, so no batch ever offered it (owner
+ * report). It is work to do here, and the row carries the `bestiary only` marker
+ * naming the shared row (title + screen-reader sentence) so the panel never
+ * pretends the bare row is this module's entity.
  *
  * fix-01 state: batch generation is GATED on the module's entity-name
  * normalization (`entityNamesNormalized`) — the visible guarantee that no
@@ -1216,6 +1226,28 @@ function EntityRow({
             </span>
             {/* Touch + screen-reader mirror of the hover-only title above. */}
             <span className="sr-only">Multiple artifacts match this name</span>
+          </>
+        )}
+        {/* The honest verdict (owner-reported: a name that only resolved to a
+            shared bestiary creature row counted as a DEFINED entity while its
+            row carried nothing but the global portrait). The row is offered as
+            work to do — and it says why a campaign row of that name is not it,
+            instead of leaving the owner to guess: the marker's title names the
+            shared creature row and the remedy, and the sr-only mirror carries
+            the same sentence to touch and screen readers (the ambiguous marker's
+            convention above). */}
+        {entry.creatureRow !== undefined && (
+          <>
+            <span
+              className="shrink-0 rounded border border-dashed px-1 text-[10px] whitespace-nowrap text-muted-foreground"
+              title={creatureRowOnlyNotice(entry.name)}
+              data-testid="entity-creature-only"
+              data-name={entry.name}
+              aria-hidden
+            >
+              bestiary only
+            </span>
+            <span className="sr-only">{creatureRowOnlyNotice(entry.name)}</span>
           </>
         )}
         {entry.resolved ? (
