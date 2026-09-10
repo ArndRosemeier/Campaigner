@@ -23,9 +23,9 @@ number; grep the symbol.
 ## 1. Layer map (dependency direction)
 
 Dependencies point downward only: `app → features → {db, llm, search, ingest,
-lib} → domain`. Nothing imports upward — no repo imports a feature (the one
-exception is `moduleRepo.deleteModule`'s dynamic `import('@/llm/moduleGen')`,
-sanctioned only because a static import would be a cycle).
+lib} → domain`. Every upward import that exists at HEAD is enumerated in §5
+(known debt) — read it before adding one, and never import a feature from a
+repo.
 
 - **`src/domain`** — pure TS + zod: every entity type, schema and pure
   algorithm (battle engine in `battle/`, encounter layout in `encounterMap/`,
@@ -494,7 +494,19 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   any write — no rename, no `stampModuleOwnership`, no tag), and authored text
   found on one is reported and cleared only by the explicit two-step repair,
   which leaves name, aliases, marker, stat block, images, cover, tags, links and
-  scope untouched. Never a second interpretation of "creature row" (ledger 81).
+  scope untouched. The refill WRITE is refused at DESTINATION RESOLUTION in
+  `runEngine.runFinalize` (`isMobArtifact` + the same refusal copy): a
+  creature-row target fails the run loudly (run row `errorMessage` + toast)
+  before any branch below can write — the row comes out byte-identical, with
+  no revision — and the persona panel's refill picker never OFFERS one (a
+  creature row held over from an Illustrator/Continuity selection is marked
+  refused with the same copy and a disabled Start whose `title` says why;
+  those two pickers keep the FULL list, because a creature row is exactly
+  where a mob portrait belongs and review is legitimate). That import of the
+  refusal copy into `llm/runEngine` is the seam `llm/moduleGen` already takes
+  into `features/modules/post-generation` — a deliberate seam, not layer-map
+  drift (both are enumerated in §5). Never a second interpretation of
+  "creature row" (ledger 81, ledger 84).
 - **The module entity view asks "does this name have an authored, DETAILED
   entity of its own?" — never "does anything resolve?"** The ONE verdict is
   `features/modules/detailed-entity.ts` (`detailedEntityVerdict` /
@@ -523,6 +535,22 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   batchable). Ledger 82.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+
+- **Every upward import that exists at HEAD** (§1 says dependencies point
+  downward; these are the exceptions, all deliberate — do not "discover" them
+  and do not add a further one): `db/seed.ts` + `db/personaRepo.ts` →
+  `llm/personas/builtins` (the built-in persona definitions);
+  `db/campaignRepo.ts`, `db/moduleRepo.ts` and `db/maintenance.ts` → dynamic
+  `import('@/llm/moduleGen')` (a static import would be a cycle);
+  `llm/moduleGen` → `features/modules/post-generation.runModulePostGeneration`
+  and `llm/runEngine` → `features/campaign/creature-row-guard.creatureRowAiRefusal`
+  (the sweep and the refusal copy each have ONE implementation, and a copy
+  inside `llm` would drift from the code the UI reads — docs/17 rows 80, 84);
+  `llm/moduleGen` + `llm/runEngine` → `@/app/routes`, plus all 28
+  `features/**` sites → `@/app/routes` (route builders are treated as
+  constants, not as app state); `domain/wikiGraph.ts` +
+  `domain/encounterMap/layout.ts` → `@/lib` (`wikilinks`, `errors` — pure
+  helpers with no upward dependency of their own).
 
 - **The Advanced floor editor's minimum disagrees with its own schema.** The
   "Per level" input falls back to `0` when it is cleared
