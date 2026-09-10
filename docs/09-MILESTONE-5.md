@@ -403,7 +403,14 @@ address the shared record type, while the user-visible and accessible names
 are the ones that must be kind-true. The user-facing guide text ("fog covers
 each room's monsters") was corrected in the same arc. All three are pinned:
 layered-cloud + no-flat-slab, kind-named controls, and the seeded cover's
-tap-through to its room's key.*
+tap-through to its room's key. **NO MIGRATION, and this is the one visible
+consequence: `kind` is persisted board data, so a battle seeded BEFORE this
+amendment keeps its `kind: 'fog'` covers — they still render (as the new
+cloud) and still BLOCK, and only a fresh seed emits veils. A running battle
+therefore gets the new cover kind by re-seeding the board from its encounter
+(the surface's destructive re-seed, `confirm-reseed`) or by lifting/deleting
+the old covers; nothing re-reads the kind at read time, and no schema field,
+Dexie version or setting changed.***
 
 Amended 2026-09-07 by 01a0b5e (room-keys/treasure arc, owner-ratified; D9 in
 11-ENCOUNTER-GENERATOR): *GM view additionally renders room-key markers — one
