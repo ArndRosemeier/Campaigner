@@ -261,13 +261,26 @@ discipline plus the owner's read of the spine checkpoint. A pure check in the
 floor's family (for example counting links) may only be PROPOSED, never built
 silently.
 
-### M4-B-2 — The scene block: the document's scene grammar (owner decision, docs/17 row 73)
+### M4-B-2 — The scene block is the CLASSIC STYLE's shape (owner decision, docs/17 row 73; styles, row 86)
+
+**This is now ONE option among the module's writing styles, not the only shape
+a module can take** (owner decision, docs/17 row 86 — see §Editable prompt
+styles below). It remains the shape of the **Classic** built-in, which is the
+default and whose bytes are pinned, and everything the rest of this section
+says about the block describes what Classic asks for.
 
 **Why.** Every generated scene must arrive as a GM-usable BLOCK. This is the
 best-evidenced usability finding in the research behind this arc (multi-source
 practitioner consensus: a scene the GM can run from the page, rather than prose
 they must re-read and re-organize mid-session). The owner chose the full
 per-scene field set over a prose-only instruction (docs/17 row 73).
+
+**Where the text lives.** The labels and the anti-formula demands moved out of
+`src/llm/moduleGen.ts` with the style layer: `PART_SCENE_FIELD_LABELS`,
+`classicSceneFieldBullets()` and `PART_SCENE_VARIATION_DEMANDS` now live in
+`src/llm/promptStyles.ts` and are rendered into the CLASSIC template. That is
+also why the Story style has no field list at all: the block is what Classic
+says, and a style is free to say something else (row 86).
 
 **It is a DOCUMENT-FORMAT convention, not a schema.** The block lives in the
 part's markdown, so there is no schema change, no Dexie version, no migration
@@ -359,6 +372,94 @@ ENCOUNTER/EVENT tag is TEXT for now — maps, monsters and rosters are still
 decided by the entity's recorded `kind === 'encounter'` in the artifact
 pipeline (`post-generation` filters on it), and the encounter floor is
 untouched (§Editable encounter floor).
+
+### Editable prompt styles (owner decision, docs/17 row 86)
+
+**What the owner asked for, verbatim:** *"How about we make these prompts (with
+placeholders) visible and changeable in settings? We could even have several
+'styles' and the user could just select one... or author his own, based on
+another."* — the answer to the row-73 complaint that the module had become *"a
+list of things with the same structure"* with *"no room to spin a story"*.
+
+**Two layers, and the split is the design.**
+
+- The **style** is the user prompt: everything the author writes, with
+  `{{placeholders}}` for the run's values. Styles are DATA
+  (`src/domain/promptStyle.ts`), never code: `{ id, name, origin, basedOn?,
+  version, templateText, createdAt, updatedAt }`.
+- The **contract** is what the app parses, counts or depends on. It is injected
+  on every composition from values the seam computes, and a style can say
+  anything around those clauses but cannot remove them. The required tokens, per
+  surface, are the spine's `contract.replyFormat`, `contract.floor`,
+  `contract.entityKinds`, `contract.sceneKinds`, `contract.wikiLinks` and the
+  parts' `contract.replyFormat`, `contract.gmAddress`, `contract.wikiLinks`,
+  `contract.lengthTarget`, `contract.floor`, `contract.mechanics`,
+  `contract.encounterCasting` (the floor clause itself still comes from the
+  module's own recorded guardrail — §Editable encounter floor — and the gate,
+  the counter, the messages and the goldens are untouched by this arc).
+
+**The template is sectioned**: `--- SPINE ---` and `--- PARTS ---`. One flat
+template cannot compose two structurally different prompts (the planner's JSON
+call and the per-part markdown call), so the section markers are part of the
+format, text outside them is refused by name, and the settings editor says so
+next to the field.
+
+**Placeholders are named, and every misuse is loud.** An unknown token is an
+error that names it (never rendered literally, never silently emptied); a token
+used in the wrong section names the section; an empty template is refused. A
+placeholder ALONE on a paragraph disappears when the run has no value for it —
+exactly how the pre-style builders dropped a null entry from the message array —
+while a placeholder alone on a LINE inside a block leaves an empty line (that is
+what the pre-style disabled-floor part prompt looks like). All three cases,
+plus inline substitution, are pinned byte for byte.
+
+**Built-ins are immutable and shipped in code.** `Classic` is today's text,
+verbatim; `Story` writes the part as the story the GM plays — beats whose shape
+the model chooses, no ordered field list — while keeping the contract, the
+heading-with-`[[link]]` requirement (the encounter floor counts canonical
+`[[encounter]]` links, so a beat named only in passing prose would be invisible
+to the gate) and the floor clauses byte-identical to Classic's. A built-in
+cannot be edited at all; `Duplicate` is the way in, and a style derived from
+another keeps `basedOn` and a `Reset to source`.
+
+**A module RECORDS the style it was written in** — id, name, version and the
+full `templateText` on its row (`domain/module.promptStyle`, additive and
+optional). Every later generation of that module — a resume, a repair, a
+per-part regeneration, the floor-repair rewrite — composes from THAT copy, so
+editing a style can never rewrite a module that exists and deleting one can
+never break it. A module written before styles existed has no recorded style and
+resolves to the immutable Classic (`promptStyleForModule` →
+`source: 'legacy-classic'`): it was written with that text and keeps composing
+it. Moving an existing module onto a style's current text is an explicit,
+confirmed act (the canvas's style bar, which renders NOTHING when there is no
+difference).
+
+**Byte identity is the acceptance criterion.** `tests/llm/promptStyles-classic-identity.test.ts`
+compares the composed Classic prompt against eleven fixtures captured by
+RENDERING the pre-refactor builders (the 89e5d71 method — never transcribed):
+the default floor, a disabled floor, prior modules with the shared cast, an
+extra retry instruction, tone bans with a campaign description, part 0,
+continuity, the finale, the bare case, plus a LEGACY row (no `promptStyle` key
+in Dexie) and a row that RECORDED Classic. Nothing about this arc is allowed to
+change one byte of the default path.
+
+**Storage decision.** Styles live on the SETTINGS row (`promptStyles`,
+`defaultPromptStyleId`), not in a Dexie table: no version bump and no migration
+golden to re-derive, the app default is a settings preference anyway (one read
+seam instead of two), the row already carries a comparable per-feature object
+(`newModuleDraft`) with its own read carve-out, and backup/export already
+carries the settings row. The hazard — a settings write clobbering a field it
+does not own — is closed in `settingsRepo.updateSettings`, which carries such a
+field forward VERBATIM and fails loudly if it cannot be read; an unreadable
+styles blob is reported on both surfaces with one explicit way out ("Discard
+unreadable styles") and is never shown as "no styles".
+
+**Deliberately NOT in this arc:** per-module style AUTHORING (a module selects a
+style and records its text; authoring happens in Settings), style versioning as
+history (the version only marks the template generation a module recorded),
+style-level model/temperature settings (those stay on the persona and the
+Settings defaults), and any effect of a style on the encounter FLOOR (which
+stays recorded per module and machine-checked).
 
 ### Pass 0 — Spine (one call, JSON)
 
