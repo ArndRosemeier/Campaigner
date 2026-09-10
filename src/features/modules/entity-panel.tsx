@@ -34,7 +34,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { AnyArtifact, Campaign, Module } from '@/domain';
-import { entityKindFor, moduleCreationPool } from '@/domain';
+import { entityKindFor } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
@@ -58,12 +58,10 @@ import {
   type StubKind,
 } from '@/features/modules/persona-request';
 import {
-  countOccurrences,
-  extractWikiLinks,
-  resolveWikiLink,
-  rewriteWikiLinkTargets,
-  sentenceAround,
-} from '@/lib/wikilinks';
+  useModuleEntities,
+  type EntityEntry,
+} from '@/features/modules/use-module-entities';
+import { rewriteWikiLinkTargets } from '@/lib/wikilinks';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { RunBattleButton } from '@/features/play/run-battle';
 import { cn } from '@/lib/utils';
@@ -134,61 +132,6 @@ export interface EntityPanelProps {
   onStub: (name: string, anchor: { x: number; y: number }) => void;
   /** Opens the entity card (peek modal) for a resolved entity. */
   onOpenCard: (artifact: AnyArtifact) => void;
-}
-
-interface EntityEntry {
-  name: string;
-  resolved: boolean;
-  ambiguous: boolean;
-  artifact: AnyArtifact | undefined;
-  occurrences: { where: string; count: number }[];
-  total: number;
-  sentence: string;
-}
-
-export function useModuleEntities(
-  module: Module,
-  artifacts: readonly AnyArtifact[],
-): { entries: EntityEntry[]; documents: { where: string; markdown: string }[] } {
-  return useMemo(() => {
-    // The panel is a MODULE-CREATION surface (its unresolved rows are the
-    // batch work queue and its observation feeds the classification run), so
-    // it resolves against the module-creation pool: the Party is invisible
-    // here (docs/17 row 69). A separate-named PC mention therefore reads as
-    // unresolved — the module gets its own entity instead of silently binding
-    // to a player character. Reading surfaces (reader chips, chat) still
-    // resolve against the full pool.
-    const pool = moduleCreationPool(artifacts);
-    const documents = [
-      { where: 'premise', markdown: module.spine?.premise ?? '' },
-      ...module.parts
-        .slice()
-        .sort((a, b) => a.planIndex - b.planIndex)
-        .map((part) => ({ where: `part-${String(part.planIndex)}`, markdown: part.markdown })),
-    ];
-    const names = extractWikiLinks(documents.map((document) => document.markdown).join('\n\n')).map(
-      (link) => link.name,
-    );
-    const entries = names.map((name) => {
-      const resolution = resolveWikiLink(name, pool, { moduleId: module.id });
-      const occurrences = countOccurrences(name, documents);
-      const firstDoc = documents.find((document) =>
-        countOccurrences(name, [document]).length > 0,
-      );
-      return {
-        name,
-        resolved: resolution.artifact !== undefined,
-        ambiguous: resolution.status === 'ambiguous',
-        artifact: resolution.artifact,
-        occurrences,
-        total: occurrences.reduce((sum, occurrence) => sum + occurrence.count, 0),
-        sentence: sentenceAround(firstDoc?.markdown ?? '', name),
-      };
-    });
-    // First-mention order (premise first, then parts by plan index) — the
-    // 'mention' sort mode; the panel re-sorts per `module.entitySort`.
-    return { entries, documents };
-  }, [module, artifacts]);
 }
 
 export function EntityPanel({

@@ -31,7 +31,7 @@ import {
   globalArtifactKindSchema,
 } from '@/domain';
 import { defaultArtifactName } from '@/domain';
-import { exportSingleArtifact } from '@/features/campaign/components/export-dialog';
+import { exportSingleArtifact } from '@/features/campaign/components/export-single-artifact';
 import { RemoveKindDialog } from '@/features/campaign/components/remove-kind-dialog';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
 import { ImageThumb } from '@/features/images/image-thumb';

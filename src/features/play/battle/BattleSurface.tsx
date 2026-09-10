@@ -92,7 +92,7 @@ import {
   regenerateSingleMobPortrait,
   type SingleMobPortraitTarget,
 } from '@/features/campaign/mob-portrait-queue';
-import { runBattle } from '@/features/play/run-battle';
+import { runBattle } from '@/features/play/run-battle-seed';
 import { formatDateTime } from '@/lib/format';
 import { NpcCard } from '../artifact-cards';
 import { StatBlockCard } from '@/features/campaign/components/stat-block';

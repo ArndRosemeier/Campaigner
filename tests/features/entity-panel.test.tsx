@@ -31,7 +31,8 @@ import {
   type Id,
   type Module,
 } from '@/domain';import { emptyBoard } from '@/domain/battle/board';
-import { EntityPanel, useModuleEntities } from '@/features/modules/entity-panel';
+import { EntityPanel } from '@/features/modules/entity-panel';
+import { useModuleEntities } from '@/features/modules/use-module-entities';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { STUB_PERSONA_SLUGS } from '@/features/modules/persona-request';
 import { ProgressDock } from '@/features/progress/progress-dock';

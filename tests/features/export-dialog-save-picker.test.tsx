@@ -7,7 +7,7 @@ import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
 import { ROUTES } from '@/app/routes';
 import { CampaignPickerPage } from '@/features/campaign/CampaignPickerPage';
-import { exportSingleArtifact } from '@/features/campaign/components/export-dialog';
+import { exportSingleArtifact } from '@/features/campaign/components/export-single-artifact';
 import * as artifactRepo from '@/db/artifactRepo';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';

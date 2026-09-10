@@ -27,14 +27,14 @@ import {
 import { fallbackSpawnPoint } from '@/domain/battle/board';
 import { sha256Hex } from '@/lib/hash';
 import { toastError } from '@/lib/toast';
+import { SpawnPicker } from '@/features/play/battle/SpawnPicker';
 import {
-  SpawnPicker,
   buildMobPickEntry,
   countLabelSlots,
   nextFreeSpawnPoint,
   parseLevelOrLast,
   spawnPickedEntry,
-} from '@/features/play/battle/SpawnPicker';
+} from '@/features/play/battle/spawn-picker-logic';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 

@@ -15,18 +15,16 @@ import {
 import { Label } from '@/components/ui/label';
 import {
   buildCampaignExport,
-  buildExport,
   buildZip,
   exportSuggestedName,
 } from '@/lib/exportImport';
 import { EXPORT_JSON_TYPES, EXPORT_ZIP_TYPES, openSaveTarget } from '@/lib/filePicker';
-import { listRevisions } from '@/db/artifactRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
 
 /**
  * Export (06-MILESTONES M2): a campaign-wide dialog with artifact selection
- * (JSON file or zip bundle) plus single-artifact quick export from the tree
- * context menu.
+ * (JSON file or zip bundle). The single-artifact quick export from the tree
+ * context menu lives in the `export-single-artifact.ts` sibling.
  */
 
 type ExportFormat = 'json' | 'zip';
@@ -201,40 +199,4 @@ export function ExportCampaignDialog({
       </DialogContent>
     </Dialog>
   );
-}
-
-function artifactSlug(name: string): string {
-  return (
-    name
-      .toLowerCase()
-      .replaceAll(/[^a-z0-9]+/g, '-')
-      .replaceAll(/^-+|-+$/g, '') || 'artifact'
-  );
-}
-
-/** One-click JSON export of a single artifact (tree context menu). */
-export async function exportSingleArtifact(artifact: Artifact): Promise<void> {
-  // Gesture-first like runExport above: the tree menu click carries the user
-  // activation the native picker needs, so the target is acquired first.
-  let target;
-  try {
-    target = await openSaveTarget({
-      suggestedName: `${artifactSlug(artifact.name)}-${new Date(Date.now()).toISOString().slice(0, 10)}.json`,
-      types: EXPORT_JSON_TYPES,
-    });
-  } catch (error) {
-    toastError('Artifact export failed', error);
-    return;
-  }
-  if (target.cancelled) return;
-  try {
-    const revisions = await listRevisions(artifact.id);
-    const exported = buildExport(null, [{ ...artifact, revisions }]);
-    await target.write(
-      new Blob([JSON.stringify(exported, null, 2)], { type: 'application/json' }),
-    );
-    toastSuccess('Artifact exported');
-  } catch (error) {
-    toastError('Artifact export failed', error);
-  }
 }

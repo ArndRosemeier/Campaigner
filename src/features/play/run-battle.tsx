@@ -5,9 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { SwordsIcon } from 'lucide-react';
 
 import type { AnyArtifact, Id } from '@/domain';
-import { seedBattleFromEncounter, type SeedReport } from '@/db/battleSeed';
 import { getBattleByModule } from '@/db/battleRepo';
-import { toastError, toastSuccess } from '@/lib/toast';
+import { runBattle } from '@/features/play/run-battle-seed';
 import { battlePath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
 
@@ -24,39 +23,12 @@ import { Button } from '@/components/ui/button';
  * resume/replace split stays one shared implementation. A successful seed
  * NAVIGATES straight to that module's battle table (the toast only confirms
  * the seed — it never tells the user to go open it themselves).
+ *
+ * The seed action itself (`runBattle`) lives in the `run-battle-seed.ts`
+ * sibling.
  */
 function isRunning(battle: Awaited<ReturnType<typeof getBattleByModule>>): boolean {
   return battle !== undefined && (battle.board.tokens.length > 0 || battle.encounterArtifactId !== null);
-}
-
-export async function runBattle(
-  campaignId: Id,
-  moduleId: Id,
-  encounter: AnyArtifact & { kind: 'encounter' },
-  /**
-   * Toast wording override for the battle surface's destructive re-seed
-   * (encounter-resume arc): same REPLACE semantics and the same reseed
-   * provenance stamp, but the GM is already standing on the table, so the
-   * toast names what actually happened.
-   */
-  toasts: { successTitle: string; failureTitle: string } = {
-    successTitle: 'Battle seeded',
-    failureTitle: 'Could not seed the battle',
-  },
-): Promise<SeedReport | null> {
-  try {
-    const report = await seedBattleFromEncounter(campaignId, moduleId, encounter.id);
-    toastSuccess(toasts.successTitle);
-    if (report.statless.length > 0) {
-      toastError(
-        `No combat stats for: ${report.statless.join('; ')} — they will not roll initiative`,
-      );
-    }
-    return report;
-  } catch (error) {
-    toastError(toasts.failureTitle, error);
-    return null;
-  }
 }
 
 export function RunBattleButton({
