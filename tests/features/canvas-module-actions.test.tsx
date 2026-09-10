@@ -29,7 +29,7 @@ import { flushChatPersist } from '@/features/modules/canvas/chatPersist';
 import { chainRunner } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * The canvas's two DERIVED controls (docs/05 §Module canvas, docs/08 §M4-B-3):
@@ -562,14 +562,26 @@ describe('"Resume automatic module creation" on the canvas', () => {
     const dialog = await screen.findByTestId('canvas-resume-automation-dialog');
 
     // The work lands by other means while the dialog is open (the owner's other
-    // tab, a hand edit, the entity panel).
+    // tab, a hand edit, the entity panel). The write lands in the SAME tick as
+    // the mounted canvas's live queries, so it runs inside `actDrained`: a bare
+    // `await saveModule(...)` hands the loop to `useModule`'s re-emission
+    // (dexie-react-hooks → CanvasPage's own setState) and then to the Base UI
+    // dialog internals the re-render wakes, all outside act (docs/08-TESTING.md
+    // §Console guard). Measured at this site by delaying the cause — an extra
+    // bare await right after the write made the un-cured test fail 9/9 with the
+    // act warnings (`CanvasPage`, then `AlertDialogRoot`/`DialogPortal`/
+    // `DialogBackdrop`/`DialogPopup`), and the drained write absorbs them 9/9.
+    // The raw `getModule` read two lines up is NOT a site (250ms of delay there
+    // left the test green 4/4): nothing is pending before the write.
     const row = await getModule(world.moduleId);
     if (row === undefined) throw new Error('the module row is missing');
-    await saveModule({
-      ...row,
-      parts: row.parts.map((part) => ({ ...part, markdown: part.markdown.replaceAll('[[Kael]]', 'the watchman') })),
-      entityKinds: [{ name: 'Bell Trial', kind: 'encounter', absorbed: [] }],
-    });
+    await actDrained(() =>
+      saveModule({
+        ...row,
+        parts: row.parts.map((part) => ({ ...part, markdown: part.markdown.replaceAll('[[Kael]]', 'the watchman') })),
+        entityKinds: [{ name: 'Bell Trial', kind: 'encounter', absorbed: [] }],
+      }),
+    );
     chatMock.mockClear();
 
     await userEvent.click(within(dialog).getByTestId('canvas-resume-automation-confirm'));
