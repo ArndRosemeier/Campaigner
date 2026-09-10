@@ -11,6 +11,7 @@ import { ExperimentsSection } from '@/features/settings/experiments-section';
 import { AppearanceSection } from '@/features/settings/appearance-section';
 import { LanguageSelect } from '@/features/settings/language-select';
 import { PersonaSection } from '@/features/settings/persona-section';
+import { PromptStylesSection } from '@/features/settings/prompt-styles-section';
 import { DangerZone } from '@/features/settings/danger-zone';
 import { SettingsSection } from '@/features/settings/settings-section';
 
@@ -51,6 +52,7 @@ export function SettingsPage(): JSX.Element {
       </Card>
       <AppearanceSection />
       <PersonaSection personas={personas ?? []} />
+      <PromptStylesSection />
       <ExperimentsSection />
       <BackupSection />
       <DangerZone />

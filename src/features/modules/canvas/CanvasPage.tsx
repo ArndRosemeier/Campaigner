@@ -85,6 +85,7 @@ import { PeekModal } from '@/features/modules/peek-modal';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
 import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
+import { ModuleStyleBar } from '@/features/modules/canvas/module-style-bar';
 import { CanvasPreview } from '@/features/modules/canvas/CanvasPreview';
 import { useCanvasPreviewStore } from '@/features/modules/canvas/previewStore';
 import { canvasChatKey, useCanvasChatStore } from '@/features/modules/canvas/chatStore';
@@ -1441,6 +1442,7 @@ export function CanvasPage(): JSX.Element {
           />
         )}
         <div className="flex min-h-0 flex-1 flex-col">
+          <ModuleStyleBar module={currentModule} />
           {wholeProposal !== undefined && !previewOpen && (
             <div
               className="flex items-center gap-2 border-b px-4 py-1.5 text-sm text-muted-foreground"
