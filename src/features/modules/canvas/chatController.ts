@@ -184,6 +184,9 @@ export async function runChatTurn(
           module,
           origin: 'ai',
           label: `Chat: ${text.slice(0, 60)}`,
+          // Durable pre-change snapshot (docs/18 §2.3): the whole document as
+          // it stood before this batch — the simple undo for chat edits.
+          version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
         });
       }
       return { doc: options.view.state.doc.toString(), lastApplied: applied.lastApplied };

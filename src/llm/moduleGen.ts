@@ -3,6 +3,7 @@ import { createModule, ENCOUNTER_CONFLICT_KINDS, entityKindFor, moduleDocumentTe
 import { canonicalEntityRecords, normalizationReplySchema, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings } from '@/db/settingsRepo';
@@ -873,12 +874,38 @@ export interface PartsRunOptions {
 }
 
 /**
+ * The honest one-line label for a parts pass (docs/18 §2.3): the Versions menu
+ * shows it against the snapshot taken BEFORE the pass, so it names what the
+ * pass is about to do — "Generate parts" (full pass), "Generate N missing
+ * parts" (hole fill), or "Rewrite part <n> — <title>: <instruction opening>"
+ * (single-part rewrite/regenerate, board rewrite). Never a generic "AI change".
+ */
+function partsRunLabel(module: Module, options: PartsRunOptions): string {
+  const indexes = options.planIndexes;
+  if (indexes === undefined) return 'Generate parts';
+  if (indexes.length !== 1) return `Generate ${String(indexes.length)} missing parts`;
+  const planIndex = indexes[0] ?? 0;
+  const title = module.spine?.partPlan[planIndex]?.title ?? '';
+  const head = title.trim() === '' ? `Rewrite part ${String(planIndex + 1)}` : `Rewrite part ${String(planIndex + 1)} — ${title.trim()}`;
+  const instruction = (options.extraInstruction ?? '').trim();
+  return instruction === '' ? head : `${head}: ${instruction.slice(0, 60)}`;
+}
+
+/**
  * Runs pass 1: one markdown call per plan entry, sequentially. Each finished
  * part lands on the module row immediately (progressive reveal — the reader
  * shows part 1 while part 3 streams). A failed part does NOT stop the chain:
  * it is marked failed (with its error) and generation continues. Continuity
  * for part i comes from the part at planIndex i−1 only — when that
  * predecessor failed, part i is written WITHOUT continuity context.
+ *
+ * SIMPLE UNDO (docs/18 §2.3): the pass takes ONE durable whole-document
+ * snapshot at ENTRY — before the first row write — so every part this pass
+ * rewrites (generation, missing-part fill, single-part rewrite/regenerate,
+ * the board's staged rewrite, and the floor-repair rewrites inside the pass)
+ * can be undone as a whole. The in-pass `normalizeModuleEntityNames` calls
+ * take their OWN snapshot (see that function), because they are separate AI
+ * passes over the text.
  */
 export async function runParts(
   moduleId: Id,
@@ -894,6 +921,11 @@ export async function runParts(
     const settings = await getSettings();
     const module = await requireModule(moduleId);
     if (module.spine === null) throw new Error('Cannot generate parts without an approved spine');
+    // Durable pre-change snapshot (docs/18 §2.3 simple undo): the WHOLE parts
+    // document as it stands before this pass writes anything. Loud on failure
+    // — an AI pass must not rewrite part text whose pre-state could not be
+    // recorded (the throw fails the module through the existing loud path).
+    await snapshotModuleVersion(moduleId, 'generation', partsRunLabel(module, options));
     await patchModule(moduleId, { status: 'generating', errorMessage: '' });
 
     const planIndexes =
@@ -1499,6 +1531,12 @@ async function normalizationCall(
  */
 export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
   const module = await requireModule(moduleId);
+  // Durable pre-change snapshot (docs/18 §2.3): this pass rewrites wiki-link
+  // targets INSIDE generated part text, so it is an AI change to the parts
+  // document — whether it runs standalone (the entity panel's Retry) or from
+  // inside a parts pass (whose own entry snapshot covers the generated text,
+  // not this rewrite). Loud on failure, before any write.
+  await snapshotModuleVersion(moduleId, 'normalization', 'Normalize entity names');
   const artifacts = await listArtifactsByCampaign(module.campaignId);
   const artifactNames = artifacts.map((artifact) => artifact.name);
   const documents = [

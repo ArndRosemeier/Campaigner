@@ -14,6 +14,7 @@ import {
   PanelLeftOpenIcon,
   PencilIcon,
   SaveIcon,
+  Trash2Icon,
   WandSparklesIcon,
 } from 'lucide-react';
 
@@ -36,6 +37,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -54,14 +56,19 @@ import {
   canvasPartLabel,
   CANVAS_PARTS_DELIMITER,
   ModulePartsDocumentError,
+  MODULE_VERSION_CAP,
+  MODULE_VERSION_SOURCE_LABELS,
+  savedVersionsNoun,
   splitPartsDocument,
   type AnyArtifact,
   type Module,
+  type ModuleDocumentVersion,
+  type ModuleVersionSource,
 } from '@/domain';
 import { cancelModuleGen, ModuleBusyError } from '@/llm/moduleGen';
 import { enclosingBlockOf, refineModuleText } from '@/llm/canvasRefine';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
-import { useModule } from '@/features/modules/hooks';
+import { useModule, useModuleVersions } from '@/features/modules/hooks';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
@@ -103,6 +110,7 @@ import type {
   CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
 import type { LastReplacement } from '@/features/modules/canvas/lastReplacement';
+import { clearModuleVersions } from '@/db/moduleVersionRepo';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
@@ -139,9 +147,22 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * run against the preview SNAPSHOT STRING (the editor is unmounted — the
  * v3 contract, never remounted hidden) via the shared split + the existing
  * per-part ladder, persist through the existing split-save, and re-render
- * the preview. Preview-applied edits have NO undo (no CM history while the
- * editor is unmounted — documented caveat). Returning to Edit remounts the
- * editor from the latest snapshot through the existing mountDoc path.
+ * the preview. Preview-applied edits have no CM6 history (the editor is
+ * unmounted) — their undo is the durable Versions snapshot taken before the
+ * turn, which is why that seam is required for both apply modes. Returning to
+ * Edit remounts the editor from the latest snapshot through the existing
+ * mountDoc path.
+ *
+ * Versions (header dropdown) — SIMPLE UNDO, owner-directed (docs/18 §2.3,
+ * docs/17 ledger row 63): the top group lists the DURABLE whole-document
+ * snapshots taken before every AI change (Dexie `moduleVersions`, newest
+ * first, capped at MODULE_VERSION_CAP with the oldest pruned, the retention
+ * stated in the menu) and each entry restores through the SAME proposal/save
+ * path (validated against the current part plan first — a version saved under
+ * a different plan is refused loudly rather than proposed). The bottom group
+ * is the SESSION-ONLY per-part ledger, labelled as such: it dies on reload
+ * and is never presented as durable history. "Clear all previous versions"
+ * empties THIS module's durable stack behind an explicit confirm.
  */
 
 const EMPTY_LEDGER: readonly CanvasVersionEntry[] = [];
@@ -246,7 +267,22 @@ export function CanvasPage(): JSX.Element {
   const [instruction, setInstruction] = useState('');
   const refineAbortRef = useRef<AbortController | null>(null);
   const proposalsRef = useRef<
-    Map<string, { instruction: string; wholePart: boolean; ledgerLabel: string }>
+    Map<
+      string,
+      {
+        instruction: string;
+        wholePart: boolean;
+        ledgerLabel: string;
+        /** What kind of AI change accepting this proposal lands (the durable
+         * snapshot's source, docs/18 §2.3) — never inferred from the label. */
+        versionSource: ModuleVersionSource;
+        /** The durable snapshot's honest label (differs from the ledger label
+         * for restores: "Restore from <time>" vs "Restored version #N"). */
+        versionLabel: string;
+        /** Toast shown once the save landed (null = no toast). */
+        successMessage: string | null;
+      }
+    >
   >(new Map());
   // The Show-previous toggle is PAGE state mirrored into the editor field —
   // reading it from the view during render would use a stale closure (the
@@ -277,6 +313,12 @@ export function CanvasPage(): JSX.Element {
   const previewAbortRef = useRef<AbortController | null>(null);
   // The peek modal behind the preview's resolved chips (reader affordance).
   const [peekArtifact, setPeekArtifact] = useState<AnyArtifact | null>(null);
+  // "Clear all previous versions" (the Versions menu's destructive door).
+  const [versionsClearOpen, setVersionsClearOpen] = useState(false);
+  // The DURABLE version stack (docs/18 §2.3 simple undo): live, so a snapshot
+  // taken by any AI path (canvas, chat, generation, normalization) or a clear
+  // shows up here without a reload. `undefined` = still loading.
+  const durableVersions = useModuleVersions(moduleId);
 
   // The leave-guard mirrors (the guard re-checks the live editor view too).
   const dirty = docText !== null && baselineDoc !== null && docText !== baselineDoc;
@@ -434,8 +476,18 @@ export function CanvasPage(): JSX.Element {
    * the editor keeps its text so the problem can be fixed. Per-part save
    * failures toast loudly naming the part (saveWholeModuleDocument) while
    * the remaining parts still land.
+   *
+   * `ai` saves also take the durable whole-document snapshot BEFORE writing
+   * (docs/18 §2.3 simple undo), so the caller passes the AI action it is
+   * landing; a missing source throws inside the seam and this catch surfaces
+   * it loudly with nothing written.
    */
-  async function saveDoc(origin: 'user' | 'ai', label: string, successMessage: string | null): Promise<void> {
+  async function saveDoc(
+    origin: 'user' | 'ai',
+    label: string,
+    successMessage: string | null,
+    version?: { source: ModuleVersionSource; label: string },
+  ): Promise<void> {
     const view = activeCanvasView.current;
     if (view === null || saving) return;
     const doc = view.state.doc.toString();
@@ -447,6 +499,7 @@ export function CanvasPage(): JSX.Element {
         module: currentModule,
         origin,
         label,
+        ...(version === undefined ? {} : { version }),
       });
       setBaselineDoc(doc);
       if (successMessage !== null && result.failedParts.length === 0) {
@@ -524,10 +577,14 @@ export function CanvasPage(): JSX.Element {
     refineAbortRef.current = controller;
     setRefineInFlight(true);
     const id = newSuggestionId();
+    const proposalLabel = `${isSelection ? 'Refine' : 'Rewrite'}: ${instructionText}`;
     proposalsRef.current.set(id, {
       instruction: instructionText,
       wholePart: !isSelection,
-      ledgerLabel: `${isSelection ? 'Refine' : 'Rewrite'}: ${instructionText}`,
+      ledgerLabel: proposalLabel,
+      versionSource: isSelection ? 'refine' : 'rewrite',
+      versionLabel: proposalLabel,
+      successMessage: isSelection ? 'Proposal applied' : 'Rewrite applied',
     });
     proposeSuggestion(view, {
       id,
@@ -596,26 +653,94 @@ export function CanvasPage(): JSX.Element {
   /**
    * Acceptance IS persistence: the accept dispatch already replaced the doc
    * (ONE undo unit), so the page lands the result through the split-save
-   * (only the part(s) the proposal touched hit the row) and appends the
-   * session ledger entry per changed part. A failed save toasts loudly and
-   * leaves the editor text (Save retries from there).
+   * (only the part(s) the proposal touched hit the row), appends the session
+   * ledger entry per changed part, and takes the durable pre-change snapshot
+   * for the AI source the proposal recorded (docs/18 §2.3). A failed save
+   * toasts loudly and leaves the editor text (Save retries from there).
    */
   async function handleSuggestionAccepted(id: string): Promise<void> {
     const meta = proposalsRef.current.get(id);
     proposalsRef.current.delete(id);
     const view = activeCanvasView.current;
     if (view === null) return;
-    await saveDoc('ai', meta?.ledgerLabel ?? 'AI proposal', meta?.wholePart === true ? 'Rewrite applied' : 'Proposal applied');
+    await saveDoc(
+      'ai',
+      meta?.ledgerLabel ?? 'AI proposal',
+      meta?.successMessage ?? (meta?.wholePart === true ? 'Rewrite applied' : 'Proposal applied'),
+      {
+        source: meta?.versionSource ?? 'chat',
+        label: meta?.versionLabel ?? meta?.ledgerLabel ?? 'AI proposal',
+      },
+    );
+    syncSuggestions();
+  }
+
+  /**
+   * The restore door for a DURABLE version (docs/18 §2.3): the stored whole
+   * document is VALIDATED against the CURRENT part plan first — a version
+   * saved under a different plan (a re-drafted spine) would produce a doc
+   * whose scaffold labels lie, so it is refused LOUDLY instead of proposed —
+   * then it rides the SAME proposal machinery as every other AI change (a
+   * block replace over the whole document, NO side-door row write). Accepting
+   * it lands through the split-save, and because that save is an AI save it
+   * snapshots the pre-restore document first: a wrong restore stays
+   * recoverable. Restore needs the mounted editor (the suggestion machinery
+   * is CM6 state), so preview mode says so loudly instead of doing nothing.
+   */
+  function restoreDurableVersion(version: ModuleDocumentVersion): void {
+    const view = activeCanvasView.current;
+    if (view === null) {
+      toastInfo('Switch back to Edit to restore a saved version — the editor is not mounted in preview.');
+      return;
+    }
+    if (pendingSuggestions(view.state).length > 0) {
+      toastInfo('Discard the pending proposal first.');
+      return;
+    }
+    try {
+      splitPartsDocument(version.docText, currentModule.spine?.partPlan ?? []);
+    } catch (error) {
+      toastError(
+        'Could not restore that version — it was saved for a different part plan, so its part labels no longer match this module.',
+        error,
+      );
+      return;
+    }
+    const doc = view.state.doc.toString();
+    const label = `Restore from ${new Date(version.createdAt).toLocaleString()}`;
+    const id = newSuggestionId();
+    proposalsRef.current.set(id, {
+      instruction: label,
+      wholePart: true,
+      ledgerLabel: label,
+      versionSource: 'restore',
+      versionLabel: label,
+      successMessage: 'Version restored',
+    });
+    proposeSuggestion(view, {
+      id,
+      from: 0,
+      to: doc.length,
+      originalText: doc,
+      proposedText: version.docText,
+      instruction: label,
+      streaming: false,
+      wholePart: true,
+    });
     syncSuggestions();
   }
 
   /** Restore proposes an older per-part version through the SAME suggestion
    * machinery — a block replace over THAT part's current section range;
    * accepting it rides undo and the save path like any AI proposal (no
-   * side-door write). */
+   * side-door write), and the durable pre-restore snapshot makes the restore
+   * itself undoable. */
   function restoreVersion(planIndex: number, entry: CanvasVersionEntry): void {
     const view = activeCanvasView.current;
-    if (view === null) return;
+    if (view === null) {
+      toastInfo('Switch back to Edit to restore a version — the editor is not mounted in preview.');
+      return;
+    }
     if (pendingSuggestions(view.state).length > 0) {
       toastInfo('Discard the pending proposal first.');
       return;
@@ -638,10 +763,17 @@ export function CanvasPage(): JSX.Element {
       return;
     }
     const id = newSuggestionId();
+    const sessionRestoreLabel = `Restored version #${String(entry.seq)}`;
     proposalsRef.current.set(id, {
-      instruction: `Restore version #${String(entry.seq)}`,
+      instruction: sessionRestoreLabel,
       wholePart: true,
-      ledgerLabel: `Restored version #${String(entry.seq)}`,
+      ledgerLabel: sessionRestoreLabel,
+      versionSource: 'restore',
+      // The durable snapshot describes the change ABOUT to happen, so it is
+      // stamped with the time of the version being restored (the session seq
+      // means nothing in the durable stack).
+      versionLabel: `Restore from ${new Date(entry.createdAt).toLocaleString()}`,
+      successMessage: 'Version restored',
     });
     proposeSuggestion(view, {
       id,
@@ -649,11 +781,32 @@ export function CanvasPage(): JSX.Element {
       to: section.textTo,
       originalText: section.text,
       proposedText: entry.markdown,
-      instruction: `Restore version #${String(entry.seq)}`,
+      instruction: sessionRestoreLabel,
       streaming: false,
       wholePart: true,
     });
     syncSuggestions();
+  }
+
+  /**
+   * "Clear all previous versions" (docs/18 §2.3, owner-directed): empties THIS
+   * module's durable version stack in one confirmed action. NO snapshot is
+   * taken first — that would immediately re-create what was just cleared.
+   * Another module's stack is untouched (the sweep is keyed by moduleId), the
+   * module's DOCUMENT text is untouched, and the count in the loud success
+   * toast is the number of rows that actually went (re-listed inside the
+   * repo's transaction, never the count the dialog showed).
+   */
+  async function confirmClearVersions(): Promise<void> {
+    setVersionsClearOpen(false);
+    try {
+      const removed = await clearModuleVersions(currentModule.id);
+      toastSuccess(
+        `Cleared ${String(removed)} ${savedVersionsNoun(removed)} for this module — the document text was not changed`,
+      );
+    } catch (error) {
+      toastError('Could not clear the saved versions — nothing was removed', error);
+    }
   }
 
   /**
@@ -925,9 +1078,60 @@ export function CanvasPage(): JSX.Element {
                 </Button>
               }
             />
-            <DropdownMenuContent align="end" className="max-h-80 w-80 overflow-y-auto">
+            <DropdownMenuContent align="end" className="max-h-96 w-96 overflow-y-auto">
               <DropdownMenuGroup>
-                <DropdownMenuLabel>Session versions — dies on reload</DropdownMenuLabel>
+                <DropdownMenuLabel data-testid="canvas-saved-versions-label">
+                  {`Saved versions — the whole document as it was BEFORE each AI change (keeping the most recent ${String(MODULE_VERSION_CAP)})`}
+                </DropdownMenuLabel>
+                {durableVersions === undefined ? (
+                  <p
+                    className="px-2 py-3 text-sm text-muted-foreground"
+                    data-testid="canvas-saved-versions-loading"
+                  >
+                    Loading saved versions…
+                  </p>
+                ) : durableVersions.length === 0 ? (
+                  <p
+                    className="px-2 py-3 text-sm text-muted-foreground"
+                    data-testid="canvas-saved-versions-empty"
+                  >
+                    No saved versions yet — one is saved before every AI change, and any of them can be
+                    restored from here.
+                  </p>
+                ) : (
+                  durableVersions.map((version) => (
+                    <DropdownMenuItem
+                      key={version.id}
+                      data-testid={`canvas-saved-version-${version.id}`}
+                      onClick={() => {
+                        restoreDurableVersion(version);
+                      }}
+                    >
+                      <span className="flex min-w-0 flex-col">
+                        <span className="truncate text-sm">{version.label}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {MODULE_VERSION_SOURCE_LABELS[version.source]} ·{' '}
+                          {new Date(version.createdAt).toLocaleString()}
+                        </span>
+                      </span>
+                      <span className="ml-auto pl-2 text-xs text-muted-foreground">Restore</span>
+                    </DropdownMenuItem>
+                  ))
+                )}
+                <DropdownMenuItem
+                  data-testid="canvas-versions-clear"
+                  disabled={durableVersions === undefined || durableVersions.length === 0}
+                  onClick={() => {
+                    setVersionsClearOpen(true);
+                  }}
+                >
+                  <Trash2Icon aria-hidden data-icon="inline-start" />
+                  Clear all previous versions
+                </DropdownMenuItem>
+              </DropdownMenuGroup>
+              <DropdownMenuSeparator />
+              <DropdownMenuGroup>
+                <DropdownMenuLabel>Session versions — this session only, die on reload</DropdownMenuLabel>
                 {plans.every((plan) => (ledgerByPart[canvasLedgerKey(moduleId, plan.planIndex)]?.versions.length ?? 0) === 0) ? (
                   <p className="px-2 py-3 text-sm text-muted-foreground" data-testid="canvas-versions-empty">
                     Nothing accepted yet — accepted proposals and saves land here.
@@ -958,6 +1162,7 @@ export function CanvasPage(): JSX.Element {
                                 {new Date(entry.createdAt).toLocaleTimeString()}
                               </span>
                             </span>
+                            <span className="ml-auto pl-2 text-xs text-muted-foreground">Restore</span>
                           </DropdownMenuItem>
                         ))}
                       </DropdownMenuGroup>
@@ -1256,6 +1461,31 @@ export function CanvasPage(): JSX.Element {
           </AlertDialogContent>
         </AlertDialog>
       )}
+
+      <AlertDialog open={versionsClearOpen} onOpenChange={setVersionsClearOpen}>
+        <AlertDialogContent data-testid="canvas-versions-clear-dialog">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Clear all previous versions for this module?</AlertDialogTitle>
+            <AlertDialogDescription data-testid="canvas-versions-clear-description">
+              {`Cleared: all ${String(durableVersions?.length ?? 0)} ${savedVersionsNoun(durableVersions?.length ?? 0)} of THIS module — the whole-document snapshots taken before each AI change, in every session, not just this one. Clearing them is permanent: no version is saved first, so this is the one action the undo stack cannot take back.`}
+              <br />
+              <br />
+              {"NOT cleared: the module's DOCUMENT TEXT — the current text stays exactly as it is (this is not an undo, and the text is not touched); the chat thread and this session's Versions list; and every OTHER module's saved versions."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel data-testid="canvas-versions-clear-cancel">Keep versions</AlertDialogCancel>
+            <AlertDialogAction
+              data-testid="canvas-versions-clear-confirm"
+              onClick={() => {
+                void confirmClearVersions();
+              }}
+            >
+              Clear all versions
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

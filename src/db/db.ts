@@ -9,6 +9,7 @@ import type {
   Deliverable,
   Module,
   MobPortraitCacheEntry,
+  ModuleDocumentVersion,
   Persona,
   PersonaRun,
   RuleChunk,
@@ -58,6 +59,11 @@ import { LEGACY_COMPLEX_BUDGET_NOTE, normalizeEncounterShapeData } from '@/domai
  * artifacts gain `siteShape` (derived from the layout via
  * `normalizeEncounterShapeData`), complex layouts gain `path`, and legacy
  * multi-room complexes gain the under-budget note on `budgetAdvisory`.
+ *
+ * Version 19 (simple undo, docs/17 ledger row 63): new `moduleVersions`
+ * table — durable whole-module-document snapshots taken before every AI
+ * change (docs/18 §2.3). Additive store, no migration: the table starts
+ * empty and pre-v19 databases carry no undo history.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -74,6 +80,7 @@ export class CampaignerDB extends Dexie {
   battles!: Table<Battle, Id>;
   pdfFiles!: Table<StoredPdf, Id>;
   mobPortraits!: Table<MobPortraitCacheEntry, Id>;
+  moduleVersions!: Table<ModuleDocumentVersion, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -575,6 +582,34 @@ export class CampaignerDB extends Dexie {
       battles: 'id, campaignId, &moduleId',
       pdfFiles: 'id, &bookId',
       mobPortraits: 'id, &chunkId',
+      settings: 'id',
+    });
+
+    // Durable module document versions (owner-directed simple undo, docs/17
+    // ledger row 63): new `moduleVersions` table (`id, moduleId, createdAt`)
+    // holding the WHOLE module parts document byte-exact as it was BEFORE
+    // each AI change. Additive store, NO upgrade function — the table starts
+    // EMPTY and the upgrade path is the index rebuild itself (the v14/v18
+    // precedent for a brand-new table): no existing row is touched, and a
+    // pre-v19 database simply has no undo history to carry over (the first
+    // AI change after the upgrade starts the stack). `tests/db/migration.test.ts`
+    // pins the golden v18 → v19 open (rows preserved, new table empty).
+    this.version(19).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &chunkId',
+      moduleVersions: 'id, moduleId, createdAt',
       settings: 'id',
     });
   }

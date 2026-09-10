@@ -15,7 +15,9 @@ import { listRunsByCampaign } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
+import { listModuleVersions } from '@/db/moduleVersionRepo';
 import {
+  assembleModulePartsDocument,
   battleSchema,
   createArtifact as buildArtifact,
   createModule,
@@ -960,12 +962,33 @@ describe('EntityPanel — normalization state (fix-01)', () => {
     expect(within(dialog).getByTestId('entity-proposals-list')).toHaveTextContent('Part 1');
     await user.click(within(dialog).getByTestId('entity-proposals-apply'));
 
+    // The apply is fire-and-forget from the click (the dialog closes at once),
+    // and it now waits on the durable pre-change snapshot before the row write
+    // — so wait for the write to settle instead of reading the row immediately.
+    await waitFor(async () => {
+      expect((await getModule(module.id))?.entityRewriteProposals).toBeNull();
+    });
     const after = await getModule(module.id);
     expect(after?.entityRewriteProposals).toBeNull();
     // The premise took the proposal path and is now rewritten — display text
     // preserved, target canonical.
     expect(after?.spine?.premise).toContain('[[Mira|Guard Mira]]');
     expect(after?.parts[0]?.markdown).toContain('[[Mira|Guard Mira]]');
+
+    // Durable simple undo (docs/18 §2.3): the AI-authored rewrite was
+    // snapshotted BEFORE it landed, byte-exact — the pre-rewrite whole
+    // document, so the consent click is never an unrecoverable change.
+    const versions = await listModuleVersions(module.id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0]?.source).toBe('normalization');
+    expect(versions[0]?.label).toBe('Apply name-normalization rewrites');
+    expect(versions[0]?.docText).toBe(
+      assembleModulePartsDocument({
+        partPlan: fixtureSpine.partPlan,
+        parts: module.parts,
+      }).document,
+    );
+    expect(versions[0]?.docText).toContain('[[Guard Mira]]');
   }, 20_000);
 
   it('drops the proposals on decline — nothing is rewritten', async () => {
@@ -1006,6 +1029,9 @@ describe('EntityPanel — normalization state (fix-01)', () => {
     expect(after?.entityRewriteProposals).toBeNull();
     expect(after?.spine?.premise).toContain('[[Guard Mira]] was seen at dusk.');
     expect(after?.parts[0]?.markdown).toContain('[[Guard Mira]]');
+    // Declining rewrites nothing, so it snapshots nothing either (the durable
+    // capture is tied to the WRITE, not to the click).
+    expect(await listModuleVersions(module.id)).toEqual([]);
   }, 20_000);
 });
 

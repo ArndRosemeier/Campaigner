@@ -1,7 +1,8 @@
-import type { Id, Module } from '@/domain';
+import type { Id, Module, ModuleVersionSource } from '@/domain';
 import { splitPartsDocument } from '@/domain/modulePartsDocument';
 import { saveModulePartText } from '@/features/modules/partText';
 import { canvasLedgerKey, useCanvasLedgerStore } from '@/features/modules/canvas/canvasStore';
+import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { toastError } from '@/lib/toast';
 
 /**
@@ -17,6 +18,18 @@ import { toastError } from '@/lib/toast';
  * per part (a toast naming the part) while the remaining parts still land —
  * never a silent partial: the return value reports exactly what did and did
  * not persist, and the editor keeps every in-doc edit so Save can retry.
+ *
+ * SIMPLE UNDO (owner-directed, docs/18 §2.3): an `origin: 'ai'` save FIRST
+ * takes the durable whole-document snapshot of the row as it stands — the
+ * exact pre-change text this save is about to replace (`snapshotModuleVersion`)
+ * — and that snapshot is REQUIRED: a caller must name the AI action's `source`,
+ * because an AI write whose pre-state was not recorded is exactly the bug this
+ * seam exists to prevent (a missing source throws loudly, and the throw lands
+ * in the caller's existing loud-failure surface — nothing is written).
+ * `origin: 'user'` saves (manual typing / manual Save) never snapshot: CM6's
+ * own history covers hand edits, and a hand edit is not an AI change. The
+ * snapshot happens BEFORE the first part write, never after, and a snapshot
+ * failure aborts the whole save (the editor keeps its text; the caller toasts).
  */
 
 export interface SaveWholeDocResult {
@@ -35,7 +48,23 @@ export async function saveWholeModuleDocument(input: {
   origin: 'user' | 'ai';
   /** The ledger label for every part this save changes. */
   label: string;
+  /**
+   * REQUIRED for `origin: 'ai'`: the durable pre-change snapshot this save
+   * must take first (docs/18 §2.3) — the AI action's kind (`source`) and the
+   * honest label the Versions menu shows for the captured text. A restore
+   * labels its snapshot with what is about to happen ("Restore from 14:32"),
+   * which is why this carries its own label rather than reusing `label`.
+   */
+  version?: { source: ModuleVersionSource; label: string } | undefined;
 }): Promise<SaveWholeDocResult> {
+  if (input.origin === 'ai') {
+    if (input.version === undefined) {
+      throw new Error(
+        'an AI document save must name its version snapshot — the durable pre-change capture is required (docs/18 §2.3)',
+      );
+    }
+    await snapshotModuleVersion(input.moduleId, input.version.source, input.version.label);
+  }
   const sections = splitPartsDocument(input.doc, input.module.spine?.partPlan ?? []);
   const savedPlanIndexes: number[] = [];
   const failedParts: SaveWholeDocResult['failedParts'] = [];

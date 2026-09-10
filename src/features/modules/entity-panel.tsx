@@ -38,6 +38,7 @@ import { entityKindFor } from '@/domain';
 import { adoptIntoCampaign } from '@/db/artifactRepo';
 import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { getModule, patchModule } from '@/db/moduleRepo';
+import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import {
   sweepOrphanedArtifacts,
   type OrphanSweepOutcome,
@@ -298,7 +299,10 @@ export function EntityPanel({
    * fix-01 consent: applies the stored rewrite proposals to the documents'
    * CURRENT text (fetched fresh, so hand edits made since the pass are
    * preserved), then clears the proposals. Tokens that no longer occur are
-   * skipped naturally by the mechanical rewriter.
+   * skipped naturally by the mechanical rewriter. The rewrite targets are
+   * AI-authored, so the write takes the durable pre-change snapshot first
+   * (docs/18 §2.3 simple undo) — the consent click is what lands it, but the
+   * change is the model's, and the module's text must stay undoable.
    */
   async function applyProposals(): Promise<void> {
     const proposals = module.entityRewriteProposals;
@@ -306,6 +310,11 @@ export function EntityPanel({
     try {
       const current = await getModule(module.id);
       if (current === undefined) throw new Error('the module row vanished');
+      await snapshotModuleVersion(
+        module.id,
+        'normalization',
+        'Apply name-normalization rewrites',
+      );
       let spine = current.spine;
       let parts = current.parts;
       for (const proposal of proposals) {

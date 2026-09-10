@@ -1191,3 +1191,111 @@ describe('cover-generation arc (no Dexie bump: parse-on-read defaults)', () => {
     await db.delete();
   }, 20000);
 });
+
+
+/**
+ * v18 → v19 (owner-directed simple undo, docs/17 ledger row 63): the new
+ * `moduleVersions` table is an ADDITIVE store with no upgrade function — the
+ * upgrade path is the index rebuild itself (the v14/v18 precedent). A pre-v19
+ * database keeps every row untouched and simply has no undo history; the
+ * first AI change after the upgrade starts the stack. This is the golden pin
+ * for that claim.
+ */
+describe('v18 → v19 migration (durable module document versions)', () => {
+  it('adds an empty moduleVersions table without touching existing rows', async () => {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(18).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &chunkId',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('campaigns').put({
+      id: '00000000-0000-4000-8000-000000000c19',
+      name: 'Pre-undo campaign',
+      system: 'dnd5e',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('modules').put({
+      id: '00000000-0000-4000-8000-000000000b19',
+      campaignId: '00000000-0000-4000-8000-000000000c19',
+      title: 'Pre-undo module',
+      concept: 'A vault.',
+      levelMin: 1,
+      levelMax: 3,
+      tone: '',
+      sizeDial: 'standard',
+      spine: {
+        premise: 'A drowned vault premise.',
+        themes: [],
+        partPlan: [
+          { title: 'The Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+        ],
+      },
+      parts: [
+        {
+          planIndex: 0,
+          markdown: 'Pre-undo part text.',
+          status: 'ready',
+          errorMessage: '',
+          edited: true,
+        },
+      ],
+      status: 'ready',
+      errorMessage: '',
+      entityKinds: [],
+      focusedEntities: [],
+      entitySort: 'mention',
+      entityNamesNormalized: true,
+      entityNormalizationError: '',
+      entityRewriteProposals: null,
+      includePriorModules: false,
+      autoGenerateKinds: [],
+      autoImageKinds: [],
+      autoGenerateBattlemaps: false,
+      autoApproveSpine: false,
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    legacy.close();
+
+    // Opening the app's DB upgrades 18 → 19 (additive: no upgrade function
+    // runs, no row is rewritten).
+    const { db } = await import('@/db/db');
+    await db.open();
+    expect(db.verno).toBe(19);
+
+    const module = await db.modules.get('00000000-0000-4000-8000-000000000b19');
+    expect(module?.parts[0]?.markdown).toBe('Pre-undo part text.');
+    // No undo history to carry over — the truthful empty state, not a failure.
+    expect(await db.moduleVersions.count()).toBe(0);
+
+    // The table is usable straight after the upgrade: the first AI change
+    // starts the stack.
+    const { snapshotModuleVersion, listModuleVersions } = await import('@/db/moduleVersionRepo');
+    await snapshotModuleVersion(
+      '00000000-0000-4000-8000-000000000b19',
+      'chat',
+      'Chat: after the upgrade',
+    );
+    const versions = await listModuleVersions('00000000-0000-4000-8000-000000000b19');
+    expect(versions).toHaveLength(1);
+    expect(versions[0]?.docText).toContain('Pre-undo part text.');
+    await db.delete();
+  }, 20000);
+});

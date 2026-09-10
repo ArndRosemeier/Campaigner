@@ -173,7 +173,16 @@ export async function deleteModule(
   const doomedCover = (await getModule(id))?.coverImageId ?? null;
   await db.transaction(
     'rw',
-    [db.modules, db.artifacts, db.revisions, db.images, db.battles, db.settings, db.campaigns],
+    [
+      db.modules,
+      db.artifacts,
+      db.revisions,
+      db.images,
+      db.battles,
+      db.settings,
+      db.campaigns,
+      db.moduleVersions,
+    ],
     async () => {
       // Re-listed INSIDE the transaction (count honesty): rows that landed
       // after the dialog opened are disposed by the same branch.
@@ -181,6 +190,11 @@ export async function deleteModule(
       // Battles are live play state, not authored module content; neither
       // delete branch can leave one pointing at a removed module.
       await deleteBattlesByModule(id);
+      // The durable document versions belong to the module row itself
+      // (docs/18 §2.3 simple undo): no branch keeps them — they describe a
+      // document that no longer exists, and nothing could ever prune them
+      // again. Same transaction, so a failed delete leaves them intact.
+      await db.moduleVersions.where('moduleId').equals(id).delete();
       // The TopBar last-module shortcut must not outlive the module it
       // points at — a stale shortcut navigates to a dead reader route.
       const settings = await db.settings.get('settings');

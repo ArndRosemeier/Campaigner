@@ -392,6 +392,9 @@ export async function runSnapshotChatTurn(
           module,
           origin: 'ai',
           label: `Chat: ${text.slice(0, 60)}`,
+          // Durable pre-change snapshot (docs/18 §2.3): preview-applied chat
+          // edits have no CM history, so the snapshot is their undo.
+          version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
         });
       }
     }

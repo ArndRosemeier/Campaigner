@@ -5,9 +5,10 @@ import { waitFor } from '@testing-library/react';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { createArtifact } from '@/db/artifactRepo';
+import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
-import { createModule, modulePartSchema, moduleSpineSchema, newId, type Campaign, type Id, type Module } from '@/domain';
+import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, type Campaign, type Id, type Module } from '@/domain';
 import {
   cancelModuleGen,
   campaignCastContext,
@@ -1373,5 +1374,115 @@ describe('createModuleAndRun (non-blocking creation)', () => {
       expect((await getModule(moduleId))?.status).toBe('draft');
     });
     expect(chatMock).toHaveBeenCalledTimes(1);
+  }, 20000);
+});
+
+/**
+ * Durable versions (owner-directed simple undo, docs/18 §2.3, docs/17 ledger
+ * row 63): EVERY AI pass that can rewrite part text snapshots the whole
+ * module document BEFORE it writes — the parts pass at entry (generation,
+ * missing-part fill, single-part rewrite/regenerate, the board's staged
+ * rewrite, floor repairs) and each entity-name-normalization pass (they are
+ * separate AI passes over the text). Byte-exact pre-change text, honest
+ * labels; the canvas/chat paths are pinned in canvas-versions.test.tsx.
+ */
+describe('durable versions — the parts passes snapshot before they write', () => {
+  /** The module row's whole document right now (the pre-change expectation). */
+  async function rowDocument(moduleId: Id): Promise<string> {
+    const row = await getModule(moduleId);
+    if (row === undefined) throw new Error('module row missing');
+    return assembleModulePartsDocument({
+      partPlan: row.spine?.partPlan ?? [],
+      parts: row.parts,
+    }).document;
+  }
+
+  it('a full parts pass snapshots the pre-pass document ONCE, at entry, labelled for the pass', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    // A part already on the row (hand-authored here) — the pass overwrites it.
+    await seedReadyPart(moduleId, 0, partMarkdown('BEFORE-THE-PASS'));
+    const before = await rowDocument(moduleId);
+    expect(await listModuleVersions(moduleId)).toHaveLength(0);
+
+    chatMock
+      .mockResolvedValueOnce(partWithNames('PART-ONE', ['Ember Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(partWithNames('PART-THREE', ['Bell Trial']))
+      .mockResolvedValueOnce(encounterReply('Ember Trial', 'Flood Trial', 'Bell Trial'));
+
+    const finished = await runParts(moduleId, campaign);
+    expect(finished.status).toBe('ready');
+
+    const versions = await listModuleVersions(moduleId);
+    const pass = versions.filter((entry) => entry.source === 'generation');
+    // ONE snapshot for the pass (not one per part, not one after the write).
+    expect(pass).toHaveLength(1);
+    expect(pass[0]?.label).toBe('Generate parts');
+    // BYTE-EXACT pre-change text: the document as it stood before the first
+    // part write (the seeded part still carries its own prose there).
+    expect(pass[0]?.docText).toBe(before);
+    expect(pass[0]?.docText).toContain('BEFORE-THE-PASS');
+    // The pass really changed the text (so this is a pre-change state, not a
+    // copy of the post-pass document).
+    expect(await rowDocument(moduleId)).not.toBe(before);
+    // The in-pass normalization is its own AI pass → its own snapshot.
+    expect(versions.some((entry) => entry.source === 'normalization')).toBe(true);
+  }, 20000);
+
+  it('a per-part rewrite names the part and the instruction, and captures the pre-rewrite document', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 1, partMarkdown('OLD-TWO'));
+    const before = await rowDocument(moduleId);
+
+    chatMock
+      .mockResolvedValueOnce(partWithNames('NEW-TWO', ['Flood Trial']))
+      .mockResolvedValueOnce(encounterReply('Flood Trial'));
+
+    await rewritePart(moduleId, campaign, 1, 'make the flood louder');
+
+    const versions = await listModuleVersions(moduleId);
+    const pass = versions.find((entry) => entry.source === 'generation');
+    expect(pass?.label).toBe('Rewrite part 2 — The Drowned Cathedral: make the flood louder');
+    expect(pass?.docText).toBe(before);
+    expect(pass?.docText).toContain('OLD-TWO');
+    expect((await getModule(moduleId))?.parts.find((part) => part.planIndex === 1)?.markdown).toContain(
+      'NEW-TWO',
+    );
+  }, 20000);
+
+  it('a standalone normalization pass snapshots before it rewrites part text', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    await seedReadyPart(moduleId, 0, partWithNames('PART-ONE', ['Guard Halmund']));
+    await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Halmund',
+      summary: 'The guard of the drowned bell.',
+    });
+    const before = await rowDocument(moduleId);
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: 'Guard Halmund', canonical: 'Halmund', kind: 'npc' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await normalizeModuleEntityNames(moduleId);
+
+    const versions = await listModuleVersions(moduleId);
+    expect(versions).toHaveLength(1);
+    const [snapshot] = versions;
+    expect(snapshot?.source).toBe('normalization');
+    expect(snapshot?.label).toBe('Normalize entity names');
+    // The pre-rewrite text: the variant link, NOT the rewritten canonical one.
+    expect(snapshot?.docText).toBe(before);
+    expect(snapshot?.docText).toContain('[[Guard Halmund]]');
+    const after = (await getModule(moduleId))?.parts.find((part) => part.planIndex === 0)?.markdown ?? '';
+    expect(after).toContain('[[Halmund|Guard Halmund]]');
+    expect(after).not.toBe(snapshot?.docText);
   }, 20000);
 });

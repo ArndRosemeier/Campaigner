@@ -137,8 +137,17 @@ export interface BackupImportResult {
  * `mobPortraits` (global mob-portrait cache, docs/11 D5 amendment slice A)
  * is likewise derived, rebuildable state — a pre-v18 backup restores with an
  * empty cache and the next canonical generation repopulates it.
+ * `moduleVersions` (durable module document versions, docs/18 §2.3 simple
+ * undo) landed after backup v1 too: a pre-v19 zip carries no undo history,
+ * which is the truth about that database — the first AI change after the
+ * restore starts the stack, and no module DOCUMENT text is affected (the
+ * parts live on the module rows, which the zip does carry).
  */
-const OPTIONAL_TABLES: ReadonlySet<string> = new Set(['pdfFiles', 'mobPortraits']);
+const OPTIONAL_TABLES: ReadonlySet<string> = new Set([
+  'pdfFiles',
+  'mobPortraits',
+  'moduleVersions',
+]);
 
 /**
  * Restores a backup zip, REPLACING every table's contents. The locally

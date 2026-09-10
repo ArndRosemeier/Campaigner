@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createImage } from '@/db/imageRepo';
-import { createModule } from '@/db/moduleRepo';
+import { createModule, saveModule } from '@/db/moduleRepo';
 import { createModule as buildModule, ruleChunkSchema, stampNewEntity, type RuleChunk } from '@/domain';
 import { db } from '@/db/db';
 import { putChunks } from '@/db/chunkRepo';
@@ -246,6 +246,48 @@ describe('app backup', () => {
     expect(await db.personas.count()).toBeGreaterThan(0);
     expect(await db.pdfFiles.toArray()).toEqual([]);
     expect(result.tableCounts.pdfFiles).toBe(0);
+  });
+
+  it('still restores a pre-undo backup whose zip lacks the moduleVersions table', async () => {
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Pre-undo Ember', system: 'dnd5e' });
+    const module = await createModule(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'The Pre-Undo Vault',
+        concept: 'A vault from before undo existed.',
+        levelMin: 1,
+        levelMax: 3,
+        tone: '',
+        sizeDial: 'standard',
+      }),
+    );
+    await saveModule(module);
+    const { bytes } = await buildBackup();
+
+    // Simulate a zip made before durable module versions existed (no table
+    // key at all) — the owner's own pre-v19 backups.
+    const entries = unzipSync(bytes);
+    const manifest = JSON.parse(
+      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
+    ) as { data?: Record<string, unknown[]>; tableCounts?: Record<string, number> };
+    if (manifest.data === undefined || manifest.tableCounts === undefined) {
+      throw new Error('backup manifest is missing data/tableCounts');
+    }
+    delete manifest.data.moduleVersions;
+    delete manifest.tableCounts.moduleVersions;
+    const oldZip = zipSync({ ...entries, 'campaigner-backup.json': strToU8(JSON.stringify(manifest)) });
+
+    // The rows restore; the optional undo stack restores empty (no undo
+    // history existed then — the truth), never a loud "incompatible version".
+    await clearDatabase();
+    const result = await importBackup(new Uint8Array(oldZip));
+    expect(await db.personas.count()).toBeGreaterThan(0);
+    // The module itself restores (its DOCUMENT text is the module row's, never
+    // the version stack's) — only the undo history is absent.
+    expect((await db.modules.toArray()).some((row) => row.title === 'The Pre-Undo Vault')).toBe(true);
+    expect(await db.moduleVersions.toArray()).toEqual([]);
+    expect(result.tableCounts.moduleVersions).toBe(0);
   });
 
   it('heals legacy persona rows on restore and fails loudly on a truly invalid kind', async () => {
