@@ -72,6 +72,15 @@ import { ModuleBattlePicker } from '@/features/campaign/components/run-battle-pi
 import { RevisionDialog } from '@/features/campaign/components/revision-dialog';
 import { TagEditor } from '@/features/campaign/components/tag-editor';
 import { useRevisions } from '@/features/campaign/hooks';
+import {
+  clearCreatureRowAuthoredContent,
+  creatureLabel,
+  creatureRowAiRefusal,
+  creatureRowAuthoredFields,
+  creatureRowFieldList,
+  isPollutedCreatureRow,
+} from '@/features/campaign/creature-row-guard';
+import { isMobArtifact } from '@/db/mobArtifacts';
 import { deepEqual } from '@/lib/equal';
 import { formatDateTime } from '@/lib/format';
 import { toastError, toastSuccess } from '@/lib/toast';
@@ -256,6 +265,20 @@ export function ArtifactEditor({
     }
   }
 
+  /**
+   * Adopts a row the editor itself rewrote (the creature-row repair): the
+   * draft AND the last-saved snapshot move to the fresh row in one step, so
+   * the pending-autosave effect sees no difference and can never write the
+   * cleared text back. The artifact prop arriving from the parent's live query
+   * would do the same only while the draft has no unsaved edits — this closes
+   * the window where a half-typed edit coexists with a repair.
+   */
+  const adoptExternalRow = useCallback((next: AnyArtifact): void => {
+    const serverDraft = draftFrom(next);
+    lastSavedRef.current = serverDraft;
+    setDraft(serverDraft);
+  }, []);
+
   function patchDraft(patch: Partial<CommonDraft>): void {
     setDraft((previous) => ({ ...previous, ...patch }));
   }
@@ -397,7 +420,9 @@ export function ArtifactEditor({
               />
             )}
             {draft.kind === 'note' && <NoteForm />}
-            {draft.kind !== 'encounter' && <ContentAiSection artifact={artifact} />}
+            {draft.kind !== 'encounter' && (
+              <ContentAiSection artifact={artifact} onRepaired={adoptExternalRow} />
+            )}
             {draft.kind === 'encounter' && (
               <EncounterAiSection artifact={artifact} />
             )}
@@ -481,11 +506,54 @@ interface RevisionDropdownProps {
  * grounded in the owning module exactly like automatic module generation
  * (runEngine's targetModuleGrounding). Overwriting authored content is a
  * two-step act, mirroring the encounter section.
+ *
+ * A BESTIARY CREATURE row (an `npc` artifact carrying `data.monsterChunkId`,
+ * `features/campaign/creature-row-guard`) is not an authoring slot: it is ONE
+ * shared row per campaign per cited rulebook chunk, so a smith persona writing
+ * here would describe some other character in text every encounter citing the
+ * creature reads. The action is therefore UNAVAILABLE for such a row — disabled
+ * with the reason in `title` (never a silently dead control) and the remedy in
+ * the copy — and no second "do it anyway" path exists. A creature row that
+ * ALREADY carries authored text (an unguarded run's leftovers) is reported
+ * loudly above the button, with the explicit, non-silent repair.
  */
-function ContentAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element {
+function ContentAiSection({
+  artifact,
+  onRepaired,
+}: {
+  artifact: AnyArtifact;
+  /** Hands the repaired row back so the editor's draft can never autosave the
+   * cleared text again. */
+  onRepaired: (artifact: AnyArtifact) => void;
+}): JSX.Element {
   const requestRefill = useContentRefillRequest((state) => state.request);
   const [armed, setArmed] = useState(false);
   const hasContent = artifact.body.trim() !== '';
+  const creatureRow = isMobArtifact(artifact);
+
+  if (creatureRow) {
+    const refusal = creatureRowAiRefusal(artifact.name);
+    return (
+      <div className="flex flex-col gap-3 rounded-md border p-3" data-testid="content-ai-section">
+        <CreatureRowPollutionReport artifact={artifact} onRepaired={onRepaired} />
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground" data-testid="creature-row-ai-refusal">
+            {refusal}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled
+            title={refusal}
+            data-testid="generate-artifact-content"
+          >
+            <SparklesIcon aria-hidden data-icon="inline-start" />
+            Generate with AI
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-between gap-3 rounded-md border p-3" data-testid="content-ai-section">
@@ -509,6 +577,83 @@ function ContentAiSection({ artifact }: { artifact: AnyArtifact }): JSX.Element 
       >
         <SparklesIcon aria-hidden data-icon="inline-start" />
         {!hasContent ? 'Generate with AI' : armed ? 'Overwrite content — confirm?' : 'Regenerate with AI'}
+      </Button>
+    </div>
+  );
+}
+
+/**
+ * The loud report + explicit repair for a bestiary creature row an unguarded
+ * run (or a hand edit) already wrote authored text onto. Renders NOTHING when
+ * the row is clean — the detection and the repair are the same predicate, so
+ * the surface can never claim work that is not there.
+ *
+ * Why it is a report and not a silent tidy-up: the row is SHARED, so the text
+ * is corrupt data for every encounter citing the creature, and only the owner
+ * can judge that it is invented rather than wanted. The repair is two-step
+ * (arm, then confirm), names the fields it will clear, clears ONLY those
+ * fields, leaves the creature's identity untouched, and reports the outcome
+ * with a toast — clearing is never silent (AGENTS rule 2). `updateArtifact`
+ * writes a revision first, so the cleared text stays restorable.
+ */
+function CreatureRowPollutionReport({
+  artifact,
+  onRepaired,
+}: {
+  artifact: AnyArtifact;
+  onRepaired: (artifact: AnyArtifact) => void;
+}): JSX.Element | null {
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  // Above the early return: never a conditional hook, and the detector is the
+  // same predicate the repair re-checks over the fresh row.
+  if (!isPollutedCreatureRow(artifact)) return null;
+  const fields = creatureRowAuthoredFields(artifact);
+  const label = creatureLabel(artifact.name);
+  const fieldList = creatureRowFieldList(fields);
+
+  async function repair(): Promise<void> {
+    if (!armed) {
+      setArmed(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      const result = await clearCreatureRowAuthoredContent(artifact.id);
+      onRepaired(result.artifact);
+      setArmed(false);
+      // Never silent (AGENTS rule 2), and never a false claim: a row another
+      // surface already cleared says so instead of reporting a cleared nothing.
+      toastSuccess(
+        result.cleared.length === 0
+          ? `Nothing left to clear on the bestiary creature ${label} — name, aliases, rulebook source and portrait are unchanged.`
+          : `Cleared the authored ${creatureRowFieldList(result.cleared)} from the bestiary creature ${label} — name, aliases, rulebook source and portrait kept; the cleared text stays in the revision history.`,
+      );
+    } catch (error) {
+      toastError(`Could not clear the authored text from the bestiary creature ${label}`, error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div
+      className="flex flex-col gap-2 rounded-md border border-destructive/50 bg-destructive/5 p-2"
+      data-testid="creature-row-pollution-report"
+    >
+      <p className="text-xs text-destructive" data-testid="creature-row-pollution-copy">
+        {`This bestiary creature row carries authored text — ${fieldList} — that a smith run (or a hand edit) wrote onto it. The row is the ONE shared row for this creature, so every encounter citing ${label} reads that text, and it describes a character that is not this creature. Clearing removes only that text: name, aliases, the rulebook stat source, the portrait and every other field stay, and the previous text stays in the revision history.`}
+      </p>
+      <Button
+        variant={armed ? 'destructive' : 'outline'}
+        size="sm"
+        className="self-start"
+        disabled={busy}
+        title={busy ? 'Clearing the authored text — the creature row is being rewritten' : undefined}
+        data-testid="clear-creature-row-content"
+        onClick={() => void repair()}
+      >
+        {armed ? 'Clear the invented text — confirm?' : 'Clear the invented text'}
       </Button>
     </div>
   );
