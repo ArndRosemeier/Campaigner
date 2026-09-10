@@ -44,7 +44,10 @@ Ported rules that are kept verbatim (they are the mechanism's substance):
 - **Covered/hidden tokens are removed from the DOM and pruned from
   initiative** — that *is* the player-safe mechanic (there is no
   line-of-sight simulation; a "fog" veil renders above tokens, a "veil" is
-  plain cover).
+  plain cover). As shipped (ledger 65, 2026-09-09) the two kinds read
+  differently: fog is an opaque, blocking rectangle, veil is a transparent
+  one whose taps pass through to the room-key marker beneath it — see the
+  M5-D veil amendment below, which supersedes the 8fa7abd 10% tint.
 - **Initiative bonus is frozen onto the token at roll time** so later
   artifact edits never rewrite history.
 - **One live battle per session**, created lazily on first mutation, deleted
@@ -316,7 +319,35 @@ mob tokens, GM view sees everything under its own veils, and every token
 that survives renders ABOVE the veil (veils mount first in the content
 frame). The initiative prune stays mode-independent and mob-scoped: a
 veiled mob is not yet in play and re-enters with an auto-roll on reveal;
-fogged PCs now roll and stay in the order.*
+fogged PCs now roll and stay in the order.* **The 8fa7abd fog-tint rule in
+that amendment is SUPERSEDED 2026-09-09 (ledger 65, owner-ratified) — read
+the next amendment before restoring the 10% fog tint** (the coverage and
+initiative rules that follow it in the same amendment stand unchanged).
+
+Amended 2026-09-09 (ledger 65 — the fog/veil distinction, owner-ratified,
+**supersedes the 8fa7abd 10%-in-both-views rule** above): *the two kinds do
+different things again, keyed off `veil.kind` — `kind` already encodes the
+seeder's fog intent, so existing AND newly seeded rows light up with no data
+migration and NO new field. **Fog is OPAQUE and blocks**: a solid
+`bg-zinc-300` fill (alpha-free, never `opacity-*`), rendered identically in
+GM and player view, and a sub-threshold tap on a fog selects the fog and
+stops there. **Veil is transparent and clicks through**: it keeps the
+`bg-black/10` tint, and a sub-threshold tap on its body that lands inside a
+room-key marker's 44px hit pad opens that room's key instead of merely
+selecting the veil (markers stay BELOW veils with `z-index: auto` — 469f058
+— so pass-through, never z-index, is what makes a covered key reachable).
+The earlier "must not blind the GM" reasoning was overridden because it was
+not the actual risk: tokens still paint ABOVE the veils by DOM order, the GM
+can still drag a fog aside, delete it, or lift it with "Reveal next room" —
+while at ~10% the two kinds were visually the same thing, which is exactly
+the bug the owner reported ("fog and veil … do the exact same thing"). The
+GM is not blinded by an opaque rectangle they own and can move. Both tool
+buttons are pinnable now (`data-testid="veil-tool"` / `fog-tool`): before
+this they had no testid, so no test could click either one. Reversal is one
+ternary (the fill) plus the tap branch; ledger 65 records the reasoning.
+Both buttons call the ONE creator `addVeil(kind)`, and `kind` is the single
+behavioral and visual switch — there is no second fog mechanism to keep in
+sync.*
 
 Amended 2026-09-07 by 01a0b5e (room-keys/treasure arc, owner-ratified; D9 in
 11-ENCOUNTER-GENERATOR): *GM view additionally renders room-key markers — one
