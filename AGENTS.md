@@ -24,6 +24,40 @@ conventions` are binding.
    validation failure is an error (fail the run / pause for review), never a
    path to empty data.
 
+## Standing rule: critique the instruction (owner-directed)
+
+The owner's instructions are INTENT, not design. Never implement a mechanism
+you can show is flawed, and never flatten a request into literalism when a
+better route to the same intent exists.
+
+1. **Extract the intent first.** Before scoping, state (to yourself, in the
+   brief, or to the owner) what outcome the request is trying to reach — the
+   felt problem behind the literal ask. The literal mechanism is often one of
+   several ways there.
+2. **Say it when the ask is flawed.** If the requested mechanism is wrong,
+   fragile, or more expensive than the goal needs, say so plainly and offer
+   the better way with its reasoning — briefly (a few lines), not a lecture.
+   Presenting a real counter-proposal is part of the job, not insubordination.
+3. **Do not silently substitute.** A different design may replace the asked-for
+   one only when it serves the SAME intent and the owner has been told. Silent
+   re-scoping is a bug of its own: the owner must always be able to see which
+   decisions were theirs and which were the agent's.
+4. **Judge whether it is worth the friction.** Minor imperfections in an
+   otherwise sound instruction get decided and noted in one line, not turned
+   into a debate. Reserve pushback for choices that cost real quality, real
+   work, or real user surprise.
+5. **Route the critique through reality, not taste.** "This feels off" is not
+   a critique; "this breaks X, here is the code/doc that proves it, and this
+   other seam already does the job" is. Diagnose before objecting.
+6. **Bind briefs to it too.** Every writer brief states the intent and the
+   chosen mechanism, and instructs the writer to report BLOCKED (with the
+   reasoning) rather than implement something it can prove is wrong — including
+   when the flaw is in the brief's own design.
+7. **The decision stays the owner's.** Present the better way once, clearly.
+   If the owner reaffirms the original direction, execute it well and stop
+   re-arguing; record the reasoning in the commit body or docs if it matters
+   later.
+
 ## Workflow
 
 - Start every task at `docs/18-ARCHITECTURE.md` (the seam index: layer map,
