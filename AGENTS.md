@@ -100,6 +100,16 @@ used:
    real regression. `pnpm install --offline` fails with
    `ERR_PNPM_NO_OFFLINE_META`; a plain `pnpm install --frozen-lockfile`
    succeeds in seconds from the local pnpm store.
+6. **A worktree instruction is not self-enforcing (real incident).** Every
+   bash call runs in a fresh shell whose working directory is the session
+   workspace, and the file tools resolve RELATIVE paths against that same
+   workspace — so a writer told to work in `/tmp/<worktree>` edits the MAIN
+   tree unless every call passes an absolute path (or `workdir`). A writer's
+   six-file slice landed in the main tree while its own worktree sat clean
+   and commitless, and the other writer's gates kept failing on half-finished
+   foreign files; the slice had to be lifted out as a patch and reverted by
+   hand. Every worktree brief must state this, and every `edit`/`read`/`write`
+   in a worktree session must use absolute paths under that worktree.
 
 The **dispatcher is a writer for this purpose too**. An uncommitted edit of
 its own in the shared tree (rules or docs) makes a landing writer's `git
