@@ -478,6 +478,22 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   turn, outside the persisted history — do not "optimize" it back to the generation-time
   caps (owner-directed, ledger 51).
 
+- **A bestiary creature row is a wiki-link identity, not an authoring slot.**
+  An `npc` artifact carrying `data.monsterChunkId` is ONE campaign-scoped row
+  per cited rulebook chunk — shared by every encounter citing the creature,
+  stats resolved through it, one shared portrait — so it counts as a DEFINED
+  entity for `resolveWikiLink` and the entity paths must never treat it as a
+  generation target. ALL classification, refusal copy, the authored-text
+  detector and its repair live in
+  `src/features/campaign/creature-row-guard.ts` (the predicate itself is
+  `db/mobArtifacts.isMobArtifact`); the artifact editor disables its AI action
+  for such a row with the reason in `title`, `entity-batch.alignEntityName`
+  throws rather than renaming one (and the batch checks the produced row BEFORE
+  any write — no rename, no `stampModuleOwnership`, no tag), and authored text
+  found on one is reported and cleared only by the explicit two-step repair,
+  which leaves name, aliases, marker, stat block, images, cover, tags, links and
+  scope untouched. Never a second interpretation of "creature row" (ledger 81).
+
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 
 - **The Advanced floor editor's minimum disagrees with its own schema.** The
