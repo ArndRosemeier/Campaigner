@@ -13,7 +13,12 @@ import {
 } from '@/db/campaignRepo';
 import { deleteCampaignWorkspace } from '@/db/maintenance';
 import { db } from '@/db/db';
-import { getSettings, readSettings, updateSettings } from '@/db/settingsRepo';
+import {
+  getSettings,
+  readSettings,
+  readStoredNewModuleDraft,
+  updateSettings,
+} from '@/db/settingsRepo';
 import type * as SettingsRepo from '@/db/settingsRepo';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 import {
@@ -23,6 +28,7 @@ import {
   type Campaign,
   type NewModuleDraft,
 } from '@/domain';
+import { toastError } from '@/lib/toast';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
@@ -33,8 +39,12 @@ import { actDrained, flushAsyncUpdates } from '../helpers/flush';
  *
  * The drafts are TAGGED with their campaign: another campaign's draft is never
  * prefilled. The campaign WIPES ("Remove all generated content", "Clear
- * workspace") keep the draft on purpose; `deleteCampaign` clears it. A stored
- * draft that no longer validates fails the settings read LOUDLY.
+ * workspace") keep the draft on purpose; `deleteCampaign` clears it.
+ *
+ * A stored draft that no longer validates is SCOPED to the draft (docs/17): the
+ * settings read stays readable, the value is never returned, and the dialog —
+ * the one consumer that shows a draft — reports the failure LOUDLY and opens at
+ * its own defaults instead of half-prefilling.
  */
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
@@ -495,56 +505,71 @@ describe('draft lifecycle across the campaign delete paths', () => {
   }, 30_000);
 });
 
-describe('a corrupt stored draft fails loudly (no silent fallback)', () => {
-  it('rejects on the settings read instead of half-prefilling the dialog', async () => {
-    const campaign = await seedCampaign();
-    await updateSettings({ newModuleDraft: defaultNewModuleDraft(campaign.id) });
-    // Write a draft that no longer validates (levelMax below levelMin, and a
-    // count the schema refuses) straight into the row.
+describe('a corrupt stored draft: scoped to the draft, reported loudly', () => {
+  /** Writes a draft the schema refuses straight into the row (as a hand-edited
+   * or restored settings row would). */
+  async function storeCorruptDraft(campaignId: string, overrides: object): Promise<void> {
     await actDrained(async () => {
       await getSettings();
       const row = await db.settings.get('settings');
       if (row === undefined) throw new Error('settings row missing');
       await db.settings.put({
         ...row,
-        newModuleDraft: {
-          ...defaultNewModuleDraft(campaign.id),
-          levelMin: 5,
-          levelMax: 2,
-          encounterFloorGuardrail: { enabled: true, perLevel: 0 },
-        },
+        newModuleDraft: { ...defaultNewModuleDraft(campaignId), ...overrides },
       });
     });
+  }
 
-    await actDrained(async () => {
-      await expect(readSettings()).rejects.toThrow();
+  it('never fails the settings read, and reports the draft instead', async () => {
+    const campaign = await seedCampaign();
+    // A load-bearing setting that the corrupt draft must not take down with it.
+    await updateSettings({ newModuleDraft: defaultNewModuleDraft(campaign.id) });
+    const before = await readSettings();
+    await storeCorruptDraft(campaign.id, {
+      levelMin: 5,
+      levelMax: 2,
+      encounterFloorGuardrail: { enabled: true, perLevel: 0 },
     });
+
+    // The READ is whole: every other setting is still there, and the draft that
+    // no longer validates is simply not returned as a value.
+    const settings = await readSettings();
+    expect(settings.newModuleDraft).toBeNull();
+    expect(settings.defaultChatModel).toBe(before.defaultChatModel);
+    expect(settings.imagesEnabled).toBe(before.imagesEnabled);
+    expect(settings.embeddingModel).toBe(before.embeddingModel);
+
+    // The draft's own seam carries the failure, so the one consumer that cares
+    // reports it instead of silently prefilling nothing.
+    const stored = await readStoredNewModuleDraft();
+    expect(stored.draft).toBeNull();
+    expect(stored.error?.message).toMatch(/levelMax must be >= levelMin/);
   }, 30_000);
 
-  it('surfaces a rejected read instead of half-prefilling the dialog', async () => {
+  it('opens the dialog at its defaults and toasts instead of half-prefilling', async () => {
     const campaign = await seedCampaign();
-    // Corrupt the stored draft, then open the dialog on it.
-    await actDrained(async () => {
-      await getSettings();
-      const row = await db.settings.get('settings');
-      if (row === undefined) throw new Error('settings row missing');
-      await db.settings.put({
-        ...row,
-        newModuleDraft: {
-          ...defaultNewModuleDraft(campaign.id),
-          levelMin: 5,
-          levelMax: 2,
-        },
-      });
-    });
+    await storeCorruptDraft(campaign.id, { levelMin: 5, levelMax: 2 });
 
     render(<Harness campaign={campaign} />);
 
-    // LOUD: the failure reaches the error boundary — the dialog never renders
-    // with a silently-defaulted draft.
-    const failed = await screen.findByTestId('dialog-failed', {}, { timeout: 5_000 });
-    expect(failed.textContent).toMatch(/levelMax must be >= levelMin/);
-    expect(screen.queryByTestId('new-module-dialog')).not.toBeInTheDocument();
+    // Nothing of the unreadable draft reaches the form: the levels are the
+    // dialog's own defaults, not the stored 5/2.
+    const dialog = await screen.findByTestId('new-module-dialog', {}, { timeout: 5_000 });
+    expect(within(dialog).getByLabelText('Level from')).toHaveValue(1);
+    expect(within(dialog).getByLabelText('Level to')).toHaveValue(3);
+    expect(within(dialog).getByLabelText('Concept')).toHaveValue('');
+
+    // LOUD (AGENTS 2): the user is told the stored draft could not be read —
+    // and the dialog itself is NOT broken by a field the app cannot parse.
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith(
+        'The stored New Module draft could not be read',
+        expect.any(Error),
+      );
+    });
+    const reported = vi.mocked(toastError).mock.calls.at(-1);
+    expect(String(reported?.[1])).toMatch(/levelMax must be >= levelMin/);
+    expect(screen.queryByTestId('dialog-failed')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 30_000);
 });
@@ -580,7 +605,11 @@ describe('draft schema', () => {
         ...row,
         newModuleDraft: { ...defaultNewModuleDraft(campaign.id), levelMin: 4, levelMax: 1 },
       });
-      await expect(readSettings()).rejects.toThrow(/levelMax must be >= levelMin/);
+      const stored = await readStoredNewModuleDraft();
+      expect(stored.draft).toBeNull();
+      expect(stored.error?.message).toMatch(/levelMax must be >= levelMin/);
+      // The row's load-bearing settings are unaffected by the bad draft.
+      await expect(readSettings()).resolves.toMatchObject({ newModuleDraft: null });
     });
   });
 });

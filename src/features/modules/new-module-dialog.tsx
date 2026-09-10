@@ -33,7 +33,7 @@ import {
 } from '@/domain';
 import { modulePath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
-import { readSettings, updateSettings } from '@/db/settingsRepo';
+import { readStoredNewModuleDraft, updateSettings } from '@/db/settingsRepo';
 import { createModuleAndRun } from '@/llm/moduleGen';
 import { toastError } from '@/lib/toast';
 
@@ -178,7 +178,11 @@ function NewModuleDialogContent({
   // The stored draft (pure read — never `getSettings`, which writes). Held in
   // a ref as well: `flush` (run start, dialog close) must save the CURRENT
   // values without re-subscribing every render.
-  const settings = useLiveQuery(() => readSettings(), []);
+  // The stored draft, read on its own: a draft that no longer validates is a
+  // LOUD failure of THE DRAFT (reported below, once per open) rather than a
+  // failure of every settings read in the app, and the form opens at its own
+  // defaults instead of half-prefilling from data the app cannot read (docs/17).
+  const stored = useLiveQuery(() => readStoredNewModuleDraft(), []);
   const draftRef = useRef<NewModuleDraft>(defaultNewModuleDraft(campaign.id));
   // Seeded once per open: an edit made while the settings row was still
   // loading must never be overwritten by the arriving prefill.
@@ -293,31 +297,47 @@ function NewModuleDialogContent({
       pristineRef.current = defaultNewModuleDraft(campaign.id);
       touchedRef.current = false;
     }
-    if (settings === undefined) return;
-    // The settings row arrived after the user already started editing: their
+    if (stored === undefined) return;
+    // The stored draft arrived after the user already started editing: their
     // values stand and the prefill is skipped for this open (the draft they
     // wrote is still in the row — nothing is lost, and the next open prefills).
     if (touchedRef.current) {
       seededRef.current = true;
       return;
     }
-    const stored = settings.newModuleDraft;
+    const row = stored.draft;
     const draft =
-      stored !== null && stored.campaignId === campaign.id
-        ? stored
-        : defaultNewModuleDraft(campaign.id);
+      row !== null && row.campaignId === campaign.id ? row : defaultNewModuleDraft(campaign.id);
     seededRef.current = true;
     // A snapshot the form already shows changes nothing — and skipping it here
     // is what keeps a re-emission (every settings write re-runs the live query)
     // from churning the prefill and the save effect.
     if (draftsEqual(draft, draftRef.current)) return;
-    seedDraft(stored);
+    seedDraft(row);
     // `campaign.id` is a dependency because the seed is campaign-scoped: the
     // pristine defaults this effect arms the "an edit already happened" test
     // with are that campaign's, and `seedDraft`'s tag check reads it. Inside
     // one mount it cannot change (the campaign is the mount key), so the extra
     // runs only re-apply the same snapshot.
-  }, [open, settings, seedDraft, campaign.id]);
+  }, [open, stored, seedDraft, campaign.id]);
+
+  // A stored draft the app cannot read is reported to the user, once per open
+  // (AGENTS 2: the failure is never silent) — the dialog itself opens at its
+  // defaults, and the first edit replaces the unreadable draft with a valid one.
+  // Keyed by MESSAGE, not by the error object: every read of a corrupt draft
+  // builds a fresh Error, and the live query re-reads on every settings write —
+  // an identity check would toast on each one.
+  const reportedDraftErrorRef = useRef<string | null>(null);
+  useEffect(() => {
+    const error = stored?.error ?? null;
+    if (error === null) {
+      reportedDraftErrorRef.current = null;
+      return;
+    }
+    if (reportedDraftErrorRef.current === error.message) return;
+    reportedDraftErrorRef.current = error.message;
+    toastError('The stored New Module draft could not be read', error);
+  }, [stored]);
 
   // Debounced save on every change. Only the USER's edits are saved: before the
   // prefill lands the form may still show this dialog's pristine defaults, and
@@ -415,10 +435,14 @@ function NewModuleDialogContent({
   }
 
   /**
-   * One guardrail count: integers only, never below `min` (0 everywhere except
-   * an enabled floor, which needs at least 1). A cleared/invalid field falls
-   * back to `min` instead of writing NaN — the stored value is always a valid
-   * integer, so a draft can never come back invalid.
+   * One guardrail count: integers only, never below `min`. A cleared/invalid
+   * field falls back to `min` instead of writing NaN — an integer, but NOT
+   * always a draft the schema accepts: with the floor enabled the fallback is
+   * 0, and `encounterFloorGuardrailSchema` requires at least 1 per level while
+   * it is enabled. That attempt is rejected LOUDLY at the settings boundary
+   * (`persist` toasts) and the draft simply is not saved until the user puts a
+   * count back — KNOWN DEBT, docs/18: the floor editor's minimum and the
+   * schema's invariant disagree.
    */
   function guardrailCountInput(
     min: number,

@@ -143,11 +143,6 @@ const ALLOWED_NOISE: readonly {
     why: 'the test deliberately crashes rendering (and jsdom not-implemented noise from the stubbed location) to verify the global error boundary is loud.',
   },
   {
-    file: /new-module-draft\.test\./,
-    message: /The above error occurred in the <NewModuleDialog(Content)?> component/,
-    why: 'the corrupt-draft test deliberately stores a draft that no longer validates and renders the dialog on it, to prove the failure reaches the error boundary instead of half-prefilling the form; React logs the caught render error, and that log IS the expected trace of the loud failure under test. The component name is optional because the dialog is mounted through a per-campaign wrapper (`NewModuleDialog` → `NewModuleDialogContent`), so React names the inner component.',
-  },
-  {
     file: /ingestFiles\.test\./,
     message: /Indexing all PDF objects/,
     why: 'the ingest-failure test deliberately feeds pdfjs a truncated PDF ("%PDF" header, no body); pdfjs warns while scanning for a recoverable xref and the ingest then fails loudly \u2014 the warning is the expected trace of the loud failure under test.',
