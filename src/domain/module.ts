@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { BaseEntitySchema, stampNewEntity, type BaseEntity, type Id } from '@/domain/entity';
+import { modulePromptStyleSchema, type ModulePromptStyle } from '@/domain/promptStyle';
 
 /**
  * Module Designer v2 (08-MODULE-DESIGNER M4-A): a Module is a markdown
@@ -461,6 +462,24 @@ export const moduleSchema = z
      * it (the future surface derives deviation from the live state).
      */
     automationIntent: moduleAutomationIntentSchema.nullable().default(null),
+    /**
+     * The prompt STYLE this module was generated with (owner decision, docs/17
+     * row 86): the style's id, name and version for provenance, plus the
+     * TEMPLATE TEXT itself. `src/llm/promptStyles.ts` composes the spine and
+     * part prompts from this text — never from the settings' current version of
+     * that style — so resume, "Fix module problems" and a per-part regeneration
+     * keep writing in the voice the module started in after the style was
+     * edited or deleted. Editing a style can therefore never silently change an
+     * existing module; the canvas offers an explicit adoption when the module's
+     * text and the style's current text differ.
+     *
+     * Additive `.default(null)` — parse-on-read, no Dexie version. `null` is
+     * the LEGACY shape, and it reads as Classic: this module was written before
+     * styles existed, and Classic is the text that existed when it was written.
+     * That is provenance, not a fallback to a default (AGENTS rule 1 is about
+     * masking failures).
+     */
+    promptStyle: modulePromptStyleSchema.nullable().default(null),
     /** The module's cover image (list thumb / reader hero / module-PDF
      * fallback), or null. Additive `.default(null)` mirrors the v2 upgrade
      * backfill, so rows written before covers parse at the read boundary —
@@ -512,6 +531,14 @@ export interface NewModule {
    * today's default floor, exactly as before.
    */
   encounterFloorGuardrail?: EncounterFloorGuardrail;
+  /**
+   * The prompt style this module is written in (docs/17 row 86). The CALLER
+   * resolves it — a chosen style id or the app default — and hands the record
+   * in; `createModule` stores id, name, version and template text as-is.
+   * Omitted = not recorded = the legacy shape (Classic), which is what every
+   * module created before styles records.
+   */
+  promptStyle?: ModulePromptStyle;
 }
 
 export function createModule(input: NewModule): Module {
@@ -556,6 +583,7 @@ export function createModule(input: NewModule): Module {
     autoGenerateMobImages: automationIntent.autoGenerateMobImages,
     autoApproveSpine: input.autoApproveSpine ?? false,
     encounterFloorGuardrail: input.encounterFloorGuardrail ?? null,
+    promptStyle: input.promptStyle ?? null,
     automationIntent,
   });
 }

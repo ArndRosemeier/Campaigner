@@ -14,12 +14,25 @@ import {
   type EncounterFloorGuardrail,
 } from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
+import {
+  composePromptFromTemplate,
+  validatePromptStyleTemplate,
+  type ModulePromptStyle,
+} from '@/domain/promptStyle';
+import {
+  builtinPromptStyle,
+  modulePromptStyleOf,
+  PART_ENDING_LINES,
+  partsContractValues,
+  promptStyleForModule,
+  spineContractValues,
+} from '@/llm/promptStyles';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
-import { getSettings } from '@/db/settingsRepo';
+import { getSettings, readPromptStyles } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { repairModel } from '@/llm/modelFallback';
@@ -717,51 +730,33 @@ async function spineMessages(
   // default) — the same numbers the gate below judges the reply against.
   const spineFloor = encounterFloorGuardrailFor(module);
   const floorRequirement = floorClause(spineFloor, module);
-  // With the floor off there is no floor requirement, but the placement /
-  // escalation sentences that shared the bullet stay.
-  const spineFloorItem =
-    '- ' +
-    (floorRequirement === null ? '' : `${floorRequirement} `) +
-    'Place encounters deliberately in the parts where they make narrative and gameplay sense, and reserve climactic encounters for an earned escalation.';
-  const instruction = [
-    `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
-    `Module concept: ${module.concept}`,
-    `Party levels ${module.levelMin}–${module.levelMax}${module.tone === '' ? '' : `; tone: ${module.tone}`}`,
-    index,
-    priorContext,
-    [
-      'Design the module spine. Cover the whole level range with parts, in order:',
-      `- Default one part per level; you MAY merge adjacent levels into one part when the story is better served (levels ${module.levelMin}–${module.levelMax} → about ${levelCount} parts or fewer).`,
-      '- Every level in the range must be covered by exactly one part.',
-      '- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up). Write the synopsis as a GM-facing note with scene-level substance: the situation, the actors, the stakes, and at least one concrete scene the part contains.',
-      '- Think like an experienced GM: prioritize meaningful choices, varied pacing, clear stakes, and challenges that are exciting without feeling arbitrary. Let the fiction and pacing decide the structure — never a quota.',
-      spineFloorItem,
-      '- Conflict first: the situation is contested by someone — a faction, an NPC, a predator, a rival party, or the place itself — and who carries that conflict may shift as the module runs. Not every module has an antagonist; every module has a conflict.',
-      '- Every situation offers at least two VISIBLE approaches that differ in cost or consequence, so nothing resolves on a single route and no part is a passive wait for the plot. Two rolls toward the same outcome are one approach: the difference must be one the players can see before they commit.',
-      '- State in the premise how the situation can resolve, and keep every part equal to what the premise promises — a promised siege arrives, a promised traitor is present and reachable.',
-      '- Give each faction an order of battle — wants, needs, preferred tactics, fears, when it flees — and advance its own plan between parts whether or not the party engages it. Every returnable location gets a line of what has changed since.',
-      '- If an antagonist exists, the party meets their agents, aftereffects or evidence from the first part — never a villain held back for the finale.',
-      '- Every encounter and every location carries one concrete particular that could not be swapped out unchanged (a named river, a debt, a smell, a rule of the place): an opponent the party cannot tell apart from the last one is meaningless combat, and interchangeable scenery is the same failure more slowly.',
-      '- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.',
-      '- Opportunistic threats (a predator, a bandit group, a patrol) belong to the situation: each one advances or reveals a faction’s plan instead of appearing as filler. Exploring is never punished as such — wherever it leads, the interesting thing found there must be worth the risk.',
-      '- Structural conflict governs HOW scenes resolve, never what they feel like — no tone, register or subject matter is restricted here. ' +
-        'Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option. Satisfaction is rationed to the finale.' +
-        (toneBans.length === 0
+  // The two-layer prompt (08 §M4-B-3, docs/17 row 86): the module's style
+  // supplies the editable instruction text and the read-only contract layer is
+  // injected into its required slots. Classic (the default, and the honest
+  // reading of every module created before styles existed) renders these bytes
+  // exactly as the pre-style builder did.
+  const style = promptStyleForModule(module);
+  const composed = composePromptFromTemplate({
+    templateText: style.style.templateText,
+    surface: 'spine',
+    values: {
+      campaign: `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
+      moduleConcept: `Module concept: ${module.concept}`,
+      partyLevels: `Party levels ${module.levelMin}–${module.levelMax}${module.tone === '' ? '' : `; tone: ${module.tone}`}`,
+      campaignIndex: index,
+      priorModules: priorContext,
+      additionalInstruction:
+        extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+      levelMin: String(module.levelMin),
+      levelMax: String(module.levelMax),
+      levelCount: String(levelCount),
+      toneBans:
+        toneBans.length === 0
           ? ''
-          : ` This module’s tone rules out these outcomes, each because it would erase the choice that produced it: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`),
-      '- When the party defeats, bypasses or changes something, that change persists and is visible when they return: a beaten antagonist stays beaten unless the fiction earned the return, and no NPC finds, captures or sets back the party by fiat.',
-      '- Introduce as many locations, NPCs, factions, notes, events and encounters as the story needs — none of them must be detailed here. Give every scene a distinctive, stable name, declare it with its kind in entities, and wiki-link it in prose ([[Scene Name]]) so it can be resolved into its artifact later.',
-      '- An "encounter" is a FIGHT: initiative, a battle map with terrain, and a monster roster with images. Anything that is not a fight — a negotiation, a hazard, a puzzle, an investigation, a ritual, a chase — is an "event" instead: it gets an illustration and no battle map, no monsters, no roster. Never declare a non-combat scene as an encounter, and never hide a fight inside an event. A hazard or a puzzle still carries meaningful risk and player agency — only its artifact differs.',
-      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a non-combat scene the party plays through; same shape as a location), "faction" (an organization or group), "encounter" (a fight — a battle map and a monster roster), or "note" (anything else — items, rumors, mysteries, plot devices). One entry per named entity, one canonical spelling — a person is listed once, not once per role or title. Reuse existing campaign entities by exact name; never duplicate one to fill the floor.',
-      '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
-      '- Before you answer, the three things that do not bend: (1) every situation has at least two visible approaches that differ in cost or consequence — no single-route conclusions; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible when they return.',
-      "- The user's premise, tone, level range and size are FIXED INPUT. Do not restate, extend, soften or contradict them. If a structural requirement cannot be met inside the user's premise, change the STRUCTURE (the part plan, which faction carries the conflict, where the conflict starts) — never the premise. If you believe the premise makes a requirement impossible, satisfy the requirement anyway and say what you changed in the structure notes.",
-    ].join('\n'),
-    extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
-    'Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter" }] } — partPlan length 1..20, one entity entry per named entity with its kind.',
-  ]
-    .filter((part) => part !== null)
-    .join('\n\n');
+          : ` This module’s tone rules out these outcomes, each because it would erase the choice that produced it: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
+      ...spineContractValues({ floorClause: floorRequirement }),
+    },
+  });
 
   return [
     {
@@ -771,7 +766,7 @@ async function spineMessages(
         'You structure adventures as a spine: a premise plus an ordered set of parts covering the party level range. ' +
         'Always answer in the exact JSON format requested. Never include commentary outside the JSON.',
     },
-    { role: 'user', content: instruction },
+    { role: 'user', content: composed.text },
   ];
 }
 
@@ -1437,54 +1432,45 @@ async function partCall(
     encounterFloorPerPart(encounterFloorGuardrailFor(module), bandLevels),
   );
   // The list item keeps its bullet, and is DROPPED entirely when the floor is
-  // off (the guard above then has no repair target either).
-  const partFloorItem = partFloorRequirement === null ? null : `- ${partFloorRequirement}`;
-  const instruction = [
-    `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
-    `Module premise:\n${spine.premise}`,
-    spine.themes.length > 0 ? `Themes: ${spine.themes.join('; ')}` : null,
-    `All parts of this module (one-line synopses, so later parts can foreshadow):\n${synopses}`,
-    `Write part ${planIndex + 1}: "${plan.title}" (levels ${plan.levelBand}).`,
-    `Part synopsis: ${plan.synopsis}`,
-    `Part ends when: ${plan.levelUpTrigger}`,
-    continuity === null
-      ? null
-      : `Full markdown of the previous part (continue seamlessly from it):\n\n${continuity}`,
-    ruleExcerpts,
-    glossary,
-    campaignIndex,
-    priorContext,
-    [
-      'Writing instructions:',
-      '- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).',
-      '- Write the part as SCENES. Every scene that has anything at stake is written as one labeled block, with these fields in this order:',
-      ...sceneBlockBullets(),
-      ...sceneVariationBullets(),
-      '- Every situation in this part offers at least two VISIBLE approaches that differ in cost or consequence — two rolls toward the same outcome are one approach. Nothing resolves on a single route.',
-      '- Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option.',
-      '- When the party defeats, bypasses or changes something, write the change into the fiction so it is still visible when they look again — nothing they accomplished is undone off-screen, and nobody locates or captures them by fiat.',
-      '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters — and every scene ([[Encounter Name]] for a fight, [[Event Name]] for anything else). Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
-      '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token ([[Halmund]]s Haus, not [[Halmunds]] Haus — English genitive: [[Halmund]]\'s tower) and never bake a role or title into it ([[Halmund|the guard Halmund]], not [[Guard Halmund]]). Use [[Name|display]] when the surface text must differ. Same rules in any language.',
-      `- Target length for this part: ${MODULE_SIZE_WORD_TARGETS[module.sizeDial]} (soft target).`,
-      partFloorItem,
-      isFinale
-        ? '- This is the FINALE: satisfaction is allowed here, at full price — every want met must be paid for visibly in loss, consequence, or foregone alternative.'
-        : '- End this part with a cost, a revelation, or a new pressure that carries into the next part — never with every side satisfied. Satisfaction is rationed to the finale.',
-      '- If an antagonist exists, keep their agents, aftereffects or evidence on the page from here on — never hold the villain back for the finale.',
-      '- Show one faction advancing its own plan in this part, whether or not the party engages it; when the party returns to a place they have been, open with what has changed since.',
-      '- Every encounter and every location in this part carries one concrete particular that could not be swapped out unchanged: an opponent the party cannot tell apart from the last one is meaningless combat.',
-      '- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.',
-      '- Opportunistic threats (a predator, a patrol, a bandit group) advance or reveal a faction’s plan instead of appearing as filler, and exploring is never punished as such — whatever the party finds must be worth the risk it took.',
-      '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
-      '- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
-      '- A scene that is NOT a fight is an event: link it as [[Event Name]] and write its whole block right here in the prose (the block above is what an event gets). An event receives an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.',
-      '- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.',
-      '- Before you answer, the three things that do not bend in this part: (1) at least two visible approaches per situation, differing in cost or consequence, so nothing resolves on a single route; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible.',
-    ].join('\n'),
-    options.extraInstruction === '' ? null : `Additional instruction from the GM: ${options.extraInstruction}`,
-  ]
-    .filter((part) => part !== null)
-    .join('\n\n');
+  // off (the guard above then has no repair target either) — inside the style
+  // template the floor clause is a slot whose line disappears when it is empty.
+  // The two-layer prompt (08 §M4-B-3, docs/17 row 86): the module's OWN style
+  // decides the shape of the writing instruction, and the read-only contract
+  // layer (reply format, GM address, wiki-link rules, length target, floor,
+  // artifact rules) is injected into its required slots. A module reads the
+  // style it RECORDED — never today's settings — so a resume, a repair or a
+  // per-part regeneration keeps writing in the voice the module started in.
+  const style = promptStyleForModule(module);
+  const composed = composePromptFromTemplate({
+    templateText: style.style.templateText,
+    surface: 'parts',
+    values: {
+      campaign: `Campaign: ${campaign.name} (${GAME_SYSTEM_LABELS[campaign.system]})${campaign.description === '' ? '' : ` — ${campaign.description}`}`,
+      modulePremise: `Module premise:\n${spine.premise}`,
+      themes: spine.themes.length > 0 ? `Themes: ${spine.themes.join('; ')}` : null,
+      allParts: `All parts of this module (one-line synopses, so later parts can foreshadow):\n${synopses}`,
+      partHeading: `Write part ${String(planIndex + 1)}: "${plan.title}" (levels ${plan.levelBand}).`,
+      partSynopsis: `Part synopsis: ${plan.synopsis}`,
+      partEndCondition: `Part ends when: ${plan.levelUpTrigger}`,
+      previousPart:
+        continuity === null
+          ? null
+          : `Full markdown of the previous part (continue seamlessly from it):\n\n${continuity}`,
+      ruleExcerpts,
+      glossary,
+      campaignIndex,
+      priorModules: priorContext,
+      partEnding: isFinale ? PART_ENDING_LINES.finale : PART_ENDING_LINES.regular,
+      additionalInstruction:
+        options.extraInstruction === ''
+          ? null
+          : `Additional instruction from the GM: ${options.extraInstruction}`,
+      ...partsContractValues({
+        lengthTarget: MODULE_SIZE_WORD_TARGETS[module.sizeDial],
+        floorClause: partFloorRequirement,
+      }),
+    },
+  });
 
   const messages: ChatMessage[] = [
     {
@@ -1493,7 +1479,7 @@ async function partCall(
         'You are the Module Writer, an expert adventure author for tabletop RPGs. ' +
         'You write evocative, immediately usable GM-facing module prose in markdown.',
     },
-    { role: 'user', content: instruction },
+    { role: 'user', content: composed.text },
   ];
 
   // Output is plain markdown — no JSON, no zod. Empty or <100-char output is
@@ -1529,85 +1515,6 @@ async function partCall(
     );
     return normalizePartMarkdown(retry);
   }
-}
-
-// --- The scene block (08 §M4-B-2) --------------------------------------------
-
-/**
- * The scene block (08-MODULE-DESIGNER §M4-B-2, docs/17 ledger row 73): the
- * ONE field set a generated scene is written in, and the ONE source the parts
- * prompt renders it from — the test asserts each label reaches the prompt, so
- * a label can never be dropped from the copy without failing.
- *
- * The block is a GM-facing SCAFFOLD inside the part's ordinary markdown: it
- * lives in the part text, so there is no schema, no Dexie change and no second
- * document format (see `domain/modulePartsDocument`), and the canvas editor,
- * the byte-exact version snapshots, the reader's markdown rendering and the
- * encounter floor's `[[encounter]]` counting all keep working on the same
- * text. Every label is written EXACTLY as it reaches the prompt.
- */
-export const PART_SCENE_FIELD_LABELS = [
-  'Scene heading + tag',
-  'Where',
-  'First impression',
-  'Who is here and what they want right now',
-  'The situation',
-  'What changed',
-  'If the party acts',
-  'Secrets',
-  'Leads',
-  'Outcome',
-] as const;
-
-/**
- * The anti-formula rule (docs/17 ledger row 73, owner's explicit fear: "I dont
- * want this to become formulaic. I fear that if we prompt this creativity gets
- * lost."). These lines ride IMMEDIATELY next to the field list in the SAME
- * prompt and are a BINDING requirement of the format, not a nicety: the block
- * orders the GM's information, it never dictates what happens. Exported so the
- * test can pin them — the owner judges the output on exactly this, so the
- * demands may not be quietly softened.
- */
-export const PART_SCENE_VARIATION_DEMANDS = [
-  'The block ORDERS information for the GM. It is not a form to fill in.',
-  'Scenes differ from each other in length, shape and voice. Any field may be a single short line when the scene is small — do not pad a field to look complete, and never write filler to satisfy a label.',
-  'Do not give every scene the same symmetric structure, and do not repeat one beat pattern (arrive, talk, fight) across the part or the module.',
-  'The fields never dictate what happens. If a scene has nothing at stake, rewrite it or delete it — never pour prose into the labels to fill them.',
-] as const;
-
-/**
- * The scene block's field-by-field instruction list, rendered into the parts
- * prompt (one bullet per label in `PART_SCENE_FIELD_LABELS` order). Kept as a
- * function of the labels so the two can never drift.
- */
-function sceneBlockBullets(): string[] {
-  const [heading, where, impression, who, situation, changed, acts, secrets, leads, outcome] =
-    PART_SCENE_FIELD_LABELS;
-  return [
-    `- **${heading}** — name the scene and tag it in the heading, as a wiki-link to the scene's own entity: "### [[Scene Name]] — ENCOUNTER". ENCOUNTER means a fight with real stakes (it gets a battle map, a monster roster and images); EVENT means everything else — a negotiation, a chase, a hazard, a mystery, a puzzle, an investigation (illustration only: no map, no monsters). Combat being merely possible does not make a scene an ENCOUNTER: tag it by what the scene is FOR. Link every scene this way — a scene named only in passing prose is not a scene the module can stand on.`,
-    `- **${where}** — link the existing location entity with the document's wiki-link syntax ([[Place Name]]); never invent a location inline.`,
-    `- **${impression}** — EXACTLY one or two sentences, present tense, one concrete sense plus one thing that is out of place. No history, no faction names, no explanation of causes, and never the party's actions or feelings. THIS IS THE ONLY TEXT A GM READS ALOUD: everything else on the block is GM-facing.`,
-    `- **${who}** — one clause per NPC present, saying what that NPC wants in this scene. Each NPC speaks about what they want and otherwise deflects or refuses.`,
-    `- **${situation}** — the conflict already running when the party arrives, and what it does in the next few minutes if nobody intervenes.`,
-    `- **${changed}** — the one thing different from the previous scene's state, and the cost the party pays to engage with it. If you could honestly write "the situation is the same, now what do you do", this is not a scene — rewrite it or delete it.`,
-    `- **${acts}** — 2-4 bullets of the form <a plausible party action> -> <what the opposition does>. Different bullets must lead to genuinely different outcomes: two routes reaching the same place are one bullet.`,
-    `- **${secrets}** — 0-2 per scene, each written abstract from where it is found so a GM can move it. Nothing the party NEEDS may be available from only one place.`,
-    `- **${leads}** — each lead names the entity it points at and why it is worth following. A lead that points nowhere is deleted.`,
-    `- **${outcome}** — graded: success, partial success and failure written separately. Failure must cost something specific AND move the situation forward: a failed attempt is a new situation, never a dead end.`,
-  ];
-}
-
-/** The anti-formula and part-level rules as prompt bullets — ONE source with
- * the pinned demand strings (`PART_SCENE_VARIATION_DEMANDS`), so the test's
- * assertions are literally the text the prompt carries. */
-function sceneVariationBullets(): string[] {
-  return [
-    ...PART_SCENE_VARIATION_DEMANDS.map((demand) => `- ${demand}`),
-    '- No scene may require one specific party action to proceed. If the party does nothing, the relevant faction simply advances its own plan.',
-    '- Address the GM, never the players: write what the world and its people do. Never author what a player character does, says, thinks or feels.',
-    '- Introduce at most one new entity per scene, and use it in the scene that introduces it.',
-    '- End the part with at least two threads pointing into other parts.',
-  ];
 }
 
 // --- Entity name normalization (fix-01) --------------------------------------
@@ -2502,6 +2409,35 @@ export async function discardSpine(moduleId: Id): Promise<void> {
 }
 
 /**
+ * The style a NEW module is written in (docs/17 row 86): the explicitly chosen
+ * id, or the app default from Settings, resolved against the built-ins and the
+ * user's styles. Both failure modes are loud and name the offender: an
+ * unreadable styles field, an id that resolves to nothing, and a template that
+ * fails validation all throw here (nothing is created, nothing is written).
+ */
+async function resolveCreationPromptStyle(
+  requestedId?: string,
+): Promise<ModulePromptStyle> {
+  const stored = await readPromptStyles();
+  if (stored.error !== null) {
+    throw new Error(
+      `Your saved prompt styles could not be read, so the module was not created: ${stored.error.message}`,
+    );
+  }
+  const id = requestedId ?? (await getSettings()).defaultPromptStyleId;
+  const style =
+    builtinPromptStyle(id) ?? (stored.styles ?? []).find((entry) => entry.id === id);
+  if (style === undefined) {
+    throw new Error(`The module prompt style "${id}" does not exist — pick another one in the dialog`);
+  }
+  const issues = validatePromptStyleTemplate(style.templateText);
+  if (issues.length > 0) {
+    throw new Error(`The prompt style “${style.name}” cannot be used: ${issues.join(' ')}`);
+  }
+  return modulePromptStyleOf(style);
+}
+
+/**
  * Creates the module row from the dialog input and STARTS pass 0 without
  * waiting for it: the reader is the spine's live progress surface (streaming
  * card, Stop button), so the dialog navigates immediately instead of blocking
@@ -2534,9 +2470,20 @@ export async function createModuleAndRun(
     autoGenerateMobImages?: boolean;
     /** Opt-in: skip the spine checkpoint (auto-approve pass 0, run pass 1). */
     autoApproveSpine?: boolean;
+    /**
+     * The module prompt style to write in (docs/17 row 86): a built-in id or a
+     * user style id. Omitted = the app default from Settings. An id that does
+     * not resolve, or a style whose template does not validate, throws BEFORE
+     * any row is created — the dialog names it and no half-made module is left
+     * behind (AGENTS rules 1/3).
+     */
+    promptStyleId?: string;
   },
 ): Promise<Id> {
-  const created = createModule(input);
+  // Resolved and validated FIRST: a module row that cannot be written in a
+  // valid voice must not exist at all.
+  const promptStyle = await resolveCreationPromptStyle(input.promptStyleId);
+  const created = createModule({ ...input, promptStyle });
   const saved = await saveModule(created);
   void (async () => {
     const drafted = await runSpine(saved.id, campaign).catch(() => undefined);

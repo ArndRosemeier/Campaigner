@@ -26,13 +26,12 @@ import {
   PRIOR_MODULE_CHAR_CAP,
   PRIOR_MODULES_TOTAL_CAP,
   PRIOR_PART_CHAR_CAP,
-  PART_SCENE_FIELD_LABELS,
-  PART_SCENE_VARIATION_DEMANDS,
   priorModulesContext,
   rewritePart,
   runParts,
   runSpine,
 } from '@/llm/moduleGen';
+import { PART_SCENE_FIELD_LABELS, PART_SCENE_VARIATION_DEMANDS } from '@/llm/promptStyles';
 import { clearDatabase } from '../db/helpers';
 import { useProgressStore } from '@/lib/progress';
 import type { ChatResult } from '@/llm/openrouter';

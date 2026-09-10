@@ -12,6 +12,10 @@ import {
   ENTITY_KINDS,
   moduleSizeDialSchema,
 } from '@/domain/module';
+import {
+  PROMPT_STYLE_CLASSIC_ID,
+  userPromptStyleSchema,
+} from '@/domain/promptStyle';
 
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
@@ -201,6 +205,18 @@ export const newModuleDraftSchema = z
     /** The Advanced floor editor's numbers — part of the draft so a retry
      * starts from the same rules the deleted attempt used. */
     encounterFloorGuardrail: encounterFloorGuardrailSchema,
+    /**
+     * The prompt style this module will be written in (docs/17 row 86): a
+     * built-in id or one of the user styles. Part of the draft so a retry after
+     * a reset starts from the same voice — but OPTIONAL and absent by default,
+     * because "no choice made" is a real state: it means the creation uses the
+     * app default (`settings.defaultPromptStyleId`) as it stands at that
+     * moment. A defaulted 'classic' here would silently pin every module to
+     * Classic for anyone who changed the app default while a prior draft sat in
+     * the row — a fallback hiding a preference, which is exactly what AGENTS 1
+     * forbids.
+     */
+    promptStyleId: z.string().min(1).optional(),
   })
   .refine((draft) => draft.levelMax >= draft.levelMin, {
     message: 'levelMax must be >= levelMin',
@@ -359,6 +375,26 @@ export const settingsSchema = z.object({
    * defaults (AGENTS rules 1/3, the settingsRepo convention).
    */
   newModuleDraft: newModuleDraftSchema.nullable().default(null),
+  /**
+   * The app-default module prompt style (docs/17 row 86): the id a New Module
+   * dialog preselects, overridable per module. A genuine preference, so it has
+   * a default — and an id that no longer resolves fails LOUDLY where it is used
+   * (the dialog and the creation path name it) rather than quietly falling back
+   * to another voice.
+   */
+  defaultPromptStyleId: z.string().min(1).default(PROMPT_STYLE_CLASSIC_ID),
+  /**
+   * The user's own module prompt styles. Built-ins are NOT stored here (they
+   * ship in code and are immutable); this is authored content, so the app
+   * treats it as the user's work: it rides backup/export, and no wipe path
+   * touches it.
+   *
+   * `null` = the stored value could not be read (the field is carved out of the
+   * settings repo's core parse so one bad styles blob can never take down every
+   * settings read — the `newModuleDraft` precedent). An empty list is `[]`,
+   * which is a real state: no styles of your own yet.
+   */
+  promptStyles: z.array(userPromptStyleSchema).nullable().default(null),
 });
 
 export type Settings = z.infer<typeof settingsSchema>;
@@ -392,5 +428,7 @@ export function defaultSettings(): Settings {
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
     newModuleDraft: null,
+    defaultPromptStyleId: PROMPT_STYLE_CLASSIC_ID,
+    promptStyles: [],
   };
 }

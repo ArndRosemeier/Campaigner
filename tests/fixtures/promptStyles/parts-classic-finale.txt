@@ -1,0 +1,81 @@
+Campaign: Emberfall (D&D 5e)
+
+Module premise:
+A harbor town raised its bell to warn of the drownings; now the bell rings by itself.
+
+Themes: duty; decay
+
+All parts of this module (one-line synopses, so later parts can foreshadow):
+1. [1] The Sunken Quarter — The party arrives with the low tide and finds the first bodies.
+2. [2] The Drowned Cathedral — Descent beneath the harbor to the flooded nave.
+3. [3] The Bell Tower — Final confrontation at the top of the leaning tower.
+
+Write part 3: "The Bell Tower" (levels 3).
+
+Part synopsis: Final confrontation at the top of the leaning tower.
+
+Part ends when: The cult is broken.
+
+Full markdown of the previous part (continue seamlessly from it):
+
+PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun. PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun. PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun. PART-TWO [[The Flooded Nave]]: The tide withdraws and the streets shine wet under a pale sun.
+
+Module entities — wiki-link these ONLY by these exact canonical spellings:
+- Warden Bellamy (npc)
+- The Drowned Cathedral (location)
+- The Tide Cult (faction)
+- The Bells Below (encounter)
+- The Flooded Nave (encounter)
+- The Wardens Confession (encounter)
+
+Existing campaign entities (reuse by exact name where they fit):
+- Harbormaster Ilse (npc)
+- The Salt Ward (location)
+
+Previous modules of this campaign, oldest first — settled history. Build on their events and open threads, reuse their established names exactly, and never retcon them:
+
+Shared campaign cast (used across modules — reuse these exact names, do not duplicate them):
+- Harbormaster Ilse (npc)
+- The Salt Ward (location)
+
+
+
+Writing instructions:
+- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).
+- Write the part as SCENES. Every scene that has anything at stake is written as one labeled block, with these fields in this order:
+- **Scene heading + tag** — name the scene and tag it in the heading, as a wiki-link to the scene's own entity: "### [[Scene Name]] — ENCOUNTER". ENCOUNTER means a fight with real stakes (it gets a battle map, a monster roster and images); EVENT means everything else — a negotiation, a chase, a hazard, a mystery, a puzzle, an investigation (illustration only: no map, no monsters). Combat being merely possible does not make a scene an ENCOUNTER: tag it by what the scene is FOR. Link every scene this way — a scene named only in passing prose is not a scene the module can stand on.
+- **Where** — link the existing location entity with the document's wiki-link syntax ([[Place Name]]); never invent a location inline.
+- **First impression** — EXACTLY one or two sentences, present tense, one concrete sense plus one thing that is out of place. No history, no faction names, no explanation of causes, and never the party's actions or feelings. THIS IS THE ONLY TEXT A GM READS ALOUD: everything else on the block is GM-facing.
+- **Who is here and what they want right now** — one clause per NPC present, saying what that NPC wants in this scene. Each NPC speaks about what they want and otherwise deflects or refuses.
+- **The situation** — the conflict already running when the party arrives, and what it does in the next few minutes if nobody intervenes.
+- **What changed** — the one thing different from the previous scene's state, and the cost the party pays to engage with it. If you could honestly write "the situation is the same, now what do you do", this is not a scene — rewrite it or delete it.
+- **If the party acts** — 2-4 bullets of the form <a plausible party action> -> <what the opposition does>. Different bullets must lead to genuinely different outcomes: two routes reaching the same place are one bullet.
+- **Secrets** — 0-2 per scene, each written abstract from where it is found so a GM can move it. Nothing the party NEEDS may be available from only one place.
+- **Leads** — each lead names the entity it points at and why it is worth following. A lead that points nowhere is deleted.
+- **Outcome** — graded: success, partial success and failure written separately. Failure must cost something specific AND move the situation forward: a failed attempt is a new situation, never a dead end.
+- The block ORDERS information for the GM. It is not a form to fill in.
+- Scenes differ from each other in length, shape and voice. Any field may be a single short line when the scene is small — do not pad a field to look complete, and never write filler to satisfy a label.
+- Do not give every scene the same symmetric structure, and do not repeat one beat pattern (arrive, talk, fight) across the part or the module.
+- The fields never dictate what happens. If a scene has nothing at stake, rewrite it or delete it — never pour prose into the labels to fill them.
+- No scene may require one specific party action to proceed. If the party does nothing, the relevant faction simply advances its own plan.
+- Address the GM, never the players: write what the world and its people do. Never author what a player character does, says, thinks or feels.
+- Introduce at most one new entity per scene, and use it in the scene that introduces it.
+- End the part with at least two threads pointing into other parts.
+- Every situation in this part offers at least two VISIBLE approaches that differ in cost or consequence — two rolls toward the same outcome are one approach. Nothing resolves on a single route.
+- Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option.
+- When the party defeats, bypasses or changes something, write the change into the fiction so it is still visible when they look again — nothing they accomplished is undone off-screen, and nobody locates or captures them by fiat.
+- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters — and every scene ([[Encounter Name]] for a fight, [[Event Name]] for anything else). Reuse the exact names of entities from earlier parts and the campaign index, consistently.
+- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token ([[Halmund]]s Haus, not [[Halmunds]] Haus — English genitive: [[Halmund]]'s tower) and never bake a role or title into it ([[Halmund|the guard Halmund]], not [[Guard Halmund]]). Use [[Name|display]] when the surface text must differ. Same rules in any language.
+- Target length for this part: 800–1500 words (soft target).
+- REQUIREMENT — encounter floor for this part (levels 3: 1 level(s)): name at least 1 distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, each a fight with real stakes, staged where a battle map and a monster roster make sense. A negotiation, hazard, puzzle, investigation or chase is an event, not an encounter, and cannot cover this floor. Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.
+- This is the FINALE: satisfaction is allowed here, at full price — every want met must be paid for visibly in loss, consequence, or foregone alternative.
+- If an antagonist exists, keep their agents, aftereffects or evidence on the page from here on — never hold the villain back for the finale.
+- Show one faction advancing its own plan in this part, whether or not the party engages it; when the party returns to a place they have been, open with what has changed since.
+- Every encounter and every location in this part carries one concrete particular that could not be swapped out unchanged: an opponent the party cannot tell apart from the last one is meaningless combat.
+- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.
+- Opportunistic threats (a predator, a patrol, a bandit group) advance or reveal a faction’s plan instead of appearing as filler, and exploring is never punished as such — whatever the party finds must be worth the risk it took.
+- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.
+- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).
+- A scene that is NOT a fight is an event: link it as [[Event Name]] and write its whole block right here in the prose (the block above is what an event gets). An event receives an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.
+- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.
+- Before you answer, the three things that do not bend in this part: (1) at least two visible approaches per situation, differing in cost or consequence, so nothing resolves on a single route; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible.

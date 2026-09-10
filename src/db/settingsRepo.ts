@@ -2,9 +2,14 @@ import {
   defaultSettings,
   newModuleDraftSchema,
   settingsSchema,
+  userPromptStyleSchema,
   type NewModuleDraft,
   type Settings,
 } from '@/domain';
+import { z } from 'zod';
+
+/** One stored (always user-authored) style. */
+type UserPromptStyle = z.infer<typeof userPromptStyleSchema>;
 import { db } from '@/db/db';
 
 /**
@@ -16,7 +21,7 @@ import { db } from '@/db/db';
  * Everything else in the row is still validated here, strictly: a broken
  * load-bearing setting must fail the read (AGENTS 1).
  */
-const coreSettingsSchema = settingsSchema.omit({ newModuleDraft: true });
+const coreSettingsSchema = settingsSchema.omit({ newModuleDraft: true, promptStyles: true });
 
 /** The draft field on its own — the same schema the row validates on write. */
 const newModuleDraftFieldSchema = newModuleDraftSchema.nullable().default(null);
@@ -50,10 +55,46 @@ function draftFromRow(existing: Record<string, unknown>): StoredNewModuleDraft {
   return { draft: parsed.data, error: null };
 }
 
-/** The row's load-bearing settings, with the draft read on its own. */
+/** The styles field on its own — the same schema the row validates on write. */
+const promptStylesFieldSchema = z.array(userPromptStyleSchema).nullable().default(null);
+
+/**
+ * The user's prompt styles, with the read's verdict — the `newModuleDraft`
+ * precedent, for the same reason: styles are a few KB of authored text and a
+ * blob that no longer parses must fail in the ONE surface that can report it
+ * (the styles editor) instead of taking down every settings read in the app.
+ * `styles` is `null` whenever the field is unreadable; `error` then carries the
+ * reason. An empty array is a real value (no styles of your own yet).
+ */
+export interface StoredPromptStyles {
+  styles: UserPromptStyle[] | null;
+  error: Error | null;
+}
+
+/** Reads the stored prompt styles on their own (the editor's and creation's seam). */
+export async function readPromptStyles(): Promise<StoredPromptStyles> {
+  const existing = await db.settings.get('settings');
+  if (existing === undefined) return { styles: [], error: null };
+  return promptStylesFromRow(existing);
+}
+
+/** The styles field of a loaded row, with the read's verdict. */
+function promptStylesFromRow(existing: Record<string, unknown>): StoredPromptStyles {
+  const parsed = promptStylesFieldSchema.safeParse(existing.promptStyles ?? null);
+  if (!parsed.success) return { styles: null, error: new Error(parsed.error.message) };
+  return { styles: parsed.data ?? [], error: null };
+}
+
+/**
+ * The row's load-bearing settings, with the draft and the styles read on their
+ * own. `promptStyles: null` here means the same as above — unreadable, never
+ * "no styles" — so a caller that cannot see the error still cannot mistake the
+ * state for an empty list.
+ */
 function coreSettingsFromRow(existing: Record<string, unknown>): Settings {
   const core = coreSettingsSchema.parse({ ...defaultSettings(), ...existing });
-  return { ...core, newModuleDraft: draftFromRow(existing).draft };
+  const styles = promptStylesFromRow(existing);
+  return { ...core, newModuleDraft: draftFromRow(existing).draft, promptStyles: styles.styles };
 }
 
 /**
@@ -102,8 +143,19 @@ export type SettingsPatch = Partial<Omit<Settings, 'id'>>;
  */
 export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
   return db.transaction('rw', db.settings, async () => {
-    const current = await getSettings();
-    const updated = settingsSchema.parse({ ...current, ...patch });
+    const existing = await db.settings.get('settings');
+    const current = existing === undefined ? defaultSettings() : coreSettingsFromRow(existing);
+    const candidate: Record<string, unknown> = { ...current, ...patch };
+    // A field this write does NOT own is carried forward VERBATIM from the
+    // stored row. The user's styles are authored work: a settings write that
+    // neither read nor touched them must never be the thing that drops an
+    // unreadable blob on the floor (AGENTS rule 1 — no silent data loss). A
+    // carried-forward blob that fails the schema fails THIS write loudly
+    // instead, naming the problem where the user can see it.
+    if (patch.promptStyles === undefined && existing !== undefined && 'promptStyles' in existing) {
+      candidate.promptStyles = existing.promptStyles;
+    }
+    const updated = settingsSchema.parse(candidate);
     await db.settings.put(updated);
     return updated;
   });

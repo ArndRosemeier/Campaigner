@@ -30,10 +30,19 @@ import {
   defaultNewModuleDraft,
   ENTITY_KINDS,
   MODULE_SIZE_LABELS,
+  PROMPT_STYLE_CLASSIC_ID,
 } from '@/domain';
 import { modulePath } from '@/app/routes';
 import { listModulesByCampaign } from '@/db/moduleRepo';
-import { readStoredNewModuleDraft, updateSettings } from '@/db/settingsRepo';
+import { readSettings, readStoredNewModuleDraft, updateSettings } from '@/db/settingsRepo';
+import { catalogStyles, readPromptStyleCatalog } from '@/db/promptStyleRepo';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { createModuleAndRun } from '@/llm/moduleGen';
 import { toastError } from '@/lib/toast';
 
@@ -97,6 +106,7 @@ function draftsEqual(a: NewModuleDraft, b: NewModuleDraft): boolean {
     sameKinds(a.autoImageKinds, b.autoImageKinds) &&
     a.autoGenerateBattlemaps === b.autoGenerateBattlemaps &&
     a.autoGenerateMobImages === b.autoGenerateMobImages &&
+    a.promptStyleId === b.promptStyleId &&
     a.encounterFloorGuardrail.enabled === b.encounterFloorGuardrail.enabled &&
     a.encounterFloorGuardrail.perLevel === b.encounterFloorGuardrail.perLevel
   );
@@ -173,6 +183,12 @@ function NewModuleDialogContent({
   const [encounterFloorGuardrail, setEncounterFloorGuardrail] = useState<EncounterFloorGuardrail>(
     defaultEncounterFloorGuardrail(),
   );
+  // The module prompt style this module will be written in (docs/17 row 86):
+  // the dialog's own default is the app default from Settings, and the choice
+  // rides the draft like every other field.
+  // `null` = the user has not chosen one: the app default applies (and follows
+  // a later change of the default) instead of being frozen into the draft.
+  const [promptStyleId, setPromptStyleId] = useState<string | null>(null);
   const [starting, setStarting] = useState(false);
 
   // The stored draft (pure read — never `getSettings`, which writes). Held in
@@ -183,6 +199,15 @@ function NewModuleDialogContent({
   // failure of every settings read in the app, and the form opens at its own
   // defaults instead of half-prefilling from data the app cannot read (docs/17).
   const stored = useLiveQuery(() => readStoredNewModuleDraft(), []);
+  // The style catalog AND the app default in one read (the same seam the
+  // creation path resolves against). `undefined` while it loads; the built-ins
+  // are always available, because they ship in code.
+  const catalog = useLiveQuery(async () => {
+    const settings = await readSettings();
+    return readPromptStyleCatalog(settings.defaultPromptStyleId);
+  }, []);
+  const appDefaultStyleId = catalog?.defaultStyleId ?? PROMPT_STYLE_CLASSIC_ID;
+  const styleOptions = catalog === undefined ? [] : catalogStyles(catalog);
   const draftRef = useRef<NewModuleDraft>(defaultNewModuleDraft(campaign.id));
   // Seeded once per open: an edit made while the settings row was still
   // loading must never be overwritten by the arriving prefill.
@@ -270,6 +295,10 @@ function NewModuleDialogContent({
       setAutoGenerateBattlemaps(draft.autoGenerateBattlemaps);
       setAutoGenerateMobImages(draft.autoGenerateMobImages);
       setEncounterFloorGuardrail(draft.encounterFloorGuardrail);
+      // A stored draft carries the style its author picked; with none the
+      // select shows the APP DEFAULT, which is resolved at render (so a default
+      // changed while the dialog sits open is followed, not frozen).
+      setPromptStyleId(matches ? (draft.promptStyleId ?? null) : null);
     },
     [campaign.id],
   );
@@ -358,6 +387,7 @@ function NewModuleDialogContent({
       autoGenerateBattlemaps,
       autoGenerateMobImages,
       encounterFloorGuardrail,
+      ...(promptStyleId === null ? {} : { promptStyleId }),
     };
     // The ref always mirrors what the form shows, so `flush` saves the CURRENT
     // values no matter when it runs.
@@ -389,6 +419,7 @@ function NewModuleDialogContent({
     autoGenerateBattlemaps,
     autoGenerateMobImages,
     encounterFloorGuardrail,
+    promptStyleId,
     persist,
   ]);
 
@@ -465,7 +496,7 @@ function NewModuleDialogContent({
       // Fully-specified creation input (the dialog always sends a tone).
       // `createModuleAndRun` forwards this object verbatim to `createModule`,
       // so the additive automation fields and the guardrails ride along.
-      const input: NewModule & { tone: string } = {
+      const input: NewModule & { tone: string; promptStyleId: string } = {
         campaignId: campaign.id,
         title: 'New Module',
         concept: concept.trim(),
@@ -480,6 +511,10 @@ function NewModuleDialogContent({
         autoGenerateBattlemaps,
         autoGenerateMobImages,
         encounterFloorGuardrail,
+        // The user's explicit choice, or the app default as it stands NOW; the
+        // creation path resolves it against the built-ins and the user's styles
+        // and REFUSES an id that does not resolve (loud, no row).
+        promptStyleId: promptStyleId ?? appDefaultStyleId,
       };
       const moduleId = await createModuleAndRun(campaign, input);
       onOpenChange(false);
@@ -578,6 +613,51 @@ function NewModuleDialogContent({
             <p className="text-xs text-muted-foreground">
               Target part length: sketch ≈ 400–700 words, standard ≈ 800–1500, detailed ≈ 1500–2500.
             </p>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="module-prompt-style">Writing style</Label>
+            <Select
+              value={promptStyleId ?? appDefaultStyleId}
+              onValueChange={(value) => {
+                markEdited();
+                if (value !== null) setPromptStyleId(value);
+              }}
+            >
+              <SelectTrigger
+                id="module-prompt-style"
+                className="w-full"
+                data-testid="module-prompt-style"
+              >
+                <SelectValue placeholder="Pick a writing style" />
+              </SelectTrigger>
+              <SelectContent>
+                {styleOptions.map((style) => (
+                  <SelectItem key={style.id} value={style.id}>
+                    {style.name}
+                    {style.origin === 'builtin' ? ' (built-in)' : ''} — v{style.version}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-muted-foreground">
+              How this module is written: the instruction text is a style you can edit or author in
+              Settings → Module prompt styles. The module records the style text it used, so editing
+              a style later never changes a module that is already underway.
+            </p>
+            {styleOptions.length > 0 &&
+              !styleOptions.some((style) => style.id === (promptStyleId ?? appDefaultStyleId)) && (
+                <p className="text-xs text-destructive" data-testid="module-prompt-style-missing">
+                  The style “{promptStyleId ?? appDefaultStyleId}” no longer exists — pick another
+                  one; the module is not created with a style that cannot be resolved.
+                </p>
+              )}
+            {catalog?.error != null && (
+              <p className="text-xs text-destructive" data-testid="module-prompt-styles-error">
+                Your saved prompt styles could not be read ({catalog.error.message}); only the
+                built-in styles are available.
+              </p>
+            )}
           </div>
 
           <div className="flex items-start gap-2">

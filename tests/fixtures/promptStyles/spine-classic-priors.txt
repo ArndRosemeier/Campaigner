@@ -1,0 +1,48 @@
+Campaign: Emberfall (D&D 5e)
+
+Module concept: A harbor bell that rings by itself beneath the water.
+
+Party levels 1–3; tone: eerie
+
+Existing campaign entities (reuse the ones that fit, by their exact names):
+- Harbormaster Ilse (npc)
+- The Salt Ward (location) — A burned ward on the north bank.
+
+Previous modules of this campaign, oldest first — settled history. Build on their events and open threads, reuse their established names exactly, and never retcon them:
+
+Shared campaign cast (used across modules — reuse these exact names, do not duplicate them):
+- Harbormaster Ilse (npc)
+- The Salt Ward (location)
+
+## The Salt Ward (levels 1–2)
+
+Premise:
+The Salt Ward burned on the first night of the tide.
+
+### Part 1: The Burning Ward
+PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. PRIOR-PART-MARKER: The ward burned and the salt came in. 
+
+Design the module spine. Cover the whole level range with parts, in order:
+- Default one part per level; you MAY merge adjacent levels into one part when the story is better served (levels 1–3 → about 3 parts or fewer).
+- Every level in the range must be covered by exactly one part.
+- Each part needs: title, levelBand (e.g. "1" or "2-3"), a one-paragraph synopsis, and levelUpTrigger (what ends this part / triggers the level-up). Write the synopsis as a GM-facing note with scene-level substance: the situation, the actors, the stakes, and at least one concrete scene the part contains.
+- Think like an experienced GM: prioritize meaningful choices, varied pacing, clear stakes, and challenges that are exciting without feeling arbitrary. Let the fiction and pacing decide the structure — never a quota.
+- REQUIREMENT — encounter floor: name at least one distinct encounter per level of this module's range (levels 1–3 → at least 3 distinct encounters across the module), with each part naming at least as many encounters as the levels its band covers. An encounter is a fight — a battle map and a monster roster — so a negotiation, hazard, puzzle, investigation or chase is an event instead and does not count. Place encounters deliberately in the parts where they make narrative and gameplay sense, and reserve climactic encounters for an earned escalation.
+- Conflict first: the situation is contested by someone — a faction, an NPC, a predator, a rival party, or the place itself — and who carries that conflict may shift as the module runs. Not every module has an antagonist; every module has a conflict.
+- Every situation offers at least two VISIBLE approaches that differ in cost or consequence, so nothing resolves on a single route and no part is a passive wait for the plot. Two rolls toward the same outcome are one approach: the difference must be one the players can see before they commit.
+- State in the premise how the situation can resolve, and keep every part equal to what the premise promises — a promised siege arrives, a promised traitor is present and reachable.
+- Give each faction an order of battle — wants, needs, preferred tactics, fears, when it flees — and advance its own plan between parts whether or not the party engages it. Every returnable location gets a line of what has changed since.
+- If an antagonist exists, the party meets their agents, aftereffects or evidence from the first part — never a villain held back for the finale.
+- Every encounter and every location carries one concrete particular that could not be swapped out unchanged (a named river, a debt, a smell, a rule of the place): an opponent the party cannot tell apart from the last one is meaningless combat, and interchangeable scenery is the same failure more slowly.
+- Keep the PCs the protagonists: no NPC ally is more intimately bound to the plot than they are, and no NPC solves what the party came to solve.
+- Opportunistic threats (a predator, a bandit group, a patrol) belong to the situation: each one advances or reveals a faction’s plan instead of appearing as filler. Exploring is never punished as such — wherever it leads, the interesting thing found there must be worth the risk.
+- Structural conflict governs HOW scenes resolve, never what they feel like — no tone, register or subject matter is restricted here. Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option. Satisfaction is rationed to the finale.
+- When the party defeats, bypasses or changes something, that change persists and is visible when they return: a beaten antagonist stays beaten unless the fiction earned the return, and no NPC finds, captures or sets back the party by fiat.
+- Introduce as many locations, NPCs, factions, notes, events and encounters as the story needs — none of them must be detailed here. Give every scene a distinctive, stable name, declare it with its kind in entities, and wiki-link it in prose ([[Scene Name]]) so it can be resolved into its artifact later.
+- An "encounter" is a FIGHT: initiative, a battle map with terrain, and a monster roster with images. Anything that is not a fight — a negotiation, a hazard, a puzzle, an investigation, a ritual, a chase — is an "event" instead: it gets an illustration and no battle map, no monsters, no roster. Never declare a non-combat scene as an encounter, and never hide a fight inside an event. A hazard or a puzzle still carries meaningful risk and player agency — only its artifact differs.
+- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a non-combat scene the party plays through; same shape as a location), "faction" (an organization or group), "encounter" (a fight — a battle map and a monster roster), or "note" (anything else — items, rumors, mysteries, plot devices). One entry per named entity, one canonical spelling — a person is listed once, not once per role or title. Reuse existing campaign entities by exact name; never duplicate one to fill the floor.
+- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.
+- Before you answer, the three things that do not bend: (1) every situation has at least two visible approaches that differ in cost or consequence — no single-route conclusions; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible when they return.
+- The user's premise, tone, level range and size are FIXED INPUT. Do not restate, extend, soften or contradict them. If a structural requirement cannot be met inside the user's premise, change the STRUCTURE (the part plan, which faction carries the conflict, where the conflict starts) — never the premise. If you believe the premise makes a requirement impossible, satisfy the requirement anyway and say what you changed in the structure notes.
+
+Reply with ONLY a JSON object: { "premise": string, "themes": string[], "partPlan": [{ "title": string, "levelBand": string, "synopsis": string, "levelUpTrigger": string }], "entities": [{ "name": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter" }] } — partPlan length 1..20, one entity entry per named entity with its kind.

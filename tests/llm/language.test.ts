@@ -53,6 +53,8 @@ const SETTINGS_BASE = {
   onboarding: { status: 'fresh' as const, stepState: [] },
   lastModule: null,
   newModuleDraft: null,
+  defaultPromptStyleId: 'classic',
+  promptStyles: [],
 };
 
 beforeEach(async () => {
