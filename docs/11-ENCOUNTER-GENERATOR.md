@@ -10,7 +10,8 @@ alternatively map through the **vision-located path** (D19): one painted
 labeled map whose room plaques are sight-located — no pick pause,
 locate+verify is the gate. The result is an
 `encounter` artifact whose battles seed with **mobs placed in their rooms and
-one fog veil per monster spawn group** — the party reveals the fight group by
+one VEIL per monster spawn group** (a veil, never a fog — D4's fog-cloud
+amendment) — the party reveals the fight group by
 group, exactly the GM-Cockpit veil mechanic M5 already runs.
 
 Binding conventions from `00-OVERVIEW.md §Global conventions` and `AGENTS.md`
@@ -42,7 +43,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D1 | **Standalone generator**: a run creates a complete `encounter` artifact from a brief — roster included — plus layout, map and room veils. It also runs in a **regenerate** mode against an existing encounter (same or edited roster): name, links and body survive; layout + map are replaced. |
 | D2 | **Two autonomies**: interactive runs use the run-engine autonomy (manual/review pause at the checkpoints below; map pick always pauses, M3-A rule). **Unattended auto runs** (module generation) never pause: one stylize candidate, no pick gate — the `entity-image-queue` precedent (08 §M4-C). Any failure fails that encounter loudly; the batch continues. |
 | D3 | Rooms are **unions of rectangles** (1 rect = plain, 2–3 rects = L/T shapes). Every room carries a **mob sub-rectangle** (`mobsRect`) inscribed in the union — it is both the mob placement area and the source the per-group veil footprints are cut from (D4). |
-| D4 | **One fog veil per monster spawn group** (owner-ratified group veils — supersedes the old one-veil-per-room rule): each room's `mobsRect` is split per `monsterIndexes` entry, in the owner's group order, into the minimal cell bounding box of that group's `placeMonsters` cells (`veilsFromSpawnClusters`, beside the legacy `veilsFromRooms`) — kind `fog`, int cells ≥ `VEIL_MIN_CELLS`. Rooms with no monster groups seed no veil. The room's FIRST group keeps `id = room.id` so the Path rail's "Reveal next room" still resolves per room; later groups mint fresh ids and every group veil carries `roomId = room.id` (additive on `battleVeilSchema`). Corridors stay open (GM can add fog manually). Amended (veil-reachability arc): **cover convention** — each seeded group veil covers its spawn area PLUS a one-cell margin on every side, clamped to the board bounds (a 1x1 group seeds at most 3x3), so the GM can grab the veil body and reach the edge handles around the tokens, which stay directly clickable above. Amended (veil-overlap merge): same-room group covers that OVERLAP (share ground) merge at seed into one fog veil — the bounding-box union re-clamped to the board, keeping the room id + `roomId` — so single-room adjacent spawns seed exactly one veil; disjoint same-room covers stay separate and cross-room covers never merge. GM-created veils are untouched. Amended (ledger 65, owner-ratified): **a seeded fog now RENDERS as its name — an opaque, blocking rectangle** (`bg-zinc-300`, no alpha, same in GM and player view; the earlier "~10% in both views" fill was what made seeded fog indistinguishable from a GM-drawn transparent veil — the owner's "there are no fogged rooms right now" report, when every seeded row was already `kind: 'fog'`). Seeding geometry, `kind`, `roomId`, the merge, and coverage/pruning/initiative are all byte-unchanged; only the fill and the tap behavior are keyed off `kind` (docs/18 seam row; ledger 65). |
+| D4 | **One veil per monster spawn group** (owner-ratified group veils — supersedes the old one-veil-per-room rule): each room's `mobsRect` is split per `monsterIndexes` entry, in the owner's group order, into the minimal cell bounding box of that group's `placeMonsters` cells (`veilsFromSpawnClusters`, beside the legacy `veilsFromRooms`) — kind `veil`, int cells ≥ `VEIL_MIN_CELLS`. Rooms with no monster groups seed no veil. The room's FIRST group keeps `id = room.id` so the Path rail's "Reveal next room" still resolves per room; later groups mint fresh ids and every group veil carries `roomId = room.id` (additive on `battleVeilSchema`). Corridors stay open (GM can add fog manually). Amended (veil-reachability arc): **cover convention** — each seeded group veil covers its spawn area PLUS a one-cell margin on every side, clamped to the board bounds (a 1x1 group seeds at most 3x3), so the GM can grab the veil body and reach the edge handles around the tokens, which stay directly clickable above. Amended (veil-overlap merge): same-room group covers that OVERLAP (share ground) merge at seed into one veil — the bounding-box union re-clamped to the board, keeping the room id + `roomId` — so single-room adjacent spawns seed exactly one veil; disjoint same-room covers stay separate and cross-room covers never merge. GM-created veils are untouched. Amended (ledger 65, owner-ratified): **fog RENDERS as its name — an opaque, blocking cover** (`bg-zinc-300` then, no alpha, same in GM and player view; the earlier "~10% in both views" fill was what made fog indistinguishable from a GM-drawn transparent veil — the owner's "there are no fogged rooms right now" report, when every seeded row was already `kind: 'fog'`). Seeding geometry, `kind`, `roomId`, the merge, and coverage/pruning/initiative are all byte-unchanged; only the fill and the tap behavior are keyed off `kind` (docs/18 seam row; ledger 65). Amended (fog-cloud arc, 2026-09-10, owner-directed — supersedes the ledger-65 `bg-zinc-300` fill AND the seeded kind): **the seeded group covers are kind `'veil'`** — owner, verbatim: "The mobs should be covered by a veil, not fog." The seeder emitted the opaque BLOCKING kind over mob clusters; a veil is the kind the job needs, because hiding is done by COVERAGE (kind-agnostic: `portraitCoveredByVeils`, player-view DOM removal, initiative pruning, auto-roll on reveal), while a plain cover also keeps the map readable, passes a sub-threshold tap through to the room-key marker beneath it — repairing a real access bug, since a keyed room's marker sits at its `mobsRect` centre, inside the seeded cover by construction, and markers stay BELOW veils, so an opaque fog over it was untappable — and stays draggable/resizable/deletable exactly as before. Fog remains the GM-drawn opaque blocking kind and now renders as an animated grey cloud (`battle-fog-cloud`, pure CSS, `prefers-reduced-motion` aware — 09-MILESTONE-5 M5-D fog-cloud amendment). Seeding geometry, `roomId`, the merge, coverage/pruning/initiative and the rail's per-room resolution via `veil.id`/`veil.roomId` are byte-unchanged: the rail never resolves by kind. |
 | D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below. Amended 2026-09-08: uncited entries (`inline` / `none`) gain on-demand creature artifacts + local portraits ("Create creature + portrait", per entry and batch-all); invented covers stay local-only, never the global cache. Amended 2026-09-09: all-imaged batches offer portrait regeneration (canonical slots republished with fresh bytes — future clones everywhere get the new art, other campaigns' existing covers unchanged; flavored/invented regenerate locally). |
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. Amended 2026-09-08 (D14): the vision check that "only flagged drift for human review" is GONE entirely — no pixel is read back anywhere, and the human is the judge at pick. Amended 2026-09-09 (D19): the vision-located path carves out ONE exception — room LABEL positions (plaques the pipeline itself painted, not geometry) are read back through the structured vision locate; packed geometry is still never read back, and vision rooms carry none. |
@@ -418,10 +419,10 @@ gate). See "Vision-located dungeon path" below.
   room's `mobsRect` (deterministic scatter, ≥1 cell apart, doors excluded) —
   reused by the seeder; the layout persists only `monsterIndexes`, placement
   is recomputed at seed time so roster edits never desync stored coordinates.
-- `veilsFromRooms(layout)`: one `BattleVeil` per room — kind `'fog'`, center
+- `veilsFromRooms(layout)`: one `BattleVeil` per room — kind `'veil'`, center
   normalized from `mobsRect`, `widthCells/heightCells` = the rect's cell
   span (legacy helper, kept for its pin tests). Battle seed uses
-  `veilsFromSpawnClusters(layout, rosterCounts)` (D4): one fog veil per
+  `veilsFromSpawnClusters(layout, rosterCounts)` (D4): one veil per
   `monsterIndexes` entry — the group's `placeMonsters` cells PLUS the
   one-cell cover margin (clamped to the board), first group per room keeping
   `id = room.id`, every group carrying `roomId`. Correct under D6 because
@@ -605,7 +606,8 @@ checklist content — never player-facing, never structured loot output.
 For an encounter with `layout !== null`:
 
 1. Stamp `board.mapLayout` from the layout.
-2. Create the spawn-group veils (`veilsFromSpawnClusters`) — kind `'fog'`,
+2. Create the spawn-group veils (`veilsFromSpawnClusters`) — kind `'veil'`
+   (a mob cover is plain cover, never fog — D4's fog-cloud amendment),
    one per `monsterIndexes` entry (D4); the spawn room's groups are veiled
    too (no exemption).
 3. Place each roster instance on a free cell of its room's `mobsRect`
@@ -970,7 +972,7 @@ single-room sites seed their spawn-group veils instead of zero. The party
 still starts in the spawn room (staging is unchanged); its monsters simply
 begin veiled. The passage above stays as history; D4 as amended is the rule.
 
-Layouts without an entrance keep D4 exactly: one fog veil per spawn group,
+Layouts without an entrance keep D4 exactly: one veil per spawn group,
 each covering its group's `placeMonsters` cells plus the one-cell margin
 (cover convention), corridors open.
 
@@ -1566,9 +1568,13 @@ data model, run-engine threading, UI, docs); the gate at completion is
 - From a brief, an auto run produces a complete encounter artifact: roster
   with resolved sources, `layout` (validated rooms/corridors/doors), a
   map-role map image whose aspect matches the layout, and a computed veil set
-  (one `fog` per room's `mobsRect`). Those seeded fogs RENDER OPAQUE on the
-  battle surface in both GM and player view (ledger 65) — the kind was always
-  `fog`; the fill said otherwise until the ledger-65 fix.
+  (one VEIL per spawned monster group). The seeded covers are veils, not fogs
+  (fog-cloud arc, D4): plain cover — player view removes the covered mob
+  tokens from the DOM (that removal, never the fill, is the hiding mechanic),
+  and a tap on the cover passes through to the room-key marker it covers.
+  FOG itself stays the opaque, blocking GM-drawn kind and renders as an
+  animated grey cloud in both GM and player view (ledger 65 + the M5-D
+  fog-cloud amendment in 09-MILESTONE-5).
 - A manual run pauses at `brief` and `layout` (both editable/regeneratable)
   and at map pick — the LAST pause is the pick, and the pipeline is
   `brief→layout→schematic→stylize→pick→finalize` with NO verify step; the

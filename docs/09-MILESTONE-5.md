@@ -43,11 +43,15 @@ Ported rules that are kept verbatim (they are the mechanism's substance):
   (fresh per battle). An NPC artifact must never store current HP.
 - **Covered/hidden tokens are removed from the DOM and pruned from
   initiative** — that *is* the player-safe mechanic (there is no
-  line-of-sight simulation; a "fog" veil renders above tokens, a "veil" is
+  line-of-sight simulation; a "fog" renders above tokens, a "veil" is
   plain cover). As shipped (ledger 65, 2026-09-09) the two kinds read
-  differently: fog is an opaque, blocking rectangle, veil is a transparent
-  one whose taps pass through to the room-key marker beneath it — see the
-  M5-D veil amendment below, which supersedes the 8fa7abd 10% tint.
+  differently: fog is an opaque, blocking cover (since 2026-09-10 an
+  animated grey cloud), veil is a transparent one whose taps pass through to
+  the room-key marker beneath it — see the M5-D veil amendment below, which
+  supersedes the 8fa7abd 10% tint. Since 2026-09-10 (fog-cloud arc,
+  owner-directed) a **generated cover over a mob area is a VEIL, not a
+  fog** — the seeder seeds the transparent kind, because coverage (not the
+  fill) is what hides mobs and a cover is what the GM draws a fog for.
 - **Initiative bonus is frozen onto the token at roll time** so later
   artifact edits never rewrite history.
 - **One live battle per session**, created lazily on first mutation, deleted
@@ -347,7 +351,59 @@ this they had no testid, so no test could click either one. Reversal is one
 ternary (the fill) plus the tap branch; ledger 65 records the reasoning.
 Both buttons call the ONE creator `addVeil(kind)`, and `kind` is the single
 behavioral and visual switch — there is no second fog mechanism to keep in
-sync.*
+sync.* **The `bg-zinc-300` FILL named in this amendment — and its phrase "the
+seeder's fog intent", which no longer describes the seeder — are SUPERSEDED
+2026-09-10 (fog-cloud arc): read the next amendment before restoring the flat
+slab or seeding fog over mobs. Everything else here still stands unchanged:
+fog opaque and blocking, veil transparent and pass-through, the two tool
+buttons, the tap rules and the two-ternary reversal shape.**
+
+Amended 2026-09-10 (fog-cloud arc — three owner-directed reports in one
+pass, ratified by the reports themselves; supersedes only the `bg-zinc-300`
+fill above): *first, **"The mobs should be covered by a veil, not fog"** —
+`veilsFromSpawnClusters` (the seeder) and `veilsFromRooms` (the legacy
+helper) emitted every generated cover with `kind: 'fog'`, i.e. the opaque
+BLOCKING kind over a mob cluster. They now emit `kind: 'veil'`, which is the
+kind the job actually needs: coverage is kind-agnostic (`portraitCoveredByVeils` over all veils; player view removes the covered mob tokens from the
+DOM, initiative prunes them, and a veiled mob re-enters with an auto-roll on
+reveal), so the fill is free to be the transparent one — and being plain
+cover repairs a real access bug: a room-key marker sits at its room's
+`mobsRect` CENTRE, inside the generated cover by construction, and markers
+stay BELOW veils, so while the seeded kind was a blocking fog the keyed
+room's OWN key marker was unreachable by tap; as a veil the same tap passes
+through and opens the key. Fog stays the GM-drawn opaque, blocking kind —
+ledger 65 is untouched. Seeding geometry is untouched too: `VEIL_MIN_CELLS`,
+the one-cell cover margin, the overlap merge (union bounding box under the
+first-emitted ROOM id the Path rail resolves), `roomId`, and the loud throw
+for a vision room without a `mobsRect` all behave byte-identically; the
+Path rail resolves rooms by `veil.id`/`veil.roomId`, never by kind, so
+"Reveal next room" is unaffected in intent AND in behavior. Second, **"Right
+now its just a white opaque rectangle. I would like this to be grey-ish and
+animated, cloudy with some contrast, not just mushy"** — fog's fill is now
+the `battle-fog-cloud` class (index.css): three layered radial gradients
+(alpha-free greys, near-white puffs over dark patches) combined with
+`background-blend-mode` only, drifting on ONE `background-position`
+animation — no per-frame JavaScript, no timers, one cheap CSS animation per
+fog rect. It stays OPAQUE and blocking: no `opacity-*`, no alpha channel, no
+`mix-blend-mode` (which would blend the fog with the map behind it and make
+it see-through), and the class sets no `position`/`z-index` (an unlayered
+rule would win the cascade against the board's own `absolute` positioning
+and the markers-below-veils paint order). `prefers-reduced-motion: reduce`
+stops the drift and keeps the cloud — a static cloud, never "no fog" — and
+the animation touches background-position only, so it can never fight the
+selection ring or the drag lift. Third, **"When clicking on a fog, the
+delete action is labeled delete veil, please correct"** — the rail resolved
+the selection by id alone (the record type is one kind-discriminated shape),
+so its destructive label was kind-blind; it now resolves the selected RECORD
+and both the delete action and the four edge-handle aria-labels take their
+noun from `veil.kind` ("Delete fog" / "Resize fog n" for a fog, veil for a
+veil). Test ids stay the FAMILY ids (`battle-veil`, `delete-veil`,
+`veil-handle-*`) exactly as the `BattleVeil` type is the family type: they
+address the shared record type, while the user-visible and accessible names
+are the ones that must be kind-true. The user-facing guide text ("fog covers
+each room's monsters") was corrected in the same arc. All three are pinned:
+layered-cloud + no-flat-slab, kind-named controls, and the seeded cover's
+tap-through to its room's key.*
 
 Amended 2026-09-07 by 01a0b5e (room-keys/treasure arc, owner-ratified; D9 in
 11-ENCOUNTER-GENERATOR): *GM view additionally renders room-key markers — one
