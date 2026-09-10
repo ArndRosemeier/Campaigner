@@ -48,6 +48,19 @@ vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
  */
 let heldSettingsRead: { promise: Promise<void>; release: () => void } | null = null;
 
+/**
+ * A settings WRITE can be held back by a test (`delayDraftWrites`): the close's
+ * flush then needs a DB round trip, exactly like a loaded machine, so a reopen
+ * can read the row BEFORE that write lands. Only writes are delayed — the read
+ * stays the real call, because a querier that awaits before touching Dexie
+ * never registers its range and its live query stops reacting (measured).
+ */
+let draftWriteDelayMs = 0;
+
+function delayDraftWrites(ms: number): void {
+  draftWriteDelayMs = ms;
+}
+
 function holdSettingsRead(): () => void {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -71,6 +84,13 @@ vi.mock('@/db/settingsRepo', async (importOriginal) => {
       const held = heldSettingsRead;
       if (held === null) return actual.readSettings();
       return held.promise.then(() => actual.readSettings());
+    },
+    updateSettings: (patch: Parameters<typeof SettingsRepo.updateSettings>[0]) => {
+      const delayMs = draftWriteDelayMs;
+      if (delayMs === 0) return actual.updateSettings(patch);
+      return new Promise((resolve) => {
+        setTimeout(resolve, delayMs);
+      }).then(() => actual.updateSettings(patch));
     },
   };
 });
@@ -150,6 +170,7 @@ async function reopenDialog(user: ReturnType<typeof userEvent.setup>): Promise<H
 beforeEach(async () => {
   heldSettingsRead?.release();
   heldSettingsRead = null;
+  draftWriteDelayMs = 0;
   await clearDatabase();
   vi.clearAllMocks();
   createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
@@ -181,9 +202,18 @@ describe('the draft round-trips through the settings row', () => {
 
     dialog = await reopenDialog(user);
 
-    expect(within(dialog).getByLabelText('Concept')).toHaveValue(
-      'A harbor bell rings underwater.',
-    );
+    // Wait for the value the row SETTLES on, not for the first frame after the
+    // reopen: the close's flushed write reaches the settings live query a DB
+    // round trip after the dialog is back, so the reopen can prefill from the
+    // snapshot taken BEFORE that write and correct itself only when the write
+    // lands (the dialog re-applies a newer snapshot for as long as the form is
+    // untouched). This is the app's own settled state — never a fixed sleep,
+    // never a widened timeout (docs/08-TESTING.md, the census precedent).
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('Concept')).toHaveValue(
+        'A harbor bell rings underwater.',
+      );
+    });
     expect(within(dialog).getByLabelText('Tone (optional)')).toHaveValue('eerie');
     expect(within(dialog).getByTestId('auto-spine')).toBeChecked();
     expect(within(dialog).getByRole('button', { name: 'Detailed' })).toHaveAttribute(
@@ -333,6 +363,35 @@ describe('the draft round-trips through the settings row', () => {
 
     await user.type(concept, 'harbor bell rings underwater.');
     expect(concept).toHaveValue('A harbor bell rings underwater.');
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('ends the reopen on the draft the close saved, not on an older snapshot', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    let dialog = await openDialog(campaign);
+    const concept = within(dialog).getByLabelText<HTMLTextAreaElement>('Concept');
+    await user.type(concept, 'A harbor bell rings underwater.');
+    expect(concept).toHaveValue('A harbor bell rings underwater.');
+
+    // The close's flush needs a DB round trip, held back here: the reopen below
+    // reads the row as it was BEFORE that write, so it prefills the OLDER
+    // snapshot first — and only then does the write land and reach the settings
+    // live query. The reopen may start on the older value; it may not END there
+    // (the row is the source of truth for as long as the form is untouched).
+    // On the old code the first snapshot latched (the seed ran once per open),
+    // so the reopen stayed on the empty pre-draft value and the close after it
+    // wrote that value back over the row: the draft was destroyed.
+    delayDraftWrites(300);
+    dialog = await reopenDialog(user);
+    await waitFor(() => {
+      expect(within(dialog).getByLabelText('Concept')).toHaveValue(
+        'A harbor bell rings underwater.',
+      );
+    });
+    expect((await readSettings()).newModuleDraft?.concept).toBe(
+      'A harbor bell rings underwater.',
+    );
     await flushAsyncUpdates();
   }, 30_000);
 

@@ -201,9 +201,6 @@ function NewModuleDialogContent({
   const touchedRef = useRef(false);
   const wasOpenRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // True only once a render has SEEN the seeded values: the debounced-save
-  // effect must never write the pre-seed empty state over a stored draft.
-  const seededSettledRef = useRef(false);
 
   /**
    * Marks the form as the USER's: from here on the stored draft is never applied
@@ -228,24 +225,30 @@ function NewModuleDialogContent({
     }
   }, []);
 
-  /** Cancels the pending debounce and persists the current draft immediately. */
+  /**
+   * Cancels the pending debounce and persists the current draft immediately.
+   *
+   * Only the USER's values are ever written back. The prefill's values are the
+   * row's already — and a snapshot that arrived after the form was seeded can
+   * even be OLDER than the row (see the seed effect), so writing an untouched
+   * form back could only put an older draft over a newer one: closing a
+   * just-reopened dialog would erase the very edit the close before it saved.
+   * No edit this open ⇒ nothing to save.
+   */
   const flush = useCallback((): void => {
     if (timerRef.current !== null) {
       clearTimeout(timerRef.current);
       timerRef.current = null;
     }
-    // Nothing to save: the prefill has not landed and the user changed nothing,
-    // so the form still shows this dialog's pristine defaults — writing now
-    // would overwrite the STORED draft with them (closing a just-opened dialog
-    // must never erase a prefill it had not read yet).
-    if (!seededRef.current && !touchedRef.current) return;
+    if (!touchedRef.current) return;
     void persist(draftRef.current);
   }, [persist]);
 
-  // Seed once per OPEN (and once per MOUNT — the campaign is a mount identity,
-  // see `NewModuleDialog`). The stored draft is prefilled only when its campaign
-  // tag matches the campaign being created in; another campaign's draft is
-  // left untouched and this dialog opens at its defaults.
+  // Prefill the stored draft — once per OPEN (and once per MOUNT: the campaign
+  // is a mount identity, see `NewModuleDialog`) — and only while the form is
+  // still the row's. The stored draft is prefilled only when its campaign tag
+  // matches the campaign being created in; another campaign's draft is left
+  // untouched and this dialog opens at its defaults.
   const seedDraft = useCallback(
     (stored: NewModuleDraft | null | undefined): void => {
       const matches = stored?.campaignId === campaign.id;
@@ -267,6 +270,18 @@ function NewModuleDialogContent({
     [campaign.id],
   );
 
+  //
+  // The ROW stays the source of truth for an untouched form, so a newer
+  // snapshot replaces an older prefill. It has to: the close's `flush` reaches
+  // the settings live query a DB round trip after the dialog has reopened, so a
+  // reopen can prefill a snapshot OLDER than the draft it just wrote (measured
+  // with the stored-draft read delayed: the reopen prefilled "" over the field
+  // the user had filled, and the next close then wrote that stale value back
+  // over the row — the draft was destroyed). The first snapshot to arrive after
+  // an open is therefore not the last word; every later one is applied too,
+  // until the user touches the form. From that moment nothing may overwrite it
+  // (`touchedRef` above) — typing always wins, in this open and every later
+  // snapshot of it.
   useEffect(() => {
     if (!open) {
       wasOpenRef.current = false;
@@ -278,25 +293,36 @@ function NewModuleDialogContent({
       pristineRef.current = defaultNewModuleDraft(campaign.id);
       touchedRef.current = false;
     }
-    if (seededRef.current || settings === undefined) return;
-    seededRef.current = true;
+    if (settings === undefined) return;
     // The settings row arrived after the user already started editing: their
     // values stand and the prefill is skipped for this open (the draft they
     // wrote is still in the row — nothing is lost, and the next open prefills).
-    if (touchedRef.current) return;
-    seedDraft(settings.newModuleDraft);
+    if (touchedRef.current) {
+      seededRef.current = true;
+      return;
+    }
+    const stored = settings.newModuleDraft;
+    const draft =
+      stored !== null && stored.campaignId === campaign.id
+        ? stored
+        : defaultNewModuleDraft(campaign.id);
+    seededRef.current = true;
+    // A snapshot the form already shows changes nothing — and skipping it here
+    // is what keeps a re-emission (every settings write re-runs the live query)
+    // from churning the prefill and the save effect.
+    if (draftsEqual(draft, draftRef.current)) return;
+    seedDraft(stored);
     // `campaign.id` is a dependency because the seed is campaign-scoped: the
     // pristine defaults this effect arms the "an edit already happened" test
     // with are that campaign's, and `seedDraft`'s tag check reads it. Inside
     // one mount it cannot change (the campaign is the mount key), so the extra
-    // runs are idempotent: the reset block above is guarded by "first pass of
-    // this open", and the seed itself is guarded by `seededRef`.
+    // runs only re-apply the same snapshot.
   }, [open, settings, seedDraft, campaign.id]);
 
-  // Debounced save on every change — gated on the seed so the pre-seed empty
-  // state can never overwrite a stored draft. The first post-seed pass only
-  // arms the gate (the state is seeded from here on, so the values below are
-  // the stored ones).
+  // Debounced save on every change. Only the USER's edits are saved: before the
+  // prefill lands the form may still show this dialog's pristine defaults, and
+  // after it lands the form may still be showing a snapshot older than the row,
+  // so a write of an untouched form could only destroy what is stored.
   useEffect(() => {
     const next: NewModuleDraft = {
       campaignId: campaign.id,
@@ -316,14 +342,12 @@ function NewModuleDialogContent({
     // The ref always mirrors what the form shows, so `flush` saves the CURRENT
     // values no matter when it runs.
     draftRef.current = next;
-    if (!seededRef.current) {
+    if (!touchedRef.current) {
       // Prefill not read yet: a value that differs from the pristine defaults
-      // is a user edit, and it must survive the arriving prefill.
-      if (!draftsEqual(next, pristineRef.current)) touchedRef.current = true;
-      return;
-    }
-    if (!seededSettledRef.current) {
-      seededSettledRef.current = true;
+      // is a user edit, and it must survive the arriving prefill. (Every
+      // interaction marks the form itself — this is the backstop for a change
+      // that reached the state some other way.)
+      if (!seededRef.current && !draftsEqual(next, pristineRef.current)) touchedRef.current = true;
       return;
     }
     if (timerRef.current !== null) clearTimeout(timerRef.current);
