@@ -1402,7 +1402,9 @@ async function partCall(
     [
       'Writing instructions:',
       '- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).',
-      '- Each location opens with one or two sentences of sensory, present-tense description, then a short GM block: who is here, what they want right now, what they do if the party acts, and where the leads point. Read-aloud text stays inside blockquotes and stays that short, so the GM can run the scene without reading a page aloud.',
+      '- Write the part as SCENES. Every scene that has anything at stake is written as one labeled block, with these fields in this order:',
+      ...sceneBlockBullets(),
+      ...sceneVariationBullets(),
       '- Every situation in this part offers at least two VISIBLE approaches that differ in cost or consequence — two rolls toward the same outcome are one approach. Nothing resolves on a single route.',
       '- Every conflict ends with someone worse off, a cost paid, or a new problem opened: the losing side is bought, beaten or outmaneuvered, never talked out of its want; a compromise costs a party something it needed; the resolution is built from what the party found and did, never revealed as an unearned third option.',
       '- When the party defeats, bypasses or changes something, write the change into the fiction so it is still visible when they look again — nothing they accomplished is undone off-screen, and nobody locates or captures them by fiat.',
@@ -1420,7 +1422,7 @@ async function partCall(
       '- Opportunistic threats (a predator, a patrol, a bandit group) advance or reveal a faction’s plan instead of appearing as filler, and exploring is never punished as such — whatever the party finds must be worth the risk it took.',
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
       '- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
-      '- A scene that is NOT a fight is an event: link it as [[Event Name]] and write the whole scene here — who is present, what they want right now, what they do if the party acts, where the leads point. An event gets an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.',
+      '- A scene that is NOT a fight is an event: link it as [[Event Name]] and write its whole block right here in the prose (the block above is what an event gets). An event receives an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.',
       '- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.',
       '- Before you answer, the three things that do not bend in this part: (1) at least two visible approaches per situation, differing in cost or consequence, so nothing resolves on a single route; (2) every conflict ends with someone worse off, a cost paid, or a new problem opened; (3) what the party changes stays changed and stays visible.',
     ].join('\n'),
@@ -1472,6 +1474,85 @@ async function partCall(
     );
     return normalizePartMarkdown(retry);
   }
+}
+
+// --- The scene block (08 §M4-B-2) --------------------------------------------
+
+/**
+ * The scene block (08-MODULE-DESIGNER §M4-B-2, docs/17 ledger row 73): the
+ * ONE field set a generated scene is written in, and the ONE source the parts
+ * prompt renders it from — the test asserts each label reaches the prompt, so
+ * a label can never be dropped from the copy without failing.
+ *
+ * The block is a GM-facing SCAFFOLD inside the part's ordinary markdown: it
+ * lives in the part text, so there is no schema, no Dexie change and no second
+ * document format (see `domain/modulePartsDocument`), and the canvas editor,
+ * the byte-exact version snapshots, the reader's markdown rendering and the
+ * encounter floor's `[[encounter]]` counting all keep working on the same
+ * text. Every label is written EXACTLY as it reaches the prompt.
+ */
+export const PART_SCENE_FIELD_LABELS = [
+  'Scene heading + tag',
+  'Where',
+  'First impression',
+  'Who is here and what they want right now',
+  'The situation',
+  'What changed',
+  'If the party acts',
+  'Secrets',
+  'Leads',
+  'Outcome',
+] as const;
+
+/**
+ * The anti-formula rule (docs/17 ledger row 73, owner's explicit fear: "I dont
+ * want this to become formulaic. I fear that if we prompt this creativity gets
+ * lost."). These lines ride IMMEDIATELY next to the field list in the SAME
+ * prompt and are a BINDING requirement of the format, not a nicety: the block
+ * orders the GM's information, it never dictates what happens. Exported so the
+ * test can pin them — the owner judges the output on exactly this, so the
+ * demands may not be quietly softened.
+ */
+export const PART_SCENE_VARIATION_DEMANDS = [
+  'The block ORDERS information for the GM. It is not a form to fill in.',
+  'Scenes differ from each other in length, shape and voice. Any field may be a single short line when the scene is small — do not pad a field to look complete, and never write filler to satisfy a label.',
+  'Do not give every scene the same symmetric structure, and do not repeat one beat pattern (arrive, talk, fight) across the part or the module.',
+  'The fields never dictate what happens. If a scene has nothing at stake, rewrite it or delete it — never pour prose into the labels to fill them.',
+] as const;
+
+/**
+ * The scene block's field-by-field instruction list, rendered into the parts
+ * prompt (one bullet per label in `PART_SCENE_FIELD_LABELS` order). Kept as a
+ * function of the labels so the two can never drift.
+ */
+function sceneBlockBullets(): string[] {
+  const [heading, where, impression, who, situation, changed, acts, secrets, leads, outcome] =
+    PART_SCENE_FIELD_LABELS;
+  return [
+    `- **${heading}** — name the scene and tag it in the heading: ENCOUNTER for a fight with real stakes (it gets a battle map, a monster roster and images), EVENT for everything else — a negotiation, a chase, a hazard, a mystery, a puzzle, an investigation (illustration only: no map, no monsters). Combat being merely possible does not make a scene an ENCOUNTER: tag it by what the scene is FOR.`,
+    `- **${where}** — link the existing location entity with the document's wiki-link syntax ([[Place Name]]); never invent a location inline.`,
+    `- **${impression}** — EXACTLY one or two sentences, present tense, one concrete sense plus one thing that is out of place. No history, no faction names, no explanation of causes, and never the party's actions or feelings. THIS IS THE ONLY TEXT A GM READS ALOUD: everything else on the block is GM-facing.`,
+    `- **${who}** — one clause per NPC present, saying what that NPC wants in this scene. Each NPC speaks about what they want and otherwise deflects or refuses.`,
+    `- **${situation}** — the conflict already running when the party arrives, and what it does in the next few minutes if nobody intervenes.`,
+    `- **${changed}** — the one thing different from the previous scene's state, and the cost the party pays to engage with it. If you could honestly write "the situation is the same, now what do you do", this is not a scene — rewrite it or delete it.`,
+    `- **${acts}** — 2-4 bullets of the form <a plausible party action> -> <what the opposition does>. Different bullets must lead to genuinely different outcomes: two routes reaching the same place are one bullet.`,
+    `- **${secrets}** — 0-2 per scene, each written abstract from where it is found so a GM can move it. Nothing the party NEEDS may be available from only one place.`,
+    `- **${leads}** — each lead names the entity it points at and why it is worth following. A lead that points nowhere is deleted.`,
+    `- **${outcome}** — graded: success, partial success and failure written separately. Failure must cost something specific AND move the situation forward: a failed attempt is a new situation, never a dead end.`,
+  ];
+}
+
+/** The anti-formula and part-level rules as prompt bullets — ONE source with
+ * the pinned demand strings (`PART_SCENE_VARIATION_DEMANDS`), so the test's
+ * assertions are literally the text the prompt carries. */
+function sceneVariationBullets(): string[] {
+  return [
+    ...PART_SCENE_VARIATION_DEMANDS.map((demand) => `- ${demand}`),
+    '- No scene may require one specific party action to proceed. If the party does nothing, the relevant faction simply advances its own plan.',
+    '- Address the GM, never the players: write what the world and its people do. Never author what a player character does, says, thinks or feels.',
+    '- Introduce at most one new entity per scene, and use it in the scene that introduces it.',
+    '- End the part with at least two threads pointing into other parts.',
+  ];
 }
 
 // --- Entity name normalization (fix-01) --------------------------------------

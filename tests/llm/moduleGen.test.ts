@@ -26,6 +26,8 @@ import {
   PRIOR_MODULE_CHAR_CAP,
   PRIOR_MODULES_TOTAL_CAP,
   PRIOR_PART_CHAR_CAP,
+  PART_SCENE_FIELD_LABELS,
+  PART_SCENE_VARIATION_DEMANDS,
   priorModulesContext,
   rewritePart,
   runParts,
@@ -448,6 +450,68 @@ describe('runParts', () => {
     expect(userPromptOf(1)).toContain('Full markdown of the previous part');
     expect(userPromptOf(1)).toContain('PART-ONE');
     expect(userPromptOf(2)).toContain('PART-TWO');
+  }, 20000);
+
+  it('the parts prompt asks for the scene block field set, in order, and the anti-formula rule next to it', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValue({
+      text: `${'The tide withdraws. '.repeat(20)}\n`,
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await runParts(moduleId, campaign);
+
+    const prompt = userPromptOf(0);
+    // Every field label reaches the prompt EXACTLY once, in the declared order.
+    const at = PART_SCENE_FIELD_LABELS.map((label) => {
+      const first = prompt.indexOf(`**${label}**`);
+      expect(first, `field label ${label} missing from the parts prompt`).toBeGreaterThanOrEqual(0);
+      expect(prompt.split(`**${label}**`)).toHaveLength(2);
+      return first;
+    });
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+    // The tag decides the artifact pipeline: an ENCOUNTER gets a map and a
+    // monster roster, an EVENT gets an illustration and nothing else.
+    expect(prompt).toContain('tag it by what the scene is FOR');
+    // The "what changed" test is carried VERBATIM (the brief requires it).
+    expect(prompt).toContain(
+      'If you could honestly write "the situation is the same, now what do you do", this is not a scene — rewrite it or delete it.',
+    );
+    // The read-aloud boundary and the no-authored-PC rule are stated.
+    expect(prompt).toContain('THIS IS THE ONLY TEXT A GM READS ALOUD');
+    expect(prompt).toContain('Never author what a player character does, says, thinks or feels.');
+    expect(prompt).toContain('Introduce at most one new entity per scene');
+    expect(prompt).toContain('End the part with at least two threads pointing into other parts.');
+  }, 20000);
+
+  it('the anti-formula demands ride the SAME prompt, verbatim (owner requirement, docs/17 row 73)', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock.mockResolvedValue({
+      text: `${'The tide withdraws. '.repeat(20)}\n`,
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    await runParts(moduleId, campaign);
+
+    const prompt = userPromptOf(0);
+    for (const demand of PART_SCENE_VARIATION_DEMANDS) {
+      expect(prompt, `variation demand missing from the parts prompt: ${demand}`).toContain(demand);
+    }
+    // …immediately NEXT TO the field list, not buried elsewhere in the prompt:
+    // the demands sit inside the same instruction block, after the last field.
+    const lastField = prompt.lastIndexOf(`**${PART_SCENE_FIELD_LABELS[PART_SCENE_FIELD_LABELS.length - 1]}**`);
+    const firstDemand = prompt.indexOf(`- ${PART_SCENE_VARIATION_DEMANDS[0]}`);
+    expect(firstDemand).toBeGreaterThan(lastField);
+    // The block is explicitly not a form, and padding is explicitly refused.
+    expect(prompt).toContain('It is not a form to fill in');
+    expect(prompt).toContain('never write filler to satisfy a label');
+    // No ratio/quota demand ever rides with it (docs/08 §M4-B-1 boundary).
+    expect(prompt).not.toContain('scenes per part');
+    expect(prompt).not.toMatch(/% of (the )?(scenes|part)/i);
   }, 20000);
 
   it('repairs a failed part against the floor and still lands the module on ready', async () => {
