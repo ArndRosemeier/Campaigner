@@ -55,6 +55,45 @@ export const ARTIFACT_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
  */
 export const BULK_REMOVE_EXCLUDED_KINDS: readonly ArtifactKind[] = ['pc'];
 
+/**
+ * Kinds INVISIBLE to module creation (08 §M4-A/§M4-B/§M4-C; owner-ratified
+ * rule, docs/17 row 69 — verbatim: "The creator is referring to players in
+ * the party. The party should not be visible to module creation.").
+ *
+ * Why `pc` and not "any artifact": a PC is AUTHORED BY THE PLAYERS. Feeding
+ * `pc` rows into module creation made the generator address the players by
+ * name — the cast block told it to REUSE them and the name-classification
+ * pass then resolved generated names back onto the players' characters, so a
+ * module silently bound itself to the party. NPCs/locations/factions and the
+ * rest stay visible: that reuse is the feature.
+ *
+ * ONE constant, mirroring `BULK_REMOVE_EXCLUDED_KINDS` — read by every
+ * module-creation consumer (the shared cast block, the "existing campaign
+ * entities/artifacts" prompt indexes, the name-classification candidate set
+ * and every pool those resolve against) through `visibleToModuleCreation` /
+ * `moduleCreationPool`, never a scattered `kind !== 'pc'` that could drift.
+ *
+ * Boundary (do not "fix" it): this is about ARTIFACT visibility to
+ * generation, not about censoring the owner's prose — a campaign premise or a
+ * module premise that names a party member is the owner's own text and stays
+ * byte-identical. Party-derived LEVEL context (`partyLevelLine`) and the
+ * npc-only fixed cast are not party artifacts and are untouched.
+ */
+export const MODULE_CREATION_EXCLUDED_KINDS: readonly ArtifactKind[] = ['pc'];
+
+/** The ONE module-creation visibility predicate: false ⇔ this artifact must
+ * never reach a module-creation prompt, index or resolution set. */
+export function visibleToModuleCreation(artifact: AnyArtifact): boolean {
+  return !MODULE_CREATION_EXCLUDED_KINDS.includes(artifact.kind);
+}
+
+/** The module-creation pool: the campaign/batch input list with the excluded
+ * kinds removed. Idempotent — safe to apply both where a list is loaded and
+ * where it is consumed. */
+export function moduleCreationPool<T extends AnyArtifact>(artifacts: readonly T[]): T[] {
+  return artifacts.filter(visibleToModuleCreation);
+}
+
 /** Singular labels, for badges and toasts ("NPC created"). */
 export const ARTIFACT_KIND_SINGULAR: Readonly<Record<ArtifactKind, string>> = {
   pc: 'PC',

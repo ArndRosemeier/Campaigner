@@ -1,5 +1,5 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
-import { createModule, ENCOUNTER_CONFLICT_KINDS, entityKindFor, moduleDocumentText, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS, type EncounterConflictKind } from '@/domain';
+import { createModule, ENCOUNTER_CONFLICT_KINDS, entityKindFor, moduleCreationPool, moduleDocumentText, moduleEntityKindSchema, moduleSpineSchema, MODULE_SIZE_WORD_TARGETS, type EncounterConflictKind } from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
@@ -534,13 +534,20 @@ function priorModuleBlock(module: Module): string {
 }
 
 /**
- * Campaign-level cast list (auto-promote follow-up reuse): moduleId-null
- * rows — names + kinds, capped like the campaign indexes — so follow-up
- * generations reuse the shared names exactly instead of inventing
- * duplicates. Returns null when nothing is shared yet.
+ * Campaign-level cast list (auto-promote follow-up reuse): the campaign-scoped
+ * (`moduleId`-null) rows module creation may see — names + kinds, capped like
+ * the campaign indexes — so follow-up generations reuse the shared names
+ * exactly instead of inventing duplicates. Returns null when nothing is
+ * shared yet.
+ *
+ * The Party is NOT part of the cast: `pc` rows are excluded through the ONE
+ * domain constant (`MODULE_CREATION_EXCLUDED_KINDS`, 08 §M4-B, docs/17 row
+ * 69) — the players' characters are authored, not campaign setting content
+ * the generator may reuse. Applied here as well as at the load sites, so a
+ * caller passing a raw list cannot leak the party back in.
  */
 export function campaignCastContext(artifacts: readonly AnyArtifact[]): string | null {
-  const shared = artifacts.filter((artifact) => artifact.moduleId === null);
+  const shared = moduleCreationPool(artifacts).filter((artifact) => artifact.moduleId === null);
   if (shared.length === 0) return null;
   const lines = shared
     .slice(0, CAMPAIGN_CAST_NAME_CAP)
@@ -608,7 +615,10 @@ async function spineMessages(
   campaign: Campaign,
   extraInstruction: string,
 ): Promise<ChatMessage[]> {
-  const artifacts = await listArtifactsByCampaign(campaign.id);
+  // The module-creation pool (08 §M4-B, docs/17 row 69): the Party is
+  // invisible to generation — a `pc` row is the players' own character, never
+  // campaign setting content to reuse (see `MODULE_CREATION_EXCLUDED_KINDS`).
+  const artifacts = moduleCreationPool(await listArtifactsByCampaign(campaign.id));
   const index =
     artifacts.length === 0
       ? null
@@ -1346,7 +1356,9 @@ async function partCall(
   // instead of re-deriving names from prose. Cost policy (fix-01): the
   // campaign index is names-only and capped like the spine's (60); the
   // module glossary is uncapped — it is the module's own, small list.
-  const artifacts = await listArtifactsByCampaign(campaign.id);
+  // The Party is excluded from the campaign index (the module-creation pool,
+  // docs/17 row 69): a PC is authored, not a reusable campaign entity.
+  const artifacts = moduleCreationPool(await listArtifactsByCampaign(campaign.id));
   const glossary =
     module.entityKinds.length === 0
       ? null
