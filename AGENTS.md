@@ -188,5 +188,6 @@ coordinate or delegate — the session runs under this standing rule:
   `origin/main`, gates green, specs amended in the same landing) → report
   to the owner. The §Subagent hygiene rules bind the registry side: delete
   probes once their report is consumed; delete writers only after a
-  verified landing; never a running writer; salvage-check a silent one
-  first. Do not implement large changes yourself while a writer can.
+  verified landing; retire a BLOCKED writer once its reasoning is
+  captured; never a running writer; salvage-check a silent one first; and
+  retire the branch with the worktree. Do not implement large changes yourself while a writer can.
