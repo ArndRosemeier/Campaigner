@@ -229,6 +229,80 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
+  it('renders a scene block as ordinary markdown: heading, tag, field labels and wiki chips', async () => {
+    // The scene block is a DOCUMENT-FORMAT convention, not markup the reader
+    // knows about (08 §M4-B-2): "## [[Scene]] — ENCOUNTER" must render as a
+    // heading, the bold field labels as labels, and the in-block links as the
+    // ordinary resolved/unresolved chips. Nothing in the reader changed for it,
+    // which is exactly the claim this pins.
+    const sceneBlock = [
+      '## [[Old Tower]] — ENCOUNTER',
+      '',
+      '**Where** — [[Old Tower]].',
+      '',
+      '**First impression** — Cold water sweats down the stones, and a lantern burns in a room with no floor.',
+      '',
+      '**Who is here and what they want right now** — [[Keeper Ilse]] wants the gate left shut.',
+      '',
+      '**The situation** — The keeper is losing an argument nobody can hear.',
+      '',
+      '**What changed** — The keeper now answers to the diver.',
+      '',
+      '**If the party acts**',
+      '- Cut the rope -> the diver surfaces.',
+      '- Jam the sluice -> the water rises elsewhere.',
+      '',
+      '**Secrets** — The gate key is a bell clapper.',
+      '',
+      '**Leads** — [[Missing Person]] — last seen below the gate.',
+      '',
+      '**Outcome** — Success: the gate holds. Failure: the walkway is gone.',
+    ].join('\n');
+    const { campaignId, moduleId } = await seedReaderModule({ part0Markdown: sceneBlock });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const part0 = await findPartSection(0);
+    const body = within(part0).getByTestId('part-body');
+
+    // The scene heading renders as a heading, tag and all.
+    expect(within(body).getByRole('heading', { name: 'Old Tower — ENCOUNTER' })).toBeInTheDocument();
+    // The field labels survive as text: the GM reads the block, not a form.
+    expect(body).toHaveTextContent('First impression');
+    expect(body).toHaveTextContent('Who is here and what they want right now');
+    expect(body).toHaveTextContent('What changed');
+    expect(body).toHaveTextContent('If the party acts');
+    expect(body).toHaveTextContent('Outcome');
+    // The arrow bullets render as list items, not as one run-on paragraph.
+    expect(within(body).getByText('Cut the rope -> the diver surfaces.')).toBeInTheDocument();
+    expect(within(body).getByText('Jam the sluice -> the water rises elsewhere.')).toBeInTheDocument();
+    // In-block links resolve exactly like the rest of the module text: the
+    // seeded [[Old Tower]] becomes a chip, the unknown one stays a stub chip.
+    const chips = within(body).getAllByTestId('wiki-chip');
+    expect(chips.some((chip) => chip.getAttribute('data-wiki-name') === 'Old Tower')).toBe(true);
+    expect(
+      within(body)
+        .getAllByTestId('wiki-chip-unresolved')
+        .some((chip) => chip.getAttribute('data-wiki-name') === 'Missing Person'),
+    ).toBe(true);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('renders a legacy prose part with no scene blocks unchanged, and still editable', async () => {
+    // Documents written before the format carry no heading, no labels and no
+    // bullets: nothing may fail, and the stored text renders as it always did.
+    const legacy = 'The party climbs to the [[Old Tower]] before dawn. A lantern still burns.';
+    const { campaignId, moduleId } = await seedReaderModule({ part0Markdown: legacy });
+    renderAppAt(modulePath(campaignId, moduleId));
+
+    const part0 = await findPartSection(0);
+    const body = within(part0).getByTestId('part-body');
+    expect(body).toHaveTextContent('A lantern still burns');
+    expect(within(body).getByTestId('wiki-chip')).toHaveAttribute('data-wiki-name', 'Old Tower');
+    // The part is still hand-editable through the same surface.
+    expect(within(part0).getByRole('button', { name: /^Edit/ })).toBeInTheDocument();
+    await flushAsyncUpdates();
+  }, 20_000);
+
   it('renders the document article at the full pane width (no prose max-width cap)', async () => {
     const { campaignId, moduleId } = await seedReaderModule();
     renderAppAt(modulePath(campaignId, moduleId));
