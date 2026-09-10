@@ -1,5 +1,7 @@
+import type { Id } from '@/domain';
 import { listCampaigns } from '@/db/campaignRepo';
 import { listModulesByCampaign } from '@/db/moduleRepo';
+import { cancelCanvasGenerations } from '@/llm/canvasBusy';
 import { chainRunner } from '@/llm/chainRunner';
 import { cancelModuleGen } from '@/llm/moduleGen';
 import { runEngine } from '@/llm/runEngine';
@@ -40,7 +42,12 @@ import { toastInfo, toastSuccess } from '@/lib/toast';
  * - an active Writers' Room chain (the cancel flag ends it at the next step
  *   boundary; its in-flight step run is swept with the runs above);
  * - a module forge mid-spine/mid-parts (`cancelModuleGen` for every module
- *   row whose persisted status is 'generating').
+ *   row whose persisted status is 'generating');
+ * - an in-flight CANVAS AI turn (chat co-editor, selection/whole-part
+ *   refine, report-to-LLM) through the `llm/canvasBusy` abort registry —
+ *   these stream straight from the model with no run row, so the registry is
+ *   the only seam that can reach them; the partial reply is marked 'aborted'
+ *   in place and nothing is applied.
  * NOT covered (not generations, no cancel seam): PDF builds and backup
  * jobs — their dock entries keep running. Also NOT swept: the cross-campaign
  * shared mob-portrait cache worker (the sweep aborts LOCAL participation
@@ -87,19 +94,37 @@ export async function stopAllGenerations(): Promise<{ stopped: number }> {
   // ('generating' from spine start until the pass settles); cancelModuleGen
   // is a no-op for a row without a live controller.
   let moduleForges = 0;
+  const forgedModuleIds = new Set<Id>();
   for (const campaign of await listCampaigns()) {
     for (const module of await listModulesByCampaign(campaign.id)) {
       if (module.status !== 'generating') continue;
       cancelModuleGen(module.id);
+      forgedModuleIds.add(module.id);
       moduleForges += 1;
     }
   }
+
+  // Canvas AI turns (chat co-editor, refine, report-to-LLM): no run row to
+  // find, no forge row either — the shared canvasBusy registry publishes one
+  // abort handle per live turn, and the sweep drives it. A module already
+  // counted as a forge is not counted twice (its row said 'generating', so
+  // the forge pass above named it).
+  const canvasModules = cancelCanvasGenerations().filter(
+    (moduleId) => !forgedModuleIds.has(moduleId),
+  ).length;
 
   const chainStopped =
     chainWasRunning && !chainRunIds.some((id) => cancelledRunIds.includes(id)) ? 1 : 0;
 
   const stopped =
-    mobJobs + entityJobs + mapJobs + coverJobs + cancelledRunIds.length + moduleForges + chainStopped;
+    mobJobs +
+    entityJobs +
+    mapJobs +
+    coverJobs +
+    cancelledRunIds.length +
+    moduleForges +
+    canvasModules +
+    chainStopped;
   if (stopped === 0) {
     toastInfo('Nothing was running');
   } else {

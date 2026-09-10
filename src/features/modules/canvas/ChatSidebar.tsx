@@ -157,14 +157,14 @@ export function ChatSidebar({
     const controller = new AbortController();
     abortRef.current = controller;
     setInput('');
-    await guardedTurn((view) =>
+    await guardedTurn(controller, (view) =>
       runChatTurn(
         {
           moduleId,
           key: chatKey,
           hasPlannedParts,
           modelSelection,
-          signal: controller.signal,
+          turn: controller,
           view,
         },
         text,
@@ -213,7 +213,10 @@ export function ChatSidebar({
 
   /** Every editor turn (send + report) needs the live view; busy rethrows from the
    * controller and toasts here (canvasRefine's surface). */
-  async function guardedTurn(run: (view: EditorView) => Promise<unknown>): Promise<void> {
+  async function guardedTurn(
+    controller: AbortController,
+    run: (view: EditorView) => Promise<unknown>,
+  ): Promise<void> {
     const view = activeCanvasView.current;
     if (view === null) {
       toastError('The editor is not ready — try again', new Error('canvas chat needs the editor view'));
@@ -222,7 +225,11 @@ export function ChatSidebar({
     try {
       await run(view);
     } catch (error) {
-      if (error instanceof ModuleBusyError) {
+      if (controller.signal.aborted) {
+        // The turn was cancelled — by the user's own stop, or by the
+        // app-level Stop all (the canvas abort registry aborts this same
+        // controller). A cancel is not an error and needs no surface.
+      } else if (error instanceof ModuleBusyError) {
         toastError('A generation is already running for this module — wait for it or stop it first', error);
       } else {
         toastError('Chat failed', error);
@@ -239,14 +246,14 @@ export function ChatSidebar({
     }
     const controller = new AbortController();
     abortRef.current = controller;
-    void guardedTurn((view) =>
+    void guardedTurn(controller, (view) =>
       reportChatOutcome(
         {
           moduleId,
           key: chatKey,
           hasPlannedParts,
           modelSelection,
-          signal: controller.signal,
+          turn: controller,
           view,
         },
         messageId,
@@ -263,14 +270,14 @@ export function ChatSidebar({
     }
     const controller = new AbortController();
     abortRef.current = controller;
-    void guardedTurn((view) =>
+    void guardedTurn(controller, (view) =>
       reportChatMessage(
         {
           moduleId,
           key: chatKey,
           hasPlannedParts,
           modelSelection,
-          signal: controller.signal,
+          turn: controller,
           view,
         },
         message,

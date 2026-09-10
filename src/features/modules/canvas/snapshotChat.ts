@@ -263,7 +263,9 @@ export interface SnapshotChatTurnOptions {
   doc: string;
   /** The session model selection; null = Settings defaultChatModel. */
   modelSelection: string | null;
-  signal: AbortSignal;
+  /** The caller's per-turn controller — handed to the turn so Stop all can
+   * reach this canvas generation (canvasBusy's abort registry). */
+  turn: AbortController;
 }
 
 export interface SnapshotChatTurnResult {
@@ -349,7 +351,7 @@ export async function runSnapshotChatTurn(
       instruction: text,
       history,
       model: options.modelSelection ?? undefined,
-      signal: options.signal,
+      turn: options.turn,
       onDelta: (raw) => {
         latestRaw = raw;
         streamRafRef.current ??= requestAnimationFrame(flushStream);
@@ -401,7 +403,7 @@ export async function runSnapshotChatTurn(
     return { doc, docChanged, lastApplied };
   } catch (error) {
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
-    if (options.signal.aborted) {
+    if (options.turn.signal.aborted) {
       const { prose } = chatProseSoFar(latestRaw);
       useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
         status: 'aborted',

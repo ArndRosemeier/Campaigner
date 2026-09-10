@@ -207,7 +207,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
           hasPlannedParts: true,
           doc: WHOLE_DOC,
           modelSelection: null,
-          signal: new AbortController().signal,
+          turn: new AbortController(),
         },
         'add a harbormaster to the gate',
       );
@@ -420,7 +420,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
           hasPlannedParts: true,
           doc: WHOLE_DOC,
           modelSelection: null,
-          signal: new AbortController().signal,
+          turn: new AbortController(),
         },
         'give Kael his title',
       );

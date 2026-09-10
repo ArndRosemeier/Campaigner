@@ -5,7 +5,11 @@ import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { ModuleBusyError } from '@/llm/moduleGen';
-import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy';
+import {
+  claimModuleGeneration,
+  registerCanvasAbort,
+  releaseModuleGeneration,
+} from '@/llm/canvasBusy';
 import { parseJsonReply } from '@/llm/jsonReply';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { debrisIssuesForFields } from '@/lib/encodingHygiene';
@@ -65,7 +69,11 @@ export interface CanvasRefineInput {
   /** scope 'selection': the block paragraph containing the selection's
    * start (context only — the model must not emit it). */
   enclosingBlock: string;
-  signal?: AbortSignal | undefined;
+  /** The caller's per-turn controller. Required: the app-level sweep reaches
+   * canvas turns through the `canvasBusy` abort registry, which pairs this
+   * controller with the turn's model signal (so a sweep abort also fires the
+   * caller's own "the user stopped this" branch). */
+  turn?: AbortController | undefined;
   /** Cumulative extracted replacement text so far (overlay streaming). */
   onDelta?: ((textSoFar: string) => void) | undefined;
 }
@@ -176,7 +184,16 @@ const WIKI_TOKEN_RULES =
  * (18-ARCHITECTURE: the signal is the source of truth).
  */
 export async function refineModuleText(input: CanvasRefineInput): Promise<string> {
-  if (input.signal?.aborted) {
+  if (input.turn === undefined) {
+    // Loud, never a silent un-cancellable turn: the app-level sweep reaches
+    // canvas turns through this controller (canvasBusy's abort registry), so a
+    // caller that does not pass one would hand the user a generation Stop all
+    // cannot stop — the exact bug this seam exists to close.
+    throw new Error(
+      "canvas refine needs the caller's AbortController (Stop all reaches canvas turns through it)",
+    );
+  }
+  if (input.turn.signal.aborted) {
     throw new DOMException('Aborted', 'AbortError');
   }
   // ONE generation per module: the SHARED canvas generation registry
@@ -185,6 +202,12 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
   // pass the check), and the forge's own row state is the other
   // authority: a module mid-generation refuses too.
   claimModuleGeneration(input.moduleId);
+  // The app-level sweep's abort handle (18-ARCHITECTURE §2.3): a refine turn
+  // has no run row, so Stop all can only reach it through this registry. The
+  // returned signal is composed with the caller's own controller — both ends
+  // of a cancel (the user's, the sweep's) land in the SAME place the caller
+  // already handles.
+  const handle = registerCanvasAbort(input.moduleId, input.turn);
   try {
     const instruction = input.instruction.trim();
     if (instruction === '') {
@@ -210,7 +233,7 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
       temperature: 0.4,
       reasoningEffort: settings.defaultReasoningEffort,
       responseFormat: schemaResponseFormat('canvas-refine', canvasRefineReplySchema),
-      signal: input.signal,
+      signal: handle.signal,
       onToken: (delta) => {
         const soFar = extractor.push(delta);
         if (soFar !== '') input.onDelta?.(soFar);
@@ -228,6 +251,7 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
     }
     return reply.replacement;
   } finally {
+    handle.releaseHandle();
     releaseModuleGeneration(input.moduleId);
   }
 }

@@ -1048,7 +1048,10 @@ async function runPartsPass(
     const recordNormalizationFailure = (error: unknown): void => {
       toastError('Entity name normalization failed — retry from the entity panel', error);
     };
-    await normalizeModuleEntityNames(moduleId).catch(recordNormalizationFailure);
+    await normalizeModuleEntityNames(moduleId, controller.signal).catch((error: unknown) => {
+      if (isCancel(error, controller.signal)) throw error;
+      recordNormalizationFailure(error);
+    });
     // Encounter-floor gate (08 §M4-B): counted on the NORMALIZED canonicals,
     // before the ready write — a short module is never shipped as ready.
     // Each deficient part in this run's scope gets ONE repair rewrite (the
@@ -1143,7 +1146,10 @@ async function runPartsPass(
         }
       }
       progress.update(jobId, { progress: 1, detail: 'Normalizing entity names…' });
-      await normalizeModuleEntityNames(moduleId).catch(recordNormalizationFailure);
+      await normalizeModuleEntityNames(moduleId, controller.signal).catch((error: unknown) => {
+        if (isCancel(error, controller.signal)) throw error;
+        recordNormalizationFailure(error);
+      });
       gated = await requireModule(moduleId);
     }
     const floorReport = countModuleEncounters(gated);
@@ -1558,6 +1564,10 @@ async function normalizationCall(
   options: {
     requireEncounterDeclarations?: boolean;
     canonicalNames?: readonly string[];
+    /** The pass's abort signal (a parts run's controller). Without it a stop
+     * mid-pass left the normalization chat call streaming to completion —
+     * the last un-cancellable forge call. */
+    signal?: AbortSignal | undefined;
   } = {},
 ): Promise<NormalizationEntry[]> {
   const settings = await getSettings();
@@ -1566,6 +1576,9 @@ async function normalizationCall(
     temperature: 0.2,
     reasoningEffort: settings.defaultReasoningEffort,
     responseFormat: schemaResponseFormat('entity-normalization', normalizationReplySchema),
+    // The normalization call is inside a FORGE pass, so it carries the
+    // pass's signal: Stop all aborts it like every other step's call.
+    signal: options.signal,
   };
   const run = (raw: string): NormalizationEntry[] => {
     const parsed = normalizationReplySchema.parse(parseJsonReply(raw)).entities;
@@ -1616,7 +1629,10 @@ async function normalizationCall(
  * module stays `status: 'ready'` (the parts are done); batch entity
  * generation stays gated until the panel's Retry succeeds.
  */
-export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
+export async function normalizeModuleEntityNames(
+  moduleId: Id,
+  signal?: AbortSignal,
+): Promise<void> {
   const module = await requireModule(moduleId);
   // Durable pre-change snapshot (docs/18 §2.3): this pass rewrites wiki-link
   // targets INSIDE generated part text, so it is an AI change to the parts
@@ -1657,9 +1673,20 @@ export async function normalizeModuleEntityNames(moduleId: Id): Promise<void> {
       settings.defaultChatModel,
       names,
       artifactNames,
-      { requireEncounterDeclarations: true },
+      // The pass's own signal: a stop aborts this call too. The independent
+      // entry points (the entity panel's Retry, the creation-time spine pass)
+      // pass none — they are user-driven, not a stopped orchestration.
+      { requireEncounterDeclarations: true, signal },
     );
   } catch (error) {
+    if (signal?.aborted === true) {
+      // A STOP is not a normalization failure: the call was aborted mid-flight
+      // by the sweep (or by the pass's own cancel), so recording a failure +
+      // toasting would blame the user's stop on the model and paint the
+      // panel's failure state over a pass that was simply interrupted. The
+      // abort propagates — the caller's cancel path owns the quiet rewind.
+      throw error;
+    }
     const message = errorMessage(error);
     await patchModule(moduleId, { entityNamesNormalized: false, entityNormalizationError: message });
     toastError('Entity name normalization failed — retry from the entity panel', error);

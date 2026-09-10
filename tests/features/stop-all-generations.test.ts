@@ -12,6 +12,7 @@ import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
 import { createModule } from '@/domain';
 import { stopAllGenerations } from '@/features/progress/stop-all-generations';
+import { cancelCanvasGenerations, registerCanvasAbort } from '@/llm/canvasBusy';
 import { useCoverImageQueue } from '@/features/covers/cover-image-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
@@ -23,9 +24,9 @@ import { clearDatabase } from '../db/helpers';
 /**
  * Stop-all generations (owner request): ONE sweep over the FOUR job queues
  * (mob portraits, entity images, encounter maps, covers), the in-flight
- * run-engine runs and the module forge. Non-destructive — stopped runs stay
- * resumable ('cancelled'), queue jobs settle silently, and the summary toast
- * reports the distinct stopped count.
+ * run-engine runs, the module forge and live CANVAS AI turns. Non-destructive
+ * — stopped runs stay resumable ('cancelled'), queue jobs settle silently, and
+ * the summary toast reports the distinct stopped count.
  *
  * The count pin in the mixed-work case is deliberately EXACT: every surface
  * the sweep claims to cover must contribute, so a surface that silently stops
@@ -150,11 +151,17 @@ describe('stopAllGenerations', () => {
       expect(useEntityImageQueue.getState().active).toHaveLength(1);
       expect(useCoverImageQueue.getState().active).toHaveLength(1);
     });
+    // A live canvas AI turn on the SAME module whose forge is in flight: the
+    // sweep drives both abort seams (canvasBusy + cancelModuleGen) and counts
+    // the module ONCE — the canvas turn is not a second unit of work.
+    const canvasTurn = new AbortController();
+    const canvasHandle = registerCanvasAbort(module.id, canvasTurn);
 
     const result = await stopAllGenerations();
 
     // 3 queue jobs (mob portrait, entity image, cover) + 1 in-flight run +
-    // 1 module forge — distinct units.
+    // 1 module forge (whose live canvas turn counts inside that same unit) —
+    // distinct units.
     expect(result).toEqual({ stopped: 5 });
     expect(toastSuccessMock).toHaveBeenCalledWith('Stopped 5 generations');
     expect(toastInfoMock).not.toHaveBeenCalled();
@@ -173,6 +180,12 @@ describe('stopAllGenerations', () => {
     const run = (await listRunsByCampaign(campaign.id)).find((row) => row.id === runId);
     expect(run?.status).toBe('cancelled');
     expect(cancelModuleGenMock).toHaveBeenCalledWith(module.id);
+    // The canvas turn was reached: its model signal AND the caller's own
+    // controller are aborted (the UI's "the user stopped this" branch).
+    expect(canvasHandle.signal.aborted).toBe(true);
+    expect(canvasTurn.signal.aborted).toBe(true);
+    canvasHandle.releaseHandle();
+    expect(cancelCanvasGenerations()).toEqual([]);
   });
 
   it('reports "Nothing was running" when there is no work to stop', async () => {

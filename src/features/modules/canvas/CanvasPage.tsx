@@ -615,7 +615,7 @@ export function CanvasPage(): JSX.Element {
           instruction: instructionText,
           text: groundingText,
           enclosingBlock: isSelection ? enclosingBlockOf(doc, selection.from) : '',
-          signal: controller.signal,
+          turn: controller,
           onDelta: (soFar) => {
             latestStreamed = soFar;
             // rAF coalescing (board ghost-buffer precedent).
@@ -869,7 +869,7 @@ export function CanvasPage(): JSX.Element {
           hasPlannedParts: options.hasPlannedParts,
           doc: source,
           modelSelection: options.modelSelection,
-          signal: controller.signal,
+          turn: controller,
         },
         text,
       );
@@ -896,14 +896,18 @@ export function CanvasPage(): JSX.Element {
         hasPlannedParts: options.hasPlannedParts,
         doc: source,
         modelSelection: options.modelSelection,
-        signal: controller.signal,
+        turn: controller,
       },
       messageId,
       outcome,
     )
       .then(applyPreviewTurnResult)
       .catch((error: unknown) => {
-        if (error instanceof ModuleBusyError) {
+        if (controller.signal.aborted) {
+          // The turn was cancelled — by the user's own stop, or by the
+          // app-level Stop all (the canvas abort registry aborts this same
+          // controller). A cancel is not an error and needs no surface.
+        } else if (error instanceof ModuleBusyError) {
           toastError('A generation is already running for this module — wait for it or stop it first', error);
         } else {
           toastError('Chat failed', error);
@@ -931,13 +935,17 @@ export function CanvasPage(): JSX.Element {
         hasPlannedParts: options.hasPlannedParts,
         doc: source,
         modelSelection: options.modelSelection,
-        signal: controller.signal,
+        turn: controller,
       },
       message,
     )
       .then(applyPreviewTurnResult)
       .catch((error: unknown) => {
-        if (error instanceof ModuleBusyError) {
+        if (controller.signal.aborted) {
+          // The turn was cancelled — by the user's own stop, or by the
+          // app-level Stop all (the canvas abort registry aborts this same
+          // controller). A cancel is not an error and needs no surface.
+        } else if (error instanceof ModuleBusyError) {
           toastError('A generation is already running for this module — wait for it or stop it first', error);
         } else {
           toastError('Chat failed', error);

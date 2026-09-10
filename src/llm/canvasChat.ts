@@ -8,7 +8,11 @@ import { getSettings } from '@/db/settingsRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { ModuleBusyError } from '@/llm/moduleGen';
-import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy';
+import {
+  claimModuleGeneration,
+  registerCanvasAbort,
+  releaseModuleGeneration,
+} from '@/llm/canvasBusy';
 
 /**
  * Canvas CHAT contract (08-MODULE-DESIGNER §Module canvas chat): LLM
@@ -831,7 +835,11 @@ export interface CanvasChatTurnInput {
   history: { role: 'user' | 'assistant'; text: string }[];
   /** The canvas model selection; falls back to Settings defaultChatModel. */
   model?: string | undefined;
-  signal?: AbortSignal | undefined;
+  /** The caller's per-turn controller. Required: the app-level sweep reaches
+   * canvas turns through the `canvasBusy` abort registry, which pairs this
+   * controller with the turn's model signal (so a sweep abort also fires the
+   * caller's own "the user stopped this" branch). */
+  turn?: AbortController | undefined;
   onDelta?: ((textSoFar: string) => void) | undefined;
 }
 
@@ -861,7 +869,16 @@ export interface CanvasChatTurnResult {
  * story order) rides every request.
  */
 export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise<CanvasChatTurnResult> {
-  if (input.signal?.aborted) {
+  if (input.turn === undefined) {
+    // Loud, never a silent un-cancellable turn: the app-level sweep reaches
+    // canvas turns through this controller (canvasBusy's abort registry), so a
+    // caller that does not pass one would hand the user a generation Stop all
+    // cannot stop — the exact bug this seam exists to close.
+    throw new Error(
+      "canvas chat needs the caller's AbortController (Stop all reaches canvas turns through it)",
+    );
+  }
+  if (input.turn.signal.aborted) {
     throw new DOMException('Aborted', 'AbortError');
   }
   const instruction = input.instruction.trim();
@@ -869,6 +886,12 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
     throw new Error('canvas chat needs an instruction');
   }
   claimModuleGeneration(input.moduleId);
+  // The app-level sweep's abort handle (18-ARCHITECTURE §2.3): a chat turn has
+  // no run row, so Stop all can only reach it through this registry. The
+  // returned signal is composed with the caller's own controller — both ends
+  // of a cancel (the user's, the sweep's) land in the SAME place the caller
+  // already handles (the partial reply is marked 'aborted', never applied).
+  const handle = registerCanvasAbort(input.moduleId, input.turn);
   try {
     const module = await getModule(input.moduleId);
     if (module === undefined) {
@@ -900,7 +923,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       // NO responseFormat: the reply is prose + XML blocks, deliberately
       // not a JSON contract (docs/17 row 50). The strict extractor +
       // zod boundary below are the validation.
-      signal: input.signal,
+      signal: handle.signal,
       onToken: (delta) => {
         input.onDelta?.(delta);
       },
@@ -908,6 +931,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
     const parse = parseCanvasChatReply(raw);
     return { raw, modelUsed, parse, parts };
   } finally {
+    handle.releaseHandle();
     releaseModuleGeneration(input.moduleId);
   }
 }

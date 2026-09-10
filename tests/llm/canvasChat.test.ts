@@ -692,6 +692,10 @@ describe('sendCanvasChatMessage (engine)', () => {
       document: PARTS_DOCUMENT,
       instruction: 'make the gate scene rainier',
       history: [],
+      // Default per-turn controller: the turn must be reachable by Stop all
+      // (lib Stop all → canvasBusy's registry pairs this controller with the
+      // turn's model signal). Cases that abort use their own controller.
+      turn: new AbortController(),
       ...overrides,
     };
   }
@@ -788,6 +792,7 @@ describe('sendCanvasChatMessage (engine)', () => {
       instruction: 'rewrite',
       text: PART_0,
       enclosingBlock: '',
+      turn: new AbortController(),
     });
     // Let the refine reach its chat await so the registry is genuinely held.
     for (let round = 0; round < 20 && chatMock.mock.calls.length === 0; round += 1) {
@@ -819,7 +824,7 @@ describe('sendCanvasChatMessage (engine)', () => {
   it('a pre-aborted signal throws AbortError before any model call', async () => {
     const controller = new AbortController();
     controller.abort();
-    await expect(sendCanvasChatMessage(baseInput({ signal: controller.signal }))).rejects.toThrow(/abort/i);
+    await expect(sendCanvasChatMessage(baseInput({ turn: controller }))).rejects.toThrow(/abort/i);
     expect(chatMock).not.toHaveBeenCalled();
   });
 });

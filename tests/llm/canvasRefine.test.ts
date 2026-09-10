@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 
+import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -80,6 +81,9 @@ function baseInput(overrides: Partial<CanvasRefineInput> = {}): CanvasRefineInpu
     instruction: 'tighten the scene',
     text: 'The party bargains with [[Keeper Ilse]] at the gate.',
     enclosingBlock: 'The party bargains with [[Keeper Ilse]] at the gate.',
+    // Default per-turn controller: the turn must be reachable by Stop all
+    // (canvasBusy's registry pairs this controller with the model signal).
+    turn: new AbortController(),
     ...overrides,
   };
 }
@@ -234,21 +238,40 @@ describe('canvasRefine contract', () => {
   it('a pre-aborted signal throws AbortError before any model call', async () => {
     const controller = new AbortController();
     controller.abort();
-    await expect(refineModuleText(baseInput({ signal: controller.signal }))).rejects.toThrow(
+    await expect(refineModuleText(baseInput({ turn: controller }))).rejects.toThrow(
       /abort/i,
     );
     expect(chatMock).not.toHaveBeenCalled();
   });
 
-  it('the abort signal rides the chat call', async () => {
+  it('the abort signal rides the chat call and follows the turn controller', async () => {
     const controller = new AbortController();
-    chatMock.mockResolvedValue({
-      text: JSON.stringify({ replacement: 'x' }),
-      modelUsed: 'm',
-      fallback: null,
+    // The call hangs so the turn is genuinely live while the abort lands
+    // (releasing the turn drops the relay, so a settled turn is not the case
+    // under test).
+    chatMock.mockImplementation((_messages, opts) => {
+      const signal = (opts as { signal?: AbortSignal } | undefined)?.signal;
+      if (signal === undefined) return Promise.reject(new Error('no signal passed'));
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener('abort', () => {
+          reject(new DOMException('Aborted', 'AbortError'));
+        });
+      });
     });
-    await refineModuleText(baseInput({ signal: controller.signal }));
-    expect(chatMock.mock.calls[0]?.[1]?.signal).toBe(controller.signal);
+
+    const refine = refineModuleText(baseInput({ turn: controller }));
+    await waitFor(() => {
+      expect(chatMock).toHaveBeenCalled();
+    });
+    // The model call carries the turn's composed signal (canvasBusy): a
+    // caller abort reaches it, so the caller's controller stays the source
+    // of truth for "the user stopped this".
+    const carried = chatMock.mock.calls[0]?.[1]?.signal;
+    expect(carried).toBeDefined();
+    expect(carried?.aborted).toBe(false);
+    controller.abort();
+    expect(carried?.aborted).toBe(true);
+    await expect(refine).rejects.toThrow();
   });
 });
 

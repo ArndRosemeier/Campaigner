@@ -57,7 +57,9 @@ export interface ChatTurnOptions {
   view: EditorView;
   /** The session model selection; null = Settings defaultChatModel. */
   modelSelection: string | null;
-  signal: AbortSignal;
+  /** The caller's per-turn controller — handed to the turn so Stop all can
+   * reach this canvas generation (canvasBusy's abort registry). */
+  turn: AbortController;
 }
 
 export const NO_PARTS_MESSAGE = 'no parts to chat about — generate the module first';
@@ -142,7 +144,7 @@ export async function runChatTurn(
       instruction: text,
       history,
       model: options.modelSelection ?? undefined,
-      signal: options.signal,
+      turn: options.turn,
       onDelta: (raw) => {
         latestRaw = raw;
         streamRafRef.current ??= requestAnimationFrame(flushStream);
@@ -194,7 +196,7 @@ export async function runChatTurn(
     return { doc: options.view.state.doc.toString(), lastApplied: null };
   } catch (error) {
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
-    if (options.signal.aborted) {
+    if (options.turn.signal.aborted) {
       // User stop: the partial reply is marked aborted in place — loud,
       // nothing applied, no toast (a stop is not an error).
       const { prose } = chatProseSoFar(latestRaw);
