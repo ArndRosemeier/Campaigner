@@ -150,18 +150,35 @@ function battleReason(battle: Battle, modulesById: Map<Id, Module>, what: string
   return `${what} on the battle of "${title}"`;
 }
 
-/** Recursively collects artifact-outline node ids of one deliverable. */
+/**
+ * Recursively collects artifact-outline node ids of one deliverable.
+ *
+ * ONE shared reader (exported): the sweep's guard below and the module-delete
+ * reference scan (`artifactAutoPromote.modulesReferencingOwnedArtifacts`)
+ * must agree on what an outline node references — a second walk of
+ * `Deliverable['outline']` would let the two surfaces disagree about whether a
+ * row is still pointed at. Ids only: the sweep keeps its own title map, the
+ * delete scan just needs "is it cited".
+ */
+export function outlineArtifactIds(outline: Deliverable['outline'], into: Set<Id>): void {
+  for (const node of outline) {
+    if (node.type === 'artifact') into.add(node.artifactId);
+    if (node.type === 'chapter' || node.type === 'part') {
+      outlineArtifactIds(node.children, into);
+    }
+  }
+}
+
+/** Recursively collects artifact-outline node ids of one deliverable, with the
+ * deliverable's title as the guard's loud reason (the sweep's shape). */
 function collectArtifactNodes(
   nodes: Deliverable['outline'],
   title: string,
   into: Map<Id, string>,
 ): void {
-  for (const node of nodes) {
-    if (node.type === 'artifact') into.set(node.artifactId, title);
-    if (node.type === 'chapter' || node.type === 'part') {
-      collectArtifactNodes(node.children, title, into);
-    }
-  }
+  const ids = new Set<Id>();
+  outlineArtifactIds(nodes, ids);
+  for (const id of ids) into.set(id, title);
 }
 
 /** The roster guard: a surviving encounter's entry citing `artifactId`. */
