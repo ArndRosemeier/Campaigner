@@ -1,5 +1,5 @@
 import type { AnyArtifact, Module } from '@/domain';
-import { countModuleEncounters } from '@/llm/moduleGen';
+import { countModuleEncounters, floorRepairTargets } from '@/llm/moduleGen';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 
 /**
@@ -153,14 +153,13 @@ export function deriveModuleProblems(
   artifacts: readonly AnyArtifact[],
 ): ModuleProblemSet {
   const report = countModuleEncounters(module);
-  // The whole-module total short while every band is met means the names
-  // REPEAT across parts: no single part is deficient, so every part is
-  // targeted for DISTINCT encounters — the same scope `runParts` repairs a
-  // full run with (moduleGen).
+  // The SCOPE comes from the repair seam's own derivation (`floorRepairTargets`:
+  // the deficient parts, or every planned part when each band is met but the
+  // whole-module total is short because names repeat) — so the confirmation can
+  // only ever list parts the repair would actually rewrite. The extra facts
+  // below (is this the repeats case?) only shape the label.
+  const floorTargets = floorRepairTargets(module);
   const repeats = report.deficient.length === 0 && report.found < report.required;
-  const floorTargets = repeats
-    ? report.perPart.filter((entry) => entry.required > 0)
-    : report.deficient;
 
   const floorProblems: EncounterFloorProblem[] = floorTargets.map((target) => {
     const part = module.parts.find((entry) => entry.planIndex === target.planIndex);

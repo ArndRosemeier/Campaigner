@@ -31,7 +31,7 @@ import { debrisIssuesForFields } from '@/lib/encodingHygiene';
 // unattended paths have no UI to do it); the orchestrator never imports this
 // module, so the direction stays acyclic.
 import { runModulePostGeneration } from '@/features/modules/post-generation';
-import { toastError } from '@/lib/toast';
+import { toastError, toastSuccess } from '@/lib/toast';
 import { errorMessage } from '@/lib/errors';
 import { useProgressStore } from '@/lib/progress';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
@@ -539,6 +539,30 @@ function floorRepairInstruction(target: PartEncounterCount): string | null {
   );
 }
 
+/**
+ * The SCOPED rewrite instruction for one short part — the check's own words plus
+ * the closing move every floor repair carries (full-price satisfaction in the
+ * finale, a carried cost elsewhere), composed in ONE place so the in-pass repair
+ * and the "Fix module problems" entry point can never ask for different things.
+ * A disabled floor never yields a repair target, so the `null` branch is a loud
+ * invariant rather than a fallback: reaching it would mean a target was computed
+ * for a floor that demands nothing.
+ */
+function floorRepairRewriteInstruction(target: PartEncounterCount, planCount: number): string {
+  const instruction = floorRepairInstruction(target);
+  if (instruction === null) {
+    throw new Error(
+      `Encounter floor repair was requested for "${target.title}" while the module's floor is disabled`,
+    );
+  }
+  return (
+    instruction +
+    (target.planIndex === planCount - 1
+      ? `This is the FINALE: satisfaction is allowed at full price — every want met is paid for visibly.`
+      : `End the part with a cost, a revelation, or a new pressure that carries into the next part.`)
+  );
+}
+
 export function toneBansFor(tone: string): readonly string[] | null {
   return MODULE_TONE_BANS[tone.trim().toLowerCase()] ?? null;
 }
@@ -893,6 +917,62 @@ export function assertEncounterFloor(
   }
 }
 
+/**
+ * The parts a floor repair must rewrite for the module's CURRENT shortfall: the
+ * deficient parts (each short of its own band's share) — or, when every band is
+ * met but the whole-module total is short, i.e. the names REPEAT across parts,
+ * every planned part, because only DISTINCT encounters can help there. Empty
+ * when the floor is met (or disabled).
+ *
+ * ONE derivation of the repair scope: the parts-pass repair reads it (full runs),
+ * the "Fix module problems" problem set lists exactly these parts in its
+ * confirmation, and the repair entry point re-derives it before each rewrite — so
+ * a button can never promise a different scope than the repair judges by. The
+ * floor's own numbers, message and resolver are untouched.
+ */
+export function floorRepairTargets(
+  module: Module,
+  floor: EncounterFloorGuardrail = encounterFloorGuardrailFor(module),
+): PartEncounterCount[] {
+  const report = countModuleEncounters(module, floor);
+  if (report.deficient.length > 0) return report.deficient;
+  if (report.found >= report.required) return [];
+  return report.perPart.filter((entry) => entry.required > 0);
+}
+
+/**
+ * Puts a part row back exactly as it stood before a rewrite that FAILED or was
+ * CANCELLED (`generatePart` clears the slot before its call, so without this the
+ * pre-repair prose would be gone — AGENTS rule 1). Restores only when the attempt
+ * left the slot EMPTY: text the attempt actually wrote is kept (the user judges
+ * it, with the durable pre-change snapshot to undo it), and a newer hand edit is
+ * never clobbered (`live.edited` with nothing of ours to undo). ONE restore used
+ * by the in-pass floor repair and by the "Fix module problems" entry point.
+ */
+async function restorePartAfterFailedRepair(moduleId: Id, snapshot: ModulePart | undefined): Promise<void> {
+  if (snapshot === undefined) return;
+  const live = (await getModule(moduleId))?.parts.find(
+    (entry) => entry.planIndex === snapshot.planIndex,
+  );
+  if (live?.markdown !== '') return;
+  if (live.edited && !snapshot.edited) return;
+  const restored = (await requireModule(moduleId)).parts.filter(
+    (entry) => entry.planIndex !== snapshot.planIndex,
+  );
+  restored.push(snapshot);
+  restored.sort((a, b) => a.planIndex - b.planIndex);
+  await patchModule(moduleId, { parts: restored });
+}
+
+/**
+ * The user-visible half of a failed normalization pass (the pass records the
+ * gate state on the module row itself — `entityNamesNormalized: false` + the
+ * error). ONE wording, so a repair run and a parts pass report it identically.
+ */
+function recordNormalizationFailure(error: unknown): void {
+  toastError('Entity name normalization failed — retry from the entity panel', error);
+}
+
 // --- Pass 1 — parts ----------------------------------------------------------
 
 export interface PartsRunOptions {
@@ -1066,9 +1146,6 @@ async function runPartsPass(
     // Entity name normalization (fix-01): one call after the parts land —
     // canonical names, kinds, link rewrites and aliases. A failure is
     // recorded on the module row (loud, batch gated, Retry in the panel).
-    const recordNormalizationFailure = (error: unknown): void => {
-      toastError('Entity name normalization failed — retry from the entity panel', error);
-    };
     await normalizeModuleEntityNames(moduleId, controller.signal).catch((error: unknown) => {
       if (isCancel(error, controller.signal)) throw error;
       recordNormalizationFailure(error);
@@ -1126,24 +1203,14 @@ async function runPartsPass(
         // Satisfaction is rationed to the finale: the repair carries the
         // resolution shape everywhere else, full-price satisfaction on the
         // closing part.
-        const repairIsFinale = target.planIndex === current.spine.partPlan.length - 1;
-        const floorInstruction = floorRepairInstruction(target);
-        // A disabled floor never yields a repair target, so this is a loud
-        // invariant rather than a fallback: reaching it would mean a target was
-        // computed for a floor that demands nothing.
-        if (floorInstruction === null) {
-          throw new Error(
-            `Encounter floor repair was requested for "${target.title}" while the module's floor is disabled`,
-          );
-        }
+        const floorInstruction = floorRepairRewriteInstruction(
+          target,
+          current.spine.partPlan.length,
+        );
         try {
           await generatePart(moduleId, current, target.planIndex, campaign, floorRepairModel, {
             signal: controller.signal,
-            extraInstruction:
-              floorInstruction +
-              (repairIsFinale
-                ? `This is the FINALE: satisfaction is allowed at full price — every want met is paid for visibly.`
-                : `End the part with a cost, a revelation, or a new pressure that carries into the next part.`),
+            extraInstruction: floorInstruction,
             onToken: undefined,
             onReasoning: undefined,
             onActivity: undefined,
@@ -1156,22 +1223,10 @@ async function runPartsPass(
           // newer hand-edit landed meanwhile). The recount below still fails
           // the module loudly with the part named — the user retries the
           // part itself.
-          const snapshot = current.parts.find((entry) => entry.planIndex === target.planIndex);
-          const live = (await getModule(moduleId))?.parts.find(
-            (entry) => entry.planIndex === target.planIndex,
+          await restorePartAfterFailedRepair(
+            moduleId,
+            current.parts.find((entry) => entry.planIndex === target.planIndex),
           );
-          if (
-            snapshot !== undefined &&
-            live?.markdown === '' &&
-            !(live.edited && !snapshot.edited)
-          ) {
-            const restored = (await requireModule(moduleId)).parts.filter(
-              (entry) => entry.planIndex !== target.planIndex,
-            );
-            restored.push(snapshot);
-            restored.sort((a, b) => a.planIndex - b.planIndex);
-            await patchModule(moduleId, { parts: restored });
-          }
         }
       }
       progress.update(jobId, { progress: 1, detail: 'Normalizing entity names…' });
@@ -2157,6 +2212,248 @@ export async function generateMissingParts(moduleId: Id, campaign: Campaign): Pr
   if (finished === undefined || finished.aborted || stoppedSince(epoch)) return;
   if (finished.module.status !== 'ready') return;
   void runModulePostGeneration(moduleId, campaign);
+}
+
+/**
+ * What one "Fix module problems" repair run did (the caller's report).
+ *
+ * Every field is a fact about the attempt, never a verdict about the module:
+ * a repair is ONE attempt per short part, so the caller can say exactly what
+ * happened — which parts were rewritten, which attempt failed (and left the
+ * text untouched), and what is still short.
+ */
+export interface FloorRepairOutcome {
+  /** Parts the rewrite was attempted for, in the order attempted. */
+  attempted: { planIndex: number; title: string }[];
+  /** Parts whose text the model rewrote (the durable snapshot precedes them). */
+  rewritten: { planIndex: number; title: string }[];
+  /** Attempts that threw: the pre-repair text was restored (nothing written). */
+  failed: { planIndex: number; title: string; message: string }[];
+  /** Requested parts that were no longer short when the repair re-derived the
+   * scope (the text changed while the confirmation was open) — never rewritten. */
+  skipped: { planIndex: number; title: string }[];
+  /** Still short after the attempt (empty = the floor is met). */
+  remaining: PartEncounterCount[];
+  /** The module's floor is met after this run. */
+  met: boolean;
+  /** A Stop all / cancel landed before the next part: nothing more started. */
+  stopped: boolean;
+}
+
+/**
+ * "Fix module problems" on the encounter floor — the ONE user-invoked repair of
+ * module TEXT, reached from the canvas confirmation (docs/08 §M4-B-3, docs/05
+ * §Module canvas). It exists because the owner asked for a button that fixes the
+ * text's problems when there are any, and that may rewrite prose as long as a
+ * version is saved first ("Allow rewriting with snapshot").
+ *
+ * It is NOT a second repair path: the rewrite rides the SAME seam the parts
+ * pass's floor repair uses — `generatePart` with the check's own instruction
+ * (`floorRepairRewriteInstruction`), the escalated `repairModel`, then the
+ * existing name-normalization pass so the new encounters get RECORDED kinds (the
+ * counter only counts `[[links]]` whose recorded kind is `encounter`, so a
+ * rewrite alone would change the prose without moving the number), then a recount
+ * of the module's own floor.
+ *
+ * The boundaries, all binding:
+ * - **Snapshot before the write** — `snapshotModuleVersion` (the ONE durable undo
+ *   seam) at entry, and a failure to record it throws before anything is written.
+ * - **Scoped to this check** — the instruction is the floor repair's; no other
+ *   prose is "improved", no entity is created, no image or map is enqueued. The
+ *   entity half of a shortfall belongs to the entity workflow and to "Resume
+ *   automatic module creation".
+ * - **Bounded** — ONE attempt per part per invocation: a failed part is reported,
+ *   never retried, and no loop can run away.
+ * - **Loud** — a failed part toasts (the text is left as it was), and a still-short
+ *   floor toasts with the existing `encounterFloorMessage` verdict and leaves the
+ *   module `failed`; a met floor returns it to `ready`.
+ * - **Stoppable** — the run registers the module's own controller (so the canvas
+ *   Stop and Stop all's module sweep reach it) AND captures the stop epoch at
+ *   entry: a stop that lands between parts ends the run without starting the next.
+ */
+export async function repairModuleEncounterFloor(
+  moduleId: Id,
+  campaign: Campaign,
+  planIndexes: readonly number[],
+): Promise<FloorRepairOutcome> {
+  const entry = await requireModule(moduleId);
+  const floor = encounterFloorGuardrailFor(entry);
+  if (!floor.enabled) {
+    throw new Error('This module has no enabled encounter floor — there is no floor shortfall to repair');
+  }
+  const outcome: FloorRepairOutcome = {
+    attempted: [],
+    rewritten: [],
+    failed: [],
+    skipped: [],
+    remaining: [],
+    met: false,
+    stopped: false,
+  };
+  if (planIndexes.length === 0) return outcome;
+  // The requested parts are intersected with the scope the LIVE row actually
+  // needs BEFORE anything is written: a confirmation opened against text that
+  // has since been fixed must produce no snapshot, no status change and no call
+  // — the repair can only ever rewrite LESS than it promised.
+  const requested = new Set(planIndexes);
+  const titles = new Map(
+    (entry.spine?.partPlan ?? []).map((plan, planIndex) => [
+      planIndex,
+      plan.title.trim() === '' ? `Part ${String(planIndex + 1)}` : plan.title,
+    ]),
+  );
+  const liveTargets = floorRepairTargets(entry, floor)
+    .map((target) => target.planIndex)
+    .filter((planIndex) => requested.has(planIndex));
+  for (const planIndex of planIndexes) {
+    if (liveTargets.includes(planIndex)) continue;
+    outcome.skipped.push({
+      planIndex,
+      title: titles.get(planIndex) ?? `Part ${String(planIndex + 1)}`,
+    });
+  }
+  const liveReport = countModuleEncounters(entry, floor);
+  outcome.met = liveReport.found >= liveReport.required && liveReport.deficient.length === 0;
+  if (liveTargets.length === 0) return outcome;
+  const controller = controllerFor(moduleId);
+  const epoch = getStopEpoch();
+  let statusSet = false;
+  /** The loud verdict when the floor is still short after the attempt. */
+  let stillShort: string | null = null;
+  try {
+    const settings = await getSettings();
+    const repairModelName = repairModel(settings.defaultChatModel, settings);
+    // Durable pre-change snapshot (docs/18 §2.3 simple undo) BEFORE the first
+    // write: the whole parts document as it stands now, so every part this run
+    // rewrites can be undone as one change. Throws loud if it cannot be
+    // recorded — no rewrite lands without a restorable pre-state.
+    await snapshotModuleVersion(
+      moduleId,
+      'generation',
+      `Fix module problems — encounter floor (${String(planIndexes.length)} part${planIndexes.length === 1 ? '' : 's'})`,
+    );
+    // The row says 'generating' for the run's duration: that is what the canvas
+    // busy badge reads and what Stop all's module sweep keys the abort on.
+    await patchModule(moduleId, { status: 'generating' });
+    statusSet = true;
+
+    for (const planIndex of planIndexes) {
+      // "A stopped orchestration must not start its next unit" (lib/stopEpoch):
+      // a stop landing while the previous part was being rewritten ends the run
+      // here rather than firing one more doomed call.
+      if (stoppedSince(epoch) || controller.signal.aborted) {
+        outcome.stopped = true;
+        break;
+      }
+      const current = await requireModule(moduleId);
+      if (current.spine === null) throw new Error('The spine was removed mid-repair');
+      // The scope is re-derived from the LIVE row: a part the owner already
+      // fixed (or a plan that changed) while the confirmation was open is
+      // skipped, so the repair can only ever rewrite LESS than it promised.
+      const target = floorRepairTargets(current, floor).find(
+        (entryTarget) => entryTarget.planIndex === planIndex,
+      );
+      const title = current.spine.partPlan[planIndex]?.title ?? `Part ${String(planIndex + 1)}`;
+      if (target === undefined) {
+        outcome.skipped.push({ planIndex, title });
+        continue;
+      }
+      outcome.attempted.push({ planIndex, title: target.title });
+      const before = current.parts.find((part) => part.planIndex === planIndex);
+      try {
+        await generatePart(moduleId, current, planIndex, campaign, repairModelName, {
+          signal: controller.signal,
+          extraInstruction: floorRepairRewriteInstruction(target, current.spine.partPlan.length),
+          onToken: undefined,
+          onReasoning: undefined,
+          onActivity: undefined,
+          onEmbeddingProgress: undefined,
+        });
+        outcome.rewritten.push({ planIndex, title: target.title });
+      } catch (error) {
+        // A cancel is not a failure (the stop's own surface owns it) — but the
+        // pre-repair prose still comes back: a stop must never cost text.
+        await restorePartAfterFailedRepair(moduleId, before);
+        if (isCancel(error, controller.signal)) {
+          outcome.stopped = true;
+          break;
+        }
+        outcome.failed.push({ planIndex, title: target.title, message: errorMessage(error) });
+      }
+    }
+
+    if (!outcome.stopped && outcome.rewritten.length > 0) {
+      // The rewritten parts name NEW encounters, and the floor counter only
+      // counts links whose recorded kind is `encounter` — so the pass that
+      // records kinds runs here, exactly as the parts pass's repair runs it.
+      // It is the existing pass (its own snapshot, its consent rule for
+      // hand-edited parts), never a second classifier.
+      await normalizeModuleEntityNames(moduleId, controller.signal).catch((error: unknown) => {
+        if (isCancel(error, controller.signal)) throw error;
+        recordNormalizationFailure(error);
+      });
+    }
+
+    if (!outcome.stopped) {
+      const after = await requireModule(moduleId);
+      const report = countModuleEncounters(after, floor);
+      outcome.remaining = report.deficient;
+      outcome.met = report.found >= report.required && report.deficient.length === 0;
+      if (outcome.met) {
+        await patchModule(moduleId, { status: 'ready', errorMessage: '' });
+      } else {
+        // Still short: fail LOUDLY, keep what was written (the durable snapshot
+        // is the undo), and leave the row `failed` with the floor's own verdict
+        // — the wording the generation gate and the runner already use.
+        let message = encounterFloorMessage(report);
+        if (!after.entityNamesNormalized) {
+          message +=
+            ' Entity name normalization did not succeed for the current text, so the count uses the last recorded kinds — retry normalization from the entity panel if this looks wrong.';
+        }
+        await patchModule(moduleId, { status: 'failed', errorMessage: message });
+        stillShort =
+          `${message} One rewrite attempt per part was made, so nothing more was tried — ` +
+          `check the ${String(outcome.remaining.length)} part${outcome.remaining.length === 1 ? '' : 's'} named above, or add the missing [[encounter]] links by hand.`;
+      }
+    }
+  } catch (error) {
+    // A cancel anywhere in the run (the in-flight call, the normalization pass)
+    // ends it quietly: the stop's own surface reports the stop, and the row's
+    // status is restored below.
+    if (!isCancel(error, controller.signal)) throw error;
+    outcome.stopped = true;
+  } finally {
+    controllers.delete(moduleId);
+    if (statusSet) {
+      // A stopped run reaches no verdict: put the row's status back exactly as
+      // it was (a stop is not a judgment about the text).
+      const live = await getModule(moduleId);
+      if (live?.status === 'generating') {
+        await patchModule(moduleId, { status: entry.status, errorMessage: entry.errorMessage });
+      }
+    }
+  }
+
+  if (outcome.failed.length > 0) {
+    toastError(
+      `${String(outcome.failed.length)} of ${String(outcome.attempted.length)} parts could not be rewritten — ` +
+        `their text was left as it was (${outcome.failed
+          .map((failure) => `"${failure.title}" — ${failure.message}`)
+          .join('; ')})`,
+    );
+  }
+  if (outcome.stopped) return outcome;
+  if (stillShort !== null) {
+    toastError('The module still falls short of its encounter floor', new Error(stillShort));
+    return outcome;
+  }
+  if (outcome.rewritten.length > 0) {
+    toastSuccess(
+      `Fixed the encounter floor: rewrote ${String(outcome.rewritten.length)} part${outcome.rewritten.length === 1 ? '' : 's'} ` +
+        `(${outcome.rewritten.map((part) => `"${part.title}"`).join(', ')}) — the pre-repair text is in Versions.`,
+    );
+  }
+  return outcome;
 }
 
 /** Re-runs pass 0 with an optional extra steering instruction. */
