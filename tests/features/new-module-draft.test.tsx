@@ -320,7 +320,9 @@ describe('the draft round-trips through the settings row', () => {
         setTimeout(resolve, 700);
       });
     });
-    const settings = await readSettings();
+    // actDrained (docs/08 §Race cures): the unmount flush of the old mount is
+    // still in flight, and its write re-renders the new mount's live query.
+    const settings = await actDrained(() => readSettings());
     expect(settings.newModuleDraft?.campaignId).toBe(mine.id);
     expect(settings.newModuleDraft?.concept).toBe('Mine, and only mine.');
     await flushAsyncUpdates();
@@ -399,7 +401,10 @@ describe('the draft round-trips through the settings row', () => {
         'A harbor bell rings underwater.',
       );
     });
-    expect((await readSettings()).newModuleDraft?.concept).toBe(
+    // actDrained (docs/08 §Race cures): the reopen's flushed write lands on the
+    // settings live query a DB round trip after the dialog is back, so a bare
+    // await here re-renders the mounted dialog outside act under load.
+    expect((await actDrained(() => readSettings())).newModuleDraft?.concept).toBe(
       'A harbor bell rings underwater.',
     );
     await flushAsyncUpdates();
@@ -416,12 +421,21 @@ describe('the draft round-trips through the settings row', () => {
 
     await waitFor(
       async () => {
+        // Deliberately NOT drained: inside `waitFor` the act environment is off
+        // for the whole poll (RTL's async wrapper), so a write landing here is
+        // exempt by design. The leak site is the bare read AFTER this resolves —
+        // see the drain below and docs/08 §Race cures.
         const settings = await readSettings();
         expect(settings.newModuleDraft?.concept).toBe('Final wording');
       },
       { timeout: 5_000 },
     );
-    const settings = await readSettings();
+    // actDrained (docs/08 §Race cures): the debounced save's write re-fires the
+    // settings live query, which re-renders the mounted dialog. A bare await
+    // hands that re-render the event loop, and on a loaded box the write lands
+    // exactly there — the "An update to NewModuleDialogContent inside a test was
+    // not wrapped in act(...)" failure observed in a concurrent full-suite gate.
+    const settings = await actDrained(() => readSettings());
     expect(settings.newModuleDraft?.campaignId).toBe(campaign.id);
     await flushAsyncUpdates();
   }, 30_000);
@@ -475,7 +489,9 @@ describe('the draft round-trips through the settings row', () => {
     // A reopen no longer brings the discarded text back either.
     dialog = await reopenDialog(user);
     expect(within(dialog).getByLabelText('Concept')).toHaveValue('');
-    const settings = await readSettings();
+    // actDrained (docs/08 §Race cures): the reopen's flushed write re-renders
+    // the mounted dialog's live query.
+    const settings = await actDrained(() => readSettings());
     expect(settings.newModuleDraft?.concept ?? '').toBe('');
     await flushAsyncUpdates();
   }, 30_000);
