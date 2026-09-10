@@ -3,7 +3,12 @@ import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getAnyArtifact, attachImagesToArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
-import { getOrCreateMobArtifact, materializeInventedCreatureArtifact } from '@/db/mobArtifacts';
+import {
+  findInventedCreatureArtifact,
+  findMobArtifactByChunk,
+  getOrCreateMobArtifact,
+  materializeInventedCreatureArtifact,
+} from '@/db/mobArtifacts';
 import {
   canonicalCreatureName,
   cloneCachedPortraitToArtifact,
@@ -52,6 +57,18 @@ import { ensureCanonicalMobPortrait, regenerateCanonicalMobPortrait } from '@/fe
  * and publish into the global slot; every later campaign clones the bytes
  * instead of generating. Flavored citations generate locally and never touch
  * the cache — neither read nor write.
+ *
+ * The batch NEVER pre-clones while it counts (owner report, one-sided
+ * replace-all confirm): enumerating with `getOrCreateMobArtifact`'s
+ * cache read-through made a cover-less citation arrive already imaged, so a
+ * hole the owner could see was reported as `alreadyImaged` and the press
+ * opened the replace-all confirm — a claim about art that did not exist
+ * before the press. A cover-less canonical citation is now a NORMAL job: the
+ * worker's canonical branch finds the populated slot and CLONES the bytes
+ * (no second generation, no API call) — the same one-generation rule, with
+ * honest counts. `planMobPortraitBatch` is the read-only half of the same
+ * enumeration: it creates nothing, clones nothing and enqueues nothing, so
+ * the surface can state the counts before the owner chooses.
  *
  * Single-mob entry points (battle surface selection card, docs/11 D5): the
  * same queue and the same regen phases for ONE already-resolved target
@@ -268,13 +285,6 @@ async function draftPrompt(
   );
 }
 
-export interface MobPortraitBatchResult {
-  /** Cover-less mobs enqueued for generation (deduped by artifact). */
-  enqueued: number;
-  /** Creature names whose mob artifact already carries an image. */
-  alreadyImaged: string[];
-}
-
 /**
  * Enqueues delete-after-replace regen jobs, upgrading any stale queued or
  * in-flight normal job for the same artifact FIRST. The queue dedupes by
@@ -296,6 +306,194 @@ function enqueueRegenJobs(jobs: MobPortraitJob[]): void {
 }
 
 /**
+ * Where one creature kind's art stands. THE classification the additive
+ * batch, its regen and the read-only count all share (docs/18: one way to
+ * read a kind's portrait state). `gallery-only` = the artifact holds art
+ * that is NOT set as its cover: the batch counts the kind imaged (the art is
+ * real, and setting the cover is the owner's call in the artifact's Images
+ * section) and never re-generates over it — but the battle token renders
+ * `coverImageId` alone, so the surface names these kinds instead of letting
+ * the count imply a portrait the board is not showing.
+ */
+type KindArt = 'none' | 'cover' | 'gallery-only';
+
+/** One creature kind of the encounter's roster (the dedupe unit: one
+ * portrait per kind, shared by every roster row citing it). */
+interface BatchKind {
+  lane: 'rulebook' | 'invented';
+  /** The kind's name — the first roster row that cites it wins. */
+  name: string;
+  /** The kind's mob artifact; null only when nothing exists yet and the
+   * caller asked for no creation (the read-only count). */
+  artifactId: Id | null;
+  /** Rulebook kinds: the cited stat-block chunk (prompt grounding). */
+  chunkId?: Id;
+  art: KindArt;
+}
+
+interface BatchEnumeration {
+  rulebook: BatchKind[];
+  invented: BatchKind[];
+  /** Roster rows that collapsed onto a kind already counted — the
+   * one-portrait-per-creature-kind share. Counted, never silently dropped. */
+  sharedRows: number;
+  /** Uncited roster rows the invented lane walked (its materialize count). */
+  inventedRows: number;
+}
+
+/**
+ * The batch's ONE enumeration (both lanes), shared by the additive batch, the
+ * two regen paths and the read-only count — so what the surface promises and
+ * what the queue does can never drift. `create: false` is the read-only mode:
+ * it resolves artifacts that EXIST (`findMobArtifactByChunk` /
+ * `findInventedCreatureArtifact`) and creates nothing, clones nothing,
+ * enqueues nothing.
+ *
+ * A dangling stamped `mobArtifactId` (its artifact was deleted) throws loud
+ * in BOTH modes — the count must never promise a fill the enqueue would
+ * refuse to perform (the message prefixes are per-lane and verbatim).
+ */
+async function enumerateBatchKinds(
+  encounter: AnyArtifact & { kind: 'encounter' },
+  campaignId: Id,
+  options: {
+    lanes: readonly ('rulebook' | 'invented')[];
+    /** Run mode creates the artifacts the batch needs; the read-only count
+     * passes false and reports what it finds. */
+    create: boolean;
+    /** The per-entry invented action: only these roster indexes. */
+    inventedIndexes?: readonly number[] | undefined;
+    rulebookLabel: string;
+    inventedLabel: string;
+  },
+): Promise<BatchEnumeration> {
+  const enumerated: BatchEnumeration = { rulebook: [], invented: [], sharedRows: 0, inventedRows: 0 };
+  /** Kind identity: the artifact id, or — when no artifact exists yet — the
+   * citation's chunk (rulebook) / the roster name (invented), so a kind
+   * without an artifact still collapses instead of double-counting. */
+  const seenKinds = new Set<string>();
+
+  if (options.lanes.includes('rulebook')) {
+    const artifactIdByChunk = new Map<Id, Id>();
+    for (const entry of encounter.data.monsters) {
+      if (entry.source.type !== 'rulebook') continue;
+      const known = artifactIdByChunk.get(entry.source.chunkId);
+      const artifactId =
+        known ??
+        entry.source.mobArtifactId ??
+        (options.create
+          ? await getOrCreateMobArtifact(campaignId, entry.source.chunkId, entry.name)
+          : ((await findMobArtifactByChunk(campaignId, entry.source.chunkId))?.id ?? null));
+      if (artifactId === null) {
+        // No artifact yet: a real hole the fill creates first (read-only mode
+        // only — `create` mode always returns one).
+        const key = `chunk:${entry.source.chunkId}`;
+        if (seenKinds.has(key)) enumerated.sharedRows += 1;
+        else {
+          seenKinds.add(key);
+          enumerated.rulebook.push({
+            lane: 'rulebook',
+            name: entry.name,
+            artifactId: null,
+            chunkId: entry.source.chunkId,
+            art: 'none',
+          });
+        }
+        continue;
+      }
+      artifactIdByChunk.set(entry.source.chunkId, artifactId);
+      // One portrait per creature kind, not per roster entry.
+      if (seenKinds.has(artifactId)) {
+        enumerated.sharedRows += 1;
+        continue;
+      }
+      seenKinds.add(artifactId);
+      enumerated.rulebook.push({
+        lane: 'rulebook',
+        name: entry.name,
+        artifactId,
+        chunkId: entry.source.chunkId,
+        art: await kindArtOf(artifactId, entry.name, options.rulebookLabel),
+      });
+    }
+  }
+
+  if (options.lanes.includes('invented')) {
+    const only = options.inventedIndexes === undefined ? undefined : new Set(options.inventedIndexes);
+    const materialized = new Map<string, Id>();
+    for (const [index, entry] of encounter.data.monsters.entries()) {
+      if (only !== undefined && !only.has(index)) continue;
+      if (entry.source.type !== 'inline' && entry.source.type !== 'none') continue;
+      enumerated.inventedRows += 1;
+      const artifactId = options.create
+        ? await materializeInventedCreatureArtifact({
+            campaignId,
+            encounterId: encounter.id,
+            encounterName: encounter.name,
+            moduleId: encounter.moduleId,
+            name: entry.name,
+            notes: entry.notes,
+            treasure: entry.treasure,
+            statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
+            cache: materialized,
+          })
+        : ((await findInventedCreatureArtifact(campaignId, encounter.id, entry.name))?.id ?? null);
+      const key = artifactId ?? `name:${entry.name.trim().toLowerCase()}`;
+      if (seenKinds.has(key)) {
+        enumerated.sharedRows += 1;
+        continue;
+      }
+      seenKinds.add(key);
+      enumerated.invented.push({
+        lane: 'invented',
+        name: entry.name,
+        artifactId,
+        art:
+          artifactId === null ? 'none' : await kindArtOf(artifactId, entry.name, options.inventedLabel),
+      });
+    }
+  }
+  return enumerated;
+}
+
+/** The artifact behind one enumerated kind, read for its art state. A
+ * dangling id is loud (AGENTS rule 1) — never a silent "assume cover-less". */
+async function kindArtOf(artifactId: Id, name: string, label: string): Promise<KindArt> {
+  const artifact = await getAnyArtifact(artifactId);
+  if (artifact === undefined) {
+    throw new Error(
+      `${label}: the artifact for "${name}" no longer exists — re-run the encounter content to restore it`,
+    );
+  }
+  if (artifact.coverImageId !== null) return 'cover';
+  return artifact.imageIds.length > 0 ? 'gallery-only' : 'none';
+}
+
+/** Run mode always resolves an artifact; null is impossible there and a loud
+ * error rather than a cast (AGENTS rule 1). */
+function artifactOfKind(kind: BatchKind): Id {
+  if (kind.artifactId === null) {
+    throw new Error(`mob portrait batch: "${kind.name}" resolved without an artifact while enqueueing`);
+  }
+  return kind.artifactId;
+}
+
+/** Rulebook kinds always carry their citation chunk (loud, never a cast). */
+function chunkOfKind(kind: BatchKind): Id {
+  if (kind.chunkId === undefined) {
+    throw new Error(`mob portrait batch: "${kind.name}" is a rulebook kind with no citation chunk`);
+  }
+  return kind.chunkId;
+}
+
+export interface MobPortraitBatchResult {
+  /** Cover-less mobs enqueued for generation (deduped by artifact). */
+  enqueued: number;
+  /** Creature names whose mob artifact already carries an image. */
+  alreadyImaged: string[];
+}
+
+/**
  * The batch action (encounter editor): enumerates the encounter's
  * rulebook-cited entries, get-or-creates each mob artifact (lazy retro-fill
  * for encounters written before `mobArtifactId` — the same shared helper the
@@ -303,53 +501,113 @@ function enqueueRegenJobs(jobs: MobPortraitJob[]): void {
  * enqueues the rest. A dangling stamped `mobArtifactId` (its artifact was
  * deleted) fails loudly instead of silently diverging identities.
  *
- * Cache-first (docs/11 D5 amendment, slice A): the get-or-create carries the
- * portrait read-through, so a canonical citation whose slot is already
- * populated arrives WITH its cloned cover and is enumerated away as
- * already-imaged — no job, no second generation. A cache miss enqueues
- * normally; the worker's canonical branch generates once and publishes.
+ * NO enumeration-time cache clone (owner report): a cover-less canonical
+ * citation is a JOB here, and the worker's canonical branch clones the
+ * populated global slot instead of generating (one generation per chunk,
+ * unchanged) — so `alreadyImaged` names only the kinds that already showed a
+ * portrait before this call, and a hole is always reported as work.
  */
 export async function enqueueMobPortraits(
   encounter: AnyArtifact & { kind: 'encounter' },
   campaignId: Id,
 ): Promise<MobPortraitBatchResult> {
-  const artifactIdByChunk = new Map<Id, Id>();
-  const seenArtifacts = new Set<Id>();
+  const enumerated = await enumerateBatchKinds(encounter, campaignId, {
+    lanes: ['rulebook'],
+    create: true,
+    rulebookLabel: 'Generate mob portraits',
+    inventedLabel: 'Create creature portraits',
+  });
   const jobs: MobPortraitJob[] = [];
   const alreadyImaged: string[] = [];
-  for (const entry of encounter.data.monsters) {
-    if (entry.source.type !== 'rulebook') continue;
-    const known = artifactIdByChunk.get(entry.source.chunkId);
-    const artifactId =
-      known ??
-      entry.source.mobArtifactId ??
-      (await getOrCreateMobArtifact(campaignId, entry.source.chunkId, entry.name, undefined, undefined, {
-        fillCoverFromCache: true,
-      }));
-    artifactIdByChunk.set(entry.source.chunkId, artifactId);
-    // One portrait per creature kind, not per roster entry.
-    if (seenArtifacts.has(artifactId)) continue;
-    seenArtifacts.add(artifactId);
-    const artifact = await getAnyArtifact(artifactId);
-    if (artifact === undefined) {
-      throw new Error(
-        `Generate mob portraits: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
-      );
-    }
-    if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
-      alreadyImaged.push(entry.name);
+  for (const kind of enumerated.rulebook) {
+    if (kind.art !== 'none') {
+      alreadyImaged.push(kind.name);
       continue;
     }
     jobs.push({
       campaignId,
       encounterId: encounter.id,
-      artifactId,
-      name: entry.name,
-      chunkId: entry.source.chunkId,
+      artifactId: artifactOfKind(kind),
+      name: kind.name,
+      chunkId: chunkOfKind(kind),
     });
   }
   useMobPortraitQueue.getState().enqueue(jobs);
   return { enqueued: jobs.length, alreadyImaged };
+}
+
+/**
+ * The read-only half of the batch enumeration — what the confirm dialog needs
+ * to state the truth BEFORE the owner chooses. Creates nothing (no artifact,
+ * no creature), clones nothing, enqueues nothing; every number it returns is
+ * exactly what the additive batch and the two regen paths will do, because it
+ * walks the same enumeration (its counts are pinned against the run's own
+ * result).
+ */
+export interface MobPortraitBatchPlan {
+  /** Creature kinds with no art at all — exactly what the fill enqueues. */
+  missing: string[];
+  /** Creature kinds that already carry art (the batch skips these). */
+  imaged: string[];
+  /** Subset of `imaged`: art on the artifact that is NOT set as its cover —
+   * the battle board still shows initials until the owner sets it (open the
+   * creature artifact → Images → Set as cover). Never silently skipped. */
+  artWithoutCover: string[];
+  /** Roster rows that collapsed onto a creature kind already counted (the
+   * one-portrait-per-kind share). */
+  sharedRows: number;
+  /** Missing kinds with no artifact yet: the fill creates the creature
+   * (rulebook artifact / on-demand invented creature) before its portrait. */
+  creates: number;
+  /** Imaged rulebook kinds that are Monster Core (canonical) citations:
+   * REPLACING them republishes the shared bestiary slot, so every future
+   * portrait in every campaign uses the new art (existing covers elsewhere
+   * keep theirs) — the confirm must say so before the choice. */
+  sharedPortraitNames: string[];
+  /** Imaged rulebook kinds whose citation can no longer be read: replacing
+   * them fails loudly and keeps their cover (the count never hides it). */
+  unreadableCitations: string[];
+}
+
+export async function planMobPortraitBatch(
+  encounter: AnyArtifact & { kind: 'encounter' },
+  campaignId: Id,
+): Promise<MobPortraitBatchPlan> {
+  const enumerated = await enumerateBatchKinds(encounter, campaignId, {
+    lanes: ['rulebook', 'invented'],
+    create: false,
+    rulebookLabel: 'Generate mob portraits',
+    inventedLabel: 'Create creature portraits',
+  });
+  const kinds = [...enumerated.rulebook, ...enumerated.invented];
+  const imaged = kinds.filter((kind) => kind.art !== 'none');
+  const sharedPortraitNames: string[] = [];
+  const unreadableCitations: string[] = [];
+  for (const kind of imaged) {
+    if (kind.lane !== 'rulebook' || kind.chunkId === undefined) continue;
+    const chunk = (await getChunksByIds([kind.chunkId]))[0];
+    if (chunk === undefined) {
+      // The replace path throws loud on this (kept cover); the count reports
+      // it instead of quietly presenting the kind as an ordinary shared one.
+      unreadableCitations.push(kind.name);
+      continue;
+    }
+    const canonical = canonicalCreatureName(chunk);
+    if (canonical !== null && isCanonicalCitation(canonical, kind.name)) {
+      sharedPortraitNames.push(kind.name);
+    }
+  }
+  return {
+    missing: kinds.filter((kind) => kind.art === 'none').map((kind) => kind.name),
+    imaged: imaged.map((kind) => kind.name),
+    artWithoutCover: imaged
+      .filter((kind) => kind.art === 'gallery-only')
+      .map((kind) => kind.name),
+    sharedRows: enumerated.sharedRows,
+    creates: kinds.filter((kind) => kind.art === 'none' && kind.artifactId === null).length,
+    sharedPortraitNames,
+    unreadableCitations,
+  };
 }
 
 /**
@@ -365,8 +623,9 @@ export async function enqueueMobPortraits(
  *    nothing is enqueued. Flavored citations skip the cache entirely
  *    (local-only invariant).
  * 3. Enqueue delete-after-replace regen jobs for the imaged artifacts (plus
- *    the normal cover-less batch for the remainder, which also retro-fills
- *    unstamped rows through the cache read-through). The old covers stay
+ *    the normal cover-less batch for the remainder, which resolves unstamped
+ *    rows and lets the worker clone a populated canonical slot). The old
+ *    covers stay
  *    until each worker commits its replacement; a failed, skipped, or
  *    queue-dropped regen leaves the old portrait intact (loud error, never
  *    silent loss). Only the superseded blob is freed, and only after the
@@ -383,34 +642,20 @@ export async function regenerateMobPortraits(
   encounter: AnyArtifact & { kind: 'encounter' },
   campaignId: Id,
 ): Promise<MobPortraitRegenResult> {
-  const artifactIdByChunk = new Map<Id, Id>();
-  const seenArtifacts = new Set<Id>();
-  const imaged: { artifactId: Id; chunkId: Id; name: string }[] = [];
-  for (const entry of encounter.data.monsters) {
-    if (entry.source.type !== 'rulebook') continue;
-    const known = artifactIdByChunk.get(entry.source.chunkId);
-    const artifactId =
-      known ??
-      entry.source.mobArtifactId ??
-      // Pure resolve (NO read-through: cloning here would defeat the detach).
-      (await getOrCreateMobArtifact(campaignId, entry.source.chunkId, entry.name));
-    artifactIdByChunk.set(entry.source.chunkId, artifactId);
-    // One portrait per creature kind, not per roster entry.
-    if (seenArtifacts.has(artifactId)) continue;
-    seenArtifacts.add(artifactId);
-    const artifact = await getAnyArtifact(artifactId);
-    if (artifact === undefined) {
-      throw new Error(
-        `Regenerate mob portraits: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
-      );
-    }
-    if (artifact.coverImageId === null && artifact.imageIds.length === 0) continue;
-    imaged.push({ artifactId, chunkId: entry.source.chunkId, name: entry.name });
-  }
+  const enumerated = await enumerateBatchKinds(encounter, campaignId, {
+    lanes: ['rulebook'],
+    create: true,
+    // Pure resolve (NO read-through anywhere on this path: cloning here
+    // would defeat the detach).
+    rulebookLabel: 'Regenerate mob portraits',
+    inventedLabel: 'Regenerate creature portraits',
+  });
+  const imaged = enumerated.rulebook.filter((kind) => kind.art !== 'none');
   const republishedCanonical: string[] = [];
   const republishedChunks = new Set<Id>();
   for (const target of imaged) {
-    const chunk = (await getChunksByIds([target.chunkId]))[0];
+    const chunkId = chunkOfKind(target);
+    const chunk = (await getChunksByIds([chunkId]))[0];
     if (chunk === undefined) {
       throw new Error(
         `Regenerate mob portraits: the stat-block chunk for "${target.name}" no longer exists — kept the existing cover`,
@@ -420,10 +665,10 @@ export async function regenerateMobPortraits(
     if (
       canonical !== null &&
       isCanonicalCitation(canonical, target.name) &&
-      !republishedChunks.has(target.chunkId)
+      !republishedChunks.has(chunkId)
     ) {
-      republishedChunks.add(target.chunkId);
-      await regenerateCanonicalMobPortrait({ chunkId: target.chunkId, campaignId });
+      republishedChunks.add(chunkId);
+      await regenerateCanonicalMobPortrait({ chunkId, campaignId });
       republishedCanonical.push(target.name);
     }
   }
@@ -431,14 +676,14 @@ export async function regenerateMobPortraits(
     imaged.map((target) => ({
       campaignId,
       encounterId: encounter.id,
-      artifactId: target.artifactId,
+      artifactId: artifactOfKind(target),
       name: target.name,
-      chunkId: target.chunkId,
+      chunkId: chunkOfKind(target),
     })),
   );
   // The cover-less remainder (including unstamped rows the resolve above
-  // retro-filled) flows through the normal batch — read-through included.
-  // Imaged targets enumerate away there as already-imaged: no second job.
+  // retro-filled) flows through the normal batch. Imaged targets enumerate
+  // away there as already-imaged: no second job.
   await enqueueMobPortraits(encounter, campaignId);
   return { regenerated: imaged.length, republishedCanonical };
 }
@@ -591,49 +836,29 @@ export async function enqueueInventedCreaturePortraits(
   campaignId: Id,
   entryIndexes?: readonly number[],
 ): Promise<InventedCreatureBatchResult> {
-  const only = entryIndexes === undefined ? undefined : new Set(entryIndexes);
-  const materialized = new Map<string, Id>();
-  const seenArtifacts = new Set<Id>();
+  const enumerated = await enumerateBatchKinds(encounter, campaignId, {
+    lanes: ['invented'],
+    create: true,
+    ...(entryIndexes === undefined ? {} : { inventedIndexes: entryIndexes }),
+    rulebookLabel: 'Generate mob portraits',
+    inventedLabel: 'Create creature portraits',
+  });
   const jobs: MobPortraitJob[] = [];
   const alreadyImaged: string[] = [];
-  let created = 0;
-  for (const [index, entry] of encounter.data.monsters.entries()) {
-    if (only !== undefined && !only.has(index)) continue;
-    if (entry.source.type !== 'inline' && entry.source.type !== 'none') continue;
-    const artifactId = await materializeInventedCreatureArtifact({
-      campaignId,
-      encounterId: encounter.id,
-      encounterName: encounter.name,
-      moduleId: encounter.moduleId,
-      name: entry.name,
-      notes: entry.notes,
-      treasure: entry.treasure,
-      statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
-      cache: materialized,
-    });
-    created += 1;
-    // One portrait per creature kind, not per roster entry.
-    if (seenArtifacts.has(artifactId)) continue;
-    seenArtifacts.add(artifactId);
-    const artifact = await getAnyArtifact(artifactId);
-    if (artifact === undefined) {
-      throw new Error(
-        `Create creature portraits: the artifact for "${entry.name}" no longer exists — re-run the action to restore it`,
-      );
-    }
-    if (artifact.coverImageId !== null || artifact.imageIds.length > 0) {
-      alreadyImaged.push(entry.name);
+  for (const kind of enumerated.invented) {
+    if (kind.art !== 'none') {
+      alreadyImaged.push(kind.name);
       continue;
     }
     jobs.push({
       campaignId,
       encounterId: encounter.id,
-      artifactId,
-      name: entry.name,
+      artifactId: artifactOfKind(kind),
+      name: kind.name,
     });
   }
   useMobPortraitQueue.getState().enqueue(jobs);
-  return { created, enqueued: jobs.length, alreadyImaged };
+  return { created: enumerated.inventedRows, enqueued: jobs.length, alreadyImaged };
 }
 
 export interface InventedCreatureRegenResult {
@@ -661,48 +886,24 @@ export async function regenerateInventedCreaturePortraits(
   campaignId: Id,
   entryIndexes?: readonly number[],
 ): Promise<InventedCreatureRegenResult> {
-  const only = entryIndexes === undefined ? undefined : new Set(entryIndexes);
-  const materialized = new Map<string, Id>();
-  const seenArtifacts = new Set<Id>();
-  const imaged: { artifactId: Id; name: string }[] = [];
-  let created = 0;
-  for (const [index, entry] of encounter.data.monsters.entries()) {
-    if (only !== undefined && !only.has(index)) continue;
-    if (entry.source.type !== 'inline' && entry.source.type !== 'none') continue;
-    const artifactId = await materializeInventedCreatureArtifact({
-      campaignId,
-      encounterId: encounter.id,
-      encounterName: encounter.name,
-      moduleId: encounter.moduleId,
-      name: entry.name,
-      notes: entry.notes,
-      treasure: entry.treasure,
-      statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
-      cache: materialized,
-    });
-    created += 1;
-    // One portrait per creature kind, not per roster entry.
-    if (seenArtifacts.has(artifactId)) continue;
-    seenArtifacts.add(artifactId);
-    const artifact = await getAnyArtifact(artifactId);
-    if (artifact === undefined) {
-      throw new Error(
-        `Regenerate creature portraits: the artifact for "${entry.name}" no longer exists — re-run the action to restore it`,
-      );
-    }
-    if (artifact.coverImageId === null && artifact.imageIds.length === 0) continue;
-    imaged.push({ artifactId, name: entry.name });
-  }
+  const enumerated = await enumerateBatchKinds(encounter, campaignId, {
+    lanes: ['invented'],
+    create: true,
+    ...(entryIndexes === undefined ? {} : { inventedIndexes: entryIndexes }),
+    rulebookLabel: 'Regenerate mob portraits',
+    inventedLabel: 'Regenerate creature portraits',
+  });
+  const imaged = enumerated.invented.filter((kind) => kind.art !== 'none');
   enqueueRegenJobs(
     imaged.map((target) => ({
       campaignId,
       encounterId: encounter.id,
-      artifactId: target.artifactId,
+      artifactId: artifactOfKind(target),
       name: target.name,
     })),
   );
   // The cover-less remainder flows through the normal invented batch.
   // Imaged targets enumerate away there as already-imaged: no second job.
   await enqueueInventedCreaturePortraits(encounter, campaignId, entryIndexes);
-  return { created, regenerated: imaged.length };
+  return { created: enumerated.inventedRows, regenerated: imaged.length };
 }

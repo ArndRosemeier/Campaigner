@@ -311,6 +311,31 @@ export function inventedCreatureMarker(encounterId: Id): string {
   return `[encounter-creature:${encounterId}]`;
 }
 
+/**
+ * The on-demand invented creature for one roster name on one encounter, when
+ * it already exists: an npc of the exact name (case-insensitive, trimmed)
+ * carrying this encounter's creation marker. THE one lookup rule —
+ * `materializeInventedCreatureArtifact` reuses what this finds, and the
+ * portrait batch's read-only count resolves through it too, so counting what
+ * a roster row's portrait would be can never CREATE the creature it counts.
+ */
+export async function findInventedCreatureArtifact(
+  campaignId: Id,
+  encounterId: Id,
+  name: string,
+): Promise<NpcArtifact | undefined> {
+  const trimmedName = name.trim();
+  if (trimmedName === '') return undefined;
+  const marker = inventedCreatureMarker(encounterId);
+  const artifacts = await listArtifactsByCampaign(campaignId);
+  return artifacts.find(
+    (artifact): artifact is NpcArtifact =>
+      artifact.kind === 'npc' &&
+      artifact.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
+      artifact.summary.includes(marker),
+  );
+}
+
 /** Appearance seeding for an invented creature: roster notes, then the
  * pocket-treasure checklist the token card would carry — the only
  * description an uncited roster entry has. Both empty ⇒ '' (no
@@ -386,13 +411,11 @@ export async function materializeInventedCreatureArtifact(
   const key = `${options.encounterId}:${trimmedName.toLowerCase()}`;
   const cached = options.cache?.get(key);
   if (cached !== undefined) return cached;
-  const marker = inventedCreatureMarker(options.encounterId);
 
-  const existing = (await listArtifactsByCampaign(options.campaignId)).find(
-    (artifact): artifact is NpcArtifact =>
-      artifact.kind === 'npc' &&
-      artifact.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
-      artifact.summary.includes(marker),
+  const existing = await findInventedCreatureArtifact(
+    options.campaignId,
+    options.encounterId,
+    trimmedName,
   );
   if (existing !== undefined) {
     if (existing.data.statBlock === null && options.statBlock !== null) {
@@ -412,7 +435,7 @@ export async function materializeInventedCreatureArtifact(
       ...(options.moduleId === null ? {} : { moduleId: options.moduleId }),
       kind: 'npc',
       name: trimmedName,
-      summary: `On-demand creature created for encounter "${options.encounterName.trim() === '' ? 'Untitled encounter' : options.encounterName.trim()}" ${marker}`,
+      summary: `On-demand creature created for encounter "${options.encounterName.trim() === '' ? 'Untitled encounter' : options.encounterName.trim()}" ${inventedCreatureMarker(options.encounterId)}`,
       data: {
         appearance: inventedCreatureAppearance(options.notes, options.treasure),
         personality: '',

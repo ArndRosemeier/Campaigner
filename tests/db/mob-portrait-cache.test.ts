@@ -293,13 +293,22 @@ describe('canonical-only invariant', () => {
     expect(mobA?.coverImageId).not.toBeNull();
     expect(mobA?.coverImageId).not.toBe(entry?.imageId);
 
-    // Second campaign: skip-if-cached at enqueue — clone, no job, no generation.
+    // Second campaign: the cover-less canonical citation is a normal JOB
+    // whose worker CLONES the populated slot — still ONE generation for the
+    // chunk. The batch reports the hole as work instead of calling it
+    // already-imaged: the old enumeration-time read-through (`fillCoverFromCache`
+    // during get-or-create) filled the cover WHILE counting and then reported
+    // { enqueued: 0, alreadyImaged: ['Giant Rat'] } — a visible hole described
+    // as existing art, and the trigger for the one-sided replace-all confirm
+    // (owner report; ledger 81).
     const encounterB = await addEncounter(campaignB, [
       { name: 'Giant Rat', count: 2, source: { type: 'rulebook', chunkId } },
     ]);
     const resultB = await enqueueMobPortraits(encounterB, campaignB);
-    expect(resultB).toEqual({ enqueued: 0, alreadyImaged: ['Giant Rat'] });
-    expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
+    expect(resultB).toEqual({ enqueued: 1, alreadyImaged: [] });
+    expect(useMobPortraitQueue.getState().queued).toHaveLength(1);
+    await drainMobQueue();
+    // Reuse, not regeneration: the fill cloned the slot's bytes.
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
 
     const mobB = await getAnyArtifact(
@@ -362,12 +371,21 @@ describe('canonical-only invariant', () => {
       { name: '  GIANT RAT ', count: 1, source: { type: 'rulebook', chunkId } },
     ]);
     const resultB = await enqueueMobPortraits(encounterB, campaignB);
-    expect(resultB).toEqual({ enqueued: 0, alreadyImaged: ['  GIANT RAT '] });
+    expect(resultB).toEqual({ enqueued: 1, alreadyImaged: [] });
+    await drainMobQueue();
+    // The case-insensitive canonical match resolves the SAME slot: the fill
+    // cloned it, so the chunk still has exactly one generation (ledger 81 —
+    // the job replaces the old enumeration-time read-through).
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
+    const cacheEntry = await getMobPortraitCacheEntry(chunkId);
     const mobB = await getAnyArtifact(
       await getOrCreateMobArtifact(campaignB, chunkId, 'GIANT RAT'),
     );
     expect(mobB?.coverImageId).not.toBeNull();
+    expect(mobB?.coverImageId).not.toBe(cacheEntry?.imageId);
+    const coverB = await getImage(mobB?.coverImageId ?? '');
+    const cached = await getImage(cacheEntry?.imageId ?? '');
+    expect([...(coverB?.bytes ?? [])]).toEqual([...(cached?.bytes ?? [])]);
   });
 
   it('a flavored variant neither populates nor overwrites the cache', async () => {

@@ -3,7 +3,13 @@ import 'fake-indexeddb/auto';
 import { waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getAnyArtifact, listRevisions, updateArtifact } from '@/db/artifactRepo';
+import {
+  createArtifact,
+  getAnyArtifact,
+  listArtifactsByCampaign,
+  listRevisions,
+  updateArtifact,
+} from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createImage, getImage } from '@/db/imageRepo';
@@ -16,6 +22,7 @@ import { newId, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domai
 import {
   enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
+  planMobPortraitBatch,
   regenerateInventedCreaturePortraits,
   regenerateMobPortraits,
   useMobPortraitQueue,
@@ -130,9 +137,13 @@ async function seedCreatureChunk(creatureName: string, text: string): Promise<st
   return chunk.id;
 }
 
-async function addEncounter(monsters: { name: string; count: number; source: Record<string, unknown> }[]) {
+async function addEncounter(
+  monsters: { name: string; count: number; source: Record<string, unknown> }[],
+  /** Another campaign (canonical-slot tests build the same shape there). */
+  campaign: string = campaignId,
+) {
   return createArtifact({
-    campaignId,
+    campaignId: campaign,
     kind: 'encounter',
     name: 'Goblin warren',
     data: {
@@ -713,5 +724,213 @@ describe('regenerateInventedCreaturePortraits', () => {
     expect(second).toEqual({ created: 1, enqueued: 0, alreadyImaged: ['Gloom Ooze'] });
     expect((await getAnyArtifact(created.id))?.coverImageId).toBe(coverId);
     expect(generateImagesMock.mock.calls.length).toBe(calls);
+  });
+});
+
+/**
+ * The batch confirm's read-only half (owner report: the press offered
+ * replace-all in a state the owner read as "2 mobs have a portrait, one does
+ * not" — Mob Core/canonical art). `planMobPortraitBatch` walks the SAME
+ * enumeration as the batch, the regen paths and the fill, so the counts a
+ * surface states are the counts the queue will act on; and the batch never
+ * pre-clones a canonical slot while enumerating (a hole is WORK, reported as
+ * work, and the worker's canonical branch clones the populated slot — one
+ * generation per chunk, no API call for the fill).
+ */
+describe('planMobPortraitBatch (the read-only count behind the confirm)', () => {
+  it('counts a cover-less canonical citation as work; the fill clones the shared slot with no new generation', async () => {
+    const goblin = await seedCreatureChunk('Goblin', 'Goblin, small and mean. HP 7, AC 15.');
+    const ogre = await seedCreatureChunk('Ogre', 'Ogre, big and rude. HP 59, AC 11.');
+    const troll = await seedCreatureChunk('Troll', 'Troll, huge and hungry. HP 84, AC 15.');
+
+    // Another campaign publishes the SHARED canonical portrait for Troll.
+    const campaignB = (await createCampaign({ name: 'Second campaign', system: 'dnd5e' })).id;
+    await getOrCreateMobArtifact(campaignB, troll, 'Troll');
+    const encounterB = await addEncounter(
+      [{ name: 'Troll', count: 1, source: { type: 'rulebook', chunkId: troll } }],
+      campaignB,
+    );
+    if (encounterB.kind !== 'encounter') throw new Error('not an encounter');
+    await enqueueMobPortraits(encounterB, campaignB);
+    await waitFor(async () => {
+      expect(await getMobPortraitCacheEntry(troll)).toBeDefined();
+      expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
+      expect(useMobPortraitQueue.getState().active).toHaveLength(0);
+    });
+    const slot = await getMobPortraitCacheEntry(troll);
+    if (slot === undefined) throw new Error('slot missing');
+
+    // This campaign: two kinds imaged, Troll cover-less — rows cited by hand
+    // exactly as the roster UI writes them (rulebook citation, NO stamp).
+    const goblinArt = await getOrCreateMobArtifact(campaignId, goblin, 'Goblin');
+    const ogreArt = await getOrCreateMobArtifact(campaignId, ogre, 'Ogre');
+    const trollArt = await getOrCreateMobArtifact(campaignId, troll, 'Troll');
+    await attachUploadedCover(goblinArt, campaignId);
+    await attachUploadedCover(ogreArt, campaignId);
+    const encounter = await addEncounter([
+      { name: 'Goblin', count: 1, source: { type: 'rulebook', chunkId: goblin } },
+      { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre } },
+      { name: 'Troll', count: 1, source: { type: 'rulebook', chunkId: troll } },
+    ]);
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+    // The hole is real: the token for this kind renders initials (cover null).
+    expect((await getAnyArtifact(trollArt))?.coverImageId).toBeNull();
+    const generationsBefore = generateImagesMock.mock.calls.length;
+
+    const plan = await planMobPortraitBatch(encounter, campaignId);
+    expect(plan).toEqual({
+      missing: ['Troll'],
+      imaged: ['Goblin', 'Ogre'],
+      artWithoutCover: [],
+      sharedRows: 0,
+      creates: 0,
+      // Both imaged citations are canonical (Monster Core-style) — replacing
+      // them republishes the shared slot, and the confirm must say so.
+      sharedPortraitNames: ['Goblin', 'Ogre'],
+      unreadableCitations: [],
+    });
+    // Counting cloned nothing and created nothing.
+    expect((await getAnyArtifact(trollArt))?.coverImageId).toBeNull();
+    expect(generateImagesMock.mock.calls.length).toBe(generationsBefore);
+
+    // The batch reports the hole as WORK — never as already-imaged, and it
+    // does not pre-clone while enumerating (revert-proof: the read-through
+    // returned {enqueued: 0, alreadyImaged: [Goblin, Ogre, Troll]}).
+    const result = await enqueueMobPortraits(encounter, campaignId);
+    expect(result).toEqual({ enqueued: 1, alreadyImaged: ['Goblin', 'Ogre'] });
+    expect((await getAnyArtifact(trollArt))?.coverImageId).toBeNull();
+    // Plan/run agreement: what the confirm promised is what the batch queued.
+    expect(result.enqueued).toBe(plan.missing.length);
+    expect(result.alreadyImaged).toEqual(plan.imaged);
+
+    // The job fills the hole by CLONING the shared slot: identical bytes,
+    // zero fresh generations (one generation per chunk, unchanged).
+    await waitFor(async () => {
+      expect((await getAnyArtifact(trollArt))?.coverImageId).not.toBeNull();
+    });
+    const fill = await getAnyArtifact(trollArt);
+    expect(await bytesText(fill?.coverImageId ?? '')).toBe(await bytesText(slot.imageId));
+    expect(generateImagesMock.mock.calls.length).toBe(generationsBefore);
+    expect(chatMock).not.toHaveBeenCalled();
+  });
+
+  it('counts both lanes per creature kind and reports a repeated kind as a shared row, never silencing it', async () => {
+    const goblin = await seedCreatureChunk('Goblin', 'Goblin, small and mean. HP 7, AC 15.');
+    const ogre = await seedCreatureChunk('Ogre', 'Ogre, big and rude. HP 59, AC 11.');
+    const goblinArt = await getOrCreateMobArtifact(campaignId, goblin, 'Goblin');
+    const ogreArt = await getOrCreateMobArtifact(campaignId, ogre, 'Ogre');
+    await attachUploadedCover(goblinArt, campaignId);
+    const encounter = await addEncounter([
+      {
+        name: 'Goblin',
+        count: 2,
+        source: { type: 'rulebook', chunkId: goblin, mobArtifactId: goblinArt },
+      },
+      {
+        name: 'Goblin',
+        count: 1,
+        source: { type: 'rulebook', chunkId: goblin, mobArtifactId: goblinArt },
+      },
+      { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre, mobArtifactId: ogreArt } },
+      { name: 'Gloom Ooze', count: 1, source: { type: 'inline', statBlock: oozeBlock() } },
+      { name: 'Gloom Ooze', count: 1, source: { type: 'inline', statBlock: oozeBlock() } },
+    ]);
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+    const plan = await planMobPortraitBatch(encounter, campaignId);
+    expect(plan.missing).toEqual(['Ogre', 'Gloom Ooze']);
+    expect(plan.imaged).toEqual(['Goblin']);
+    expect(plan.sharedRows).toBe(2);
+    // The invented creature does not exist yet; the rulebook artifact does.
+    expect(plan.creates).toBe(1);
+
+    const rulebook = await enqueueMobPortraits(encounter, campaignId);
+    expect(rulebook).toEqual({ enqueued: 1, alreadyImaged: ['Goblin'] });
+    const invented = await enqueueInventedCreaturePortraits(encounter, campaignId);
+    expect(invented).toEqual({ created: 2, enqueued: 1, alreadyImaged: [] });
+    expect(rulebook.enqueued + invented.enqueued).toBe(plan.missing.length);
+    expect([...rulebook.alreadyImaged, ...invented.alreadyImaged]).toEqual(plan.imaged);
+  });
+
+  it('names art that is not set as a cover instead of implying a portrait the board shows', async () => {
+    const ogre = await seedCreatureChunk('Ogre', 'Ogre, big and rude. HP 59, AC 11.');
+    const ogreArt = await getOrCreateMobArtifact(campaignId, ogre, 'Ogre');
+    // Gallery art with NO cover: the battle token (coverImageId alone) shows
+    // initials, while the batch's skip-if-imaged predicate counts the kind
+    // imaged. The count says exactly that — both buckets, no invented art.
+    const gallery = await createImage({
+      campaignId,
+      blob: blobOf('gallery-only'),
+      mimeType: 'image/png',
+      width: 10,
+      height: 10,
+      source: 'uploaded',
+    });
+    await updateArtifact(ogreArt, { imageIds: [gallery.id], coverImageId: null });
+    const encounter = await addEncounter([
+      { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre, mobArtifactId: ogreArt } },
+    ]);
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+    const plan = await planMobPortraitBatch(encounter, campaignId);
+    expect(plan).toEqual({
+      missing: [],
+      imaged: ['Ogre'],
+      artWithoutCover: ['Ogre'],
+      sharedRows: 0,
+      creates: 0,
+      sharedPortraitNames: ['Ogre'],
+      unreadableCitations: [],
+    });
+    expect((await getAnyArtifact(ogreArt))?.coverImageId).toBeNull();
+    // The count matches what the batch does (skip-if-imaged is unchanged) —
+    // agreement is the point: the surface never promises this kind's fill.
+    const result = await enqueueMobPortraits(encounter, campaignId);
+    expect(result).toEqual({ enqueued: 0, alreadyImaged: ['Ogre'] });
+    expect((await getAnyArtifact(ogreArt))?.coverImageId).toBeNull();
+  });
+
+  it('names an unreadable citation instead of quietly calling it flavored, and still never blocks the fill', async () => {
+    const ogre = await seedCreatureChunk('Ogre', 'Ogre, big and rude. HP 59, AC 11.');
+    const ogreArt = await getOrCreateMobArtifact(campaignId, ogre, 'Ogre');
+    await attachUploadedCover(ogreArt, campaignId);
+    const encounter = await addEncounter([
+      { name: 'Ogre', count: 1, source: { type: 'rulebook', chunkId: ogre, mobArtifactId: ogreArt } },
+    ]);
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+    const { db } = await import('@/db/db');
+    await db.chunks.delete(ogre);
+
+    const plan = await planMobPortraitBatch(encounter, campaignId);
+    expect(plan.unreadableCitations).toEqual(['Ogre']);
+    expect(plan.sharedPortraitNames).toEqual([]);
+    expect(plan.imaged).toEqual(['Ogre']);
+    // Replacing fails loud with the cover kept (unchanged behavior) — the
+    // count reports it instead of hiding it, and the additive path stands.
+    await expect(regenerateMobPortraits(encounter, campaignId)).rejects.toThrow(
+      /no longer exists — kept the existing cover/,
+    );
+  });
+
+  it('creates nothing while counting: the fill is what creates the artifacts', async () => {
+    const kobold = await seedCreatureChunk('Kobold', 'Kobold, yappy. HP 5, AC 12.');
+    const encounter = await addEncounter([
+      { name: 'Kobold', count: 1, source: { type: 'rulebook', chunkId: kobold } },
+      { name: 'Gloom Ooze', count: 1, source: { type: 'none' } },
+    ]);
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+
+    const before = (await listArtifactsByCampaign(campaignId)).length;
+    const plan = await planMobPortraitBatch(encounter, campaignId);
+    expect(plan.missing).toEqual(['Kobold', 'Gloom Ooze']);
+    expect(plan.imaged).toEqual([]);
+    expect(plan.creates).toBe(2);
+    expect((await listArtifactsByCampaign(campaignId)).length).toBe(before);
+
+    const rulebook = await enqueueMobPortraits(encounter, campaignId);
+    expect(rulebook).toEqual({ enqueued: 1, alreadyImaged: [] });
+    const invented = await enqueueInventedCreaturePortraits(encounter, campaignId);
+    expect(invented).toEqual({ created: 1, enqueued: 1, alreadyImaged: [] });
+    expect(rulebook.enqueued + invented.enqueued).toBe(plan.missing.length);
   });
 });
