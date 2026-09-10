@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { memo, useMemo } from 'react';
 import type { JSX, ReactNode } from 'react';
 import Markdown, { defaultUrlTransform } from 'react-markdown';
 
@@ -14,6 +14,14 @@ import { cn } from '@/lib/utils';
  * and the peek modal. Resolved `[[links]]` render as kind-colored chips (with
  * a cover micro-thumb when present), unresolved ones as dashed muted chips,
  * ambiguous ones with a ⚠ tooltip listing the candidates.
+ *
+ * MEMOIZED on its props, and the reader passes STABLE ones (a part's `value`,
+ * the `artifacts` pool and the callbacks do not change per token or per page
+ * state change): a markdown tree is rebuilt only when its OWN text or link
+ * pool changed. Measured — the markdown parse is the expensive half of a
+ * reader render, and an unmemoized renderer re-parsed the whole document
+ * whenever an ancestor re-rendered for any reason. `highlight` is an object
+ * prop, so the canvas preview (a fresh range per render) behaves as before.
  */
 
 export interface WikiMarkdownProps {
@@ -52,7 +60,7 @@ const KIND_CHIP_CLASSES: Readonly<Record<ArtifactKind, string>> = {
   plotarc: 'border-violet-500/50 bg-violet-500/10 text-violet-800 dark:text-violet-200',
 };
 
-export function WikiMarkdown({
+export const WikiMarkdown = memo(function WikiMarkdown({
   value,
   artifacts,
   moduleId,
@@ -130,7 +138,7 @@ export function WikiMarkdown({
       </Markdown>
     </div>
   );
-}
+});
 
 /** Keeps relative `#wiki:` hrefs; everything else goes through the default. */
 function wikiUrlTransform(url: string): string {

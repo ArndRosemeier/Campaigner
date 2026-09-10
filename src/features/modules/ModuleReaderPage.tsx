@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { JSX } from 'react';
 import { Link, useLocation, useNavigate, useParams } from 'react-router-dom';
 import {
@@ -48,6 +48,7 @@ import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
 import { SpineCheckpoint } from '@/features/modules/spine-checkpoint';
 import { StubPopover, type StubPopoverState } from '@/features/modules/stub-popover';
+import { streamTails, useStreamTail } from '@/features/modules/streamTails';
 import { sentenceAround, surroundingParagraphs } from '@/lib/wikilinks';
 import {
   cancelModuleGen,
@@ -66,8 +67,6 @@ import { cn } from '@/lib/utils';
  * Sticky mini-ToC on the left, entity panel on the right, per-part ✎ editing
  * (save on blur), wiki-link chips everywhere through the shared WikiMarkdown.
  */
-
-const TOKEN_TAIL_CHARS = 800;
 
 export function ModuleReaderPage(): JSX.Element {
   const { campaignId = '', moduleId = '' } = useParams<{ campaignId: string; moduleId: string }>();
@@ -93,59 +92,68 @@ export function ModuleReaderPage(): JSX.Element {
   const [rewriteInstruction, setRewriteInstruction] = useState('');
   const [editPartIndex, setEditPartIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
-  const [tails, setTails] = useState<{
-    spine?: string | undefined;
-    spineThinking?: string | undefined;
-    parts: Record<number, string>;
-    partsThinking: Record<number, string>;
-  }>({ parts: {}, partsThinking: {} });
 
-  // Streaming tails (in-memory emitter → never persisted). Reasoning deltas
-  // ("the model is thinking") stream dimmed for illustration only and are
-  // cleared once the actual content starts arriving.
+  // Streaming tails (in-memory emitter → never persisted) live in an EXTERNAL
+  // store, not page state: a token tick must re-render ONLY the card that is
+  // streaming (features/modules/streamTails + `StreamingTail`). As page state
+  // it re-rendered this whole page per delta, re-parsing every part's
+  // markdown — the measured cause of the slow, jumpy scroll during
+  // generation. This effect owns the store's lifetime for the mounted module:
+  // it is emptied on unmount (a later mount must never show the previous
+  // visit's tails).
   useEffect(() => {
-    setTails({ parts: {}, partsThinking: {} });
-    return moduleGenEvents.on((event) => {
-      if (event.moduleId !== moduleId) return;
-      if (event.kind === 'spine-token') {
-        setTails((previous) => ({
-          ...previous,
-          spine: `${previous.spine ?? ''}${event.delta}`.slice(-TOKEN_TAIL_CHARS),
-          spineThinking: '',
-        }));
-      } else if (event.kind === 'spine-thinking') {
-        setTails((previous) => ({
-          ...previous,
-          spineThinking: `${previous.spineThinking ?? ''}${event.delta}`.slice(
-            -TOKEN_TAIL_CHARS,
-          ),
-        }));
-      } else if (event.kind === 'part-token') {
-        setTails((previous) => ({
-          ...previous,
-          parts: {
-            ...previous.parts,
-            [event.planIndex]: `${previous.parts[event.planIndex] ?? ''}${event.delta}`.slice(
-              -TOKEN_TAIL_CHARS,
-            ),
-          },
-          partsThinking: { ...previous.partsThinking, [event.planIndex]: '' },
-        }));
-      } else if (event.kind === 'part-thinking') {
-        setTails((previous) => ({
-          ...previous,
-          partsThinking: {
-            ...previous.partsThinking,
-            [event.planIndex]: `${previous.partsThinking[event.planIndex] ?? ''}${
-              event.delta
-            }`.slice(-TOKEN_TAIL_CHARS),
-          },
-        }));
-      } else {
-        setTails({ parts: {}, partsThinking: {} });
-      }
-    });
+    streamTails.reset(moduleId);
+    return () => {
+      streamTails.reset(moduleId);
+    };
   }, [moduleId]);
+
+  // Every hook runs before the loading/missing guards below (Rules of Hooks:
+  // a hook can never sit behind an early return).
+  //
+  // ONE array per artifact arrival: a fresh concat every render is a fresh
+  // prop identity for every memoized body in the document, which would
+  // re-parse all of them for a page state change that has nothing to do with
+  // them.
+  const readerArtifacts: readonly AnyArtifact[] = useMemo(
+    () => [...(artifacts ?? []), ...(globalArtifacts ?? [])],
+    [artifacts, globalArtifacts],
+  );
+  // Stable identities for the props of the memoized bodies: any state change
+  // in this page (a stub click, an edit-draft keystroke, a streaming tick)
+  // must not hand a part body a fresh prop and re-parse its markdown.
+  // `saveEditPart` calls the CURRENT save closure through a ref, so its
+  // identity is stable while its behavior is always that of this render.
+  const openArtifact = useCallback((artifact: AnyArtifact) => {
+    setPeekId(artifact.id);
+  }, []);
+  const openStub = useCallback((name: string, anchor: { x: number; y: number }) => {
+    setStub({ name, ...anchor });
+  }, []);
+  const cancelEditPart = useCallback(() => {
+    setEditPartIndex(null);
+  }, []);
+  const changeEditDraft = useCallback((value: string) => {
+    setEditDraft(value);
+  }, []);
+  const saveEditRef = useRef<() => void>(() => undefined);
+  const saveEditPart = useCallback(() => {
+    saveEditRef.current();
+  }, []);
+  const retryPart = useCallback(
+    (planIndex: number) => {
+      void (async () => {
+        try {
+          const camp = await getCampaign(campaignId);
+          if (camp === undefined) throw new Error('Campaign no longer exists');
+          await rewritePart(moduleId, camp, planIndex);
+        } catch (error) {
+          toastError('Could not retry the part', error);
+        }
+      })();
+    },
+    [campaignId, moduleId],
+  );
 
   // `#part-<index>` deep links (quick-find "select scrolls the reader").
   useEffect(() => {
@@ -227,7 +235,6 @@ export function ModuleReaderPage(): JSX.Element {
 
   const peekArtifact =
     peekId !== null ? artifacts.find((artifact) => artifact.id === peekId) : undefined;
-  const readerArtifacts: readonly AnyArtifact[] = [...artifacts, ...globalArtifacts];
 
   function startEditPart(part: ModulePart): void {
     setEditPartIndex(part.planIndex);
@@ -245,11 +252,9 @@ export function ModuleReaderPage(): JSX.Element {
       toastError('Could not save the part', error);
     }
   }
-
-  /** Discards the edit draft — the module row is untouched, no `edited` flag. */
-  function cancelEditPart(): void {
-    setEditPartIndex(null);
-  }
+  saveEditRef.current = () => {
+    void savePartEdit();
+  };
 
   function requestRewrite(planIndex: number): void {
     setRewriteInstruction('');
@@ -279,6 +284,10 @@ export function ModuleReaderPage(): JSX.Element {
 
   return (
     <div className="flex h-full min-h-0" data-testid="module-reader">
+      {/* The ONE reader subscription to the generator's token emitter: it
+          publishes each delta into `streamTails` and renders nothing, so a
+          token tick re-renders a streaming card and never this page. */}
+      <ModuleGenTailsBridge moduleId={moduleId} />
       {/* Mini-ToC */}
       {tocOpen ? (
         <nav
@@ -467,11 +476,7 @@ export function ModuleReaderPage(): JSX.Element {
 
           {module.spine === null ? (
             busy ? (
-              <StreamingCard
-                label="Drafting the spine…"
-                tail={tails.spine ?? ''}
-                thinkingTail={tails.spineThinking ?? ''}
-              />
+              <StreamingTail label="Drafting the spine…" moduleId={module.id} planIndex={null} />
             ) : module.status === 'failed' ? (
               // A failed first spine is actionable, not a dead end: the
               // generator recorded the error on the row (AGENTS rule 2) and
@@ -517,12 +522,8 @@ export function ModuleReaderPage(): JSX.Element {
                   premise={module.spine.premise}
                   artifacts={readerArtifacts}
                   moduleId={module.id}
-                  onOpenArtifact={(artifact) => {
-                    setPeekId(artifact.id);
-                  }}
-                  onStub={(name, anchor) => {
-                    setStub({ name, ...anchor });
-                  }}
+                  onOpenArtifact={openArtifact}
+                  onStub={openStub}
                 />
               </section>
               <SpineCheckpoint
@@ -579,12 +580,8 @@ export function ModuleReaderPage(): JSX.Element {
                   premise={module.spine.premise}
                   artifacts={readerArtifacts}
                   moduleId={module.id}
-                  onOpenArtifact={(artifact) => {
-                    setPeekId(artifact.id);
-                  }}
-                  onStub={(name, anchor) => {
-                    setStub({ name, ...anchor });
-                  }}
+                  onOpenArtifact={openArtifact}
+                  onStub={openStub}
                 />
               </section>
 
@@ -608,28 +605,19 @@ export function ModuleReaderPage(): JSX.Element {
                     </div>
                     <PartBody
                       part={part}
+                      planIndex={index}
                       planTitle={plan.title}
                       artifacts={readerArtifacts}
                       moduleId={module.id}
-                      tail={tails.parts[index] ?? ''}
-                      thinkingTail={tails.partsThinking[index] ?? ''}
                       editing={editPartIndex === index}
                       editDraft={editDraft}
-                      onEditDraftChange={setEditDraft}
-                      onEditSave={() => void savePartEdit()}
+                      onEditDraftChange={changeEditDraft}
+                      onEditSave={saveEditPart}
                       onEditCancel={cancelEditPart}
-                      onOpenArtifact={(artifact) => {
-                        setPeekId(artifact.id);
-                      }}
-                      onStub={(name, anchor) => {
-                        setStub({ name, ...anchor });
-                      }}
-                      onRetry={() => {
-                        void rewritePart(moduleId, campaign, index);
-                      }}
-                      onRewrite={() => {
-                        requestRewrite(index);
-                      }}
+                      onOpenArtifact={openArtifact}
+                      onStub={openStub}
+                      onRetry={retryPart}
+                      onRewrite={requestRewrite}
                     />
                   </section>
                 );
@@ -748,6 +736,25 @@ export function ModuleReaderPage(): JSX.Element {
 
 // --- Pieces ------------------------------------------------------------------
 
+/**
+ * The ONE subscription that moves generator deltas into the tail store. It
+ * renders NOTHING (null) and never subscribes to the store itself: this
+ * component must not re-render per token, or the isolation it exists for is
+ * lost one level up. Other modules' events are ignored — a reader mounts one
+ * module.
+ */
+function ModuleGenTailsBridge({ moduleId }: { moduleId: Id }): null {
+  useEffect(
+    () =>
+      moduleGenEvents.on((event) => {
+        if (event.moduleId !== moduleId) return;
+        streamTails.apply(event);
+      }),
+    [moduleId],
+  );
+  return null;
+}
+
 function MissingModule({ message, campaignId }: { message: string; campaignId: string }): JSX.Element {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
@@ -818,7 +825,10 @@ function ModuleTitleInput({ module }: { module: Module }): JSX.Element {
   );
 }
 
-function IntroBlock({
+/** The premise's markdown tree — memoized on its real inputs (`premise`,
+ * `artifacts`, `moduleId` and the two stable callbacks), so a page state
+ * change does not re-parse the intro either. */
+const IntroBlock = memo(function IntroBlock({
   premise,
   artifacts,
   moduleId,
@@ -845,7 +855,7 @@ function IntroBlock({
       />
     </div>
   );
-}
+});
 
 function PartActions({
   part,
@@ -877,13 +887,40 @@ function PartActions({
   );
 }
 
-function PartBody({
+/**
+ * The streaming stream itself, in its OWN component: this is the only reader
+ * subscriber to `moduleGenEvents` (through `streamTails`), so a token tick
+ * re-renders this card and nothing else. `planIndex` is null for the spine.
+ * Every prop is stable for the life of the stream, so a tick that belongs to
+ * another part never touches this card.
+ */
+const StreamingTail = memo(function StreamingTail({
+  label,
+  moduleId,
+  planIndex,
+}: {
+  label: string;
+  moduleId: Id;
+  planIndex: number | null;
+}): JSX.Element {
+  const { tail, thinkingTail } = useStreamTail(moduleId, planIndex);
+  return <StreamingCard label={label} tail={tail} thinkingTail={thinkingTail} />;
+});
+
+/**
+ * ONE part's body, memoized on its real inputs. `part`, `artifacts` and every
+ * callback are stable across a page re-render, so a body re-renders only when
+ * its own data changed — never because a sibling streamed a token or the page
+ * re-rendered for an unrelated state change. The streaming tail is
+ * deliberately NOT a prop: it comes from the store inside `StreamingTail`, so
+ * a token is outside this component's inputs entirely.
+ */
+const PartBody = memo(function PartBody({
   part,
+  planIndex,
   planTitle,
   artifacts,
   moduleId,
-  tail,
-  thinkingTail,
   editing,
   editDraft,
   onEditDraftChange,
@@ -895,11 +932,10 @@ function PartBody({
   onRewrite,
 }: {
   part: ModulePart | undefined;
+  planIndex: number;
   planTitle: string;
   artifacts: readonly AnyArtifact[];
   moduleId: Id;
-  tail: string;
-  thinkingTail: string;
   editing: boolean;
   editDraft: string;
   onEditDraftChange: (value: string) => void;
@@ -907,8 +943,8 @@ function PartBody({
   onEditCancel: () => void;
   onOpenArtifact: (artifact: AnyArtifact) => void;
   onStub: (name: string, anchor: { x: number; y: number }) => void;
-  onRetry: () => void;
-  onRewrite: () => void;
+  onRetry: (planIndex: number) => void;
+  onRewrite: (planIndex: number) => void;
 }): JSX.Element {
   if (editing) {
     return (
@@ -932,13 +968,7 @@ function PartBody({
     );
   }
   if (part.status === 'generating') {
-    return (
-      <StreamingCard
-        label={`Writing “${planTitle}”…`}
-        tail={tail}
-        thinkingTail={thinkingTail}
-      />
-    );
+    return <StreamingTail label={`Writing “${planTitle}”…`} moduleId={moduleId} planIndex={planIndex} />;
   }
   if (part.status === 'failed') {
     return (
@@ -953,11 +983,11 @@ function PartBody({
         </p>
         <p className="text-sm text-muted-foreground">{part.errorMessage}</p>
         <div className="flex gap-2">
-          <Button size="sm" variant="outline" onClick={onRetry}>
+          <Button variant="outline" size="sm" onClick={() => { onRetry(planIndex); }}>
             <RotateCcwIcon aria-hidden data-icon="inline-start" />
             Retry
           </Button>
-          <Button size="sm" variant="ghost" onClick={onRewrite}>
+          <Button variant="ghost" size="sm" onClick={() => { onRewrite(planIndex); }}>
             Retry with instruction…
           </Button>
         </div>
@@ -975,7 +1005,7 @@ function PartBody({
       />
     </div>
   );
-}
+});
 
 function StreamingCard({
   label,
