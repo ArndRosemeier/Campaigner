@@ -134,8 +134,12 @@ afterEach(() => {
 });
 
 describe('the built-in styles', () => {
-  it('ships exactly Classic and Story, both immutable and valid', () => {
-    expect(BUILTIN_PROMPT_STYLES.map((style) => style.id)).toEqual(['classic', 'story']);
+  it('ships exactly Classic, Story and Freestyle, all immutable and valid', () => {
+    expect(BUILTIN_PROMPT_STYLES.map((style) => style.id)).toEqual([
+      'classic',
+      'story',
+      'freestyle',
+    ]);
     for (const style of BUILTIN_PROMPT_STYLES) {
       expect(style.origin).toBe('builtin');
       expect(validatePromptStyleTemplate(style.templateText)).toEqual([]);

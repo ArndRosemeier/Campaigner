@@ -6,8 +6,8 @@ import {
 } from '@/domain/promptStyle';
 
 /**
- * The CONTRACT layer and the two built-in styles (owner-directed, docs/17 row
- * 86).
+ * The CONTRACT layer and the built-in styles (owner-directed, docs/17 rows 86
+ * and 87).
  *
  * The prompt is two layers:
  *
@@ -25,7 +25,8 @@ import {
  * parts prompts are byte-identical to what the app sent before this feature,
  * pinned by `tests/llm/promptStyles-classic-identity.test.ts` against fixtures
  * captured from the pre-refactor builders. `story` is the narrative shape the
- * owner asked for.
+ * owner asked for, and `freestyle` is the shape-free experiment he asked for
+ * next: the setting, the technology and a goal, and no structure on top.
  */
 
 /** The JSON reply contract the spine callback parses (contract slot). */
@@ -256,6 +257,118 @@ function classicPartsSection(): string {
 }
 
 /**
+ * The freestyle PARTS section (owner request, docs/17 row 87): the SETTING, the
+ * TECHNOLOGY and a GOAL — and NO shape at all.
+ *
+ * The owner asked to experiment with a style that prescribes nothing on top of
+ * those three things: *"i would like you to add a 'Freestyle' option where just
+ * the setting and the technology is explained and the goal to make this a
+ * noteworthy and fun module to play, no actual structure given on top of that.
+ * I want to experiment with that. All artefact types and the encounter floor
+ * still need to be explained."* So there is deliberately NO field list, NO
+ * beat-heading template and NONE of the craft-discipline bullets the other two
+ * built-ins carry — no "two visible approaches", no "end the part with two
+ * threads", no "every conflict ends with a cost": those are Classic's and
+ * Story's creative prescriptions, and seeing what the model does without them
+ * is the point of this style.
+ *
+ * What it does carry, and why neither half is creative preference:
+ *
+ * - the SETTING: every context placeholder the other built-ins use (campaign,
+ *   premise, themes, the all-parts synopses, this part's heading / synopsis /
+ *   end condition, the previous part's markdown, rule excerpts, the module
+ *   glossary, the campaign index, prior modules, a one-off additional
+ *   instruction). A part prompt without them writes a different module than the
+ *   one the planner approved.
+ * - the TECHNOLOGY: the text is what a GM runs a table from; every proper noun
+ *   written as a `[[wiki-link]]` becomes a real artifact the app builds out;
+ *   the six artifact kinds and what the app builds per kind; and the encounter
+ *   floor, whose NUMBERS arrive through `{{contract.floor}}` and are never
+ *   restated here (a style that repeated the numbers could disagree with the
+ *   gate that counts them).
+ * - the GOAL: a noteworthy and fun module to play.
+ *
+ * WHERE THE FORM IS STATED, and what that does NOT change. Classic and Story
+ * carry "name each scene/beat with a heading that carries its own [[link]]" as a
+ * FORMAT requirement; Freestyle states the same underlying app behavior as
+ * TECHNOLOGY instead — the app builds an artifact from every linked name, and it
+ * counts a part's encounters from the linked names whose recorded entity kind is
+ * `encounter` (`encounterNamesIn` / `countModuleEncounters`), so a fight becomes
+ * countable by being named, linked and declared with that kind — and then leaves
+ * the form to the model. That boundary (a fight written only inside a sentence,
+ * never named or linked, is invisible to the count) is PRE-EXISTING for every
+ * style, not something this one introduces, and it is what the contract's own
+ * link rules already carry. The encounter floor itself is IDENTICAL for all
+ * three styles: the same `{{contract.floor}}` clauses, verbatim, with the
+ * module's own numbers; nothing here weakens it, and no claim is made that a
+ * freestyle part complies with it differently.
+ *
+ * The SPINE section is Classic's, verbatim — a judgement call, reported and the
+ * owner's to veto (docs/08 §Editable prompt styles, docs/17 row 87): the
+ * planner's reply is a JSON contract (`partPlan`), its instruction is already
+ * conflict-first rather than formulaic, and the plan is scaffolding the owner
+ * does not read, while the part text is what he is experimenting with.
+ */
+function freestylePartsSection(): string {
+  return [
+    '{{campaign}}',
+    '',
+    '{{modulePremise}}',
+    '',
+    '{{themes}}',
+    '',
+    '{{allParts}}',
+    '',
+    '{{partHeading}}',
+    '',
+    '{{partSynopsis}}',
+    '',
+    '{{partEndCondition}}',
+    '',
+    '{{previousPart}}',
+    '',
+    '{{ruleExcerpts}}',
+    '',
+    '{{glossary}}',
+    '',
+    '{{campaignIndex}}',
+    '',
+    '{{priorModules}}',
+    '',
+    'Write this part of the module.',
+    '{{contract.replyFormat}}',
+    '',
+    'What the app does with your text, so you know what you are writing: this is the module a GM runs a table from. Every proper noun you write as a [[wiki-link]] becomes a real artifact the app builds out — its own generated details, its own generated images, its own card in front of the GM. A name you never link stays prose the app can do nothing with, and one name linked in two spellings forks into two artifacts.',
+    '',
+    'The artifact kinds the app can build, and what each one gets:',
+    '- "npc" — a person or creature the party meets.',
+    '- "location" — a place.',
+    '- "event" — a non-combat scene the party plays through: a negotiation, a hazard, a puzzle, an investigation, a chase. An event gets an illustration and nothing else — no battle map, no monsters, no roster.',
+    '- "faction" — an organization or group.',
+    '- "encounter" — a FIGHT, and the app builds it as one: a battle map, a monster roster, and images (mob portraits) generated for it. Anything that is not a fight is an event and never an encounter, and a fight buried in an event gets no map, no monsters and no roster.',
+    '- "note" — anything else: items, rumors, mysteries, plot devices.',
+    '',
+    'Player characters are not yours to write — the players author them — and no player character is an entity this module declares. "plotarc" is not an entity kind the module declares either.',
+    '',
+    'Name and link what you create, fights included: the app builds an artifact from every linked name and counts your encounters from them, so a fight staged only in passing prose is invisible to the app. The module entities above are the names and kinds already recorded for this module — link those by their exact spellings, and reuse the campaign entities listed above instead of inventing a second name for something that already exists.',
+    '',
+    'Whenever this module carries an encounter floor, that floor is a hard requirement the app checks the finished part against: a fight is what satisfies it and anything that is not a fight cannot. Its numbers are stated in the requirement line here and are never yours to restate, round, soften or work around.',
+    '{{contract.floor}}',
+    '',
+    'The goal: make this a noteworthy and fun module to play. The setting and the technology above are what you have to work with; how the part is written is yours to decide — there is no prescribed shape, no field list and no beat template here.',
+    '',
+    'What the app needs from every module, whichever style writes it:',
+    '{{contract.gmAddress}}',
+    '{{contract.wikiLinks}}',
+    '{{contract.mechanics}}',
+    '{{contract.encounterCasting}}',
+    '{{contract.lengthTarget}}',
+    '',
+    '{{additionalInstruction}}',
+  ].join('\n');
+}
+
+/**
  * The story PARTS section (owner-directed): the part IS the story the GM plays,
  * told in the order it happens. The ten-field block is gone — the model chooses
  * each beat's shape, no two beats share a pattern, and length follows the
@@ -317,13 +430,17 @@ function storyPartsSection(): string {
 }
 
 /**
- * The built-in styles, immutable and shipped in code. Both are complete
- * templates: a user duplicates one (`basedOn`) and edits the copy.
+ * The built-in styles, immutable and shipped in code. Each is a complete
+ * template: a user duplicates one (`basedOn`) and edits the copy.
  *
- * The story style deliberately carries the CLASSIC spine section: the planner
- * prompt is already story-first (conflict first, stakes, no quotas) and its JSON
- * shape is an app contract, so the narrative rewrite the owner asked for lands
- * where the story is actually written — the part prompt.
+ * TWO of the three deliberately carry the CLASSIC spine section — the story
+ * style, because the planner prompt is already story-first (conflict first,
+ * stakes, no quotas) and its JSON shape is an app contract, so the narrative
+ * rewrite the owner asked for lands where the story is actually written (the
+ * part prompt); and the freestyle style, as a JUDGEMENT CALL the owner can veto
+ * (docs/17 row 87): the planner's reply is a JSON contract, its instruction is
+ * not formulaic, and the plan is scaffolding rather than the text the owner
+ * reads — freestyling the planner too is a follow-up he can ask for.
  */
 export const BUILTIN_PROMPT_STYLES: readonly PromptStyle[] = [
   {
@@ -341,6 +458,15 @@ export const BUILTIN_PROMPT_STYLES: readonly PromptStyle[] = [
     origin: 'builtin',
     version: 1,
     templateText: `${PROMPT_STYLE_SECTION_MARKERS.spine}\n${classicSpineSection()}\n\n${PROMPT_STYLE_SECTION_MARKERS.parts}\n${storyPartsSection()}\n`,
+    createdAt: 0,
+    updatedAt: 0,
+  },
+  {
+    id: 'freestyle',
+    name: 'Freestyle',
+    origin: 'builtin',
+    version: 1,
+    templateText: `${PROMPT_STYLE_SECTION_MARKERS.spine}\n${classicSpineSection()}\n\n${PROMPT_STYLE_SECTION_MARKERS.parts}\n${freestylePartsSection()}\n`,
     createdAt: 0,
     updatedAt: 0,
   },
