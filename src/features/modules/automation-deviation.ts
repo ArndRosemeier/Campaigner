@@ -1,4 +1,4 @@
-import type { AnyArtifact, Artifact, EntityKind, Id, Module, ModuleAutomationIntent } from '@/domain';
+import type { AnyArtifact, EntityKind, Id, Module, ModuleAutomationIntent } from '@/domain';
 import { moduleCreationPool } from '@/domain';
 import { unclassifiedModuleNames } from '@/llm/moduleGen';
 import {
@@ -174,7 +174,10 @@ export function deviationLines(deviation: AutomationDeviation): string[] {
  * Derives the deviation. `campaignArtifacts` is the CAMPAIGN's artifact list
  * (the same list `runModulePostGeneration` enumerates) — the module-creation
  * pool is applied here, in the one place, so no caller can hand this a different
- * pool than the sweep reads.
+ * pool than the sweep reads. Typed `AnyArtifact` because the entity panel
+ * receives the page's campaign pool (a shared-library row is filtered out by
+ * `moduleCreationPool` and can own nothing in this module either way); production
+ * callers pass campaign-owned rows.
  *
  * `target` is the OPTIONAL explicit automation target (docs/17 row 80). Omitted,
  * the deviation compares the live state against the module row's RECORDED
@@ -190,7 +193,7 @@ export function deviationLines(deviation: AutomationDeviation): string[] {
  */
 export function deriveAutomationDeviation(
   module: Module,
-  campaignArtifacts: readonly Artifact[],
+  campaignArtifacts: readonly AnyArtifact[],
   target?: ModuleAutomationIntent,
 ): AutomationDeviation {
   const intent = target ?? module.automationIntent;

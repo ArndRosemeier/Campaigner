@@ -110,7 +110,7 @@ function namesOfKind(module: Module, kind: EntityKind): string[] {
  */
 export function batchTargets(
   module: Module,
-  artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
+  artifacts: readonly AnyArtifact[],
   kind: EntityKind,
 ): string[] {
   return namesOfKind(module, kind).filter(
@@ -119,7 +119,7 @@ export function batchTargets(
 }
 
 /** Image targets: resolved entities of a configured kind without an image. */
-export function imageTargets(module: Module, artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>, kind: EntityKind): string[] {
+export function imageTargets(module: Module, artifacts: readonly AnyArtifact[], kind: EntityKind): string[] {
   return namesOfKind(module, kind).filter((name) => {
     const artifact = resolveWikiLink(name, artifacts, { moduleId: module.id }).artifact;
     if (artifact === undefined) return false;
@@ -130,7 +130,7 @@ export function imageTargets(module: Module, artifacts: Awaited<ReturnType<typeo
 /** Map targets: module-owned encounters without a generated layout + map. */
 export function encountersNeedingMaps(
   module: Module,
-  artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
+  artifacts: readonly AnyArtifact[],
 ): { id: Id; name: string }[] {
   return artifacts
     .filter(
@@ -154,7 +154,7 @@ export function encountersNeedingMaps(
  */
 export function encountersNeedingMobPortraits(
   module: Module,
-  artifacts: Awaited<ReturnType<typeof listArtifactsByCampaign>>,
+  artifacts: readonly AnyArtifact[],
 ): (AnyArtifact & { kind: 'encounter' })[] {
   return artifacts.filter(
     // listArtifactsByCampaign yields OWNED rows only (never global), so the
