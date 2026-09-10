@@ -92,6 +92,13 @@ used:
 4. Re-verify duty: whichever brief was written against an older HEAD
    re-verifies its findings at landing time.
 
+The **dispatcher is a writer for this purpose too**. An uncommitted edit of
+its own in the shared tree (rules or docs) makes a landing writer's `git
+pull --rebase` refuse mid-landing — real incident: a writer had to verify
+`behind=0` and push `HEAD:main` directly because the dispatcher's edit sat
+unstaged in `AGENTS.md`. Stage, commit and push dispatcher edits in ONE
+chained command, and never leave one uncommitted while a writer is gating.
+
 ## Subagent hygiene
 
 The session list holds in-flight work only — a short list is a correct
