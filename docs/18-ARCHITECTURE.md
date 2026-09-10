@@ -294,7 +294,11 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   entries exist (the two legacy `persona-run-ui`/`onboarding-wizard` ones
   were root-fixed and removed; `actDrained` is the standing cure, including
   under open Base UI dialogs whose transition rAF/unmount timers ride the
-  same queue — and a **destructive-confirm dialog is settled (its testid
+  same queue; **a DB write into a tree whose live queries are mounted
+  (`useModule` etc.) is drained, not awaited bare** — its live-query cascade
+  lands in whatever bare `await` follows, taking the open dialog's internals
+  with it (`canvas-module-actions`'s stale-confirmation test, docs/08 §Race
+  cures) — and a **destructive-confirm dialog is settled (its testid
   waited out of the document) before the test navigates or does raw store
   reads**, since confirming closes it and Base UI unmounts the popup on an
   exit timer whose teardown updates otherwise land outside act under
