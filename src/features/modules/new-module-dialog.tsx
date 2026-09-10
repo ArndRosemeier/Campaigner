@@ -186,14 +186,34 @@ function NewModuleDialogContent({
   // The dialog's own defaults for THIS open — the yardstick for "the user has
   // already changed something" before the prefill lands.
   const pristineRef = useRef<NewModuleDraft>(defaultNewModuleDraft(campaign.id));
-  // True once any value differs from those defaults: the arriving prefill is
-  // then SKIPPED for this open (the user's typing wins) instead of clobbering it.
+  // True once the user has edited anything: the arriving prefill is then
+  // SKIPPED for this open (the user's typing wins) instead of clobbering it.
+  //
+  // Armed SYNCHRONOUSLY by the interactions themselves (`markEdited`, called
+  // from every handler and toggle) and never by an effect. That is the whole
+  // guarantee: the prefill's decision is taken by an effect, so an edit whose
+  // flag is armed by ANOTHER effect can lose the race — React may apply the
+  // arriving prefill in the very commit that carries the user's keystrokes
+  // (measured: the seed ran first, wrote the stored draft over the field and
+  // left the rest of the typing appended to it, i.e. "A harbor bell rings
+  // underwater." came back as "harbor bell rings underwater."). A flag set by
+  // the interaction itself is already true whenever any effect runs.
   const touchedRef = useRef(false);
   const wasOpenRef = useRef(false);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // True only once a render has SEEN the seeded values: the debounced-save
   // effect must never write the pre-seed empty state over a stored draft.
   const seededSettledRef = useRef(false);
+
+  /**
+   * Marks the form as the USER's: from here on the stored draft is never applied
+   * again in this open, and the form's values are the ones that get saved. Call
+   * this synchronously from the interaction that changes a value — see
+   * `touchedRef` above for why an effect may not do it.
+   */
+  function markEdited(): void {
+    touchedRef.current = true;
+  }
 
   /**
    * Persists the draft NOW (validated at the settings boundary). A failure is
@@ -341,8 +361,13 @@ function NewModuleDialogContent({
     [flush, onOpenChange],
   );
 
-  /** Reset to the dialog's own defaults (prefill's escape hatch). */
+  /**
+   * Reset to the dialog's own defaults (prefill's escape hatch). The reset is a
+   * user edit like any other: it must latch, or an arriving snapshot of the
+   * draft just discarded would bring it straight back.
+   */
   function resetToDefaults(): void {
+    markEdited();
     seedDraft(null);
   }
 
@@ -376,6 +401,7 @@ function NewModuleDialogContent({
     write: (current: EncounterFloorGuardrail, value: number) => EncounterFloorGuardrail,
   ): (event: { target: { value: string } }) => void {
     return (event): void => {
+      markEdited();
       const parsed = Number.parseInt(event.target.value, 10);
       const value = Number.isNaN(parsed) ? min : Math.max(min, parsed);
       setEncounterFloorGuardrail((current) => write(current, value));
@@ -440,6 +466,7 @@ function NewModuleDialogContent({
               placeholder="e.g. 'smugglers' cove gone eldritch — the party raids a smuggling den that has dug into something older.'"
               value={concept}
               onChange={(event) => {
+                markEdited();
                 setConcept(event.target.value);
               }}
             />
@@ -450,14 +477,20 @@ function NewModuleDialogContent({
               id="module-level-min"
               label="Level from"
               value={levelMin}
-              onChange={setLevelMin}
+              onChange={(next) => {
+                markEdited();
+                setLevelMin(next);
+              }}
             />
             <LevelStepper
               id="module-level-max"
               label="Level to"
               value={Math.max(levelMax, levelMin)}
               min={levelMin}
-              onChange={setLevelMax}
+              onChange={(next) => {
+                markEdited();
+                setLevelMax(next);
+              }}
             />
           </div>
 
@@ -468,6 +501,7 @@ function NewModuleDialogContent({
               placeholder="e.g. grim, folk-horror, swashbuckling…"
               value={tone}
               onChange={(event) => {
+                markEdited();
                 setTone(event.target.value);
               }}
             />
@@ -485,6 +519,7 @@ function NewModuleDialogContent({
                   className="flex-1"
                   aria-pressed={sizeDial === size}
                   onClick={() => {
+                    markEdited();
                     setSizeDial(size);
                   }}
                 >
@@ -503,6 +538,7 @@ function NewModuleDialogContent({
               checked={includePriorModules}
               disabled={!hasPriorText}
               onCheckedChange={(checked) => {
+                markEdited();
                 setIncludePriorModules(checked);
               }}
             />
@@ -527,6 +563,7 @@ function NewModuleDialogContent({
               data-testid="auto-spine"
               checked={autoApproveSpine}
               onCheckedChange={(checked) => {
+                markEdited();
                 setAutoApproveSpine(checked);
               }}
             />
@@ -557,6 +594,7 @@ function NewModuleDialogContent({
                       data-testid={`auto-generate-${kind}`}
                       checked={autoGenerateKinds.includes(kind)}
                       onCheckedChange={() => {
+                        markEdited();
                         toggleKind(autoGenerateKinds, setAutoGenerateKinds, kind);
                       }}
                     />
@@ -567,6 +605,7 @@ function NewModuleDialogContent({
                       data-testid={`auto-image-${kind}`}
                       checked={autoImageKinds.includes(kind)}
                       onCheckedChange={() => {
+                        markEdited();
                         toggleKind(autoImageKinds, setAutoImageKinds, kind);
                       }}
                     />
@@ -580,6 +619,7 @@ function NewModuleDialogContent({
                 data-testid="auto-battlemaps"
                 checked={autoGenerateBattlemaps}
                 onCheckedChange={(checked) => {
+                  markEdited();
                   setAutoGenerateBattlemaps(checked);
                 }}
               />
@@ -599,6 +639,7 @@ function NewModuleDialogContent({
                 data-testid="auto-mob-images"
                 checked={autoGenerateMobImages}
                 onCheckedChange={(checked) => {
+                  markEdited();
                   setAutoGenerateMobImages(checked);
                 }}
               />
@@ -638,6 +679,7 @@ function NewModuleDialogContent({
                   data-testid="guardrail-floor-enabled"
                   checked={encounterFloorGuardrail.enabled}
                   onCheckedChange={(checked) => {
+                    markEdited();
                     setEncounterFloorGuardrail((current) => ({
                       perLevel: checked ? Math.max(1, current.perLevel) : 0,
                       enabled: checked,
@@ -679,6 +721,7 @@ function NewModuleDialogContent({
                 size="sm"
                 data-testid="guardrail-reset"
                 onClick={() => {
+                  markEdited();
                   setEncounterFloorGuardrail(defaultEncounterFloorGuardrail());
                 }}
               >

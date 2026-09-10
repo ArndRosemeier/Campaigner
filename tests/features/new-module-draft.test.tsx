@@ -1,7 +1,7 @@
 import 'fake-indexeddb/auto';
 
 import { Component, useState, type JSX, type ReactNode } from 'react';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,6 +14,7 @@ import {
 import { deleteCampaignWorkspace } from '@/db/maintenance';
 import { db } from '@/db/db';
 import { getSettings, readSettings, updateSettings } from '@/db/settingsRepo';
+import type * as SettingsRepo from '@/db/settingsRepo';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
 import {
   defaultEncounterFloorGuardrail,
@@ -37,6 +38,42 @@ import { actDrained, flushAsyncUpdates } from '../helpers/flush';
  */
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
+
+/**
+ * The stored-draft read can be HELD OPEN by a test (`holdSettingsRead`), so the
+ * prefill arrives while the user is already typing. That is the interleaving
+ * the full suite hits under load — the read's value lands in the same React
+ * commit as the keystrokes — and the one the "the user's typing always wins"
+ * guarantee below is about. Tests that do not arm it get the real read.
+ */
+let heldSettingsRead: { promise: Promise<void>; release: () => void } | null = null;
+
+function holdSettingsRead(): () => void {
+  let release!: () => void;
+  const promise = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  heldSettingsRead = { promise, release };
+  return () => {
+    heldSettingsRead = null;
+    release();
+  };
+}
+
+vi.mock('@/db/settingsRepo', async (importOriginal) => {
+  const actual = await importOriginal<typeof SettingsRepo>();
+  return {
+    ...actual,
+    // Unarmed (every test but the pin below): the real read, unwrapped — the
+    // same promise chain the app uses, so nothing else in this file shifts.
+    // Armed: this read is held open until the test releases it.
+    readSettings: () => {
+      const held = heldSettingsRead;
+      if (held === null) return actual.readSettings();
+      return held.promise.then(() => actual.readSettings());
+    },
+  };
+});
 
 // Creation must never start real LLM machinery here.
 vi.mock('@/llm/moduleGen', () => ({
@@ -111,6 +148,8 @@ async function reopenDialog(user: ReturnType<typeof userEvent.setup>): Promise<H
 }
 
 beforeEach(async () => {
+  heldSettingsRead?.release();
+  heldSettingsRead = null;
   await clearDatabase();
   vi.clearAllMocks();
   createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
@@ -265,6 +304,35 @@ describe('the draft round-trips through the settings row', () => {
     await user.type(within(dialog).getByLabelText('Concept'), 'ZZ');
 
     expect(within(dialog).getByLabelText<HTMLInputElement>('Concept').value).toMatch(/ZZ$/);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('keeps the typing that lands in the same commit as the arriving prefill', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const releaseSettings = holdSettingsRead();
+    const dialog = await openDialog(campaign);
+    const concept = within(dialog).getByLabelText<HTMLTextAreaElement>('Concept');
+
+    // The prefill's value and the user's first keystrokes in ONE React commit:
+    // what that commit renders already holds the typed text, so the prefill must
+    // not write over it. Measured on the old code (a probe with this very delay,
+    // 6/6 runs): the seed applied the stored (empty) draft in that commit, wiped
+    // the two characters, and the rest of the typing was appended to the wiped
+    // field — the assertion below received "harbor bell rings underwater.".
+    await act(async () => {
+      releaseSettings();
+      // Let the held read reach React's queue inside this act, so its value and
+      // the keystroke are applied together.
+      await new Promise((resolve) => {
+        setTimeout(resolve, 40);
+      });
+      fireEvent.input(concept, { target: { value: 'A ' } });
+    });
+    expect(concept).toHaveValue('A ');
+
+    await user.type(concept, 'harbor bell rings underwater.');
+    expect(concept).toHaveValue('A harbor bell rings underwater.');
     await flushAsyncUpdates();
   }, 30_000);
 
