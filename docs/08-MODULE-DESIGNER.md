@@ -999,6 +999,92 @@ has `autoApproveSpine`). A single-part rewrite NEVER triggers it. Semantics:
 - Failures are loud per job (toasts + failed runs in the Runs tab) and never
   stop the remaining automation; one `toastSuccess` summarizes what ran.
 
+### M4-B-3 — The two derived repair controls (owner requests, docs/17 rows 71/74)
+
+The canvas header carries two user-invoked controls that repair finished work:
+**Fix module problems** and **Resume automatic module creation**. Both are
+DERIVED — the page asks "is there something to do?" of the live row on every
+render — and both are additive or snapshot-protected rather than destructive.
+
+**The text/entity boundary (binding, owner's words).** *"Fix module problems"*
+is about the module TEXT, not entities: *"Entities are automated in other
+ways. So... when the text is fixed, entities can be regenerated just by the
+second part of my request."* Concretely:
+
+- the problem set the fix control acts on is the TEXT's own, derived from
+  detectors that already exist — the module's encounter floor per level band
+  (`assertEncounterFloor`'s own counter and guardrail) and the READER's
+  unresolved-link test (`resolveWikiLink` → the dashed "not detailed yet"
+  chip). No new runtime check is introduced, and no detector that judges prose
+  quality, pacing, fairness or story shape exists here (§M4-B-1 boundary);
+- only the FLOOR is repairable by rewriting text. An unresolved `[[Name]]` is
+  the reader's own way of saying "this entity is not detailed yet", which is
+  entity work: it is DETECTED and REPORTED (in the confirmation's own section,
+  with its remedy) and never rewritten. Fuzzy or heuristic name matching for a
+  phantom link is forbidden here — a variant of an existing name is the
+  normalization pass's job, judged by the model;
+- therefore the control APPEARS only when a rewrite can fix something. Being
+  driven by missing entities would make it entity work under a text label, and
+  it would open a dialog with nothing to rewrite. The entity half of any
+  shortfall has its own control below, plus the entity panel;
+- the rewrite itself rides the EXISTING repair seam — `generatePart` with the
+  floor repair's instruction and the escalated repair model — and is scoped to
+  the failing check: one attempt per part per invocation, no retry loop, no
+  "improve the prose" behaviour, no candidate slate, no cardinality demand.
+  A `snapshotModuleVersion` row is written BEFORE the attempt (the confirmation
+  says so; the snapshot precedes the ATTEMPT, so a failed attempt leaves an
+  identical-to-restore version rather than no version at all — no rewrite may
+  ever run without a prior recorded version). A still-short floor fails
+  LOUDLY with the floor's own message and leaves the module `failed`; a part
+  whose call threw has its pre-repair text restored byte-identically and is
+  reported, never silently patched. Because the floor counts LINKS whose
+  RECORDED kind is `encounter`, the repair runs the existing name-normalization
+  pass after a successful rewrite, or the number would not move.
+
+**The derived-deviation rule (binding).** *"Resume automatic module
+creation"* compares the module's RECORDED intent (`automationIntent`, written
+at creation, docs/17 row 71) with what actually exists, at render time: what
+the intent asked to generate (entities by kind, images by kind, battle maps,
+mob portraits) and does not have. NOTHING about the deviation is stored — no
+`deviates`, `hasProblems` or `needsWork` flag exists and none may be added,
+because a cached verdict goes stale the moment the owner fixes the text,
+deletes an artifact or images something by hand, which is exactly the state the
+button exists for. The targets are the SWEEP's own (`batchTargets`,
+`imageTargets`, `encountersNeedingMaps`, `encountersNeedingMobPortraits`) over
+the SWEEP's pool (the module-creation pool: the Party is invisible to module
+creation, docs/17 row 69), so the confirmation names exactly the work the
+sweep would do and can neither promise work it would skip nor hide work it
+would run. Names the text picked up with no recorded type are part of the
+deviation, because no batch can see them until they are classified; a closed
+`entityNamesNormalized` gate is part of it too, because it silently blocks
+every entity batch. A module created before the intent was recorded
+(`automationIntent: null`) stays INERT: intent is never inferred from a legacy
+row's automation fields, which describe what the engine did. A row whose
+automation fields have drifted from the recorded intent is refused LOUDLY
+rather than guessed at.
+
+**Resume is additive by construction.** The work is the existing
+post-generation sweep, whose every step already targets only what is missing
+(unresolved names, entities without images, encounters without maps, mobs
+without portraits): the resume never re-generates, re-details or overwrites an
+existing artifact or image, and it never touches the module's prose. Before the
+sweep it may run two EXISTING passes, each for a concrete reason — the
+incremental classification pass (names the text picked up later have no
+recorded kind), and the name-normalization pass when the gate is closed (a
+sweep called with the gate closed would generate nothing silently). If that
+pass still fails, the resume refuses loudly and runs NOTHING rather than
+half-running. It captures the stop epoch at entry and asks `stoppedSince`
+before each unit, so **Stop all** during a resume ends it where it is — a
+stopped orchestration must not start its next unit — and the sweep keeps its
+own entry capture for a stop landing mid-sweep. A resume with nothing missing
+is a no-op with no call, no write, no enqueue and no toast.
+
+**Neither control is a gate.** No runtime check, prompt clause, run state or
+validation path depends on either of them: they are repair surfaces over work
+that already exists, they cannot block a module, and the generation gates
+(the floor, the normalization gate) are exactly the ones that were there
+before. Their visibility rules are the derivations above, not stored state.
+
 ---
 
 ## Module board (v1 — whole module on a board with LLM refinement)
