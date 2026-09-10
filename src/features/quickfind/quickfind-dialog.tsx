@@ -5,6 +5,7 @@ import { BookOpenIcon, CompassIcon } from 'lucide-react';
 
 import type { AnyArtifact, Artifact, Id, Module, RuleChunk } from '@/domain';
 import type { GoToEntry } from '@/features/quickfind/go-to';
+import { matchModules, type ModuleHit } from '@/features/quickfind/moduleHits';
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { searchRules, type SearchHit } from '@/search';
 import { Button } from '@/components/ui/button';
@@ -68,38 +69,6 @@ function matchedAliasHint(
 }
 
 /** One module/part match ("selecting scrolls the reader"). */
-export interface ModuleHit {
-  module: Module;
-  /** Undefined = the module itself; else the part index. */
-  partIndex?: number | undefined;
-}
-
-/** Case-insensitive substring match over module title + part titles/bands. */
-export function matchModules(
-  query: string,
-  modules: readonly Module[],
-  limit = 8,
-): ModuleHit[] {
-  const text = query.trim().toLowerCase();
-  if (text === '') return [];
-  const hits: ModuleHit[] = [];
-  for (const module of modules) {
-    if (module.title.toLowerCase().includes(text) && hits.length < limit) {
-      hits.push({ module });
-    }
-    const plan = module.spine?.partPlan ?? [];
-    for (const [partIndex, part] of plan.entries()) {
-      if (hits.length >= limit) break;
-      const haystack =
-        `${part.title} ${part.levelBand} ${part.synopsis}`.toLowerCase();
-      if (haystack.includes(text)) {
-        hits.push({ module, partIndex });
-      }
-    }
-  }
-  return hits.slice(0, limit);
-}
-
 export interface QuickFindDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;

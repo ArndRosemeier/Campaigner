@@ -3,6 +3,7 @@ import { ChevronDownIcon, ChevronUpIcon, EyeIcon, FastForwardIcon, XIcon } from 
 
 import type { Battle, BattleToken, BattleTokenId } from '@/domain';
 import { activeInitiativeTokenId, initiativeTotal } from '@/domain/battle/initiative';
+import { moveInitiativeOrder } from '@/features/play/battle/initiativeOrder';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -12,6 +13,9 @@ import { cn } from '@/lib/utils';
  * commit per move — HTML5 DnD is dead on iOS Safari), and >>> next turn.
  * Player-safe by contract: it renders ONLY labels, totals, and the turn
  * arrow — no stats, no GM-only material.
+ *
+ * The one-step reorder itself (pure splice math) lives in the
+ * `initiativeOrder.ts` sibling.
  */
 
 export interface InitiativeSidebarProps {
@@ -47,26 +51,6 @@ export interface InitiativeSidebarProps {
    * covered set ONLY in GM view — player-safe rows never leak veil state.
    */
   veiledTokenIds?: ReadonlySet<BattleTokenId> | undefined;
-}
-
-/**
- * One-step reorder: the SAME splice-and-commit path the old drop handler
- * used (remove at `from`, insert at the clamped neighbor). Returns the new
- * order, or null when the token is not in the order (no commit then).
- */
-export function moveInitiativeOrder(
-  order: BattleTokenId[],
-  tokenId: BattleTokenId,
-  delta: -1 | 1,
-): BattleTokenId[] | null {
-  const from = order.indexOf(tokenId);
-  if (from < 0) return null;
-  const to = Math.max(0, Math.min(order.length - 1, from + delta));
-  if (to === from) return null;
-  const next = [...order];
-  next.splice(from, 1);
-  next.splice(to, 0, tokenId);
-  return next;
 }
 
 export function InitiativeSidebar({

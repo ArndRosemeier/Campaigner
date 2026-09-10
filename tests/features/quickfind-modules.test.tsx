@@ -21,7 +21,8 @@ import {
   type Id,
   type Module,
 } from '@/domain';
-import { QuickFindDialog, matchModules } from '@/features/quickfind/quickfind-dialog';
+import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
+import { matchModules } from '@/features/quickfind/moduleHits';
 import { quickFindGoToEntries } from '@/features/quickfind/go-to';
 import { clearDatabase } from '../db/helpers';
 

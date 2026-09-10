@@ -9,6 +9,11 @@ import { Switch } from '@/components/ui/switch';
 import type { AnyArtifact, Id } from '@/domain';
 import { MarkdownBody } from '@/features/campaign/components/markdown-body';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
+import {
+  findDraftMatches,
+  replaceAllDraftMatches,
+  replaceDraftMatch,
+} from '@/features/modules/textMatches';
 
 /**
  * Module part text editor (08-MODULE-DESIGNER M4-A): the find/replace toolbar
@@ -22,59 +27,11 @@ import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
  * Shift+Enter navigation, case-insensitive default) with one deliberate
  * difference: `ReaderSearch.findMatches` walks rendered DOM text via
  * TreeWalker, while this editor needs STRING offsets (textarea selection +
- * replacement), so `findDraftMatches` below is its string-offset counterpart
- * with the same non-overlapping loop semantics — not a second implementation
- * of a different behavior.
+ * replacement), so `findDraftMatches` (`textMatches.ts`, the shared sibling
+ * holding both paired find surfaces) is its string-offset counterpart with the
+ * same non-overlapping loop semantics — not a second implementation of a
+ * different behavior.
  */
-
-export interface DraftMatch {
-  start: number;
-  end: number;
-}
-
-/** String-offset matches of `needle` in `haystack`, in document order. */
-export function findDraftMatches(
-  haystack: string,
-  needle: string,
-  caseSensitive: boolean,
-): DraftMatch[] {
-  if (needle === '') return [];
-  const source = caseSensitive ? haystack : haystack.toLowerCase();
-  const query = caseSensitive ? needle : needle.toLowerCase();
-  const matches: DraftMatch[] = [];
-  let index = source.indexOf(query);
-  while (index !== -1) {
-    matches.push({ start: index, end: index + query.length });
-    index = source.indexOf(query, index + query.length);
-  }
-  return matches;
-}
-
-/** Splices `replacement` over one match (offsets from `findDraftMatches`). */
-export function replaceDraftMatch(value: string, match: DraftMatch, replacement: string): string {
-  return value.slice(0, match.start) + replacement + value.slice(match.end);
-}
-
-/**
- * Replaces every match back-to-front (so earlier offsets stay valid) and
- * reports how many were replaced. Empty needle is a no-op, never a wipe.
- */
-export function replaceAllDraftMatches(
-  value: string,
-  needle: string,
-  replacement: string,
-  caseSensitive: boolean,
-): { text: string; count: number } {
-  const matches = findDraftMatches(value, needle, caseSensitive);
-  if (matches.length === 0) return { text: value, count: 0 };
-  let text = value;
-  for (let index = matches.length - 1; index >= 0; index -= 1) {
-    const match = matches[index];
-    if (match === undefined) throw new Error('replaceAllDraftMatches: match index out of range');
-    text = replaceDraftMatch(text, match, replacement);
-  }
-  return { text, count: matches.length };
-}
 
 /** Moves the textarea selection to [start, end) so the match is visible. */
 function focusTextareaRange(container: HTMLElement | null, start: number, end: number): void {

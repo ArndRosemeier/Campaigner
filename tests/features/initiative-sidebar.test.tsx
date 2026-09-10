@@ -4,10 +4,8 @@ import userEvent from '@testing-library/user-event';
 
 import type { Battle } from '@/domain';
 import { battleSchema, newId } from '@/domain';
-import {
-  InitiativeSidebar,
-  moveInitiativeOrder,
-} from '@/features/play/battle/initiative-sidebar';
+import { InitiativeSidebar } from '@/features/play/battle/initiative-sidebar';
+import { moveInitiativeOrder } from '@/features/play/battle/initiativeOrder';
 
 /**
  * iPad batch A: the HTML5-DnD initiative reorder is dead on iOS Safari, so

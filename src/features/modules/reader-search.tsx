@@ -4,6 +4,7 @@ import { ChevronDownIcon, ChevronUpIcon, SearchIcon, XIcon } from 'lucide-react'
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { findMatches, type TextMatch } from '@/features/modules/textMatches';
 
 /**
  * Reader search (08-MODULE-DESIGNER M4-C, module-mode-as-play): a find box on
@@ -12,34 +13,10 @@ import { Input } from '@/components/ui/input';
  * scrolling the match into view and flashing a highlight on its containing
  * block. The highlight is a transient class on an existing element — React
  * owns the tree, so no nodes are added or removed here.
+ *
+ * Both find surfaces (this DOM walker and the part-draft editor's string-offset
+ * matcher) live in the shared `textMatches.ts` sibling.
  */
-
-interface TextMatch {
-  node: Text;
-  offset: number;
-}
-
-/** Collects the matches of `needle` (case-insensitive) in document order.
- * Exported for reuse by DOM-based find surfaces; the part-draft editor
- * (`part-text-editor.tsx`) carries the string-offset counterpart
- * (`findDraftMatches`, same non-overlapping loop semantics) because textarea
- * content is not walkable DOM text. */
-export function findMatches(container: HTMLElement, needle: string): TextMatch[] {
-  const matches: TextMatch[] = [];
-  const lower = needle.toLowerCase();
-  const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT);
-  let current = walker.nextNode();
-  while (current !== null) {
-    const text = current.nodeValue?.toLowerCase() ?? '';
-    let index = text.indexOf(lower);
-    while (index !== -1) {
-      matches.push({ node: current as Text, offset: index });
-      index = text.indexOf(lower, index + lower.length);
-    }
-    current = walker.nextNode();
-  }
-  return matches;
-}
 
 /** The block-level element to flash-highlight for a match. */
 function hitBlock(match: TextMatch, length: number): HTMLElement | undefined {

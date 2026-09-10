@@ -4,7 +4,7 @@ import {
   findDraftMatches,
   replaceAllDraftMatches,
   replaceDraftMatch,
-} from '@/features/modules/part-text-editor';
+} from '@/features/modules/textMatches';
 
 /**
  * Part text editor pure helpers (08-MODULE-DESIGNER M4-A): string-offset
