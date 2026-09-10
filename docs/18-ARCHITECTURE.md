@@ -507,7 +507,32 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   refusal copy into `llm/runEngine` is the seam `llm/moduleGen` already takes
   into `features/modules/post-generation` — a deliberate seam, not layer-map
   drift (both are enumerated in §5). Never a second interpretation of
-  "creature row" (ledger 81, ledger 84).
+  "creature row" (ledger 81, ledger 84). **The HAND door is shut the same
+  way** (ledger 85): the artifact editor renders the authored inputs (name,
+  aliases, summary, body, appearance, personality) READ-ONLY on such a row —
+  per-field `title` plus an in-place notice, both from this module's ONE copy
+  source — and its save funnel writes through
+  `creature-row-guard.updateArtifactRefusingCreatureRowAuthored`, which throws
+  a `CreatureRowAuthoredWriteError` (carrying the untouched row) BEFORE the
+  repo write: autosave, form inputs, blur flush and unmount flush are covered
+  by construction, the row stays byte-identical with NO revision, and the
+  editor toasts it and puts the draft back on the row's real values. The
+  boundary lives in `features/campaign` and NOT in `db/artifactRepo` because
+  that layer may host neither the copy nor the predicate — a DB-layer check
+  would need an upward `db/**` → `features/**` import AND a second reading of
+  the `monsterChunkId` marker (§5; ledger 81). Repair vs. authoring is decided
+  INTRINSICALLY, never by a caller flag: `creatureRowAuthoredWriteFields`
+  authorizes a text change only when the next value is BLANK (the row's birth
+  state), so `clearCreatureRowAuthoredContent` writes through the SAME
+  boundary while any content write is refused; images, cover, tags, links and
+  scope pass through untouched (a cover change in the editor's Images section
+  still saves), and a revision RESTORE still works, which is how the repair is
+  undone. The dead end is replaced by an exit: with module context
+  (`artifact.moduleId !== null`) the editor runs the existing per-entity chain
+  (`features/modules/entity-detail.generateSingleEntity`, the 1-target batch —
+  never a new creation seam) to create the module's OWN npc of that name and
+  navigates to it; with none it says so and names the route (Modules → the
+  module → its entity panel) behind a plainly labelled navigation.
 - **The module entity view asks "does this name have an authored, DETAILED
   entity of its own?" — never "does anything resolve?"** The ONE verdict is
   `features/modules/detailed-entity.ts` (`detailedEntityVerdict` /
