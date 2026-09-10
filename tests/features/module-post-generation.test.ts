@@ -518,6 +518,128 @@ describe('runModulePostGeneration', () => {
   }, 30_000);
 });
 
+describe('an event is not an encounter (08 §M4-B, superseded: only a fight is an encounter)', () => {
+  beforeEach(async () => {
+    await clearDatabase();
+    await seedBuiltInPersonas();
+    chatMock.mockReset();
+    toastErrorMock.mockReset();
+    toastSuccessMock.mockReset();
+    enqueueImageJobs.mockReset();
+    enqueueEncounterMaps.mockReset();
+    enqueueMobPortraits.mockReset();
+    chainRunner.reset();
+    useProgressStore.getState().reset();
+  });
+  afterEach(() => {
+    chainRunner.reset();
+    useProgressStore.getState().reset();
+  });
+
+  /** The location-shaped data an event artifact carries. */
+  const eventData = {
+    locationType: 'ritual',
+    inhabitants: '',
+    pointsOfInterest: [],
+    hooks: [],
+  };
+
+  /** A module whose prose links one EVENT and one FIGHT, both module-owned. */
+  async function seedEventAndEncounter(
+    campaignId: string,
+    options: { autoImageKinds: Module['autoImageKinds']; battlemaps: boolean; mobImages: boolean },
+  ): Promise<{ module: Module; eventId: string; encounterId: string }> {
+    const module = await seedModule(campaignId, {
+      autoGenerateKinds: [],
+      autoImageKinds: options.autoImageKinds,
+      autoGenerateBattlemaps: options.battlemaps,
+      autoGenerateMobImages: options.mobImages,
+      entityKinds: [
+        { name: 'Ember Omen', kind: 'event', absorbed: [] },
+        { name: 'Ash Gate', kind: 'encounter', absorbed: [] },
+      ],
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          status: 'ready',
+          markdown:
+            '## The Tide Gate\n\nThe party watches [[Ember Omen]] and then forces [[Ash Gate]].',
+          edited: false,
+          errorMessage: '',
+        }),
+      ],
+    });
+    // Both artifacts are resolved and image-less: the only difference between
+    // them is their kind.
+    const event = await createArtifact({
+      campaignId,
+      moduleId: module.id,
+      kind: 'event',
+      name: 'Ember Omen',
+      summary: '',
+      body: '',
+      data: eventData,
+    });
+    const encounter = await seedEncounter(
+      campaignId,
+      module.id,
+      [rulebookEntry()],
+      'Ash Gate',
+    );
+    return { module, eventId: event.id, encounterId: encounter.id };
+  }
+
+  it('gives an event an illustration target, and never a battlemap', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const { module, eventId, encounterId } = await seedEventAndEncounter(campaign.id, {
+      autoImageKinds: ['event', 'encounter'],
+      battlemaps: true,
+      mobImages: false,
+    });
+    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+
+    await runModulePostGeneration(module.id, campaign);
+
+    // Both kinds are image targets…
+    expect(enqueueImageJobs).toHaveBeenCalledWith([
+      { campaignId: campaign.id, moduleId: module.id, name: 'Ember Omen' },
+      { campaignId: campaign.id, moduleId: module.id, name: 'Ash Gate' },
+    ]);
+    // …but only the FIGHT gets a battlemap: the event is an illustration and
+    // nothing else (the map queue is kind-filtered, not name-filtered).
+    expect(enqueueEncounterMaps).toHaveBeenCalledWith([
+      { campaignId: campaign.id, moduleId: module.id, artifactId: encounterId, name: 'Ash Gate' },
+    ]);
+    const mapTargets = enqueueEncounterMaps.mock.calls.flatMap((call) =>
+      (call[0] as { artifactId: string }[]).map((target) => target.artifactId),
+    );
+    expect(mapTargets).not.toContain(eventId);
+  }, 30_000);
+
+  it('never enqueues a mob portrait for an event, however configured', async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const { module, eventId, encounterId } = await seedEventAndEncounter(campaign.id, {
+      autoImageKinds: [],
+      battlemaps: false,
+      mobImages: true,
+    });
+    await saveSettings({ ...defaultSettings(), imagesEnabled: true });
+
+    await runModulePostGeneration(module.id, campaign);
+
+    // The portrait batch is driven by encounter artifacts' rosters, so the
+    // event is not even a candidate — only the fight's roster is.
+    expect(enqueueMobPortraits).toHaveBeenCalledTimes(1);
+    const portraitTarget = enqueueMobPortraits.mock.calls[0]?.[0] as { id: string; kind: string };
+    expect(portraitTarget.id).toBe(encounterId);
+    expect(portraitTarget.kind).toBe('encounter');
+    expect(
+      enqueueMobPortraits.mock.calls.map((call) => (call[0] as { id: string }).id),
+    ).not.toContain(eventId);
+    expect(enqueueEncounterMaps).not.toHaveBeenCalled();
+  }, 30_000);
+});
+
 describe('orderedKinds (the fixed-cast order pin)', () => {
   it('runs NPC batches before encounter batches — encounters detail last', () => {
     // The encounter brief pins already-drafted scene members as fixed cast,

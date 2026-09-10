@@ -302,6 +302,21 @@ describe('a plan that declares no kinds and no wants (mocked chat)', () => {
     expect(prompt).not.toContain('declared mix');
     expect(prompt).not.toContain('"wants"');
     expect(prompt).not.toContain('"conflictKind"');
+
+    // The encounter/event boundary (08 §M4-B, superseded): an encounter IS a
+    // fight — battle map + monster roster — and everything else is an event.
+    expect(prompt).toContain('locations, NPCs, factions, notes, events, and encounters');
+    expect(prompt).toContain('An "encounter" is a FIGHT');
+    expect(prompt).toContain('battle map with terrain, and a monster roster with images');
+    expect(prompt).toContain('is an "event" instead');
+    expect(prompt).toContain('no battle map, no monsters, no roster');
+
+    // The normalization call carries the same boundary: classify by what the
+    // party DOES, never by how dangerous the scene sounds.
+    const normalizationPrompt = userPromptOf(1);
+    expect(normalizationPrompt).toContain('"encounter" = a FIGHT');
+    expect(normalizationPrompt).toContain('"event" = a non-combat scene the party plays through');
+    expect(normalizationPrompt).toContain('if no fight happens, it is an event');
   }, 20000);
 
   it('parts: a full run over such a plan ships ready with no repair', async () => {
@@ -332,6 +347,11 @@ describe('a plan that declares no kinds and no wants (mocked chat)', () => {
     // The banned resolutions survived the removal (a scene still must cost
     // someone something).
     expect(prompt).toContain('banned resolution');
+    // …and so did the encounter/event boundary: a non-fight is an event, with
+    // an illustration and no map, monsters or roster.
+    expect(prompt).toContain('A scene that is NOT a fight is an event');
+    expect(prompt).toContain('[[Event Name]]');
+    expect(prompt).toContain('no battle map, no monsters, no roster, because none is generated for it');
   }, 20000);
 
   it('part prompt: the finale rations satisfaction, other parts never resolve clean', async () => {

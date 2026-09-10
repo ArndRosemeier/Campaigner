@@ -501,7 +501,7 @@ function floorClause(floor: EncounterFloorGuardrail, module: Module): string | n
     `REQUIREMENT — encounter floor: name at least ${encounterCountWord(floor.perLevel)} distinct ` +
     `encounter${floor.perLevel === 1 ? '' : 's'} per level of this module's range ` +
     `(levels ${String(module.levelMin)}–${String(module.levelMax)} → at least ${String(total)} distinct encounters across the module), ` +
-    'with each part naming at least as many encounters as the levels its band covers.'
+    'with each part naming at least as many encounters as the levels its band covers. An encounter is a fight — a battle map and a monster roster — so a negotiation, hazard, puzzle, investigation or chase is an event instead and does not count.'
   );
 }
 
@@ -511,7 +511,8 @@ function perPartFloorClause(levelBand: string, levels: number, required: number)
   return (
     `REQUIREMENT — encounter floor for this part (levels ${levelBand}: ${String(levels)} level(s)): ` +
     `name at least ${String(required)} distinct encounter(s) in this part's markdown as [[Encounter Name]] wiki-links, ` +
-    `each a scene with meaningful risk and player agency — combat, hazard, chase, social conflict, or another tactical set piece. ` +
+    `each a fight with real stakes, staged where a battle map and a monster roster make sense. ` +
+    `A negotiation, hazard, puzzle, investigation or chase is an event, not an encounter, and cannot cover this floor. ` +
     `Encounters already named in earlier parts do not count toward this part's share; never pad with repetitive or disposable encounters.`
   );
 }
@@ -535,8 +536,9 @@ function floorRepairInstruction(target: PartEncounterCount): string | null {
   return (
     `Encounter floor repair: this part covers levels ${target.levelBand} ` +
     `(${String(target.required)} level(s)) and must name at least ${String(target.required)} ` +
-    `distinct encounter(s) in its markdown as [[Encounter Name]] wiki-links — scenes with meaningful risk ` +
-    `and player agency (combat, hazard, chase, social conflict, or another tactical set piece). ` +
+    `distinct encounter(s) in its markdown as [[Encounter Name]] wiki-links — fights with real stakes, ` +
+    `staged where a battle map and a monster roster make sense (a negotiation, hazard, puzzle, investigation ` +
+    `or chase is an event and does not count). ` +
     `It currently names ${String(target.found)}. Add the missing encounters; keep the part's story, ` +
     `characters and continuity intact. Encounters already named in other parts do not count toward this part's share. `
   );
@@ -716,8 +718,9 @@ async function spineMessages(
       spineFloorItem,
       '- Structural conflict governs HOW scenes resolve, never what they feel like: no tone, register, or subject matter is restricted by these requirements. ' +
         `Never resolve a scene by any of these banned resolutions: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
-      '- Introduce as many locations, NPCs, factions, notes, and encounters as the story needs — you are not required to detail any of them in the spine. Give every planned encounter a distinctive, stable name and declare it with kind "encounter" in entities when introduced. When the module references an encounter in prose, use a wiki-link ([[Encounter Name]]) so it can be resolved into an encounter artifact later.',
-      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a social/non-combat occasion — same shape as a location), "faction" (an organization or group), "encounter" (a named combat, challenge, or tactical set piece), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title. Reuse existing campaign entities by their exact names when they fit; do not invent duplicates to fill out the encounter floor.',
+      '- Introduce as many locations, NPCs, factions, notes, events, and encounters as the story needs — you are not required to detail any of them in the spine. Give every scene a distinctive, stable name and declare it with its kind in entities when introduced. When the module references a scene in prose, use a wiki-link ([[Scene Name]]) so it can be resolved into its artifact later.',
+      '- An "encounter" is a FIGHT: initiative, a battle map with terrain, and a monster roster with images. Anything that is not a fight — a negotiation, a hazard, a puzzle, an investigation, a ritual, a chase — is an "event" instead: it gets an illustration and no battle map, no monsters, no roster. Never declare a non-combat scene as an encounter, and never hide a fight inside an event. A hazard or a puzzle still carries meaningful risk and player agency — only its artifact differs.',
+      '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a non-combat scene the party plays through — a negotiation, hazard, puzzle, investigation, or chase; same shape as a location), "faction" (an organization or group), "encounter" (a fight — a scene resolved in initiative with a battle map and a monster roster), or "note" (anything else — items, rumors, mysteries, plot devices). One entity entry per named entity, under one canonical spelling — list a person once, not once per role or title. Reuse existing campaign entities by their exact names when they fit; do not invent duplicates to fill out the encounter floor.',
       '- Also write a premise (a few paragraphs of markdown — the intro section of the module) and 1-5 themes.',
     ].join('\n'),
     extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
@@ -1390,7 +1393,7 @@ async function partCall(
       'Writing instructions:',
       '- Free-form GM-facing markdown; ## and ### section headings are allowed (the reader adds the H1 part title — do NOT start your reply with an H1).',
       '- Read-aloud text goes in blockquotes.',
-      '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters. Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
+      '- Wiki-link every proper noun as [[Name]]: NPCs, locations, factions, artifacts, monsters — and every scene ([[Encounter Name]] for a fight, [[Event Name]] for anything else). Reuse the exact names of entities from earlier parts and the campaign index, consistently.',
       '- Canonical spellings: link glossary entities only by their listed exact spelling. Never inflect inside the token — write [[Halmund]]s Haus, not [[Halmunds]] Haus (English genitive: [[Halmund]]\'s tower). Never bake roles or titles into the token — write [[Halmund|the guard Halmund]], not [[Guard Halmund]]. Use [[Name|display]] whenever the surface text must differ from the canonical name. The same rules apply in any language.',
       `- Target length for this part: ${MODULE_SIZE_WORD_TARGETS[module.sizeDial]} (soft target).`,
       partFloorItem,
@@ -1399,7 +1402,8 @@ async function partCall(
         ? '- This is the FINALE: satisfaction is allowed here, at full price — every want met must be paid for visibly in loss, consequence, or foregone alternative.'
         : '- REQUIREMENT — no clean resolution: end this part with a cost, a revelation, or a new pressure — never with every side satisfied. Satisfaction is rationed to the finale.',
       '- No stat blocks in the prose — mechanics belong to linked entities. Reference DCs/checks inline where natural.',
-      '- Encounters live in separate encounter artifacts — in the prose, set up the scene and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
+      '- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
+      '- A scene that is NOT a fight is an event: link it as [[Event Name]] and write the whole scene here — who is present, what they want right now, what they do if the party acts, where the leads point. An event gets an illustration and nothing else: no battle map, no monsters, no roster, because none is generated for it.',
       '- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.',
     ].join('\n'),
     options.extraInstruction === '' ? null : `Additional instruction from the GM: ${options.extraInstruction}`,
@@ -1521,7 +1525,7 @@ function normalizationMessages(
       `- "canonical" is the exact spelling of the entity this name refers to: the name itself, another listed name (the canonical form of a variant)${recorded.length === 0 ? '' : ', one of the already-recorded entity names listed above'}, or an existing artifact's exact name. Never a name that appears nowhere in the inputs. Canonical spellings are final — never A → B when B maps elsewhere.`,
       '- Merge only when confident the names refer to the same entity (same person, place, organization, or thing). A role or title attached to the same person ("Guard Halmund" / "Harbormaster Ilse") maps onto the person\'s canonical name; similar names for different beings never merge.',
       '- A name that exactly matches an existing artifact\'s name maps to itself.',
-      '- "kind" describes the canonical entity: "npc" = a person or creature the party meets; "location" = a place; "event" = a social/non-combat occasion (same shape as a location); "faction" = an organization or group; "encounter" = a named combat or tactical set piece; "note" = anything else (items, rumors, mysteries, plot devices).',
+      '- "kind" describes the canonical entity: "npc" = a person or creature the party meets; "location" = a place; "event" = a non-combat scene the party plays through (a negotiation, hazard, puzzle, investigation, ritual, or chase — same shape as a location: an illustration and no battle map, monsters or roster); "faction" = an organization or group; "encounter" = a FIGHT, a scene resolved in initiative with a battle map and a monster roster; "note" = anything else (items, rumors, mysteries, plot devices). Classify a scene by what the party does in it, not by how dangerous it sounds: if no fight happens, it is an event.',
     ].join('\n'),
     'Entities:\n' + lines.join('\n'),
     'Reply with ONLY a JSON object: { "entities": [{ "name": string, "canonical": string, "kind": "npc" | "location" | "event" | "faction" | "note" | "encounter" }] } — one entry per listed entity.',
