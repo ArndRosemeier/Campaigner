@@ -263,14 +263,17 @@ shared-blob image row.
   behind-the-back canonical generation (never spend image budget for
   global benefit unsolicited). A chunk cited only ever flavored keeps an
   empty slot and per-campaign behavior is unchanged.
-- **Generate-once.** `enqueueMobPortraits` checks the cache first
-  (skip-if-cached: the get-or-create read-through clones an already
-  populated slot into the cover-less artifact, so no job is enqueued) and
-  the queue's canonical branch generates through the dedicated cache
-  worker (`ensureCanonicalMobPortrait` — in-memory single-flight per
-  chunkId, put-if-absent publish converging on the unique `&chunkId`
-  winner). Progress keys stay artifactId-based; generation stays
-  manual-only (seed/finalize callers pass no read-through flag).
+- **Generate-once.** The queue's canonical branch checks the cache first
+  (`ensureCanonicalMobPortrait` fast path: a populated slot is CLONED into
+  the cover-less artifact's cover through `cloneCachedPortraitToArtifact`,
+  so no image generation happens) and generates only on a miss, through the
+  dedicated cache worker (in-memory single-flight per chunkId, put-if-absent
+  publish converging on the unique `&chunkId` winner). The BATCH does not
+  pre-clone while it enumerates (owner report → ledger 83): a cover-less
+  canonical citation is a normal job — the worker clones the slot and the
+  batch reports it as work, so a hole the owner can see is never reported as
+  art that already existed. Progress keys stay artifactId-based; generation
+  stays manual-only.
 - **Render = clone.** The shared global row is never attached; each mob
   artifact gets its own campaign-scoped copy of the bytes as
   `coverImageId` through the attach seam — zero BattleSurface changes.
