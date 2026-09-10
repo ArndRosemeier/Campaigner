@@ -45,8 +45,40 @@ const nodeTestGlobs = [
   'tests/{backup,pwa-assets,search}.test.ts',
 ];
 
+/**
+ * The worker budget for a test run — the ONE bound that actually binds.
+ *
+ * `maxWorkers` must be set at the root AND in every project: vitest resolves a
+ * project's own value ahead of the root config, and `extends: true` copies the
+ * root value into each project, so a CLI `--maxWorkers=N` (which lands on the
+ * root) is silently ignored and both projects keep running the file-level 6.
+ * MEASURED on this shared 8-core box: `pnpm exec vitest run --maxWorkers=2`
+ * runs 6 CPU-busy workers and 10 alive — i.e. the flag the agent rules used to
+ * prescribe was never a bound, and two writers meant up to twelve workers. A
+ * real bound comes from the environment instead:
+ *
+ *   CAMPAIGNER_TEST_WORKERS=2 pnpm exec vitest run
+ *
+ * Absent, the value stays 6 for the owner's own runs on his dev box. A value
+ * that is present but not a positive integer is a loud error rather than a
+ * silent fallback (AGENTS rule 1).
+ */
+function testMaxWorkers(): number {
+  const raw = process.env.CAMPAIGNER_TEST_WORKERS?.trim();
+  if (raw === undefined || raw === '') return 6;
+  const parsed = Number(raw);
+  if (!Number.isInteger(parsed) || parsed < 1) {
+    throw new Error(
+      `CAMPAIGNER_TEST_WORKERS must be a positive integer (got "${raw}") — ` +
+        'unset it to use the default of 6.',
+    );
+  }
+  return parsed;
+}
+
 // https://vite.dev/config/
 export default defineConfig(({ mode }) => {
+  const maxWorkers = testMaxWorkers();
   const fromEnv = process.env.CAMPAIGNER_BASE?.trim();
   const base =
     fromEnv && fromEnv.length > 0
@@ -76,8 +108,11 @@ export default defineConfig(({ mode }) => {
       // event-loop starvation and false 5s timeouts on constrained CI/dev VMs.
       // 6 workers on the 8-core dev box (peak ~480-490MB RSS per worker,
       // ~3GB tree) measured the full suite 84.8s -> 58.1s with no timeouts;
-      // 4 workers left half the machine idle.
-      maxWorkers: 6,
+      // 4 workers left half the machine idle. Bound it with
+      // CAMPAIGNER_TEST_WORKERS (see testMaxWorkers above) — the CLI flag does
+      // not work here, and this value is repeated in each project for that
+      // reason.
+      maxWorkers,
       testTimeout: 20_000,
       projects: [
         {
@@ -86,6 +121,7 @@ export default defineConfig(({ mode }) => {
             name: 'node',
             environment: 'node',
             include: nodeTestGlobs,
+            maxWorkers,
           },
         },
         {
@@ -95,6 +131,7 @@ export default defineConfig(({ mode }) => {
             environment: 'jsdom',
             include: ['tests/**/*.test.{ts,tsx}'],
             exclude: [...configDefaults.exclude, ...nodeTestGlobs],
+            maxWorkers,
           },
         },
       ],
