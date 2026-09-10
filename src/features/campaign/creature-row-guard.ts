@@ -19,15 +19,28 @@ import type { AnyArtifact, Id } from '@/domain';
  * draft's `appearance`/`personality` onto it), and the produced prose
  * described a DIFFERENT character — saved onto the row every encounter shares.
  * The write was silent because nothing distinguished "the row a wiki-link
- * resolves to" from "the row authored detail belongs in".
+ * resolves to" from "the row authored detail belongs in". That write is refused
+ * now, in the run's finalize and in the refill picker (the last two readers
+ * below).
  *
- * Three seams read this module, and nothing else classifies a creature row:
+ * Every seam that must classify a creature row reads THIS module, and nothing
+ * else classifies one (the list is not a count — a new reader is added here, so
+ * a number in this comment can never go stale):
  * - the artifact editor disables its AI action for such a row, with the reason
  *   in `title` (never a silently dead control) and the remedy in the copy;
  * - the entity paths refuse to rename, re-scope or write onto one
  *   (`features/modules/entity-batch`), failing loudly with the reason;
  * - the artifact editor reports authored text already sitting on one and
- *   offers the explicit repair below, which clears ONLY that text.
+ *   offers the explicit repair below, which clears ONLY that text;
+ * - the refill destination refuses one at DESTINATION RESOLUTION in
+ *   `llm/runEngine`'s finalize — before any branch below can write, so the row
+ *   stays byte-identical and the run fails loudly — and the persona panel's
+ *   refill picker never offers one (`creatureRowAiRefusal` is the ONE copy both
+ *   read; the Illustrator's and the Continuity Editor's pickers keep the full
+ *   list);
+ * - the module entity view's detailed-entity verdict
+ *   (`features/modules/detailed-entity`) reads `creatureLabel` for the message
+ *   that names a creature row as not-an-authored-entity.
  *
  * `isMobArtifact` is the whole classification: a kind `npc` WITHOUT the marker
  * (an authored NPC, a module-owned NPC, an on-demand invented creature) is a

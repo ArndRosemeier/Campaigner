@@ -3,9 +3,14 @@
 Campaigner is built autonomously: across the pipeline the dispatcher made
 default calls on the owner's behalf — everything reversible, everything
 recorded here, everything reviewable in one pass. Every decision below is
-**Status: active** in the shipped code (main @ `fe1d365`; gate baseline
-1316 tests / 143 files, lint 0 errors / 4 pre-existing warnings, typecheck
-clean). The enumeration is complete: no standing default lives outside this
+**Status: active** in the shipped code — re-verified landing by landing against
+`main` (the last full pass was the consolidation that landed this line, at
+`main` @ `79abe82`: 236 files / 2727 tests passing under the bounded gate
+`pnpm exec vitest run --maxWorkers=2`, lint 0 problems, typecheck clean). That
+baseline is a DATE STAMP, not a claim about HEAD — it is not re-frozen on every
+docs commit, so a stale-looking number means "re-run the gate", not "the ledger
+is wrong"; nothing here is verified by a remembered count. The enumeration is
+complete: no standing default lives outside this
 list. The binding spec text stays in the referenced doc/section — where a
 row and its reference disagree, the reference wins.
 
