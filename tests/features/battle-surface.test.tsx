@@ -842,6 +842,64 @@ describe('veil presentation', () => {
     expect(byKind.get('veil')?.className).toContain('bg-black/10');
   });
 
+  it('names the veil controls by KIND: a fog is never called a veil (owner-reported label bug)', async () => {
+    // Owner report, verbatim: "Side note: When clicking on a fog, the delete
+    // action is labeled delete veil, please correct." The record type is one
+    // kind-discriminated shape, so the rail was kind-blind: it resolved the
+    // selection by id alone and printed the family noun. A destructive action
+    // that names the wrong object is the bug; its sibling affordance labels
+    // (the edge handles' aria-labels) were kind-blind in the same way.
+    const { moduleId } = await seedStandardBattle();
+    await renderSurface(moduleId);
+    await waitFor(() => {
+      expect(screen.getAllByTestId('battle-token').length).toBeGreaterThan(0);
+    });
+    const seeded = await currentBattle(moduleId);
+    await act(async () => {
+      await saveBattleBoard(seeded.id, { ...seeded.board, veils: [] });
+      await flushAsyncUpdates();
+    });
+    const elFor = (kind: 'fog' | 'veil'): HTMLElement => {
+      const el = screen
+        .getAllByTestId('battle-veil')
+        .find((node) => node.getAttribute('data-veil-kind') === kind);
+      if (el === undefined) throw new Error(`no ${kind} veil rendered`);
+      return el;
+    };
+    const user = userEvent.setup();
+    // A fog's controls say fog — every one of them.
+    await user.click(screen.getByTestId('fog-tool'));
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('delete-veil')).toHaveTextContent('Delete fog');
+    for (const edge of ['n', 's', 'e', 'w'] as const) {
+      expect(within(elFor('fog')).getByTestId(`veil-handle-${edge}`)).toHaveAttribute(
+        'aria-label',
+        `Resize fog ${edge}`,
+      );
+    }
+    // …and a veil's controls still say veil (the fix is kind-aware, not a
+    // blanket rename).
+    await user.click(screen.getByTestId('veil-tool'));
+    await flushAsyncUpdates();
+    expect(screen.getByTestId('delete-veil')).toHaveTextContent('Delete veil');
+    expect(within(elFor('veil')).getByTestId('veil-handle-n')).toHaveAttribute(
+      'aria-label',
+      'Resize veil n',
+    );
+    // The fog keeps its own handle labels alongside it.
+    expect(within(elFor('fog')).getByTestId('veil-handle-n')).toHaveAttribute(
+      'aria-label',
+      'Resize fog n',
+    );
+    // Deleting removes exactly the record the label named (the selected veil,
+    // here the last minted) — never its neighbour.
+    await user.click(screen.getByTestId('delete-veil'));
+    await flushAsyncUpdates();
+    const after = await currentBattle(moduleId);
+    expect(after.board.veils).toHaveLength(1);
+    expect(after.board.veils[0]?.kind).toBe('fog');
+  });
+
   it('gives veil resize handles a 44px touch target and drag-resizes with one commit (T2a/T2b unified)', async () => {
     const { moduleId } = await seedStandardBattle();
     await renderSurface(moduleId);

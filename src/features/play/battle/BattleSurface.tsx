@@ -1611,6 +1611,17 @@ export function BattleSurface(): JSX.Element {
   const nextVeiledRoom =
     pathRooms.find((entry) => veiledRoomIds.has(entry.room.id)) ?? null;
   const selectedKeyRoom = keyedRooms.find((entry) => entry.room.id === selectedKeyRoomId) ?? null;
+  // KIND-AWARE LABELS (owner report, verbatim: "When clicking on a fog, the
+  // delete action is labeled delete veil, please correct."). The rail resolves
+  // the selected RECORD, not just its id, so the delete action and every
+  // affordance label name the kind the GM is actually holding: a `kind: 'fog'`
+  // cover is a fog, a `kind: 'veil'` cover is a veil. The record type is one
+  // kind-discriminated shape, so this is a lookup — never a second field and
+  // never a second mechanism. The test ids stay the FAMILY ids (`battle-veil`,
+  // `delete-veil`, `veil-handle-*`), exactly like `BattleVeil` itself: they
+  // name the shared record type, while the user-visible label names the kind.
+  const selectedVeil = (battle?.board.veils ?? []).find((veil) => veil.id === selectedVeilId) ?? null;
+  const selectedVeilNoun = selectedVeil?.kind === 'fog' ? 'fog' : 'veil';
 
   if (battle === undefined) {
     return (
@@ -2253,7 +2264,7 @@ export function BattleSurface(): JSX.Element {
               )}
             </div>
           )}
-          {selectedVeilId !== null && !playerSafe && (
+          {selectedVeil !== null && !playerSafe && (
             <Button
               size="sm"
               variant="outline"
@@ -2262,13 +2273,13 @@ export function BattleSurface(): JSX.Element {
               onClick={() => {
                 void commit((current) => ({
                   ...current,
-                  veils: current.veils.filter((veil) => veil.id !== selectedVeilId),
+                  veils: current.veils.filter((veil) => veil.id !== selectedVeil.id),
                 }));
                 setSelectedVeilId(null);
               }}
             >
               <TrashIcon aria-hidden data-icon="inline-start" />
-              Delete veil
+              Delete {selectedVeilNoun}
             </Button>
           )}
           {selectedEffect !== null && !playerSafe && (
@@ -2663,7 +2674,11 @@ function VeilView({
           <button
             key={handle.edge}
             type="button"
-            aria-label={`Resize veil ${handle.edge}`}
+            // KIND-AWARE like the delete action: a fog's edge handle must not
+            // announce itself as a veil's ("Resize veil n" on an opaque fog was
+            // the same kind-blind label bug the owner reported). The test id
+            // stays the family id.
+            aria-label={`Resize ${veil.kind === 'fog' ? 'fog' : 'veil'} ${handle.edge}`}
             // T2a: the visible dot stays 12px, but the hit target is a 44px
             // (size-11) transparent pad around it. DRAG-resize now (the old
             // click-to-resize committed mid-gesture per click): the handle
