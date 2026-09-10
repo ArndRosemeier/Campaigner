@@ -61,7 +61,7 @@ const toastErrorMock = vi.mocked(toastError);
 const { toastSuccess } = await import('@/lib/toast');
 const toastSuccessMock = vi.mocked(toastSuccess);
 import { clearDatabase } from '../db/helpers';
-import { flushAsyncUpdates } from '../helpers/flush';
+import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
 /**
  * Every render gets a router context: the entity panel's Run battle button
@@ -1343,7 +1343,16 @@ describe('EntityPanel — orphaned entities', () => {
           'a portrait token on the battle of "Tide Gate"',
       );
     });
-    expect(await getArtifact(wraith.id)).toBeDefined();
+    // The confirm closes the sweep dialog — Base UI unmounts it on a timer;
+    // wait for the exit before the raw Dexie reads (docs/08 §Console guard),
+    // mirroring the bestiary-roster/onboarding-wizard precedents.
+    await waitFor(() => {
+      expect(screen.queryByTestId('orphan-sweep-dialog')).not.toBeInTheDocument();
+    });
+    // actDrained (docs/08 §Console guard): the sweep write re-fires the
+    // panel's live queries under the closing dialog's DialogRoot timers —
+    // the bare await handed them an outside-act window.
+    expect(await actDrained(() => getArtifact(wraith.id))).toBeDefined();
     await waitFor(async () => {
       expect(await getArtifact(winter.id)).toBeUndefined();
     });
