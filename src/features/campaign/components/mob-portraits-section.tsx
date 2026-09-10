@@ -3,9 +3,11 @@ import type { JSX } from 'react';
 import { ImageIcon, SparklesIcon } from 'lucide-react';
 
 import type { AnyArtifact, Id } from '@/domain';
+import type { MobPortraitBatchPlan } from '@/features/campaign/mob-portrait-queue';
 import {
   enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
+  planMobPortraitBatch,
   regenerateInventedCreaturePortraits,
   regenerateMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
@@ -30,20 +32,34 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * an on-demand creature artifact plus a local portrait ("Create creature +
  * portrait", per entry and batch-all). Every instance of an illustrated
  * creature shares the artifact — and its portrait — on the battle board
- * via the existing coverImageId token path.
+ * via the existing `coverImageId` token path.
  *
- * Regeneration (owner-ordered, docs/11 D5 amendment): when a batch would
- * enqueue NOTHING because every portrait already exists, the section offers
- * a "Regenerate N portrait(s)?" confirm instead of the old
- * already-generated toast — Confirm replaces the existing covers
- * delete-after-replace (canonical slots are republished with fresh bytes first; see
- * `regenerateMobPortraits`), Cancel keeps the old all-generated toast.
- * Partial states (some enqueued, some imaged) keep today's silent behavior
- * with NO dialog — regen there is out of scope by owner-shaped decision
- * (docs/05-UI). The per-entry invented action offers the same confirm for
- * its single portrait. The old art stays until the fresh cover commits — a
- * failed or dropped regen leaves every portrait intact (docs/11 D5
- * preservation rule).
+ * The batch press never guesses and never replaces anything silently
+ * (owner report: "2 mobs already have an image and I just want to fill a
+ * hole" — the old one-sided confirm only ever offered replace-all). It
+ * first runs the READ-ONLY count (`planMobPortraitBatch`: creates nothing,
+ * clones nothing, enqueues nothing) and then:
+ *
+ * - **pure gaps** (nothing imaged yet): fills immediately, exactly as
+ *   before — there is nothing to choose;
+ * - **mixed** (some imaged, some not): the confirm states the counts and
+ *   offers BOTH ways — **Fill the missing N** (primary: additive, every
+ *   existing portrait kept) and **Replace all M** (secondary/destructive:
+ *   today's delete-after-replace regen, unchanged semantics — old art stays
+ *   until the fresh art lands, canonical republishing stays shared). The
+ *   additive action is never unreachable while a hole exists;
+ * - **nothing missing** (every kind already has art): the confirm offers
+ *   only replace-all, with the reason stated — never a dead or misleading
+ *   control.
+ *
+ * The confirm states the SHARED consequence of replacing a Monster Core
+ * (canonical) citation BEFORE the choice — republishing the bestiary slot
+ * means every future portrait in every campaign uses the new art, while
+ * existing covers elsewhere keep theirs (the old flow said it in a toast,
+ * after the click). It also names what the counts mean: art that is not set
+ * as a creature's cover (the board still shows initials until the owner sets
+ * it) and roster rows that share one creature kind's portrait. The per-entry
+ * invented action keeps its own confirm, unchanged.
  *
  * Rendered beside the encounter's monsters section (after the roster form),
  * only for campaign-scoped encounters: mob artifacts are campaign-scoped, so
@@ -60,7 +76,7 @@ export function MobPortraitsSection({
 }): JSX.Element | null {
   const [busy, setBusy] = useState(false);
   const [busyIndex, setBusyIndex] = useState<number | null>(null);
-  const [regenBatch, setRegenBatch] = useState<string[] | null>(null);
+  const [batchChoice, setBatchChoice] = useState<MobPortraitBatchPlan | null>(null);
   const [regenEntry, setRegenEntry] = useState<{ index: number; name: string } | null>(null);
   if (artifact.campaignId === null) return null;
   const data = artifact.data;
@@ -69,7 +85,10 @@ export function MobPortraitsSection({
     .map((monster, index) => ({ monster, index }))
     .filter(({ monster }) => monster.source.type === 'inline' || monster.source.type === 'none');
 
-  async function handleBatch(): Promise<void> {
+  /** The additive path — the owner's ask: fill every kind with no portrait,
+   * keep every portrait that exists. Never regenerates, never replaces. */
+  async function fillMissing(): Promise<void> {
+    setBatchChoice(null);
     setBusy(true);
     try {
       const rulebook =
@@ -81,13 +100,19 @@ export function MobPortraitsSection({
           ? { created: 0, enqueued: 0, alreadyImaged: [] as string[] }
           : await enqueueInventedCreaturePortraits(artifact, campaignId);
       const enqueued = rulebook.enqueued + invented.enqueued;
-      const alreadyImaged = [...rulebook.alreadyImaged, ...invented.alreadyImaged];
-      if (enqueued === 0 && alreadyImaged.length === 0 && invented.created === 0) {
-        toastInfo('No creatures to illustrate — add roster entries first');
-      } else if (enqueued === 0 && alreadyImaged.length > 0) {
-        // All-imaged: offer regeneration instead of the old toast (Cancel
-        // replays it — see cancelRegen).
-        setRegenBatch(alreadyImaged);
+      const kept = rulebook.alreadyImaged.length + invented.alreadyImaged.length;
+      if (enqueued === 0) {
+        // Covers landed between the count and this call (read-through or a
+        // concurrent run) — nothing left to fill, and nothing was replaced.
+        toastInfo('Nothing left to fill — every creature kind already has a portrait');
+      } else {
+        toastSuccess(
+          `Filling ${String(enqueued)} missing portrait${enqueued === 1 ? '' : 's'} — ${
+            kept === 0
+              ? 'nothing is replaced'
+              : `keeping the ${String(kept)} that exist${kept === 1 ? 's' : ''}`
+          }`,
+        );
       }
     } catch (error) {
       toastError('Could not start mob portrait generation', error);
@@ -96,8 +121,11 @@ export function MobPortraitsSection({
     }
   }
 
-  async function confirmRegenBatch(): Promise<void> {
-    setRegenBatch(null);
+  /** The replace-all path: today's delete-after-replace regen, unchanged
+   * semantics (canonical slots republished first, old art kept until the
+   * fresh art commits). */
+  async function replaceAll(): Promise<void> {
+    setBatchChoice(null);
     setBusy(true);
     try {
       const rulebook =
@@ -130,9 +158,49 @@ export function MobPortraitsSection({
     }
   }
 
-  function cancelRegenBatch(): void {
-    setRegenBatch(null);
-    toastSuccess('All mob portraits are already generated');
+  async function handleBatch(): Promise<void> {
+    setBusy(true);
+    try {
+      // Read-only count first: every number the owner sees comes from the
+      // same enumeration the queue acts on (never a hardcoded or optimistic
+      // label), and nothing is created or cloned by counting.
+      const plan = await planMobPortraitBatch(artifact, campaignId);
+      if (plan.missing.length + plan.imaged.length === 0) {
+        toastInfo('No creatures to illustrate — add roster entries first');
+        return;
+      }
+      if (plan.missing.length === 0) {
+        // Nothing missing: replace-all is the only honest action left.
+        setBatchChoice(plan);
+        return;
+      }
+      if (plan.imaged.length === 0) {
+        // Pure gaps: nothing to choose, fill immediately (unchanged).
+        await fillMissing();
+        return;
+      }
+      setBatchChoice(plan);
+    } catch (error) {
+      toastError('Could not start mob portrait generation', error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function cancelBatch(plan: MobPortraitBatchPlan): void {
+    setBatchChoice(null);
+    if (plan.missing.length === 0) {
+      // Nothing was missing: today's honest already-generated outcome.
+      toastSuccess('All mob portraits are already generated');
+      return;
+    }
+    // The press queued nothing — say so instead of letting the owner guess
+    // whether the holes were filled.
+    toastInfo(
+      `Nothing queued — ${String(plan.missing.length)} creature kind${
+        plan.missing.length === 1 ? ' still has' : 's still have'
+      } no portrait`,
+    );
   }
 
   async function handleEntry(index: number, name: string): Promise<void> {
@@ -173,7 +241,6 @@ export function MobPortraitsSection({
 
   const batchLabel = rulebookCount === 0 ? 'Create creatures + portraits' : 'Generate mob portraits';
   const batchDisabled = busy || busyIndex !== null || (rulebookCount === 0 && uncited.length === 0);
-  const regenNames = regenBatch ?? (regenEntry === null ? [] : [regenEntry.name]);
 
   return (
     <div
@@ -236,48 +303,182 @@ export function MobPortraitsSection({
         </ul>
       )}
       <AlertDialog
-        open={regenBatch !== null || regenEntry !== null}
+        open={batchChoice !== null || regenEntry !== null}
         onOpenChange={(next) => {
-          // Silent dismiss (Esc/backdrop): clears the pending regen with no
-          // toast — the explicit Cancel buttons below replay today's toasts.
+          // Silent dismiss (Esc/backdrop): clears the pending confirm with no
+          // toast — the explicit Cancel buttons below do the honest reporting.
           if (!next) {
-            setRegenBatch(null);
+            setBatchChoice(null);
             setRegenEntry(null);
           }
         }}
       >
-        <AlertDialogContent data-testid="mob-portraits-regen-dialog">
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              Regenerate {regenNames.length} portrait{regenNames.length === 1 ? '' : 's'}?
-            </AlertDialogTitle>
-            <AlertDialogDescription data-testid="mob-portraits-regen-copy">
-              Existing covers are replaced — {regenNames.map((name) => `"${name}"`).join(', ')}.
-              The current art stays until the new art lands — if generation fails, nothing changes.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel
-              data-testid="mob-portraits-regen-cancel"
-              onClick={() => {
-                if (regenBatch !== null) cancelRegenBatch();
-                else if (regenEntry !== null) cancelRegenEntry(regenEntry);
-              }}
-            >
-              Cancel
-            </AlertDialogCancel>
-            <AlertDialogAction
-              data-testid="mob-portraits-regen-confirm"
-              onClick={() => {
-                if (regenBatch !== null) void confirmRegenBatch();
-                else if (regenEntry !== null) void confirmRegenEntry(regenEntry);
-              }}
-            >
-              Regenerate
-            </AlertDialogAction>
-          </AlertDialogFooter>
+        <AlertDialogContent
+          data-testid={batchChoice !== null ? 'mob-portraits-choice-dialog' : 'mob-portraits-regen-dialog'}
+        >
+          {batchChoice === null ? (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Regenerate 1 portrait?</AlertDialogTitle>
+                <AlertDialogDescription data-testid="mob-portraits-regen-copy">
+                  Existing covers are replaced — &quot;{regenEntry?.name ?? ''}&quot;. The current art
+                  stays until the new art lands — if generation fails, nothing changes.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel
+                  data-testid="mob-portraits-regen-cancel"
+                  onClick={() => {
+                    if (regenEntry !== null) cancelRegenEntry(regenEntry);
+                  }}
+                >
+                  Cancel
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  data-testid="mob-portraits-regen-confirm"
+                  onClick={() => {
+                    if (regenEntry !== null) void confirmRegenEntry(regenEntry);
+                  }}
+                >
+                  Regenerate
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </>
+          ) : (
+            <>
+              <AlertDialogHeader>
+                <AlertDialogTitle>
+                  {batchChoice.missing.length > 0
+                    ? `Fill ${String(batchChoice.missing.length)} missing portrait${
+                        batchChoice.missing.length === 1 ? '' : 's'
+                      } or replace ${String(batchChoice.imaged.length)}?`
+                    : `Replace all ${String(batchChoice.imaged.length)} portrait${
+                        batchChoice.imaged.length === 1 ? '' : 's'
+                      }?`}
+                </AlertDialogTitle>
+                <AlertDialogDescription
+                  data-testid="mob-portraits-choice-copy"
+                  className="flex flex-col gap-1"
+                >
+                  {batchChoiceCopy(batchChoice).map((line) => (
+                    <span key={line}>{line}</span>
+                  ))}
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel
+                  data-testid="mob-portraits-choice-cancel"
+                  onClick={() => {
+                    cancelBatch(batchChoice);
+                  }}
+                >
+                  Cancel
+                </AlertDialogCancel>
+                <AlertDialogAction
+                  variant="destructive"
+                  data-testid="mob-portraits-choice-replace"
+                  onClick={() => {
+                    void replaceAll();
+                  }}
+                >
+                  Replace all {batchChoice.imaged.length}
+                </AlertDialogAction>
+                {batchChoice.missing.length > 0 && (
+                  <AlertDialogAction
+                    data-testid="mob-portraits-choice-fill"
+                    onClick={() => {
+                      void fillMissing();
+                    }}
+                  >
+                    Fill the missing {batchChoice.missing.length}
+                  </AlertDialogAction>
+                )}
+              </AlertDialogFooter>
+            </>
+          )}
         </AlertDialogContent>
       </AlertDialog>
     </div>
   );
+}
+
+/** `"A", "B"` — the named creatures behind a count (never counts alone). */
+function named(names: readonly string[]): string {
+  return names.map((name) => `"${name}"`).join(', ');
+}
+
+/**
+ * The confirm's copy — every line a count or a consequence that is TRUE for
+ * this roster (never a hardcoded or optimistic label): what exists, what the
+ * fill adds, what replacing does to the existing art, and the SHARED
+ * canonical consequence stated before the choice rather than in a toast
+ * afterwards.
+ */
+function batchChoiceCopy(plan: MobPortraitBatchPlan): string[] {
+  const kinds = plan.missing.length + plan.imaged.length;
+  const lines: string[] = [];
+  if (plan.imaged.length === 0) {
+    lines.push(`None of this roster's ${String(kinds)} creature kinds has a portrait yet.`);
+  } else if (plan.missing.length === 0) {
+    lines.push(
+      `All ${String(kinds)} creature kinds already have a portrait: ${named(plan.imaged)}.`,
+    );
+  } else {
+    lines.push(
+      `${String(plan.imaged.length)} of ${String(kinds)} creature kinds already have a portrait (${named(
+        plan.imaged,
+      )}); ${String(plan.missing.length)} ${plan.missing.length === 1 ? 'has' : 'have'} none (${named(
+        plan.missing,
+      )}).`,
+    );
+  }
+  if (plan.missing.length > 0) {
+    lines.push(
+      `Filling adds only the missing portrait${plan.missing.length === 1 ? '' : 's'}${
+        plan.creates > 0
+          ? ` (creating ${String(plan.creates)} creature artifact${plan.creates === 1 ? '' : 's'} first)`
+          : ''
+      } and keeps the ${String(plan.imaged.length)} that exist${plan.imaged.length === 1 ? 's' : ''} — nothing is replaced.`,
+    );
+  } else {
+    lines.push('Nothing is missing, so there is nothing to fill.');
+  }
+  lines.push(
+    plan.missing.length > 0
+      ? `Replacing regenerates all ${String(plan.imaged.length)} existing portrait${
+          plan.imaged.length === 1 ? '' : 's'
+        } and still fills the missing one${plan.missing.length === 1 ? '' : 's'} — the current art stays until each fresh portrait lands, so a failure changes nothing.`
+      : 'Replacing regenerates every existing portrait — the current art stays until each fresh portrait lands, so a failure changes nothing.',
+  );
+  if (plan.sharedPortraitNames.length > 0) {
+    lines.push(
+      `Monster Core (bestiary-cited) portraits are shared: republishing ${named(
+        plan.sharedPortraitNames,
+      )} changes the shared portrait every future campaign clones — existing covers elsewhere keep theirs.`,
+    );
+  }
+  if (plan.unreadableCitations.length > 0) {
+    lines.push(
+      `The bestiary citation for ${named(plan.unreadableCitations)} can no longer be read — replacing ${
+        plan.unreadableCitations.length === 1 ? 'it' : 'them'
+      } fails loudly and keeps ${plan.unreadableCitations.length === 1 ? 'its' : 'their'} cover.`,
+    );
+  }
+  if (plan.artWithoutCover.length > 0) {
+    lines.push(
+      `${named(plan.artWithoutCover)} already carr${
+        plan.artWithoutCover.length === 1 ? 'ies' : 'y'
+      } art on the creature artifact that is not set as its cover — the battle board still shows initials until you set it (open the creature artifact → Images → Set as cover). Filling leaves ${
+        plan.artWithoutCover.length === 1 ? 'it' : 'them'
+      } alone; replacing regenerates ${plan.artWithoutCover.length === 1 ? 'it' : 'them'}.`,
+    );
+  }
+  if (plan.sharedRows > 0) {
+    lines.push(
+      `${String(plan.sharedRows)} roster row${plan.sharedRows === 1 ? '' : 's'} share${
+        plan.sharedRows === 1 ? 's' : ''
+      } a creature kind with another row — each kind keeps ONE shared portrait on the battle board.`,
+    );
+  }
+  return lines;
 }
