@@ -101,8 +101,8 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Global mob portrait per cited chunk (canonical only, all campaigns) | `db/mobPortraitCache` (firewall `cacheKeyForMonsterSource`, read-through `fillCoverFromCache`, render `cloneCachedPortraitToArtifact` — first-time clone skips imaged artifacts, the `force` flavor force-clones delete-after-replace for regen — plus artifact-to-artifact `cloneArtifactCover` for the content-regen carry-forward; all three ride the ONE `attachClonedCover` core, never a second mechanism — first-publish `storeCanonicalPortraitIfAbsent` — put-if-absent ONLY) + `features/campaign/mob-portrait-cache-queue.ensureCanonicalMobPortrait` (cross-campaign single-flight; Dexie v18 `mobPortraits` table `id, &chunkId`; docs/11 D5 amendment). Regen republishes through `replaceCanonicalPortrait` (the ONLY unconditional slot writer) via `regenerateCanonicalMobPortrait` (the ONLY always-fresh generation) — never `storeCanonicalPortraitIfAbsent` for a regen (it would keep the old bytes) | generating per campaign; attaching the shared global row as a cover; a flavored citation writing the cache; republishing the slot anywhere but `replaceCanonicalPortrait` |
 | Regenerate a mob / invented-creature portrait | `features/campaign/mob-portrait-queue.regenerateMobPortraits` (rulebook batch: validate → republish canonical slots fresh → enqueue delete-after-replace regen jobs `regen: true` for the imaged artifacts + the normal cover-less batch for the remainder) / `regenerateSingleMobPortrait` (battle-card single mob: the same three phases on one resolved target) / `regenerateInventedCreaturePortraits` (uncited: materialize → regen jobs for the imaged + the normal invented batch for the cover-less remainder) — delete-after-replace is the one way (docs/11 D5 preservation rule): the worker generates fresh bytes, then the attach seam swaps the cover in ONE tx (fresh cover commits, ONLY the superseded ids are scrubbed from that artifact's snapshots and refcount-pruned); a failed republish throws loud with all old covers intact and nothing enqueued; a failed, skipped, or queue-dropped regen keeps the old portrait with a loud error — regen entries upgrade (withdraw-then-enqueue) any stale queued/in-flight normal job for the same artifact so the dedupe can never strand a regen as a silent skip | detaching first (`removeImageFromArtifact` in a regen path — destroys the blob AND the restore path before the replacement exists); a second detach/enqueue path; re-enqueueing an imaged artifact expecting fresh bytes (the skip branch + cache read-through return the OLD art — a no-op regen); detaching without re-enqueueing (strands initials) |
 | Carry a mob cover onto a re-cited row (content-regen preservation) | `mobArtifacts.carryMobCoversForward` — runEngine's in-place encounter finalize calls it after the content write (old roster → new roster, same-name rulebook entries, cover-less new row inherits the old row's cover via `cloneArtifactCover`); old rows stay as orphans | re-citing without carrying (abandons the cover while tokens fall back to initials); deleting the old row as part of the carry |
-| Read / patch settings | `getSettings` (write-creates defaults) / `readSettings` (pure — liveQuery-safe) / `updateSettings` (tx, schema-validated merge; existing rows merge over defaults) | raw `db.settings` reads without the defaults-merge parse |
-| Persist the New Module dialog's draft (owner request, docs/17 row 70) | `domain/settings.newModuleDraftSchema` — ONE settings field, `newModuleDraft`, REQUIRED-but-NULLABLE like `lastModule` (`null` = nothing stored; a row/backup written before the field parses as null), TAGGED with `campaignId`; the dialog prefills it only when the tag matches the campaign being created in, overwrites it (never merges across campaigns), debounces the save and FLUSHES on run start / dialog close / unmount, and offers **Reset to defaults** as the escape hatch. Deleting a campaign clears a draft tagged with it (`campaignRepo.deleteCampaign`); the two campaign WIPES deliberately KEEP it (`removeAllGeneratedContent`, `maintenance.deleteCampaignWorkspace` — it is authored input and retry-after-reset is the feature). A stored draft that no longer validates fails the settings read LOUDLY (no silent half-prefill) | a per-campaign MAP (a second record shape that every delete path would have to sweep — the orphan class closed twice already); prefilling an untagged or foreign draft; clearing it in a wipe (defeats the retry); silently falling back to defaults on a corrupt draft (AGENTS 1/3) |
+| Read / patch settings | `getSettings` (write-creates defaults) / `readSettings` (pure — liveQuery-safe) / `updateSettings` (tx, schema-validated merge; existing rows merge over defaults). The read is TWO parts: `coreSettingsSchema` (every load-bearing setting, strict) + the New Module draft validated on its own — see the draft row below | raw `db.settings` reads without the defaults-merge parse; a settings read that fails because of a CONVENIENCE field (docs/17 row 76) |
+| Persist the New Module dialog's draft (owner request, docs/17 row 70) | `domain/settings.newModuleDraftSchema` — ONE settings field, `newModuleDraft`, REQUIRED-but-NULLABLE like `lastModule` (`null` = nothing stored; a row/backup written before the field parses as null), TAGGED with `campaignId`; the dialog prefills it only when the tag matches the campaign being created in, overwrites it (never merges across campaigns), debounces the save and FLUSHES on run start / dialog close / unmount, and offers **Reset to defaults** as the escape hatch. Deleting a campaign clears a draft tagged with it (`campaignRepo.deleteCampaign`); the two campaign WIPES deliberately KEEP it (`removeAllGeneratedContent`, `maintenance.deleteCampaignWorkspace` — it is authored input and retry-after-reset is the feature). A stored draft that no longer validates is SCOPED to the draft (docs/17 row 76, ledger decision after the owner's recommendation): `readStoredNewModuleDraft` returns `{ draft, error }` — never a half-value — and the dialog, the ONE consumer that shows a draft, reports the failure with `toastError` (once per open, keyed by message) and opens at its own DEFAULT levels rather than half-prefilling from data the app cannot read. The load-bearing settings around it stay readable, so a legacy row whose draft names an artifact kind that was since RETIRED cannot brick the app; the old contract (`readSettings` itself rejects, the dialog hits the error boundary) is in the git history before `84e77a9`. The prefill itself: the user's typing always wins (the form's "edited" mark is armed SYNCHRONOUSLY by the interaction, never by an effect) and the row stays the source of truth until then (a newer snapshot is re-applied while the form is untouched, and only the user's edits are ever written back — docs/05 §New Module dialog) | a per-campaign MAP (a second record shape that every delete path would have to sweep — the orphan class closed twice already); prefilling an untagged or foreign draft; clearing it in a wipe (defeats the retry); returning a corrupt draft as a value, or prefilling it silently (AGENTS 1/3); letting one unreadable draft fail every settings read in the app |
 | Show an image | `useImageUrl` (`features/images/use-image-url.ts`) — object URLs revoked on change/unmount | `URL.createObjectURL` without revoke |
 | Bring an image INTO the app (upload or generated blob) | `imageIntake.intakeImage` — EXIF-safe decode, ≤1600px long edge, WebP re-encode | ad-hoc canvas/FileReader scaling |
 | Store map candidates mid-run | `imageRepo.createImage` per candidate — deliberately UNATTACHED until the pick step attaches via the seam; top-level use only (inside a tx: `buildStoredImage` before it opens, `db.images.put` inside) | attaching candidates eagerly |
@@ -314,6 +314,26 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 
 ## 4. Gotchas
 
+- **A settings-row field is never allowed to be load-bearing for the whole
+  row.** One unvalidated CONVENIENCE field took down every settings read in the
+  app (and with it every settings-dependent surface), because the row was parsed
+  as a single object: the New Module draft. The rule is the rip-out arc's, one
+  step further — a retired/non-load-bearing field is tolerated on read, and any
+  field that cannot be tolerated must be validated SEPARATELY so its failure
+  stays scoped to itself (`settingsRepo`'s `coreSettingsSchema` +
+  `readStoredNewModuleDraft`, docs/17 row 76). A NEW optional settings field that
+  can be written by an older version belongs in the second camp.
+- **A Dexie liveQuery querier that `await`s before touching Dexie never
+  registers its range — the subscription then goes DEAF (measured).** Adding one
+  microtask of delay before the table read inside a `useLiveQuery(() => read()…)`
+  querier (a mocked read wrapped in `.then()`, a delayed helper) makes Dexie
+  record no range for that subscription: the querier is called exactly ONCE for
+  the mount and never again, so a test that "holds the read open" to reproduce a
+  prefill race measures its own artifact and cannot pass whatever the product
+  does. If a querier needs to wait for something, make it an `async` function
+  (Dexie's `isAsyncFunction` path accounts for the awaits) — and reproduce a
+  write/prefill race by delaying the WRITE, not the read (docs/08 §Race cures).
+
 - **Dexie variadic cap.** `db.transaction(mode, t1…t5, scope)` caps at five
   tables (the scope function must be the last argument); more tables → the
   ARRAY form (`deleteModule` passes seven tables as an array; `deleteArtifact`,
@@ -444,6 +464,20 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   caps (owner-directed, ledger 51).
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
+
+- **The Advanced floor editor's minimum disagrees with its own schema.** The
+  "Per level" input falls back to `0` when it is cleared
+  (`guardrailCountInput(0, …)`, `min={0}`), but
+  `encounterFloorGuardrailSchema` refuses `perLevel: 0` while the floor is
+  enabled — so a GM can hold a draft whose save the settings boundary rejects.
+  The failure is LOUD (`persist` toasts and the draft simply is not saved until
+  a count is put back), which is why it is debt and not a fallback: nothing is
+  faked and nothing is lost. Clamping the fallback to the schema's `1` was tried
+  and REVERTED — the field is controlled, so clearing it then typing "2" turned
+  into `12` (it broke a pinned floor assertion), i.e. the real fix is a
+  text-vs-number editing change in the floor editor, which the draft brief puts
+  out of scope. Left as-is on purpose: do not "fix" the minimum without fixing
+  the editing flow in the same change.
 
 - ~~Map-regenerate attach bypasses the image seam~~ — closed: `runEngine.runEncounterFinalize`'s regenerate branch rides `attachImagesToArtifact` (new optional `data` + `meta` patch fields) — re-anchor + content write commit in the one attach tx, and the cover is explicitly kept (never cleared). Extended by docs/11 D16 (single-map-slot): the same tx swaps the previous map out of `imageIds` (`removeImageIds`), refchecks its blob (`pruneCandidates`), converges never-live boards, and declares `db.battles` in its scope for the board-aware refcount. The fresh-encounter `createArtifact` birth path stays intentionally off-seam (single-row create, no desync window — see below).
 - **Queue reload survival is deferred BY OWNER DECISION** (`lib/jobQueue`

@@ -112,6 +112,26 @@ Rules:
   after the click (a FAILING pass toasts without closing it), its raw reads
   still need `actDrained` per the open-dialog rule above.
 
+- **A prefill that can arrive mid-interaction is reproduced by HOLDING THE
+  WRITE, never by holding the read.** The New Module draft's prefill is applied
+  by an effect, so the load-sensitive failure is an ordering one: the settings
+  value landing in the same React commit as the user's keystrokes
+  (`tests/features/new-module-draft.test.tsx` holds the stored-draft READ open
+  and releases it inside one `act` with the first keystroke — measured failing
+  6/6 on the shipped code, green after the fix, and the pin fails 3/3 without
+  it). The OTHER half of the same feature — a reopen prefilling a snapshot older
+  than the draft it just saved — is reproduced by delaying the settings WRITE
+  instead, because that is the race the app actually runs: the close's flush
+  needs a DB round trip, so the reopen reads the row before the write lands. Two
+  traps found the hard way, both now in docs/18 §4: (a) a mock that wraps a
+  Dexie read in an extra `await` makes the live query stop reacting ENTIRELY
+  (its querier is never called again, so the test measures a test artifact and
+  cannot pass whatever the product does); (b) the harness keeps the dialog
+  mounted across close/reopen, so the form still holds the previous open's
+  values and a stale prefill is visible as a WIPE rather than an empty field.
+  Assert the settled value with `waitFor`, never the first frame after the
+  reopen, and never a fixed sleep.
+
 ### 2. Route smoke sweep — `tests/app/ui-smoke.test.tsx`
 
 Twelve tests that render the **real app shell + router** against one seeded
