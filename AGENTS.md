@@ -118,6 +118,36 @@ pull --rebase` refuse mid-landing — real incident: a writer had to verify
 unstaged in `AGENTS.md`. Stage, commit and push dispatcher edits in ONE
 chained command, and never leave one uncommitted while a writer is gating.
 
+## Host hygiene (load discipline)
+
+Real incident, owner-visible (the host became unusable and DSH had to be
+restarted): four writers in flight PLUS a load generator one of them had
+written drove the load average to ~106 on this 8-core box and starved
+everything. The box is shared with the owner's own tools — it is NOT a test
+fixture. Binding rules:
+
+1. **At most TWO writers in flight** (this supersedes the "≤ cores" gate
+   note above). The dispatcher counts the registry before dispatching, and a
+   verified landing frees a slot.
+2. **No synthetic load, ever.** No busy-loop scripts, no `yes >/dev/null`
+   blocks, no stress harnesses, no N-way suite hammering. A flake is proved
+   deterministic by DELAYING its cause (the `89e5d71` method in
+   `docs/08-TESTING.md`) and by repeating the suite SEQUENTIALLY — never by
+   loading the machine. "Prove it under load" in a brief means "prove the
+   race is gone deterministically"; the dispatcher must say exactly that and
+   must never invite unbounded parallelism.
+3. **Gates are bounded**: `pnpm test -- --maxWorkers=2` per concurrent
+   writer, one suite run at a time, no overnight loops, no background job
+   left pumping when a turn ends.
+4. **Nothing outlives the writer.** Scratch harnesses live under that
+   writer's own `/tmp/<worktree>` directory, every process it starts is
+   foreground or killed before it reports, and load-generating scripts are
+   DELETED rather than left executable.
+5. **The dispatcher verifies the host, not just the diff**: `uptime` and a
+   process scan (`pgrep -af "vitest|loadgen"`) before dispatching and after
+   every landing; it cleans up its own writers' leftovers and reports the
+   incident to the owner.
+
 ## Subagent hygiene
 
 The session list holds in-flight work only — a short list is a correct
