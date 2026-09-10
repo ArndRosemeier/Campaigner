@@ -134,14 +134,20 @@ function encountersNeedingMobPortraits(
  * no-op when the module has nothing configured (or was deleted mid-run).
  */
 export async function runModulePostGeneration(moduleId: Id, campaign: Campaign): Promise<void> {
-  // The epoch this pass belongs to (see the doc comment): captured ONCE, at
-  // entry, so every guard below answers "did a Stop all land while this
-  // automation was running?" — and keeps answering yes for the rest of it.
-  const epoch = getStopEpoch();
   try {
     const module = await getModule(moduleId);
     if (module === undefined) return;
-    if (module.status !== 'ready') return; // automation follows a COMPLETED parts pass
+    // Automation follows a completed parts pass. This check is NOT the
+    // completed-vs-cancelled test: a cancelled pass keeps 'ready' with parts
+    // present (Retry must stay available), so a cancel is rejected by the
+    // stop-epoch guard below and by the caller's `aborted` flag.
+    if (module.status !== 'ready') return;
+    // The epoch this pass belongs to (see the doc comment): captured ONCE,
+    // here — the moment the automation actually starts doing work, after the
+    // no-op gates — so every guard below answers "did a Stop all land while
+    // this automation was running?" and keeps answering yes for the rest of
+    // it.
+    const epoch = getStopEpoch();
     const { autoGenerateKinds, autoImageKinds, autoGenerateBattlemaps, autoGenerateMobImages } =
       module;
     if (
