@@ -40,6 +40,36 @@ describe('buildEntityBrief', () => {
     expect(brief).toContain('The Gray Nun');
     expect(brief.trim()).not.toBe('');
   });
+
+  it('frames an ENCOUNTER brief as the scene it must stage, and only there', () => {
+    // The assertion rule's brief-side framing (docs/11, docs/17 row 89).
+    // Revert-proof: passing the flag through to every kind — or ignoring it —
+    // fails one of the two halves here (the framing appearing where it must
+    // not, or missing where it must). The omitted argument is the pre-rule
+    // byte-identical default that every other stub kind takes.
+    const scene = 'Two risen lumberjacks stand motionless on the footbridge.';
+    const plain = buildEntityBrief('The Sunken Bridge', scene, 'premise', 3);
+    expect(plain).toContain('Where it is mentioned:');
+    expect(buildEntityBrief('The Sunken Bridge', scene, 'premise', 3, [], false)).toBe(plain);
+
+    const encounter = buildEntityBrief('The Sunken Bridge', scene, 'premise', 3, [], true);
+    expect(encounter).toContain('The scene this encounter must stage');
+    expect(encounter).toContain('is FIXED, and the roster and the map must match it');
+    expect(encounter).not.toContain('Where it is mentioned:');
+    // The scene text itself is byte-identical: only the label changed.
+    expect(encounter).toBe(
+      plain.replace(
+        'Where it is mentioned:',
+        'The scene this encounter must stage — whatever it states about the opposition and the place is FIXED, and the roster and the map must match it:',
+      ),
+    );
+  });
+
+  it('adds no scene block to an encounter brief that carries no context', () => {
+    const brief = buildEntityBrief('The Gray Nun', '', 'premise', undefined, [], true);
+    expect(brief).not.toContain('The scene this encounter must stage');
+    expect(brief).not.toContain('Where it is mentioned:');
+  });
 });
 
 describe('STUB_KINDS and persona slugs', () => {

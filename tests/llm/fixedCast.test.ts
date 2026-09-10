@@ -513,7 +513,7 @@ describe('partCall constants-only sentence', () => {
     return typeof user?.content === 'string' ? user.content : '';
   }
 
-  it('the part prompt names only fixed participants in encounter scenes', async () => {
+  it('the part prompt carries the assertion rule for encounter scenes', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const targetDraft = createModule({
       campaignId: campaign.id,
@@ -542,7 +542,13 @@ describe('partCall constants-only sentence', () => {
 
     await runParts(target.id, campaign, { planIndexes: [0] });
 
-    expect(partCallText()).toContain('name only the fixed participants');
-    expect(partCallText()).toContain('rank-and-file');
+    // The rewritten casting clause (docs/17 row 89): the writer asserts the
+    // fiction — a stated count is binding — and keeps personal names off the
+    // rank and file. This test used to pin the OLD clause ("name only the
+    // fixed participants" / "rank-and-file"); it is the one existing pin on
+    // that contract text outside the byte-identity fixtures.
+    expect(partCallText()).toContain('state what the fight IS and where it happens');
+    expect(partCallText()).toContain('A count you state is binding');
+    expect(partCallText()).toContain('A rank-and-file fighter never gets a personal name');
   }, 30_000);
 });

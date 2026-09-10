@@ -229,6 +229,10 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         // byte-identical. Encounter drafts additionally carry the fixed cast
         // (docs/11): drafted NPCs/monsters sharing this scene's context, with
         // the must-appear instruction — the rest of the roster casts as usual.
+        // And encounter drafts present that same scene text as THE SCENE THIS
+        // ENCOUNTER MUST STAGE (docs/11 assertion rule, docs/17 row 89): the
+        // prose is the truth about this fight, fixed in what it states. Every
+        // other stub kind keeps the pre-rule brief bytes.
         const contextParagraphs = surroundingParagraphs(moduleText, target.name);
         const brief = buildEntityBrief(
           target.name,
@@ -238,6 +242,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           kind === 'encounter'
             ? fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
             : [],
+          kind === 'encounter',
         );
         const runInput: StartRunInput = {
           campaign,

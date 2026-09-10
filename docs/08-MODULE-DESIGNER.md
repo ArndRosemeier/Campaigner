@@ -374,6 +374,65 @@ decided by the entity's recorded `kind === 'encounter'` in the artifact
 pipeline (`post-generation` filters on it), and the encounter floor is
 untouched (§Editable encounter floor).
 
+### The assertion rule — what the writer must state, and what it must leave alone (owner-directed, docs/17 row 89)
+
+**The writer now says what the fight IS.** Owner report, verbatim: *"The
+encounter prose generator actually did a good job here, and the mob generator
+was not too bad either. The problem is the disconnect. The prose actually holds
+truth, but it might not always be sufficient. If the prose is vague then the mob
+generator can improvise, if its specific like here, it must follow that lead."*
+The module text had staged two risen lumberjacks, axes in hand, on a boggy
+footbridge, and the encounter roster fielded a sea hag, ghoul soldiers and
+skeletal guards — because the writer's own contract clause asked the rank and
+file to *"stay anonymous and undescribed by name (no names, no counts), so the
+encounter pipeline casts them."* That clause is rewritten; the pipeline's half
+lives in `11-ENCOUNTER-GENERATOR.md §The scene is the truth — the assertion
+rule`.
+
+**What the writer MUST state, in an encounter scene** (the rewritten
+`contract.encounterCasting` slot, `src/llm/promptStyles.ts` — one contract
+clause, rendered once per part, identical in all three built-in styles):
+
+- the **opposition**: what the creatures are, roughly how many, what they carry,
+  what they are doing;
+- the **place**: where it is, its terrain, and the conditions the party will
+  fight in;
+- and therefore any creature the scene identifies precisely enough to be a
+  specific creature rather than "some undead".
+
+**A stated count is BINDING.** The prohibition that produced the vague
+opposition is deleted: a writer who writes "two risen lumberjacks" has fixed the
+roster's composition, and the encounter generator must stage it — or declare
+loudly why it could not (that collision path is the pipeline's, `docs/11`). The
+count is FICTION, not a stat line: the mechanics slot still forbids stat blocks,
+tactics rules and the map in prose, and the casting clause restates that
+boundary in the same breath so the two never read as a contradiction.
+
+**What the writer MUST leave alone.** Stat blocks, difficulty tuning, tactics,
+treasure and the battle map belong to the encounter pipeline. The writer asserts
+the fiction; the pipeline owns the CASTING around it and must not contradict
+what the text states.
+
+**Personal names stay the writer's choice, for PEOPLE.** A boss, a duelist or a
+negotiator may be named (a named, drafted NPC is pinned as fixed cast,
+`docs/11`); a rank-and-file fighter never gets a personal name — write "two
+drowned lumberjacks", not "[[Josef]], a drowned lumberjack". Names are what the
+module's links, artifacts and cast resolve against, so an invented name per mook
+would fork entities the module has no use for.
+
+**Silence is free, and that half is load-bearing.** Where the scene states
+nothing the pipeline designs the roster, the map and everything else freely: the
+contract clause says so in as many words, and that is a deliberate refusal to
+make the pipeline timid. A vague scene is never a reason to invent an assertion
+the text does not make — no mechanism anywhere counts, measures or judges how
+"specific" a scene is (that threshold is what a model answers inconsistently,
+and it is the failure mode this rule exists to avoid).
+
+**This is prompt discipline, not a gate** (§M4-B-1 boundary, unchanged): no code
+reads the prose to check it stated enough. The only new code-side inputs are the
+encounter prompt's own section, the brief's framing label and the optional
+`substitutions` declaration the model may file.
+
 ### Editable prompt styles (owner decision, docs/17 row 86)
 
 **What the owner asked for, verbatim:** *"How about we make these prompts (with

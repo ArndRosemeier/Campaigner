@@ -1401,6 +1401,131 @@ constants, the rest stays automated.
   scene mention, empty cast, no party level, unreadable cast level) yield
   nothing, never a failure.
 
+### The scene is the truth — the assertion rule (owner-directed, docs/17 row 89)
+
+**The owner's report, verbatim:** *"The encounter prose generator actually did
+a good job here, and the mob generator was not too bad either. The problem is
+the disconnect. The prose actually holds truth, but it might not always be
+sufficient. If the prose is vague then the mob generator can improvise, if its
+specific like here, it must follow that lead."* His German module staged the
+fight concretely — two of the missing lumberjacks risen as undead, axes still
+in their hands, motionless on a narrow boggy footbridge over a knee-deep icy
+stream in a pine forest — and the roster came back a sea hag, two ghoul
+soldiers and two skeletal guards: five creatures, one swamp hag, nothing of the
+lumberjacks, their axes or their stillness.
+
+**The diagnosis (dispatcher-verified).** The scene text *did* reach the
+encounter prompt (`features/modules/entity-batch.ts` builds the brief with
+`surroundingParagraphs` + premise + party level + fixed cast, and that brief is
+the `Task:` line of the draft). But it arrived framed as **"Where it is
+mentioned:"** — CONTEXT, not SPECIFICATION — while the encounter designer was
+told its job is to design a level-appropriate, citable, environment-plausible
+roster. So the swamp produced the hag and the undead produced ghouls and
+skeletons, and **nothing obliged the roster to agree with the scene text**. The
+only bridge that existed was the FIXED CAST (`roomBudget.fixedCastForEncounter`),
+and it was empty: the scene named no participants — because the writer's own
+contract clause (`PARTS_ENCOUNTER_CASTING`) demanded that the rank and file
+*"stay anonymous and undescribed by name (no names, no counts), so the encounter
+pipeline casts them."* The contract caused the vague opposition, and the vague
+opposition unbound the pipeline.
+
+**The rule, and why it is DIRECTIONAL rather than a threshold.** Everything the
+scene text **ASSERTS** is binding on the encounter; everything it leaves **OPEN**
+is the generator's to invent. It is deliberately NOT implemented as an "is the
+prose specific enough?" judgement — that threshold is exactly the question a
+model answers inconsistently and then rationalises after the fact. There is no
+threshold anywhere in the mechanism: a stated creature is staged or declared, an
+unstated one is free.
+
+Four places carry it, each with a revert-proof test
+(`tests/llm/sceneAuthority.test.ts`, plus the added cases in
+`tests/features/persona-request.test.ts` and `tests/llm/fixedCast.test.ts`):
+
+1. **The writer's contract clause** (`PARTS_ENCOUNTER_CASTING`,
+   `src/llm/promptStyles.ts` — still ONE contract slot, rendered once per part
+   in all three built-in styles). It now says the writer **states what the fight
+   IS and where it happens** (the opposition's nature, roughly how many, what
+   they carry, what they are doing; the place, its terrain and the conditions the
+   party fights in), that **a stated count is binding**, that these are FICTION
+   and not mechanics (no stat lines, no tactics rules, no map — the mechanics
+   slot's boundary, restated), that a rank-and-file fighter gets **no personal
+   name** (the one half of the old clause that survives, now about names only),
+   and that the pipeline owns the CASTING and must not contradict the fiction
+   while **silence is not a constraint**. The "no names, no counts" prohibition
+   that produced the vague opposition is deleted.
+2. **The encounter pipeline's own prompt section** (`SCENE_AUTHORITY_SECTION`,
+   `src/llm/sceneAuthority.ts`) — CODE, not persona text: personas are
+   user-editable stored rows, so a persona edit would never reach an app the
+   owner already has. It renders in the Smith draft prompt (`runDraft`, for
+   `kind === 'encounter'` only) and in the Cartographer brief prompt, where the
+   roster and the map are designed together. Every other kind's draft prompt is
+   byte-identical without it — pinned by an exact-bytes comparison.
+3. **The brief's framing** (`buildEntityBrief`'s additive `encounterScene`
+   parameter, set true only by the encounter path in `entity-batch.ts`): an
+   encounter's surrounding text is labelled **"The scene this encounter must
+   stage — whatever it states about the opposition and the place is FIXED, and
+   the roster and the map must match it:"** instead of "Where it is mentioned:".
+   Every non-encounter brief keeps the pre-rule bytes.
+4. **The loud collision path** (below) — without it the rule would create
+   exactly the silent substitution AGENTS 1 forbids.
+
+**The map is bound by the same text.** The assertion rule names the roster AND
+the map: whatever the scene states about the place — terrain, ground, weather,
+the conditions the party fights in — must be what the encounter is fought on.
+D17 is untouched and is what makes this work: a natural-site map is already
+rebuilt from the brief's own prose (terrain + summary, no materials line, no
+terrain bans), so an outdoor fight's map follows the scene text by construction,
+and the Cartographer's `terrain` field and room descriptions carry it indoors.
+No new map-side mechanism was added, and no prose-vs-map checker exists: the
+declaration below is the model's own account, which is the honest bound of what
+code can verify without a classifier (AGENTS 1/3).
+
+**The loud collision path (mandatory, and the reason the encounter half is code
+rather than persona text).** A creature the scene states may have no citable stat
+source in this campaign's books. The old behaviour there was the nearest generic
+equivalent — silently. Now:
+
+- both roster-authoring contracts (`encounterDraftSchema` — the Smith draft —
+  and `encounterGeneratorBriefSchema` — the Cartographer brief, `llm/schemas.ts`)
+  gain an ADDITIVE, OPTIONAL `substitutions: [{ asserted, used, reason }]`
+  defaulting to empty. ABSENT and NULL both read as "none declared", so a brief
+  stored before this field existed parses and renders nothing (pinned);
+- the prompt instructs that a stated assertion it cannot honour must either be
+  built as a complete inline `statBlock` for exactly the creature described, or
+  be recorded in that field — **never silently swapped**;
+- the app SURFACES it through the existing advisory seam the fixed-cast checks
+  use: `roomBudget.substitutionAdvisories` renders one line per declaration into
+  the same `data.budgetAdvisory` block and step notice the GM already reads
+  ("The module text for *X* states *two risen lumberjacks with axes* and the
+  roster uses *two ghoul soldiers* instead. The encounter declared this
+  substitution itself — reason: …"), at all four finalize seams (Smith fresh
+  creation, Smith in-place fill, Cartographer full run, Cartographer roster-only
+  repopulation);
+- a `substitutions` value that is present but unreadable is a LOUD error, never
+  a silently dropped declaration (`sceneAuthority.sceneSubstitutionsOf`).
+
+**What is NOT in this arc** (named so the boundary is not re-derived): contract
+VERSIONING (recording contract text per module so an existing module keeps its
+old bytes), and any prose-vs-map contradiction checker beyond what the model
+declares.
+
+**The byte-identity consequence, stated plainly (owner-approved).** The contract
+layer is CODE, not recorded data: changing a contract value re-renders the parts
+prompt for **every** style, including modules that already exist and are
+resumed. That is deliberate — coherence between the prose and the encounter it
+produces beats frozen contract bytes — and it is not smuggled in: the style
+TEMPLATE texts (Classic, Story, Freestyle) are unchanged, only the injected
+value moved, and the fixtures that carry the composed bullet were updated by
+hand (row 89 names them and says what their pin now means).
+
+**Reversal recipe.** Restore the previous `PARTS_ENCOUNTER_CASTING` value in
+`src/llm/promptStyles.ts` (one constant), delete the `SCENE_AUTHORITY_SECTION`
+entry from the two prompt assemblers in `runEngine.ts`, drop the
+`encounterScene` argument in `entity-batch.ts`, and remove `substitutions` from
+the two schemas (the advisory call sites then read an absent field as `[]` and
+render nothing). No migration, no stored-data rewrite, no schema version: every
+piece is code plus optional fields no older row ever carried.
+
 ### Deletion record — the marker path dies entirely (owner: all pixel
 read-back is unnecessary)
 

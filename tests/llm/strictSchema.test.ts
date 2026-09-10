@@ -68,6 +68,10 @@ describe('strictJsonSchema', () => {
       'terrain',
       'tactics',
       'treasure',
+      // The scene-assertion declaration (docs/11 assertion rule, row 89): the
+      // preprocess field emits its OUTPUT shape (the array), like the other
+      // tolerant fields above.
+      'substitutions',
       'locationKind',
     ]);
   });

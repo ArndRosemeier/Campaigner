@@ -67,6 +67,14 @@ export function stubKindCarriesPartyLevel(kind: StubKind): boolean {
  * only): already-drafted NPCs/monsters whose mentions share the encounter's
  * scene context, with the must-appear instruction. Empty (the default)
  * renders nothing, so every non-encounter brief stays byte-identical.
+ *
+ * `encounterScene` is the ASSERTION RULE's brief-side framing (docs/11, docs/17
+ * row 89), set true by the encounter path in `entity-batch.ts` and false
+ * everywhere else: for an encounter the surrounding text is not background it
+ * merely happens near, it is THE SCENE THIS ENCOUNTER MUST STAGE — fixed in
+ * whatever it states about the opposition and the place. The label is the whole
+ * change: every non-encounter brief renders the same bytes as before, pinned by
+ * `tests/features/persona-request.test.ts`.
  */
 export function buildEntityBrief(
   name: string,
@@ -74,10 +82,14 @@ export function buildEntityBrief(
   premise: string,
   partyLevel: number | undefined,
   fixedCast: readonly FixedCastMember[] = [],
+  encounterScene = false,
 ): string {
+  const contextLabel = encounterScene
+    ? 'The scene this encounter must stage — whatever it states about the opposition and the place is FIXED, and the roster and the map must match it:'
+    : 'Where it is mentioned:';
   return [
     `Detail the entity "${name}" for this module. It appears in the module text below — match it exactly by name.`,
-    contextParagraphs === '' ? null : `Where it is mentioned:\n\n${contextParagraphs}`,
+    contextParagraphs === '' ? null : `${contextLabel}\n\n${contextParagraphs}`,
     premise === '' ? null : `Module premise for context:\n\n${premise}`,
     partyLevel === undefined ? null : partyLevelLine(partyLevel),
     fixedCastSectionFor(fixedCast),

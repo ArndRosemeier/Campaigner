@@ -200,6 +200,45 @@ export const imagePromptDraftSchema = z.object({
 
 export type ImagePromptDraft = z.infer<typeof imagePromptDraftSchema>;
 
+/**
+ * A substitution an encounter DECLARED (docs/11 assertion rule, docs/17 row
+ * 89): the scene text states something about the opposition or the place and
+ * the roster (or the map) could not honour it as written. `asserted` is what
+ * the scene states, `used` what the reply carries instead, `reason` why — the
+ * model's own account, surfaced to the GM through the existing advisory seam
+ * (`roomBudget.substitutionAdvisories`).
+ *
+ * Per-system creature names are the common cause (a stated creature with no
+ * citable stat source in this campaign's books), which is exactly the case the
+ * old silent fallback used to resolve by quietly fielding the nearest generic
+ * equivalent. Deliberately tolerant strings: this is a REPORT, never a gate —
+ * an entry with an empty field still renders what it does carry.
+ */
+export const sceneSubstitutionSchema = z.object({
+  asserted: z.string(),
+  used: z.string(),
+  reason: z.string(),
+});
+
+export type SceneSubstitution = z.infer<typeof sceneSubstitutionSchema>;
+
+/**
+ * The additive, optional `substitutions` list on both roster-authoring
+ * encounter contracts (the Smith draft and the Cartographer brief).
+ *
+ * ABSENT and NULL both read as "none declared", so a brief stored before this
+ * field existed parses unchanged and renders no advisory (docs/11 assertion
+ * rule; pinned by test). The coercion is a preprocess rather than
+ * `.optional()` because the strict JSON schema re-emits an optional property
+ * as required+NULLABLE (strictSchema.ts), i.e. a model that has nothing to
+ * declare may legitimately send `null` — and `.default([])` alone would reject
+ * exactly that reply and burn the run's one repair turn on nothing.
+ */
+const sceneSubstitutions = z.preprocess(
+  (value) => value ?? [],
+  z.array(sceneSubstitutionSchema),
+);
+
 export const encounterDraftSchema = z.object({
   ...draftBase,
   difficulty: z.string(),
@@ -229,6 +268,11 @@ export const encounterDraftSchema = z.object({
   terrain: z.string(),
   tactics: z.string(),
   treasure: z.string(),
+  /**
+   * Scene-assertion substitutions the reply must declare (docs/11 assertion
+   * rule): a stated creature or place it could not honour. Absent/null = none.
+   */
+  substitutions: sceneSubstitutions,
   /**
    * D10 amendment: the persona classifies WHERE the encounter takes place in
    * its existing draft call (no extra LLM call). Guides the automatic
@@ -262,6 +306,12 @@ export const encounterGeneratorBriefSchema = z
     styleNotes: z.string().default(''),
     negative: z.string().default(''),
     environment: enumCaseInsensitive(['dungeon', 'outdoor']).default('dungeon'),
+    /**
+     * Scene-assertion substitutions the brief must declare (docs/11 assertion
+     * rule): a creature or place the module text states and this reply could
+     * not honour as written. Absent/null = none declared.
+     */
+    substitutions: sceneSubstitutions,
     monsters: z.array(
       z.object({
         name: z.string().min(1),

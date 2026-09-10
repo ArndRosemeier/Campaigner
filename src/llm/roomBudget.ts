@@ -2,6 +2,7 @@ import type { GameSystem } from '@/domain/gameSystem';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
 import { parseLevelSort } from '@/llm/encounterRoster';
+import type { SceneSubstitution } from '@/llm/schemas';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 
 /**
@@ -596,6 +597,44 @@ export function fixedCastAdvisories(
     }
   }
   return advisories;
+}
+
+/**
+ * Scene-assertion substitution advisories (docs/11 assertion rule, docs/17
+ * row 89, pure): the encounter DECLARED that the module text states one thing
+ * and the roster carries another — a stated creature with no citable stat
+ * source, a stated count it could not stock, a place it could not map. Rendered
+ * through the SAME advisory seam the fixed-cast checks above use
+ * (`data.budgetAdvisory` + the step notice), so the GM reads
+ * *"your text says two risen lumberjacks; the roster uses ghouls — here is
+ * why"* instead of meeting a silent substitution in play.
+ *
+ * Never blocking and never a failure: it reports a declaration the model made,
+ * which is the whole point of asking for it. An entry carrying no assertion and
+ * no substitution (all three fields blank) says nothing and renders nothing.
+ */
+export function substitutionAdvisories(
+  encounterName: string,
+  substitutions: readonly SceneSubstitution[],
+): string[] {
+  return substitutions
+    .map((entry) => ({
+      asserted: entry.asserted.trim(),
+      used: entry.used.trim(),
+      reason: entry.reason.trim(),
+    }))
+    .filter((entry) => entry.asserted !== '' || entry.used !== '')
+    .map((entry) => {
+      const asserted =
+        entry.asserted === '' ? 'a creature or place in the scene' : `"${entry.asserted}"`;
+      const used = entry.used === '' ? 'something else' : `"${entry.used}"`;
+      const reason = entry.reason === '' ? 'no reason given' : entry.reason;
+      return (
+        `The module text for "${encounterName}" states ${asserted} and the roster uses ${used} instead. ` +
+        `The encounter declared this substitution itself — reason: ${reason}. ` +
+        'Review this roster (or regenerate the encounter) against the prose: a stated creature or place is never swapped silently.'
+      );
+    });
 }
 
 // --- Roster level resolution -------------------------------------------------

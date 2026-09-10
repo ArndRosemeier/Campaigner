@@ -315,7 +315,8 @@ export const PROMPT_STYLE_PLACEHOLDERS: readonly PromptStylePlaceholder[] = [
     surface: 'parts',
     required: true,
     layer: 'contract',
-    summary: 'Name only the fixed participants of a fight — rank-and-file fighters stay anonymous.',
+    summary:
+      'State what a fight is and where it happens — a stated count is binding; the pipeline owns the stat blocks, difficulty and map.',
     empty: 'Never empty.',
   },
 ];

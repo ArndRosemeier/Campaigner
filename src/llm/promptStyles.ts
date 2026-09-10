@@ -79,9 +79,37 @@ const PARTS_MECHANICS = [
   '- Encounters live in separate encounter artifacts — in the prose, set up the fight and link it as [[Encounter Name]]; do NOT write the encounter itself (no monster roster with counts, no tactics or terrain rules, no battle map or ASCII map — those belong to the linked encounter artifact).',
 ].join('\n');
 
-/** Encounter casting (contract slot): the pipeline casts the rank and file. */
-const PARTS_ENCOUNTER_CASTING =
-  '- In encounter scenes, name only the fixed participants ([[Halvar]] the boss, the duelist, the negotiator) — rank-and-file fighters stay anonymous and undescribed by name (no names, no counts), so the encounter pipeline casts them.';
+/**
+ * Encounter casting (contract slot, owner-approved rewrite — docs/17 row 89):
+ * THE ASSERTION RULE, in the writer's half.
+ *
+ * The old clause traded the writer out of the fight entirely ("no names, no
+ * counts") and told it to leave the opposition to the pipeline. The owner's
+ * German module shows what that costs: the prose staged two risen lumberjacks,
+ * axes in hand, motionless on a boggy footbridge — and the roster came back a
+ * sea hag, two ghoul soldiers and two skeletal guards, because the scene had
+ * named no participants and the fixed cast was therefore empty. The pipeline
+ * was not wrong; nothing obliged it to agree with the text.
+ *
+ * The replacement is DIRECTIONAL, never a "is the prose specific?" judgement
+ * (a threshold is exactly what a model answers inconsistently and then
+ * rationalises): the writer ASSERTS the fiction — what the fight is and where
+ * it happens, a count included, and a count is binding — and the pipeline owns
+ * the CASTING around it (stat blocks, difficulty, tactics, treasure, the map)
+ * without contradicting it. Where the writer says nothing the pipeline designs
+ * freely, and that half is load-bearing: a rule that read as "always obey the
+ * text" would make vague scenes worse (owner's explicit position).
+ *
+ * The mechanics slot above still owns "no stat lines, no tactics rules, no
+ * map": this slot asks for FICTION (creature, number, gear, action, ground,
+ * weather), not the roster the linked encounter artifact carries.
+ */
+const PARTS_ENCOUNTER_CASTING = [
+  '- In an encounter scene, state what the fight IS and where it happens: the opposition — what they are, roughly how many, what they carry, what they are doing — and the place, its terrain and the conditions the party will fight in. A count you state is binding on the encounter the app builds from this scene.',
+  '- You assert the FICTION, never the mechanics: no stat lines or stat blocks, no tactics rules and no map (those belong to the linked encounter artifact) — but the creature, the number, the gear, the ground and the weather you name are the truth about this fight, and the encounter generator must stage them.',
+  '- Name an individual only where the fiction needs a person: the boss, the duelist, the negotiator. A rank-and-file fighter never gets a personal name (write "two drowned lumberjacks", not "[[Josef]], a drowned lumberjack").',
+  '- The pipeline owns the CASTING around your fiction — stat blocks, difficulty tuning, tactics, treasure and the battle map — and it must not contradict what you state. Where you state nothing you constrain nothing: silence is not a constraint, and the pipeline designs the roster, the map and everything else freely.',
+].join('\n');
 
 /**
  * The finale-aware closing demand (data value for `{{partEnding}}`): the run's

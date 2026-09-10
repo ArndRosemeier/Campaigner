@@ -85,6 +85,7 @@ import {
   resolveEntryLevels,
   roomBudgetGuidanceFor,
   roomBudgetMode,
+  substitutionAdvisories,
 } from '@/llm/roomBudget';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { getSettings } from '@/db/settingsRepo';
@@ -95,6 +96,7 @@ import { chat, MissingApiKeyError, type ChatFallback, type ChatMessage, type Cha
 import { generateImages } from '@/llm/imageGen';
 import { formatZodIssues, parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { resolveChatModel, repairModel, type ChainFallback } from '@/llm/modelFallback';
+import { SCENE_AUTHORITY_SECTION, sceneSubstitutionsOf } from '@/llm/sceneAuthority';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { failureKindOf } from '@/llm/failureKind';
 import { assembleImagePrompt, buildImagePrompt, IMAGE_TEXT_NEGATIVE } from '@/llm/imagePromptDraft';
@@ -112,7 +114,12 @@ import {
   plotArcDraftSchema,
   continuityReportSchema,
 } from '@/llm/schemas';
-import type { EncounterDraft, EncounterGeneratorBrief, ImagePromptDraft } from '@/llm/schemas';
+import type {
+  EncounterDraft,
+  EncounterGeneratorBrief,
+  ImagePromptDraft,
+  SceneSubstitution,
+} from '@/llm/schemas';
 import {
   buildLabeledMapPrompt,
   labelsForRoomCount,
@@ -666,6 +673,23 @@ function buildStatblockCitationSection(statblockTitles: readonly string[]): stri
     ...statblockTitles.map((title, index) => `[${index}] ${title}`),
     'For each monster: if one of these stat blocks matches, add "sourceChunkIndex": <index> to that monster (referring to this numbered list); otherwise cite an exact bestiary roster entry via "sourceName" when one matches, or embed a complete inline "statBlock" object. A monster with no stat source is rejected.',
   ].join('\n');
+}
+
+/**
+ * The advisory text a Cartographer finalize persists (docs/11 assertion rule,
+ * docs/17 row 89): the brief step's own budget verdict plus the
+ * scene-assertion substitutions the APPROVED brief declared — ONE string on the
+ * existing `data.budgetAdvisory` seam, so the GM reads why a stated creature or
+ * place is not what the roster or the map carries.
+ */
+function encounterAdvisoryText(
+  budgetAdvisory: string,
+  encounterName: string,
+  substitutions: readonly SceneSubstitution[],
+): string {
+  return [budgetAdvisory, ...substitutionAdvisories(encounterName, substitutions)]
+    .filter((part) => part !== '')
+    .join(' ');
 }
 
 /**
@@ -2321,6 +2345,11 @@ export class RunEngine {
     const instruction = [
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})${input.campaign.description === '' ? '' : ` — ${input.campaign.description}`}`,
       `Task: ${input.brief}`,
+      // The assertion rule (docs/11, docs/17 row 89): the scene text the brief
+      // carries is the TRUTH about this fight — fixed in what it states, free
+      // where it states nothing. Encounter runs only, and null everywhere else
+      // so every other kind's prompt is byte-identical (pinned by test).
+      kind === 'encounter' ? SCENE_AUTHORITY_SECTION : null,
       moduleSection,
       groundingSection,
       contextSection,
@@ -3142,6 +3171,12 @@ export class RunEngine {
         : 'Preset: Standard — design ONE battle arena: exactly one room, no corridors between rooms, with the entry room as the party\'s way in.';
     const contract = [
       input.brief,
+      // The assertion rule (docs/11, docs/17 row 89): the scene text the brief
+      // carries is the TRUTH for this fight, and this reply designs BOTH the
+      // roster and the map — so the rule is stated here too (a regenerate or
+      // repopulate brief states no scene, and the section's own "where the
+      // scene states nothing you design freely" half is what covers that).
+      SCENE_AUTHORITY_SECTION,
       groundingSection,
       `Campaign: ${input.campaign.name} (${GAME_SYSTEM_LABELS[input.campaign.system]})`,
       partLevel === undefined ? null : partyLevelLine(partLevel),
@@ -3173,7 +3208,7 @@ export class RunEngine {
       // Asymmetric per-room budget loop (docs/11 D12): the targetLevel
       // contract + the documented per-system band.
       roomBudgetGuidanceFor(input.campaign.system),
-      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
+      `Reply with JSON only using every field: name, summary, body, difficulty, levelHint, terrain, tactics, treasure, theme, styleNotes, negative, environment ("dungeon" | "outdoor"), ${monsterFieldSpec}, substitutions [{asserted:string,used:string,reason:string}] (empty when every creature and place the scene states is honoured as written; otherwise one entry per thing you had to change), rooms [{name,description,size:"small"|"medium"|"large",monsterIndexes:number[],adjacentRoomIndexes:number[],key:string,keyTreasure:string,targetLevel?:number}] (a single arena = exactly 1 room; a dungeon complex = 4–10 rooms), entryRoomIndex. Every monster index belongs to exactly one room. Rooms form one connected graph. Do not emit coordinates.`,
     ].filter((part) => part !== null).join('\n\n');
     const messages: ChatMessage[] = [
       { role: 'system', content: input.persona.systemPrompt },
@@ -4276,6 +4311,11 @@ export class RunEngine {
     if (roomBudgetMode(input.campaign.system) === 'verbatim') {
       advisories.push(PF2E_BUDGET_ADVISORY);
     }
+    // Scene-assertion substitutions (docs/11 assertion rule): a roster-only
+    // repopulation replaces the roster and nothing else, so the brief's own
+    // declaration of what it could not honour is the one thing that must reach
+    // the GM with it.
+    advisories.push(...substitutionAdvisories(target.name, parsed.substitutions));
     const budgetAdvisory = advisories.join(' ');
     await updateArtifact(
       target.id,
@@ -4430,7 +4470,11 @@ export class RunEngine {
           siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
           // And the run's own budget verdict (docs/11 D12) replaces the
           // target's stale advisory — the fresh layout was just checked.
-          budgetAdvisory: this.encounterBudgetAdvisory(steps),
+          budgetAdvisory: encounterAdvisoryText(
+            this.encounterBudgetAdvisory(steps),
+            parsed.name,
+            parsed.substitutions,
+          ),
           // Fill grade (docs/11 D12 amendment): the row's value always wins
           // (never redrawn — owner precedence). Absent + a complex layout
           // stamps the run's drawn value — the legacy row's draw-on-first-
@@ -4517,7 +4561,11 @@ export class RunEngine {
           // single, anything multi-room = complex. The brief boundary
           // enforces 1-or-4–10; the persisted field records the outcome.
           siteShape: layout.rooms.length === 1 ? 'single' : 'complex',
-          budgetAdvisory: this.encounterBudgetAdvisory(steps),
+          budgetAdvisory: encounterAdvisoryText(
+            this.encounterBudgetAdvisory(steps),
+            parsed.name,
+            parsed.substitutions,
+          ),
           // Fill grade (docs/11 D12 amendment): a complex layout
           // materializing for the FIRST time stamps the value the brief was
           // written against (drawn at the brief step; a pre-arc resumed run
@@ -4916,6 +4964,12 @@ export class RunEngine {
     // the finalized roster — coverage + level mismatches ride the advisory
     // block, loud, never blocking. Fresh creations only here; the in-place
     // fill below computes the same checks on its own path.
+    //
+    // Scene-assertion substitutions (docs/11 assertion rule, docs/17 row 89)
+    // ride the SAME block: the encounter's own declaration of every creature
+    // or place the module text states that it could not honour as written.
+    // That is the loud-collision half of the rule — a stated creature is
+    // never swapped for a generic equivalent in silence.
     let fixedCastNotice: string | null = null;
     if (kind === 'encounter' && 'monsters' in data && input.targetArtifactId === undefined) {
       const castAdvisories = await this.fixedCastAdvisoriesFor({
@@ -4925,11 +4979,16 @@ export class RunEngine {
         monsters: data.monsters,
         levelHint: data.levelHint,
       });
-      if (castAdvisories.length > 0) {
-        data.budgetAdvisory = [data.budgetAdvisory, ...castAdvisories]
+      const declaredSubstitutions = substitutionAdvisories(
+        asString(draft.name).trim(),
+        sceneSubstitutionsOf(draft.substitutions),
+      );
+      const advisories = [...castAdvisories, ...declaredSubstitutions];
+      if (advisories.length > 0) {
+        data.budgetAdvisory = [data.budgetAdvisory, ...advisories]
           .filter((part) => part !== '')
           .join(' ');
-        fixedCastNotice = castAdvisories.join(' ');
+        fixedCastNotice = advisories.join(' ');
       }
     }
 
@@ -5217,7 +5276,8 @@ export class RunEngine {
       // Fixed-cast advisories (docs/11): the same checks as fresh creations,
       // riding the same advisory block + notice (which the update below
       // persists). The prose-only path above returns earlier and persists
-      // the roster byte-identically — untouched.
+      // the roster byte-identically — untouched. Scene-assertion substitutions
+      // (docs/11 assertion rule) ride the same block for the same reason.
       const castAdvisories = await this.fixedCastAdvisoriesFor({
         campaignId: input.campaign.id,
         moduleId: target.moduleId,
@@ -5225,8 +5285,13 @@ export class RunEngine {
         monsters: data.monsters,
         levelHint: asString(draft.levelHint),
       });
-      if (castAdvisories.length > 0) {
-        budgetAdvisory = [budgetAdvisory, ...castAdvisories]
+      const declaredSubstitutions = substitutionAdvisories(
+        target.name,
+        sceneSubstitutionsOf(draft.substitutions),
+      );
+      const inPlaceAdvisories = [...castAdvisories, ...declaredSubstitutions];
+      if (inPlaceAdvisories.length > 0) {
+        budgetAdvisory = [budgetAdvisory, ...inPlaceAdvisories]
           .filter((part) => part !== '')
           .join(' ');
       }

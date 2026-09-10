@@ -159,6 +159,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | `event` kind mirrors `location` everywhere (social/non-combat content: GM text + showable image) | aliases, not copies — `eventDataSchema = locationDataSchema`, `eventDraftSchema = locationDraftSchema`; shared engine cases (`draftContractFor`/`dataForDraft`), shared `LocationForm`, own persona slug (`event-weaver`, never `worldbuilder`) + `REFILL_PERSONA_SLUGS` entry; EXCLUDED from battleSeed map-linking (location-only map role) and encounter/npc/statblock paths | an event-specific field (the alias would drift); mapping event onto the worldbuilder slug |
 | Reject empty generation output | `substanceText` in `llm/schemas.ts` (name/summary/body ≥ 1 non-whitespace char on every draft contract; the strict schema can't express it — the zod parse rides the ONE repair turn, then loud) + the finalize re-guard (`runFinalize`: empty body refuses to create or overwrite — a refill keeps the existing content) | a prose-length floor (over-rejects short notes); a silent placeholder |
 | Reject half-formed unicode escapes in generated text | `lib/encodingHygiene.findEscapeDebris` (pure: `?` + exactly 2 lowercase hex forming a non-ASCII tail, plus literal `\uXXXX` in decoded text) + `debrisIssuesForFields`/`collectTextLeaves` at the boundaries — `runEngine.runFinalize` scans the draft + statblock strings BEFORE any create/updateArtifact (hit → loud `rejected` with the debris named, nothing persists), `moduleGen.generatePart` scans normalized part prose before the ready write (hit → part `failed` with the debris named, chain continues). Detection backstop for the `language.ts` UTF-8 contract (prevention) | silent repair-and-continue; persisting debris as ready content; a second scanner implementation |
+| Bind an encounter to the scene its module text stages (the ASSERTION RULE — docs/11 §The scene is the truth, ledger 89) | FOUR pieces, each encounter-only: (a) the writer's contract clause `PARTS_ENCOUNTER_CASTING` (`llm/promptStyles.ts`) — state what the fight IS and where, a stated count is binding, personal names stay off the rank and file, and the pipeline owns the casting; (b) `SCENE_AUTHORITY_SECTION` (`llm/sceneAuthority.ts`) rendered by `runEngine.runDraft` for `kind === 'encounter'` ONLY and by `runEncounterBrief` — the scene states nothing ⇒ design freely; (c) `buildEntityBrief`'s additive `encounterScene` framing (`features/modules/persona-request.ts`, set true by the encounter path in `entity-batch.ts` only) — the surrounding text becomes "The scene this encounter must stage"; (d) the additive optional `substitutions` on BOTH roster contracts (`encounterDraftSchema`, `encounterGeneratorBriefSchema`, `llm/schemas.ts` — absent/null = none declared) read through `sceneAuthority.sceneSubstitutionsOf` and surfaced by `roomBudget.substitutionAdvisories` on the EXISTING `data.budgetAdvisory` + step-notice seam, at all four encounter finalize seams | editing the built-in encounter persona text (`llm/personas/builtins.ts` — personas are user-editable stored rows, so the change would never reach an app that already exists); a "is the prose specific enough?" threshold, a prose classifier or any runtime gate over the prose (§4 gotcha); rendering the section for non-encounter kinds (their prompts are byte-identical, exact-bytes pinned); a SECOND advisory surface beside `data.budgetAdvisory`; silently swapping a stated creature for a generic equivalent (the whole point of `substitutions`); a prose-vs-roster checker that guesses beyond what the model declares |
 
 ### 2.3 App & UI
 
@@ -335,6 +336,42 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 
 ## 4. Gotchas
 
+- **The module scene text is BINDING on the encounter it stages, not
+  background — and a prose/roster contradiction is a REPORTED condition, never
+  a silent substitution** (ledger 89, docs/11 §The scene is the truth). The
+  scene reached the encounter prompt all along, but as *"Where it is
+  mentioned:"* — context — while the designer's instruction was to build a
+  level-appropriate, citable, environment-plausible roster, so what the text
+  asserted about the fight carried no authority: two risen lumberjacks on a
+  boggy footbridge became a sea hag, ghoul soldiers and skeletal guards. The fix
+  is directional and has no threshold — everything the scene ASSERTS is fixed
+  (roster AND map), everything it leaves open is the pipeline's to design — and
+  it lives in FOUR places at once (the writer's contract clause, the encounter
+  prompt section, the brief's framing label, the `substitutions` declaration;
+  §2.2). Three consequences are easy to get wrong: (1) **a stated creature is
+  never swapped for a generic equivalent in silence** — that path is the
+  collision the owner's rule exists to kill, so a creature with no citable stat
+  source is inlined as a complete `statBlock` for exactly the creature described
+  or DECLARED in `substitutions`, which renders through the existing
+  `data.budgetAdvisory` seam the fixed-cast advisories use (never a second
+  surface, never a blocking failure); (2) **no code judges whether the prose is
+  "specific enough"** — a classifier threshold is what a model answers
+  inconsistently and then rationalises, and the vagueness half is load-bearing
+  the other way: where the text says nothing the pipeline must design freely
+  (pinned in the contract text AND the prompt), because a rule that read as
+  "always obey the text" would make every vague scene worse; (3) **the contract
+  layer is CODE, not recorded data** — changing a contract VALUE re-renders the
+  parts prompt for every style, INCLUDING a module that already exists and is
+  resumed (its recorded `templateText` is the style layer; the values are
+  injected fresh), which is the owner-approved price of coherence between the
+  prose and the encounter. So: never change a style TEMPLATE to carry the rule
+  (the templates are frozen; only injected values move), and when a contract
+  value changes, the composed-bytes fixtures under `tests/fixtures/promptStyles/`
+  and `tests/fixtures/encounterGuardrails/parts-guardrail-default.txt` are
+  hand-updated line by line — their pin means "no unintended drift" from that
+  point on, while the spine fixtures and the floor-message golden keep their
+  original "byte-identical to the pre-styles builders" meaning. Regenerating a
+  fixture from the current code is never evidence.
 - **A settings-row field is never allowed to be load-bearing for the whole
   row.** One unvalidated CONVENIENCE field took down every settings read in the
   app (and with it every settings-dependent surface), because the row was parsed
