@@ -9,6 +9,7 @@ import { clearPackTreeCache } from '@/ingest/packFetch';
 import { Toaster } from '@/components/ui/sonner';
 import { db } from '@/db/db';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason, expectSelfEvidentBlock } from '../helpers/blocked-reason';
 
 import { baseNpc } from '../ingest/packs/fixtures';
 
@@ -313,3 +314,76 @@ describe('BestiaryFetchSection', () => {
     expect(await screen.findByText(/Could not list the repo packs/)).toBeInTheDocument();
   });
 }, 30000);
+
+/**
+ * WHY a fetch button is held while a fetch runs (docs/18 §2.3, docs/05 §Why a
+ * control cannot act; docs/17 row 99): one fetch runs at a time across the whole
+ * card, the pressed row's own label flips to "Fetching…" but EVERY OTHER row
+ * goes dead with no word — and so does the row itself once its label is the only
+ * thing that changed shape.
+ */
+describe('BestiaryFetchSection blocked-control reasons', () => {
+  const RUNNING =
+    'A pack fetch is already running — one fetch runs at a time here; wait for it to finish.';
+
+  it('a fetch in flight states why on the pressed row AND on the rows it is holding back', async () => {
+    const user = userEvent.setup();
+    // Every request hangs until `offline` is set, and then every request FAILS —
+    // so the chain's fallback ref attempt fails too and the run ends loudly.
+    let offline = false;
+    const rejecters: (() => void)[] = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => {
+        if (offline) return Promise.reject(new Error('offline'));
+        return new Promise<Response>((_resolve, reject) => {
+          rejecters.push(() => {
+            reject(new Error('offline'));
+          });
+        });
+      }),
+    );
+    render(<BestiaryFetchSection />);
+
+    const pressed = await screen.findByTestId('fetch-packs/pf2e/npc-gallery');
+    await user.click(pressed);
+    await waitFor(() => {
+      expect(screen.getByTestId('fetch-packs/pf2e/npc-gallery')).toBeDisabled();
+    });
+
+    await expectBlockedReason(user, 'fetch-packs/pf2e/npc-gallery', RUNNING);
+    // A DIFFERENT curated recipe, held by the same one-at-a-time flag.
+    await expectBlockedReason(user, 'fetch-packs/pf2e/equipment', RUNNING);
+
+    // The run ends loudly on both refs: the reason goes with the hold.
+    offline = true;
+    for (const reject of rejecters.splice(0)) reject();
+    await waitFor(
+      () => {
+        expect(screen.getByTestId('fetch-packs/pf2e/npc-gallery')).toBeEnabled();
+      },
+      { timeout: 15000 },
+    );
+    expect(screen.queryByTestId('fetch-packs/pf2e/npc-gallery-reason')).toBeNull();
+  }, 30_000);
+
+  it('SELF-EVIDENT: the advanced repo listing states its own state in place, so the switch carries no reason', async () => {
+    const user = userEvent.setup();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => new Promise<Response>(() => undefined)),
+    );
+    render(<BestiaryFetchSection />);
+
+    const toggle = await screen.findByTestId('full-list-foundry-pf2e');
+    await user.click(toggle);
+    // The state IS on screen, beside its own control: the switch reads as on and
+    // the line directly below it says the listing is running.
+    await waitFor(() => {
+      expect(screen.getByTestId('listing-foundry-pf2e')).toHaveTextContent(
+        'Listing every pack in the repo…',
+      );
+    });
+    expectSelfEvidentBlock('full-list-foundry-pf2e', 'aria-disabled');
+  }, 30_000);
+});

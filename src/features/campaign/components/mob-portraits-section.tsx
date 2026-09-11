@@ -12,6 +12,7 @@ import {
   regenerateMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
 import { Button } from '@/components/ui/button';
+import { BlockedControl } from '@/components/blocked-control';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -75,6 +76,52 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
  * artifact editor never mounts in player-safe view, so portrait generation
  * stays a GM action like every other queue on this screen.
  */
+/**
+ * WHY the batch press and the per-entry press cannot act while the section is
+ * held (docs/18 §2.3, docs/05 §Why a control cannot act). Both sentences are
+ * computed from the SAME flags their gates OR, in that same order, so a reason
+ * can never disagree with the state it explains:
+ *
+ * - `busy` is this section's own batch press still STARTING (two enqueues and
+ *   their artifact work) — the press's label counts participants, so it does
+ *   NOT change while busy, which is exactly why this state needs a sentence;
+ * - `busyIndex !== null` is one creature's portrait being created (a real
+ *   queue job, seconds long). The way out is honest and reachable: the mob
+ *   portrait queue is one of the four the progress dock's **Stop all** sweeps.
+ *
+ * NOT stated here (measured, pinned): the batch gate's THIRD rung,
+ * `participantCount === 0`, is already written beside the very same button —
+ * `batchCopy` reads "No creatures to illustrate — add roster entries first."
+ * Text beside the control is a legitimate statement (docs/05), so the device
+ * adds nothing there and the reason is null for that rung.
+ */
+const BATCH_STARTING_REASON = 'This batch is still starting — wait for it to finish.';
+const ENTRY_CREATING_REASON =
+  'A creature portrait is being created right now — wait for it, or press Stop all in the progress dock.';
+
+/** The FIRST true condition of `batchDisabled` that is not stated in place. */
+function batchBlockedReason(busy: boolean, entryRunning: boolean): string | null {
+  if (busy) return BATCH_STARTING_REASON;
+  if (entryRunning) return ENTRY_CREATING_REASON;
+  return null;
+}
+
+/**
+ * The same rule for one entry's own button, whose gate is
+ * `busy || busyIndex !== null`: the batch press is `busy`; its OWN generation
+ * is self-evident (the label reads "Creating…"), and only ANOTHER entry's
+ * generation needs the sentence.
+ */
+function entryBlockedReason(
+  busy: boolean,
+  busyIndex: number | null,
+  index: number,
+): string | null {
+  if (busy) return BATCH_STARTING_REASON;
+  if (busyIndex === null) return null;
+  return busyIndex === index ? null : ENTRY_CREATING_REASON;
+}
+
 export function MobPortraitsSection({
   artifact,
   campaignId,
@@ -310,6 +357,8 @@ export function MobPortraitsSection({
       ? `${hasUncited ? 'Create creatures + portraits' : 'Generate mob portraits'} (${String(participantCount)})`
       : 'Generate mob portraits';
   const batchDisabled = busy || busyIndex !== null || participantCount === 0;
+  /** Why the batch button cannot act, in `batchDisabled`'s own order. */
+  const batchReason = batchBlockedReason(busy, busyIndex !== null);
 
   return (
     <div
@@ -320,18 +369,20 @@ export function MobPortraitsSection({
         <p className="text-xs text-muted-foreground" data-testid="mob-portraits-copy">
           {batchCopy}
         </p>
-        <Button
-          variant="outline"
-          size="sm"
-          data-testid="generate-mob-portraits"
-          disabled={batchDisabled}
-          onClick={() => {
-            void handleBatch();
-          }}
-        >
-          <ImageIcon aria-hidden data-icon="inline-start" />
-          {batchLabel}
-        </Button>
+        <BlockedControl testId="generate-mob-portraits" reason={batchReason}>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="generate-mob-portraits"
+            disabled={batchDisabled}
+            onClick={() => {
+              void handleBatch();
+            }}
+          >
+            <ImageIcon aria-hidden data-icon="inline-start" />
+            {batchLabel}
+          </Button>
+        </BlockedControl>
       </div>
       {uncited.length > 0 && (
         <ul className="flex flex-col gap-2" data-testid="mob-portraits-uncited">
@@ -348,18 +399,23 @@ export function MobPortraitsSection({
                     {monster.source.type === 'inline' ? '· invented, with stat block' : '· invented, name only'}
                   </span>
                 </p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  data-testid={`create-creature-portrait-${String(index)}`}
-                  disabled={busy || busyIndex !== null}
-                  onClick={() => {
-                    void handleEntry(index, monster.name);
-                  }}
+                <BlockedControl
+                  testId={`create-creature-portrait-${String(index)}`}
+                  reason={entryBlockedReason(busy, busyIndex, index)}
                 >
-                  <SparklesIcon aria-hidden data-icon="inline-start" />
-                  {entryBusy ? 'Creating…' : 'Create creature + portrait'}
-                </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    data-testid={`create-creature-portrait-${String(index)}`}
+                    disabled={busy || busyIndex !== null}
+                    onClick={() => {
+                      void handleEntry(index, monster.name);
+                    }}
+                  >
+                    <SparklesIcon aria-hidden data-icon="inline-start" />
+                    {entryBusy ? 'Creating…' : 'Create creature + portrait'}
+                  </Button>
+                </BlockedControl>
               </li>
             );
           })}

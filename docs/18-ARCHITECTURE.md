@@ -818,6 +818,30 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   `disabled` attribute — so its `title` DOES render in Chrome, and its
   `aria-label` can carry the same reason for AT; check the rendered element
   before assuming a disabled control's `title` is invisible.
+- **A blocked control raises THREE questions, and the sweep that adds a reason
+  must answer all three (docs/17 row 99).** (1) *Is the block intended?* A
+  surface that holds every one of its controls on ONE flag ends up blocking
+  controls that are not that run's subject — measured, each one reported and
+  deliberately KEPT: the embedding panel's **Clear** while a library embed runs,
+  every un-pressed **Fetch** row while one fetch runs, the export dialog's
+  **Export** while a build runs, the mob-portrait BATCH while a single ENTRY
+  runs, and the second upload in the images/battlemap section while the first is
+  still being saved. The reason still has to name the run that actually holds
+  it, which is why several of those sentences say "…is being created right now"
+  rather than "you pressed this". (2) *Can the state occur at all?* Measured:
+  `spine-checkpoint`'s `busy` gate is only reachable from a caller branch
+  (`parts.length === 0 && !busy`) that can never pass `busy: true`, so its four
+  reasons are correct and currently unreachable — write the reason for the state
+  the gate encodes, and report the reachability rather than inventing a caller.
+  (3) *What does the control's held state LOOK like in the DOM?* It is not
+  always the native attribute: a shadcn/Base UI **Switch** renders
+  `<span role="switch" aria-disabled="true" tabindex="-1">` and a **menu item**
+  renders `<div role="menuitem" aria-disabled="true" data-disabled>`, so
+  `toBeDisabled()` — which only reads the native attribute off form tags — is
+  the WRONG assertion there, and a pin that uses it passes or fails for a reason
+  unrelated to the gate. Pin the form each control's own gate uses
+  (`tests/helpers/blocked-reason.ts` has one helper per form, plus the
+  self-evident pins).
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

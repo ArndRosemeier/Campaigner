@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto';
 
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +16,7 @@ import {
   type Id,
 } from '@/domain';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason, expectSelfEvidentBlock } from '../helpers/blocked-reason';
 import { flushAsyncUpdates } from '../helpers/flush';
 import { useBoardStore } from '@/features/modules/board/boardStore';
 import { useStagedRewritesStore } from '@/features/modules/board/stagedRewrites';
@@ -284,6 +285,38 @@ describe('board rewrite + staging', () => {
     await flushAsyncUpdates();
   }, 30_000);
 
+  it('SELF-EVIDENT: while the apply is in flight both staged buttons are held by an ON-SCREEN statement, not a reason', async () => {
+    const user = userEvent.setup();
+    mockEngineRun();
+    renderAppAt(boardPath(world.campaignId, world.moduleId));
+    const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
+    await user.click(within(partCard).getByTestId('board-part-rewrite-0'));
+    await user.click(await screen.findByTestId('board-rewrite-confirm'));
+    await waitFor(() => {
+      expect(screen.getByTestId('board-part-apply')).toBeInTheDocument();
+    });
+
+    // The state `applyStaged`'s OWN first step creates (BoardPage.tsx:198) before
+    // its save runs: the save path itself is pinned by the apply test above.
+    await act(() => {
+      const { byNodeKey, markApplied } = useStagedRewritesStore.getState();
+      const nodeKey = Object.keys(byNodeKey)[0] ?? '';
+      expect(nodeKey).not.toBe('');
+      markApplied(nodeKey);
+      return Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId('board-part-apply')).toHaveTextContent('Applying…');
+    });
+
+    // The statement is beside the controls in their own row: Apply reads
+    // "Applying…", and Discard's own row-mate says what is happening. Neither
+    // carries a blocked-control wrapper (docs/05 §Why a control cannot act).
+    expectSelfEvidentBlock('board-part-apply');
+    expectSelfEvidentBlock('board-part-discard');
+    await flushAsyncUpdates();
+  }, 30_000);
+
   it('shows the Stop button while generating (cancelModuleGen is the one stop path)', async () => {
     const user = userEvent.setup();
     await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
@@ -292,10 +325,18 @@ describe('board rewrite + staging', () => {
     await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
 
     const stop = await screen.findByTestId('board-stop');
+    // While busy, rewrite affordances are disabled — AND they state why
+    // (docs/18 §2.3, docs/17 row 99): the card's own status pill can read
+    // "ready" while this module-wide flag holds its one button, so the badge in
+    // the header panel does not cover it.
+    await expectBlockedReason(
+      user,
+      'board-part-rewrite-0',
+      'The module is generating right now — wait for it (or press Stop).',
+    );
+    // The reason names a Stop that is really on screen.
     await user.click(stop);
     expect(cancelModuleGenMock).toHaveBeenCalledWith(world.moduleId);
-    // While busy, rewrite affordances are disabled.
-    expect(screen.getByTestId('board-part-rewrite-0')).toBeDisabled();
     await flushAsyncUpdates();
   }, 30_000);
 });

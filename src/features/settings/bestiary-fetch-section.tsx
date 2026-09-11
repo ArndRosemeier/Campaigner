@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { CloudDownloadIcon, PackageIcon } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Switch } from '@/components/ui/switch';
@@ -53,12 +54,28 @@ function progressDetail(progress: PackFetchProgress | PackImportProgress): strin
   return `Importing ${String(progress.done)}/${String(progress.total)} chunks…`;
 }
 
+const FETCH_RUNNING_REASON =
+  'A pack fetch is already running — one fetch runs at a time here; wait for it to finish.';
+
 export function BestiaryFetchSection(): JSX.Element {
   const [states, setStates] = useState<Record<string, FetchState>>({});
   const [fullLists, setFullLists] = useState<Record<string, FullList>>({});
   const [showFailedFor, setShowFailedFor] = useState<Record<string, boolean>>({});
 
   const running = Object.values(states).some((state) => state.kind === 'fetching');
+  /**
+   * WHY every "Fetch & import" button states this while `running` (docs/18
+   * §2.3, docs/05 §Why a control cannot act): `running` is the flag its gate
+   * reads, so the reason cannot disagree with it. The sentence is TRUE for the
+   * whole section — `running` is section-wide on purpose (the guard at
+   * `runFetch`'s entry: one fetch at a time), and the in-card progress line
+   * ("Downloading N/M…") belongs to the RUNNING card, so a sibling card's held
+   * button is exactly the case with nothing on screen beside it.
+   *
+   * Way out: honest, not invented — a pack fetch takes no `AbortSignal` and the
+   * progress dock does not carry it, so the way out is to wait.
+   */
+  const fetchBlockedReason = running ? FETCH_RUNNING_REASON : null;
 
   function setState(adapterId: string, next: FetchState): void {
     setStates((previous) => ({ ...previous, [adapterId]: next }));
@@ -179,17 +196,22 @@ export function BestiaryFetchSection(): JSX.Element {
                                 : 'creatures'})
                       </span>
                     </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      disabled={running}
-                      data-testid={`fetch-${recipe.id}`}
-                      aria-label={`Fetch & import ${recipe.label}`}
-                      onClick={() => void runFetch(source.adapterId, recipe.id)}
+                    <BlockedControl
+                      testId={`fetch-${recipe.id}`}
+                      reason={fetchBlockedReason}
                     >
-                      <CloudDownloadIcon aria-hidden className="size-3.5" />
-                      Fetch &amp; import
-                    </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={running}
+                        data-testid={`fetch-${recipe.id}`}
+                        aria-label={`Fetch & import ${recipe.label}`}
+                        onClick={() => void runFetch(source.adapterId, recipe.id)}
+                      >
+                        <CloudDownloadIcon aria-hidden className="size-3.5" />
+                        Fetch &amp; import
+                      </Button>
+                    </BlockedControl>
                   </li>
                 ))}
               </ul>
@@ -213,6 +235,10 @@ export function BestiaryFetchSection(): JSX.Element {
                   id={`full-list-${source.adapterId}`}
                   data-testid={`full-list-${source.adapterId}`}
                   checked={fullList.kind === 'listed' || fullList.kind === 'loading'}
+                  /* Self-evident, so NO reason is attached (pinned): the switch
+                     is checked exactly while loading and the paragraph line
+                     "Listing every pack in the repo…" sits directly below it —
+                     the state is on screen beside its own control. */
                   disabled={fullList.kind === 'loading'}
                   onCheckedChange={(checked) => void toggleFullList(source.adapterId, checked)}
                 />

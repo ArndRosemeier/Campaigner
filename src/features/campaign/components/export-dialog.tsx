@@ -4,6 +4,7 @@ import { DownloadIcon, FileArchiveIcon, FileJsonIcon } from 'lucide-react';
 
 import { ARTIFACT_KIND_SINGULAR, type Artifact, type Id } from '@/domain';
 import { Button } from '@/components/ui/button';
+import { BlockedControl } from '@/components/blocked-control';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
   Dialog,
@@ -28,6 +29,21 @@ import { toastError, toastSuccess } from '@/lib/toast';
  */
 
 type ExportFormat = 'json' | 'zip';
+
+/**
+ * WHY the Export button cannot act while `busy` (docs/18 §2.3, docs/05 §Why a
+ * control cannot act): the gate is untouched, and this sentence is computed
+ * from that SAME flag. `busy` spans the destination picker AND the slow build
+ * (a zip walk plus image binaries) — the label "Export N artifact(s)" does not
+ * change while it runs, so this state is the one that needs a sentence. Way
+ * out: honest, not invented — a build/write in flight takes no `AbortSignal`
+ * (Cancel only closes the dialog), so the way out is to wait.
+ *
+ * The gate's OTHER rung, `selected.size === 0`, is self-evident and gets NO
+ * reason (pinned in tests/features/blocked-reasons-entity-sweep.test.tsx): the
+ * button's own label reads "Export 0 artifact(s)".
+ */
+const EXPORT_RUNNING_REASON = 'The export is still being built and written — wait for it to finish.';
 
 export function ExportCampaignDialog({
   campaignId,
@@ -191,10 +207,16 @@ export function ExportCampaignDialog({
           >
             Cancel
           </Button>
-          <Button disabled={busy || selected.size === 0} onClick={() => void runExport()}>
-            <DownloadIcon aria-hidden data-icon="inline-start" />
-            Export {selected.size} artifact(s)
-          </Button>
+          <BlockedControl testId="export-run" reason={busy ? EXPORT_RUNNING_REASON : null}>
+            <Button
+              data-testid="export-run"
+              disabled={busy || selected.size === 0}
+              onClick={() => void runExport()}
+            >
+              <DownloadIcon aria-hidden data-icon="inline-start" />
+              Export {selected.size} artifact(s)
+            </Button>
+          </BlockedControl>
         </DialogFooter>
       </DialogContent>
     </Dialog>

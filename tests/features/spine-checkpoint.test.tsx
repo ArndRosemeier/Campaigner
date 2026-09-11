@@ -1,11 +1,14 @@
 import 'fake-indexeddb/auto';
 
 import { render, screen } from '@testing-library/react';
+import type { JSX } from 'react';
+import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SpineCheckpoint } from '@/features/modules/spine-checkpoint';
 import { createCampaign } from '@/db/campaignRepo';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason, expectSelfEvidentElement } from '../helpers/blocked-reason';
 import type { Campaign, ModuleEntityKind, ModuleSpine } from '@/domain';
 
 /**
@@ -70,5 +73,53 @@ describe('SpineCheckpoint entities line (fix-01)', () => {
       />,
     );
     expect(screen.queryByTestId('spine-entities')).not.toBeInTheDocument();
+  });
+});
+
+/**
+ * The checkpoint's four `busy` controls state WHY they cannot act (docs/18 §2.3,
+ * docs/05 §Why a control cannot act; docs/17 row 99) — and the two move buttons
+ * that are merely at an end are pinned as carrying NO reason, so the self-evident
+ * judgement is a decision rather than an omission.
+ */
+describe('SpineCheckpoint blocked-control reasons', () => {
+  const GENERATING = 'The module is generating right now — wait for it (or press Stop).';
+
+  function checkpoint(busy: boolean): JSX.Element {
+    return (
+      <SpineCheckpoint
+        moduleId={campaign.id}
+        campaign={campaign}
+        spine={SPINE}
+        busy={busy}
+        entityKinds={[]}
+      />
+    );
+  }
+
+  it('all four busy-gated controls state the generating reason while the module generates', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(checkpoint(false));
+    // The retry panel has to be OPEN before the flag flips (its toggle is one of
+    // the gated controls), so open it live and then raise `busy`.
+    await user.click(screen.getByTestId('spine-retry-toggle'));
+    await screen.findByTestId('spine-retry-run');
+    rerender(checkpoint(true));
+
+    for (const testId of [
+      'generate-parts',
+      'spine-retry-toggle',
+      'spine-discard',
+      'spine-retry-run',
+    ]) {
+      await expectBlockedReason(user, testId, GENERATING);
+    }
+  }, 30_000);
+
+  it('SELF-EVIDENT: the first part cannot move up and the only part cannot move down — no reason on either', () => {
+    render(checkpoint(false));
+    // The one-part plan is both ends at once: disabled, and bare.
+    expectSelfEvidentElement(screen.getByLabelText('Move part 1 up'));
+    expectSelfEvidentElement(screen.getByLabelText('Move part 1 down'));
   });
 });

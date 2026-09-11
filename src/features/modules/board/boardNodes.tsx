@@ -5,6 +5,7 @@ import type { NodeProps, NodeTypes } from '@xyflow/react';
 import { LoaderCircleIcon, RotateCcwIcon, TriangleAlertIcon } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
+import { BlockedControl } from '@/components/blocked-control';
 import type { AnyArtifact, Id } from '@/domain';
 import { CANVAS_PREMISE_NODE_KEY, planIndexFromCanvasNodeKey } from '@/domain';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
@@ -99,6 +100,23 @@ const HEADER_CLASS = 'flex items-center gap-2 border-b px-3 py-2';
 const BODY_TEXT_CLASS = 'prose-module text-sm leading-relaxed';
 
 /**
+ * WHY a card's rewrite affordance cannot act while the module is generating
+ * (docs/18 §2.3, docs/05 §Why a control cannot act): `busy` IS
+ * `moduleStatus === 'generating'`, the flag its gate reads, so the sentence can
+ * never disagree with the state it explains — and it is the SAME sentence the
+ * canvas uses for the same state, so one state is never explained two ways in
+ * this app. The way out is real and reachable on this very screen: the board
+ * header shows the live "generating" badge and the board's own **Stop**
+ * (`board-stop` → `cancelModuleGen`, the one module-forge stop path).
+ *
+ * Needed at all because the card is NOT covered by that badge: the rewrite
+ * affordance renders only for a part whose status is already `ready`, so a
+ * card can read "ready" while this module-wide flag holds its one button.
+ */
+const MODULE_GENERATING_REASON =
+  'The module is generating right now — wait for it (or press Stop).';
+
+/**
  * Edge anchors for the derived continuity edges. Invisible (the board is
  * TEXT-ONLY v1 — no connect affordances; `nodesConnectable` is false), but
  * structurally present: React Flow anchors an edge at its endpoints'
@@ -176,19 +194,25 @@ export const PartCardNode = memo(function PartCardNode({ id }: NodeProps): JSX.E
           </Badge>
         )}
         {slice.status === 'ready' && staged === undefined && (
-          <Button
-            variant="ghost"
-            size="icon-sm"
+          <BlockedControl
+            testId={`board-part-rewrite-${String(planIndex)}`}
+            reason={busy ? MODULE_GENERATING_REASON : null}
             className="nodrag ml-auto shrink-0"
-            aria-label={`Rewrite ${slice.title}`}
-            data-testid={`board-part-rewrite-${String(planIndex)}`}
-            disabled={busy}
-            onClick={() => {
-              actions.onRewrite(planIndex, id);
-            }}
           >
-            <RotateCcwIcon aria-hidden className="size-3.5" />
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon-sm"
+              className="nodrag ml-auto shrink-0"
+              aria-label={`Rewrite ${slice.title}`}
+              data-testid={`board-part-rewrite-${String(planIndex)}`}
+              disabled={busy}
+              onClick={() => {
+                actions.onRewrite(planIndex, id);
+              }}
+            >
+              <RotateCcwIcon aria-hidden className="size-3.5" />
+            </Button>
+          </BlockedControl>
         )}
       </div>
       {detailed &&

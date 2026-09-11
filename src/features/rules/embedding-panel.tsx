@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { HelpButton } from '@/help/HelpButton';
@@ -25,6 +26,37 @@ import {
   embeddingStats,
   type EmbeddingStats,
 } from '@/search/embeddings';
+
+/**
+ * WHY the two controls cannot act while `busy` (docs/18 §2.3, docs/05 §Why a
+ * control cannot act): the gates are untouched, and this sentence is computed
+ * from that SAME flag — the whole-library run, which streams embeddings for
+ * every chunk and can take minutes, while neither button changes its label.
+ * Way out: honest, not invented — the runner takes no `AbortSignal` and the
+ * progress dock does not carry an embedding run, so the way out is to wait.
+ */
+const LIBRARY_EMBEDDING_REASON =
+  'The whole library is being embedded right now — wait for it to finish.';
+
+/**
+ * The reason the well-known rungs of both gates state, in gate order — and the
+ * two rungs that deliberately state NOTHING, so the judgement is a decision and
+ * not an omission:
+ * - `embed-library` is `disabled={!active || busy || total === 0}`. `!active` is
+ *   stated in place (the "inactive" badge plus the notice paragraph below the
+ *   buttons: "Enable embeddings and add an API key in Settings…"); `total === 0`
+ *   is self-evident (the stats line reads "0 of 0 chunks embedded" — an empty
+ *   set to embed);
+ * - `Clear` is `disabled={busy || embeddedChunks === 0}`. The busy rung states
+ *   the reason below even though the run is not Clear's own work (reported as an
+ *   over-block finding in docs/17 row 99, NOT changed here); the empty rung is
+ *   self-evident (nothing to clear — the stats line shows it).
+ */
+function libraryEmbedBlockedReason(active: boolean, busy: boolean): string | null {
+  if (!active) return null;
+  if (busy) return LIBRARY_EMBEDDING_REASON;
+  return null;
+}
 
 /**
  * Whole-library embedding management (06-MILESTONES M2): shows how many
@@ -81,6 +113,9 @@ export function EmbeddingLibraryPanel(): JSX.Element {
 
   const active = settings?.embeddingsEnabled === true && settings.openRouterApiKey !== '';
   const total = progress?.total ?? stats?.totalChunks ?? 0;
+  /** Why each button is held right now (docs/18 §2.3 — see the helper above). */
+  const embedLibraryReason = libraryEmbedBlockedReason(active, busy);
+  const clearReason = busy ? LIBRARY_EMBEDDING_REASON : null;
 
   return (
     <div className="flex flex-col gap-2 border-b p-3" data-testid="embedding-panel">
@@ -108,30 +143,35 @@ export function EmbeddingLibraryPanel(): JSX.Element {
       )}
 
       <div className="flex gap-2">
-        <Button
-          size="xs"
-          disabled={!active || busy || total === 0}
-          onClick={() => void handleEmbedAll()}
-          data-testid="embed-library"
-        >
-          {busy ? (
-            <LoaderCircleIcon aria-hidden data-icon="inline-start" className="animate-spin" />
-          ) : (
-            <ZapIcon aria-hidden data-icon="inline-start" />
-          )}
-          Embed whole library
-        </Button>
-        <Button
-          variant="outline"
-          size="xs"
-          disabled={busy || (stats?.embeddedChunks ?? 0) === 0}
-          onClick={() => {
-            setConfirmClear(true);
-          }}
-        >
-          <Trash2Icon aria-hidden data-icon="inline-start" />
-          Clear
-        </Button>
+        <BlockedControl testId="embed-library" reason={embedLibraryReason}>
+          <Button
+            size="xs"
+            disabled={!active || busy || total === 0}
+            onClick={() => void handleEmbedAll()}
+            data-testid="embed-library"
+          >
+            {busy ? (
+              <LoaderCircleIcon aria-hidden data-icon="inline-start" className="animate-spin" />
+            ) : (
+              <ZapIcon aria-hidden data-icon="inline-start" />
+            )}
+            Embed whole library
+          </Button>
+        </BlockedControl>
+        <BlockedControl testId="clear-embeddings" reason={clearReason}>
+          <Button
+            variant="outline"
+            size="xs"
+            data-testid="clear-embeddings"
+            disabled={busy || (stats?.embeddedChunks ?? 0) === 0}
+            onClick={() => {
+              setConfirmClear(true);
+            }}
+          >
+            <Trash2Icon aria-hidden data-icon="inline-start" />
+            Clear
+          </Button>
+        </BlockedControl>
       </div>
 
       {!active && (

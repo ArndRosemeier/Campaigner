@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AnyArtifact } from '@/domain';
 import type { MobPortraitBatchPlan } from '@/features/campaign/mob-portrait-queue';
 import { MobPortraitsSection } from '@/features/campaign/components/mob-portraits-section';
+import { expectBlockedReason, expectSelfEvidentBlock } from '../helpers/blocked-reason';
 import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
@@ -514,5 +515,88 @@ describe('MobPortraitsSection per-entry invented confirm (unchanged)', () => {
     });
     expect(regenerateInventedMock).not.toHaveBeenCalled();
     await flushAsyncUpdates();
+  });
+});
+
+/**
+ * WHY the section's two kinds of block state a reason (docs/18 §2.3, docs/05
+ * §Why a control cannot act; docs/17 row 99). The batch gate is
+ * `busy || busyIndex !== null || participantCount === 0` and the per-entry gate
+ * is `busy || busyIndex !== null`: THREE different states, and before row 99 the
+ * batch button — whose label counts participants and therefore does NOT change —
+ * said nothing about any of them.
+ */
+describe('MobPortraitsSection blocked-control reasons', () => {
+  function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+    let resolve!: (value: T) => void;
+    const promise = new Promise<T>((settle) => {
+      resolve = settle;
+    });
+    return { promise, resolve };
+  }
+
+  it('the batch still STARTING states why (its label cannot say it)', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<{ enqueued: number; alreadyImaged: string[] }>();
+    const artifact = enc([{ name: 'Gloom Ooze', source: INLINE }]);
+    planMock.mockResolvedValue(plan({ missing: ['Gloom Ooze'] }));
+    enqueueMobPortraitsMock.mockReturnValue(pending.promise);
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    await user.click(screen.getByTestId('generate-mob-portraits'));
+    await waitFor(() => {
+      expect(screen.getByTestId('generate-mob-portraits')).toBeDisabled();
+    });
+    await expectBlockedReason(
+      user,
+      'generate-mob-portraits',
+      'This batch is still starting — wait for it to finish.',
+    );
+
+    pending.resolve({ enqueued: 1, alreadyImaged: [] });
+    await waitFor(() => {
+      expect(screen.queryByTestId('generate-mob-portraits-reason')).toBeNull();
+    });
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('one creature being created holds the batch AND every other entry — and the entry doing it states its own label instead', async () => {
+    const user = userEvent.setup();
+    const pending = deferred<{ created: number; enqueued: number; alreadyImaged: string[] }>();
+    const artifact = enc([
+      { name: 'Gloom Ooze', source: INLINE },
+      { name: 'Whisper Wisp', source: NONE },
+    ]);
+    enqueueInventedMock.mockReturnValue(pending.promise);
+    render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
+
+    await user.click(screen.getByTestId('create-creature-portrait-0'));
+    await waitFor(() => {
+      expect(screen.getByTestId('create-creature-portrait-0')).toHaveTextContent('Creating…');
+    });
+
+    const creatingReason =
+      'A creature portrait is being created right now — wait for it, or press Stop all in the progress dock.';
+    // The batch button counts participants, so its label is unchanged — the
+    // reason is the only thing that says why it is dead.
+    await expectBlockedReason(user, 'generate-mob-portraits', creatingReason);
+    // Another entry's press names the run that is holding it.
+    await expectBlockedReason(user, 'create-creature-portrait-1', creatingReason);
+    // The entry whose work is running says so on itself — self-evident.
+    expectSelfEvidentBlock('create-creature-portrait-0');
+
+    pending.resolve({ created: 1, enqueued: 1, alreadyImaged: [] });
+    await waitFor(() => {
+      expect(screen.queryByTestId('create-creature-portrait-1-reason')).toBeNull();
+    });
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('SELF-EVIDENT: an empty roster is stated by the copy beside the button, so the button carries no reason', () => {
+    render(<MobPortraitsSection artifact={enc([])} campaignId="campaign-1" />);
+    expect(screen.getByTestId('mob-portraits-copy')).toHaveTextContent(
+      'No creatures to illustrate — add roster entries first.',
+    );
+    expectSelfEvidentBlock('generate-mob-portraits');
   });
 });

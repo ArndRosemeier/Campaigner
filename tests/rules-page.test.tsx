@@ -4,13 +4,17 @@ import { join } from 'node:path';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { RouterProvider } from 'react-router-dom';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { ROUTES } from '@/app/routes';
-import { defaultSettings } from '@/domain';
+import type * as IngestFiles from '@/ingest/ingestFiles';
+import { defaultSettings, newId, type RuleChunk } from '@/domain';
 import { saveSettings } from '@/db/settingsRepo';
+import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
+import { putChunks } from '@/db/chunkRepo';
 import { clearDatabase } from './db/helpers';
+import { expectBlockedReason, expectBlockedReasonMenuItem } from './helpers/blocked-reason';
 import { flushAsyncUpdates } from './helpers/flush';
 import { baseNpc, encodeJson, folderDoc } from './ingest/packs/fixtures';
 
@@ -51,8 +55,53 @@ function importPackFiles(files: File[]): void {
   fireEvent.change(input);
 }
 
+vi.mock('@/ingest/ingestFiles', async (importOriginal) => {
+  // A passthrough mock: the four import tests in this file drive the REAL
+  // ingest; the reason pins hold one call with `mockImplementationOnce`.
+  const actual = await importOriginal<typeof IngestFiles>();
+  return { ...actual, ingestPdf: vi.fn(actual.ingestPdf) };
+});
+vi.mock('@/search', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  embeddingsActive: vi.fn(() => Promise.resolve(true)),
+  ensureEmbeddings: vi.fn(),
+}));
+
+const { ingestPdf } = await import('@/ingest/ingestFiles');
+const { ensureEmbeddings } = await import('@/search');
+const ingestMock = vi.mocked(ingestPdf);
+const ensureMock = vi.mocked(ensureEmbeddings);
+
+function deferred<T>(): { promise: Promise<T>; resolve: (value: T) => void } {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((settle) => {
+    resolve = settle;
+  });
+  return { promise, resolve };
+}
+
+/** A minimal valid chunk row for the ready book (the embed path needs one). */
+function chunk(bookId: string): RuleChunk {
+  const hash = 'a'.repeat(64);
+  return {
+    id: newId(),
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    bookId,
+    pageStart: 1,
+    pageEnd: 1,
+    chunkType: 'section',
+    headingPath: ['Chapter 1'],
+    text: 'The bell tolls over the drowned quarter.',
+    statBlock: null,
+    contentHash: hash,
+  };
+}
+
 beforeEach(async () => {
   await clearDatabase();
+  ingestMock.mockClear();
+  ensureMock.mockClear();
   // These tests exercise the Rules screen, not the first-run wizard — seed
   // the onboarding state as finished so the wizard's one-time auto-open
   // (fresh status + zero campaigns) never overlays the page here. The
@@ -213,4 +262,85 @@ describe('rules screen', () => {
     });
     expect(within(card).getByText(/no valid creature entries/)).toBeInTheDocument();
   }, 30000);
+
+  it('states why the import/embed controls are held: the page-wide import, the per-book embed, the delete icon and both menu items', async () => {
+    const user = userEvent.setup();
+    await saveSettings({
+      ...defaultSettings(),
+      onboarding: { status: 'complete' as const, stepState: [] },
+      embeddingsEnabled: true,
+      openRouterApiKey: 'test-key',
+    });
+    const ready = await createRulebook({
+      title: 'emberfall-core',
+      system: 'generic-d20',
+      filename: 'core.pdf',
+    });
+    await updateRulebook(ready.id, { status: 'ready' });
+    await putChunks([chunk(ready.id)]);
+    const broken = await createRulebook({
+      title: 'torn-scan',
+      system: 'generic-d20',
+      filename: 'torn.pdf',
+    });
+    await updateRulebook(broken.id, { status: 'error', errorMessage: 'No extractable text' });
+
+    const pendingImport = deferred<never>();
+    ingestMock.mockImplementationOnce(() => pendingImport.promise);
+    renderAppAt(ROUTES.rules);
+    await screen.findByText('emberfall-core', {}, { timeout: 10000 });
+
+    // A PDF import in flight — the real input, a real .pdf file, a held ingest.
+    const input = screen.getByTestId('import-input');
+    Object.defineProperty(input, 'files', {
+      value: [new File(['%PDF-1.4'], 'core.pdf', { type: 'application/pdf' })],
+    });
+    fireEvent.change(input);
+    await waitFor(() => {
+      expect(screen.getByTestId('import-pdfs')).toBeDisabled();
+    });
+
+    const IMPORT_REASON =
+      'A PDF import is running right now — one import runs at a time here; wait for it to finish.';
+    await expectBlockedReason(user, 'import-pdfs', IMPORT_REASON);
+    await expectBlockedReason(user, 'import-pack', IMPORT_REASON);
+    // The card's delete icon is held by the same page-wide flag, and says so.
+    await expectBlockedReason(user, `delete-book-${ready.id}`, IMPORT_REASON);
+    // The failed book's "Retry…" starts ANOTHER import — same flag, same reason.
+    await user.click(screen.getByRole('button', { name: 'Menu for torn-scan' }));
+    await screen.findByTestId(`retry-book-${broken.id}`, {}, { timeout: 10000 });
+    await expectBlockedReasonMenuItem(user, `retry-book-${broken.id}`, IMPORT_REASON);
+    await user.keyboard('{Escape}');
+
+    // The import lands: both the hold and its reason go with it.
+    pendingImport.resolve({ book: ready, chunkCount: 0, emptyPages: 0 } as never);
+    await waitFor(() => {
+      expect(screen.getByTestId('import-pdfs')).toBeEnabled();
+    });
+    expect(screen.queryByTestId('import-pdfs-reason')).toBeNull();
+
+    // Embedding is THIS book's own run, so its menu item states the embed.
+    const pendingEmbed = deferred<never>();
+    // The run has to report its first progress tick BEFORE it is held: only a
+    // tick populates `embedProgress[book.id]`, which is the flag the item's own
+    // gate reads (`embedding === embed !== undefined`).
+    ensureMock.mockImplementation((_chunks, onProgress) => {
+      onProgress?.(1, 1);
+      return pendingEmbed.promise;
+    });
+    await user.click(screen.getByRole('button', { name: 'Menu for emberfall-core' }));
+    await user.click(await screen.findByRole('menuitem', { name: 'Embed whole book' }));
+    await waitFor(() => {
+      expect(ensureMock).toHaveBeenCalled();
+    });
+    await user.click(screen.getByRole('button', { name: 'Menu for emberfall-core' }));
+    await screen.findByTestId(`embed-book-${ready.id}`, {}, { timeout: 10000 });
+    await expectBlockedReasonMenuItem(
+      user,
+      `embed-book-${ready.id}`,
+      'This book is being embedded right now — wait for it to finish.',
+    );
+    pendingEmbed.resolve(undefined as never);
+    await flushAsyncUpdates();
+  }, 40_000);
 });

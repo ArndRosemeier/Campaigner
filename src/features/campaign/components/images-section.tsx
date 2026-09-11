@@ -8,6 +8,7 @@ import { removeImageFromArtifact } from '@/db/artifactRepo';
 import { createImage, listImagesByIds, setImageRole } from '@/db/imageRepo';
 import type { AnyArtifact, Id, StoredImage } from '@/domain';
 import { Button } from '@/components/ui/button';
+import { BlockedControl } from '@/components/blocked-control';
 import { Badge } from '@/components/ui/badge';
 import {
   Dialog,
@@ -20,6 +21,18 @@ import { intakeImage } from '@/lib/imageIntake';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
 import { LightboxImage } from '@/features/images/lightbox-image';
 import { useImageUrl } from '@/features/images/use-image-url';
+
+/**
+ * WHY the upload controls cannot act while `busy` (docs/18 §2.3, docs/05 §Why a
+ * control cannot act): `busy` is this section's own upload flag — BOTH handlers
+ * (`handleFiles`, `handleMapFiles`) raise it — and this sentence is computed
+ * from that SAME flag, so it can never disagree with the state it explains.
+ * Either handler can hold either button, which is why the sentence names the
+ * upload and not the button. Way out: honest, not invented — the intake decode
+ * and the Dexie write take no `AbortSignal`, so the way out is to wait.
+ */
+const UPLOAD_RUNNING_REASON =
+  'The upload you started is still being saved — wait for it to finish.';
 
 /**
  * Editor Images section (07-MILESTONE-3 M3-A §UI): cover thumbnail, gallery
@@ -36,6 +49,8 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [lightboxId, setLightboxId] = useState<Id | null>(null);
   const [busy, setBusy] = useState(false);
+  /** Why both upload controls are held while an upload runs (docs/18 §2.3). */
+  const uploadReason = busy ? UPLOAD_RUNNING_REASON : null;
   const requestIllustration = useIllustrationRequest((state) => state.request);
 
   async function handleFiles(files: FileList | null): Promise<void> {
@@ -181,18 +196,20 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
             )}
           </button>
         ))}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => {
-            fileInputRef.current?.click();
-          }}
-          disabled={busy}
-          data-testid="upload-image"
-        >
-          <PlusIcon aria-hidden data-icon="inline-start" />
-          Upload
-        </Button>
+        <BlockedControl testId="upload-image" reason={uploadReason}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              fileInputRef.current?.click();
+            }}
+            disabled={busy}
+            data-testid="upload-image"
+          >
+            <PlusIcon aria-hidden data-icon="inline-start" />
+            Upload
+          </Button>
+        </BlockedControl>
         <Button
           variant="outline"
           size="sm"
@@ -226,18 +243,20 @@ export function ImagesSection({ artifact }: { artifact: AnyArtifact }): JSX.Elem
           <div className="flex items-center justify-between">
             <h3 className="text-xs font-medium">Battlemap</h3>
             <div className="flex gap-1.5">
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => {
-                  mapUploadRef.current?.click();
-                }}
-                disabled={busy}
-                data-testid="upload-battlemap"
-              >
-                <MapIcon aria-hidden data-icon="inline-start" />
-                Upload battlemap
-              </Button>
+              <BlockedControl testId="upload-battlemap" reason={uploadReason}>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => {
+                    mapUploadRef.current?.click();
+                  }}
+                  disabled={busy}
+                  data-testid="upload-battlemap"
+                >
+                  <MapIcon aria-hidden data-icon="inline-start" />
+                  Upload battlemap
+                </Button>
+              </BlockedControl>
               {mapImageId !== null && (
                 <Button
                   variant="ghost"

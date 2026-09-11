@@ -7,6 +7,7 @@ import type { JSX } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { DiceRoller, type DiceRollerProps } from '@/features/dice/DiceRoller';
+import { expectBlockedReason, expectSelfEvidentBlock } from '../helpers/blocked-reason';
 
 /**
  * The dice roller UI against a mocked `@3d-dice/dice-box` (jsdom has no
@@ -296,7 +297,38 @@ describe('DiceRoller', () => {
     await user.click(screen.getByRole('button', { name: /Roll result 4/ }));
     await user.click(screen.getByRole('button', { name: 'open-roller' }));
     await user.click(screen.getByRole('button', { name: 'Add d6' }));
-    expect(screen.getByRole('button', { name: 'Roll' })).toBeDisabled();
+    // Held — and it SAYS why, naming the Retry button that is really on screen
+    // above it (docs/18 §2.3, docs/17 row 99). The visible error text beside the
+    // button states the failure; the reason is what ties it to this control and
+    // names the way out.
+    await expectBlockedReason(
+      user,
+      'dice-roll',
+      'The 3D dice engine could not start — press Retry (above) to try again.',
+    );
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('states WHY Roll is held while the engine starts — and leaves the empty tray bare (nothing to roll)', async () => {
+    // The engine start never settles: no cancel seam exists for it, which is why
+    // the reason says "wait for it" and not "stop it".
+    h.initImpl = () => new Promise(() => undefined);
+    await renderRoller();
+    const user = userEvent.setup();
+    const roll = await screen.findByTestId('dice-roll');
+
+    // No dice, no modifier: there is nothing to roll, and the tray shows it.
+    await waitFor(() => {
+      expect(roll).toBeDisabled();
+    });
+    expectSelfEvidentBlock('dice-roll');
+
+    await user.click(screen.getByRole('button', { name: 'Add d6' }));
+    await expectBlockedReason(
+      user,
+      'dice-roll',
+      'The 3D dice engine is not ready yet — wait for it, then press Roll.',
+    );
   });
 
   it('remembers the last rolled tray for the next open (user preference)', async () => {

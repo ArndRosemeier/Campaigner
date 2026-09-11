@@ -3,12 +3,33 @@ import type { JSX } from 'react';
 import { ArrowDownIcon, ArrowUpIcon, PlayIcon, PlusIcon, RotateCcwIcon, Trash2Icon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { BlockedControl } from '@/components/blocked-control';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import type { Campaign, Id, ModuleEntityKind, ModuleSpine, PartPlan } from '@/domain';
 import { approveSpineAndRun, discardSpine, retrySpine } from '@/llm/moduleGen';
 import { toastError, toastSuccess } from '@/lib/toast';
+
+/**
+ * WHY these four controls cannot act while `busy` (docs/18 §2.3, docs/05 §Why a
+ * control cannot act): the `busy` gates below are untouched — this sentence is
+ * computed from that SAME prop, so it can never disagree with the state it
+ * explains. `busy` IS "the module is generating" (the reader passes
+ * `module.status === 'generating'`), and the stop it names is the module
+ * forge's ONE cancel path, reachable as the dock's Stop all.
+ *
+ * MEASURED, and reported rather than hidden: the module reader is the only
+ * caller that mounts this checkpoint, and it mounts it on the branch
+ * `parts.length === 0 && !busy` — so at HEAD `busy` is ALWAYS false here and
+ * these four reasons cannot be reached from that surface (the reader swaps the
+ * whole checkpoint out for the generation view). They are wrapped anyway: the
+ * prop is public, `busy: true` is a state the component is written to support
+ * (and the only state in which those four gates mean anything), and a reason
+ * that is absent is a reason that will be absent the day a caller does pass it.
+ */
+const MODULE_GENERATING_REASON =
+  'The module is generating right now — wait for it (or press Stop).';
 
 /**
  * Spine approval checkpoint (08-MODULE-DESIGNER M4-B, ALWAYS on): the
@@ -38,6 +59,8 @@ export function SpineCheckpoint({
   const [draft, setDraft] = useState<ModuleSpine>(() => structuredClone(spine));
   const [retryOpen, setRetryOpen] = useState(false);
   const [retryInstruction, setRetryInstruction] = useState('');
+  /** The one reason the four `busy` gates below are explained with. */
+  const busyReason = busy ? MODULE_GENERATING_REASON : null;
 
   // A spine re-draft ("Retry spine…") replaces the row's spine while this
   // checkpoint stays mounted — resync the editable draft to the new spine.
@@ -237,23 +260,36 @@ export function SpineCheckpoint({
       </div>
 
       <div className="mt-4 flex flex-wrap items-center gap-2">
-        <Button disabled={busy} onClick={() => void generateParts()} data-testid="generate-parts">
-          <PlayIcon aria-hidden data-icon="inline-start" />
-          Generate parts
-        </Button>
-        <Button
-          variant="outline"
-          disabled={busy}
-          onClick={() => {
-            setRetryOpen((open) => !open);
-          }}
-        >
-          <RotateCcwIcon aria-hidden data-icon="inline-start" />
-          Retry spine…
-        </Button>
-        <Button variant="ghost" disabled={busy} className="text-destructive" onClick={() => void discard()}>
-          Discard
-        </Button>
+        <BlockedControl testId="generate-parts" reason={busyReason}>
+          <Button disabled={busy} onClick={() => void generateParts()} data-testid="generate-parts">
+            <PlayIcon aria-hidden data-icon="inline-start" />
+            Generate parts
+          </Button>
+        </BlockedControl>
+        <BlockedControl testId="spine-retry-toggle" reason={busyReason}>
+          <Button
+            variant="outline"
+            data-testid="spine-retry-toggle"
+            disabled={busy}
+            onClick={() => {
+              setRetryOpen((open) => !open);
+            }}
+          >
+            <RotateCcwIcon aria-hidden data-icon="inline-start" />
+            Retry spine…
+          </Button>
+        </BlockedControl>
+        <BlockedControl testId="spine-discard" reason={busyReason}>
+          <Button
+            variant="ghost"
+            data-testid="spine-discard"
+            disabled={busy}
+            className="text-destructive"
+            onClick={() => void discard()}
+          >
+            Discard
+          </Button>
+        </BlockedControl>
       </div>
 
       {retryOpen && (
@@ -267,9 +303,17 @@ export function SpineCheckpoint({
               setRetryInstruction(event.target.value);
             }}
           />
-          <Button size="sm" className="self-start" disabled={busy} onClick={() => void retry()}>
-            Re-run spine draft
-          </Button>
+          <BlockedControl testId="spine-retry-run" reason={busyReason} className="self-start">
+            <Button
+              size="sm"
+              className="self-start"
+              data-testid="spine-retry-run"
+              disabled={busy}
+              onClick={() => void retry()}
+            >
+              Re-run spine draft
+            </Button>
+          </BlockedControl>
         </div>
       )}
     </section>

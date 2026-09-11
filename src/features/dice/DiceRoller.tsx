@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { JSX } from 'react';
 
 import { Button } from '@/components/ui/button';
+import { BlockedControl } from '@/components/blocked-control';
 import {
   Dialog,
   DialogContent,
@@ -39,6 +40,37 @@ import {
  */
 
 const LOG_LIMIT = 3;
+
+/**
+ * WHY the tray picker's Roll button cannot act (docs/18 §2.3, docs/05 §Why a
+ * control cannot act). The gate is `!canRoll || diceBlocked`, and the reasons
+ * read those SAME flags in that order:
+ *
+ * - `!canRoll` (an empty tray) is SELF-EVIDENT and gets no reason at all —
+ *   there is nothing to roll (pinned in tests/features/dice-roller.test.tsx);
+ * - `diceBlocked` is the tray HOLDING dice while the 3D engine cannot run them.
+ *   Its two sub-states have two different ways out, so the reason distinguishes
+ *   them: a failure names the Retry button rendered beside the status line, and
+ *   loading (or the single render before the open effect starts the engine)
+ *   names waiting — never a Stop, because the engine start has no cancel seam.
+ *   A flat modifier-only tray is deliberately NOT blocked (`diceBlocked`
+ *   requires dice), which is why this reason never fires for one.
+ */
+const DICE_ENGINE_LOADING_REASON =
+  'The 3D dice engine is not ready yet — wait for it, then press Roll.';
+const DICE_ENGINE_ERROR_REASON =
+  'The 3D dice engine could not start — press Retry (above) to try again.';
+
+/** The FIRST true condition of the Roll gate that is not self-evident. */
+function rollBlockedReason(
+  canRoll: boolean,
+  diceBlocked: boolean,
+  engineError: string | null,
+): string | null {
+  if (!canRoll) return null;
+  if (!diceBlocked) return null;
+  return engineError === null ? DICE_ENGINE_LOADING_REASON : DICE_ENGINE_ERROR_REASON;
+}
 
 interface ActiveRoll {
   total: number;
@@ -350,6 +382,8 @@ function DiceTrayPicker({
     engineError ??
     (tray.dice.length > 0 && engineStatus === 'loading' ? 'Loading 3D dice…' : null);
   const isError = rollError !== null || engineError !== null;
+  /** Why Roll is held right now (docs/18 §2.3 — see `rollBlockedReason`). */
+  const rollReason = rollBlockedReason(canRoll, diceBlocked, engineError);
 
   return (
     <div className="flex flex-col gap-3">
@@ -483,9 +517,16 @@ function DiceTrayPicker({
         <Button type="button" variant="outline" onClick={onClose}>
           Cancel
         </Button>
-        <Button type="button" disabled={!canRoll || diceBlocked} onClick={onRoll}>
-          Roll
-        </Button>
+        <BlockedControl testId="dice-roll" reason={rollReason}>
+          <Button
+            type="button"
+            data-testid="dice-roll"
+            disabled={!canRoll || diceBlocked}
+            onClick={onRoll}
+          >
+            Roll
+          </Button>
+        </BlockedControl>
       </DialogFooter>
     </div>
   );

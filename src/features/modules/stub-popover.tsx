@@ -3,6 +3,7 @@ import type { JSX } from 'react';
 import { LinkIcon, UserPlusIcon, UsersIcon, Wand2Icon, XIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
+import { BlockedControl } from '@/components/blocked-control';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
@@ -54,6 +55,9 @@ export interface StubPopoverState {
   y: number;
 }
 
+/** The one sentence the popover's `busy` gates state (above `StubPopover`). */
+const POPOVER_SAVE_REASON = 'A save from this popover is still running — wait for it to finish.';
+
 export interface StubPopoverProps {
   state: StubPopoverState;
   sentence: string;
@@ -100,6 +104,24 @@ export function StubPopover({
    * "create/generate as a separate entity" must be a deliberate act. */
   const [armedCreate, setArmedCreate] = useState(false);
   const [armedGenerate, setArmedGenerate] = useState(false);
+  /**
+   * WHY the three gated controls below cannot act (docs/18 §2.3, docs/05 §Why a
+   * control cannot act): `busy` is this popover's own save flag — `linkToCanonical`
+   * and `createStub` both raise it — and the sentence is computed from that SAME
+   * flag, so a reason can never disagree with the state it explains. It names the
+   * way out honestly: both are local database writes with no cancel seam, so the
+   * way out is to wait.
+   *
+   * First true condition wins, per control:
+   * - the verdict link and "Create stub" gate on `busy` first (the empty-name
+   *   half of their gates is self-evident and gets no reason);
+   * - "Generate" gates on `generating` FIRST, and in that state its OWN label
+   *   reads "Generating…" — self-evident, so no reason is attached then.
+   */
+  function popoverBlockedReason(isBusy: boolean, generatingInPlace: boolean): string | null {
+    if (generatingInPlace) return null;
+    return isBusy ? POPOVER_SAVE_REASON : null;
+  }
 
   useEffect(() => {
     if (recordedKind !== undefined) return;
@@ -263,15 +285,20 @@ export function StubPopover({
             </p>
           )}
           {canonicalArtifactName !== null && (
-            <Button
-              size="sm"
-              disabled={busy}
-              data-testid="stub-link-verdict"
-              onClick={() => void linkToCanonical()}
+            <BlockedControl
+              testId="stub-link-verdict"
+              reason={popoverBlockedReason(busy, false)}
             >
-              <LinkIcon aria-hidden data-icon="inline-start" />
-              Use “{canonicalArtifactName}”
-            </Button>
+              <Button
+                size="sm"
+                disabled={busy}
+                data-testid="stub-link-verdict"
+                onClick={() => void linkToCanonical()}
+              >
+                <LinkIcon aria-hidden data-icon="inline-start" />
+                Use “{canonicalArtifactName}”
+              </Button>
+            </BlockedControl>
           )}
           <div className="flex items-center gap-2">
             <Label htmlFor="stub-name" className="shrink-0 text-xs">
@@ -317,32 +344,36 @@ export function StubPopover({
             </Select>
           </div>
 
-          <Button
-            size="sm"
-            variant={armedCreate ? 'destructive' : 'default'}
-            disabled={busy || name.trim() === ''}
-            data-testid="stub-create"
-            data-armed={armedCreate || undefined}
-            onClick={() => void createStub()}
-          >
-            <UserPlusIcon aria-hidden data-icon="inline-start" />
-            {armedCreate ? 'Create as a separate entity — confirm?' : 'Create stub'}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={generating || busy || name.trim() === ''}
-            data-testid="stub-generate"
-            data-armed={armedGenerate || undefined}
-            onClick={() => void generateInPlace()}
-          >
-            <Wand2Icon aria-hidden data-icon="inline-start" />
-            {generating
-              ? 'Generating…'
-              : armedGenerate
-                ? 'Generate as a separate entity — confirm?'
-                : 'Generate'}
-          </Button>
+          <BlockedControl testId="stub-create" reason={popoverBlockedReason(busy, false)}>
+            <Button
+              size="sm"
+              variant={armedCreate ? 'destructive' : 'default'}
+              disabled={busy || name.trim() === ''}
+              data-testid="stub-create"
+              data-armed={armedCreate || undefined}
+              onClick={() => void createStub()}
+            >
+              <UserPlusIcon aria-hidden data-icon="inline-start" />
+              {armedCreate ? 'Create as a separate entity — confirm?' : 'Create stub'}
+            </Button>
+          </BlockedControl>
+          <BlockedControl testId="stub-generate" reason={popoverBlockedReason(busy, generating)}>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={generating || busy || name.trim() === ''}
+              data-testid="stub-generate"
+              data-armed={armedGenerate || undefined}
+              onClick={() => void generateInPlace()}
+            >
+              <Wand2Icon aria-hidden data-icon="inline-start" />
+              {generating
+                ? 'Generating…'
+                : armedGenerate
+                  ? 'Generate as a separate entity — confirm?'
+                  : 'Generate'}
+            </Button>
+          </BlockedControl>
           <Button
             size="sm"
             variant="outline"

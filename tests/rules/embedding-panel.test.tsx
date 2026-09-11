@@ -11,6 +11,7 @@ import { EmbeddingLibraryPanel } from '@/features/rules/embedding-panel';
 import { embeddingStats, clearEmbeddings, embedWholeLibrary } from '@/search/embeddings';
 import { db } from '@/db/db';
 import { clearDatabase } from '../db/helpers';
+import { expectBlockedReason, expectSelfEvidentBlock } from '../helpers/blocked-reason';
 import { flushAsyncUpdates } from '../helpers/flush';
 
 /**
@@ -142,4 +143,70 @@ describe('EmbeddingLibraryPanel', () => {
     expect(rows).toHaveLength(0);
     await flushAsyncUpdates();
   }, 20000);
+});
+
+/**
+ * WHY the panel's two buttons are held (docs/18 §2.3, docs/05 §Why a control
+ * cannot act; docs/17 row 99). The whole-library run holds BOTH of them and
+ * neither label changes, so before row 99 the panel went dead in silence for a
+ * run that can take minutes. The two rungs that deliberately stay bare are
+ * pinned here too.
+ */
+describe('EmbeddingLibraryPanel blocked-control reasons', () => {
+  const RUNNING = 'The whole library is being embedded right now — wait for it to finish.';
+
+  async function activate(chunks: RuleChunk[]): Promise<void> {
+    await getSettings();
+    await updateSettings({
+      embeddingModel: MODEL,
+      embeddingsEnabled: true,
+      openRouterApiKey: 'sk-test',
+    });
+    if (chunks.length > 0) await putChunks(chunks);
+  }
+
+  it('a run in flight states why on BOTH buttons — Clear is not even that run\'s own work', async () => {
+    const user = userEvent.setup();
+    await activate([chunk('alpha'), chunk('beta')]);
+    // The API never answers: the run is genuinely in flight, and it takes no
+    // AbortSignal — which is exactly what the reason says.
+    vi.stubGlobal('fetch', () => new Promise(() => undefined));
+    render(<EmbeddingLibraryPanel />);
+
+    await waitFor(() => {
+      expect(screen.getByText('0 of 2 chunks embedded')).toBeDefined();
+    });
+    await user.click(screen.getByTestId('embed-library'));
+    await waitFor(() => {
+      expect(screen.getByTestId('embed-library')).toBeDisabled();
+    });
+
+    await expectBlockedReason(user, 'embed-library', RUNNING);
+    await expectBlockedReason(user, 'clear-embeddings', RUNNING);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('SELF-EVIDENT: nothing to embed — the stats line says "0 of 0 chunks embedded", so the button is bare', async () => {
+    await activate([]);
+    render(<EmbeddingLibraryPanel />);
+    await waitFor(() => {
+      expect(screen.getByText('0 of 0 chunks embedded')).toBeDefined();
+    });
+    expectSelfEvidentBlock('embed-library');
+    expectSelfEvidentBlock('clear-embeddings');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('SELF-EVIDENT: embeddings switched off — the badge and the notice paragraph state it in place', async () => {
+    await getSettings();
+    render(<EmbeddingLibraryPanel />);
+    await waitFor(() => {
+      expect(screen.getByText('inactive')).toBeDefined();
+    });
+    expect(
+      screen.getByText('Enable embeddings and add an API key in Settings to use semantic search.'),
+    ).toBeDefined();
+    expectSelfEvidentBlock('embed-library');
+    await flushAsyncUpdates();
+  }, 20_000);
 });

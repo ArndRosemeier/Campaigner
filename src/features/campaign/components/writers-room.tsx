@@ -13,6 +13,7 @@ import {
 import { toastError } from '@/lib/toast';
 
 import { Badge } from '@/components/ui/badge';
+import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -39,6 +40,30 @@ const CHAIN_STEP_LABELS: Record<ChainState['steps'][number]['status'], string> =
   failed: 'failed',
   cancelled: 'cancelled',
 };
+
+/**
+ * WHY a step-form control cannot act while a chain is in flight (docs/18 §2.3,
+ * docs/05 §Why a control cannot act): the `busy` gates below are untouched —
+ * these two sentences read the SAME flags that build `busy`, in the same order,
+ * so a reason can never disagree with the state it explains. Both name the way
+ * out: "Stop chain" renders for exactly that `busy` flag (below), and a paused
+ * chain is waiting on a run the user resolves in the Assistant tab — not on a
+ * model.
+ */
+const CHAIN_RUNNING_REASON = 'The chain is running right now — wait for it, or press Stop chain.';
+const CHAIN_PAUSED_REASON =
+  'The chain is paused on a run that needs you — resolve it in the Assistant tab, or press Stop chain.';
+
+/**
+ * The FIRST true condition of `busy` (null = the chain is not holding the
+ * form). `chain.status` is the one source: 'running' and 'paused' are the two
+ * states `busy` ORs together.
+ */
+function chainBlockedReason(running: boolean, paused: boolean): string | null {
+  if (running) return CHAIN_RUNNING_REASON;
+  if (paused) return CHAIN_PAUSED_REASON;
+  return null;
+}
 
 /**
  * Writers' room (06-MILESTONES M2: persona chaining): an ordered pipeline of
@@ -83,6 +108,10 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
   }
 
   const busy = chain.status === 'running' || chain.status === 'paused';
+  // One computation for every control the `busy` gate holds (docs/18 §2.3): the
+  // whole step form goes dead while a chain runs, so each of those controls
+  // states this same reason instead of going silently grey.
+  const busyReason = chainBlockedReason(chain.status === 'running', chain.status === 'paused');
 
   return (
     <div className="flex flex-col gap-3 p-3" data-testid="writers-room">
@@ -94,134 +123,193 @@ export function WritersRoom({ campaign }: { campaign: Campaign }): JSX.Element {
         <div key={index} className="flex flex-col gap-1.5 rounded-md border p-2">
           <div className="flex items-center gap-1.5">
             <Badge variant="outline">{index + 1}</Badge>
-            <Select
-              value={step.personaId}
-              items={Object.fromEntries(
-                (personas ?? []).map((persona) => [persona.id, persona.name]),
-              )}
+            {/* The device's `testId` is the wrapper's own hook here: a Base UI
+                `Select.Root` renders NO element, so the id cannot live on the
+                control itself (the trigger keeps its aria-label). */}
+            <BlockedControl
+              testId={`writers-room-step-${String(index + 1)}-persona`}
+              reason={busyReason}
+              className="min-w-0 flex-1"
+            >
+              <Select
+                value={step.personaId}
+                items={Object.fromEntries(
+                  (personas ?? []).map((persona) => [persona.id, persona.name]),
+                )}
+                disabled={busy}
+                onValueChange={(value) => {
+                  if (value === null) return;
+                  setSteps((previous) =>
+                    previous.map((candidate, i) =>
+                      i === index ? { ...candidate, personaId: value } : candidate,
+                    ),
+                  );
+                }}
+              >
+                <SelectTrigger
+                  className="h-7 flex-1 text-xs pointer-coarse:text-base"
+                  aria-label={`Step ${index + 1} persona`}
+                  data-testid={`writers-room-step-${String(index + 1)}-persona`}
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(personas ?? []).map((persona) => (
+                    <SelectItem key={persona.id} value={persona.id}>
+                      {persona.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </BlockedControl>
+            {/* `index === 0` is at-an-end and self-evident (pinned in
+                tests/features/blocked-reasons-writers-room.test.tsx): the first
+                true condition of the gate supplies the reason, so the rung that
+                is stated gets it and the rung that is obvious stays bare. */}
+            <BlockedControl
+              testId={`writers-room-step-${String(index + 1)}-move-up`}
+              reason={busyReason}
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Move step ${index + 1} up`}
+                data-testid={`writers-room-step-${String(index + 1)}-move-up`}
+                disabled={busy || index === 0}
+                onClick={() => {
+                  move(index, -1);
+                }}
+              >
+                <ArrowUpIcon aria-hidden />
+              </Button>
+            </BlockedControl>
+            <BlockedControl
+              testId={`writers-room-step-${String(index + 1)}-move-down`}
+              reason={busyReason}
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Move step ${index + 1} down`}
+                data-testid={`writers-room-step-${String(index + 1)}-move-down`}
+                disabled={busy || index === steps.length - 1}
+                onClick={() => {
+                  move(index, 1);
+                }}
+              >
+                <ArrowDownIcon aria-hidden />
+              </Button>
+            </BlockedControl>
+            <BlockedControl
+              testId={`writers-room-step-${String(index + 1)}-remove`}
+              reason={busyReason}
+            >
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label={`Remove step ${index + 1}`}
+                data-testid={`writers-room-step-${String(index + 1)}-remove`}
+                disabled={busy}
+                onClick={() => {
+                  setSteps((previous) => previous.filter((_, i) => i !== index));
+                }}
+              >
+                <Trash2Icon aria-hidden />
+              </Button>
+            </BlockedControl>
+          </div>
+          <BlockedControl
+            testId={`writers-room-step-${String(index + 1)}-brief`}
+            reason={busyReason}
+          >
+            <Input
+              value={step.brief}
+              placeholder="Brief for this step…"
+              className="h-7 text-xs pointer-coarse:text-base"
+              aria-label={`Step ${index + 1} brief`}
+              data-testid={`writers-room-step-${String(index + 1)}-brief`}
               disabled={busy}
-              onValueChange={(value) => {
-                if (value === null) return;
+              onChange={(event) => {
+                const value = event.target.value;
                 setSteps((previous) =>
                   previous.map((candidate, i) =>
-                    i === index ? { ...candidate, personaId: value } : candidate,
+                    i === index ? { ...candidate, brief: value } : candidate,
                   ),
                 );
               }}
-            >
-              <SelectTrigger
-                className="h-7 flex-1 text-xs pointer-coarse:text-base"
-                aria-label={`Step ${index + 1} persona`}
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(personas ?? []).map((persona) => (
-                  <SelectItem key={persona.id} value={persona.id}>
-                    {persona.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Move step ${index + 1} up`}
-              disabled={busy || index === 0}
-              onClick={() => {
-                move(index, -1);
-              }}
-            >
-              <ArrowUpIcon aria-hidden />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Move step ${index + 1} down`}
-              disabled={busy || index === steps.length - 1}
-              onClick={() => {
-                move(index, 1);
-              }}
-            >
-              <ArrowDownIcon aria-hidden />
-            </Button>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              aria-label={`Remove step ${index + 1}`}
-              disabled={busy}
-              onClick={() => {
-                setSteps((previous) => previous.filter((_, i) => i !== index));
-              }}
-            >
-              <Trash2Icon aria-hidden />
-            </Button>
-          </div>
-          <Input
-            value={step.brief}
-            placeholder="Brief for this step…"
-            className="h-7 text-xs pointer-coarse:text-base"
-            aria-label={`Step ${index + 1} brief`}
-            disabled={busy}
-            onChange={(event) => {
-              const value = event.target.value;
-              setSteps((previous) =>
-                previous.map((candidate, i) =>
-                  i === index ? { ...candidate, brief: value } : candidate,
-                ),
-              );
-            }}
-          />
+            />
+          </BlockedControl>
         </div>
       ))}
 
-      <Button variant="outline" size="sm" className="self-start" disabled={busy} onClick={addStep}>
-        <PlusIcon aria-hidden data-icon="inline-start" />
-        Add step
-      </Button>
+      <BlockedControl testId="writers-room-add-step" reason={busyReason} className="self-start">
+        <Button
+          variant="outline"
+          size="sm"
+          className="self-start"
+          data-testid="writers-room-add-step"
+          disabled={busy}
+          onClick={addStep}
+        >
+          <PlusIcon aria-hidden data-icon="inline-start" />
+          Add step
+        </Button>
+      </BlockedControl>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="chain-autonomy">Autonomy</Label>
-        <Select
-          value={autonomy}
-          disabled={busy}
-          onValueChange={(value) => {
-            if (value !== null) setAutonomy(value);
-          }}
-        >
-          <SelectTrigger className="w-full pointer-coarse:text-base" aria-label="Chain autonomy">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="manual">Manual</SelectItem>
-            <SelectItem value="review">Review</SelectItem>
-            <SelectItem value="auto">Auto</SelectItem>
-          </SelectContent>
-        </Select>
+        <BlockedControl testId="writers-room-autonomy" reason={busyReason}>
+          <Select
+            value={autonomy}
+            disabled={busy}
+            onValueChange={(value) => {
+              if (value !== null) setAutonomy(value);
+            }}
+          >
+            <SelectTrigger
+              className="w-full pointer-coarse:text-base"
+              aria-label="Chain autonomy"
+              data-testid="writers-room-autonomy"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="manual">Manual</SelectItem>
+              <SelectItem value="review">Review</SelectItem>
+              <SelectItem value="auto">Auto</SelectItem>
+            </SelectContent>
+          </Select>
+        </BlockedControl>
       </div>
 
       <div className="flex gap-2">
-        <Button
-          data-testid="run-chain"
-          disabled={busy || steps.length === 0 || personas === undefined}
-          onClick={() => {
-            const personasById = personas ?? [];
-            void chainRunner
-              .run(
-                campaign,
-                personasById,
-                steps,
-                autonomy,
-                pinned.map((chunk) => chunk.id),
-              )
-              .catch((error: unknown) => {
-                toastError('The chain crashed', error);
-              });
-          }}
-        >
-          <PlayIcon aria-hidden data-icon="inline-start" />
-          Run chain
-        </Button>
+        {/* The two self-evident halves of this gate (`steps.length === 0`: there
+            is nothing to run; `personas === undefined`: the list is still
+            loading) get NO wrapper, pinned as such — only the busy rung states
+            a reason. */}
+        <BlockedControl testId="run-chain" reason={busyReason}>
+          <Button
+            data-testid="run-chain"
+            disabled={busy || steps.length === 0 || personas === undefined}
+            onClick={() => {
+              const personasById = personas ?? [];
+              void chainRunner
+                .run(
+                  campaign,
+                  personasById,
+                  steps,
+                  autonomy,
+                  pinned.map((chunk) => chunk.id),
+                )
+                .catch((error: unknown) => {
+                  toastError('The chain crashed', error);
+                });
+            }}
+          >
+            <PlayIcon aria-hidden data-icon="inline-start" />
+            Run chain
+          </Button>
+        </BlockedControl>
         {busy && (
           <Button
             variant="outline"
