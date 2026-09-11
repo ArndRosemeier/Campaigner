@@ -25,11 +25,13 @@ vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 
 // The automation hands its results to the background queues — replaced with
 // spies so the pumps never run inside this test.
-const { enqueueImageJobs, enqueueEncounterMaps, enqueueMobPortraits } = vi.hoisted(() => ({
-  enqueueImageJobs: vi.fn(),
-  enqueueEncounterMaps: vi.fn(),
-  enqueueMobPortraits: vi.fn(),
-}));
+const { enqueueImageJobs, enqueueEncounterMaps, enqueueMobPortraits, enqueueInventedPortraits } =
+  vi.hoisted(() => ({
+    enqueueImageJobs: vi.fn(),
+    enqueueEncounterMaps: vi.fn(),
+    enqueueMobPortraits: vi.fn(),
+    enqueueInventedPortraits: vi.fn(),
+  }));
 
 vi.mock('@/features/modules/entity-image-queue', () => ({
   useEntityImageQueue: { getState: () => ({ enqueue: enqueueImageJobs }) },
@@ -39,7 +41,12 @@ vi.mock('@/features/modules/encounter-map-queue', () => ({
   useEncounterMapQueue: { getState: () => ({ enqueue: enqueueEncounterMaps }) },
 }));
 
-vi.mock('@/features/campaign/mob-portrait-queue', () => ({ enqueueMobPortraits }));
+// BOTH batch entries are spied: the sweep runs the same two lanes the encounter
+// editor's additive fill does (docs/17 row 96).
+vi.mock('@/features/campaign/mob-portrait-queue', () => ({
+  enqueueMobPortraits,
+  enqueueInventedCreaturePortraits: enqueueInventedPortraits,
+}));
 
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
@@ -188,6 +195,11 @@ describe('runModulePostGeneration', () => {
     enqueueImageJobs.mockReset();
     enqueueEncounterMaps.mockReset();
     enqueueMobPortraits.mockReset();
+    enqueueInventedPortraits.mockReset();
+    // The invented lane enumerates nothing for a roster that is all
+    // chunk-backed, so its baseline answer is "no work" — each portrait case
+    // raises it where the invented half is the point.
+    enqueueInventedPortraits.mockResolvedValue({ created: 0, enqueued: 0, alreadyImaged: [] });
     chainRunner.reset();
     useProgressStore.getState().reset();
   });
@@ -453,6 +465,10 @@ describe('runModulePostGeneration', () => {
 
     // The failed encounter never stops the remaining automation.
     expect(enqueueMobPortraits).toHaveBeenCalledTimes(2);
+    // ONE try per encounter: the lane that failed took that encounter's portrait
+    // work with it (reported), and the healthy encounter still ran BOTH lanes.
+    expect(enqueueInventedPortraits).toHaveBeenCalledTimes(1);
+    expect(enqueueInventedPortraits.mock.calls[0]?.[0]).toMatchObject({ name: 'Flooded Stair' });
     expect(toastErrorMock).toHaveBeenCalledTimes(1);
     const failureToast = toastErrorMock.mock.calls[0]?.[0];
     expect(failureToast).toContain('1 of 2 encounters failed to enqueue mob portraits');
@@ -462,7 +478,7 @@ describe('runModulePostGeneration', () => {
     );
   }, 30_000);
 
-  it('skips the portrait step silently-free when no encounter roster cites rulebook creatures', async () => {
+  it('skips the portrait step silently-free when no roster has a participant', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await seedModule(campaign.id, {
       autoGenerateKinds: [],

@@ -11,7 +11,11 @@ import { ENTITY_KINDS, entityKindFor, moduleCreationPool, moduleDocumentText } f
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
-import { enqueueMobPortraits } from '@/features/campaign/mob-portrait-queue';
+import {
+  enqueueInventedCreaturePortraits,
+  enqueueMobPortraits,
+} from '@/features/campaign/mob-portrait-queue';
+import { encounterNeedsMobPortraitWork } from '@/features/campaign/mob-portrait-participants';
 import { hasDetailedEntity } from '@/features/modules/detailed-entity';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { runEntityBatch } from '@/features/modules/entity-batch';
@@ -42,12 +46,14 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * 3. **Auto-generate battlemaps** — module-owned encounters without a
  *    layout/map are enqueued in the unattended encounter-map queue (docs/11
  *    §Module generation integration; auto autonomy, no pick pause).
- * 4. **Auto-generate mob portraits** — every module-owned encounter's
- *    rulebook-cited roster mobs are enqueued on the mob-portrait queue
- *    through the encounter editor's batch entry (`enqueueMobPortraits`):
- *    one cover portrait per creature kind, canonically cached. Enqueue is
- *    the contract — the queue carries the progress dock and the loud
- *    per-mob failures; this sweep never awaits portrait completion.
+ * 4. **Auto-generate mob portraits** — every module-owned encounter with
+ *    un-imaged roster creatures is enqueued on the mob-portrait queue through
+ *    the encounter editor's own batch entries, BOTH lanes (`enqueueMobPortraits`
+ *    for the chunk-backed kinds, `enqueueInventedCreaturePortraits` for the
+ *    participants whose creature is not chunk-backed — docs/17 row 96): one
+ *    cover portrait per creature kind, canonically cached for citations.
+ *    Enqueue is the contract — the queue carries the progress dock and the
+ *    loud per-mob failures; this sweep never awaits portrait completion.
  *
  * Everything is idempotent: batches target only UNRESOLVED entities, the
  * image queue skips artifacts that already have an image, the map queue
@@ -162,14 +168,38 @@ export function encountersNeedingMaps(
 }
 
 /**
- * Portrait targets: module-owned encounters whose roster still carries
- * rulebook-cited creature work — an entry with no stamped `mobArtifactId`
- * (the batch resolves or creates it) or one whose mob artifact is still
- * cover-less. Cheap over the same artifact snapshot the other steps use;
- * an unstamped entry whose campaign-wide mob artifact already exists imaged
- * may over-notify the disabled skip below (errs loud, never silent). The
- * queue's own one-per-creature-kind dedupe + skip-if-imaged make an enqueue
- * re-run a no-op.
+ * Portrait targets: module-owned encounters whose roster still holds portrait
+ * work — an encounter the portrait batch would enqueue for.
+ *
+ * THE predicate is the queue's own (`encounterNeedsMobPortraitWork`,
+ * features/campaign/mob-portrait-participants): the SAME routing (by what a
+ * row's creature IS: a `rulebook` citation or an `npc-ref` to a chunk-backed
+ * mob artifact shares the one bestiary portrait; an `npc-ref` to an artifact
+ * without the marker — the monster the encounter materialized from a
+ * model-authored block, a named NPC standing in the roster — and every
+ * uncited `inline`/`none` entry gets its own local one), the SAME art reading
+ * and the SAME per-kind identity the two enqueue lanes use. It is computed
+ * over the artifact snapshot the other steps already hold: no DB read, no
+ * write, no art mutation.
+ *
+ * Why it is shared rather than re-derived (owner report, docs/17 row 96): this
+ * detector used to answer with its OWN rule — roster rows whose
+ * `source.type === 'rulebook'` — so every `npc-ref` row (the artifacts the
+ * encounter materializes its creatures into, INCLUDING the core/bestiary
+ * creatures that carry the `monsterChunkId` marker) and every uncited entry
+ * was invisible to the module path, and the sweep behind it enqueued the
+ * rulebook lane alone. Both halves are the same defect rows 90/92 fixed for
+ * the encounter editor: an offer and the work it names must read ONE rule.
+ *
+ * The one honest residue, and it is deliberately the loud direction: a roster
+ * row pointing OUTSIDE the snapshot (a dangling stamped `mobArtifactId`, a
+ * dangling `npc-ref`, a link to a row this campaign does not own) counts as
+ * work. The enqueue resolves those from the DB — it enqueues the portrait it
+ * finds, and THROWS with the citing name when the row is gone (the sweep
+ * aggregates that into one loud per-encounter toast). Reporting them as
+ * "nothing to do" would be the silent miss this seam exists to remove, and the
+ * queue's own per-kind dedupe + skip-if-imaged make a re-run of an already
+ * imaged kind a no-op.
  */
 export function encountersNeedingMobPortraits(
   module: Module,
@@ -181,13 +211,7 @@ export function encountersNeedingMobPortraits(
     // batch entry's `AnyArtifact & { kind: 'encounter' }` parameter as-is.
     (artifact): artifact is Artifact & { kind: 'encounter' } => {
       if (artifact.kind !== 'encounter' || artifact.moduleId !== module.id) return false;
-      return artifact.data.monsters.some((entry) => {
-        if (entry.source.type !== 'rulebook') return false;
-        const stamped = entry.source.mobArtifactId;
-        if (stamped === undefined) return true;
-        const mob = artifacts.find((candidate) => candidate.id === stamped);
-        return mob === undefined || (mob.coverImageId === null && mob.imageIds.length === 0);
-      });
+      return encounterNeedsMobPortraitWork(artifact, artifacts);
     },
   );
 }
@@ -326,10 +350,30 @@ export async function runModulePostGeneration(
     }
 
     // 4) Mob portraits — the encounter editor's "Generate mob portraits"
-    // batch entry per module-owned encounter. Enqueued-but-async is the
-    // contract: the portrait queue owns progress (dock) and the loud
-    // per-mob failure path; the sweep NEVER awaits portrait completion.
-    const portraitTargets = module.autoGenerateMobImages
+    // batch entry per module-owned encounter, BOTH lanes (docs/17 row 96):
+    // the rulebook lane for every chunk-backed creature kind, then the
+    // invented lane for the participants whose creature is not chunk-backed
+    // (an uncited entry's on-demand creature; an `npc-ref` monster or named
+    // NPC that already has its own artifact). That is exactly the two calls
+    // the editor's additive fill makes, over exactly the encounters
+    // `encountersNeedingMobPortraits` counted — one rule, no lane gate on the
+    // roster's shape (a roster of nothing but materialized monsters has no
+    // rulebook-citation entry and must still be illustrated). Additive in
+    // both lanes: the enumeration resolves what exists and skips every kind
+    // that already carries art, so a re-run replaces nothing.
+    //
+    // Enqueued-but-async is the contract: the portrait queue owns progress
+    // (dock) and the loud per-mob failure path; the sweep NEVER awaits
+    // portrait completion.
+    //
+    // The switch is the run's OWN (`target ?? module`, destructured above, like
+    // `autoGenerateBattlemaps` and the two kind lists): reading the module ROW
+    // here made an explicit target's promise false — the entity sidebar's
+    // "Generate everything" (FULL_AUTOMATION_TARGET, `autoGenerateMobImages:
+    // true`) offered mob portraits in its confirmation and then never enqueued
+    // them for a module whose row had the toggle off, which is the default
+    // (owner report, docs/17 row 96, second symptom).
+    const portraitTargets = autoGenerateMobImages
       ? encountersNeedingMobPortraits(module, artifacts)
       : [];
     let portraitJobs = 0;
@@ -342,7 +386,12 @@ export async function runModulePostGeneration(
       );
     } else {
       // One encounter's failure never kills the sweep: the rest still
-      // enqueue, and the failures aggregate into ONE loud toast.
+      // enqueue, and the failures aggregate into ONE loud toast. ONE try per
+      // encounter (both lanes inside it), so the aggregation counts
+      // encounters and never lanes; a failure in the first lane therefore
+      // ends that encounter's portrait work with its own loud reason, and a
+      // dangling `npc-ref` is exactly such a failure (`enumerateBatchKinds`
+      // throws with the citing name — never a silent skip).
       const failedPortraits: string[] = [];
       for (const encounter of portraitTargets) {
         // The portrait batch awaits per encounter (it reads the roster), so a
@@ -350,6 +399,15 @@ export async function runModulePostGeneration(
         if (stoppedSince(epoch)) break;
         try {
           portraitJobs += (await enqueueMobPortraits(encounter, module.campaignId)).enqueued;
+          // The invented lane always follows: every encounter in
+          // `portraitTargets` has a non-empty roster by construction (the
+          // predicate walks roster rows), which IS the editor's
+          // `hasParticipants` gate — stated here instead of as an unreachable
+          // branch. It enumerates nothing when every participant is
+          // chunk-backed, and creates/enqueues nothing that exists.
+          portraitJobs += (
+            await enqueueInventedCreaturePortraits(encounter, module.campaignId)
+          ).enqueued;
         } catch (error) {
           failedPortraits.push(`"${encounter.name}" — ${errorMessage(error)}`);
         }

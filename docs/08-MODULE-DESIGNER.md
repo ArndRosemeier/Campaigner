@@ -1311,10 +1311,18 @@ flags on the module row (zod defaults keep old pass flags off):
   artifacts are module-owned FROM BIRTH (the batch run carries
   `placementModuleId`), so the master switch applies to them too.
 - `autoGenerateMobImages: boolean` — after the parts pass, every
-  module-owned encounter's rulebook-cited roster mobs are enqueued on the
-  mob-portrait queue via the encounter editor's batch entry
-  (`enqueueMobPortraits`): one portrait per creature kind, canonically
-  cached, skip-if-imaged; enqueue is async (the dock carries progress).
+  module-owned encounter whose roster still holds portrait work is enqueued
+  on the mob-portrait queue through the encounter editor's OWN two batch
+  entries: `enqueueMobPortraits` for the chunk-backed creature kinds (one
+  portrait per creature kind, canonically cached) and
+  `enqueueInventedCreaturePortraits` for every other participant — an
+  uncited entry's on-demand creature, an `npc-ref` monster or named NPC that
+  already has its artifact (docs/17 row 96). The encounter set and the lanes
+  come from the queue's own routing/art rules
+  (`features/campaign/mob-portrait-participants`), NEVER from a rulebook-only
+  reading of the roster: a roster of materialized core/bestiary creatures
+  carries no citation entry and must still be illustrated. Additive in both
+  lanes (skip-if-imaged); enqueue is async (the dock carries progress).
   Opt-in (off by default); needs image generation in Settings.
 
 Trigger: the ENGINE fires `runModulePostGeneration`

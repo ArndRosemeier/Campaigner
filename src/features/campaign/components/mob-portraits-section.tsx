@@ -124,13 +124,20 @@ export function MobPortraitsSection({
     setBatchChoice(null);
     setBusy(true);
     try {
-      // The invented lane is loaded whenever the batch has participants — it
-      // carries npc-ref rows as well as uncited entries (row 90), so gating it
-      // on `uncited.length` left a materialized monster unfilled.
-      const rulebook =
-        rulebookCount === 0
-          ? { enqueued: 0, alreadyImaged: [] as string[] }
-          : await enqueueMobPortraits(artifact, campaignId);
+      // BOTH lanes whenever the roster has participants, in the order the
+      // queue's own enumeration walks them, and NEITHER gated on the roster's
+      // SHAPE. `rulebookCount === 0` used to skip the rulebook lane — but an
+      // `npc-ref` to a CHUNK-BACKED artifact (a bestiary creature the
+      // encounter materialized into its mob artifact) rides THAT lane, so a
+      // roster of nothing but such rows left a visible hole unfilled: the
+      // count offered "Fill 1 missing portrait" and the press enqueued
+      // nothing (row 90's exact shape-gating defect, and row 92's rule — an
+      // offer the work refuses is a bug — applied to the press). Each lane
+      // enumerates away what it has no business with, so the extra call is a
+      // no-op, not a second job.
+      const rulebook = hasParticipants
+        ? await enqueueMobPortraits(artifact, campaignId)
+        : { enqueued: 0, alreadyImaged: [] as string[] };
       const invented = hasParticipants
         ? await enqueueInventedCreaturePortraits(artifact, campaignId)
         : { created: 0, enqueued: 0, alreadyImaged: [] as string[] };
@@ -158,13 +165,14 @@ export function MobPortraitsSection({
 
   /** The replace-all path: today's delete-after-replace regen, unchanged
    * semantics (canonical slots republished first, old art kept until the
-   * fresh art commits). */
+   * fresh art commits). Both lanes, gated on participants and never on the
+   * roster's shape — the same reason as `fillMissing`. */
   async function replaceAll(): Promise<void> {
     setBatchChoice(null);
     setBusy(true);
     try {
       const rulebook =
-        rulebookCount === 0
+        !hasParticipants
           ? { regenerated: 0, republishedCanonical: [] as string[] }
           : await regenerateMobPortraits(artifact, campaignId);
       const invented =

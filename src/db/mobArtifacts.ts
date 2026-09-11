@@ -40,16 +40,30 @@ import { toastSuccess } from '@/lib/toast';
  * converge on the same row (idempotency is test-pinned).
  */
 
+/**
+ * The ONE chunk → mob-artifact identity rule, over any artifact list:
+ * `findMobArtifactByChunk` is this over the campaign read, and the module-level
+ * portrait-gap detector (`features/campaign/mob-portrait-participants`) applies
+ * the SAME rule to the artifact snapshot it already holds — a second scan
+ * written there would be a second interpretation of "the campaign's artifact
+ * for this chunk" (docs/17 row 96).
+ */
+export function mobArtifactIn(
+  artifacts: readonly AnyArtifact[],
+  chunkId: Id,
+): NpcArtifact | undefined {
+  return artifacts.find(
+    (artifact): artifact is NpcArtifact =>
+      artifact.kind === 'npc' && artifact.data.monsterChunkId === chunkId,
+  );
+}
+
 /** The campaign's mob artifact for one chunk, when one exists. */
 export async function findMobArtifactByChunk(
   campaignId: Id,
   chunkId: Id,
 ): Promise<NpcArtifact | undefined> {
-  const artifacts = await listArtifactsByCampaign(campaignId);
-  return artifacts.find(
-    (artifact): artifact is NpcArtifact =>
-      artifact.kind === 'npc' && artifact.data.monsterChunkId === chunkId,
-  );
+  return mobArtifactIn(await listArtifactsByCampaign(campaignId), chunkId);
 }
 
 /** True when the row is a mob artifact (an `npc` carrying the chunk marker). */
@@ -316,28 +330,43 @@ export function inventedCreatureMarker(encounterId: Id): string {
 }
 
 /**
- * The on-demand invented creature for one roster name on one encounter, when
- * it already exists: an npc of the exact name (case-insensitive, trimmed)
- * carrying this encounter's creation marker. THE one lookup rule —
- * `materializeInventedCreatureArtifact` reuses what this finds, and the
- * portrait batch's read-only count resolves through it too, so counting what
- * a roster row's portrait would be can never CREATE the creature it counts.
+ * THE one lookup rule for an encounter's invented creature, over any artifact
+ * list: an `npc` of the exact name (case-insensitive, trimmed) carrying this
+ * encounter's creation marker.
+ * `materializeInventedCreatureArtifact` reuses what this finds, the portrait
+ * batch's read-only count resolves through it, and the module-level
+ * portrait-gap detector applies the SAME rule to the artifact snapshot it
+ * already holds (`features/campaign/mob-portrait-participants`) — so counting
+ * what a roster row's portrait would be can never CREATE the creature it
+ * counts, and the two readers can never disagree about which row it is
+ * (docs/17 row 96).
  */
-export async function findInventedCreatureArtifact(
-  campaignId: Id,
+export function inventedCreatureArtifactIn(
+  artifacts: readonly AnyArtifact[],
   encounterId: Id,
   name: string,
-): Promise<NpcArtifact | undefined> {
+): NpcArtifact | undefined {
   const trimmedName = name.trim();
   if (trimmedName === '') return undefined;
   const marker = inventedCreatureMarker(encounterId);
-  const artifacts = await listArtifactsByCampaign(campaignId);
   return artifacts.find(
     (artifact): artifact is NpcArtifact =>
       artifact.kind === 'npc' &&
       artifact.name.trim().toLowerCase() === trimmedName.toLowerCase() &&
       artifact.summary.includes(marker),
   );
+}
+
+/**
+ * The on-demand invented creature for one roster name on one encounter, when
+ * it already exists — `findInventedCreatureArtifact` over the campaign read.
+ */
+export async function findInventedCreatureArtifact(
+  campaignId: Id,
+  encounterId: Id,
+  name: string,
+): Promise<NpcArtifact | undefined> {
+  return inventedCreatureArtifactIn(await listArtifactsByCampaign(campaignId), encounterId, name);
 }
 
 /** Appearance seeding for an invented creature: roster notes, then the

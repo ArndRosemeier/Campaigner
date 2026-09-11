@@ -101,8 +101,12 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   source of truth exactly as above.
 - **Portrait batch (one-click, not auto)**: an encounter-level
   "Generate mob portraits" action in the encounter editor (beside the
-  monsters section). It enumerates the encounter's rulebook entries whose
-  mob artifact lacks `coverImageId`; for each, generates n=1 portrait and
+  monsters section). It enumerates the encounter's CHUNK-BACKED creature
+  kinds whose mob artifact lacks `coverImageId` — a `rulebook` citation or an
+  `npc-ref` to an artifact carrying `data.monsterChunkId`, the routing
+  widened by row 90 in "The portrait batch covers EVERY roster participant"
+  below, which is also the authority the MODULE-level sweep reads (row 96:
+  both lanes there, never a rulebook-only roster shape); for each, generates n=1 portrait and
   attaches it as cover — the entity-image-queue mechanics (pump / intake /
   deterministic prompt draft / attach-cover) keyed by **artifactId** (the
   queue's wiki-link-name resolution does not fit mob artifacts;
@@ -922,6 +926,27 @@ for production. Engine seams (all in `src/llm/runEngine.ts` unless noted):
   `isEncounterMapPending` — the queue's processJob re-checks as a second
   belt). Regenerating an existing map stays an EXPLICIT user action
   (regeneration replaces room keys — the ratified consequence).
+- **Mob portraits on the unattended path (owner report, docs/17 row 96):** the
+  module sweep's portrait step runs the encounter editor's OWN two batch
+  entries per module-owned encounter with un-imaged roster creatures —
+  `enqueueMobPortraits` (chunk-backed kinds: `rulebook` citations and
+  `npc-ref` rows to a mob artifact, sharing the one bestiary portrait) then
+  `enqueueInventedCreaturePortraits` (every other participant: an uncited
+  mob's on-demand creature, a materialized `npc-ref` monster, a named NPC
+  standing in the roster) — and it decides WHICH encounters those are with the
+  queue's own routing/art rules
+  (`features/campaign/mob-portrait-participants.encounterNeedsMobPortraitWork`),
+  never with a rulebook-only reading of `source.type`, and the switch it
+  obeys is the RUN's own (`target ?? module`, like battlemaps and both kind
+  lists) so an explicit target's confirmation and its work cannot disagree.
+  Additive in both
+  lanes, one try per encounter (a failure is that encounter's loud reason and
+  never stops the sweep), and the same predicate is what "Resume automatic
+  module creation" and the entity sidebar's "Generate everything" list — so a
+  roster of materialized core creatures is offered, enqueued and illustrated
+  by the SAME rule. The configured toggle is `autoGenerateMobImages`
+  (docs/08 §Post-generation automation); the editor's own one-click batch is
+  unchanged.
 - Encounters produced here are module-owned (`moduleId`, M6-B semantics) and
   battle-ready via the module view's Run battle.
 

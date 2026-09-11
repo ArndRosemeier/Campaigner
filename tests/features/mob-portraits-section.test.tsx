@@ -449,6 +449,14 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
       // two batches the press runs.
       expect(enqueueInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     });
+    // AND the rulebook lane, although this roster has no `rulebook` citation
+    // row at all (docs/17 row 96, row 90's own lesson): a roster of nothing but
+    // `npc-ref` rows whose artifacts carry the `monsterChunkId` marker belongs
+    // to the RULEBOOK lane — which lane a row rides is the queue's routing
+    // decision (`rosterParticipantRoute`), so the surface must never gate a lane
+    // on the roster's SHAPE. It used to (`rulebookCount === 0`), and the
+    // resulting press counted a missing portrait and then enqueued nothing.
+    expect(enqueueMobPortraitsMock).toHaveBeenCalledWith(artifact, 'campaign-1');
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         'Filling 1 missing portrait — nothing is replaced',

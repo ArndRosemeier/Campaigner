@@ -36,8 +36,10 @@ import {
  *   (`imageTargets`),
  * - battle maps the intent asked for on encounters that have none
  *   (`encountersNeedingMaps`), and
- * - mob portraits the intent asked for on encounters whose roster still cites
- *   un-imaged creatures (`encountersNeedingMobPortraits`).
+ * - mob portraits the intent asked for on encounters whose roster still holds
+ *   un-imaged creatures (`encountersNeedingMobPortraits` — the queue's OWN
+ *   routing and art rules through the shared
+ *   `features/campaign/mob-portrait-participants`, docs/17 row 96).
  *
  * THE POOL is the SWEEP's (`moduleCreationPool` over the campaign's artifact
  * list), never the reader's: the confirmation must name exactly the work
@@ -81,9 +83,14 @@ export interface AutomationDeviation {
   /** Module-owned encounters of the intent without a layout + map. */
   battlemaps: { id: Id; name: string }[];
   /**
-   * Module-owned encounters of the intent with un-imaged roster mobs — the
-   * artifacts themselves, because that is exactly what the portrait batch entry
-   * (`enqueueMobPortraits`) takes.
+   * Module-owned encounters of the intent with un-imaged roster creatures —
+   * the artifacts themselves, because that is exactly what BOTH portrait batch
+   * entries take (`enqueueMobPortraits` + `enqueueInventedCreaturePortraits`,
+   * docs/17 row 96). The detector is the queue's own rule, so an encounter
+   * listed here is one the sweep really enqueues for: a roster of `npc-ref`
+   * materialized monsters with no rulebook citation is listed too (the owner
+   * report this row fixed — the old rulebook-only reading left it out
+   * entirely, and with it the control that would have filled the gap).
    */
   mobPortraits: (AnyArtifact & { kind: 'encounter' })[];
 }

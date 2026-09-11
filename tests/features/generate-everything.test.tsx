@@ -19,6 +19,7 @@ import {
   moduleSpineSchema,
   type Artifact,
   type Campaign,
+  type EncounterArtifactData,
   type EntityKind,
   type Module,
 } from '@/domain';
@@ -481,6 +482,107 @@ describe('the entity sidebar control', () => {
     expect(lines.some((line) => line.includes('without an image'))).toBe(false);
     // And the boundary is stated where the owner asks for it.
     expect(within(dialog).getByText(/never rewritten and no scene is created/i)).toBeTruthy();
+  }, 60_000);
+
+  it('appears for an encounter whose un-imaged mobs are all materialized CORE creatures (owner report)', async () => {
+    // The owner report (docs/17 row 96), verbatim: *"Same with the generate all
+    // button, its not there although some encounter mobs do not have images."*
+    // Everything the full target asks for is finished EXCEPT the encounter's mob
+    // portraits: both text-named entities exist with their images, the encounter
+    // carries its battlemap — and its roster is the shape the old rulebook-only
+    // detector could not see: an `npc-ref` to the artifact a CORE creature was
+    // materialized into (the marker is on that row), plus an uncited entry.
+    const { campaign, module } = await seedModule({ automationIntent: null });
+    await seedFinished(campaign.id, module.id, 'npc', 'Kael', '00000000-0000-4000-8000-00000000d001');
+    await seedFinished(
+      campaign.id,
+      module.id,
+      'location',
+      'Ember Crypt',
+      '00000000-0000-4000-8000-00000000d002',
+    );
+    const cube = await createArtifact({
+      campaignId: campaign.id,
+      kind: 'npc',
+      name: 'Gelatinous Cube',
+      summary: '',
+      body: '',
+      coverImageId: null,
+      data: {
+        appearance: '',
+        personality: '',
+        statBlock: null,
+        monsterChunkId: '00000000-0000-4000-8000-00000000c001',
+      },
+    });
+    // The encounter data shape, typed ONCE (an inline literal against the
+    // artifact-data union narrows its members to `never`).
+    const data: EncounterArtifactData = {
+      difficulty: 'medium',
+      levelHint: '1',
+      monsters: [
+        {
+          name: 'Gelatinous Cube',
+          count: 1,
+          notes: '',
+          treasure: '',
+          source: { type: 'npc-ref', artifactId: cube.id },
+        },
+        { name: 'Bog Lurker', count: 2, notes: '', treasure: '', source: { type: 'none' } },
+      ],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: '00000000-0000-4000-8000-00000000d003',
+      layout: {
+        gridW: 20,
+        gridH: 20,
+        theme: 'crypt',
+        rooms: [
+          {
+            id: '00000000-0000-4000-8000-00000000d004',
+            name: 'The Tide Gate',
+            rects: [{ x: 1, y: 1, w: 5, h: 5 }],
+            mobsRect: { x: 1, y: 1, w: 5, h: 5 },
+            description: '',
+            monsterIndexes: [],
+            spawn: true,
+            key: '',
+            keyTreasure: '',
+          },
+        ],
+        corridors: [],
+      },
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+    };
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Ash Gate',
+      summary: '',
+      body: '',
+      data,
+    });
+
+    renderPanel({ campaign, module }, await panelArtifacts({ campaign, module }));
+
+    // Before the fix this control was not rendered at all (its derivation came
+    // out EMPTY), and its place said "Nothing missing".
+    const button = screen.getByTestId('generate-everything');
+    await userEvent.click(button);
+
+    const dialog = await screen.findByTestId('generate-everything-dialog');
+    const lines = within(dialog)
+      .getAllByTestId('generate-everything-line')
+      .map((line) => line.textContent);
+    // The portrait gap is the ONLY thing left, and the confirmation NAMES the
+    // encounter it belongs to — the same line the sweep's own detector produces
+    // for the same encounter.
+    expect(lines).toEqual(['Mob portraits missing for 1 encounter: Ash Gate']);
   }, 60_000);
 
   it('fills the gaps the confirmation listed, through the same run', async () => {

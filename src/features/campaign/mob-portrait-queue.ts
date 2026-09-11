@@ -26,6 +26,13 @@ import {
 import type { ImagePromptDraft } from '@/llm/schemas';
 import { createJobQueue } from '@/lib/jobQueue';
 import { intakeImage } from '@/lib/imageIntake';
+import {
+  chunkKindKey,
+  inventedKindKey,
+  portraitArtOf,
+  rosterParticipantRoute,
+  type KindArt,
+} from '@/features/campaign/mob-portrait-participants';
 import { ensureCanonicalMobPortrait, regenerateCanonicalMobPortrait } from '@/features/campaign/mob-portrait-cache-queue';
 
 /**
@@ -316,18 +323,6 @@ function enqueueRegenJobs(jobs: MobPortraitJob[]): void {
   state.enqueue(jobs.map((job) => ({ ...job, regen: true })));
 }
 
-/**
- * Where one creature kind's art stands. THE classification the additive
- * batch, its regen and the read-only count all share (docs/18: one way to
- * read a kind's portrait state). `gallery-only` = the artifact holds art
- * that is NOT set as its cover: the batch counts the kind imaged (the art is
- * real, and setting the cover is the owner's call in the artifact's Images
- * section) and never re-generates over it — but the battle token renders
- * `coverImageId` alone, so the surface names these kinds instead of letting
- * the count imply a portrait the board is not showing.
- */
-type KindArt = 'none' | 'cover' | 'gallery-only';
-
 /** One creature kind of the encounter's roster (the dedupe unit: one
  * portrait per kind, shared by every roster row citing it). */
 interface BatchKind {
@@ -348,8 +343,10 @@ interface BatchEnumeration {
   /** Roster rows that collapsed onto a kind already counted — the
    * one-portrait-per-creature-kind share. Counted, never silently dropped. */
   sharedRows: number;
-  /** Roster rows the invented lane walked (its materialize count): uncited
-   * entries plus `npc-ref` rows whose artifact carries no chunk marker. */
+  /** Roster rows the invented lane materialized for — the uncited entries
+   * (`inline` / `none`), and only those: an `npc-ref` row already HAS its
+   * artifact, chunk-backed or not, so it is never materialized (this is the
+   * lane's `created` count). */
   inventedRows: number;
 }
 
@@ -392,9 +389,11 @@ async function enumerateBatchKinds(
     const artifactIdByChunk = new Map<Id, Id>();
     for (const entry of encounter.data.monsters) {
       // ROUTING (owner report: a materialized monster was invisible to this
-      // batch, so it could never get a cover). Every roster participant that
-      // can own a portrait rides the RULEBOOK lane when its creature is
-      // chunk-backed, and the invented lane otherwise:
+      // batch, so it could never get a cover; docs/17 row 90). WHICH lane a
+      // participant rides — and the artifact identity it resolves to — is
+      // `rosterParticipantRoute` (features/campaign/mob-portrait-participants,
+      // the ONE spelling of the rule the module-level gap detector reads too):
+      // by what the row's creature IS, never by the shape of its `source`.
       // - `rulebook` entries cite a stat-block chunk directly;
       // - `npc-ref` entries point at the artifact the encounter finalized for
       //   them — a chunk-backed MOB artifact (a bestiary-cited creature) is
@@ -405,40 +404,32 @@ async function enumerateBatchKinds(
       //   NPC standing in the roster) belongs to the invented lane, whose jobs
       //   carry no `chunkId` and can therefore never read or write the global
       //   portrait cache — the canonical firewall stays intact.
-      let chunkId: Id | undefined;
-      let artifactId: Id | null;
-      if (entry.source.type === 'rulebook') {
-        chunkId = entry.source.chunkId;
-        const known = artifactIdByChunk.get(chunkId);
-        artifactId =
-          known ??
-          entry.source.mobArtifactId ??
-          (options.create
-            ? await getOrCreateMobArtifact(campaignId, chunkId, entry.name)
-            : ((await findMobArtifactByChunk(campaignId, chunkId))?.id ?? null));
-      } else if (entry.source.type === 'npc-ref') {
-        // The linked artifact is read for its marker (kindArtOf re-reads it
-        // for its art state — one extra read per distinct row, never a
-        // second interpretation of the marker).
-        const linked = await getAnyArtifact(entry.source.artifactId);
-        if (linked === undefined) {
-          throw new Error(
-            `${options.rulebookLabel}: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
-          );
-        }
-        const linkedChunkId = linked.kind === 'npc' ? linked.data.monsterChunkId : undefined;
-        if (linkedChunkId === undefined) continue;
-        chunkId = linkedChunkId;
-        artifactId = linked.id;
-      } else {
-        continue;
+      // The linked artifact is read for its marker (kindArtOf re-reads it
+      // for its art state — one extra read per distinct row, never a
+      // second interpretation of the marker).
+      const linked =
+        entry.source.type === 'npc-ref' ? await getAnyArtifact(entry.source.artifactId) : undefined;
+      const route = rosterParticipantRoute(entry, linked);
+      if (route.lane === 'missing-ref') {
+        throw new Error(
+          `${options.rulebookLabel}: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
+        );
       }
+      if (route.lane !== 'rulebook') continue;
+      const { chunkId } = route;
+      const known = artifactIdByChunk.get(chunkId);
+      const artifactId: Id | null =
+        known ??
+        route.artifactId ??
+        (options.create
+          ? await getOrCreateMobArtifact(campaignId, chunkId, entry.name)
+          : ((await findMobArtifactByChunk(campaignId, chunkId))?.id ?? null));
       if (artifactId === null) {
         // No artifact yet: a real hole the fill creates first (read-only mode
         // only — `create` mode always returns one). The chunk handle is the
         // kind identity, so a citation and an `npc-ref` on the same chunk
         // still collapse onto one kind.
-        const key = `chunk:${chunkId}`;
+        const key = chunkKindKey(chunkId);
         if (seenKinds.has(key)) enumerated.sharedRows += 1;
         else {
           seenKinds.add(key);
@@ -481,8 +472,19 @@ async function enumerateBatchKinds(
       // enumerated against that artifact, never re-materialized. The
       // rulebook lane already claimed every chunk-backed `npc-ref`, so the
       // two lanes can never both list one artifact.
-      let artifactId: Id | null;
-      if (entry.source.type === 'inline' || entry.source.type === 'none') {
+      const linked =
+        entry.source.type === 'npc-ref' ? await getAnyArtifact(entry.source.artifactId) : undefined;
+      const route = rosterParticipantRoute(entry, linked);
+      if (route.lane === 'missing-ref') {
+        throw new Error(
+          `${options.inventedLabel}: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
+        );
+      }
+      if (route.lane !== 'invented') continue;
+      /** `null` is EXACTLY the uncited entry (`rosterParticipantRoute`): the
+       * only participant whose creature does not exist yet. */
+      let artifactId: Id | null = route.artifactId;
+      if (artifactId === null) {
         enumerated.inventedRows += 1;
         artifactId = options.create
           ? await materializeInventedCreatureArtifact({
@@ -502,21 +504,8 @@ async function enumerateBatchKinds(
               cache: materialized,
             })
           : ((await findInventedCreatureArtifact(campaignId, encounter.id, entry.name))?.id ?? null);
-      } else if (entry.source.type === 'npc-ref') {
-        const linked = await getAnyArtifact(entry.source.artifactId);
-        if (linked === undefined) {
-          throw new Error(
-            `${options.inventedLabel}: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
-          );
-        }
-        const linkedChunkId = linked.kind === 'npc' ? linked.data.monsterChunkId : undefined;
-        // A chunk-backed artifact is a rulebook kind (the other lane).
-        if (linkedChunkId !== undefined) continue;
-        artifactId = linked.id;
-      } else {
-        continue;
       }
-      const key = artifactId ?? `name:${entry.name.trim().toLowerCase()}`;
+      const key = artifactId ?? inventedKindKey(entry.name);
       if (seenKinds.has(key)) {
         enumerated.sharedRows += 1;
         continue;
@@ -534,8 +523,10 @@ async function enumerateBatchKinds(
   return enumerated;
 }
 
-/** The artifact behind one enumerated kind, read for its art state. A
- * dangling id is loud (AGENTS rule 1) — never a silent "assume cover-less". */
+/** The artifact behind one enumerated kind, read for its art state through
+ * `portraitArtOf` (the ONE art reading, shared with the module-level gap
+ * detector). A dangling id is loud (AGENTS rule 1) — never a silent "assume
+ * cover-less". */
 async function kindArtOf(artifactId: Id, name: string, label: string): Promise<KindArt> {
   const artifact = await getAnyArtifact(artifactId);
   if (artifact === undefined) {
@@ -543,8 +534,7 @@ async function kindArtOf(artifactId: Id, name: string, label: string): Promise<K
       `${label}: the artifact for "${name}" no longer exists — re-run the encounter content to restore it`,
     );
   }
-  if (artifact.coverImageId !== null) return 'cover';
-  return artifact.imageIds.length > 0 ? 'gallery-only' : 'none';
+  return portraitArtOf(artifact);
 }
 
 /** Run mode always resolves an artifact; null is impossible there and a loud
