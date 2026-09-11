@@ -1747,6 +1747,39 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   after mapping the whole-doc range to its part; reader output byte-identical
   when absent). Chat only — refine keeps its ghost affordances.
 
+
+#### Provenance on the canvas — outside the document, always
+
+Owner decision (docs/17 row 93 amendment), verbatim: *"i do want to see who
+wrote the module text and i dont think i can see that elsewhere. So… please put
+it below the module text."* That REVERSED the arc's first call (the canvas was
+originally left uncaptioned), so the canvas now shows the ids in two read-only
+places:
+
+- the **preview** renders a caption under each part's text
+  (`canvas-preview-part-model-<planIndex>`), matching the reader's per-part
+  caption;
+- a **footer strip** outside the editor names who wrote the module text
+  (`canvas-writer-model`) — one id when the premise and every part agree, and
+  the per-scope list when they differ (a scope with nothing recorded reads
+  `not recorded`; never a bare "various", never a majority id covering a part
+  another model wrote). The summary is `domain/provenance.moduleWritingSummary`,
+  the same ONE display rule as every other surface.
+
+**The hard constraint, and the reason the placement is what it is**: the
+editor's doc string IS the module text — it is persisted to the parts by
+`saveDoc`/`saveWholeModuleDocument` and re-assembled into model context. An id
+rendered "below the module text" INSIDE that string would therefore become
+model INPUT, exactly what §LLM boundaries forbids, and it would be captured by
+every save. So both captions read the SAVED ROWS (`module.parts[].writerModel`
+keyed by `planIndex`, plus `module.spine.writerModel`) and render as SIBLINGS of
+the text; the doc, each part's `markdown` and the assembled document stay
+byte-identical to what the owner edits. `tests/features/canvas-provenance.test.tsx`
+pins both halves — the ids render, AND no id appears in the live CodeMirror doc,
+the persisted parts or the assembled text. The premise's own id lives in the
+footer: the canvas document excludes the premise by design ("without premise"),
+so the preview has no premise text to caption.
+
 ### Module canvas chat (v2 — LLM co-authoring via XML edit commands)
 
 Owner direction: "a real chat where the LLM can make targeted edits", XML for

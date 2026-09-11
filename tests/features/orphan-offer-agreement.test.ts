@@ -69,6 +69,7 @@ async function proseModule(campaignId: Id, title: string, premise: string): Prom
   return saveSpine(module.id, {
     premise,
     themes: [],
+    writerModel: '',
     partPlan: [
       {
         title: 'The Seal',

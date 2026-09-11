@@ -45,6 +45,7 @@ function makeNote(fields: {
     currentRevision: 1,
     imageIds: [],
     coverImageId: null,
+    writerModel: '',
     data: {},
   };
 }

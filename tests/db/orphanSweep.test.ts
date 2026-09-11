@@ -78,6 +78,7 @@ async function proseModule(
   return saveSpine(module.id, {
     premise,
     themes: [],
+    writerModel: '',
     partPlan: [
       {
         title: 'The Seal',

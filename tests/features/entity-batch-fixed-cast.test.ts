@@ -69,6 +69,7 @@ async function seedWorld(): Promise<{ campaign: Campaign; module: Module; halvar
     spine: {
       premise: 'Pit premise.',
       themes: [],
+      writerModel: '',
       partPlan: [{ title: 'Descent', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
     },
     parts: [
@@ -80,6 +81,7 @@ async function seedWorld(): Promise<{ campaign: Campaign; module: Module; halvar
         status: 'ready',
         errorMessage: '',
         edited: false,
+        writerModel: '',
       },
     ],
   });

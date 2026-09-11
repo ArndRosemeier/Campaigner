@@ -121,6 +121,7 @@ describe('moduleRepo', () => {
     const spine: ModuleSpine = {
       premise: 'A vault that floods at high tide.',
       themes: ['drowning', 'greed'],
+      writerModel: '',
       partPlan: [
         { title: 'Approach', levelBand: '1', synopsis: 'Reach the sea gate.', levelUpTrigger: 'The tide turns.' },
         { title: 'Descent', levelBand: '2–4', synopsis: 'Dive the flooded stair.', levelUpTrigger: 'The vault seals.' },
@@ -178,6 +179,7 @@ describe('moduleRepo', () => {
     const tooBig: ModuleSpine = {
       premise: 'p',
       themes: [],
+      writerModel: '',
       partPlan: Array.from({ length: 21 }, (_, index) => ({
         title: `Part ${index + 1}`,
         levelBand: '1',

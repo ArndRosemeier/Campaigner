@@ -91,7 +91,13 @@ function renderAppAt(path: string): void {
  * written before the field existed.
  */
 async function seedReaderModule(
-  options: { legacy?: boolean } = {},
+  options: {
+    legacy?: boolean;
+    /** The spine-checkpoint state: a spine and NO parts yet (the reader's
+     * second premise branch — the one whose `IntroBlock` call site omitted the
+     * prop until `pnpm typecheck` caught it). */
+    noParts?: boolean;
+  } = {},
 ): Promise<{ campaign: Campaign; campaignId: Id; moduleId: Id }> {
   await seedBuiltInPersonas();
   const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
@@ -128,16 +134,19 @@ async function seedReaderModule(
     status: 'ready',
     errorMessage: '',
     spine,
-    parts: [
-      modulePartSchema.parse({
-        planIndex: 0,
-        markdown: 'The party climbs to the [[Old Tower]] before dawn.',
-        status: 'ready',
-        errorMessage: '',
-        edited: false,
-        ...(options.legacy === true ? {} : { writerModel: PART_MODEL }),
-      }),
-    ],
+    parts:
+      options.noParts === true
+        ? []
+        : [
+            modulePartSchema.parse({
+              planIndex: 0,
+              markdown: 'The party climbs to the [[Old Tower]] before dawn.',
+              status: 'ready',
+              errorMessage: '',
+              edited: false,
+              ...(options.legacy === true ? {} : { writerModel: PART_MODEL }),
+            }),
+          ],
   });
   return { campaign, campaignId: campaign.id, moduleId: saved.id };
 }
@@ -164,6 +173,27 @@ describe('the module reader shows the writing model', () => {
     expect(part).toHaveTextContent(PART_MODEL);
     // …and the ids are the real recorded ones, not swapped or shared.
     expect(part).not.toHaveTextContent(SPINE_MODEL);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('prints the premise model in the spine-checkpoint branch too (no parts yet)', async () => {
+    // The reader has TWO premise branches — the generated reader and the
+    // spine checkpoint — and each mounts its own `IntroBlock`. Only the first
+    // was pinned, so the second shipped WITHOUT the id while `pnpm lint`
+    // stayed green; `tsc -b` (the real gate) caught the missing prop. This is
+    // the pin for that branch, and it is the reason the coverage gap is
+    // closed rather than just the type error.
+    const { campaignId, moduleId } = await seedReaderModule({ noParts: true });
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findReader();
+
+    expect(await screen.findByTestId('spine-checkpoint')).toBeInTheDocument();
+    // The premise card is on screen in this branch…
+    expect(await screen.findByRole('heading', { name: 'Premise' })).toBeInTheDocument();
+    // …and it carries the same recorded id the generated reader shows.
+    expect(await screen.findByTestId('premise-writer-model')).toHaveTextContent(SPINE_MODEL);
+    // No parts exist, so there is no part caption to show (not a fallback id).
+    expect(screen.queryByTestId('part-writer-model')).not.toBeInTheDocument();
     await flushAsyncUpdates();
   }, 20_000);
 

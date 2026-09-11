@@ -64,3 +64,60 @@ export function partWriterModelFor(nextModelUsed: string, previous?: string): st
   if (next !== null) return next;
   return recordedWritingModel(previous) ?? '';
 }
+
+/** One labelled scope of a module's text in reading order: the spine premise
+ * first, then each part by its plan position. */
+export interface ModuleWritingScope {
+  /** Stable key: `premise`, or `part-<planIndex>`. */
+  id: string;
+  /** The scope's display label: `Premise`, `Part 3`. */
+  label: string;
+  /** The recorded writing model, or null when NOT RECORDED. */
+  model: string | null;
+}
+
+/**
+ * The canvas footer's answer to "who wrote the module text?" (owner decision,
+ * docs/17 row 93 amendment: the canvas MUST show it).
+ *
+ * Three honest outcomes, and no fourth:
+ *
+ *   - `none` — nothing anywhere is recorded (a module written before the
+ *     fields existed, or hand-authored throughout). The caller renders NOTHING;
+ *     the owner's rule forbids guessing an id from current settings.
+ *   - `single` — EVERY scope is recorded and they are all the SAME id, so one
+ *     id is a true statement about the whole text.
+ *   - `mixed` — the scopes disagree, or some are recorded and others are not.
+ *     The caller must show the per-scope list, so a part written by another
+ *     model is never hidden behind the majority id (never a bare "various").
+ *
+ * A scope that is NOT recorded stays `null` in `scopes` and is reported as
+ * such — it is never folded into a neighbour's id.
+ */
+export type ModuleWritingSummary =
+  | { kind: 'none' }
+  | { kind: 'single'; model: string }
+  | { kind: 'mixed'; scopes: ModuleWritingScope[] };
+
+/** Builds the canvas footer's writing summary from the spine premise's id and
+ * the parts' ids IN PLAN ORDER (`planIndex` ascending, the reading order). */
+export function moduleWritingSummary(
+  premiseModel: string | null | undefined,
+  parts: readonly { planIndex: number; writerModel?: string | null | undefined }[],
+): ModuleWritingSummary {
+  const ordered = [...parts].sort((a, b) => a.planIndex - b.planIndex);
+  const scopes: ModuleWritingScope[] = [
+    { id: 'premise', label: 'Premise', model: recordedWritingModel(premiseModel) },
+    ...ordered.map((part) => ({
+      id: `part-${String(part.planIndex)}`,
+      label: `Part ${String(part.planIndex + 1)}`,
+      model: recordedWritingModel(part.writerModel),
+    })),
+  ];
+  const recorded = scopes.filter((scope) => scope.model !== null);
+  if (recorded.length === 0) return { kind: 'none' };
+  const first = recorded[0]?.model ?? null;
+  const unanimous = scopes.every((scope) => scope.model !== null && scope.model === first);
+  if (unanimous && first !== null) return { kind: 'single', model: first };
+  return { kind: 'mixed', scopes };
+}

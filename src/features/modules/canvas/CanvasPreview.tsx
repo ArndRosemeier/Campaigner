@@ -1,6 +1,7 @@
 import type { JSX } from 'react';
 import { TriangleAlertIcon } from 'lucide-react';
 
+import { WriterModelId } from '@/components/writer-model-id';
 import type { AnyArtifact, Id, Module } from '@/domain';
 import { splitPartsDocument, ModulePartsDocumentError } from '@/domain/modulePartsDocument';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
@@ -106,6 +107,21 @@ export function CanvasPreview({
                 }
               />
             </div>
+            {/*
+             * PROVENANCE (owner decision, docs/17 row 93 amendment): the owner
+             * reversed the earlier "the canvas shows no id" decision — "i do
+             * want to see who wrote the module text … please put it below the
+             * module text". The id comes from the SAVED PART ROW, never from
+             * the document: `doc` is the editable module text and is persisted
+             * to the parts and re-sent to models, so an id placed in it would
+             * become model INPUT (docs/18 §4). Reading the row keeps the doc
+             * byte-identical to what the owner edits.
+             */}
+            <WriterModelId
+              model={module.parts.find((part) => part.planIndex === section.planIndex)?.writerModel}
+              testId={`canvas-preview-part-model-${String(section.planIndex)}`}
+              label={`Part ${String(section.planIndex + 1)} writing model`}
+            />
           </article>
         ))}
       </div>

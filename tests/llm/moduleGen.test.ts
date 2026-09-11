@@ -192,6 +192,7 @@ async function seedReadyPart(
     status: 'ready',
     errorMessage: '',
     edited: options.edited === true,
+    writerModel: '',
   });
   parts.sort((a, b) => a.planIndex - b.planIndex);
   await patchModule(moduleId, { parts });

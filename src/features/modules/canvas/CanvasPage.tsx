@@ -84,6 +84,7 @@ import { useModule, useModuleVersions } from '@/features/modules/hooks';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
+import { CanvasWriterModel } from '@/features/modules/canvas/canvas-writer-model';
 import { ChatSidebar } from '@/features/modules/canvas/ChatSidebar';
 import { ModuleStyleBar } from '@/features/modules/canvas/module-style-bar';
 import { CanvasPreview } from '@/features/modules/canvas/CanvasPreview';
@@ -1580,6 +1581,15 @@ export function CanvasPage(): JSX.Element {
               />
             </div>
           )}
+          {/*
+           * PROVENANCE (owner decision, docs/17 row 93 amendment): the canvas
+           * footer names who wrote the module's text. It sits OUTSIDE the
+           * editable document — below the editor (or the preview), above the
+           * page edge — so the id is visible in the mode the owner actually
+           * works in, and can never enter the doc, a part's markdown, or the
+           * assembled text (docs/18 §4: provenance is never model input).
+           */}
+          <CanvasWriterModel module={currentModule} />
         </div>
       </div>
 

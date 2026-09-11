@@ -521,6 +521,12 @@ export function ModuleReaderPage(): JSX.Element {
               <section id="module-intro" className="mb-8">
                 <IntroBlock
                   premise={module.spine.premise}
+                  // PROVENANCE (docs/17 row 93): the spine-checkpoint branch
+                  // shows the SAME premise card as the generated reader, so it
+                  // carries the same id. This call site omitted the prop when
+                  // the field landed (the card silently had no caption here
+                  // and `tsc -b` caught it, not the test suite).
+                  writerModel={module.spine.writerModel}
                   artifacts={readerArtifacts}
                   moduleId={module.id}
                   onOpenArtifact={openArtifact}

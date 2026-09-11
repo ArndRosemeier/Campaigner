@@ -705,6 +705,7 @@ describe('Encounter Cartographer run', () => {
       currentRevision: 1,
       imageIds: [],
       coverImageId: null,
+      writerModel: '',
       data: {
         difficulty: 'old', levelHint: '2',
         monsters: [{ name: 'Original Ogre', count: 1, notes: 'keep', treasure: '', source: { type: 'none' } }],
@@ -2068,6 +2069,7 @@ describe('Encounter Cartographer run', () => {
         spine: {
           premise: 'Crypt premise.',
           themes: [],
+          writerModel: '',
           partPlan: [{ title: 'Descent', levelBand: '2', synopsis: '', levelUpTrigger: '' }],
         },
         parts: [
@@ -2077,6 +2079,7 @@ describe('Encounter Cartographer run', () => {
             status: 'ready',
             errorMessage: '',
             edited: false,
+            writerModel: '',
           },
         ],
       });

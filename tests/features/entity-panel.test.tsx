@@ -959,6 +959,7 @@ describe('EntityPanel — normalization state (fix-01)', () => {
           status: 'ready' as const,
           errorMessage: '',
           edited: true,
+          writerModel: '',
           markdown: 'The tide rose. [[Guard Mira]] kept the watch.',
         },
       ],
@@ -1038,6 +1039,7 @@ describe('EntityPanel — normalization state (fix-01)', () => {
           status: 'ready' as const,
           errorMessage: '',
           edited: true,
+          writerModel: '',
           markdown: 'The tide rose. [[Guard Mira]] kept the watch.',
         },
       ],
@@ -1190,6 +1192,7 @@ describe('EntityPanel — orphaned entities', () => {
     const saved = await saveSpine(base.id, {
       premise,
       themes: [],
+      writerModel: '',
       partPlan: [
         {
           title: 'The Shore',

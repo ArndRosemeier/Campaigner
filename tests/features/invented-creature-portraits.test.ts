@@ -217,6 +217,7 @@ describe('enqueueInventedCreaturePortraits (the batch action)', () => {
       undefined,
       'staged/encounter-model',
     );
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
     await enqueueInventedCreaturePortraits(encounter, campaignId);
 
@@ -232,6 +233,7 @@ describe('enqueueInventedCreaturePortraits (the batch action)', () => {
     const encounter = await addEncounter([
       { name: 'Whisper Wisp', count: 1, source: { type: 'none' }, notes: 'barely a rumor' },
     ]);
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
     await enqueueInventedCreaturePortraits(encounter, campaignId);
 

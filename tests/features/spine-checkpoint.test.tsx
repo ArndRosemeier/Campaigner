@@ -17,6 +17,7 @@ import type { Campaign, ModuleEntityKind, ModuleSpine } from '@/domain';
 const SPINE: ModuleSpine = {
   premise: 'A harbor town raised its bell to warn of the drownings.',
   themes: ['duty', 'decay'],
+  writerModel: '',
   partPlan: [
     {
       title: 'The Sunken Quarter',

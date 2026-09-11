@@ -792,6 +792,7 @@ describe('moveScope owns its image re-anchor (single transaction)', () => {
       currentRevision: 1,
       imageIds: [],
       coverImageId: null,
+      writerModel: '',
       data: { appearance: '', personality: '', statBlock: null },
     });
     const imageId = newId();
@@ -948,6 +949,7 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
       currentRevision: 1,
       imageIds: [],
       coverImageId: null,
+      writerModel: '',
       data: { appearance: '', personality: '', statBlock: null },
     });
     const keptId = newId();
@@ -1101,6 +1103,7 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
       currentRevision: 1,
       imageIds: [oldMapId],
       coverImageId: oldMapId,
+      writerModel: '',
       data: {
         difficulty: 'old', levelHint: '2',
         monsters: [],
@@ -1175,6 +1178,7 @@ describe('attachImagesToArtifact (single-transaction seam)', () => {
       currentRevision: 1,
       imageIds: [oldMapId],
       coverImageId: oldMapId,
+      writerModel: '',
       data: {
         difficulty: 'old', levelHint: '2',
         monsters: [],

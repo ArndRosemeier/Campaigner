@@ -56,6 +56,7 @@ function makeNote(fields: { name: string; moduleId?: string | null }): Artifact 
     currentRevision: 1,
     imageIds: [],
     coverImageId: null,
+    writerModel: '',
     data: {},
   };
 }

@@ -216,6 +216,7 @@ function floorModule(options: {
       status: 'ready' as const,
       errorMessage: '',
       edited: false,
+      writerModel: '',
     })),
     entityKinds: options.entityKinds ?? [],
   };
