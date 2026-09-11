@@ -837,8 +837,15 @@ noted; no Dexie/schema changes):
   re-run).
 - The encounter editor's generation surface is the D18 two-button section
   (**Regenerate everything** / **Repopulate** + the "Also redesign name and
-  prose" checkbox — the ONLY automatic actions for both shapes): both run
-  their own Cartographer/Smith runs directly (no persona-panel hand-off —
+  prose" checkbox — the ONLY automatic actions for both shapes): both go
+  through the ONE change seam `features/modules/change-artifact.changeArtifact`
+  (docs/17 row 101, docs/18 §2), which resolves the row, routes by its kind and
+  forwards to `encounterRegen` — the surface keeps only its `running` flag and
+  its toasts, and a `refused` result is toasted with the seam's own reason. The
+  seam adds no prompt text of its own: `EncounterRegenOptions.instruction` is
+  the one optional addition (appended to every brief this operation sends,
+  absent = byte-identical), because a change is requested from the seam rather
+  than written by it (no persona-panel hand-off —
   the `encounterGenerationRequest` store is deleted and manual panel runs
   are fresh creates only). The Battlemap section keeps Upload battlemap +
   Clear and states the two-action contract; the pre-filled-brief wording is

@@ -630,3 +630,65 @@ describe('singles keep today\u2019s behavior under the new buttons', () => {
     expect(after.data.layout?.rooms).toHaveLength(1);
   });
 });
+
+/**
+ * The change seam's instruction (docs/17 row 101, docs/18 §2) reaches the REAL
+ * prompt: `features/modules/change-artifact` threads it through
+ * `EncounterRegenOptions.instruction`, this module appends it to every brief it
+ * sends, and the run engine renders the brief verbatim in the model prompt. The
+ * two halves are pinned together here — the ANCHORED paragraph for each leg,
+ * and the no-instruction prompt with no paragraph at all (the byte-identity the
+ * routed artifact editor buttons depend on).
+ */
+describe('an instruction is appended to the brief, and absent without one', () => {
+  function promptFor(callIndex = 0): string {
+    const messages = chatMock.mock.calls[callIndex]?.[0] as { content?: unknown }[] | undefined;
+    const content = messages?.[1]?.content;
+    return typeof content === 'string' ? content : '';
+  }
+
+  it('single Repopulate: the Smith draft prompt carries it as ONE appended paragraph', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedSingleTarget(campaign.id, goblinChunkId);
+    const instruction = 'Make the fight brutal and the terrain flooded.';
+    chatMock.mockResolvedValue({ text: JSON.stringify(smithDraft()), modelUsed: 'test-model', fallback: null });
+
+    await repopulateEncounter(target.id, { redesignProse: false, instruction });
+
+    const prompt = promptFor();
+    // The Task line still carries the brief verbatim, with the instruction as a
+    // paragraph of its own right after it (and before the next section).
+    expect(prompt).toContain(
+      'Task: Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.',
+    );
+    expect(prompt).toContain(`\n\nAdditional instruction: ${instruction}\n\n`);
+  });
+
+  it('single Repopulate with NO instruction: the same prompt, and no such paragraph', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedSingleTarget(campaign.id, goblinChunkId);
+    chatMock.mockResolvedValue({ text: JSON.stringify(smithDraft()), modelUsed: 'test-model', fallback: null });
+
+    await repopulateEncounter(target.id, { redesignProse: false });
+
+    const prompt = promptFor();
+    expect(prompt).not.toContain('Additional instruction');
+    expect(prompt).toContain(
+      'Task: Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.\n\n',
+    );
+  });
+
+  it('complex Repopulate: the Cartographer BRIEF prompt carries it too', async () => {
+    const { campaign } = await setup();
+    const goblinChunkId = await seedPackBook();
+    const target = await seedComplexTarget(campaign.id, goblinChunkId);
+    const instruction = 'Stock the Sanctum with the cult’s high priest.';
+    chatMock.mockResolvedValue({ text: JSON.stringify(REPOPULATE_BRIEF), modelUsed: 'test-model', fallback: null });
+
+    await repopulateEncounter(target.id, { redesignProse: false, instruction });
+
+    expect(promptFor()).toContain(`\n\nAdditional instruction: ${instruction}\n\n`);
+  });
+});

@@ -50,6 +50,7 @@ import {
 } from '@/db/artifactRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { contentIdentityFor } from '@/domain/encounterResolve';
+import { additionalInstructionSection } from '@/llm/additionalInstruction';
 import { carryMobCoversForward, getOrCreateMobArtifact, isMobArtifact } from '@/db/mobArtifacts';
 import { creatureRowAiRefusal } from '@/features/campaign/creature-row-guard';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
@@ -2640,7 +2641,7 @@ export class RunEngine {
         ? 'Prose-only redesign: redesign ONLY the name, summary and body prose — copy every roster entry (name and count) verbatim from the existing encounter. Renaming, adding or removing a monster fails the run.'
         : null,
       `Reply with ONLY a JSON object with exactly these fields: ${JSON.stringify(contract.keys)}`,
-      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+      additionalInstructionSection(extraInstruction),
     ]
       .filter((part) => part !== null)
       .join('\n\n');
@@ -2824,7 +2825,7 @@ export class RunEngine {
         ? 'No rule excerpts available.'
         : `Rule excerpts:\n${context.excerpts}`,
       `Reply with ONLY a JSON object matching this COMPLETE schema: ${statBlockSchemaHint(input.campaign.system)}. Include every field; use empty strings or arrays only when a section truly does not apply.`,
-      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+      additionalInstructionSection(extraInstruction),
     ]
       .filter((part) => part !== null)
       .join('\n\n');
@@ -2996,7 +2997,7 @@ export class RunEngine {
         .join('\n')}`,
       input.brief === '' ? null : `Focus: ${input.brief}`,
       'Reply with ONLY a JSON object: { "verdict": "consistent" | "issues_found", "summary": string, "issues": [{ "severity": "minor" | "major", "message": string, "relatedTo": string }] } — "relatedTo" is the name of the conflicting artifact or "".',
-      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+      additionalInstructionSection(extraInstruction),
     ]
       .filter((part) => part !== null)
       .join('\n\n');
@@ -3492,7 +3493,7 @@ export class RunEngine {
       formatRosterSection(retrieval.rosterLines, retrieval.rosterTruncated),
       // §13: the item pool grounds the treasure field here too.
       formatItemPoolSection(retrieval.itemLines, retrieval.itemTruncated),
-      extraInstruction === '' ? null : `Additional instruction: ${extraInstruction}`,
+      additionalInstructionSection(extraInstruction),
       inlineStatHint,
       // Owner-ratified room keys + mob treasure: structure + per-system
       // budget (treasureGuidanceFor coheres with the item-pool section above)

@@ -3,6 +3,7 @@ import { getCampaign } from '@/db/campaignRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { encounterDataIsComplex, type Campaign, type DungeonMapPath, type Id, type Persona } from '@/domain';
+import { withAdditionalInstruction } from '@/llm/additionalInstruction';
 import { runEngine, waitForRunStatus } from '@/llm/runEngine';
 
 /**
@@ -46,6 +47,20 @@ export interface EncounterRegenOptions {
    * Never persisted as a new Settings default.
    */
   dungeonMapPath?: DungeonMapPath | null;
+  /**
+   * Free-text change instruction (the change seam, docs/17 row 101). It is
+   * appended to EVERY brief this operation sends — the content leg, the map
+   * leg and the prose leg — in the one `Additional instruction: …` form
+   * (`llm/additionalInstruction`), and empty/omitted leaves every brief
+   * BYTE-IDENTICAL to the one this operation has always sent (the pins in
+   * `tests/llm/encounterRepopulate.test.ts`).
+   *
+   * It only ever ADDS a paragraph: each leg's own contract still governs
+   * (the prose leg still demands the roster verbatim and fails loud on a
+   * reply that rewrites it — never a partial apply), and the operation stays
+   * the chained, stop-at-first-failure sequence it was.
+   */
+  instruction?: string;
 }
 
 interface RegenContext {
@@ -83,6 +98,17 @@ async function awaitCompletedRun(runId: Id, label: string): Promise<void> {
 }
 
 /**
+ * One leg's brief, with the caller's change instruction appended (the change
+ * seam, docs/17 row 101). With no instruction the bytes are exactly the
+ * literal's — `withAdditionalInstruction` returns the text unchanged — so the
+ * two buttons the artifact editor has always had keep sending the prompts
+ * they always sent.
+ */
+function legBrief(brief: string, options: EncounterRegenOptions): string {
+  return withAdditionalInstruction(brief, options.instruction ?? '');
+}
+
+/**
  * "Repopulate": the dungeon looks fine, the spawn looks wrong — a NEW
  * roster for ALL rooms. Single: today's Smith content regen unchanged (new
  * one-fight roster, map preserved). Complex: the roster-only Cartographer
@@ -100,8 +126,10 @@ export async function repopulateEncounter(
       campaign,
       persona: smith,
       autonomy: 'auto',
-      brief:
+      brief: legBrief(
         'Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name, relations and battlemap are preserved.',
+        options,
+      ),
       pinnedChunkIds: [],
       targetArtifactId: artifactId,
       ...(options.redesignProse ? { encounterRedesignName: true as const } : {}),
@@ -115,7 +143,10 @@ export async function repopulateEncounter(
     campaign,
     persona: cartographer,
     autonomy: 'auto',
-    brief: `Repopulate the roster of "${artifact.name}" — a NEW roster stocking every room. Rooms, layout and battlemap are preserved.`,
+    brief: legBrief(
+      `Repopulate the roster of "${artifact.name}" — a NEW roster stocking every room. Rooms, layout and battlemap are preserved.`,
+      options,
+    ),
     pinnedChunkIds: [],
     targetArtifactId: artifactId,
     encounterScope: 'rosterOnly',
@@ -126,7 +157,7 @@ export async function repopulateEncounter(
   });
   await awaitCompletedRun(runId, 'Repopulate');
   if (options.redesignProse) {
-    await runProseRedesign(campaign, smith, artifactId);
+    await runProseRedesign(campaign, smith, artifactId, options);
   }
 }
 
@@ -150,8 +181,10 @@ export async function regenerateEncounterEverything(
       campaign,
       persona: smith,
       autonomy: 'auto',
-      brief:
+      brief: legBrief(
         'Regenerate the full content of this encounter — roster with stat sources, terrain, tactics, treasure and prose. Its name and relations are preserved; a fresh battlemap follows.',
+        options,
+      ),
       pinnedChunkIds: [],
       targetArtifactId: artifactId,
       ...(options.redesignProse ? { encounterRedesignName: true as const } : {}),
@@ -165,7 +198,10 @@ export async function regenerateEncounterEverything(
       campaign,
       persona: cartographer,
       autonomy: 'auto',
-      brief: `Generate a room layout and battlemap for "${refilled.name}" using its existing roster and prose.`,
+      brief: legBrief(
+        `Generate a room layout and battlemap for "${refilled.name}" using its existing roster and prose.`,
+        options,
+      ),
       pinnedChunkIds: [],
       targetArtifactId: artifactId,
       encounterPreset: refilled.data.preset,
@@ -188,7 +224,10 @@ export async function regenerateEncounterEverything(
     campaign,
     persona: cartographer,
     autonomy: 'auto',
-    brief: `Regenerate everything for "${reread.name}" — a whole new population, room layout and battlemap. Name and prose are preserved.`,
+    brief: legBrief(
+      `Regenerate everything for "${reread.name}" — a whole new population, room layout and battlemap. Name and prose are preserved.`,
+      options,
+    ),
     pinnedChunkIds: [],
     targetArtifactId: artifactId,
     encounterPreset: reread.data.preset,
@@ -201,7 +240,7 @@ export async function regenerateEncounterEverything(
   });
   await awaitCompletedRun(runId, 'Regenerate everything');
   if (options.redesignProse) {
-    await runProseRedesign(campaign, smith, artifactId);
+    await runProseRedesign(campaign, smith, artifactId, options);
   }
 }
 
@@ -211,7 +250,12 @@ export async function regenerateEncounterEverything(
  * name/summary/body, and a reply that tries to rewrite monsters fails loud,
  * never partial-applies.
  */
-async function runProseRedesign(campaign: Campaign, smith: Persona, artifactId: Id): Promise<void> {
+async function runProseRedesign(
+  campaign: Campaign,
+  smith: Persona,
+  artifactId: Id,
+  options: EncounterRegenOptions,
+): Promise<void> {
   const artifact = await getAnyArtifact(artifactId);
   if (artifact?.kind !== 'encounter') throw new Error('The encounter to redesign no longer exists');
   const roster = artifact.data.monsters
@@ -221,10 +265,12 @@ async function runProseRedesign(campaign: Campaign, smith: Persona, artifactId: 
     campaign,
     persona: smith,
     autonomy: 'auto',
-    brief:
+    brief: legBrief(
       `Redesign the name and prose of "${artifact.name}" — prose ONLY. ` +
-      `Copy the roster verbatim (names and counts: ${roster === '' ? 'no monsters' : roster}); ` +
-      'renaming, adding or removing a monster fails the run. Layout, battlemap, treasure and all other data are preserved.',
+        `Copy the roster verbatim (names and counts: ${roster === '' ? 'no monsters' : roster}); ` +
+        'renaming, adding or removing a monster fails the run. Layout, battlemap, treasure and all other data are preserved.',
+      options,
+    ),
     pinnedChunkIds: [],
     targetArtifactId: artifactId,
     encounterProseOnly: true,

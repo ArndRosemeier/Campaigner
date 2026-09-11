@@ -1,5 +1,6 @@
 import type { EntityKind } from '@/domain';
 import { ENTITY_KINDS } from '@/domain';
+import { withAdditionalInstruction } from '@/llm/additionalInstruction';
 import { fixedCastSectionFor, partyLevelLine, type FixedCastMember } from '@/llm/roomBudget';
 
 /**
@@ -75,6 +76,15 @@ export function stubKindCarriesPartyLevel(kind: StubKind): boolean {
  * whatever it states about the opposition and the place. The label is the whole
  * change: every non-encounter brief renders the same bytes as before, pinned by
  * `tests/features/persona-request.test.ts`.
+ *
+ * `instruction` is the change seam's free-text request (docs/17 row 101,
+ * `features/modules/change-artifact`): it is appended as its own final
+ * paragraph in the ONE `Additional instruction: …` form
+ * (`llm/additionalInstruction`) and NOTHING ELSE about the brief moves — an
+ * empty instruction returns the brief BYTE-IDENTICAL, so every existing
+ * generation, batch and automation pins the bytes it always did. The
+ * instruction only ever ADDS a paragraph: the name-verbatim rule below and the
+ * rest of the charter still govern, and a reply that violates them fails loud.
  */
 export function buildEntityBrief(
   name: string,
@@ -83,21 +93,25 @@ export function buildEntityBrief(
   partyLevel: number | undefined,
   fixedCast: readonly FixedCastMember[] = [],
   encounterScene = false,
+  instruction = '',
 ): string {
   const contextLabel = encounterScene
     ? 'The scene this encounter must stage — whatever it states about the opposition and the place is FIXED, and the roster and the map must match it:'
     : 'Where it is mentioned:';
-  return [
-    `Detail the entity "${name}" for this module. It appears in the module text below — match it exactly by name.`,
-    contextParagraphs === '' ? null : `${contextLabel}\n\n${contextParagraphs}`,
-    premise === '' ? null : `Module premise for context:\n\n${premise}`,
-    partyLevel === undefined ? null : partyLevelLine(partyLevel),
-    fixedCastSectionFor(fixedCast),
-    // The artifact is linked back from the module's wiki-link, which resolves
-    // by exact name — the name field must be verbatim; epithets go in the body.
-    `The artifact "name" field must be exactly "${name}" — verbatim, with no epithets, titles, or additions (put those in the body).`,
-    'Do not invent unrelated sub-plots; make this entity serve the module text.',
-  ]
-    .filter((part) => part !== null)
-    .join('\n\n');
+  return withAdditionalInstruction(
+    [
+      `Detail the entity "${name}" for this module. It appears in the module text below — match it exactly by name.`,
+      contextParagraphs === '' ? null : `${contextLabel}\n\n${contextParagraphs}`,
+      premise === '' ? null : `Module premise for context:\n\n${premise}`,
+      partyLevel === undefined ? null : partyLevelLine(partyLevel),
+      fixedCastSectionFor(fixedCast),
+      // The artifact is linked back from the module's wiki-link, which resolves
+      // by exact name — the name field must be verbatim; epithets go in the body.
+      `The artifact "name" field must be exactly "${name}" — verbatim, with no epithets, titles, or additions (put those in the body).`,
+      'Do not invent unrelated sub-plots; make this entity serve the module text.',
+    ]
+      .filter((part) => part !== null)
+      .join('\n\n'),
+    instruction,
+  );
 }

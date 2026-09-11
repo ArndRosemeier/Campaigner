@@ -12,7 +12,7 @@ import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { artifactPath, modulePath, modulesPath } from '@/app/routes';
 import { getModule } from '@/db/moduleRepo';
 import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
-import { repopulateEncounter, regenerateEncounterEverything } from '@/features/campaign/encounterRegen';
+import { changeArtifact } from '@/features/modules/change-artifact';
 import { generateSingleEntity } from '@/features/modules/entity-detail';
 import {
   ARTIFACT_KIND_SINGULAR,
@@ -895,19 +895,33 @@ function EncounterRegenControls({
     if (running !== null) return;
     setRunning(action);
     try {
-      if (action === 'repopulate') {
-        await repopulateEncounter(artifactId, { redesignProse });
-        toastSuccess('Encounter repopulated — a new roster stocks every room, map kept');
-      } else {
-        await regenerateEncounterEverything(artifactId, {
+      // The ENGINE call goes through THE change seam (docs/17 row 101,
+      // docs/18 §2): the seam resolves the row and picks the route, while this
+      // surface keeps only its own state (the `running` flag) and its copy. No
+      // instruction is passed — these two buttons ask for the operation
+      // itself, so every brief the engine sends stays byte-identical.
+      const result = await changeArtifact({
+        artifactId,
+        encounter: {
+          operation: action,
           redesignProse,
           // Singles ignore the choice (the control is complex-only, so the
           // state is always 'default' there — and the engine stamps single
           // briefs classic regardless).
           ...(mapPathChoice === 'default' ? {} : { dungeonMapPath: mapPathChoice }),
-        });
-        toastSuccess('Encounter regenerated — new roster, new layout, new map');
+        },
+      });
+      if (result.status !== 'changed') {
+        // A refusal is never silent — the seam's own reason is what the owner
+        // reads (never a generic line).
+        toastError(result.reason);
+        return;
       }
+      toastSuccess(
+        action === 'repopulate'
+          ? 'Encounter repopulated — a new roster stocks every room, map kept'
+          : 'Encounter regenerated — new roster, new layout, new map',
+      );
     } catch (error) {
       toastError(
         action === 'repopulate' ? 'Could not repopulate the encounter' : 'Could not regenerate the encounter',

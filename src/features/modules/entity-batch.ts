@@ -30,6 +30,15 @@ import { useProgressStore } from '@/lib/progress';
  * "detail one entity" implementation instead of two — the popover delegates
  * a 1-target batch through `generateSingleEntity`).
  *
+ * It is ALSO the engine behind a CHANGE: a target carrying `artifactId` (the
+ * change seam, `features/modules/change-artifact`, docs/17 row 101) is filled
+ * IN PLACE through the run engine's refill instead of being created, with the
+ * same brief builder, the same persona resolution, the same tag/name handling
+ * and the same failure reporting — one entity engine, two destinations.
+ * `instruction` is the caller's free-text request, appended to every brief in
+ * the one `Additional instruction: …` form and absent (byte-identical briefs)
+ * when it is empty.
+ *
  * Parallelization (optimization feature): entities are independent — each
  * brief is grounded in the module text alone, not in the other entities —
  * so up to `maxParallelRequests` entity runs execute at once. Each entity
@@ -104,6 +113,19 @@ export const KIND_PLURALS: Record<StubKind, string> = {
 export interface EntityBatchTarget {
   /** The exact wiki-link name the produced artifact must carry. */
   name: string;
+  /**
+   * CHANGE an artifact that already exists instead of creating one (the change
+   * seam, docs/17 row 101): the run fills THIS row in place through the run
+   * engine's in-place refill — identity (name, scope, tags, links, images)
+   * preserved, the model's invented name kept as an alias, provenance
+   * (`writerModel`) recorded on the row exactly as a refill records it. An
+   * omit is the creation path, byte-identical to before: the artifact is
+   * born MODULE-OWNED via `placementModuleId`.
+   *
+   * The two are mutually exclusive by contract (the engine refuses a run that
+   * carries both), which is why the worker passes exactly one of them.
+   */
+  artifactId?: Id;
 }
 
 export interface RunEntityBatchInput {
@@ -111,6 +133,14 @@ export interface RunEntityBatchInput {
   campaign: Campaign;
   kind: StubKind;
   targets: readonly EntityBatchTarget[];
+  /**
+   * Free-text change instruction (the change seam): appended to EVERY brief
+   * this batch builds, in the one `Additional instruction: …` form
+   * (`llm/additionalInstruction`). Empty/omitted = no instruction — the
+   * briefs are byte-identical to the ones this batch always sent, which is
+   * what every module-generation, panel and automation pin asserts.
+   */
+  instruction?: string;
 }
 
 /** One entity whose run produced no artifact, with the reason. */
@@ -148,6 +178,7 @@ export interface EntityBatchResult {
  */
 export async function runEntityBatch(input: RunEntityBatchInput): Promise<EntityBatchResult> {
   const { module, campaign, kind, targets } = input;
+  const instruction = input.instruction ?? '';
   // The epoch this batch belongs to: consulted at every worker entry, so a
   // stop withdraws the remaining targets instead of launching them.
   const epoch = getStopEpoch();
@@ -194,6 +225,16 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     updateDetail();
   });
   const producedIds: Id[] = [];
+  /**
+   * The ids this batch must NOT stamp: an in-place change target already
+   * exists with its own scope and tag (the seam resolved `module` FROM that
+   * row), and `stampModuleOwnership` is a scope writer — a change never
+   * re-scopes an artifact (docs/18 §2.1). Creation targets are the only ones
+   * the stamp below belongs to.
+   */
+  const changeTargets = new Set<Id>(
+    targets.flatMap((target) => (target.artifactId === undefined ? [] : [target.artifactId])),
+  );
   try {
     const personas = await listPersonas();
     const persona =
@@ -243,6 +284,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
             ? fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
             : [],
           kind === 'encounter',
+          instruction,
         );
         const runInput: StartRunInput = {
           campaign,
@@ -250,12 +292,22 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           autonomy: 'auto' as const,
           brief,
           pinnedChunkIds: [],
-          // The batch's artifacts are module-owned FROM BIRTH (not stamped
-          // after the run): the post-run automatic battlemap reads the
-          // encounter's own moduleId to apply the module's master switch,
-          // and wiki-links resolve against the module during the run. The
-          // tag stamp below stays for the module:tag compatibility marker.
-          placementModuleId: module.id,
+          // Two destinations, exactly one of them per target:
+          //
+          // - CHANGE (the change seam): the row already exists, so the run
+          //   fills it in place (`targetArtifactId`) and must NOT carry a
+          //   placement — the engine refuses a run that carries both, and an
+          //   existing artifact's scope changes only through explicit scope
+          //   moves (docs/18 §2.1), never as a side effect of a change.
+          // - CREATE (the panel's batches, the automation, the stub popover):
+          //   the artifact is module-owned FROM BIRTH (not stamped after the
+          //   run) — the post-run automatic battlemap reads the encounter's
+          //   own moduleId to apply the module's master switch, and wiki-links
+          //   resolve against the module during the run. The tag stamp below
+          //   stays for the module:tag compatibility marker.
+          ...(target.artifactId === undefined
+            ? { placementModuleId: module.id }
+            : { targetArtifactId: target.artifactId }),
         };
         const runId = await runEngine.startRun(runInput);
         runNames.set(runId, target.name);
@@ -329,6 +381,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     // Stamp the compatibility tag (the artifacts are already module-owned
     // from birth via placementModuleId — this is idempotent for both).
     for (const artifactId of producedIds) {
+      if (changeTargets.has(artifactId)) continue;
       try {
         const artifact = await artifactRepo.getArtifact(artifactId);
         if (artifact !== undefined && (artifact.moduleId !== module.id || !artifact.tags.includes(moduleTag))) {

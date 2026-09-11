@@ -1213,6 +1213,19 @@ The batch engine is headless (`src/features/modules/entity-batch.ts`,
 one implementation (progress dock job `module-entities-<moduleId>-<kind>`,
 name alignment, module-ownership stamping, loud failure summary).
 
+CHANGING an entity that already exists is not this button and not a second
+engine: it is the change seam (`src/features/modules/change-artifact.ts`,
+docs/17 row 101, docs/18 §2), which calls `runEntityBatch` with a per-target
+`artifactId` so the SAME brief builder and the same run land the change IN
+PLACE (the run engine's refill — identity, links and images preserved). The
+entity lane gained exactly two things for it: `RunEntityBatchInput.instruction`
+(appended to every brief as the one `Additional instruction: …` paragraph;
+empty leaves the briefs byte-identical) and `EntityBatchTarget.artifactId`
+(a change targets an existing row, so it carries `targetArtifactId` and no
+`placementModuleId`, and the ownership stamp is skipped — a change never
+re-scopes). The panel's own per-kind batches stay CREATION: their targets are
+names without artifacts and they carry no instruction.
+
 Parallelism (optimization): entity generations are independent — each brief
 is grounded in the module text alone — so the batch runs up to
 `maxParallelRequests` (Settings) entity generations at once, each a real
