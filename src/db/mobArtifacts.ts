@@ -371,6 +371,15 @@ export interface InventedCreatureMaterialize {
   treasure: string;
   /** The inline stat block when the entry has one, else null. */
   statBlock: StatBlock | null;
+  /**
+   * PROVENANCE (docs/17 row 93): the model that wrote the encounter this
+   * creature was materialized from — the caller reads it off the ENCOUNTER
+   * artifact's own `writerModel`, recorded when that encounter was written.
+   * No model call happens in this seam (the text is copied from the stored
+   * roster), so that is the only truthful source; `''` leaves the field
+   * unrecorded, which displays as nothing.
+   */
+  writerModel?: string | undefined;
   meta?: RevisionMeta;
   /** Batch dedupe: roster-name (per encounter) → artifact, mirroring
    * `materializeMonsterNpc`'s one-entity-per-name collapse. */
@@ -445,6 +454,10 @@ export async function materializeInventedCreatureArtifact(
         personality: '',
         statBlock: options.statBlock,
       },
+      // PROVENANCE (docs/17 row 93): the encounter's recorded writing model —
+      // the name, notes, treasure and appearance seed on this row are all text
+      // that model wrote. `''` stays `''` (not recorded, nothing displayed).
+      writerModel: options.writerModel ?? '',
     },
     options.meta ?? { source: 'user' },
   );

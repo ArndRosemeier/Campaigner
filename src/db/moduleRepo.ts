@@ -1,5 +1,5 @@
 import type { Id, Module, ModulePart, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
-import { moduleSchema } from '@/domain';
+import { moduleSchema, recordedWritingModel } from '@/domain';
 import { db } from '@/db/db';
 import {
   deleteArtifact,
@@ -96,29 +96,42 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
  * Every part-text write funnels through this (reader hand edits, canvas
  * rewrite Apply/Discard); part bodies live on the MODULE ROW — there is no
  * artifact revision for part markdown.
+ *
+ * PROVENANCE (docs/17 row 93): `writerModel` is optional and its ABSENCE is
+ * the load-bearing default.
+ *   - a HAND EDIT (the reader's PartTextEditor, the canvas' manual Save) does
+ *     not pass it, and the part KEEPS the id already recorded on the row: the
+ *     field answers "which model WROTE this", so the owner's edits must never
+ *     erase the provenance of the text they edited (owner decision);
+ *   - a chat-applied rewrite passes the CHAT model — the model that wrote the
+ *     text now on the row, i.e. the LAST writer;
+ *   - a part with no recorded id that a hand edit touches stays `''` (not
+ *     recorded → the reader displays nothing), never a settings-derived guess.
  */
 export async function patchModulePartText(
   id: Id,
   planIndex: number,
   markdown: string,
+  writerModel?: string,
 ): Promise<Module> {
   return db.transaction('rw', db.modules, async () => {
     const current = await db.modules.get(id);
     if (current === undefined) throw new NotFoundError('Module', id);
     const module = moduleSchema.parse(current);
+    const existing = module.parts.find((part) => part.planIndex === planIndex);
     const nextPart: ModulePart = {
       planIndex,
       markdown,
       status: 'ready',
       errorMessage: '',
       edited: true,
+      // Omitted `writerModel` = this write cannot name a model (a hand edit),
+      // so the recorded id is CARRIED — never blanked.
+      writerModel: writerModel ?? recordedWritingModel(existing?.writerModel) ?? '',
     };
-    const exists = module.parts.some((part) => part.planIndex === planIndex);
-    const parts = exists
-      ? module.parts.map((part) =>
-          part.planIndex === planIndex ? nextPart : part,
-        )
-      : [...module.parts, nextPart].sort((a, b) => a.planIndex - b.planIndex);
+    const parts = existing === undefined
+      ? [...module.parts, nextPart].sort((a, b) => a.planIndex - b.planIndex)
+      : module.parts.map((part) => (part.planIndex === planIndex ? nextPart : part));
     return saveModule({ ...module, parts });
   });
 }

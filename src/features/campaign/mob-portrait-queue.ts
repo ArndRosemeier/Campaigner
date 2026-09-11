@@ -494,6 +494,11 @@ async function enumerateBatchKinds(
               notes: entry.notes,
               treasure: entry.treasure,
               statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
+              // PROVENANCE (docs/17 row 93): the model that wrote THIS
+              // encounter's roster text — read off the encounter row's own
+              // recorded id (no model call runs here; the stored text is
+              // copied), which is the only truthful source available.
+              writerModel: encounter.writerModel,
               cache: materialized,
             })
           : ((await findInventedCreatureArtifact(campaignId, encounter.id, entry.name))?.id ?? null);

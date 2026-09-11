@@ -94,6 +94,9 @@ async function seedReaderModule(
     entityKinds?: ModuleEntityKind[];
     status?: Module['status'];
     errorMessage?: string;
+    /** PROVENANCE (docs/17 row 93): the id recorded on part 0, as the
+     * generator would have left it. Absent = a row from before the field. */
+    part0WriterModel?: string;
   } = {},
 ): Promise<{
   campaign: Campaign;
@@ -149,6 +152,9 @@ async function seedReaderModule(
         status: 'ready',
         errorMessage: '',
         edited: options.part0Edited ?? false,
+        ...(options.part0WriterModel === undefined
+          ? {}
+          : { writerModel: options.part0WriterModel }),
       }),
       modulePartSchema.parse({
         planIndex: 1,
@@ -380,7 +386,11 @@ describe('ModuleReaderPage', () => {
 
   it('saves a part hand edit on blur, persisting the new markdown with edited: true', async () => {
     const user = userEvent.setup();
-    const { campaignId, moduleId } = await seedReaderModule();
+    const { campaignId, moduleId } = await seedReaderModule({
+      // PROVENANCE (docs/17 row 93): the part was written by a model; the
+      // owner's hand edit below must not erase that.
+      part0WriterModel: 'staged/reader-part-model',
+    });
     renderAppAt(modulePath(campaignId, moduleId));
 
     const part0 = await findPartSection(0);
@@ -401,6 +411,9 @@ describe('ModuleReaderPage', () => {
         expect(part?.markdown).toBe(edited);
         expect(part?.edited).toBe(true);
         expect(part?.status).toBe('ready');
+        // The recorded writer SURVIVES the hand edit (owner decision 2): the
+        // id answers "which model wrote this", not "who touched it last".
+        expect(part?.writerModel).toBe('staged/reader-part-model');
       },
       { timeout: 10_000 },
     );
@@ -411,8 +424,12 @@ describe('ModuleReaderPage', () => {
       expect(toastSuccessMock).toHaveBeenCalledWith('Part saved');
     });
 
-    // The reader leaves edit mode and renders the saved text again.
+    // The reader leaves edit mode and renders the saved text again — with the
+    // id still under it, which is the surface the owner actually reads.
     expect(await screen.findByTestId('part-body', {}, { timeout: 5_000 })).toBeInTheDocument();
+    expect(await screen.findByTestId('part-writer-model')).toHaveTextContent(
+      'staged/reader-part-model',
+    );
     await flushAsyncUpdates();
   }, 20_000);
 

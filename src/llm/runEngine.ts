@@ -33,6 +33,7 @@ import {
   renderSchematic,
   resolveEncounterMapMode,
   resolveEncounterPreset,
+  recordedWritingModel,
   schematicCellPx,
   type DungeonMapPath,
 } from '@/domain';
@@ -1052,6 +1053,17 @@ export async function rulebookSourceFor(
  * the `moveScope` family — a run must not silently adopt a row into (or out
  * of) a module. Duplicate names inside one run collapse onto the first
  * materialized artifact via `cache`.
+ *
+ * PROVENANCE (docs/17 row 93): `writerModel` is the model that served the run's
+ * draft — the call that wrote this monster's name, notes and stat block. It is
+ * stamped on the row this seam CREATES. On the reuse branch, one rule holds for
+ * both writes:
+ *
+ *   - a row created by the REUSED materialization (it carried no provenance
+ *     before) records the model that finally authored its content;
+ *   - a row that already carries an id KEEPS it, because an id that answered
+ *     "which model wrote this" must not be rewritten by a later, unrelated run
+ *     — the same rule as the owner's hand-edit decision, applied to runs.
  */
 async function materializeMonsterNpc(
   name: string,
@@ -1060,6 +1072,7 @@ async function materializeMonsterNpc(
   input: StartRunInput,
   runId: Id,
   cache: Map<string, Id>,
+  writerModel: string,
 ): Promise<Id> {
   const trimmedName = name.trim();
   if (trimmedName === '') {
@@ -1095,7 +1108,14 @@ async function materializeMonsterNpc(
     if (existing.data.statBlock === null) {
       await updateArtifact(
         existing.id,
-        { data: { ...existing.data, statBlock } },
+        {
+          data: { ...existing.data, statBlock },
+          // Fills a row that never recorded a writer; a row that HAS one keeps
+          // it (never rewrite provenance a later run did not establish).
+          ...(recordedWritingModel(existing.writerModel) === null
+            ? { writerModel }
+            : {}),
+        },
         { source: 'persona', runId },
       );
     }
@@ -1113,6 +1133,7 @@ async function materializeMonsterNpc(
       name: trimmedName,
       summary: notes,
       data: { appearance: '', personality: '', statBlock },
+      writerModel,
     },
     { source: 'persona', runId },
   );
@@ -1951,6 +1972,27 @@ export class RunEngine {
   }
 
   /**
+   * The model that WROTE a step's text — the `modelUsed` the step recorded in
+   * its own output (`runDraft` / `runReport`; docs/18 §2.2 the recording
+   * seam). This is the ONE source every artifact write in `runFinalize` (and
+   * the monster materializers it calls) stamps its `writerModel` from, so a
+   * fallback-served call is never attributed to the configured model.
+   *
+   * `userEdit` wins, exactly like `effectiveDraft`: an edited draft is still
+   * text a model wrote, and the owner's editing must not erase that
+   * provenance (owner decision, docs/17 row 93). `''` when nothing was
+   * recorded (a resumed legacy run whose step predates the field) — which
+   * displays as NOTHING rather than inventing an id.
+   */
+  private effectiveStepWriterModel(steps: readonly RunStep[], stepName: string): string {
+    const step = steps.find((candidate) => candidate.name === stepName);
+    const effective = step?.userEdit ?? step?.output;
+    if (effective === null || typeof effective !== 'object') return '';
+    const recorded = (effective as { writerModel?: unknown }).writerModel;
+    return typeof recorded === 'string' ? recorded : '';
+  }
+
+  /**
    * The roster prompt window's target level (12-BESTIARY-PACKS §7, ratified
    * chain), resolved at the run-engine boundary from what the run carries:
    * (a) the target encounter's free-text `levelHint` ("5", "4–6", "CR 5" —
@@ -2497,7 +2539,7 @@ export class RunEngine {
       this.draftRetried.has(runId) || this.sourceRepaired.has(runId)
         ? repairModel(firstTryModel, settings)
         : firstTryModel;
-    const { text: raw, fallback } = await chat(
+    const { text: raw, modelUsed, fallback } = await chat(
       messages,
       this.chatForStep(runId, stepIndex, {
         model: repairTarget,
@@ -2589,7 +2631,13 @@ export class RunEngine {
     const step = this.finishStep(
       steps[stepIndex],
       withNotice(
-        { parsed },
+        // PROVENANCE (docs/17 row 93): the step records WHICH model served
+        // this draft, inside the step output that already rides pause/resume —
+        // finalize reads it back for the artifact it creates. `modelUsed` is
+        // the escalation chain's own answer, so a fallback-served draft
+        // records the FALLBACK model, never the configured one (docs/18
+        // §2.2 recording seam, §4 gotcha).
+        { parsed, writerModel: modelUsed },
         fallback,
         [contractRepairNotice(firstTryModel, repairTarget), moduleGroundingNotice(context.moduleGrounding)]
           .filter((note): note is string => note !== null)
@@ -2782,7 +2830,7 @@ export class RunEngine {
       .filter((part) => part !== null)
       .join('\n\n');
 
-    const { text: raw, fallback } = await chat(
+    const { text: raw, modelUsed, fallback } = await chat(
       [
         { role: 'system', content: input.persona.systemPrompt },
         { role: 'user', content: instruction },
@@ -2813,7 +2861,13 @@ export class RunEngine {
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
     }
-    const step = this.finishStep(steps[stepIndex], withNotice({ report }, fallback));
+    // PROVENANCE (docs/17 row 93): the continuity report's own step carries
+    // the model that wrote it, so the artifact finalize creates below records
+    // the serving model — the report step is a different call from the draft.
+    const step = this.finishStep(
+      steps[stepIndex],
+      withNotice({ report, writerModel: modelUsed }, fallback),
+    );
     if (pauses(input.autonomy, false)) return { step, runStatus: 'awaiting_user' };
     return { step };
   }
@@ -3635,6 +3689,7 @@ export class RunEngine {
     };
     const first = await chat(messages, chatOptions);
     let raw = first.text;
+    let modelUsed = first.modelUsed;
     let fallback = first.fallback;
     // The contract-repair model: the escalation tier when configured (the
     // step notice records the escalation only when it actually differed).
@@ -3660,6 +3715,7 @@ export class RunEngine {
         { ...chatOptions, model: briefRepairTarget },
       );
       raw = retry.text;
+      modelUsed = retry.modelUsed;
       fallback = retry.fallback ?? fallback;
       evaluated = await evaluate(raw, true);
     }
@@ -3727,6 +3783,11 @@ export class RunEngine {
             mapPath,
             statblockChunkIds: retrieval.statblockChunkIds,
             rosterChunkByName: retrieval.rosterChunkByName,
+            // PROVENANCE (docs/17 row 93): WHICH model wrote this brief — the
+            // encounter prose, roster names and notes an artifact is built
+            // from. The contract-repair turn escalates, so this is the model
+            // whose reply actually landed, not the configured one.
+            writerModel: modelUsed,
             // The run's fill grade (docs/11 D12 amendment): the value the
             // brief was written against — finalize stamps it when a complex
             // materializes with the field absent (draw-once).
@@ -4610,6 +4671,10 @@ export class RunEngine {
         summary: parsed.summary,
         body: parsed.body,
         imageIds: [selected],
+        // PROVENANCE (docs/17 row 93): the BRIEF call wrote this encounter's
+        // prose and roster — read from the step that recorded the serving
+        // model (never a settings lookup).
+        writerModel: this.effectiveStepWriterModel(steps, 'brief'),
         data: {
           difficulty: parsed.difficulty,
           levelHint: parsed.levelHint,
@@ -4887,6 +4952,11 @@ export class RunEngine {
     input: StartRunInput,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status']; artifactId?: Id }> {
     const draft = this.effectiveDraft(steps) ?? {};
+    // PROVENANCE (docs/17 row 93): read ONCE, here, and hand it to every
+    // artifact write below — the text each one persists came from the draft
+    // call, so the artifact records the model that actually served it (the
+    // escalation chain's `modelUsed`, never the configured model).
+    const writerModel = this.effectiveStepWriterModel(steps, 'draft');
     const kind = input.persona.producesKind;
     if (kind === undefined) throw new Error('image personas do not produce artifacts');
     // Loud existence check (AGENTS rule 1), BEFORE any finalize work: a
@@ -4994,6 +5064,7 @@ export class RunEngine {
             input,
             runId,
             materializedNpcs,
+            writerModel,
           );
           monsters.push({
             name: monster.name,
@@ -5097,6 +5168,9 @@ export class RunEngine {
           body: reportBody,
           links: targetId === null ? [] : [{ targetId, relation: 'continuity-check-of' }],
           data: {},
+          // PROVENANCE (docs/17 row 93): the CHECK call wrote this report — a
+          // different call from the draft, so it carries its own model.
+          writerModel: this.effectiveStepWriterModel(steps, 'check'),
         },
         { source: 'persona', runId },
       );
@@ -5195,6 +5269,9 @@ export class RunEngine {
             summary: asString(draft.summary),
             body: asString(draft.body),
             aliases: nextAliases,
+            // PROVENANCE (docs/17 row 93): a MODEL overwrote the prose, so the
+            // row records the model that just wrote it — the LAST writer.
+            writerModel,
           },
           { source: 'persona', runId },
         );
@@ -5371,6 +5448,10 @@ export class RunEngine {
           summary: asString(draft.summary),
           body: asString(draft.body),
           aliases,
+          // PROVENANCE (docs/17 row 93): an in-place content refill IS a model
+          // write, so the row records the model that wrote the text now on it
+          // — the last writer.
+          writerModel,
           // The prose checkbox (two-button regeneration): a ticked redesign
           // replaces the name; otherwise the target keeps its authored name.
           ...(renamed ? { name: modelAlias } : {}),
@@ -5440,6 +5521,9 @@ export class RunEngine {
             summary: asString(draft.summary),
             body: asString(draft.body),
             aliases,
+            // PROVENANCE (docs/17 row 93): the refill rewrote the text, so the
+            // row records the model that wrote what is on it now.
+            writerModel,
             // Fields the draft pipeline cannot re-produce survive the refill
             // (mergeRefillData): a player's human-owned PC fields, and an
             // existing stat block the refill declined to regenerate.
@@ -5469,6 +5553,10 @@ export class RunEngine {
         summary: asString(draft.summary),
         body: asString(draft.body),
         data,
+        // PROVENANCE (docs/17 row 93): the DRAFT call wrote this artifact's
+        // text — the model that actually served it (`modelUsed`), recorded at
+        // birth so the entity card can show it.
+        writerModel,
       },
       { source: 'persona', runId },
     );

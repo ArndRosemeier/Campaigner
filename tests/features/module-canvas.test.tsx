@@ -405,9 +405,12 @@ describe('canvas whole-document editor', () => {
     await waitFor(() => {
       expect(savePartMock).toHaveBeenCalledTimes(2);
     });
-    // Per-part saves with per-part text — only the two CHANGED parts.
-    expect(savePartMock).toHaveBeenCalledWith(world.moduleId, 0, nextPart0);
-    expect(savePartMock).toHaveBeenCalledWith(world.moduleId, 2, 'Dusk falls.');
+    // Per-part saves with per-part text — only the two CHANGED parts. The
+    // fourth argument is provenance (docs/17 row 93): a MANUAL save passes
+    // `undefined`, which the repo reads as "carry the recorded id" — the
+    // owner's hand edit must not erase which model wrote the passage.
+    expect(savePartMock).toHaveBeenCalledWith(world.moduleId, 0, nextPart0, undefined);
+    expect(savePartMock).toHaveBeenCalledWith(world.moduleId, 2, 'Dusk falls.', undefined);
     await waitFor(() => {
       expect(promoteSpy).toHaveBeenCalled();
     });
@@ -564,6 +567,11 @@ describe('canvas AI actions (cursor plays no role)', () => {
       const row = await getModule(world.moduleId);
       expect(row?.parts.find((entry) => entry.planIndex === 0)?.markdown).toBe(REFINED_PART0);
       expect(row?.parts.find((entry) => entry.planIndex === 0)?.edited).toBe(true);
+      // PROVENANCE (docs/17 row 93): an ACCEPTED refine proposal records the
+      // model that served the refine call. The pending proposal is created
+      // before the call, so the id is written into its meta when the turn
+      // settles — this pins that hand-off end to end.
+      expect(row?.parts.find((entry) => entry.planIndex === 0)?.writerModel).toBe('test-model');
       // The OTHER parts never hit the save path with changed text.
       expect(row?.parts.find((entry) => entry.planIndex === 1)?.markdown).toBe(PART_1_TEXT);
     });

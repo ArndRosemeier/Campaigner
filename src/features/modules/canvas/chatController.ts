@@ -189,6 +189,11 @@ export async function runChatTurn(
           // Durable pre-change snapshot (docs/18 §2.3): the whole document as
           // it stood before this batch — the simple undo for chat edits.
           version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
+          // PROVENANCE (docs/17 row 93): a chat-written passage belongs to the
+          // CHAT model — the id the turn's own call reported (`modelUsed`),
+          // which is the selected/session model or the escalation tier that
+          // actually served the reply, never a settings lookup.
+          writerModel: result.modelUsed,
         });
       }
       return { doc: options.view.state.doc.toString(), lastApplied: applied.lastApplied };

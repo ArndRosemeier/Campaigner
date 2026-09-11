@@ -79,12 +79,14 @@ let campaignId = '';
 async function addEncounter(
   monsters: { name: string; count: number; source: Record<string, unknown>; notes?: string; treasure?: string }[],
   moduleId?: string,
+  writerModel?: string,
 ) {
   return createArtifact({
     campaignId,
     ...(moduleId === undefined ? {} : { moduleId }),
     kind: 'encounter',
     name: 'Ooze warren',
+    ...(writerModel === undefined ? {} : { writerModel }),
     data: {
       difficulty: 'medium',
       levelHint: '1',
@@ -203,6 +205,40 @@ describe('enqueueInventedCreaturePortraits (the batch action)', () => {
     if (ooze?.kind !== 'npc') throw new Error('ooze artifact missing');
     expect(ooze.data.statBlock).toMatchObject({ hp: 45 });
     expect(ooze.moduleId).toBeNull();
+  });
+
+  it('stamps the ENCOUNTER\u2019s recorded model on the creatures it materializes', async () => {
+    // PROVENANCE (docs/17 row 93): the creature's row carries text the
+    // encounter's model wrote (its name, notes, treasure and the appearance
+    // seed built from them). No model call runs in this seam, so the only
+    // truthful source is the encounter row's own recorded id.
+    const encounter = await addEncounter(
+      [{ name: 'Gloom Ooze', count: 1, source: { type: 'inline', statBlock: oozeBlock() }, notes: OOZE_NOTES }],
+      undefined,
+      'staged/encounter-model',
+    );
+
+    await enqueueInventedCreaturePortraits(encounter, campaignId);
+
+    const ooze = (await listArtifactsByCampaign(campaignId)).find(
+      (artifact) => artifact.kind === 'npc' && artifact.name === 'Gloom Ooze',
+    );
+    expect(ooze?.writerModel).toBe('staged/encounter-model');
+  });
+
+  it('leaves the creature\u2019s id empty when the encounter records none', async () => {
+    // The negative half: an encounter written before the field (or hand-typed)
+    // must NOT produce a settings-derived id on the creature either.
+    const encounter = await addEncounter([
+      { name: 'Whisper Wisp', count: 1, source: { type: 'none' }, notes: 'barely a rumor' },
+    ]);
+
+    await enqueueInventedCreaturePortraits(encounter, campaignId);
+
+    const wisp = (await listArtifactsByCampaign(campaignId)).find(
+      (artifact) => artifact.kind === 'npc' && artifact.name === 'Whisper Wisp',
+    );
+    expect(wisp?.writerModel).toBe('');
   });
 
   it('never touches the mobPortraits table — materialize, enqueue and generate stay off-seam', async () => {

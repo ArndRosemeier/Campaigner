@@ -11,13 +11,20 @@ import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
  * `edited: true`; the post-save `promoteSecondModuleUses` scan promotes
  * second-module wikilink uses to campaign level, loudly (10 D12). Never
  * route a part-text write anywhere else and never skip the promote scan.
+ *
+ * PROVENANCE (docs/17 row 93): `writerModel` is passed ONLY by a model write
+ * (the canvas chat's applied batch, whose turn knows the model that served
+ * it). A hand edit omits it, and `patchModulePartText` then CARRIES the id
+ * already on the row — the owner's edits must not erase which model wrote the
+ * text (owner decision).
  */
 export async function saveModulePartText(
   moduleId: Id,
   planIndex: number,
   markdown: string,
+  writerModel?: string,
 ): Promise<Module> {
-  const saved = await patchModulePartText(moduleId, planIndex, markdown);
+  const saved = await patchModulePartText(moduleId, planIndex, markdown, writerModel);
   await promoteSecondModuleUses(moduleId, [markdown]);
   return saved;
 }

@@ -36,6 +36,7 @@ interface ModuleSpine {
   premise: string;              // markdown, a few paragraphs
   themes: string[];
   partPlan: PartPlan[];         // approved plan the parts are generated from
+  writerModel: string;          // PROVENANCE (docs/17 row 93): who wrote the premise
 }
 interface PartPlan {
   title: string;
@@ -48,9 +49,37 @@ interface ModulePart {
   markdown: string;             // the actual module text, with [[wiki-links]]
   status: 'pending' | 'generating' | 'ready' | 'failed';
   errorMessage: string;
+  edited: boolean;              // hand-edited since generation (M4-A)
+  writerModel: string;          // PROVENANCE (docs/17 row 93): who wrote THIS part
 }
 // table: modules: 'id, campaignId, updatedAt'
 ```
+
+**`writerModel` on the spine and on each part (owner request, docs/17 row
+93).** Additive `.default('')` on both schemas, parse-on-read, no Dexie
+version bump; `''` means NOT RECORDED and displays as NOTHING. Both record the
+`modelUsed` their own call returned — the spine from the pass-0 reply (the
+REPAIR turn's id when the repair turn is what parsed), each part from its own
+part call (again the repair turn's id when a too-short rewrite shipped). Rules
+worth stating because they are easy to break:
+
+- **Each part carries its OWN id**, never the module's or a neighbour's — the
+  id answers "which model wrote this passage", which is why it lives on the
+  part rather than on the module.
+- **A hand edit KEEPS the id**: `saveModulePartText` / `patchModulePartText`
+  treat an omitted `writerModel` as "carry", so editing a passage in the
+  reader does not erase which model wrote it (owner decision). A `generating`
+  /`failed`/`pending` slot carries the PREVIOUS part's id forward for the same
+  reason — a placeholder must not blank a recorded writer.
+- **A chat-applied rewrite records the CHAT model** (the last writer):
+  `saveWholeModuleDocument` takes the id from the controller that made the
+  call (`chatController` / `snapshotChat`), and an accepted refine proposal
+  records the model that produced it (`canvasRefine.refineModuleText` now
+  returns `{ replacement, modelUsed }` for exactly this — the seam cannot know
+  its serving model otherwise, and a settings lookup would lie after an
+  escalation).
+- The field is **not** part of any LLM-facing contract (the spine's emitted
+  schema omits it, docs/18 §4), and it never reaches a deliverable or a PDF.
 
 Repo `moduleRepo.ts`: CRUD + `saveModule` (full-row validate + put; modules
 are NOT revisioned — parts are individually regenerable, that is the undo).

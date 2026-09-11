@@ -177,13 +177,18 @@ const WIKI_TOKEN_RULES =
   '- Wiki-links are [[Name]] tokens (names, never IDs). Keep every token\'s EXACT canonical spelling when the instruction does not rename the entity; never inflect inside the token — write [[Halmund]]\'s tower, not [[Halmunds]] Haus; write [[Name|display]] when the surface text must differ from the canonical name; use [[Name|display]] for roles/titles ([[Halmund|the guard Halmund]]). When the instruction renames or introduces entities, update every affected token inside the replacement consistently. The same rules apply in any language.';
 
 /**
- * Runs one canvas refine: returns the validated, debris-scanned replacement.
+ * Runs one canvas refine: returns the validated, debris-scanned replacement
+ * AND the model that served the call (`modelUsed`) — the provenance the
+ * accepted proposal is persisted with (docs/17 row 93), never a settings
+ * lookup, so an escalated turn is attributed to the model that answered.
  * Throws loudly on busy (`ModuleBusyError`), contract failures (JSON/zod),
  * debris, and empty part replacements. User aborts throw `AbortError` —
  * callers distinguish them via `signal.aborted`, not via the error type
  * (18-ARCHITECTURE: the signal is the source of truth).
  */
-export async function refineModuleText(input: CanvasRefineInput): Promise<string> {
+export async function refineModuleText(
+  input: CanvasRefineInput,
+): Promise<{ replacement: string; modelUsed: string }> {
   if (input.turn === undefined) {
     // Loud, never a silent un-cancellable turn: the app-level sweep reaches
     // canvas turns through this controller (canvasBusy's abort registry), so a
@@ -226,7 +231,7 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
     const settings = await getSettings();
     const messages = canvasRefineMessages(input, instruction);
     const extractor = new ReplacementStreamExtractor();
-    const { text: raw } = await chat(messages, {
+    const { text: raw, modelUsed } = await chat(messages, {
       model: settings.defaultChatModel,
       // Surgical rewrites: lower than the forge's creative 0.8 so the
       // replacement stays close to the span it replaces.
@@ -249,7 +254,7 @@ export async function refineModuleText(input: CanvasRefineInput): Promise<string
     if (issues.length > 0) {
       throw new Error(`canvas refine rejected its reply — ${issues.join('; ')}`);
     }
-    return reply.replacement;
+    return { replacement: reply.replacement, modelUsed };
   } finally {
     handle.releaseHandle();
     releaseModuleGeneration(input.moduleId);

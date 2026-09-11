@@ -127,8 +127,11 @@ describe('moduleRepo', () => {
       ],
     };
     const spined = await saveSpine(created.id, spine);
-    expect(spined.spine).toEqual(spine);
-    expect((await getModule(created.id))?.spine).toEqual(spine);
+    // The stored spine carries the provenance field too (docs/17 row 93): a
+    // spine handed in without an id reads back with the additive default `''`
+    // = NOT RECORDED (which displays as nothing), never an invented model.
+    expect(spined.spine).toEqual({ ...spine, writerModel: '' });
+    expect((await getModule(created.id))?.spine).toEqual({ ...spine, writerModel: '' });
 
     const nextPlan: PartPlan[] = [
       { title: 'One long act', levelBand: '1–4', synopsis: 'Everything in a single part.', levelUpTrigger: 'Escape at dawn.' },

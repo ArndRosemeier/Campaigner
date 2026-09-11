@@ -11,6 +11,7 @@ import {
   moduleEntityKindSchema,
   moduleSpineSchema,
   MODULE_SIZE_WORD_TARGETS,
+  partWriterModelFor,
   type EncounterFloorGuardrail,
 } from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
@@ -264,7 +265,11 @@ export async function runSpine(
       onActivity: reporter.onActivity,
     };
 
-    let { text: raw } = await chat(messages, {
+    // PROVENANCE (docs/17 row 93): the model that served the spine call is
+    // captured here and rides onto the saved spine's premise. Every repair
+    // retry below REPLACES it, so the recorded id is always the model whose
+    // text actually landed — never the configured one (docs/18 §2.2/§4).
+    const firstSpine = await chat(messages, {
       model: settings.defaultChatModel,
       temperature: 0.8,
       reasoningEffort: settings.defaultReasoningEffort,
@@ -272,6 +277,8 @@ export async function runSpine(
       signal: controller.signal,
       ...streamHandlers,
     });
+    let raw = firstSpine.text;
+    let spineWriterModel = firstSpine.modelUsed;
 
     let spine: ModuleSpine;
     let entityKinds: ModuleEntityKind[];
@@ -281,27 +288,28 @@ export async function runSpine(
     } catch (error) {
       // One automatic invalid-JSON retry (same policy as persona drafts); a
       // second failure fails the module loudly.
-      raw = (
-        await chat(
-          [
-            ...messages,
-            {
-              role: 'user',
-              content: `Your previous reply was invalid JSON for the schema: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
-            },
-          ],
+      const retryReply = await chat(
+        [
+          ...messages,
           {
-            // Contract repair escalates to the fallback model: invalid spine
-            // JSON is usually a capability weakness of the first-try model.
-            model: repairModel(settings.defaultChatModel, settings),
-            temperature: 0.8,
-            reasoningEffort: settings.defaultReasoningEffort,
-            responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
-            signal: controller.signal,
-            ...streamHandlers,
+            role: 'user',
+            content: `Your previous reply was invalid JSON for the schema: ${parseErrorSummary(error)}. Reply with corrected JSON only.`,
           },
-        )
-      ).text;
+        ],
+        {
+          // Contract repair escalates to the fallback model: invalid spine
+          // JSON is usually a capability weakness of the first-try model.
+          model: repairModel(settings.defaultChatModel, settings),
+          temperature: 0.8,
+          reasoningEffort: settings.defaultReasoningEffort,
+          responseFormat: schemaResponseFormat('module-spine', spineReplySchema),
+          signal: controller.signal,
+          ...streamHandlers,
+        },
+      );
+      raw = retryReply.text;
+      // The repair reply REPLACED the text — so it owns the provenance.
+      spineWriterModel = retryReply.modelUsed;
       spine = parseSpine(raw);
       entityKinds = parseSpineEntities(raw);
     }
@@ -315,6 +323,7 @@ export async function runSpine(
     const normalizeAndSave = async (
       nextSpine: ModuleSpine,
       nextKinds: ModuleEntityKind[],
+      writerModel: string,
     ): Promise<Module> => {
       // Name normalization is a module-creation pass: its artifact index is
       // the module-creation pool (docs/17 row 69), so a name that happens to
@@ -343,7 +352,10 @@ export async function runSpine(
         normalizedKinds = canonicalEntityRecords(verdicts);
       }
       const saved = await patchModule(moduleId, {
-        spine: nextSpine,
+        // PROVENANCE (docs/17 row 93): the premise's writing model, recorded
+        // with the spine it belongs to. `''` stays `''` (not recorded →
+        // nothing displayed); nothing derives it from the settings.
+        spine: { ...nextSpine, writerModel },
         entityKinds: normalizedKinds,
         status: 'draft',
         errorMessage: '',
@@ -354,7 +366,7 @@ export async function runSpine(
       await promoteSecondModuleUses(moduleId, [nextSpine.premise]);
       return saved;
     };
-    let saved = await normalizeAndSave(spine, entityKinds);
+    let saved = await normalizeAndSave(spine, entityKinds, spineWriterModel);
     // Encounter spine gate (08 §M4-B): zero encounter records gets ONE repair
     // retry on the escalated model; a second encounter-free spine fails the
     // spine loudly (never a silent draft). Floor guarding is read from the
@@ -378,7 +390,7 @@ export async function runSpine(
           'The spine encounter gate fired while the module floor is disabled',
         );
       }
-      const { text: retryRaw } = await chat(
+      const floorRetry = await chat(
         [
           ...messages,
           {
@@ -400,9 +412,10 @@ export async function runSpine(
           ...streamHandlers,
         },
       );
-      const retrySpine = parseSpine(retryRaw);
-      const retryKinds = parseSpineEntities(retryRaw);
-      saved = await normalizeAndSave(retrySpine, retryKinds);
+      const retrySpine = parseSpine(floorRetry.text);
+      const retryKinds = parseSpineEntities(floorRetry.text);
+      // The floor-repair reply REPLACED the premise — it owns the provenance.
+      saved = await normalizeAndSave(retrySpine, retryKinds, floorRetry.modelUsed);
       const retryDefect = spineEncounterDefect(saved);
       if (retryDefect !== null) {
         throw new Error(
@@ -435,11 +448,20 @@ const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSche
  * the spine AND the entity list (both parse from the same JSON), so the
  * emitted schema is their composition. Runtime parsing keeps the two separate
  * schemas — this is emission-only.
+ *
+ * PROVENANCE (docs/17 row 93): the spine's `writerModel` is OMITTED from the
+ * emitted contract. It is a RECORDED field, not a model-authored one — and
+ * because `writerModel` carries `.default('')`, the strict-subset converter
+ * marks it REQUIRED, so keeping it would force the decoder to emit an id the
+ * model can only invent (which the run then overwrites anyway). The model is
+ * asked for the prose; the run records which model served it, after the fact.
  */
-const spineReplySchema = z.object({
-  ...moduleSpineSchema.shape,
-  entities: z.array(moduleEntityKindSchema),
-});
+const spineReplySchema = z
+  .object({
+    ...moduleSpineSchema.shape,
+    entities: z.array(moduleEntityKindSchema),
+  })
+  .omit({ writerModel: true });
 
 /**
  * Parses the entity list the spine pass records alongside the spine (08
@@ -1287,7 +1309,9 @@ async function requireModule(moduleId: Id): Promise<Module> {
 /**
  * Generates ONE part and writes it to the module row. Writes the
  * `generating` status first (progressive reveal), then the finished markdown
- * — or a `failed` status with the error message, which it rethrows.
+ * — or a `failed` status with the error message, which it rethrows. Resolves
+ * with the markdown (existing contract) after recording the model that served
+ * the call on the part row (provenance arc, docs/17 row 93).
  */
 export async function generatePart(
   moduleId: Id,
@@ -1309,10 +1333,39 @@ export async function generatePart(
     return patchModule(moduleId, { parts });
   };
 
-  await setPart({ planIndex, markdown: '', status: 'generating', errorMessage: '', edited: false });
+  // The part being replaced carries its own provenance; a write that cannot
+  // observe its serving model must not BLANK an id that was already recorded
+  // (`partWriterModelFor`) — the mirror of the hand-edit rule below.
+  const previousWriterModel = module.parts.find(
+    (entry): boolean => entry.planIndex === planIndex,
+  )?.writerModel;
+  // PROVENANCE (docs/17 row 93): every row this seam writes carries the model
+  // that served the call. The `generating`/`pending`/`failed` slots carry the
+  // PREVIOUS id (they hold no new text), the `ready` slot carries the model
+  // that actually wrote the markdown — a repair/rewrite escalation to the
+  // fallback model is recorded as the fallback, never the configured model.
+  const carriedWriterModel = partWriterModelFor('', previousWriterModel);
+
+  await setPart({
+    planIndex,
+    markdown: '',
+    status: 'generating',
+    errorMessage: '',
+    edited: false,
+    writerModel: carriedWriterModel,
+  });
 
   try {
-    const markdown = await partCall(module, spine, plan, planIndex, campaign, model, options);
+    const called: { markdown: string; modelUsed: string } = await partCall(
+      module,
+      spine,
+      plan,
+      planIndex,
+      campaign,
+      model,
+      options,
+    );
+    const markdown: string = called.markdown;
     // Escape-debris hygiene backstop (18-ARCHITECTURE seam): generated part
     // prose is already-decoded stored text — a `?xx` tail or literal
     // `\uXXXX` in it is mangled output, never content. The part fails with
@@ -1323,10 +1376,24 @@ export async function generatePart(
       const debrisMessage =
         `Part text contains escape debris (${debrisIssues.join('; ')}) — ` +
         'half-formed unicode escape in generated prose; refusing to persist. Retry the part.';
-      await setPart({ planIndex, markdown: '', status: 'failed', errorMessage: debrisMessage, edited: false });
+      await setPart({
+        planIndex,
+        markdown: '',
+        status: 'failed',
+        errorMessage: debrisMessage,
+        edited: false,
+        writerModel: carriedWriterModel,
+      });
       throw new Error(debrisMessage);
     }
-    await setPart({ planIndex, markdown, status: 'ready', errorMessage: '', edited: false });
+    await setPart({
+      planIndex,
+      markdown,
+      status: 'ready',
+      errorMessage: '',
+      edited: false,
+      writerModel: partWriterModelFor(called.modelUsed, previousWriterModel),
+    });
     // LINKS hook: generated part prose reuses established names exactly —
     // second-module wikilink uses promote to shared campaign ownership.
     await promoteSecondModuleUses(moduleId, [markdown]);
@@ -1340,11 +1407,19 @@ export async function generatePart(
         status: 'pending',
         errorMessage: 'Cancelled',
         edited: false,
+        writerModel: carriedWriterModel,
       });
       throw error;
     }
     const message = errorMessage(error);
-    await setPart({ planIndex, markdown: '', status: 'failed', errorMessage: message, edited: false });
+    await setPart({
+      planIndex,
+      markdown: '',
+      status: 'failed',
+      errorMessage: message,
+      edited: false,
+      writerModel: carriedWriterModel,
+    });
     throw error;
   }
 }
@@ -1378,7 +1453,7 @@ async function partCall(
   campaign: Campaign,
   model: string,
   options: PartCallOptions,
-): Promise<string> {
+): Promise<{ markdown: string; modelUsed: string }> {
   const previousPart =
     planIndex === 0
       ? null
@@ -1486,7 +1561,7 @@ async function partCall(
   // a failure (retry once, then the part fails); network errors fail
   // directly.
   const settings = await getSettings();
-  const { text: raw } = await chat(messages, {
+  const first = await chat(messages, {
     model,
     temperature: 0.8,
     reasoningEffort: settings.defaultReasoningEffort,
@@ -1496,11 +1571,12 @@ async function partCall(
     onActivity: options.onActivity,
   });
   try {
-    return normalizePartMarkdown(raw);
+    return { markdown: normalizePartMarkdown(first.text), modelUsed: first.modelUsed };
   } catch {
     // Contract repair escalates to the fallback model: a too-short reply is
-    // usually a capability weakness of the first-try model.
-    const { text: retry } = await chat(
+    // usually a capability weakness of the first-try model. It WROTE the
+    // markdown that lands, so its own `modelUsed` is the part's provenance.
+    const retry = await chat(
       [
         ...messages,
         { role: 'user', content: 'Your previous reply was too short. Write the full part now.' },
@@ -1513,7 +1589,7 @@ async function partCall(
         onActivity: options.onActivity,
       },
     );
-    return normalizePartMarkdown(retry);
+    return { markdown: normalizePartMarkdown(retry.text), modelUsed: retry.modelUsed };
   }
 }
 

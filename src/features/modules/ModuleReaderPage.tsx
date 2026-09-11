@@ -20,6 +20,7 @@ import {
 import { artifactPath, battlePath, boardPath, canvasChatPath, canvasPath, modulesPath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { WriterModelId } from '@/components/writer-model-id';
 import {
   Dialog,
   DialogContent,
@@ -578,6 +579,7 @@ export function ModuleReaderPage(): JSX.Element {
               <section id="module-intro" className="mb-10">
                 <IntroBlock
                   premise={module.spine.premise}
+                  writerModel={module.spine.writerModel}
                   artifacts={readerArtifacts}
                   moduleId={module.id}
                   onOpenArtifact={openArtifact}
@@ -827,15 +829,21 @@ function ModuleTitleInput({ module }: { module: Module }): JSX.Element {
 
 /** The premise's markdown tree — memoized on its real inputs (`premise`,
  * `artifacts`, `moduleId` and the two stable callbacks), so a page state
- * change does not re-parse the intro either. */
+ * change does not re-parse the intro either.
+ *
+ * PROVENANCE (docs/17 row 93): the PREMISE's writing model renders under it,
+ * small and muted — the module half of the owner's request. `''` (a module
+ * written before the field, or a hand-written premise) renders nothing. */
 const IntroBlock = memo(function IntroBlock({
   premise,
+  writerModel,
   artifacts,
   moduleId,
   onOpenArtifact,
   onStub,
 }: {
   premise: string;
+  writerModel: string;
   artifacts: readonly AnyArtifact[];
   moduleId: Id;
   onOpenArtifact: (artifact: AnyArtifact) => void;
@@ -853,6 +861,7 @@ const IntroBlock = memo(function IntroBlock({
         onOpenArtifact={onOpenArtifact}
         onStub={onStub}
       />
+      <WriterModelId model={writerModel} testId="premise-writer-model" />
     </div>
   );
 });
@@ -1003,6 +1012,10 @@ const PartBody = memo(function PartBody({
         onOpenArtifact={onOpenArtifact}
         onStub={onStub}
       />
+      {/* PROVENANCE (docs/17 row 93): the part's writing model, under the
+          passage it wrote — a chat-applied rewrite records the chat model (the
+          last writer); a hand edit KEEPS the id. Nothing recorded → nothing. */}
+      <WriterModelId model={part.writerModel} testId="part-writer-model" />
     </div>
   );
 });

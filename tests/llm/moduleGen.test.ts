@@ -339,6 +339,12 @@ describe('runSpine', () => {
       'partPlan',
       'entities',
     ]);
+    // PROVENANCE (docs/17 row 93): `writerModel` is RECORDED by the run, never
+    // requested from the model — and because it carries `.default('')` the
+    // strict converter would make it REQUIRED, forcing the decoder to emit an
+    // invented id. It must stay out of the emitted contract (the run fills it
+    // in from `modelUsed` after the reply).
+    expect(Object.keys(spineSchema?.properties ?? {})).not.toContain('writerModel');
     expect(messages[0]?.role).toBe('system');
     expect(messages[0]?.content).toContain('Module Architect');
     const userContent = messages.find((message) => message.role === 'user')?.content ?? '';
@@ -411,6 +417,68 @@ describe('entity kinds — spine record (08 §M4-C)', () => {
 });
 
 describe('runParts', () => {
+  it('records the serving model on the spine, using the REPAIR turn\u2019s model when it escalated', async () => {
+    const { campaign, moduleId } = await seedModule();
+    // First reply is prose without JSON, so the repair turn is the one whose
+    // text is parsed — the saved spine belongs to THAT model.
+    chatMock
+      .mockResolvedValueOnce({ text: 'no json here', modelUsed: 'primary/model', fallback: null })
+      .mockResolvedValueOnce({
+        text: JSON.stringify(VALID_SPINE),
+        modelUsed: 'escalated/model',
+        fallback: null,
+      })
+      // fix-01: the normalization call that follows the parsed spine.
+      .mockResolvedValueOnce({
+        text: JSON.stringify(SELF_NORMALIZATION),
+        modelUsed: 'normalizer/model',
+        fallback: null,
+      });
+
+    const saved = await runSpine(moduleId, campaign);
+
+    const models = chatMock.mock.calls.map(([, opts]) => (opts as { model: string }).model);
+    // The REQUEST went out on the configured model both turns; what differs is
+    // the model the server reports it SERVED the reply with (`modelUsed`). That
+    // gap is the whole reason the id must come from the reply — a settings (or
+    // `opts.model`) lookup would name the model we asked, not the writer.
+    expect(models).toEqual([TEST_MODEL, TEST_MODEL, TEST_MODEL]);
+    // PROVENANCE (docs/17 row 93): the recorded id is the model that actually
+    // wrote the premise — never the requested/configured model, and never the
+    // later normalization turn's model either.
+    expect(saved.spine?.writerModel).toBe('escalated/model');
+    expect(saved.spine?.writerModel).not.toBe(TEST_MODEL);
+    expect((await getModule(moduleId))?.spine?.writerModel).toBe('escalated/model');
+  }, 20000);
+
+  it('records each part\u2019s own serving model, including a too-short repair turn', async () => {
+    const { campaign, moduleId } = await seedModule();
+    await seedSpine(moduleId);
+    chatMock
+      .mockResolvedValueOnce({ text: 'The bell rings at midnight.', modelUsed: 'short/model', fallback: null }) // too short
+      .mockResolvedValueOnce({
+        text: 'PART-ONE-RETRY: the tide withdraws and the streets shine wet. '.repeat(3),
+        modelUsed: 'repair/model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce({
+        text: 'PART-TWO: the cathedral drowns slowly beneath the harbor. '.repeat(3),
+        modelUsed: 'second/model',
+        fallback: null,
+      })
+      .mockResolvedValueOnce(encounterReply('Ember Trial'));
+
+    const finished = await runParts(moduleId, campaign, { planIndexes: [0, 1] });
+
+    const first = finished.parts.find((part) => part.planIndex === 0);
+    const second = finished.parts.find((part) => part.planIndex === 1);
+    // The retried part records the model that produced the text that shipped.
+    expect(first?.markdown).toContain('PART-ONE-RETRY');
+    expect(first?.writerModel).toBe('repair/model');
+    // Each part records ITS OWN model, never the module's or its neighbour's.
+    expect(second?.writerModel).toBe('second/model');
+  }, 20000);
+
   it('generates parts sequentially, feeding part i the current text of part i−1', async () => {
     const { campaign, moduleId } = await seedModule();
     await seedSpine(moduleId);

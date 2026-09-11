@@ -23,6 +23,7 @@ export * from '@/domain/mobPortrait';
 export * from '@/domain/pdf';
 export * from '@/domain/persona';
 export * from '@/domain/promptStyle';
+export * from '@/domain/provenance';
 export * from '@/domain/rulebook';
 export * from '@/domain/run';
 export * from '@/domain/settings';

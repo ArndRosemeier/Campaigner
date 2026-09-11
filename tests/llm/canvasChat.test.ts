@@ -802,7 +802,9 @@ describe('sendCanvasChatMessage (engine)', () => {
     }
     await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(ModuleBusyError);
     releaseFirst();
-    await expect(refine).resolves.toBe('first');
+    // The refine seam now reports its serving model alongside the replacement
+    // (PROVENANCE, docs/17 row 93) — the shape is pinned, not just the text.
+    await expect(refine).resolves.toMatchObject({ replacement: 'first', modelUsed: 'm' });
     // After release, a chat turn goes through.
     await expect(sendCanvasChatMessage(baseInput())).resolves.toMatchObject({ modelUsed: 'm' });
   });

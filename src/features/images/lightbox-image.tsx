@@ -1,7 +1,9 @@
 import type { JSX } from 'react';
 
 import type { Id } from '@/domain';
+import { WriterModelId } from '@/components/writer-model-id';
 import { cn } from '@/lib/utils';
+import { useImageModel } from '@/features/images/use-image-model';
 import { useImageUrl } from '@/features/images/use-image-url';
 
 /**
@@ -17,6 +19,12 @@ import { useImageUrl } from '@/features/images/use-image-url';
  * shrink, so capping with them renders a generated 1024×1024 image at half a
  * 2560px screen. The default here stays the bounded-embed fit
  * (`max-h-full w-auto`); the `className` overrides the size classes.
+ *
+ * PROVENANCE (docs/17 row 93): "a small id below images indicating the image
+ * model". The caption is a SIBLING of the img, never a wrapper: the fill-
+ * viewport contract above is about the img's own box, so wrapping it would
+ * break every caller that hands in `h-[calc(100dvh-…)] w-full`. An upload —
+ * or any row with no recorded model — renders NOTHING.
  */
 export function LightboxImage({
   imageId,
@@ -26,12 +34,16 @@ export function LightboxImage({
   className?: string;
 }): JSX.Element | null {
   const url = useImageUrl(imageId);
+  const imageModel = useImageModel(imageId);
   if (url === null) return null;
   return (
-    <img
-      src={url}
-      alt="Artifact image, large view"
-      className={cn('max-h-full w-auto self-center rounded-md border object-contain', className)}
-    />
+    <>
+      <img
+        src={url}
+        alt="Artifact image, large view"
+        className={cn('max-h-full w-auto self-center rounded-md border object-contain', className)}
+      />
+      <WriterModelId model={imageModel} testId="lightbox-image-model" label="Image model" />
+    </>
   );
 }

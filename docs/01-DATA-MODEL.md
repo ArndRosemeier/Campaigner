@@ -55,6 +55,7 @@ interface ArtifactBase extends BaseEntity {
   currentRevision: number;
   imageIds: Id[];
   coverImageId: Id | null;
+  writerModel: string;          // PROVENANCE (docs/17 row 93): who wrote this text
 }
 type ArtifactKind = 'pc' | 'npc' | 'location' | 'event' | 'faction' |
   'note' | 'encounter' | 'plotarc';
@@ -65,6 +66,27 @@ interface ArtifactLink {
   relation: string;
 }
 ```
+
+**`writerModel` — which model wrote this text (owner request, docs/17 row
+93).** Additive `.default('')`, parse-on-read, **no Dexie version bump** (the
+`coverImageId` / `promptStyle` precedent). The value is the model the SERVER
+reported serving the call that produced the text (`chat()`'s `modelUsed`),
+recorded at the write seam — never a settings lookup, which would name the
+model we ASKED for and mislabel the text after any fallback escalation
+(docs/18 §4). The three owner decisions that define it:
+
+- **`''` means NOT RECORDED, and that displays as NOTHING.** Text written
+  before the field existed keeps an empty id forever; nothing is ever
+  backfilled or guessed from the settings of the day.
+- **A hand edit KEEPS the id** (`ArtifactPatch.writerModel` is optional and an
+  omitted key means "carry" — only the writers that actually author text set
+  it), so the id keeps answering "which model wrote this" after the owner
+  edits a passage.
+- **App only**: never in an exported PDF, a deliverable, or an LLM-facing
+  contract (docs/18 §2.2/§4).
+
+Provenance is a TOP-LEVEL field and must never appear inside `data` — every
+exporter renders `data`, so putting it there would ship it.
 
 Kind-specific structured data goes in a `data` field:
 
@@ -441,6 +463,15 @@ interface StoredImage extends BaseEntity {
   source: 'generated' | 'uploaded';
 }
 ```
+
+**`model` is the image half of the provenance request (docs/17 row 93).** The
+field already existed (07-MILESTONE-3 M3-A recorded which image model generated
+a blob); what the arc added is a DISPLAY surface — the same small muted caption
+as text provenance, under the image, via `useImageModel` +
+`components/writer-model-id.WriterModelId`. Same rule as the text half: `''`
+(uploads, and any generate row written before the field) means NOT RECORDED and
+renders NOTHING — never a placeholder, never the currently configured image
+model. App only, exactly like the text ids (docs/18 §4).
 
 ### StoredPdf (source-viewers arc, 2026-09-05)
 

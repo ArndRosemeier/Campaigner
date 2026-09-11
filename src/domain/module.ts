@@ -64,6 +64,19 @@ export const moduleSpineSchema = z.object({
   premise: z.string(),
   themes: z.array(z.string()).default([]),
   partPlan: z.array(partPlanSchema).min(1).max(20),
+  /**
+   * PROVENANCE (provenance arc, docs/17 row 93): the model that wrote this
+   * spine's premise — the `modelUsed` of the serving spine call (the
+   * contract-repair retry and the floor-repair retry escalate to the fallback
+   * model, so the recorded value is whichever call's text actually landed).
+   *
+   * Additive `.default('')` — parse-on-read, NO Dexie version. `''` = NOT
+   * RECORDED (every module written before the field; a hand-written premise)
+   * and displays as NOTHING — never invented from the current settings. The
+   * reader shows it below the premise; a hand edit of the premise keeps it
+   * (the field answers "which model wrote this").
+   */
+  writerModel: z.string().default(''),
 });
 
 export type ModuleSpine = z.infer<typeof moduleSpineSchema>;
@@ -78,6 +91,22 @@ export const modulePartSchema = z.object({
   /** True once the user hand-edited the part after generation (08 §M4-B:
    * rewrite then confirms before overwriting). */
   edited: z.boolean(),
+  /**
+   * PROVENANCE (provenance arc, docs/17 row 93): the model that wrote THIS
+   * part's markdown — the `modelUsed` of the serving parts call (generation,
+   * missing-part fill, a single-part rewrite, the in-pass floor repair or the
+   * board rewrite; the repair and rewrite passes escalate to the fallback
+   * model, so the recorded value is whichever call actually wrote the text).
+   * A chat-applied rewrite writes the CHAT model (the last writer).
+   *
+   * Additive `.default('')` — parse-on-read, NO Dexie version. `''` = NOT
+   * RECORDED (parts written before the field; a part whose call genuinely
+   * produced no model) and displays as NOTHING. A HAND EDIT KEEPS the value:
+   * the field answers "which model wrote this", and the owner's edits must not
+   * erase the provenance of the text they edited. Never derived from settings
+   * and never backfilled (docs/18 §2.2, §4).
+   */
+  writerModel: z.string().default(''),
 });
 
 export type ModulePart = z.infer<typeof modulePartSchema>;

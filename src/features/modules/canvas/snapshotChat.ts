@@ -397,6 +397,10 @@ export async function runSnapshotChatTurn(
           // Durable pre-change snapshot (docs/18 §2.3): preview-applied chat
           // edits have no CM history, so the snapshot is their undo.
           version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
+          // PROVENANCE (docs/17 row 93): the chat model that wrote the applied
+          // text — the SAME rule as the edit-mode controller (the preview path
+          // persists through the one split-save).
+          writerModel: result.modelUsed,
         });
       }
     }

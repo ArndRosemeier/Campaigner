@@ -141,6 +141,21 @@ const artifactBaseShape = {
   imageIds: z.array(z.uuid()).default([]),
   /** The artifact's cover image (thumbnail in tree/PDF), or null. */
   coverImageId: z.uuid().nullable().default(null),
+  /**
+   * PROVENANCE (provenance arc, docs/17 row 93): the model that WROTE this
+   * artifact's text — the `modelUsed` of the chat call that served the write,
+   * never a settings lookup (a fallback-served step was written by a
+   * different model than the configured one; docs/18 §4).
+   *
+   * Additive `.default('')` — parse-on-read, NO Dexie version. `''` means NOT
+   * RECORDED (every row written before the field, every hand-authored row,
+   * every deterministic/seed row) and displays as NOTHING. It is never
+   * backfilled, guessed or derived from current settings, and a HAND EDIT
+   * keeps it: the field answers "which model wrote this", so the owner's own
+   * edits must not erase the provenance of the text they edited
+   * (docs/01 §Artifact, docs/18 §2.2).
+   */
+  writerModel: z.string().default(''),
 };
 
 /** Fields shared by every artifact kind. */
@@ -161,6 +176,9 @@ export interface ArtifactBase extends BaseEntity {
   imageIds: Id[];
   /** The artifact's cover image, or null (M3-A). */
   coverImageId: Id | null;
+  /** The model that wrote this artifact's text; `''` = not recorded (see
+   * `artifactBaseShape.writerModel`). */
+  writerModel: string;
 }
 
 // --- Kind-specific structured data -----------------------------------------
@@ -724,6 +742,14 @@ export interface ArtifactPatch {
    * deleted by the repo when the last reference goes away. */
   imageIds?: Id[];
   coverImageId?: Id | null;
+  /**
+   * PROVENANCE (docs/17 row 93): set it ONLY when the patch itself writes
+   * model-authored text — the model that wrote it. Omitting the key LEAVES
+   * the recorded id alone, which is what makes a hand edit (the artifact
+   * editor's autosave, a name/alias fix, an image attach) keep the
+   * provenance of the text it did not write.
+   */
+  writerModel?: string;
   /** M6-B/C scope moves: adopt into a campaign / publish to the library. */
   campaignId?: Id | null;
   moduleId?: Id | null;

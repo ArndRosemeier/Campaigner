@@ -257,6 +257,11 @@ describe('canvas chat sidebar (page flows)', () => {
       PART_0_TEXT.replace('Rain hammers the stones.', 'Rain drowns every word.'),
     );
     expect(row?.parts[0]?.edited).toBe(true);
+    // PROVENANCE (docs/17 row 93): the applied passage is attributed to the
+    // model that SERVED this chat turn (`modelUsed`), recorded through the
+    // split-save — never a settings lookup, which would name the model the
+    // settings asked for rather than the one that wrote the text.
+    expect(row?.parts[0]?.writerModel).toBe('test-model');
     const ledger = useCanvasLedgerStore.getState().byPart[canvasLedgerKey(world.moduleId, 0)];
     expect(ledger?.versions).toHaveLength(1);
     expect(ledger?.versions[0]?.origin).toBe('ai');

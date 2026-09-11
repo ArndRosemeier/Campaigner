@@ -2,8 +2,10 @@ import type { JSX } from 'react';
 import { RefreshCwIcon, SparklesIcon } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import type { Campaign, Module } from '@/domain';
+import { WriterModelId } from '@/components/writer-model-id';
+import type { Campaign, Id, Module } from '@/domain';
 import { getSettings } from '@/db/settingsRepo';
+import { useImageModel } from '@/features/images/use-image-model';
 import { useImageUrl } from '@/features/images/use-image-url';
 import {
   enqueueCampaignCover,
@@ -32,6 +34,8 @@ import { toastError } from '@/lib/toast';
 export function ModuleCoverThumb({ module }: { module: Module }): JSX.Element | null {
   const url = useImageUrl(module.coverImageId);
   if (url === null) return null;
+  // No caption here: a 40px row thumb cannot render a model id legibly, and
+  // the reader's hero shows the same cover with it (provenance arc decision).
   return (
     <img
       src={url}
@@ -42,17 +46,32 @@ export function ModuleCoverThumb({ module }: { module: Module }): JSX.Element | 
   );
 }
 
+/**
+ * PROVENANCE (docs/17 row 93): "a small id below images indicating the image
+ * model" — the caption for a cover slot, resolved from the SAME
+ * `useImageUrl` boundary every cover display already uses (one live query per
+ * row, no new plumbing). `''`/missing renders NOTHING: an upload, or a cover
+ * generated before the field, shows no id.
+ */
+function CoverModelCaption({ imageId, testId }: { imageId: Id | null; testId: string }): JSX.Element | null {
+  const model = useImageModel(imageId);
+  return <WriterModelId model={model} testId={testId} label="Image model" />;
+}
+
 /** Wide header hero for a module (ModuleReaderPage). Null without art. */
 export function ModuleCoverHero({ module }: { module: Module }): JSX.Element | null {
   const url = useImageUrl(module.coverImageId);
   if (url === null) return null;
   return (
-    <img
-      src={url}
-      alt={`Cover art for ${module.title}`}
-      className="h-48 w-full rounded-lg object-cover"
-      data-testid="module-cover-hero"
-    />
+    <figure className="mb-2">
+      <img
+        src={url}
+        alt={`Cover art for ${module.title}`}
+        className="h-48 w-full rounded-lg object-cover"
+        data-testid="module-cover-hero"
+      />
+      <CoverModelCaption imageId={module.coverImageId} testId="module-cover-hero-model" />
+    </figure>
   );
 }
 
@@ -61,12 +80,15 @@ export function CampaignCoverArt({ campaign }: { campaign: Campaign }): JSX.Elem
   const url = useImageUrl(campaign.coverImageId);
   if (url === null) return null;
   return (
-    <img
-      src={url}
-      alt={`Cover art for ${campaign.name}`}
-      className="h-32 w-full rounded-md object-cover"
-      data-testid="campaign-cover-art"
-    />
+    <figure>
+      <img
+        src={url}
+        alt={`Cover art for ${campaign.name}`}
+        className="h-32 w-full rounded-md object-cover"
+        data-testid="campaign-cover-art"
+      />
+      <CoverModelCaption imageId={campaign.coverImageId} testId="campaign-cover-art-model" />
+    </figure>
   );
 }
 

@@ -105,8 +105,12 @@ describe('canvasRefine contract', () => {
       modelUsed: 'test-model',
       fallback: null,
     });
-    const replacement = await refineModuleText(baseInput());
+    const { replacement, modelUsed } = await refineModuleText(baseInput());
     expect(replacement).toBe('The party bargains harder.');
+    // PROVENANCE (docs/17 row 93): the seam reports WHICH model served the
+    // rewrite, so the caller that saves the accepted suggestion can record it
+    // instead of guessing from settings.
+    expect(modelUsed).toBe('test-model');
 
     expect(chatMock).toHaveBeenCalledTimes(1);
     const [messages, opts] = chatMock.mock.calls[0] ?? [];
@@ -148,7 +152,7 @@ describe('canvasRefine contract', () => {
       }
       return Promise.resolve({ text: raw, modelUsed: 'm', fallback: null });
     });
-    const replacement = await refineModuleText(baseInput({ onDelta: (soFar) => deltas.push(soFar) }));
+    const { replacement } = await refineModuleText(baseInput({ onDelta: (soFar) => deltas.push(soFar) }));
     // The extractor decodes exactly ONE JSON level: the mock's replacement
     // value itself carries literal backslash escapes, which survive it.
     const settled = 'First line.\\nSecond \\"quoted\\" line.';
@@ -230,9 +234,12 @@ describe('canvasRefine contract', () => {
       ModuleBusyError,
     );
     releaseFirst({ text: JSON.stringify({ replacement: 'first' }), modelUsed: 'm', fallback: null });
-    await expect(first).resolves.toBe('first');
+    await expect(first).resolves.toMatchObject({ replacement: 'first', modelUsed: 'm' });
     // After the first settles, a third refine goes through.
-    await expect(refineModuleText(baseInput({ instruction: 'third try' }))).resolves.toBe('second');
+    await expect(refineModuleText(baseInput({ instruction: 'third try' }))).resolves.toMatchObject({
+      replacement: 'second',
+      modelUsed: 'm',
+    });
   });
 
   it('a pre-aborted signal throws AbortError before any model call', async () => {
@@ -332,6 +339,9 @@ describe('canvasRefine row truth', () => {
       fallback: null,
     });
     expect((await getModule(world.moduleId))?.status).toBe('draft');
-    await expect(refineModuleText(baseInput())).resolves.toBe('x');
+    await expect(refineModuleText(baseInput())).resolves.toMatchObject({
+      replacement: 'x',
+      modelUsed: 'm',
+    });
   });
 });

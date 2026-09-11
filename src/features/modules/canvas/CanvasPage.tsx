@@ -295,6 +295,13 @@ export function CanvasPage(): JSX.Element {
         versionLabel: string;
         /** Toast shown once the save landed (null = no toast). */
         successMessage: string | null;
+        /**
+         * PROVENANCE (docs/17 row 93): the model that served the refine/rewrite
+         * call that produced this proposal — recorded on the parts the accept
+         * persists. `''` while a hand-typed/restored proposal has no model to
+         * name (the parts then keep the id they already carry).
+         */
+        writerModel: string;
       }
     >
   >(new Map());
@@ -534,12 +541,18 @@ export function CanvasPage(): JSX.Element {
    * (docs/18 §2.3 simple undo), so the caller passes the AI action it is
    * landing; a missing source throws inside the seam and this catch surfaces
    * it loudly with nothing written.
+   *
+   * PROVENANCE (docs/17 row 93): `writerModel` is the model that served the
+   * turn whose text this save lands. A manual Save and a restore omit it, and
+   * the parts then keep the ids they already carry — a hand edit must not
+   * erase which model wrote the text (owner decision).
    */
   async function saveDoc(
     origin: 'user' | 'ai',
     label: string,
     successMessage: string | null,
     version?: { source: ModuleVersionSource; label: string },
+    writerModel?: string,
   ): Promise<void> {
     const view = activeCanvasView.current;
     if (view === null || saving) return;
@@ -553,6 +566,7 @@ export function CanvasPage(): JSX.Element {
         origin,
         label,
         ...(version === undefined ? {} : { version }),
+        ...(writerModel === undefined || writerModel === '' ? {} : { writerModel }),
       });
       setBaselineDoc(doc);
       if (successMessage !== null && result.failedParts.length === 0) {
@@ -638,6 +652,9 @@ export function CanvasPage(): JSX.Element {
       versionSource: isSelection ? 'refine' : 'rewrite',
       versionLabel: proposalLabel,
       successMessage: isSelection ? 'Proposal applied' : 'Rewrite applied',
+      // Filled in when the turn settles with the model that served it (the
+      // pending proposal is created before the call).
+      writerModel: '',
     });
     proposeSuggestion(view, {
       id,
@@ -662,7 +679,7 @@ export function CanvasPage(): JSX.Element {
     };
     void (async () => {
       try {
-        const replacement = await refineModuleText({
+        const refined = await refineModuleText({
           moduleId: currentModule.id,
           scope: target,
           instruction: instructionText,
@@ -677,7 +694,13 @@ export function CanvasPage(): JSX.Element {
         });
         sealed = true;
         if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
-        sealSuggestionText(view, id, replacement);
+        // PROVENANCE (docs/17 row 93): the turn is settled, so the accepting
+        // save can stamp the model that actually wrote this replacement. The
+        // meta was created before the call (the pending proposal needs it);
+        // the id lands here, before any accept can read it.
+        const meta = proposalsRef.current.get(id);
+        if (meta !== undefined) meta.writerModel = refined.modelUsed;
+        sealSuggestionText(view, id, refined.replacement);
       } catch (error) {
         sealed = true;
         if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
@@ -724,6 +747,11 @@ export function CanvasPage(): JSX.Element {
         source: meta?.versionSource ?? 'chat',
         label: meta?.versionLabel ?? meta?.ledgerLabel ?? 'AI proposal',
       },
+      // PROVENANCE (docs/17 row 93): the refine/rewrite call's own model, so
+      // an accepted proposal is attributed to the model that wrote it — even
+      // when an escalation served the turn. A restore's meta carries `''`
+      // (no model ran), which is what keeps the existing ids.
+      meta?.writerModel,
     );
     syncSuggestions();
   }
@@ -769,6 +797,10 @@ export function CanvasPage(): JSX.Element {
       versionSource: 'restore',
       versionLabel: label,
       successMessage: 'Version restored',
+      // A RESTORE lands text a model already wrote: no model ran for this
+      // save, so the parts keep the ids they carry (provenance is never
+      // invented and never erased by a restore).
+      writerModel: '',
     });
     proposeSuggestion(view, {
       id,
@@ -827,6 +859,9 @@ export function CanvasPage(): JSX.Element {
       // means nothing in the durable stack).
       versionLabel: `Restore from ${new Date(entry.createdAt).toLocaleString()}`,
       successMessage: 'Version restored',
+      // Same rule as the durable restore above: no model ran, the recorded
+      // ids stay.
+      writerModel: '',
     });
     proposeSuggestion(view, {
       id,

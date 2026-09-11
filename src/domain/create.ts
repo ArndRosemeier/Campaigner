@@ -128,6 +128,13 @@ export interface CreateArtifactInput<K extends ArtifactKind = ArtifactKind> {
   imageIds?: readonly Id[];
   coverImageId?: Id | null;
   data?: ArtifactData;
+  /**
+   * The model that WROTE this artifact's text (provenance arc): the
+   * `modelUsed` the serving `chat()` call returned. Omitted/`''` = not
+   * recorded — a seed, an upload, a stub, a hand-authored row. NEVER a
+   * settings lookup and never backfilled (docs/18 §2.2).
+   */
+  writerModel?: string;
 }
 
 export function createArtifact(input: CreateArtifactInput<'pc'>): PcArtifact;
@@ -153,6 +160,7 @@ export function createArtifact(input: CreateArtifactInput): Artifact {
     currentRevision: 1,
     imageIds: [...(input.imageIds ?? [])],
     coverImageId: input.coverImageId ?? null,
+    writerModel: input.writerModel ?? '',
     data: input.data ?? blankArtifactData(input.kind),
   };
   // Parse instead of casting: guarantees every artifact entering the DB

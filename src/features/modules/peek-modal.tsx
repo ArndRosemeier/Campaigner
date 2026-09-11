@@ -11,7 +11,9 @@ import type { AnyArtifact, Id } from '@/domain';
 import { NpcCard, EncounterCard, Portrait } from '@/features/play/artifact-cards';
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { ZoomableImage } from '@/features/images/zoomable-image';
+import { useImageModel } from '@/features/images/use-image-model';
 import { useImageUrl } from '@/features/images/use-image-url';
+import { WriterModelId } from '@/components/writer-model-id';
 
 /**
  * Peek modal (08-MODULE-DESIGNER M4-A): renders the read-only artifact card
@@ -191,6 +193,10 @@ export function PeekModal({
  * image) shown UNCROPPED — the full picture fitted into the card's width,
  * capped in height so tall images don't push the text out of view. Click
  * opens the true fullscreen viewer. Absent when the entity has no image.
+ *
+ * PROVENANCE (docs/17 row 93): the image's own model id sits under the
+ * banner — the image half of the owner's request. An upload (or any row with
+ * no recorded model) renders NOTHING.
  */
 function PeekImage({
   artifact,
@@ -202,23 +208,32 @@ function PeekImage({
   const firstImageId = artifact.imageIds.at(0) ?? null;
   const imageId = artifact.coverImageId ?? firstImageId;
   const url = useImageUrl(imageId);
+  const imageModel = useImageModel(imageId);
   if (imageId === null || url === null) return null;
   return (
-    <button
-      type="button"
-      className="mb-2 block w-full cursor-zoom-in"
-      aria-label={`Show ${artifact.name}'s image full screen`}
-      data-testid="peek-image"
-      onClick={() => {
-        onFullscreen(imageId);
-      }}
-    >
-      <img
-        src={url}
-        alt={`Image of ${artifact.name}`}
-        className="max-h-72 w-full rounded-md border object-contain"
+    <figure className="mb-2">
+      <button
+        type="button"
+        className="block w-full cursor-zoom-in"
+        aria-label={`Show ${artifact.name}'s image full screen`}
+        data-testid="peek-image"
+        onClick={() => {
+          onFullscreen(imageId);
+        }}
+      >
+        <img
+          src={url}
+          alt={`Image of ${artifact.name}`}
+          className="max-h-72 w-full rounded-md border object-contain"
+        />
+      </button>
+      <WriterModelId
+        model={imageModel}
+        testId="peek-image-model"
+        label="Image model"
+        className="mt-0.5 text-center"
       />
-    </button>
+    </figure>
   );
 }
 
@@ -233,10 +248,10 @@ function PeekBody({
   onOpenArtifact: (artifact: AnyArtifact) => void;
 }): JSX.Element {
   if (artifact.kind === 'npc') {
-    return <NpcCard npc={artifact} />;
+    return <NpcCard npc={artifact} showWriterModel />;
   }
   if (artifact.kind === 'encounter') {
-    return <EncounterCard encounter={artifact} />;
+    return <EncounterCard encounter={artifact} showWriterModel />;
   }
   return (
     <div className="flex flex-col gap-2" data-testid="peek-body">
@@ -258,6 +273,10 @@ function PeekBody({
           <WikiMarkdown value={artifact.body} artifacts={artifacts} onOpenArtifact={onOpenArtifact} />
         </div>
       )}
+      {/* PROVENANCE (docs/17 row 93): the entity card's text carries the model
+          that wrote it, small and muted, under the text. Nothing recorded →
+          nothing rendered (never a settings-derived guess). */}
+      <WriterModelId model={artifact.writerModel} testId="peek-writer-model" />
     </div>
   );
 }

@@ -56,6 +56,14 @@ export async function saveWholeModuleDocument(input: {
    * which is why this carries its own label rather than reusing `label`.
    */
   version?: { source: ModuleVersionSource; label: string } | undefined;
+  /**
+   * PROVENANCE (docs/17 row 93): the model that served the AI turn whose
+   * commands this save is landing — the CHAT model, because it wrote the text
+   * now on the row (the last writer). Omitted by a `'user'` save (manual
+   * typing / manual Save) and by a restore, where the parts KEEP the id they
+   * already carry — a hand edit never erases provenance.
+   */
+  writerModel?: string | undefined;
 }): Promise<SaveWholeDocResult> {
   if (input.origin === 'ai') {
     if (input.version === undefined) {
@@ -72,7 +80,7 @@ export async function saveWholeModuleDocument(input: {
     const rowPart = input.module.parts.find((part) => part.planIndex === section.planIndex);
     if ((rowPart?.markdown ?? '') === section.text) continue; // unchanged — no write
     try {
-      await saveModulePartText(input.moduleId, section.planIndex, section.text);
+      await saveModulePartText(input.moduleId, section.planIndex, section.text, input.writerModel);
       useCanvasLedgerStore.getState().append(canvasLedgerKey(input.moduleId, section.planIndex), {
         markdown: section.text,
         origin: input.origin,

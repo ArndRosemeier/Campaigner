@@ -28,6 +28,15 @@ interface StoredImage extends BaseEntity {
 // table: images: 'id, campaignId'
 ```
 
+**The `model` field now has a DISPLAY surface** (provenance arc, docs/17 row
+93): the same small muted caption the text half uses renders the image model
+under the image in the lightbox, the entity card's image banner, the module
+cover hero and the campaign cover art (`features/images/use-image-model.ts` +
+`components/writer-model-id.WriterModelId`; the details are in docs/05
+§Provenance captions). The field itself is unchanged — no schema edit, no
+migration — and `''` (uploads, and any row written before) shows NOTHING. The
+caption is app-only: it is never part of an exported PDF or deliverable.
+
 - `ArtifactBase` gains `imageIds: Id[]` and `coverImageId: Id | null`.
   Migration: default `[]` / `null` on all existing artifacts (upgrade fn).
 - **Revision snapshots copy the id references only** — never image data.

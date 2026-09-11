@@ -813,6 +813,18 @@ describe('runEngine', () => {
       responseFormat?: { jsonSchema?: { properties?: Record<string, unknown> } };
     }).responseFormat?.jsonSchema;
     expect(statblockSchema?.properties?.extras).toBeUndefined();
+    // PROVENANCE (docs/17 row 93): the draft contract the MODEL is asked to
+    // fill carries no `writerModel` — the run records which model served the
+    // reply, it never asks the model to name itself (and a `.default('')`
+    // field would come out REQUIRED in the strict subset, forcing an invented
+    // id). The draft contract is a separate schema from the artifact row for
+    // exactly this reason; this pins that they never get merged.
+    const draftSchema = (chatMock.mock.calls[0]?.[1] as {
+      responseFormat?: { jsonSchema?: { properties?: Record<string, unknown> } };
+    }).responseFormat?.jsonSchema;
+    expect(draftSchema?.properties).toBeDefined();
+    expect(draftSchema?.properties?.writerModel).toBeUndefined();
+    expect(Object.keys(draftSchema?.properties ?? {})).not.toContain('writerModel');
   }, 20000);
 
   it('rollout: the continuity check step sends its strict json_schema responseFormat', async () => {    const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
