@@ -234,7 +234,12 @@ The never-mentioned report gained a destructive sibling (08-MODULE-DESIGNER
 §M4-C "Orphaned entities"): the module reader's entity panel tags its
 MODULE-owned rows with zero resolving mentions in THIS module's prose
 ("Orphaned (unmentioned)" — the disambiguated term, 00-OVERVIEW) and offers a
-GUARDED delete. The delete gate is the campaign-wide version of this spec's
+GUARDED delete. The OFFER is guard-aware and truthful (docs/17 row 92): the
+panel's read-time derivation calls the sweep's own `evaluateOrphanGuards` with
+the subset of the guard bundle its props can see, composes it with the
+refusals a sweep returned, and renders a refused row as "in use" with the
+sweep's own reason — the count, the button and the confirm name only rows a
+sweep will actually delete. The delete gate is the campaign-wide version of this spec's
 never-mentioned rule — zero resolving mentions across ALL campaign modules,
 derived via the same UNCAPPED `buildWikiGraph` call (the link-health
 report's `cap: Number.POSITIVE_INFINITY` pattern); a row another module's

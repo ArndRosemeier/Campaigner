@@ -16,6 +16,7 @@ import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
+import { sweepOrphanedArtifacts } from '@/db/orphanSweep';
 import {
   assembleModulePartsDocument,
   battleSchema,
@@ -28,8 +29,10 @@ import {
   type Artifact,
   type Battle,
   type BattleBoard,
+  type EncounterArtifactData,
   type Id,
   type Module,
+  type MonsterEntry,
 } from '@/domain';import { emptyBoard } from '@/domain/battle/board';
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { useModuleEntities } from '@/features/modules/use-module-entities';
@@ -1159,6 +1162,11 @@ describe('EntityPanel — bounded reader rail', () => {
  * the guarded delete-all + per-row trash riding the db sweep (recount in
  * one tx; guards keep with reasons). The disambiguated term ("Orphaned
  * (unmentioned)") distinguishes the tree's module-less Orphaned group.
+ *
+ * THE OFFER IS TRUTHFUL (docs/17 row 92): the destructive control counts and
+ * lists only what the deleter will delete, a guard-refused row is listed as
+ * in use with the sweep's own reason and has no trash, and a refusal a sweep
+ * returned is never offered again in this view.
  */
 describe('EntityPanel — orphaned entities', () => {
   beforeEach(clearDatabase);
@@ -1169,7 +1177,7 @@ describe('EntityPanel — orphaned entities', () => {
   afterEach(cleanup);
 
   /** A saved module whose prose mentions only the campaign-owned Mira. */
-  async function quietModule(campaignId: Id): Promise<Module> {
+  async function quietModule(campaignId: Id, premise = 'A quiet shore where [[Mira]] waits.'): Promise<Module> {
     const base = createModule({
       campaignId,
       title: 'Quiet Shore',
@@ -1180,7 +1188,7 @@ describe('EntityPanel — orphaned entities', () => {
     });
     await saveModule(base);
     const saved = await saveSpine(base.id, {
-      premise: 'A quiet shore where [[Mira]] waits.',
+      premise,
       themes: [],
       partPlan: [
         {
@@ -1476,5 +1484,171 @@ describe('EntityPanel — orphaned entities', () => {
       );
     });
     expect(await getArtifact(wraith.id)).toBeDefined();
+  });
+
+  it("shows creatures a live encounter cites as in use — no destructive control (the owner's report)", async () => {
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    // The prose stages the fight, so the encounter survives a sweep and its
+    // roster citations keep guarding the two creatures.
+    const module = await quietModule(campaign.id, 'Fight the [[Bog Ambush]].');
+    const risen = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Risen Lumberjack',
+    });
+    const bog = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Bog Lumberjack',
+    });
+    const entry = (name: string, artifactId: Id): MonsterEntry => ({
+      name,
+      count: 1,
+      notes: '',
+      treasure: '',
+      source: { type: 'npc-ref', artifactId },
+    });
+    const data: EncounterArtifactData = {
+      difficulty: '',
+      levelHint: '',
+      monsters: [
+        entry('Risen Lumberjack', risen.id),
+        entry('Bog Lumberjack', bog.id),
+      ],
+      terrain: '',
+      tactics: '',
+      treasure: '',
+      mapImageId: null,
+      layout: null,
+      preset: 'standard',
+      locationKind: 'other',
+      siteShape: 'single',
+      budgetAdvisory: '',
+    };
+    const encounter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'encounter',
+      name: 'Bog Ambush',
+      data,
+    });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    render(orphanPanel(module, campaign, [mira, risen, bog, encounter]));
+
+    // The group lists both rows as IN USE with the sweep's own reason, and
+    // there is no destructive control at all: nothing here can be deleted.
+    const group = screen.getByTestId('orphaned-group');
+    expect(group).toHaveTextContent('Orphaned (unmentioned) · 2');
+    expect(screen.queryByTestId('orphan-delete-all')).not.toBeInTheDocument();
+    expect(within(group).queryByTestId('orphan-delete')).not.toBeInTheDocument();
+    const rows = within(group).getAllByTestId('orphan-row');
+    expect(rows.map((row) => row.getAttribute('data-name'))).toEqual([
+      'Bog Lumberjack',
+      'Risen Lumberjack',
+    ]);
+    expect(rows.every((row) => row.getAttribute('data-in-use') === 'true')).toBe(true);
+    const reasons = within(group)
+      .getAllByTestId('orphan-in-use-reason')
+      .map((node) => node.textContent);
+    expect(reasons).toEqual([
+      'in use — roster entry "Bog Lumberjack" of the encounter "Bog Ambush"',
+      'in use — roster entry "Risen Lumberjack" of the encounter "Bog Ambush"',
+    ]);
+    // Both rows are still adoptable (the row is module-owned) — the removal
+    // of the offer must not remove the row's other affordances.
+    expect(within(group).getAllByTestId('entity-adopt')).toHaveLength(2);
+    await flushAsyncUpdates();
+  });
+
+  it('never offers a refused row again, and the count matches the following sweep', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const module = await quietModule(campaign.id);
+    const other = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'Tide Gate',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    const wraith = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Lonely Wraith',
+    });
+    const winter = await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'plotarc',
+      name: 'The Long Winter',
+    });
+    // The token lives on another module's battle: the panel's props cannot
+    // see battles, so THIS row is offered once and refused by the sweep.
+    await putBattle(campaign.id, other.id, {
+      tokens: [
+        {
+          id: newId(),
+          artifactId: wraith.id,
+          label: 'Lonely Wraith',
+          x: 0.5,
+          y: 0.5,
+          visible: true,
+          scale: 1,
+          shape: 'portrait',
+          color: null,
+          currentHp: 9,
+          initiativeRoll: null,
+          initiativeBonus: 2,
+          treasure: '',
+          conditions: [],
+        },
+      ],
+    });
+    const mira = await createArtifact({ campaignId: campaign.id, kind: 'npc', name: 'Mira' });
+
+    const first = render(orphanPanel(module, campaign, [mira, wraith, winter]));
+    expect(screen.getByTestId('orphan-delete-all')).toHaveTextContent('Delete 2 orphans');
+    await user.click(screen.getByTestId('orphan-delete-all'));
+    await user.click(
+      within(screen.getByTestId('orphan-sweep-dialog')).getByTestId('orphan-sweep-confirm'),
+    );
+    await waitFor(() => {
+      expect(toastErrorMock).toHaveBeenCalledWith(
+        'Deleted 1 of 2 orphans — kept 1: "Lonely Wraith" — ' +
+          'a portrait token on the battle of "Tide Gate"',
+      );
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId('orphan-sweep-dialog')).not.toBeInTheDocument();
+    });
+    expect(await actDrained(() => getArtifact(winter.id))).toBeUndefined();
+
+    // The live pool re-fires without the deleted row — the refused one stays.
+    const remaining = await actDrained(() => listArtifactsByCampaign(campaign.id));
+    first.rerender(orphanPanel(module, campaign, remaining));
+
+    const group = screen.getByTestId('orphaned-group');
+    expect(group).toHaveTextContent('Orphaned (unmentioned) · 1');
+    expect(within(group).getByTestId('orphan-row')).toHaveAttribute('data-in-use', 'true');
+    expect(within(group).getByTestId('orphan-in-use-reason')).toHaveTextContent(
+      'in use — a portrait token on the battle of "Tide Gate"',
+    );
+    // No trash on the row, no destructive control: the offer is empty, and a
+    // following sweep deletes nothing — the count matched the deleter (the
+    // sweep still NAMES the row it refused, which is what closed the loop).
+    expect(within(group).queryByTestId('orphan-delete')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('orphan-delete-all')).not.toBeInTheDocument();
+    const outcome = await actDrained(() => sweepOrphanedArtifacts(module.id));
+    expect(outcome.deleted).toEqual([]);
+    expect(outcome.kept.map((row) => row.name)).toEqual(['Lonely Wraith']);
+    expect(await actDrained(() => getArtifact(wraith.id))).toBeDefined();
+    await flushAsyncUpdates();
   });
 });

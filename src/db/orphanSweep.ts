@@ -26,8 +26,10 @@ import { NotFoundError } from '@/lib/errors';
  * Orphan sweep (08-MODULE-DESIGNER §M4-C "Orphaned entities", 14 cross-link):
  * the GUARDED delete surface for module-owned unmentioned entities. This
  * module OWNS the orphan definition — `entity-orphans.ts` (features, read
- * time) consumes `ORPHAN_KINDS`/`orphanCandidatesOf` from here (features →
- * db, never the reverse) and mirrors the panel-side module-scope tag.
+ * time) consumes `ORPHAN_KINDS`/`orphanCandidatesOf` AND
+ * `evaluateOrphanGuards` from here (features → db, never the reverse) and
+ * mirrors the panel-side module-scope tag: the read-time deriver and the
+ * transaction deleter decide "deletable" with ONE predicate (docs/18 §2.2).
  *
  * DEFINITION (owner-ratified): an orphan is a module-owned artifact
  * (`moduleId === module.id`, kind ∈ `ORPHAN_KINDS`) with ZERO resolving
@@ -55,7 +57,10 @@ import { NotFoundError } from '@/lib/errors';
  * re-derives orphans + guards from those fresh rows — the panel's count
  * never decides what goes. Per-artifact outcomes ride the failed[]
  * convention: `deleted` N + `kept` M with reasons, rendered as ONE loud
- * toast by the caller — never silent. HARD GUARDS per artifact:
+ * toast by the caller — never silent. HARD GUARDS per artifact (ONE
+ * evaluation, `evaluateOrphanGuards` below — the same function the panel's
+ * read-time derivation calls with the subset its props can see, so the offer
+ * and the deleter can never drift; docs/17 row 92):
  * - campaign-wide mentions (also covers a mention in the module's own
  *   prose — the campaign graph contains it; the reason names the site);
  * - ambiguity shadow (belt for a race between render and confirm);
@@ -151,6 +156,199 @@ function battleReason(battle: Battle, modulesById: Map<Id, Module>, what: string
 }
 
 /**
+ * Everything the orphan guards read. The sweep assembles the FULL bundle from
+ * rows re-listed inside its transaction (recount); the panel passes the subset
+ * its EXISTING props can see (`panelOrphanGuardInput` in
+ * features/modules/entity-orphans.ts — no live query, no added props,
+ * 08 §M4-C binding). ONE evaluation, two surfaces: a read-time copy of these
+ * guards is what made the panel offer rows the deleter always refuses
+ * (docs/17 row 92).
+ */
+export interface OrphanGuardInput {
+  /** The module whose orphans are being decided. */
+  module: Module;
+  /** The modules whose prose counts as a mention (guard 1, campaign-wide). */
+  campaignModules: readonly Module[];
+  /** The reader's resolution pool: campaign rows + globals. */
+  pool: readonly AnyArtifact[];
+  /** Parsed battles of the campaign (portrait tokens + frozen seed fighters). */
+  battles: readonly Battle[];
+  /** Artifact id → the deliverable title whose outline cites it. */
+  deliverableNodeTitles: ReadonlyMap<Id, string>;
+}
+
+/** Which guard refused a candidate — the discriminator the panel reads. */
+export type OrphanGuardKind =
+  | 'campaign-mention'
+  | 'ambiguity'
+  | 'battle-token'
+  | 'seed-fighter'
+  | 'outline-node'
+  | 'encounter-roster';
+
+/** One refusal: the guard and the LOUD reason text both surfaces show verbatim. */
+export interface OrphanGuardRefusal {
+  guard: OrphanGuardKind;
+  reason: string;
+}
+
+/** One candidate's verdict: `refusal: null` = every guard passed, it is deletable. */
+export interface OrphanGuardVerdict {
+  artifact: AnyArtifact;
+  refusal: OrphanGuardRefusal | null;
+}
+
+/** The evaluation of one candidate set: verdicts + the sets the report filter reads. */
+export interface OrphanGuardEvaluation {
+  /** Per-candidate verdicts, in the candidates' own order. */
+  verdicts: OrphanGuardVerdict[];
+  /** The module-scope tag: candidate ids THIS module's prose resolves. */
+  moduleMentionedIds: ReadonlySet<Id>;
+  /** The ambiguity shadow: candidate ids a same-named entity wins the node for. */
+  shadowedIds: ReadonlySet<Id>;
+}
+
+/**
+ * THE orphan guard evaluation — the one way to decide whether a candidate is
+ * deletable. Pure: every input is a value the caller already holds.
+ *
+ * Guard order is load-bearing (it decides WHICH reason a doubly-guarded row
+ * reports) and must never be reordered: (1) campaign-wide mentions — the
+ * campaign graph CONTAINS this module's prose, so it covers both scopes;
+ * (2) the ambiguity shadow; (3) a portrait token on any campaign battle
+ * board; (4) a frozen seed-fighter row on any campaign battle; (5) a
+ * deliverable outline artifact node; (6) an encounter roster citation
+ * (`npc-ref` `artifactId` or a `rulebook` `mobArtifactId`) — applied to the
+ * SURVIVING encounters only, because an encounter this evaluation finds
+ * deletable takes its citations with it.
+ */
+export function evaluateOrphanGuards(
+  candidates: readonly AnyArtifact[],
+  input: OrphanGuardInput,
+): OrphanGuardEvaluation {
+  const { module, campaignModules, pool, battles, deliverableNodeTitles } = input;
+  const modulesById = new Map<Id, Module>(campaignModules.map((row) => [row.id, row]));
+
+  // Campaign-wide resolving mentions (uncapped — the link-health-report
+  // pattern): a row with a node anywhere is mentioned and stays.
+  const campaignGraph = buildWikiGraph(campaignModules, pool, {
+    cap: Number.POSITIVE_INFINITY,
+  });
+  const mentionedNodes = new Map<Id, WikiGraphNode>();
+  for (const node of campaignGraph.nodes) {
+    if (node.artifact !== undefined) mentionedNodes.set(node.artifact.id, node);
+  }
+  // The module-scope tag (the panel's predicate): zero resolving mentions in
+  // THIS module's prose.
+  const moduleGraph = buildWikiGraph([module], pool, { cap: Number.POSITIVE_INFINITY });
+  const moduleMentionedIds = new Set<Id>(
+    moduleGraph.nodes.filter((node) => node.artifact !== undefined).map((node) => node.key),
+  );
+  // Encounters (roster guard): every encounter of the pool — a module-owned
+  // one being cited does not exempt it, `deleteModule`'s cascade exclusion
+  // does not apply here (the module SURVIVES this sweep).
+  const encounters = pool.filter(
+    (artifact): artifact is EncounterArtifact => artifact.kind === 'encounter',
+  );
+
+  const verdicts: OrphanGuardVerdict[] = [];
+  const shadowedIds = new Set<Id>();
+
+  for (const candidate of candidates) {
+    // Guard 1 — campaign-wide mentions (covers the module's own prose).
+    const mentionNode = mentionedNodes.get(candidate.id);
+    if (mentionNode !== undefined) {
+      verdicts.push({
+        artifact: candidate,
+        refusal: {
+          guard: 'campaign-mention',
+          reason: mentionReason(mentionNode, modulesById),
+        },
+      });
+      continue;
+    }
+    // Guard 2 — ambiguity shadow (belt for the render→confirm window).
+    const resolution = resolveWikiLink(candidate.name, pool, { moduleId: module.id });
+    if (
+      resolution.status === 'ambiguous' ||
+      (resolution.artifact !== undefined && resolution.artifact.id !== candidate.id)
+    ) {
+      shadowedIds.add(candidate.id);
+      verdicts.push({
+        artifact: candidate,
+        refusal: { guard: 'ambiguity', reason: AMBIGUITY_KEEP_REASON },
+      });
+      continue;
+    }
+    // Guard 3 — a portrait token on any campaign battle board.
+    const tokenBattle = battles.find((battle) =>
+      battle.board.tokens.some((token) => token.artifactId === candidate.id),
+    );
+    if (tokenBattle !== undefined) {
+      verdicts.push({
+        artifact: candidate,
+        refusal: {
+          guard: 'battle-token',
+          reason: battleReason(tokenBattle, modulesById, 'a portrait token'),
+        },
+      });
+      continue;
+    }
+    // Guard 4 — a frozen seed-fighter row on any campaign battle.
+    const seedBattle = battles.find((battle) =>
+      battle.seedFighters.some((fighter) => fighter.id === candidate.id),
+    );
+    if (seedBattle !== undefined) {
+      verdicts.push({
+        artifact: candidate,
+        refusal: {
+          guard: 'seed-fighter',
+          reason: battleReason(seedBattle, modulesById, 'a frozen seed fighter'),
+        },
+      });
+      continue;
+    }
+    // Guard 5 — a deliverable outline node.
+    const deliverableTitle = deliverableNodeTitles.get(candidate.id);
+    if (deliverableTitle !== undefined) {
+      verdicts.push({
+        artifact: candidate,
+        refusal: {
+          guard: 'outline-node',
+          reason: `an outline node of the deliverable "${deliverableTitle}"`,
+        },
+      });
+      continue;
+    }
+    // Every structural guard passed; the roster pass below decides guard 6.
+    verdicts.push({ artifact: candidate, refusal: null });
+  }
+
+  // Guard 6 — encounter rosters, applied to the SURVIVING encounters: an
+  // encounter this evaluation finds deletable takes its citations with it.
+  // Encounters outside the candidate set survive by construction (they are
+  // mentioned or shadowed, never deletable).
+  const survivorsPassedStructural = new Set<Id>(
+    verdicts.filter((verdict) => verdict.refusal === null).map((verdict) => verdict.artifact.id),
+  );
+  const survivingEncounters = encounters.filter(
+    (encounter) => !survivorsPassedStructural.has(encounter.id),
+  );
+  for (const verdict of verdicts) {
+    if (verdict.refusal !== null) continue;
+    for (const encounter of survivingEncounters) {
+      const reason = rosterReasonFor(encounter, verdict.artifact.id);
+      if (reason !== undefined) {
+        verdict.refusal = { guard: 'encounter-roster', reason };
+        break;
+      }
+    }
+  }
+
+  return { verdicts, moduleMentionedIds, shadowedIds };
+}
+
+/**
  * Recursively collects artifact-outline node ids of one deliverable.
  *
  * ONE shared reader (exported): the sweep's guard below and the module-delete
@@ -240,29 +438,11 @@ export async function sweepOrphanedArtifacts(
       if (candidates.length === 0) return { deleted: [], kept: [] };
 
       const campaignModules = await listModulesByCampaign(module.campaignId);
-      const modulesById = new Map<Id, Module>(campaignModules.map((row) => [row.id, row]));
       // The reader's resolution pool (5b28bc2): campaign rows + globals.
       const pool: AnyArtifact[] = [
         ...(await listArtifactsByCampaign(module.campaignId)),
         ...(await listGlobalArtifacts()),
       ];
-
-      // Campaign-wide resolving mentions (uncapped — the link-health-report
-      // pattern): a row with a node anywhere is mentioned and stays.
-      const campaignGraph = buildWikiGraph(campaignModules, pool, {
-        cap: Number.POSITIVE_INFINITY,
-      });
-      const mentionedNodes = new Map<Id, WikiGraphNode>();
-      for (const node of campaignGraph.nodes) {
-        if (node.artifact !== undefined) mentionedNodes.set(node.artifact.id, node);
-      }
-      // The module-scope tag re-derived (the panel's predicate): zero
-      // resolving mentions in THIS module's prose.
-      const moduleGraph = buildWikiGraph([module], pool, { cap: Number.POSITIVE_INFINITY });
-      const moduleMentionedIds = new Set(
-        moduleGraph.nodes.filter((node) => node.artifact !== undefined).map((node) => node.key),
-      );
-
       // Battle guard carriers (parse-on-read): any battle of the campaign —
       // the module survives this sweep, so its own battles count too.
       const battles = (await db.battles.where('campaignId').equals(module.campaignId).toArray()).map(
@@ -273,105 +453,23 @@ export async function sweepOrphanedArtifacts(
       for (const deliverable of await listDeliverablesByCampaign(module.campaignId)) {
         collectArtifactNodes(deliverable.outline, deliverable.title, deliverableNodeTitles);
       }
-      // Encounters (roster guard): every campaign encounter; survivors are
-      // decided below (an encounter being deleted takes its citations with it).
-      const encounters = pool.filter(
-        (artifact): artifact is EncounterArtifact => artifact.kind === 'encounter',
-      );
 
-      /** Guard refusals by artifact id, in decision order. */
-      const kept = new Map<Id, OrphanSweepKept>();
-      /** Candidates that passed every guard and will be deleted. */
-      const deletableIds = new Set<Id>();
-      /** Candidates the ambiguity guard shadowed (the offered-set filter). */
-      const shadowedIds = new Set<Id>();
-
-      for (const candidate of candidates) {
-        // Guard 1 — campaign-wide mentions (covers the module's own prose).
-        const mentionNode = mentionedNodes.get(candidate.id);
-        if (mentionNode !== undefined) {
-          kept.set(candidate.id, {
-            id: candidate.id,
-            name: candidate.name,
-            reason: mentionReason(mentionNode, modulesById),
-          });
-          continue;
-        }
-        // Guard 2 — ambiguity shadow (belt for the render→confirm window).
-        const resolution = resolveWikiLink(candidate.name, pool, { moduleId: module.id });
-        if (
-          resolution.status === 'ambiguous' ||
-          (resolution.artifact !== undefined && resolution.artifact.id !== candidate.id)
-        ) {
-          shadowedIds.add(candidate.id);
-          kept.set(candidate.id, {
-            id: candidate.id,
-            name: candidate.name,
-            reason: AMBIGUITY_KEEP_REASON,
-          });
-          continue;
-        }
-        // Guard 3 — a portrait token on any campaign battle board.
-        const tokenBattle = battles.find((battle) =>
-          battle.board.tokens.some((token) => token.artifactId === candidate.id),
-        );
-        if (tokenBattle !== undefined) {
-          kept.set(candidate.id, {
-            id: candidate.id,
-            name: candidate.name,
-            reason: battleReason(tokenBattle, modulesById, 'a portrait token'),
-          });
-          continue;
-        }
-        // Guard 4 — a frozen seed-fighter row on any campaign battle.
-        const seedBattle = battles.find((battle) =>
-          battle.seedFighters.some((fighter) => fighter.id === candidate.id),
-        );
-        if (seedBattle !== undefined) {
-          kept.set(candidate.id, {
-            id: candidate.id,
-            name: candidate.name,
-            reason: battleReason(seedBattle, modulesById, 'a frozen seed fighter'),
-          });
-          continue;
-        }
-        // Guard 5 — a deliverable outline node.
-        const deliverableTitle = deliverableNodeTitles.get(candidate.id);
-        if (deliverableTitle !== undefined) {
-          kept.set(candidate.id, {
-            id: candidate.id,
-            name: candidate.name,
-            reason: `an outline node of the deliverable "${deliverableTitle}"`,
-          });
-          continue;
-        }
-        deletableIds.add(candidate.id);
-      }
-
-      // Guard 6 — encounter rosters, applied to the SURVIVING encounters:
-      // an encounter this sweep deletes takes its citations with it.
-      // Encounters outside the candidates survive by construction (they are
-      // mentioned or shadowed, never deletable).
-      const survivingEncounters = encounters.filter(
-        (encounter) => !deletableIds.has(encounter.id),
-      );
-      for (const candidate of candidates) {
-        if (!deletableIds.has(candidate.id)) continue;
-        for (const encounter of survivingEncounters) {
-          const reason = rosterReasonFor(encounter, candidate.id);
-          if (reason !== undefined) {
-            deletableIds.delete(candidate.id);
-            kept.set(candidate.id, { id: candidate.id, name: candidate.name, reason });
-            break;
-          }
-        }
-      }
+      // THE guard evaluation (one function, shared with the panel's read-time
+      // derivation): every guard, in its documented order, decided from the
+      // rows re-listed above — the panel's count never decides what goes.
+      const evaluation = evaluateOrphanGuards(candidates, {
+        module,
+        campaignModules,
+        pool,
+        battles,
+        deliverableNodeTitles,
+      });
 
       // Deletes: the candidates that passed every guard, via the frozen
       // `deleteArtifact` (nested — its six tables are a subset of this
-      // scope; links scrub + image refcount prune ride it).
-      for (const candidate of candidates) {
-        if (deletableIds.has(candidate.id)) await deleteArtifact(candidate.id);
+      // scope; links scrub + image refcount prune ride it). Candidate order.
+      for (const verdict of evaluation.verdicts) {
+        if (verdict.refusal === null) await deleteArtifact(verdict.artifact.id);
       }
 
       // The offered set (the panel's predicate, re-derived): module-zero AND
@@ -380,17 +478,20 @@ export async function sweepOrphanedArtifacts(
       // its reason, never a silent drop. A directly-attempted row (onlyId)
       // is always reported: when it fails the offered predicate, the guard
       // that failed (mention, shadow) is the refusal.
-      const offered = (candidate: AnyArtifact): boolean =>
-        !moduleMentionedIds.has(candidate.id) && !shadowedIds.has(candidate.id);
+      const offered = (artifact: AnyArtifact): boolean =>
+        !evaluation.moduleMentionedIds.has(artifact.id) &&
+        !evaluation.shadowedIds.has(artifact.id);
       const deleted: { id: Id; name: string }[] = [];
       const keptOut: OrphanSweepKept[] = [];
-      for (const candidate of candidates) {
-        const keptRow = kept.get(candidate.id);
-        if (keptRow === undefined) {
-          deleted.push({ id: candidate.id, name: candidate.name });
+      for (const verdict of evaluation.verdicts) {
+        const { artifact } = verdict;
+        if (verdict.refusal === null) {
+          deleted.push({ id: artifact.id, name: artifact.name });
           continue;
         }
-        if (options.onlyId !== undefined || offered(candidate)) keptOut.push(keptRow);
+        if (options.onlyId !== undefined || offered(artifact)) {
+          keptOut.push({ id: artifact.id, name: artifact.name, reason: verdict.refusal.reason });
+        }
       }
       return { deleted, kept: keptOut };
     },
