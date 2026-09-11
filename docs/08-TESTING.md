@@ -496,7 +496,16 @@ exactly the class the review was after:
 
 `pnpm lint && pnpm typecheck && pnpm test` — the test step fails on console
 noise, routes that stop mounting, and Base UI composition regressions. Vitest
-uses at most six workers and a 20-second default test timeout (raised from
-four in `b84d074` — the suite is file-parallel and was leaving half the
-machine idle; jsdom plus PDF/image workers otherwise starve event loops on
-constrained CI/agent VMs).
+uses at most TWO workers, and the config is the bound: `vite.config.ts`
+defaults `maxWorkers` to `DEFAULT_TEST_WORKERS` (2, ledger row 94) in the file
+AND in each `test.projects` entry, so a bare `pnpm exec vitest run` cannot
+exceed it and a CLI `--maxWorkers=N` cannot raise or lower it (it lands on the
+root config, which each project's own value overrides).
+`CAMPAIGNER_TEST_WORKERS=<n> pnpm exec vitest run` is the one explicit way to
+raise it for a run that owns the machine, and a mis-set value fails loudly
+rather than silently defaulting. The default test timeout is 20 seconds.
+`b84d074` had raised the old worker count from four to six (the suite is
+file-parallel and was leaving half the machine idle); row 94 superseded that
+with the bound above, after a bare unbounded run twice outlived its writer —
+and because jsdom plus PDF/image workers otherwise starve event loops on
+constrained CI/agent VMs.
