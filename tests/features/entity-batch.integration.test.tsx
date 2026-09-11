@@ -152,13 +152,15 @@ describe('entity batch — real chain persistence and live resolution', () => {
 
     render(<Harness campaign={campaign} module={module} />);
 
-    expect(await screen.findByTitle('Kael — not detailed yet')).toBeInTheDocument();
+    // The unresolved chip's tooltip leads with the byte-exact token and keeps
+    // "not detailed yet" after it (docs/17 row 100).
+    expect(await screen.findByTitle('[[Kael]] — Kael — not detailed yet')).toBeInTheDocument();
     await user.click(screen.getByTestId('batch-npc'));
     expect(await screen.findByTestId('progress-dock')).toBeInTheDocument();
 
     await waitFor(
       () => {
-        expect(screen.queryByTitle('Kael — not detailed yet')).not.toBeInTheDocument();
+        expect(screen.queryByTitle('[[Kael]] — Kael — not detailed yet')).not.toBeInTheDocument();
         expect(screen.getByTestId('wiki-chip')).toHaveAttribute('data-wiki-name', 'Kael');
       },
       { timeout: 10_000 },

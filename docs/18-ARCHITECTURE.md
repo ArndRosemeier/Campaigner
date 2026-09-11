@@ -177,7 +177,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Surface an error | `lib/toast.ts` (`toastError`/`toastErrorPersistent`), a failed run row with `errorMessage`, or the global boundary (`app/GlobalErrorBoundary` + `lib/globalErrors.installGlobalErrorHandlers`) — HUMANIZE-AT-THE-SEAM: a ZodError's `.message` is the raw `[{code,path,message}...]` array, so it is never rendered verbatim; the seam formats it via `lib/zodErrorSummary` (counted, grouped by table, first 3 + "and N more", version-skew mitigation; names never invented — issues carry no input values), keeps the leading title untouched (plain-Error copy passes byte-identical), and logs the full raw error to the console (one click away, never megabytes in the toast). Import failures append the same mitigation via `lib/exportImport.withImportMitigation`; `MissingDependenciesError.message` itself reads as numbered steps | `console.error` only (AGENTS 2); rendering `error.message` of a ZodError-shaped failure into a toast description |
 | Long-running progress | `lib/progress.useProgressStore` + the app-wide `<ProgressDock/>`; queue jobs report via `dockGroup` | a disabled button or a "Generating…" label (00-OVERVIEW, binding) |
 | State why a control cannot act | `components/blocked-control.BlockedControl` — THE one way: it wraps the control so the WRAPPER is the Tooltip trigger (a natively `disabled` form control fires no pointer events, and every shadcn Button adds `disabled:pointer-events-none`, so the control itself can never be hovered), it is focusable (`tabIndex=0`) while blocked so the reason opens on focus, and it renders the same sentence into a visually hidden node pointed at with `aria-describedby` (docs/05 §Why a control cannot act; one reason per state, naming the way out) | a `title` on the control itself (invisible in Chrome on a natively disabled control, unreachable by keyboard — docs/18 §4); a second tooltip idiom; a reason that is not true for the state that produces it; a wrapper when the block is self-evident (the label already says the state, an empty input, nothing to act on) |
-| Wiki-link handling | `lib/wikilinks.ts` (extract/strip/rewrite/resolve/count; `WIKI_LINK_PATTERN`) + `lib/remark-wikilinks.ts` → `WikiMarkdown` | a private `\[\[...\]\]` regex |
+| Wiki-link handling | `lib/wikilinks.ts` (extract/strip/rewrite/resolve/count; `WIKI_LINK_PATTERN`) + `lib/remark-wikilinks.ts` → `WikiMarkdown` — the ONE chip renderer, so every wiki-aware surface (module reader, canvas preview, peek modal, artifact bodies, board cards, guide) gets the same chips and the same tooltip with no per-surface wiring. **How a chip knows the token it was written from** (docs/17 row 100): `splitWikiText` carries `match[0]` byte-exact on the wiki segment, `wikiLinkNode` puts it on the mdast node's `data.hProperties[WIKI_RAW_ATTRIBUTE]` (`'data-wiki-raw'` — the one supported mdast→hast route for custom properties; verified at HEAD that it reaches the React component and the DOM), and `WikiMarkdown` reads it back as a prop, sets it on the chip element and LEADS the chip's `title` with it, keeping whatever the chip already said as the tail | a private `\[\[...\]\]` regex; **reconstructing** the token from name+display (the plugin is the last point where the source bytes exist — the node's only child is the display text); a SECOND chip renderer or a per-surface tooltip wrapper; moving the token into the chip label or into any persisted string (it is render-time only, and `lib/modulePdf`/`lib/pdfExport` never import this module) |
 | Write part text on the module row (ONE save path) | `features/modules/partText.saveModulePartText` → `moduleRepo.patchModulePartText` (row re-read INSIDE the rw tx — a concurrent parts write can't be lost; `status: 'ready'`, `edited: true`) + the post-save `promoteSecondModuleUses` scan. Callers: the reader's `savePartEdit` (PartTextEditor hand edits), the board rewrite's Apply and Discard | a stale-snapshot `parts` array written through plain `patchModule` (lost-update on concurrent saves); a part-text write that skips the promote scan; artifact revisions for part markdown (there are none — parts live on the module row) |
 | Streaming state on a screen (reader/board tails) | The emitter is NEVER the subscription: `features/modules/streamTails` (reader) / `features/modules/board/stagedRewrites` (board) hold it in an external store with value-diffed frozen snapshots, consumed by the ONE component that shows it (`useStreamTail` → `useSyncExternalStore`); ONE bridge component subscribes to `moduleGenEvents` for the whole screen (`ModuleGenTailsBridge`, renders `null`, ignores other modules) | page-level `useState` fed by a `moduleGenEvents` listener — every token re-renders the page and re-parses every part (measured on 12 parts × 4 KB: 200 tokens = 13,578 ms task time, 200 long tasks of 50–115 ms, 32,134 DOM mutations; after the store: 520 ms, 0 long tasks, 134 mutations) |
 | Board the whole module (viewport, layout, LOD) | `features/modules/board/` on `@xyflow/react` (attribution rendered): React Flow is THE viewport gesture owner (pan/zoom/pinch/drag — cards mount plain buttons only, scrollable bodies `nowheel`); node positions + viewport persist via the module row's `canvas` field (`patchModule`, debounced 600ms, unmount flush — rides backup/export); content slices in `boardStore` are value-diffed per node (node objects must stay stable — React Flow re-renders ALL nodes when node objects churn); node keys via `domain/module` (`premise`, `part-<planIndex>`, `prior-<id>`); continuity edges via `boardEdges.deriveContinuityEdges` over `buildWikiGraph` mentions, capped + surfaced | custom pointer handlers on board nodes (a second gesture-arming path — battle-machine rules apply to the battle board only, but the module board must never arm its own); localStorage layout copies; a second node-key format |
@@ -842,6 +842,33 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   unrelated to the gate. Pin the form each control's own gate uses
   (`tests/helpers/blocked-reason.ts` has one helper per form, plus the
   self-evident pins).
+- **A remark plugin that rewrites a text run into a synthetic node has
+  DISCARDED the source bytes, and the discarding is silent (docs/17 row 100).**
+  `remarkWikiLinks` reads `match[0]` and then throws it away, replacing the run
+  with a link node whose only child is the DISPLAY text — so `[[Encounter:Ash
+  Gate|the gate]]` and `[[Ash Gate]]` become indistinguishable downstream, and
+  the difference the author wrote (encounter parameters, inner spacing) is gone
+  with no error anywhere. **The rule: if any consumer will ever need the
+  original text, carry it at the moment it still exists, on the node's
+  `data.hProperties`** — that is the one supported mdast→hast route for custom
+  properties (`mdast-util-to-hast`'s `applyData` merges it into the element it
+  produced, and `hast-util-to-jsx-runtime` hands it to the React component).
+  VERIFIED at HEAD rather than assumed — react-markdown 10.1.0 /
+  mdast-util-to-hast 13.2.1 — because a *documented* carrier that silently does
+  not survive would leave the tooltip empty and every test passing on the
+  fallback: a `link` node carrying `data.hProperties['data-wiki-raw']` renders
+  `<a href="#wiki:…" data-wiki-raw="[[Name|display]]">` and the `a` component
+  receives `href, data-wiki-raw, node, children`. Corollaries:
+  (1) **never RECONSTRUCT** — `[[${name}|${display}]]` looks right and is wrong
+  (measured: it fails the byte-exactness pins on `[[ Ash Gate |the gate]]`,
+  which a name+display rebuild turns into `[[Ash Gate|the gate]]`), so pin the
+  token in a fixture whose inner padding differs from the canonical form;
+  (2) the carrier is render-time only — keep it out of every persisted string,
+  and note that `lib/markdown.markdownToText` (the single-artifact PDF body
+  path) is NOT wiki-aware, so it prints `[[…]]` verbatim while
+  `lib/mdToPdfmake` (module/deliverable) renders the display text: two export
+  paths, two behaviours, both pre-existing and both pinned in
+  `tests/lib/wiki-raw-export.test.ts`.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

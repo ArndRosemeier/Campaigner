@@ -360,7 +360,9 @@ describe('the module entity view: a creature row is never a DETAILED entity', ()
     // module entity view's verdict, never the reader's linking.
     const chip = screen.getByTestId('wiki-chip');
     expect(chip).toHaveAttribute('data-wiki-name', 'Zombie');
-    expect(chip).toHaveAttribute('title', 'NPC Zombie');
+    // The tooltip leads with the byte-exact token and keeps the kind + name
+    // (docs/17 row 100) — the token is what the rendered view drops.
+    expect(chip).toHaveAttribute('title', '[[Zombie]] — NPC Zombie');
     expect(screen.queryByTestId('wiki-chip-unresolved')).toBeNull();
     await flushAsyncUpdates();
   }, 20_000);

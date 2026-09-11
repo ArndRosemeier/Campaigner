@@ -2,7 +2,12 @@ import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
 import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
-import { remarkWikiLinks, splitWikiText, type WikiMdNode } from '@/lib/remark-wikilinks';
+import {
+  remarkWikiLinks,
+  splitWikiText,
+  WIKI_RAW_ATTRIBUTE,
+  type WikiMdNode,
+} from '@/lib/remark-wikilinks';
 
 /**
  * Solo-token wiki-link tokenizing (module-reader literal-bracket fix).
@@ -47,11 +52,37 @@ function bracketTextNodes(node: WikiMdNode): WikiMdNode[] {
 
 describe('splitWikiText', () => {
   it('produces a single wiki segment when the whole run is exactly one token', () => {
-    expect(splitWikiText(`[[${NAME}]]`)).toEqual([{ kind: 'wiki', name: NAME, display: NAME }]);
+    expect(splitWikiText(`[[${NAME}]]`)).toEqual([
+      { kind: 'wiki', name: NAME, display: NAME, raw: `[[${NAME}]]` },
+    ]);
+  });
+
+  it('carries the token BYTE-EXACT while trimming the name and display', () => {
+    // The inner padding is exactly what a reconstruction from name+display
+    // cannot reproduce (docs/17 row 100).
+    expect(splitWikiText('[[ Ash Gate |the gate]]')).toEqual([
+      { kind: 'wiki', name: 'Ash Gate', display: 'the gate', raw: '[[ Ash Gate |the gate]]' },
+    ]);
   });
 
   it('produces a single text segment when there is no token', () => {
     expect(splitWikiText('plain text')).toEqual([{ kind: 'text', value: 'plain text' }]);
+  });
+});
+
+describe('the raw token rides the link node', () => {
+  it('puts the byte-exact token on data.hProperties[data-wiki-raw]', () => {
+    const tree = runPlugin(paragraphWithText('See [[ Ash Gate |the gate]] today.'));
+    const links = wikiLinkNodes(tree);
+    expect(links).toHaveLength(1);
+    expect(links[0]?.data?.hProperties?.[WIKI_RAW_ATTRIBUTE]).toBe('[[ Ash Gate |the gate]]');
+    // The name and display are trimmed; only the carried token is not.
+    expect(links[0]?.url).toBe(`#wiki:${encodeURIComponent('Ash Gate')}`);
+    expect(links[0]?.children).toEqual([{ type: 'text', value: 'the gate' }]);
+  });
+
+  it('pins the carrier constant to the attribute the renderer reads', () => {
+    expect(WIKI_RAW_ATTRIBUTE).toBe('data-wiki-raw');
   });
 });
 

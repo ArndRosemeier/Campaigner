@@ -189,6 +189,22 @@ describe('preview default + full width + live chat', () => {
     await flushAsyncUpdates();
   });
 
+  it('every chip in the CANVAS PREVIEW shows the token it was written from', async () => {
+    await renderCanvas();
+    const preview = screen.getByTestId('canvas-preview');
+    // Part 0's text is `... bargains with [[Keeper Ilse]] at the gate.` — the
+    // preview renders through the SAME `WikiMarkdown`, so the carrier arrives
+    // here with no per-surface wiring (docs/17 row 100).
+    const chip = within(preview).getByTestId('wiki-chip-unresolved');
+    expect(chip).toHaveAttribute('data-wiki-name', 'Keeper Ilse');
+    expect(chip).toHaveAttribute('data-wiki-raw', '[[Keeper Ilse]]');
+    expect(chip).toHaveAttribute(
+      'title',
+      '[[Keeper Ilse]] — Keeper Ilse — not detailed yet',
+    );
+    await flushAsyncUpdates();
+  });
+
   it('chat send in preview applies to the snapshot + persists via split-save + re-renders, and return-to-Edit shows it', async () => {
     const user = userEvent.setup();
     await renderCanvas();

@@ -4,7 +4,7 @@ import Markdown, { defaultUrlTransform } from 'react-markdown';
 
 import type { AnyArtifact, ArtifactKind, Id } from '@/domain';
 import { ImageThumb } from '@/features/images/image-thumb';
-import { remarkWikiLinks } from '@/lib/remark-wikilinks';
+import { remarkWikiLinks, WIKI_RAW_ATTRIBUTE } from '@/lib/remark-wikilinks';
 import { resolveWikiLink } from '@/lib/wikilinks';
 import { cn } from '@/lib/utils';
 
@@ -14,6 +14,12 @@ import { cn } from '@/lib/utils';
  * and the peek modal. Resolved `[[links]]` render as kind-colored chips (with
  * a cover micro-thumb when present), unresolved ones as dashed muted chips,
  * ambiguous ones with a ⚠ tooltip listing the candidates.
+ *
+ * EVERY chip's hover tooltip LEADS with the byte-exact token it was written
+ * from (`data-wiki-raw`, carried by `remarkWikiLinks`) and keeps what the chip
+ * already said after it — the rendered view drops the source text (an
+ * encounter's parameters live in the token, not in its display text), and a
+ * reconstruction from name + display cannot reproduce it (docs/17 row 100).
  *
  * MEMOIZED on its props, and the reader passes STABLE ones (a part's `value`,
  * the `artifacts` pool and the callbacks do not change per token or per page
@@ -151,7 +157,14 @@ function wikiAnchorComponent(context: {
   moduleId?: Id | undefined;
   onOpenArtifact?: ((artifact: AnyArtifact) => void) | undefined;
   onStub?: ((name: string, anchor: { x: number; y: number }) => void) | undefined;
-}): (props: { href?: string | undefined; children?: ReactNode }) => JSX.Element {  return function WikiAnchor({ href, children }) {
+}): (props: WikiAnchorProps) => JSX.Element {
+  return function WikiAnchor(props: WikiAnchorProps) {
+    const { href, children } = props;
+    // The byte-exact token the link was written from, carried by
+    // `remarkWikiLinks` on the node's `data.hProperties` (see
+    // `WIKI_RAW_ATTRIBUTE`). Absent only for a hand-written
+    // `[text](#wiki:Name)` link, which never went through the plugin.
+    const raw = props[WIKI_RAW_ATTRIBUTE];
     if (!href?.startsWith('#wiki:')) {
       return <a href={href}>{children}</a>;
     }
@@ -162,17 +175,37 @@ function wikiAnchorComponent(context: {
       // A malformed escape stays as-is — the chip simply won't resolve.
     }
     const display = plainText(children) ?? name;
-    return <WikiChip name={name} display={display} context={context} />;
+    return <WikiChip name={name} display={display} raw={raw} context={context} />;
   };
+}
+
+/** The props react-markdown hands a rendered `a` element, narrowed to what
+ * this renderer reads (`data-wiki-raw` is the extra one it carries). */
+interface WikiAnchorProps {
+  href?: string | undefined;
+  children?: ReactNode;
+  [WIKI_RAW_ATTRIBUTE]?: string | undefined;
+}
+
+/**
+ * The chip's hover tooltip: the byte-exact source token FIRST, then whatever
+ * the chip already said (artifact kind + name, the unresolved "not detailed
+ * yet", or the ⚠ ambiguity list) — never a reconstruction from name+display
+ * (docs/17 row 100, docs/05 §The chip).
+ */
+function wikiChipTitle(raw: string | undefined, existing: string): string {
+  return raw === undefined || raw === '' ? existing : `${raw} — ${existing}`;
 }
 
 function WikiChip({
   name,
   display,
+  raw,
   context,
 }: {
   name: string;
   display: string;
+  raw: string | undefined;
   context: {
     artifacts: readonly AnyArtifact[];
     moduleId?: Id | undefined;
@@ -189,8 +222,9 @@ function WikiChip({
         type="button"
         data-testid="wiki-chip-unresolved"
         data-wiki-name={name}
+        data-wiki-raw={raw}
         className={cn(CHIP_BASE, CHIP_UNRESOLVED, onStub === undefined && 'cursor-default')}
-        title={`${name} — not detailed yet`}
+        title={wikiChipTitle(raw, `${name} — not detailed yet`)}
         onClick={
           onStub === undefined
             ? undefined
@@ -219,9 +253,10 @@ function WikiChip({
       data-testid="wiki-chip"
       data-wiki-name={name}
       data-wiki-artifact-id={artifact.id}
+      data-wiki-raw={raw}
       data-wiki-ambiguous={ambiguous || undefined}
       className={cn(CHIP_BASE, KIND_CHIP_CLASSES[artifact.kind], onOpenArtifact === undefined && 'cursor-default')}
-      title={title}
+      title={wikiChipTitle(raw, title)}
       onClick={
         onOpenArtifact === undefined
           ? undefined

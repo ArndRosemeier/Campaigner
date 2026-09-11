@@ -210,12 +210,23 @@ describe('ModuleReaderPage', () => {
     const intro = document.getElementById('module-intro');
     if (intro === null) throw new Error('module-intro section missing');
     const premiseChips = within(intro).getAllByTestId('wiki-chip');
-    expect(
-      premiseChips.some((chip) => chip.getAttribute('data-wiki-name') === 'Old Tower'),
-    ).toBe(true);
-    expect(within(intro).getByTestId('wiki-chip-unresolved')).toHaveAttribute(
-      'data-wiki-name',
-      'Missing Person',
+    const oldTowerChip = premiseChips.find(
+      (chip) => chip.getAttribute('data-wiki-name') === 'Old Tower',
+    );
+    expect(oldTowerChip).toBeDefined();
+    const unresolvedChip = within(intro).getByTestId('wiki-chip-unresolved');
+    expect(unresolvedChip).toHaveAttribute('data-wiki-name', 'Missing Person');
+
+    // EVERY chip in the READER's rendered document shows the token it was
+    // written from — byte-exact, on the element and leading the tooltip
+    // (docs/17 row 100): the rendered view drops the source text, which is
+    // the owner's complaint.
+    expect(oldTowerChip).toHaveAttribute('data-wiki-raw', '[[Old Tower]]');
+    expect(oldTowerChip?.getAttribute('title')?.startsWith('[[Old Tower]] —')).toBe(true);
+    expect(unresolvedChip).toHaveAttribute('data-wiki-raw', '[[Missing Person]]');
+    expect(unresolvedChip).toHaveAttribute(
+      'title',
+      '[[Missing Person]] — Missing Person — not detailed yet',
     );
 
     // Part sections carry the plan titles as H1s; part 0 shows its markdown.

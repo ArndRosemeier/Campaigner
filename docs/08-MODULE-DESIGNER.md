@@ -159,6 +159,20 @@ a remark step or pre-tokenizer):
   click opens the **peek modal**;
 - unresolved → dashed/muted chip; click opens the **stub popover** (M4-C);
 - ambiguous → solid chip with ⚠.
+- **every chip's hover tooltip LEADS with the byte-exact source token** it was
+  written from (`[[Encounter:Ash Gate|the gate]]`, inner spacing included),
+  then keeps what the chip already said — the kind + name for a resolved chip,
+  the "not detailed yet" sentence for an unresolved one, the ⚠ candidate list
+  for an ambiguous one (owner request, docs/17 row 100; docs/05 §The chip's
+  hover tooltip). The token is CARRIED, never reconstructed: `remarkWikiLinks`
+  is the last point where the source bytes exist (it replaces the text run with
+  a synthetic link node whose only child is the DISPLAY text), so `splitWikiText`
+  hands `match[0]` to `wikiLinkNode`, which puts it on the node's
+  `data.hProperties[WIKI_RAW_ATTRIBUTE]` = `'data-wiki-raw'` — the one supported
+  mdast→hast route for custom properties. The renderer reads it back as a prop
+  and also sets it on the chip element. A token inside a code span, a code fence
+  or an existing markdown link stays literal, with no chip and no tooltip
+  (unchanged).
 
 **Peek modal**: a dialog rendering the read-only artifact card (REUSE the
 Session-Mode card components — portrait, summary, kind data, stat block).
