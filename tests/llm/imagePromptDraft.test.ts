@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { statBlockSchema } from '@/domain';
+import { markdownToDisplayText } from '@/lib/markdown';
 import {
   assembleImagePrompt,
   buildImagePrompt,
@@ -62,6 +63,28 @@ describe('buildImagePrompt (deterministic image prompt)', () => {
       negative: IMAGE_TEXT_NEGATIVE,
       styleNotes: '',
     });
+  });
+
+  /**
+   * DOCUMENTED EXCLUSION (docs/17 row 105): the image prompt is a MODEL input,
+   * not a rendering — nothing here is read by the owner — so it keeps
+   * `markdownToText`'s verbatim `[[…]]`. The token is also the only place the
+   * target's real NAME survives: `[[Encounter:Ash Gate|the gate]]` grounds the
+   * illustration on "Ash Gate" as well as "the gate".
+   *
+   * NON-VACUITY: `markdownToDisplayText` genuinely renders this input
+   * differently, so this pin fails the day someone swaps the function here.
+   */
+  it('KEEPS a wiki token verbatim (a model prompt is not a rendering — docs/17 row 105)', () => {
+    const body = 'He guards [[Encounter:Ash Gate|the gate]] at night.';
+    const draft = buildImagePrompt(
+      { name: 'Watchman', kind: 'npc', summary: '', body, data: {} },
+      { systemLabel: 'D&D 5e' },
+    );
+    expect(draft.prompt).toContain(`Description: ${body}`);
+    expect(draft.prompt).toContain('[[Encounter:Ash Gate|the gate]]');
+    expect(markdownToDisplayText(body)).toBe('He guards the gate at night.');
+    expect(markdownToDisplayText(body)).not.toBe(body);
   });
 
   it('is deterministic: the same input builds the same prompt', () => {

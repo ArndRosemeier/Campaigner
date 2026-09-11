@@ -12,7 +12,7 @@ import {
 } from '@/lib/pdfExport';
 import { EXPORT_PDF_TYPES, openSaveTarget } from '@/lib/filePicker';
 import * as toast from '@/lib/toast';
-import { markdownToText } from '@/lib/markdown';
+import { markdownToDisplayText, markdownToText } from '@/lib/markdown';
 
 /**
  * PDF export (06-MILESTONES M2): GM notes + player handout templates. The
@@ -136,6 +136,24 @@ describe('pdf export definitions', () => {
   it('markdownToText strips headings, emphasis, and links', () => {
     const text = markdownToText('# Title\n**bold** and _em_ and [link](https://x.y)');
     expect(text).toBe('Title\nbold and em and link');
+  });
+
+  /**
+   * The split behind docs/17 row 105: `markdownToText` is the FAITHFUL-SOURCE
+   * stripper (a wiki token survives it — the image-prompt builder depends on
+   * that, pinned in `tests/llm/imagePromptDraft.test.ts`), and
+   * `markdownToDisplayText` is the one a READER's document uses, because a PDF
+   * is a rendering. Both halves are pinned, so neither can drift into the
+   * other's job.
+   */
+  it('the export rendering is wiki-aware while the source stripper is not', () => {
+    const source = 'He guards [[Encounter:Ash Gate|the gate]] and [[Kael]].';
+    expect(markdownToText(source)).toBe(source);
+    expect(markdownToDisplayText(source)).toBe('He guards the gate and Kael.');
+    // A non-token stays literal in both.
+    expect(markdownToDisplayText('Not a link: [[ not even this one')).toBe(
+      'Not a link: [[ not even this one',
+    );
   });
 
   it('generates a real PDF blob for both templates', async () => {

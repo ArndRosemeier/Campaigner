@@ -169,6 +169,14 @@ export function buildImagePrompt(
   // The body is markdown (artifact content): strip the syntax so the image
   // API receives prose, and cap it deterministically (the drafted
   // instruction grounded on ≤800 chars too).
+  //
+  // DELIBERATELY `markdownToText`, not `markdownToDisplayText` (docs/17 row
+  // 105): this is a MODEL PROMPT, not a rendering — nothing here is read by
+  // the owner, and the token is the only place the target's real NAME survives
+  // (`[[Encounter:Ash Gate|the gate]]` → the display would drop "Ash Gate"
+  // from the grounding). The image text-render guard is the default negative,
+  // so the syntax cannot print into the picture either. Pinned as-is by
+  // tests/llm/imagePromptDraft.test.ts ("KEEPS a wiki token verbatim").
   const description = markdownToText(target.body);
   if (summary === '' && description === '') {
     throw new Error(

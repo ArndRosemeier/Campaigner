@@ -4,7 +4,7 @@ import type { Artifact, StatBlock } from '@/domain';
 import { abilityModifier, formatModifier, imageBlob, printsAbilityModifiers } from '@/domain';
 import { getImage } from '@/db/imageRepo';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
-import { markdownToText } from '@/lib/markdown';
+import { markdownToDisplayText } from '@/lib/markdown';
 import { EXPORT_PDF_TYPES, openSaveTarget } from '@/lib/filePicker';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -14,6 +14,11 @@ import { toastError, toastSuccess } from '@/lib/toast';
  * **player handout** (name, summary, body only — no structured data, no mechanics).
  * Definition builders are pure; `exportArtifactPdf` loads pdfmake lazily and
  * resolves the artifact's cover image (M3-A) as a ≤1024px data URL.
+ *
+ * A PDF is a RENDERING, so both bodies print a wiki token's DISPLAY text
+ * (`markdownToDisplayText` — the same rule `lib/mdToPdfmake` applies to the
+ * module/deliverable pipeline), never the `[[…]]` token the app stores
+ * (docs/07 §Wiki-links in an exported document, docs/18 §2.3, docs/17 row 105).
  */
 
 export type PdfTemplate = 'gm' | 'player';
@@ -275,7 +280,7 @@ export function buildGmNotesDefinition(
   if (cover !== undefined && cover !== null) content.push(coverImageNode(cover));
   if (artifact.summary !== '') content.push({ text: artifact.summary, style: 'meta' });
   content.push({
-    text: artifact.body === '' ? '(no body)' : markdownToText(artifact.body),
+    text: artifact.body === '' ? '(no body)' : markdownToDisplayText(artifact.body),
     style: 'body',
   });
   content.push(...(dataSections(artifact) as Content[]));
@@ -297,7 +302,7 @@ export function buildPlayerHandoutDefinition(
   content.push(
     ...(artifact.summary === '' ? [] : [{ text: artifact.summary, style: 'meta' }]),
     {
-      text: artifact.body === '' ? '(empty)' : markdownToText(artifact.body),
+      text: artifact.body === '' ? '(empty)' : markdownToDisplayText(artifact.body),
       style: 'body',
     } satisfies Content,
   );

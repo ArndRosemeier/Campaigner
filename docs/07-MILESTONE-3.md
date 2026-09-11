@@ -356,6 +356,29 @@ book puts in appendices — `npcs` is the NSC-Galerie (every NPC artifact, stat
 box each), `treasure` is the Schätze appendix (a ledger aggregated from the
 `treasure` fields of all included encounter artifacts).
 
+### Wiki-links in an exported document — the DISPLAY rule
+
+**An export renders the DISPLAY text of a wiki token, never the token itself**
+(owner's standing rule, docs/17 row 105). `[[Name]]` exports as the name,
+`[[Name|display]]` as the display — in every export, through ONE
+implementation per pipeline:
+
+- module and deliverable PDFs → `lib/mdToPdfmake` (bold display runs; docs/08
+  §M4-D);
+- the single-artifact **GM notes** and **player handout** PDFs (06-MILESTONES
+  M2) → `lib/markdown.markdownToDisplayText`, which is `markdownToText` plus
+  `lib/wikilinks.stripWikiLinks` — never a second `\[\[…\]\]` regex at an
+  export site.
+
+A PDF is a RENDERING: the `[[…]]` token is the app's INTERNAL representation,
+so one that reaches a reader has leaked that internal. Text that only LOOKS
+like a token (`[[ not even this one`, an unclosed `[[`) is not a token and
+stays literal. The single-artifact export printed the token verbatim until row
+105 — the defect row 100's arc found and recorded (docs/18 §4) — and the
+faithful-source stripper `markdownToText` remains the image-prompt builder's
+input, where nothing is read by the owner and the token is the only place the
+target's NAME survives.
+
 ### Rendering conventions (the book's craft, mapped to pdfmake)
 
 - **Read-aloud boxes**: markdown **blockquotes** in any artifact body render as
