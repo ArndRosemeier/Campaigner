@@ -105,9 +105,12 @@ export function canvasPath(
 /**
  * Path of the whole-module document canvas with the chat sidebar forced
  * OPEN (08 §Module canvas chat, docs/17 row 57 — the chat is the front
- * door): the modules list row and the reader header link here, so one click
- * from anywhere starts talking to the module. The page reads `?chat=open`
- * and opens the sidebar even when the session toggle closed it.
+ * door): the reader header's Chat link (next to Canvas) routes here, so one
+ * click from the module reader starts talking to the module. The modules
+ * list row's own Chat entry to this same path was dropped by owner decision
+ * 2026-09-10 (docs/17 row 91, AMENDS 57 — one row icon per destination).
+ * The page reads `?chat=open` and opens the sidebar even when the session
+ * toggle closed it.
  */
 export function canvasChatPath(
   campaignId: string,

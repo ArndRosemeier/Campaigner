@@ -225,8 +225,9 @@ export function CanvasPage(): JSX.Element {
     hydrateChatFromThread(canvasChatKey(moduleId), module.chatThread);
   }, [moduleId, module]);
 
-  // Front-door entries (docs/17 row 57): a `?chat=open` arrival (the modules
-  // list row + the reader header link here) forces the sidebar open even
+  // Front-door entry (docs/17 row 57): a `?chat=open` arrival — the reader
+  // header's Chat link, the only remaining entry to it since the modules list
+  // row's own entry was dropped (ledger 91) — forces the sidebar open even
   // when this session's toggle closed it. Plain canvas arrivals leave the
   // toggle state untouched.
   useEffect(() => {

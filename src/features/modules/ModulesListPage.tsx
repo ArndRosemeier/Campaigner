@@ -2,9 +2,9 @@ import { useState } from 'react';
 import type { JSX } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpenIcon, MessageSquareTextIcon, NetworkIcon, PencilIcon, PlusIcon, SquarePenIcon, Trash2Icon } from 'lucide-react';
+import { BookOpenIcon, NetworkIcon, PencilIcon, PlusIcon, SquarePenIcon, Trash2Icon } from 'lucide-react';
 
-import { boardPath, canvasChatPath, canvasPath, guidePath, modulePath } from '@/app/routes';
+import { boardPath, canvasPath, guidePath, modulePath } from '@/app/routes';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -252,7 +252,12 @@ export function ModulesListPage(): JSX.Element {
                   <NetworkIcon aria-hidden />
                 </Button>
                 {/* Per-part document canvas (08 §Module canvas) — opens on
-                    the module's first part. */}
+                    the module's first part. The row's ONE canvas control: the
+                    chat forced-open variant (`canvasChatPath`, ledger 57's
+                    front door on this row) was dropped by owner decision
+                    (ledger 91, AMENDS 57) — one row icon per destination. The
+                    chat stays one click away inside the canvas (its own
+                    header toggle) and in the reader header (its Chat link). */}
                 <Button
                   variant="ghost"
                   size="icon-sm"
@@ -264,21 +269,6 @@ export function ModulesListPage(): JSX.Element {
                   }}
                 >
                   <SquarePenIcon aria-hidden />
-                </Button>
-                {/* Chat front door (08 §Module canvas chat, ledger 57) — one
-                    click from the list to talking to the module: the canvas
-                    with the chat sidebar forced open. */}
-                <Button
-                  variant="ghost"
-                  size="icon-sm"
-                  aria-label={`Chat: ${module.title}`}
-                  className="shrink-0"
-                  data-testid={`module-chat-link-${module.id}`}
-                  onClick={() => {
-                    navigate(canvasChatPath(campaignId, module.id));
-                  }}
-                >
-                  <MessageSquareTextIcon aria-hidden />
                 </Button>
                 <Button
                   variant="ghost"

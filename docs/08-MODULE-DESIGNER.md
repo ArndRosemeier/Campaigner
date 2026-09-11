@@ -1696,7 +1696,13 @@ commands (fewer problems in owner experience); amended 2026-09-09 (ledger
 row 51): "No part selection. Whole module in context (without premise),
 parts split by an easy to see delimiter … I want the model to see the whole
 module and be able to make changes to the whole module" + an uncapped
-read-only grounding block for continuity. A collapsible wide LEFT
+read-only grounding block for continuity. Entry: the reader header's **Chat**
+link (next to Canvas) routes to the canvas with the sidebar forced open
+(`canvasChatPath`, `?chat=open`, ledger 57); the modules list row's own Chat
+entry was DROPPED by owner decision 2026-09-10 (ledger row 91, AMENDS 57) —
+it landed on this same canvas, so the row keeps one icon per destination and
+the chat stays one click away from the row's Canvas icon through the
+sidebar's own header toggle. A collapsible wide LEFT
 sidebar (`w-96`, `canvas/ChatSidebar.tsx`) beside the editor — and
 beside the PREVIEW, which is the DEFAULT view (ledger 58): the canvas opens
 as chat + rendered preview side by side, and the chat is FULLY LIVE there

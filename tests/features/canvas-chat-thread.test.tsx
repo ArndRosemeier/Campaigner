@@ -435,16 +435,42 @@ describe('canvas chat front door', () => {
     await flushAsyncUpdates();
   });
 
-  it('a modules-list row Chat entry routes to the canvas with the chat open', async () => {
-    const user = userEvent.setup();
+  it('a modules-list row offers NO chat entry — one row icon per destination (owner decision, ledger 91)', async () => {
     renderAppAt(modulesPath(world.campaignId));
-    await user.click(
-      await screen.findByTestId(`module-chat-link-${world.moduleId}`, {}, { timeout: 10_000 }),
-    );
-    await screen.findByTestId('module-canvas', {}, { timeout: 10_000 });
-    expect(window.location.pathname).toContain(`/m/${world.moduleId}/canvas`);
-    expect(window.location.search).toContain('chat=open');
-    expect(await screen.findByTestId('canvas-chat')).toBeInTheDocument();
+    const row = await screen.findByTestId(`module-board-link-${world.moduleId}`, {}, { timeout: 10_000 });
+    const listRow = row.closest('li');
+    if (listRow === null) throw new Error('module list row missing');
+
+    // The removed front door (ledger 57's second `canvasChatPath` entry) stays
+    // removed: re-adding the row button fails this pin.
+    expect(
+      screen.queryByTestId(`module-chat-link-${world.moduleId}`),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: `Chat: The Drowned Vault` }),
+    ).not.toBeInTheDocument();
+
+    // …and the row holds the canvas entry exactly ONCE (the row chat entry was
+    // literally this destination again, with `?chat=open`).
+    expect(within(listRow).getAllByTestId(`module-canvas-link-${world.moduleId}`)).toHaveLength(1);
+    expect(
+      screen.queryAllByTestId(new RegExp(`^module-canvas-link-`)),
+    ).toHaveLength(1);
+
+    // The row's whole control inventory: title → reader, cover (no
+    // navigation), board, canvas, delete — FIVE controls, no chat. Querying by
+    // REGEX matches the accessible NAME, so a re-added chat control fails here
+    // by name even if it were given a different test id.
+    const names = (pattern: RegExp): string[] =>
+      screen.getAllByRole('button', { name: pattern }).map((control) => control.getAttribute('aria-label') ?? 'title → reader');
+    expect(names(/Drowned Vault/)).toEqual([
+      'title → reader',
+      'Generate cover for The Drowned Vault',
+      `Board: The Drowned Vault`,
+      `Canvas: The Drowned Vault`,
+      'Delete The Drowned Vault',
+    ]);
+    expect(screen.queryAllByRole('button', { name: /chat/i })).toHaveLength(0);
     await flushAsyncUpdates();
   });
 
