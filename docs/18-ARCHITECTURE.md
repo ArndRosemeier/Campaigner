@@ -795,18 +795,20 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   KendoReact's tooltip-on-a-disabled-button guide), so a native tooltip on it
   never appears (Firefox differs); and because a disabled control cannot take
   focus, the same `title` is unreachable by Tab and unannounced by a screen
-  reader. This repo wrote the recipe down as its OWN device four times (docs/05
-  §Module reader, §Module canvas Save, §Module canvas header, §Entity panel)
+  reader. This repo wrote the recipe down as its OWN device in five places
+  across four sections (docs/05 §Module reader, §Module canvas Save, §Module
+  canvas header, §Entity panel, §Workspace persona Start)
   while every shadcn Button additionally carries `disabled:pointer-events-none`
   — measured at HEAD: a disabled `Button` renders
   `<button disabled … class="… disabled:pointer-events-none …">`, i.e. the
   control is not even a hit-test target. **The incident:** the owner reported
   three canvas header controls (`canvas-preview-toggle`,
   `canvas-refine-selection`, `canvas-rewrite-part`) as "doing nothing". They
-  were implemented, correct and heavily pinned — what was missing was any
-  PERCEIVABLE reason, because the canvas opens in Preview and both AI actions
-  are gated on `aiBlocked || previewOpen`, so on first open they are dead with
-  the reason living in a place no user could see. The cure is the device in
+  were implemented, correct and heavily pinned — what was missing was any reason
+  AT ALL: a brace-aware scan of that commit shows none of the three carried a
+  `title`, an `aria-describedby` or a hint beside it, because the canvas opens in
+  Preview and both AI actions are gated on `aiBlocked || previewOpen`, so on
+  first open they are dead in silence. The cure is the device in
   §2.3 (one home, `components/blocked-control`), and the corrected record:
   never say "its reason is in `title`" again — a `title` may stay as a mirror
   for the browsers that render it (and where an existing pin asserts it), but
