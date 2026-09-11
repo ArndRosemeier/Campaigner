@@ -264,6 +264,90 @@ neither is a green run produced by loading the machine.
   entries carrying the four dialog components) and the cured one passed **9/9**
   under the same injection; cure = the write goes through `actDrained`. Assertions
   unchanged, no product file touched.
+- **A test that starts REAL orchestration must SETTLE it before teardown — the
+  pending continuation's next write otherwise lands on a wiped database and turns a
+  green gate RED.** This is the `post-run-extras` gate flake (dispatcher report,
+  ledger 97), and it is the one shape in this section that does not fail a test at
+  all: a full-suite run at `01b85de` printed **253 files / 2891 tests passed** with
+  every individual test green and still exited **1**, because vitest also reported
+  `Errors 1 error` — `NotFoundError: PersonaRun not found: e4deb265-…` from inside
+  the transaction at `src/db/runRepo.ts:48`, attributed to
+  `tests/features/post-run-extras.test.ts` with "the latest test that might've
+  caused the error" = `a completed npc run without the statblock extra attaches no
+  notice`. Isolated repeats of that single file: **1 of 6** printed the `Errors 1
+  error` line, the other 5 were clean, and all 12 tests passed every time — a timing
+  signature, not a data bug (it surfaced while the box was loaded 17–23 by another
+  session, and the difference the delay makes is the whole story).
+  **What the pending continuation WAS.** The `mobPortraits` test creates a FRESH
+  encounter, so the `post-run-extras` completion listener hands that encounter to
+  the unattended **encounter-map queue**, whose job calls `runEngine.startRun` — and
+  `startRun`'s pipeline is FIRE-AND-FORGET (it resolves as soon as the row is
+  written), while the queue waits only for a terminal STATUS. MEASURED with a
+  temporary probe printed at the end of that test:
+  `runs: <mapRunId>:running:other | <smithRunId>:completed:smith`,
+  `map queue: queued=0 active=1` — the test returned with the map job in flight. The
+  NEXT test's `beforeEach` then ran `clearDatabase()` (deleting `db.runs`) and
+  `useEncounterMapQueue.getState().reset()` (aborting the job): the abort reaction's
+  `runEngine.cancel` write hit the deleted row — caught by the queue factory, which
+  classifies the job cancelled, but it left `cancelRequested` set — the still-live
+  pipeline's own catch then wrote `cancelled` to the same vanished row, that
+  `NotFoundError` escaped `executeFrom`, and the engine's own failure chain
+  `void this.executeFrom(…).catch((error) => void this.fail(runId, error))` called
+  `fail`, whose `updateRun(runId, { status: 'failed' })` rejected **with nothing
+  awaiting it**. A second probe pinned WHICH write is unhandled: `toastError` had
+  been called with the bare `PersonaRun not found: <the map run's id>` — the message
+  `fail` toasts before its own write fails — so the unhandled rejection is `fail`'s,
+  not the loop's. (The guard did its job: nothing silently substituted a row.)
+  **How it is now impossible.** `tests/features/post-run-extras.test.ts` gains ONE
+  module-scope `settleStartedQueues()`, called from the file's `afterEach` BEFORE
+  the next `clearDatabase()`: it drains BOTH queues the file drives through the
+  queues' own `queued`/`active` state — the same seam the app's unattended callers
+  wait on (`waitForRunStatus`) — and then PINS the contract that no run row is left
+  `running` (`db.runs.where('status').equals('running')`). The file's map-only local
+  `queueSettled()` is folded into it, so the mid-test settle points in the
+  automatic-battlemap tests assert the same thing, and no assertion was weakened.
+  The order is the fix: settle while the rows still exist, then let the next test
+  wipe.
+  **Reproduction by DELAYING THE CAUSE (the `89e5d71` method), never by loading the
+  box** — one file, `CAMPAIGNER_TEST_WORKERS=2`, one process at a time: HEAD as-is
+  was green 1/1 (it does not fire unloaded, which is why repetition alone never found
+  it); with **250ms added to that test's chat replies** (the map run provably still
+  in flight when the test returns) and no cure it was **RED 2/2** — `Errors 1 error`,
+  exit 1, 12/12 tests green, the same `runRepo.ts:48` NotFoundError; under the SAME
+  delay with the cure it passed (exit 0); with the cure and the injection REMOVED it
+  passed **5/5** (4.37–4.66s against a 4.08s baseline, so the settle costs nothing
+  measurable). Revert-proofs, both directions: removing the `afterEach` settle call
+  under the delivered delay reproduces the red gate on demand, and removing ONLY the
+  drain while keeping the `running`-census pin makes the pin fail LOUDLY — 3
+  assertion failures naming the still-running run id — instead of degrading into the
+  file-level unhandled error. **Nothing was widened to make it quiet:** no
+  `ALLOWED_NOISE` entry, no `process.on('unhandledRejection')` swallow, no `catch`
+  around a DB write, no `--retry`, and `runRepo`'s row-must-exist guard is
+  byte-identical (it is what made the pending write loud in the first place).
+  **Generalize it, and note the direction of the cure:** a test that starts real
+  orchestration owns settling it, because teardown is exactly where the row the
+  pipeline is writing disappears; and prefer the ordering fix over a guard change,
+  since a guard that tolerates a vanished row would be the silent fallback AGENTS
+  rule 1 forbids. The REAL-APP analogue is deliberately NOT fixed here and is
+  recorded in ledger 97: the Runs list lets the owner delete a RUNNING run, so
+  `deleteRun` removes the row the pipeline is writing and the same chain would surface
+  as the global "Unhandled error in a background task" toast (`lib/globalErrors`) —
+  deduced from the chain, NOT measured in the app; that cure belongs in
+  `src/llm/runEngine.ts`, owned by another arc.
+- **A SECOND load-sensitive observation, RECORDED and NOT diagnosed** (another
+  writer's full-suite run on this box at ~12:04, load ~6 with other suites running):
+  `tests/features/provenance-display.test.tsx:277` failed with `peek-image` missing.
+  That file contains zero `statBlock` references, passes **9/9 in isolation** (the
+  observing writer's measurement) and did not recur in two clean full-suite runs
+  afterwards, so it reads as a load-timing flake in the peek modal rather than a defect
+  in the arc that observed it. It was NOT reproduced on demand and NO cause was
+  established — recorded with its evidence and nothing more, deliberately not chased
+  here, not added to `ALLOWED_NOISE`, and neither that test file nor the peek modal was
+  touched. No shared mechanism with the `PersonaRun` continuation above was shown: that
+  one is a RUN PIPELINE still writing after `clearDatabase()` (the guard fired and
+  nothing awaited the failure chain), while this one is an element assertion in a
+  mounted UI surface — the two want different evidence before either is called
+  understood.
 
 Two shapes that were tested and RULED OUT, so they are not "fixed" by mistake:
 - a raw Dexie read inside an `async` `waitFor` callback is deliberately exempt

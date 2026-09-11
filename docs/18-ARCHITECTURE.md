@@ -757,6 +757,33 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   READ boundary for the blank editor form and PDF-ingested chunks — which is why
   `statBlockSchema` was NOT tightened.
 
+- **A test that starts real orchestration must SETTLE it before its teardown wipes the
+  database — a pending continuation otherwise turns a green gate RED** (docs/17 row 97,
+  docs/08 §the pending-continuation flake). The shape: a fresh encounter's creation
+  hands the unattended Cartographer RUN to the encounter-map queue, and
+  `runEngine.startRun`'s pipeline is FIRE-AND-FORGET (it resolves once the row is
+  written) — the QUEUE, never the test, waits for a terminal status. A test that
+  returns while that run is still `running` leaves a live pipeline mid-write, and the
+  next test's `clearDatabase()` deletes the row it is writing: `runRepo.updateRun`'s
+  row-must-exist guard throws, the error escapes `executeFrom`, and the engine's own
+  `void this.executeFrom(…).catch((error) => void this.fail(runId, error))` chain calls
+  `fail`, whose failed-row write goes through the SAME guard **with nothing awaiting
+  it** — an unhandled rejection. Every test passes and the run still exits 1
+  (`Errors 1 error`, measured: 1 of 6 isolated runs of the file), which is how a real
+  regression in the same run gets dismissed as "just the flake". The cure is the ORDER,
+  not a wider guard: an `afterEach` that drains the queues the file started through the
+  queues' own state (`tests/features/post-run-extras.test.ts`'s `settleStartedQueues`)
+  plus a pin that no run row is left `running` — never an `ALLOWED_NOISE` entry, never a
+  swallowed rejection, never a `catch` around the DB write, and never a weakened
+  `runRepo` guard (that guard is what made the pending write loud). Generalize it: a
+  test that starts real orchestration owns settling it before teardown, because teardown
+  is exactly where the row the pipeline is writing disappears. The same chain is
+  REACHABLE from the app — the Runs list lets the owner delete a RUNNING run, so
+  `deleteRun` removes the row the pipeline is writing and `lib/globalErrors` would
+  surface the unhandled rejection as the global "Unhandled error in a background task"
+  toast (deduced from the same chain, NOT measured in the app, and reported rather than
+  fixed here): that cure belongs in `src/llm/runEngine.ts`, not in the guard.
+
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them

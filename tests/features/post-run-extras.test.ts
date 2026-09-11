@@ -1,12 +1,13 @@
 import 'fake-indexeddb/auto';
 
 import { waitFor } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // Side-effect module under test: registers the run-completion listener.
 import '@/features/campaign/post-run-extras';
 import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { db } from '@/db/db';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { createPersona } from '@/db/personaRepo';
 import { listRunsByCampaign, getRun } from '@/db/runRepo';
@@ -119,7 +120,47 @@ beforeEach(async () => {
   vi.spyOn(encounterRunAdapters, 'intakeImage').mockImplementation((blob) => Promise.resolve({ blob, width: 800, height: 600, mimeType: 'image/webp' }));
 });
 
-afterEach(() => {
+/**
+ * TEARDOWN WAITS: settles the unattended queues the tests below start, and
+ * pins that no run is left `running` when the test ends.
+ *
+ * Every test here drives the REAL orchestration — `runEngine.startRun`'s
+ * pipeline is FIRE-AND-FORGET (it resolves once the row is written), and a
+ * fresh encounter additionally hands the encounter-map queue an unattended
+ * Cartographer run through the `post-run-extras` completion listener. A test
+ * that returns while such a run is still `running` leaves a live pipeline
+ * mid-write, and the NEXT test's `clearDatabase()` deletes the row it is
+ * writing: its next `updateRun` hits runRepo's row-must-exist guard, nothing
+ * awaits it, and the engine's own failure chain
+ * (`void executeFrom(...).catch((error) => void this.fail(...))`) rejects
+ * with that NotFoundError — vitest reports `Errors 1 error` and the run exits
+ * 1 with every test green (docs/08-TESTING.md §the pending-continuation
+ * flake; ledger 97). Measured with the cause delayed (250ms on that test's
+ * chat replies): RED without this helper — `Errors 1 error`, exit 1, all 12
+ * tests green — and green with it under the same delay.
+ *
+ * The wait rides the queues' own state — the same seam the app's unattended
+ * callers use (`waitForRunStatus`) and the mid-test settle calls below: a
+ * drained queue means its run reached a terminal status, so nothing is left
+ * to write. The `running` census is the pin: a row still running at the end
+ * of a test is exactly the state that turned a green gate red.
+ */
+async function settleStartedQueues(): Promise<void> {
+  await waitFor(
+    () => {
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+      expect(useMobPortraitQueue.getState().queued).toEqual([]);
+      expect(useMobPortraitQueue.getState().active).toEqual([]);
+    },
+    { timeout: 15000 },
+  );
+  const running = await db.runs.where('status').equals('running').toArray();
+  expect(running.map((run) => run.id)).toEqual([]);
+}
+
+afterEach(async () => {
+  await settleStartedQueues();
   useEncounterMapQueue.getState().reset();
   vi.restoreAllMocks();
 });
@@ -351,7 +392,6 @@ describe('post-run extras', () => {
     expect(generateImagesMock).toHaveBeenCalled();
     expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
     // The invented portrait stays off the shared cache (firewall).
-    const { db } = await import('@/db/db');
     expect(await db.mobPortraits.count()).toBe(0);
   }, 20000);
 
@@ -426,17 +466,6 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     return { campaign, smith, cartographer };
   }
 
-  /** Waits until the encounter-map queue has fully settled (all jobs done). */
-  async function queueSettled(): Promise<void> {
-    await waitFor(
-      () => {
-        expect(useEncounterMapQueue.getState().queued).toEqual([]);
-        expect(useEncounterMapQueue.getState().active).toEqual([]);
-      },
-      { timeout: 15000 },
-    );
-  }
-
   it('a fresh module-owned Smith encounter is auto-enqueued on the module queue and mapped with resolved defaults', async () => {
     const { campaign, smith } = await seedEncounterPersonas();
     const module = await saveModule(createModule({
@@ -465,7 +494,7 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     expect(artifact.moduleId).toBe(module.id);
 
     // The unattended Cartographer ran on the encounter and mapped it.
-    await queueSettled();
+    await settleStartedQueues();
     const mapped = await getAnyArtifact(artifact.id);
     if (mapped?.kind !== 'encounter') throw new Error('encounter missing');
     expect(mapped.data.layout).not.toBeNull();
@@ -506,7 +535,7 @@ describe('automatic battlemaps for automated encounter creation (owner request)'
     const artifact = await getAnyArtifact(run?.resultArtifactId ?? '');
     expect(artifact?.moduleId ?? null).toBeNull();
 
-    await queueSettled();
+    await settleStartedQueues();
     const runs = await listRunsByCampaign(campaign.id);
     const mapRun = runs.find((entry) => entry.targetArtifactId === artifact?.id && entry.personaId !== smith.id);
     // The map run exists and the JOB was campaign-level (moduleId null —
