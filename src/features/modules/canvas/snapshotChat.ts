@@ -19,6 +19,7 @@ import {
 } from '@/features/modules/canvas/chatStore';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import { scheduleChatPersist } from '@/features/modules/canvas/chatPersist';
+import { toastError } from '@/lib/toast';
 
 /**
  * Chat command application onto the PREVIEW SNAPSHOT STRING (preview-default
@@ -300,6 +301,11 @@ function historyFor(key: string): { role: 'user' | 'assistant'; text: string }[]
  * failed message cards, a user abort marks the partial reply `aborted` with
  * nothing applied. Preview-applied edits have NO undo (no CM history while
  * the editor is unmounted) — the outcome cards still show before→after.
+ *
+ * The REQUEST round trip (docs/17 row 103) runs here too, through the SAME
+ * engine: the follow-up reply lands as its own message and its commands are
+ * applied as a SECOND batch of string splices (the shared ladder, the same
+ * split-save), with that reply's own `modelUsed` as provenance.
  */
 export async function runSnapshotChatTurn(
   options: SnapshotChatTurnOptions,
@@ -344,6 +350,35 @@ export async function runSnapshotChatTurn(
     const { prose } = chatProseSoFar(latestRaw);
     useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, { text: prose });
   };
+  // The request round trip (docs/17 row 103): the follow-up reply streams into
+  // its OWN bubble, created lazily — a reply that asked nothing never produces
+  // a second message.
+  let followUpRaw = '';
+  const followUpMessageRef: { current: CanvasChatMessage | null } = { current: null };
+  const followUpRafRef: { current: number | null } = { current: null };
+  const flushFollowUpStream = (): void => {
+    followUpRafRef.current = null;
+    const message = followUpMessageRef.current;
+    if (message === null) return;
+    const { prose } = chatProseSoFar(followUpRaw);
+    useCanvasChatStore.getState().updateMessage(options.key, message.id, { text: prose });
+  };
+  const ensureFollowUpMessage = (): CanvasChatMessage => {
+    if (followUpMessageRef.current !== null) return followUpMessageRef.current;
+    const message: CanvasChatMessage = {
+      id: newChatId('msg'),
+      role: 'assistant',
+      text: '',
+      raw: null,
+      status: 'streaming',
+      error: null,
+      outcomes: [],
+      createdAt: Date.now(),
+    };
+    followUpMessageRef.current = message;
+    useCanvasChatStore.getState().addMessage(options.key, message);
+    return message;
+  };
   try {
     const result = await sendCanvasChatMessage({
       moduleId: options.moduleId,
@@ -356,8 +391,14 @@ export async function runSnapshotChatTurn(
         latestRaw = raw;
         streamRafRef.current ??= requestAnimationFrame(flushStream);
       },
+      onFollowUpDelta: (raw) => {
+        followUpRaw = raw;
+        ensureFollowUpMessage();
+        followUpRafRef.current ??= requestAnimationFrame(flushFollowUpStream);
+      },
     });
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
+    if (followUpRafRef.current !== null) cancelAnimationFrame(followUpRafRef.current);
     useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
       status: 'ok',
       text: result.parse.prose,
@@ -366,47 +407,86 @@ export async function runSnapshotChatTurn(
     let doc = options.doc;
     let lastApplied: { from: number; to: number } | null = null;
     let docChanged = false;
-    if (result.parse.commands.length > 0) {
+    /**
+     * Applies ONE reply's commands to the snapshot string and persists the
+     * changed parts through the ONE split-save (headless). Called once per
+     * reply of the turn, each with the model that served THAT reply (row 93).
+     */
+    const applyCommandsFor = async (
+      message: CanvasChatMessage,
+      commands: readonly CanvasEditCommand[],
+      writerModel: string,
+    ): Promise<void> => {
+      if (commands.length === 0) return;
       const applied = applyChatCommandsToSnapshot({
-        commands: result.parse.commands,
+        commands,
         partPlan: result.parts.map((part) => ({ title: part.title })),
         doc,
       });
       doc = applied.doc;
-      docChanged = applied.docChanged;
-      lastApplied = applied.lastApplied;
-      useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
+      if (applied.docChanged) docChanged = true;
+      if (applied.lastApplied !== null) lastApplied = applied.lastApplied;
+      useCanvasChatStore.getState().updateMessage(options.key, message.id, {
         outcomes: [
           ...(useCanvasChatStore.getState().module(options.key).messages.find(
-            (message) => message.id === assistantMessage.id,
+            (candidate) => candidate.id === message.id,
           )?.outcomes ?? []),
           ...applied.outcomes,
         ],
       });
-      if (applied.docChanged) {
-        const module = await getModule(options.moduleId);
-        if (module === undefined) {
-          throw new Error('Module no longer exists — the edits are still in the preview, switch to Edit and use Save to retry');
-        }
-        await saveWholeModuleDocument({
-          moduleId: options.moduleId,
-          doc,
-          module,
-          origin: 'ai',
-          label: `Chat: ${text.slice(0, 60)}`,
-          // Durable pre-change snapshot (docs/18 §2.3): preview-applied chat
-          // edits have no CM history, so the snapshot is their undo.
-          version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
-          // PROVENANCE (docs/17 row 93): the chat model that wrote the applied
-          // text — the SAME rule as the edit-mode controller (the preview path
-          // persists through the one split-save).
-          writerModel: result.modelUsed,
+      if (!applied.docChanged) return;
+      const module = await getModule(options.moduleId);
+      if (module === undefined) {
+        throw new Error('Module no longer exists — the edits are still in the preview, switch to Edit and use Save to retry');
+      }
+      await saveWholeModuleDocument({
+        moduleId: options.moduleId,
+        doc,
+        module,
+        origin: 'ai',
+        label: `Chat: ${text.slice(0, 60)}`,
+        // Durable pre-change snapshot (docs/18 §2.3): preview-applied chat
+        // edits have no CM history, so the snapshot is their undo.
+        version: { source: 'chat', label: `Chat: ${text.slice(0, 60)}` },
+        // PROVENANCE (docs/17 row 93): the chat model that wrote the applied
+        // text — the SAME rule as the edit-mode controller (the preview path
+        // persists through the one split-save).
+        writerModel,
+      });
+    };
+    await applyCommandsFor(assistantMessage, result.parse.commands, result.modelUsed);
+    // --- the request round trip (docs/17 row 103) ---------------------------
+    if (result.details !== null) {
+      const followUpMessage = ensureFollowUpMessage();
+      if (result.details.status === 'failed') {
+        useCanvasChatStore.getState().updateMessage(options.key, followUpMessage.id, {
+          status: 'failed',
+          text: followUpRaw === '' ? '' : chatProseSoFar(followUpRaw).prose,
+          raw: followUpRaw === '' ? null : followUpRaw,
+          error: `the follow-up reply after your requested details failed: ${result.details.error}`,
         });
+      } else {
+        useCanvasChatStore.getState().updateMessage(options.key, followUpMessage.id, {
+          status: 'ok',
+          text: result.details.parse.prose,
+          raw: result.details.raw,
+        });
+        await applyCommandsFor(followUpMessage, result.details.parse.commands, result.details.modelUsed);
+        if (result.details.ignoredRequests.length > 0) {
+          // One details round trip per message — named LOUDLY, never a silent
+          // drop and never a third call.
+          toastError(
+            `The chat asked for artifact details a second time in one turn: ${result.details.ignoredRequests
+              .map((request) => `«${request.name}»`)
+              .join(', ')} — one details round trip is served per message, so it was NOT answered. Ask again in your next message to fetch it.`,
+          );
+        }
       }
     }
     return { doc, docChanged, lastApplied };
   } catch (error) {
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
+    if (followUpRafRef.current !== null) cancelAnimationFrame(followUpRafRef.current);
     if (options.turn.signal.aborted) {
       const { prose } = chatProseSoFar(latestRaw);
       useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
@@ -414,6 +494,13 @@ export async function runSnapshotChatTurn(
         text: prose,
         error: 'stopped — the reply was cut off and nothing was applied',
       });
+      if (followUpMessageRef.current !== null) {
+        useCanvasChatStore.getState().updateMessage(options.key, followUpMessageRef.current.id, {
+          status: 'aborted',
+          text: followUpRaw === '' ? '' : chatProseSoFar(followUpRaw).prose,
+          error: 'stopped — the reply after your requested details was cut off and nothing was applied',
+        });
+      }
       return { doc: options.doc, docChanged: false, lastApplied: null };
     }
     const message = error instanceof Error ? error.message : String(error);
@@ -423,6 +510,14 @@ export async function runSnapshotChatTurn(
       raw: latestRaw === '' ? null : latestRaw,
       error: message,
     });
+    if (followUpMessageRef.current !== null) {
+      useCanvasChatStore.getState().updateMessage(options.key, followUpMessageRef.current.id, {
+        status: 'failed',
+        text: followUpRaw === '' ? '' : chatProseSoFar(followUpRaw).prose,
+        raw: followUpRaw === '' ? null : followUpRaw,
+        error: message,
+      });
+    }
     if (error instanceof ModuleBusyError) {
       throw error;
     }

@@ -1909,6 +1909,65 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   labeled REFERENCE-ONLY: continuity context the model must never edit or
   emit commands against; commands apply to the current module's parts
   document only.
+- **Requested artifact details (the READ half; decision ledger row 103)** —
+  owner direction, verbatim: *"I am considering right now if we should make
+  the details available for the chat (maybe not unconditionally but for the
+  LLM to be able to request). That would also need an ability for the LLM to
+  actually change those details."* The chat's context is the module TEXT (the
+  parts document) plus continuity grounding, so an artifact's STORED details —
+  an encounter's difficulty/level hint/roster/rooms/budget, an NPC's stat
+  block, a location's fields — are invisible to it: a model asked to "tighten
+  the gate fight" cannot see the row it is talking about. So the model may
+  REQUEST them: `<request><name>EXACT NAME</name></request>` — exactly one
+  `<name>` child, no attributes, the artifact's name VERBATIM (trimmed), at
+  most **5 requests per reply** — parsed by the SAME strict extractor
+  (`parseCanvasChatReply`) with the same loudness: a malformed, unterminated,
+  attribute-carrying, empty-named, stray-closing or over-cap request fails
+  the WHOLE reply (`CanvasChatParseError`, nothing applied, nothing partial).
+  `<request>` is scanned in the SAME left-to-right walk as `<edit>`, so a
+  request before an edit is never swallowed into prose. The app answers in
+  **exactly ONE further model call per user turn** — never a loop; a request
+  appearing in that follow-up reply is a NAMED no-op (`ignoredRequests`, the
+  caller toasts it and the capability re-arms on the next user message). The
+  answer is built from the STORED ROWS ONLY: `loadChatDetailsPool(campaignId)`
+  (the campaign's own artifacts + the shared library — exactly the pool
+  reader chips resolve against) through the EXISTING
+  `lib/wikilinks.resolveWikiLink(name, pool, { moduleId })`, so chat
+  resolution and chip resolution can never disagree (row 100's parity). The
+  result is a `<requested-details>` block inside that follow-up user turn,
+  explicitly REFERENCE-ONLY (`REQUESTED_DETAILS_HEADER` +
+  `CANVAS_CHAT_DETAILS_INSTRUCTION`: never edit it, never fold it into the
+  module text, commands still apply only to the parts document), capped at
+  12000 characters with a LOUD marker and never a silent trim
+  (`[TRUNCATED — …]` when ONE record alone overflows, `[BLOCK FULL — … these
+  requested records were NOT included: …]` for the records that no longer
+  fit). Each block opens with `### <name> — <Kind label> · <scope>` and then
+  the row's stored fields per kind — encounter: difficulty/level hint/shape/
+  preset/location kind/map mode, fill grade, budget advisory, terrain /
+  tactics / treasure, the layout (rooms with their descriptions, rosters,
+  challenge levels, room keys and key treasure, corridors, play order,
+  theme), the roster per entry (name, ×count, source, per-entry treasure,
+  stats resolved through `monsterResolve.resolveMonsterEntryWithRepos` —
+  a loud `stats: MISSING — …` when a citation cannot be resolved, never an
+  invented block); npc: appearance/personality, the rulebook creature marker,
+  the stat block on the row (or the cited chunk's); pc: player, stat block,
+  current HP, initiative override, notes; location/event: type, inhabitants,
+  points of interest, hooks; faction: goals/methods/resources/ranks; plotarc:
+  arc type, premise, stakes, beats, hooks, climax; plus the shared lines
+  (`also known as:`, `tags:`, `summary:`, `links:` — link targets named from
+  the same pool, else the id is named as not in it, and
+  `prose body (the row's stored markdown):`). A list is emitted ONLY when it
+  is non-empty, so an entirely empty row honestly yields the refusal below
+  rather than a block of blanks. **Unservable requests say WHY, in a fixed
+  vocabulary the model reads back**: `NO SUCH ARTIFACT` (no row of that name
+  in the campaign or the library — with the same name-resolution hint the
+  chips use), `AMBIGUOUS NAME` (the resolver's OWN candidate list, named —
+  never a silent newest-wins pick, because the future write half must not
+  edit the wrong row) and `NOTHING STORED ON THE ROW` (the row exists and is
+  genuinely empty — the model is told to ask the owner rather than invent).
+  **The write half does not exist in this arc**: nothing on this path writes
+  an artifact, a revision or a byte of module text; changing details goes
+  through the ONE `changeArtifact` seam (row 101) in its own arc.
 - **Apply semantics** (`chatApply.applyChatCommandsAcrossParts`): commands
   resolve per part against each part's CURRENT text at apply time
   (re-resolved per command against the live doc — earlier commands in one
