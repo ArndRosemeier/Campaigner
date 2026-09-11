@@ -316,6 +316,16 @@ function plainText(node: ReactNode): string | null {
  * The source map: rendered DOM → markdown SOURCE (canvas preview, row 102)
  * ------------------------------------------------------------------------ */
 
+/* eslint-disable react-refresh/only-export-components -- this section's
+   exports ARE this module's render contract, not a second component: the
+   default export is the only component, and the plugin, its two attributes,
+   the refusal copy and the resolver are the same mechanism split across the
+   producer and consumer halves. The repo's own precedent for keeping such
+   values beside their component is `features/modules/board/boardNodes.tsx`; a
+   sibling module was rejected because `WIKI_RAW_ATTRIBUTE`-style constants are
+   imported by surfaces outside this arc, and a move would have reached into
+   another writer's files for a lint warning. */
+
 /**
  * The two attributes a source-run wrapper carries: that run's byte range in
  * the markdown SOURCE string the renderer was handed. ONE constant each, so
