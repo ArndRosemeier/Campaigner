@@ -201,6 +201,37 @@ describe('roster expansion', () => {
     expect(stats(npc.id)?.maxHp).toBe(84);
   });
 
+  /**
+   * The SAME convention as the artifact path (docs/12 §5, docs/17 row 95): a
+   * frozen seed fighter's initiative comes from the stored d20 SCORE, so a
+   * Pathfinder 2e creature (importer: `score = 10 + 2·mod`) freezes the bonus
+   * its print carries — dex 18 is the score of a +4 modifier, and 4 is what
+   * seeds.
+   *
+   * Revert-proof: apply `abilityModifier` to the printed MODIFIER instead and
+   * this reads -3.
+   */
+  it("freezes a Pathfinder 2e inline creature's initiative from its stored score", async () => {
+    const encounter = await addEncounter({
+      monsters: [
+        {
+          name: 'Wolf',
+          count: 1,
+          source: {
+            type: 'inline',
+            statBlock: statBlock({
+              system: 'pathfinder2e',
+              abilities: { str: 14, dex: 18, con: 12, int: 2, wis: 14, cha: 6 },
+            }),
+          },
+        },
+      ],
+    });
+    const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
+    expect(battle.seedFighters).toHaveLength(1);
+    expect(battle.seedFighters[0]).toMatchObject({ name: 'Wolf', initiativeBonus: 4 });
+  });
+
   it('freezes the roster entry treasure onto every instance token, statless included (GM-only)', async () => {
     const chunkId = await seedGoblinChunk();
     const encounter = await addEncounter({

@@ -1,7 +1,7 @@
 import type { Content, NamedStyle, TDocumentDefinitions } from 'pdfmake/interfaces';
 
 import type { Artifact, StatBlock } from '@/domain';
-import { imageBlob } from '@/domain';
+import { abilityModifier, formatModifier, imageBlob, printsAbilityModifiers } from '@/domain';
 import { getImage } from '@/db/imageRepo';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
 import { markdownToText } from '@/lib/markdown';
@@ -56,6 +56,14 @@ function statBlockSection(statBlock: StatBlock): object[] {
       style: 'value',
     }));
   const { abilities } = statBlock;
+  // Per-system ability display (docs/12 §5): a Pathfinder 2e stat block prints
+  // the signed BONUS — its stored d20 score means nothing to a PF2e reader, so
+  // the exported document must not print it. Every other system's compact
+  // score line is unchanged.
+  const ability = (score: number): string =>
+    printsAbilityModifiers(statBlock.system)
+      ? formatModifier(abilityModifier(score))
+      : String(score);
   return [
     { text: 'Stat block', style: 'heading' },
     {
@@ -74,12 +82,12 @@ function statBlockSection(statBlock: StatBlock): object[] {
     },
     {
       columns: [
-        { text: `STR ${abilities.str}`, style: 'value' },
-        { text: `DEX ${abilities.dex}`, style: 'value' },
-        { text: `CON ${abilities.con}`, style: 'value' },
-        { text: `INT ${abilities.int}`, style: 'value' },
-        { text: `WIS ${abilities.wis}`, style: 'value' },
-        { text: `CHA ${abilities.cha}`, style: 'value' },
+        { text: `STR ${ability(abilities.str)}`, style: 'value' },
+        { text: `DEX ${ability(abilities.dex)}`, style: 'value' },
+        { text: `CON ${ability(abilities.con)}`, style: 'value' },
+        { text: `INT ${ability(abilities.int)}`, style: 'value' },
+        { text: `WIS ${ability(abilities.wis)}`, style: 'value' },
+        { text: `CHA ${ability(abilities.cha)}`, style: 'value' },
       ],
       margin: [0, 0, 0, 4],
     },

@@ -89,6 +89,36 @@ describe('pdf export definitions', () => {
     expect(text).toContain('Soot-stained');
     expect(text).toContain('Nimble Escape');
     expect(text).toContain('AC 17');
+    // A d20 block keeps its compact score line, byte-identical (ability
+    // semantics are per-system — docs/12 §5, docs/17 row 95).
+    expect(text).toContain('STR 14');
+    expect(text).not.toContain('STR +2');
+  });
+
+  /**
+   * The exported document obeys the same per-system display rule as the screen
+   * (docs/12 §5, docs/17 row 95): a Pathfinder 2e stat box prints the signed
+   * BONUS, because the stored d20 score is a number no PF2e reader uses.
+   *
+   * Revert-proof: print `abilities.str` verbatim for every system (the pre-row-95
+   * builder) and this reads `STR 14` instead of `STR +2`.
+   */
+  it('prints the BONUS only for a Pathfinder 2e stat block in the exported PDF', () => {
+    const artifact = createArtifact({
+      ...NPC,
+      data: {
+        ...NPC.data,
+        statBlock: { ...NPC.data.statBlock, system: 'pathfinder2e' as const },
+      },
+    });
+    const doc = buildGmNotesDefinition(artifact);
+    const text = dump(doc.content);
+    // str 14 / dex 14 are the scores a PF2e +2 modifier is stored as.
+    expect(text).toContain('STR +2');
+    expect(text).toContain('DEX +2');
+    expect(text).not.toContain('STR 14');
+    // The rest of the block is untouched.
+    expect(text).toContain('AC 17');
   });
 
   it('player handout strips markdown and omits structured data and the stat block', () => {

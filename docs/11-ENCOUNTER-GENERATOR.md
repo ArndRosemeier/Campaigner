@@ -211,6 +211,26 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   design and whose unparseable levels are a documented sort-last state — see
   docs/18 §4.
 
+- **The inline stat block's `abilities` are d20 SCORES, and a printed signed
+  modifier is refused at the same boundaries (owner report, docs/17 row 95)**.
+  A generated Pathfinder 2e mob rendered **"2 (−4)"**: PF2e prints ability
+  *modifiers*, the model wrote its printed `+2`, and the shared read schema's
+  coercion (`numericStat` — `Number("+2")` is 2) turned it into the score 2,
+  which the stat block and the battle initiative then read as a score. The
+  shape hint now STATES the convention (`score = 10 + 2 × the printed
+  modifier`, worked example: a PF2e "Str +2" is written 14) — docs/12 §5 is the
+  authority for the conversion, not a second convention — and
+  `runEngine.statBlockSignedAbilityIssues` refuses a SIGNED ability value as a
+  NAMED issue (teaching the conversion) through the existing
+  one-repair-then-loud path: it rides `encounterSourceIssues` for BOTH model
+  boundaries (the Smith draft and the Cartographer brief) and the statblock
+  step's own reply, reading the reply's RAW pre-coercion object because the
+  sign is exactly what the coercion erases. An UNSIGNED value the model meant
+  as a modifier is NOT mechanically detectable and is never guessed (docs/18
+  §4); `domain/statblock.ts` is untouched (it is the READ boundary). Display is
+  per-system: a PF2e block prints the bonus only, every other system
+  `score (bonus)` (docs/05 §Artifact editor).
+
 - **Portrait regeneration (owner-ordered, 2026-09-09)**: when a batch would
   enqueue NOTHING because every portrait already exists, the section offers
   a **"Regenerate N portrait(s)?"** confirm (same for the per-entry

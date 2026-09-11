@@ -342,6 +342,26 @@ describe('normalize-on-write', () => {
     expect(stats(newId())).toBeUndefined();
   });
 
+  /**
+   * The battle initiative reads the STORED d20 SCORE (docs/12 §5, docs/17 row
+   * 95): a Pathfinder 2e creature's dexterity is stored as `10 + 2·mod` by the
+   * importer, so `abilityModifier(score)` is the app's one formula applied to
+   * the score — never to the printed modifier it was derived from.
+   *
+   * Revert-proof: apply the formula to the MODIFIER instead (dex 18 → printed
+   * +4 → floor((4 - 10) / 2) = -3) and this reads -3.
+   */
+  it("derives a Pathfinder 2e fighter's initiative from the stored score, not its printed modifier", async () => {
+    const npcId = await addNpc('Wolf', {
+      system: 'pathfinder2e',
+      // The real Monster Core Wolf: Str +2, Dex +4, Con +1, Int -4, Wis +2, Cha -2.
+      abilities: { str: 14, dex: 18, con: 12, int: 2, wis: 14, cha: 6 },
+    });
+    const battle = await ensureBattle(campaignId, newId());
+    const stats = buildFighterStatsLookup(battle, await campaignArtifacts());
+    expect(requireStats(stats, npcId).initiativeBonus).toBe(4);
+  });
+
   it('never writes PC current HP onto the token — the pc artifact owns it', async () => {
     await addPc('Serren');
     const battle = await ensureBattle(campaignId, newId());

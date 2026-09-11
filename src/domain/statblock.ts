@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { gameSystemSchema } from '@/domain/gameSystem';
+import { gameSystemSchema, type GameSystem } from '@/domain/gameSystem';
 
 /** A named block of rules text (trait, action, reaction, legendary action). */
 export const namedTextSchema = z.object({
@@ -74,4 +74,38 @@ export function abilityModifier(score: number): number {
 /** Formats a modifier for display: 3 → '+3', -1 → '-1'. */
 export function formatModifier(value: number): string {
   return value >= 0 ? `+${value}` : String(value);
+}
+
+/**
+ * The d20 SCORE a PRINTED ability modifier stands for: `10 + 2·modifier`, the
+ * exact inverse of `abilityModifier` (docs/12 §5 is the authority — Pathfinder
+ * 2e's `system.abilities.*.mod` is stored this way by the pack importer, and
+ * the stat-block editor converts an owner-typed modifier with the same
+ * function, so nothing derives the conversion a second time).
+ */
+export function abilityScoreFromModifier(modifier: number): number {
+  return 10 + 2 * modifier;
+}
+
+/**
+ * How a system PRINTS an ability (docs/12 §5, docs/05 §Artifact editor): the
+ * app STORES d20-scale SCORES in every system — including Pathfinder 2e, whose
+ * own stat blocks print signed MODIFIERS instead — and this predicate is the
+ * ONE switch that decides which of the two a surface shows. It is display
+ * only: no consumer may branch on it to change what is stored or computed.
+ */
+export function printsAbilityModifiers(system: GameSystem): boolean {
+  return system === 'pathfinder2e';
+}
+
+/**
+ * One ability as the shared stat-block display prints it: `"14 (+2)"` for
+ * every system that prints scores, `"+2"` for Pathfinder 2e (which prints the
+ * bonus only — owner decision, docs/17 row 95). The compact PDF stat boxes
+ * keep their own one-value layout and compose `printsAbilityModifiers` with
+ * `formatModifier` instead.
+ */
+export function formatAbilityValue(system: GameSystem, score: number): string {
+  const modifier = formatModifier(abilityModifier(score));
+  return printsAbilityModifiers(system) ? modifier : `${String(score)} (${modifier})`;
 }

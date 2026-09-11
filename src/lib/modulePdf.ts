@@ -1,6 +1,7 @@
 import type { Content, Style, TDocumentDefinitions } from 'pdfmake/interfaces';
 
 import type { AnyArtifact, Deliverable, Id, OutlineNode, StatBlock } from '@/domain';
+import { abilityModifier, formatModifier, printsAbilityModifiers } from '@/domain';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { getImage } from '@/db/imageRepo';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
@@ -54,8 +55,15 @@ export function statBoxContent(statBlock: StatBlock, name: string): Content {
       margin: [0, 4, 0, 4],
     },
   ];
+  // Per-system ability display (docs/12 §5): a Pathfinder 2e stat box prints
+  // the signed BONUS — printing its stored d20 score would be a number no PF2e
+  // reader uses. Every other system's compact score line is unchanged.
   const abilities = Object.entries(statBlock.abilities)
-    .map(([key, value]) => `${key.toUpperCase()} ${value}`)
+    .map(([key, value]) =>
+      printsAbilityModifiers(statBlock.system)
+        ? `${key.toUpperCase()} ${formatModifier(abilityModifier(value))}`
+        : `${key.toUpperCase()} ${value}`,
+    )
     .join('  ');
   const right: Content[] = [
     { text: abilities },

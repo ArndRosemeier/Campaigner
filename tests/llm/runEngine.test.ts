@@ -290,6 +290,93 @@ describe('runEngine', () => {
     expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
   }, 20000);
 
+  /**
+   * The ability convention (owner report, docs/17 row 95): a Pathfinder 2e
+   * model prints ability MODIFIERS, `numericStat` coerces "+2" to the number 2,
+   * and the app read that as a d20 score — the owner's generated mob rendered
+   * "2 (−4)" while its real Strength bonus was +2. The check runs on the RAW,
+   * pre-coercion reply (a sign is what no printed score carries), the prompt
+   * states the convention, and the violation rides the step's existing
+   * one-repair-then-loud path.
+   *
+   * Revert-proof: delete the `statblockSignedAbilityIssues` call in
+   * `runStatblock` and this run COMPLETES on the second chat call with
+   * `abilities.str === 2` (and the card then prints "-4" for Strength).
+   */
+  it('refuses a statblock reply that prints signed ability modifiers — one named repair, then the corrected score', async () => {
+    const { campaignId, persona } = await seed();
+    const signedBlock = {
+      ...VALID_STATBLOCK,
+      system: 'pathfinder2e',
+      abilities: { ...VALID_STATBLOCK.abilities, str: '+2' },
+    };
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({ text: JSON.stringify(signedBlock), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValueOnce({
+        text: JSON.stringify({
+          ...VALID_STATBLOCK,
+          system: 'pathfinder2e',
+          abilities: { ...VALID_STATBLOCK.abilities, str: 14 },
+        }),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+
+    const runId = await runEngine.startRun({ ...INPUT(campaignId, persona), autonomy: 'auto' as const });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    }, { timeout: 20000 });
+
+    // The prompt states the convention it enforces (a bare `"str": number` is
+    // what invited the slip) …
+    const statblockPrompt = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(statblockPrompt).toContain('score = 10 + 2 × the printed modifier');
+    expect(statblockPrompt).toContain('NEVER carries a sign');
+    // … and the repair turn teaches the conversion it demands.
+    const repair = chatMock.mock.calls[2]?.[0].at(-1)?.content ?? '';
+    expect(repair).toContain('abilities.str is "+2"');
+    expect(repair).toContain('a +2 modifier is 14');
+    expect(chatMock).toHaveBeenCalledTimes(3);
+
+    const run = await getRun(runId);
+    const artifact = await getArtifact(run?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'npc') throw new Error('the run produced no npc artifact');
+    // The score "+2" MEANS — never the coerced 2.
+    expect(artifact.data.statBlock?.abilities.str).toBe(14);
+    expect(artifact.data.statBlock?.abilities.dex).toBe(VALID_STATBLOCK.abilities.dex);
+  }, 20000);
+
+  /**
+   * A signed reply that survives its one repair fails the run LOUDLY with the
+   * named issue (never a persisted modifier-shaped "score"), and nothing is
+   * written — the same shape as the garbage-statblock regression above.
+   */
+  it('fails the statblock step loudly when signed ability values survive the repair', async () => {
+    const { campaignId, persona } = await seed();
+    const signedBlock = {
+      ...VALID_STATBLOCK,
+      system: 'pathfinder2e',
+      abilities: { ...VALID_STATBLOCK.abilities, dex: '+3' },
+    };
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({ text: JSON.stringify(signedBlock), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({ ...INPUT(campaignId, persona), autonomy: 'auto' as const });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    }, { timeout: 20000 });
+
+    const run = await getRun(runId);
+    expect(run?.errorMessage).toContain('abilities.dex is "+3"');
+    expect(run?.errorMessage).toContain('a +3 modifier is 16');
+    expect(run?.errorMessage).toContain('Step "statblock" rejected');
+    expect(await listArtifactsByCampaign(campaignId)).toHaveLength(0);
+    // One repair attempt, never a loop.
+    expect(chatMock).toHaveBeenCalledTimes(3);
+  }, 20000);
+
   it('reviews a global target with scope-gated global context and a campaign-anchored run', async () => {
     const editor = BUILT_IN_PERSONAS.find((persona) => persona.slug === 'continuity-editor');
     if (editor === undefined) throw new Error('continuity-editor persona missing');

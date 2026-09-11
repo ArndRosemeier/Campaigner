@@ -561,6 +561,51 @@ describe('Encounter Cartographer run', () => {
     }
   });
 
+  /**
+   * The ability convention reaches the Cartographer's brief too (docs/17 row
+   * 95, docs/12 §5): the brief designs the roster AND the map, so an inline
+   * block that prints a Pathfinder 2e MODIFIER is refused HERE — named, one
+   * repair, then the loud rejection — instead of surviving as the coerced
+   * score 2 on the finalized roster (the owner's "2 (−4)").
+   *
+   * Revert-proof: drop the `statBlockSignedAbilityIssues` call from
+   * `encounterSourceIssues` and this brief is ACCEPTED, with the modifier
+   * persisted as the score.
+   */
+  it('refuses a brief whose inline stat block prints a signed ability modifier (named issue, repairable)', async () => {
+    const { campaign, cartographer } = await setup();
+    const signedAbilities = {
+      ...BRIEF,
+      monsters: [
+        {
+          ...BRIEF.monsters[0],
+          statBlock: {
+            ...INLINE_STATBLOCK,
+            system: 'pathfinder2e',
+            abilities: { ...INLINE_STATBLOCK.abilities, str: '+2' },
+          },
+        },
+      ],
+    };
+    chatMock.mockResolvedValue({ text: JSON.stringify(signedAbilities), modelUsed: 'test-model', fallback: null });
+    const runId = await runEngine.startRun(input(campaign, cartographer));
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const repairTurn = (chatMock.mock.calls[1]?.[0] ?? []).at(-1);
+    expect(repairTurn?.content).toContain(
+      'monsters[0] "Ash Cultist": abilities.str is "+2" — a signed value is a printed ability MODIFIER',
+    );
+    expect(repairTurn?.content).toContain('a +2 modifier is 14');
+    const step = (await getRun(runId))?.steps[0];
+    expect(step?.status).toBe('rejected');
+    expect(rejectionIssues(step ?? { output: null })).toEqual([
+      'monsters[0] "Ash Cultist": abilities.str is "+2" — a signed value is a printed ability MODIFIER (Pathfinder 2e prints "Str +2"), never a score, and this app stores d20 ability SCORES in every system: a +2 modifier is 14 (score = 10 + 2 × the printed modifier)',
+    ]);
+  });
+
   it('accepts numeric strings and a missing guidance field from the model', async () => {
     const { campaign, cartographer } = await setup();
     const loose: Record<string, unknown> = {

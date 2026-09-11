@@ -230,6 +230,32 @@ describe('buildModuleDefinition', () => {
     expect(widths).toEqual(['*', '*']);
   });
 
+  /**
+   * The module PDF's compact stat box obeys the same per-system rule as the
+   * screen (docs/12 §5, docs/17 row 95): a Pathfinder 2e box prints the signed
+   * BONUS, never the stored d20 score — a d20 box is unchanged (the test above
+   * still reads `DEX 12`).
+   *
+   * Revert-proof: print the score for every system (the pre-row-95 builder) and
+   * this reads `STR 14 DEX 18` instead of `STR +2 DEX +4`.
+   */
+  it('prints bonuses only in a Pathfinder 2e stat box', () => {
+    const pf2e = statBoxContent(
+      {
+        ...statBlockFixture(),
+        system: 'pathfinder2e',
+        // The real Monster Core Wolf: Str +2, Dex +4.
+        abilities: { str: 14, dex: 18, con: 12, int: 2, wis: 14, cha: 6 },
+      },
+      'Wolf',
+    );
+    const pf2eText = textOf(pf2e);
+    expect(pf2eText).toContain('STR +2');
+    expect(pf2eText).toContain('DEX +4');
+    expect(pf2eText).not.toContain('STR 14');
+    expect(pf2eText).not.toContain('DEX 18');
+  });
+
   it('generates a real PDF blob through pdfmake', async () => {
     const { deliverable } = await seed();
     const { db } = await import('@/db/db');

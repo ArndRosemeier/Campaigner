@@ -190,7 +190,7 @@ is one action.
 |---|---|
 | `name` | identity + `headingPath[0]` |
 | `system.details.level.value` | `level` (string) |
-| `system.abilities.*.mod` (modifiers!) | **score = 10 + 2·mod** (binding: the exact inverse of `abilityModifier`, so the shared stat-block UI prints identically); raw mods additionally into `extras['Ability modifiers']` for fidelity |
+| `system.abilities.*.mod` (modifiers!) | **score = 10 + 2·mod** (binding: the exact inverse of `abilityModifier` — `domain/statblock.abilityScoreFromModifier` is the ONE conversion, shared with the stat-block editor; docs/17 row 95); raw mods additionally into `extras['Ability modifiers']` for fidelity |
 | `system.traits.size.value` | `size` (`med` → `Medium`, …) |
 | type trait (humanoid, undead, beast, …) | `creatureType`; no match → `''` |
 | `attributes.ac.value` / `.details` | `ac` / `acNote` |
@@ -207,6 +207,17 @@ is one action.
 Spells are **not represented in v1** (a documented scope cut, not a failure
 path); attack/action text renders from the item fields pinned by the fixture
 test.
+
+**Ability display is per-system, storage is not** (owner decision + owner report,
+docs/17 row 95; docs/05 §Artifact editor). Every system stores d20-scale
+SCORES — an imported PF2e row and a generated one are the same data — and the
+shared stat-block UI prints them per system: for `pathfinder2e` the signed
+BONUS only (`STR +2`), for every other system `score (bonus)` (`STR 14 (+2)`).
+The two PDF stat boxes (`lib/pdfExport`, `lib/modulePdf`) follow the same rule
+in their own compact layout. That is why the mapping above converts at all:
+`score = 10 + 2·mod` is the exact inverse of `abilityModifier`, so an imported
+creature prints exactly what a generated one prints, and PF2e's own printed
+line survives verbatim in `extras['Ability modifiers']`.
 
 ### `foundry-dnd5e-srd` mapping (337 SRD creatures)
 

@@ -27,6 +27,7 @@ import {
   gridDimensionsFor,
   moduleDocumentText,
   spawnFirstPath,
+  abilityScoreFromModifier,
   drawFillGrade,
   newId,
   packRooms,
@@ -709,13 +710,20 @@ function encounterAdvisoryText(
  * vocabulary into the value). The description IS the acceptance set
  * `encounterRoster.parseLevelSort` enforces — the system's printed level, a
  * number or a fraction like "1/2", or "—" when the creature has none.
+ *
+ * `abilities` is spelled out for the same reason (owner report, docs/17 row
+ * 95): a bare `"str": number` let a PF2e-aware model emit its printed `+2`,
+ * `numericStat` coerced it to the score `2`, and the shared stat-block UI
+ * printed "2 (−4)" for a creature whose Strength bonus is +2. The app stores
+ * d20-scale SCORES in EVERY system (docs/12 §5 is the authority for the
+ * conversion); the clause below states that AND the signed-value tell.
  */
 function statBlockSchemaHint(system: string): string {
   return (
     `{ "system": "${system}", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), ` +
     `"size": string, "creatureType": string, "ac": number, ` +
     '"acNote": string, "hp": number, "hpFormula": string, "speed": string, ' +
-    '"abilities": { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, ' +
+    '"abilities": d20 ability SCORES — in EVERY system, Pathfinder 2e included: write the SCORE, never the printed modifier, so a Pathfinder 2e "Str +2" is written 14 (score = 10 + 2 × the printed modifier) and an ability value NEVER carries a sign — the keys are { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, ' +
     '"saves": string, "skills": string, "senses": string, "languages": string, ' +
     '"traits": [{ "name": string, "text": string }], "actions": [{ "name": string, "text": string }], ' +
     '"reactions": [{ "name": string, "text": string }], "legendary": [{ "name": string, "text": string }], ' +
@@ -888,12 +896,133 @@ function statBlockLevelIssues(
 }
 
 /**
+ * The six ability keys of the shared stat block, in schema order.
+ */
+const ABILITY_KEYS = ['str', 'dex', 'con', 'int', 'wis', 'cha'] as const;
+
+/**
+ * The SIGNED ability values a raw (pre-coercion) stat block carries.
+ *
+ * `numericStat` (domain/statblock.ts) coerces a numeric STRING to a number —
+ * `Number` accepts a sign, so a model that prints a Pathfinder 2e modifier
+ * (`"str": "+2"`) stores the plain score `2`, and every consumer then reads it
+ * as a d20 score (the stat block printed owner-visible `2 (−4)`, and the
+ * battle initiative used `abilityModifier(2) = -4`). No stat block, in ANY
+ * system, prints an ability SCORE with a sign, so a signed value is a
+ * convention violation rather than a formatting choice — and it is caught
+ * HERE, on the raw reply, because after the zod parse the sign is gone.
+ *
+ * The predicate is `numericStat`'s own (`Number` on the trimmed string),
+ * narrowed to the signed form: an UNSIGNED numeric string ("14") is a score
+ * quoted as a string and stays a legitimate, meaning-preserving coercion.
+ *
+ * The honest limitation (docs/18 §4): a model that writes the bare number `2`
+ * while MEANING the modifier is indistinguishable from a genuine score of 2 —
+ * no mechanical rule separates those, and guessing would corrupt correct data.
+ * The signed case is caught because a score never carries a sign; the unsigned
+ * case is the contract wording's job (`statBlockSchemaHint`), not a heuristic.
+ */
+function signedAbilityValues(rawStatBlock: unknown): { ability: string; printed: string }[] {
+  if (typeof rawStatBlock !== 'object' || rawStatBlock === null) return [];
+  const abilities = (rawStatBlock as { abilities?: unknown }).abilities;
+  if (typeof abilities !== 'object' || abilities === null) return [];
+  const source = abilities as Record<string, unknown>;
+  const signed: { ability: string; printed: string }[] = [];
+  for (const ability of ABILITY_KEYS) {
+    const value = source[ability];
+    if (typeof value !== 'string') continue;
+    const printed = value.trim();
+    if (!/^[+-]/.test(printed)) continue;
+    if (!Number.isFinite(Number(printed))) continue;
+    signed.push({ ability, printed });
+  }
+  return signed;
+}
+
+/**
+ * The named issue for one signed ability value. It TEACHES the conversion it
+ * demands (`score = 10 + 2 × modifier`, derived through the shared
+ * `abilityScoreFromModifier`, so the example can never drift from the maths
+ * the importer and the editor use) — a repair prompt that only says "wrong"
+ * makes the model guess.
+ */
+function signedAbilityIssue(where: string, ability: string, printed: string): string {
+  const score = abilityScoreFromModifier(Number(printed));
+  return (
+    `${where}: abilities.${ability} is "${printed}" — a signed value is a printed ability MODIFIER (Pathfinder 2e prints "Str +2"), never a score, and this app stores d20 ability SCORES in every system: a ${printed} modifier is ${String(score)} (score = 10 + 2 × the printed modifier)`
+  );
+}
+
+/**
+ * The ability half of the model-authored stat-block contract, enforced at the
+ * SAME boundaries and through the SAME repair path as `statBlockLevelIssues`
+ * (docs/17 row 95): the Smith draft and the Cartographer brief both call
+ * `encounterSourceIssues`, and the statblock step checks its own reply.
+ *
+ * `rawMonsters` is the reply's own `monsters` array as the model sent it. Both
+ * arrays come from ONE reply and neither schema filters, defaults or reorders
+ * the array, so the pairing is index-aligned by construction — a mismatch is a
+ * bug in a caller, and it fails LOUDLY here rather than silently skipping the
+ * check for a monster (AGENTS 1).
+ */
+function statBlockSignedAbilityIssues(
+  monsters: readonly { name: string; statBlock?: StatBlock | undefined }[],
+  rawMonsters: readonly unknown[],
+): string[] {
+  if (rawMonsters.length !== monsters.length) {
+    throw new Error(
+      `statBlockSignedAbilityIssues: the raw reply listed ${String(rawMonsters.length)} monsters and the parsed contract ${String(monsters.length)} — the pre-coercion array must pair index-for-index with the parsed one`,
+    );
+  }
+  const issues: string[] = [];
+  for (const [index, monster] of monsters.entries()) {
+    if (monster.statBlock === undefined) continue;
+    const raw = rawMonsters[index];
+    const rawStatBlock =
+      typeof raw === 'object' && raw !== null
+        ? (raw as { statBlock?: unknown }).statBlock
+        : undefined;
+    for (const { ability, printed } of signedAbilityValues(rawStatBlock)) {
+      issues.push(signedAbilityIssue(`monsters[${String(index)}] "${monster.name}"`, ability, printed));
+    }
+  }
+  return issues;
+}
+
+/**
+ * The same check for a reply that IS the stat block (the statblock step): the
+ * step's own one-repair-then-loud path consumes these.
+ */
+function statblockSignedAbilityIssues(rawStatBlock: unknown): string[] {
+  return signedAbilityValues(rawStatBlock).map(({ ability, printed }) =>
+    signedAbilityIssue('the statblock reply', ability, printed),
+  );
+}
+
+/**
+ * The raw reply's `monsters` array (pre-coercion). Empty when the reply is not
+ * an object or carries no array there — the parsed contract's own required
+ * array then fails the boundary first, with the schema's named issues.
+ */
+function rawReplyMonsters(rawJson: unknown): readonly unknown[] {
+  if (rawJson === null || typeof rawJson !== 'object') return [];
+  const monsters = (rawJson as { monsters?: unknown }).monsters;
+  return Array.isArray(monsters) ? monsters : [];
+}
+
+/**
  * Encounter monsters must resolve to a stat block: a cited excerpt index that
  * exists, an exact bestiary roster name (§7), or an inline block — checked in
  * that precedence order. Returns one named issue per offender so the repair
  * prompt and the review UI can say exactly what is missing. Shared by the
  * Smith draft validation and the Cartographer brief (fix-02 decisions 1–2:
  * the Smith no longer accepts name-only monsters — one repair, then loud).
+ *
+ * `rawMonsters` is the SAME reply's `monsters` array as it arrived from the
+ * model, BEFORE the contract's zod coercion: the ability convention check
+ * needs a value the schemas deliberately reshape away (`numericStat` turns
+ * "+2" into the number 2). It is REQUIRED, never defaulted, so a future caller
+ * cannot silently drop the check.
  */
 function encounterSourceIssues(
   monsters: readonly {
@@ -904,12 +1033,14 @@ function encounterSourceIssues(
   }[],
   statblockChunkIds: readonly Id[],
   rosterChunkByName: Readonly<Record<string, Id>>,
+  rawMonsters: readonly unknown[],
 ): string[] {
   const issues = invalidCitationIssues(monsters, statblockChunkIds, rosterChunkByName);
   // A model-authored inline block must carry a level the app's parser can
   // read (the same acceptance set as every level consumer) — a junk level is
   // an issue HERE, where the one repair turn still exists.
   issues.push(...statBlockLevelIssues(monsters));
+  issues.push(...statBlockSignedAbilityIssues(monsters, rawMonsters));
   for (const [index, monster] of monsters.entries()) {
     if (monster.statBlock !== undefined) continue;
     if (
@@ -2556,10 +2687,15 @@ export class RunEngine {
 
     debugLog('run', `draft chat returned ${String(raw.length)} chars`);
     let parsed: unknown = null;
+    // The reply as the model sent it, before the contract's zod coercion: the
+    // ability convention check needs the printed sign, which `numericStat`
+    // erases (docs/17 row 95, §4).
+    let rawJson: unknown = null;
     let parseFailed = false;
     let issues: string[] = [];
     try {
-      parsed = contract.schema.parse(parseJsonReply(raw));
+      rawJson = parseJsonReply(raw);
+      parsed = contract.schema.parse(rawJson);
     } catch (error) {
       issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
       debugLog('run', 'draft parse FAILED — retrying with schema-fix instruction', {
@@ -2602,6 +2738,7 @@ export class RunEngine {
         draftMonsters,
         context.statblockChunkIds,
         context.rosterChunkByName,
+        rawReplyMonsters(rawJson),
       );
       if (sourceIssues.length > 0) {
         if (!this.sourceRepaired.has(runId)) {
@@ -2711,8 +2848,13 @@ export class RunEngine {
 
     let statBlock: StatBlock | null = null;
     let issues: string[] = [];
+    // The reply as the model sent it, before the schema's coercion (the sign
+    // `numericStat` erases is the only proof that an ability value is the
+    // printed modifier rather than a score — docs/17 row 95).
+    let rawJson: unknown = null;
     try {
-      const parsed = statBlockSchema.parse(parseJsonReply(raw));
+      rawJson = parseJsonReply(raw);
+      const parsed = statBlockSchema.parse(rawJson);
       statBlock = parsed;
     } catch (error) {
       issues = error instanceof ZodError ? formatZodIssues(error) : [parseErrorSummary(error)];
@@ -2737,6 +2879,35 @@ export class RunEngine {
       if (input.autonomy === 'auto') return { step };
       if (input.autonomy === 'manual') return { step, runStatus: 'awaiting_user' };
       return { step, runStatus: 'needs_review' };
+    }
+
+    // The ability convention violation (docs/17 row 95): a stat block whose
+    // reply printed a SIGNED ability value is a PF2e modifier, not a score,
+    // and `numericStat` has already coerced it into a plausible-looking score.
+    // Same one-repair-then-loud policy as the parse failure above, sharing the
+    // step's single repair flag; the instruction is in the step's own prompt
+    // (`statBlockSchemaHint` states the convention in every call).
+    const abilityIssues = statblockSignedAbilityIssues(rawJson);
+    if (abilityIssues.length > 0) {
+      if (!this.statblockRetried.has(runId)) {
+        this.statblockRetried.add(runId);
+        debugLog('run', 'statblock reply printed signed ability values — retrying once', {
+          issue: abilityIssues.join('; '),
+        });
+        return this.runStatblock(
+          runId,
+          stepIndex,
+          steps,
+          input,
+          signal,
+          `${extraInstruction === '' ? '' : `${extraInstruction}\n`}Your previous statblock reply printed signed ability values:\n- ${abilityIssues.join('\n- ')}\nReply with corrected JSON only, with every ability written as its d20 SCORE.`,
+        );
+      }
+      this.statblockRetried.delete(runId);
+      const rejected = this.finishStep(steps[stepIndex], { raw, issues: abilityIssues }, 'rejected');
+      if (input.autonomy === 'auto') return { step: rejected };
+      if (input.autonomy === 'manual') return { step: rejected, runStatus: 'awaiting_user' };
+      return { step: rejected, runStatus: 'needs_review' };
     }
 
     this.statblockRetried.delete(runId);
@@ -3465,6 +3636,10 @@ export class RunEngine {
       );
       if (result.brief === null) return { ...result, advisory: null, expansionActive: false };
       const brief = result.brief;
+      // The reply as it arrived, before the contract's zod coercion: the
+      // ability convention check needs the printed sign (docs/17 row 95). The
+      // parse is known to succeed — `parseEncounterBrief` returned a brief.
+      const rawMonsters = rawReplyMonsters(parseJsonReply(reply));
       const isComplex = brief.rooms.length > 1;
       // Bounded roster expansion (docs/11 D12 amendment, shape-gated): the
       // gate reads the SAME authorization the prompt rendered — a COMPLEX
@@ -3560,6 +3735,7 @@ export class RunEngine {
           brief.monsters,
           retrieval.statblockChunkIds,
           retrieval.rosterChunkByName,
+          rawMonsters,
         );
         if (sourceIssues.length > 0) {
           return { brief: null, issues: sourceIssues, advisory: null, expansionActive: false };
@@ -3590,6 +3766,10 @@ export class RunEngine {
           expandedEntries,
           retrieval.statblockChunkIds,
           retrieval.rosterChunkByName,
+          // The pinned prefix's own entries are data the contract DISCARDS
+          // (`stripStatFieldCount`), so their raw values are out of reach of
+          // the check by construction — the same slice, index-aligned.
+          rawMonsters.slice(pinLength),
         );
         if (sourceIssues.length > 0) {
           return { brief: null, issues: sourceIssues, advisory: null, expansionActive: false };

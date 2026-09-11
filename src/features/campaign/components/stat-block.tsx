@@ -1,7 +1,14 @@
 import type { ReactNode } from 'react';
 
 import { Input } from '@/components/ui/input';
-import { abilityModifier, formatModifier, type NamedText, type StatBlock } from '@/domain';
+import {
+  abilityModifier,
+  abilityScoreFromModifier,
+  formatAbilityValue,
+  printsAbilityModifiers,
+  type NamedText,
+  type StatBlock,
+} from '@/domain';
 import {
   PairListEditor,
   ExtrasEditor,
@@ -117,9 +124,9 @@ export function StatBlockCard({ statBlock, name }: { statBlock: StatBlock; name:
           return (
             <div key={ability}>
               <div className="font-semibold">{ABILITY_LABELS[ability]}</div>
-              <div>
-                {score} ({formatModifier(abilityModifier(score))})
-              </div>
+              {/* Per-system display (docs/12 §5): Pathfinder 2e prints the
+                  BONUS only, every other system `score (bonus)`. */}
+              <div>{formatAbilityValue(statBlock.system, score)}</div>
             </div>
           );
         })}
@@ -177,14 +184,32 @@ export interface StatBlockFormProps {
   onChange: (next: StatBlock) => void;
 }
 
-/** Edit form for every StatBlock field, mapped 1:1 (05-UI: "plain labeled inputs"). */
+/**
+ * Edit form for every StatBlock field, mapped 1:1 (05-UI: "plain labeled
+ * inputs").
+ *
+ * ABILITIES follow the block's own SYSTEM (docs/12 §5): the app stores
+ * d20-scale scores everywhere, Pathfinder 2e prints signed modifiers, so for a
+ * PF2e block the field IS the printed bonus and the stored score is derived
+ * with `abilityScoreFromModifier` — stated on screen by the conversion note
+ * below the grid rather than converted behind the owner's back (AGENTS 1),
+ * because a signed value he types (-1) means the same thing here as in the
+ * book. Every other system's field is the stored score, unchanged.
+ */
 export function StatBlockForm({ statBlock, onChange }: StatBlockFormProps) {
+  const editsAbilitiesAsModifiers = printsAbilityModifiers(statBlock.system);
+
   function patch(next: Partial<StatBlock>): void {
     onChange({ ...statBlock, ...next });
   }
 
   function patchAbility(ability: (typeof ABILITIES)[number], value: number): void {
-    patch({ abilities: { ...statBlock.abilities, [ability]: value } });
+    patch({
+      abilities: {
+        ...statBlock.abilities,
+        [ability]: editsAbilitiesAsModifiers ? abilityScoreFromModifier(value) : value,
+      },
+    });
   }
 
   function patchNamedList(
@@ -260,14 +285,28 @@ export function StatBlockForm({ statBlock, onChange }: StatBlockFormProps) {
         {ABILITIES.map((ability) => (
           <NumberField
             key={ability}
-            label={ABILITY_LABELS[ability]}
-            value={statBlock.abilities[ability]}
+            label={
+              editsAbilitiesAsModifiers
+                ? `${ABILITY_LABELS[ability]} bonus`
+                : ABILITY_LABELS[ability]
+            }
+            value={
+              editsAbilitiesAsModifiers
+                ? abilityModifier(statBlock.abilities[ability])
+                : statBlock.abilities[ability]
+            }
             onChange={(value) => {
               patchAbility(ability, value);
             }}
           />
         ))}
       </div>
+      {editsAbilitiesAsModifiers && (
+        <p className="text-xs text-muted-foreground" data-testid="stat-block-ability-conversion">
+          Pathfinder 2e prints abilities as bonuses, so each field above is the printed bonus. The
+          score stored on this block is 10 + 2 × the bonus (a +2 bonus is stored as 14, a -1 as 8).
+        </p>
+      )}
       <div className="grid grid-cols-2 gap-2">
         <TextField
           label="Saving throws"

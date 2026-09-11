@@ -967,6 +967,128 @@ describe('encounter runs (M3-B)', () => {
   });
 
   /**
+   * The ability convention of a model-authored inline stat block (owner report,
+   * docs/17 row 95, docs/12 §5): a Pathfinder 2e model prints ability
+   * MODIFIERS, `numericStat` coerces "+2" to the score 2, and the app then read
+   * that as a d20 score — the owner's generated mob rendered "2 (−4)" for a
+   * creature whose Strength bonus is +2. The check runs on the RAW reply (the
+   * sign is the tell, and zod's coercion erases it), names the monster and the
+   * ability, and rides the existing one-repair-then-loud path.
+   *
+   * Revert-proof: delete the `statBlockSignedAbilityIssues` call inside
+   * `encounterSourceIssues` and this run COMPLETES with the modifier-shaped
+   * score 2 persisted on the materialized monster.
+   */
+  it('refuses an inline stat block that prints a signed ability modifier — one named repair, then a loud failure', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    // The owner's exact shape: a PF2e model wrote its printed modifier. The
+    // block is deliberately NOT a valid StatBlock — the signed value the
+    // contract's coercion silently reshapes is the whole point of the test.
+    const signedBlock = {
+      ...monsterBlock({ system: 'pathfinder2e' }),
+      abilities: { str: '+2', dex: 18, con: 12, int: 2, wis: 14, cha: 6 },
+    } as unknown as StatBlock;
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [
+          {
+            name: 'Risen Lumberjack',
+            count: 2,
+            notes: 'axes still in hand',
+            statBlock: signedBlock,
+          },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'The footbridge scene',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+    const storedRun = await getRun(runId);
+    // One repair attempt, then the run fails with the named issue.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const repairContent = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(repairContent).toContain('Risen Lumberjack');
+    expect(repairContent).toContain('abilities.str is "+2"');
+    expect(repairContent).toContain('a +2 modifier is 14');
+    expect(storedRun?.errorMessage).toContain('abilities.str is "+2"');
+    expect(storedRun?.resultArtifactId).toBeNull();
+    // Nothing was persisted: no encounter, no materialized monster row.
+    expect((await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc')).toEqual([]);
+  });
+
+  /**
+   * The acceptance set does not over-reject: an ability quoted as an UNSIGNED
+   * numeric string is a score (the coercion `numericStat` has always done and
+   * documented), and a PF2e score the model wrote correctly passes untouched.
+   * Revert-proof: widen the predicate to `typeof value === 'string'` and this
+   * draft is refused instead of completing.
+   */
+  it('accepts unsigned numeric-string scores and correctly written PF2e scores', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    // 14 is what "+2" means (docs/12 §5) and "18" is a score quoted as a
+    // string — both legitimate raw replies (only the SIGNED form is refused).
+    const acceptedBlock = {
+      ...monsterBlock({ system: 'pathfinder2e' }),
+      abilities: { str: 14, dex: '18', con: 12, int: 2, wis: 14, cha: 6 },
+    } as unknown as StatBlock;
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [
+          {
+            name: 'Risen Lumberjack',
+            count: 2,
+            notes: 'axes still in hand',
+            statBlock: acceptedBlock,
+          },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'The footbridge scene',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const monsters = (await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc');
+    const materialized = monsters[0];
+    if (materialized?.kind !== 'npc') throw new Error('no materialized monster');
+    expect(materialized.data.statBlock?.abilities.str).toBe(14);
+    // The unsigned numeric string coerced exactly as before.
+    expect(materialized.data.statBlock?.abilities.dex).toBe(18);
+  });
+
+  /**
    * End-to-end version of the owner's report (docs/17 row 90), through the
    * REAL pipeline: the prose stages a creature that exists in no imported
    * bestiary, the encounter materializes it as an `npc-ref` monster, and the
