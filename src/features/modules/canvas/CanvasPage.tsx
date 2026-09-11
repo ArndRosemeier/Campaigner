@@ -281,6 +281,14 @@ export function CanvasPage(): JSX.Element {
   const [instructionTarget, setInstructionTarget] = useState<'selection' | 'part' | null>(null);
   const [rewritePartIndex, setRewritePartIndex] = useState<number | null>(null);
   const [instruction, setInstruction] = useState('');
+  // The EXACT span a running/opening AI action will replace, captured when the
+  // instruction dialog opens (docs/17 row 102). In Edit it is the CodeMirror
+  // selection; in Preview it is the capture the rendered preview made when the
+  // owner selected text (a click on the header button collapses the browser
+  // selection, so it cannot be read at confirm time). The dialog SHOWS the
+  // source text this resolves to, and the confirm re-resolves it against the
+  // live document — a range that no longer matches refuses, loudly.
+  const [refineTarget, setRefineTarget] = useState<RefineTarget | null>(null);
   const refineAbortRef = useRef<AbortController | null>(null);
   const proposalsRef = useRef<
     Map<
@@ -499,12 +507,10 @@ export function CanvasPage(): JSX.Element {
   // WHY each blocked header control cannot act (docs/18 §2.3): the gates above
   // are untouched and spec'd — these strings read the SAME flags in the same
   // order, so a reason can never disagree with the state it explains, and each
-  // one names the way out. `previewOpen` is the state the canvas OPENS in, so
-  // without it the first press of Refine selection / Rewrite part did nothing
-  // and said nothing at all.
-  const aiBlockedReason =
-    busyReason(busy, refineInFlight, wholeProposal !== undefined) ??
-    (previewOpen ? PREVIEW_AI_ACTIONS_REASON : null);
+  // one names the way out. There is deliberately NO preview entry any more
+  // (docs/17 row 102): both actions work in the rendered view, so the preview
+  // is not a reason to block anything.
+  const aiBlockedReason = busyReason(busy, refineInFlight, wholeProposal !== undefined);
   const viewBusyReason = viewBusy ? busyReason(busy, refineInFlight, suggestions.length > 0) : null;
 
   // The preview highlight: the whole-doc replacement mapped onto its
@@ -539,6 +545,47 @@ export function CanvasPage(): JSX.Element {
     const view = activeCanvasView.current;
     setSuggestions(view === null ? [] : pendingSuggestions(view.state));
   }
+
+  /**
+   * Captures what "Refine selection" will replace, WHEN THE BUTTON IS PRESSED
+   * (docs/17 row 102): the CodeMirror selection in Edit, the rendered preview's
+   * own capture in Preview. It cannot be read later — the click on a button
+   * collapses the browser selection — and it must not be re-read at render
+   * time, where it would drift out from under the dialog the owner is reading.
+   */
+  function captureRefineTarget(): RefineTarget {
+    if (!previewOpen) {
+      const view = activeCanvasView.current;
+      if (view === null) return { kind: 'refused', reason: SELECT_FIRST_REASON };
+      const selection = view.state.selection.main;
+      if (selection.from === selection.to) {
+        return { kind: 'refused', reason: SELECT_FIRST_REASON };
+      }
+      return {
+        kind: 'mapped',
+        doc: view.state.doc.toString(),
+        from: selection.from,
+        to: selection.to,
+      };
+    }
+    const captured = useCanvasPreviewStore.getState().selectionByModule[moduleId] ?? null;
+    return captured ?? { kind: 'refused', reason: SELECT_FIRST_REASON };
+  }
+
+  // What the instruction dialog SHOWS (docs/17 row 102): the exact SOURCE text
+  // the action will replace — a wrong or stale range is visible BEFORE it can
+  // apply, not after — or the named reason it cannot be resolved at all.
+  const instructionPreview: { text: string | null; reason: string | null } = (() => {
+    if (instructionTarget === null) return { text: null, reason: null };
+    const resolved = resolveRefineRange(
+      instructionTarget,
+      instructionTarget === 'part' ? rewritePartIndex : null,
+      refineTarget,
+    );
+    return resolved.ok
+      ? { text: resolved.range.doc.slice(resolved.range.from, resolved.range.to), reason: null }
+      : { text: null, reason: resolved.reason };
+  })();
 
   /**
    * ONE save action for the whole document (manual Save, accepted
@@ -599,6 +646,100 @@ export function CanvasPage(): JSX.Element {
   }
 
   /**
+   * The document the CURRENT view is reading: the mounted editor's doc in
+   * Edit, the snapshot the preview renders from in Preview. One reader, so
+   * every AI action resolves its range against the text the owner can see.
+   */
+  function currentSourceDoc(): string | null {
+    if (!previewOpen) {
+      const view = activeCanvasView.current;
+      if (view !== null) return view.state.doc.toString();
+    }
+    return previewSource;
+  }
+
+  /**
+   * The EXACT source span an AI action replaces, resolved from the mode's own
+   * document — or a NAMED refusal (docs/17 row 102). Nothing here guesses:
+   * a selection that cannot be resolved does not get clamped to a nearby
+   * boundary; it comes back as a reason the dialog states and nothing runs.
+   */
+  function resolveRefineRange(
+    target: 'selection' | 'part',
+    planIndex: number | null,
+    captured: RefineTarget | null,
+  ): ResolvedRefineRange {
+    const doc = currentSourceDoc();
+    if (doc === null) {
+      return { ok: false, loud: false, reason: 'The canvas is not ready yet — try again.' };
+    }
+    if (target === 'part') {
+      if (planIndex === null) {
+        return { ok: false, loud: false, reason: PICK_PART_REASON };
+      }
+      let section;
+      try {
+        section = splitPartsDocument(doc, currentModule.spine?.partPlan ?? []).find(
+          (entry) => entry.planIndex === planIndex,
+        );
+      } catch {
+        return { ok: false, loud: true, reason: SCAFFOLDING_REASON };
+      }
+      if (section === undefined) {
+        return {
+          ok: false,
+          loud: true,
+          reason: `Part ${String(planIndex + 1)} is not in the document — nothing was rewritten.`,
+        };
+      }
+      return { ok: true, range: { doc, from: section.textFrom, to: section.textTo } };
+    }
+    if (previewOpen) {
+      if (captured === null) return { ok: false, loud: false, reason: SELECT_FIRST_REASON };
+      if (captured.kind === 'refused') {
+        return { ok: false, loud: false, reason: captured.reason };
+      }
+      if (captured.doc !== doc) {
+        return { ok: false, loud: true, reason: STALE_SELECTION_REASON };
+      }
+      return { ok: true, range: { doc, from: captured.from, to: captured.to } };
+    }
+    const view = activeCanvasView.current;
+    if (view === null || view.state.selection.main.from === view.state.selection.main.to) {
+      return { ok: false, loud: false, reason: SELECT_FIRST_REASON };
+    }
+    const selection = view.state.selection.main;
+    return { ok: true, range: { doc, from: selection.from, to: selection.to } };
+  }
+
+  /**
+   * Runs one AI action from the instruction dialog: resolve the exact span, or
+   * state why it cannot be (never a guess, never a clamp), then hand it to the
+   * path that belongs to the view the owner is looking at — the mention
+   * overlay in Edit, the preview snapshot in Preview.
+   */
+  function runInstruction(
+    target: 'selection' | 'part',
+    instructionText: string,
+    planIndex: number | null,
+  ): void {
+    const resolved = resolveRefineRange(target, planIndex, refineTarget);
+    if (!resolved.ok) {
+      if (resolved.loud) {
+        toastError(resolved.reason, new Error('the canvas AI action could not resolve its range'));
+      } else {
+        toastInfo(resolved.reason);
+      }
+      return;
+    }
+    if (previewOpen) {
+      void applyPreviewInstruction(target, instructionText, resolved.range);
+      return;
+    }
+    beginProposal(target, instructionText, resolved.range);
+  }
+
+  /**
    * Runs one canvas refine (canvasRefine contract): proposes the suggestion
    * overlay immediately, streams extracted content deltas into it, seals it
    * with the validated reply — or drops it loudly. The grounding is the
@@ -611,47 +752,21 @@ export function CanvasPage(): JSX.Element {
   function beginProposal(
     target: 'selection' | 'part',
     instructionText: string,
-    rewritePlanIndex: number | null,
+    range: { doc: string; from: number; to: number },
   ): void {
     const view = activeCanvasView.current;
     if (view === null) return;
-    const doc = view.state.doc.toString();
-    const selection = view.state.selection.main;
     const isSelection = target === 'selection';
-    if (isSelection && selection.from === selection.to) {
-      toastInfo('Select the text to refine first, then run Refine selection.');
+    const { doc, from, to } = range;
+    // The range was resolved against the document the dialog SHOWED. If the
+    // doc moved underneath it (a chat turn settling while the dialog was
+    // open), the span no longer means what the owner confirmed: refuse
+    // LOUDLY and write nothing, never propose over whatever now sits there.
+    if (doc !== view.state.doc.toString()) {
+      toastError(STALE_SELECTION_REASON, new Error('the canvas document changed while the dialog was open'));
       return;
     }
-    let from = selection.from;
-    let to = selection.to;
-    let groundingText = doc.slice(selection.from, selection.to);
-    if (!isSelection) {
-      if (rewritePlanIndex === null) {
-        toastInfo('Pick the part to rewrite first.');
-        return;
-      }
-      try {
-        const section = splitPartsDocument(doc, currentModule.spine?.partPlan ?? []).find(
-          (entry) => entry.planIndex === rewritePlanIndex,
-        );
-        if (section === undefined) {
-          throw new Error(`part ${String(rewritePlanIndex + 1)} is not in the document`);
-        }
-        from = section.textFrom;
-        to = section.textTo;
-        groundingText = section.text;
-      } catch (error) {
-        if (error instanceof ModulePartsDocumentError) {
-          toastError(
-            'Could not start the rewrite — the parts-document scaffolding no longer parses.',
-            error,
-          );
-        } else {
-          toastError('Could not start the rewrite', error);
-        }
-        return;
-      }
-    }
+    const groundingText = doc.slice(from, to);
     const controller = new AbortController();
     refineAbortRef.current = controller;
     setRefineInFlight(true);
@@ -696,7 +811,7 @@ export function CanvasPage(): JSX.Element {
           scope: target,
           instruction: instructionText,
           text: groundingText,
-          enclosingBlock: isSelection ? enclosingBlockOf(doc, selection.from) : '',
+          enclosingBlock: isSelection ? enclosingBlockOf(doc, from) : '',
           turn: controller,
           onDelta: (soFar) => {
             latestStreamed = soFar;
@@ -928,6 +1043,111 @@ export function CanvasPage(): JSX.Element {
         from: result.lastApplied.from,
         to: result.lastApplied.to,
       });
+    }
+  }
+
+  /**
+   * Runs one AI action WHILE THE PREVIEW IS OPEN (docs/17 row 102).
+   *
+   * The preview has no editor, so there is nothing to propose INTO: the
+   * snapshot string the preview renders from IS the document, and the chat
+   * already edits it through the existing split-save. This function rides that
+   * SAME path — no second apply seam, no second write: the reply's bytes are
+   * spliced over exactly `[from, to)`, the save goes through
+   * `saveWholeModuleDocument` (durable pre-change snapshot first, session
+   * ledger per changed part, THE one part-text save path), and the page's
+   * mirror state advances exactly as a settled preview chat turn does
+   * (`applyPreviewTurnResult`), including the last-replacement highlight.
+   *
+   * The invitation the owner accepted was the dialog's own display of the
+   * SOURCE text this range holds, so the range is re-checked here against the
+   * live snapshot: a document that moved under the dialog refuses loudly and
+   * writes nothing.
+   *
+   * The reply is markdown for markdown: what lands is the model's bytes,
+   * verbatim. Nothing protects, restores or reconciles `[[tokens]]` — an AI
+   * edit may invent and drop links freely, exactly as in Edit (docs/17 row 102).
+   */
+  async function applyPreviewInstruction(
+    target: 'selection' | 'part',
+    instructionText: string,
+    range: { doc: string; from: number; to: number },
+  ): Promise<void> {
+    const source = previewDoc ?? mountDoc ?? initialDoc;
+    if (source === null || source !== range.doc) {
+      toastError(STALE_SELECTION_REASON, new Error('the preview snapshot moved since the range was resolved'));
+      return;
+    }
+    const isSelection = target === 'selection';
+    const label = `${isSelection ? 'Refine' : 'Rewrite'}: ${instructionText}`;
+    const controller = new AbortController();
+    refineAbortRef.current = controller;
+    setRefineInFlight(true);
+    try {
+      const refined = await refineModuleText({
+        moduleId: currentModule.id,
+        scope: target,
+        instruction: instructionText,
+        text: range.doc.slice(range.from, range.to),
+        enclosingBlock: isSelection ? enclosingBlockOf(range.doc, range.from) : '',
+        turn: controller,
+      });
+      const next =
+        range.doc.slice(0, range.from) + refined.replacement + range.doc.slice(range.to);
+      // The replacement is written as a whole parts-document: validate it at
+      // THIS boundary before anything is persisted (AGENTS 3). A reply that
+      // breaks the scaffolding is refused here — loudly, with nothing written
+      // and no durable snapshot of a change that was never applied.
+      try {
+        splitPartsDocument(next, currentModule.spine?.partPlan ?? []);
+      } catch (error) {
+        toastError(
+          'The replacement would break the parts-document scaffolding — nothing was applied. Try a different instruction.',
+          error,
+        );
+        return;
+      }
+      const row = await getModule(currentModule.id);
+      if (row === undefined) {
+        toastError(
+          'Could not apply the change — the module row is gone.',
+          new Error('module row missing after the canvas refine turn'),
+        );
+        return;
+      }
+      await saveWholeModuleDocument({
+        moduleId: currentModule.id,
+        doc: next,
+        module: row,
+        origin: 'ai',
+        label,
+        version: { source: isSelection ? 'refine' : 'rewrite', label },
+        ...(refined.modelUsed === '' ? {} : { writerModel: refined.modelUsed }),
+      });
+      setPreviewDoc(next);
+      setBaselineDoc(next);
+      setDocText(next);
+      setLastReplacement({
+        doc: next,
+        from: range.from,
+        to: range.from + refined.replacement.length,
+      });
+      toastSuccess(isSelection ? 'Refinement applied' : 'Rewrite applied');
+    } catch (error) {
+      if (controller.signal.aborted) {
+        // A stop is not an error: the overlay of the editor path has no
+        // equivalent here, and nothing was written.
+      } else if (error instanceof ModuleBusyError) {
+        toastError(
+          'A generation is already running for this module — wait for it or stop it first',
+          error,
+        );
+      } else {
+        toastError('Canvas refine failed — nothing was applied', error);
+      }
+    } finally {
+      if (refineAbortRef.current === controller) refineAbortRef.current = null;
+      setRefineInFlight(false);
     }
   }
 
@@ -1254,10 +1474,11 @@ export function CanvasPage(): JSX.Element {
             <Button
               variant="outline"
               size="xs"
-              disabled={aiBlocked || previewOpen}
+              disabled={aiBlocked}
               data-testid="canvas-refine-selection"
               onClick={() => {
                 setInstruction('');
+                setRefineTarget(captureRefineTarget());
                 setInstructionTarget('selection');
               }}
             >
@@ -1269,7 +1490,7 @@ export function CanvasPage(): JSX.Element {
             <Button
               variant="outline"
               size="xs"
-              disabled={aiBlocked || previewOpen}
+              disabled={aiBlocked}
               data-testid="canvas-rewrite-part"
               onClick={() => {
                 setInstruction('');
@@ -1582,16 +1803,32 @@ export function CanvasPage(): JSX.Element {
             </div>
           )}
           {previewOpen && previewSource !== null ? (
-            <CanvasPreview
-              doc={previewSource}
-              module={currentModule}
-              artifacts={pool}
-              moduleId={currentModule.id}
-              highlight={previewHighlight}
-              onOpenArtifact={(artifact) => {
-                setPeekArtifact(artifact);
-              }}
-            />
+            <>
+              {refineInFlight && (
+                <div
+                  className="flex items-center gap-2 border-b bg-muted/40 px-4 py-1.5 text-xs text-muted-foreground"
+                  data-testid="canvas-preview-proposing"
+                  role="status"
+                >
+                  <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
+                  {instructionTarget === 'part' ? 'Rewriting the part' : 'Refining'} — the change lands
+                  in the preview when the reply settles (Stop proposal cancels it).
+                </div>
+              )}
+              <CanvasPreview
+                doc={previewSource}
+                module={currentModule}
+                artifacts={pool}
+                moduleId={currentModule.id}
+                highlight={previewHighlight}
+                onOpenArtifact={(artifact) => {
+                  setPeekArtifact(artifact);
+                }}
+                onSelectionChange={(capture) => {
+                  useCanvasPreviewStore.getState().setSelection(moduleId, capture);
+                }}
+              />
+            </>
           ) : (
             <div className="flex min-h-0 flex-1 flex-col p-4">
               <CanvasEditor
@@ -1660,8 +1897,12 @@ export function CanvasPage(): JSX.Element {
             </DialogTitle>
             <DialogDescription>
               {instructionTarget === 'selection'
-                ? 'The selected span is replaced exactly — the rest of the document stays untouched until you accept.'
-                : 'The picked part is rewritten as a proposal — nothing changes until you apply it.'}
+                ? previewOpen
+                  ? 'The span shown below is replaced exactly, in the rendered text you are reading. The module text as it is now is saved as a version first, so it can be restored from Versions.'
+                  : 'The span shown below is replaced exactly — the rest of the document stays untouched until you accept.'
+                : previewOpen
+                  ? 'The picked part is rewritten in place, in the rendered text you are reading. The module text as it is now is saved as a version first, so it can be restored from Versions.'
+                  : 'The picked part is rewritten as a proposal — nothing changes until you apply it.'}
             </DialogDescription>
           </DialogHeader>
           {instructionTarget === 'part' && (
@@ -1706,6 +1947,36 @@ export function CanvasPage(): JSX.Element {
               }}
             />
           </div>
+          {/*
+           * WHAT WILL BE REPLACED, IN SOURCE (docs/17 row 102): the exact
+           * markdown bytes this action hands the model and writes back. That is
+           * the safety property of a rendered selection — a mis-mapped or stale
+           * range is visible HERE, before it can apply — so it is shown for
+           * both actions (for "Rewrite part" it is the picked part's text) and
+           * a range that cannot be resolved shows its named reason instead.
+           */}
+          <div className="flex flex-col gap-1.5">
+            <Label>
+              {instructionTarget === 'selection'
+                ? 'Text that will be replaced (exact source)'
+                : 'Part text that will be replaced (exact source)'}
+            </Label>
+            {instructionPreview.text !== null ? (
+              <pre
+                data-testid="canvas-instruction-source"
+                className="max-h-40 overflow-auto rounded-md border bg-muted/40 p-2 font-mono text-xs break-words whitespace-pre-wrap"
+              >
+                {instructionPreview.text}
+              </pre>
+            ) : (
+              <p
+                data-testid="canvas-instruction-refusal"
+                className="rounded-md border border-dashed p-2 text-xs text-muted-foreground"
+              >
+                {instructionPreview.reason}
+              </p>
+            )}
+          </div>
           <DialogFooter>
             <Button
               variant="outline"
@@ -1717,16 +1988,16 @@ export function CanvasPage(): JSX.Element {
             </Button>
             <Button
               data-testid="canvas-instruction-confirm"
-              disabled={instruction.trim() === '' || (instructionTarget === 'part' && rewritePartIndex === null)}
+              disabled={instruction.trim() === '' || instructionPreview.text === null}
               onClick={() => {
                 const target = instructionTarget;
                 const text = instruction.trim();
                 setInstructionTarget(null);
                 if (target === null) return;
-                beginProposal(target, text, target === 'part' ? rewritePartIndex : null);
+                runInstruction(target, text, target === 'part' ? rewritePartIndex : null);
               }}
             >
-              Propose
+              {previewOpen ? 'Apply' : 'Propose'}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1885,12 +2156,19 @@ const MODULE_GENERATING_REASON =
 const REFINE_RUNNING_REASON = 'A refine is running.';
 const PENDING_PROPOSAL_REASON = 'Accept or discard the pending proposal first.';
 /**
- * The reason the canvas OPENS with: the editor (and with it the selection and
- * the picked part these two actions work on) is not mounted while the preview
- * is up — the canvas lands in preview by default.
+ * Refusals of the TWO AI actions' targets (docs/17 row 102). Each one is a
+ * NAMED reason for a range that could not be resolved — never a clamp to the
+ * nearest boundary, never a silent no-op. The mapping's own refusals (a
+ * selection inside a wiki chip, a run whose text does not reproduce its
+ * source) live where they are detected, in `wiki-markdown.tsx`, and reach here
+ * as `PreviewSelectionCapture.kind === 'refused'`.
  */
-const PREVIEW_AI_ACTIONS_REASON =
-  'Refine and Rewrite work on the editor — switch to Edit (the header toggle) to use them.';
+const SELECT_FIRST_REASON = 'Select the text to refine first, then run Refine selection.';
+const PICK_PART_REASON = 'Pick the part to rewrite first.';
+const STALE_SELECTION_REASON =
+  'The document changed since that selection was made — select the text again.';
+const SCAFFOLDING_REASON =
+  'Could not read the parts-document scaffolding — fix the separator / label lines first.';
 /**
  * The proposal bar's own gate: Apply/Discard are held while the replacement is
  * still streaming in (a half-streamed replacement is never accepted), and Stop
@@ -1898,6 +2176,23 @@ const PREVIEW_AI_ACTIONS_REASON =
  */
 const PROPOSAL_STREAMING_REASON =
   'The proposal is still streaming — wait for it, or press Stop proposal.';
+
+/**
+ * What an AI action will replace, captured when its dialog OPENS and resolved
+ * (or refused by name) against the live document before anything runs. Only
+ * `mapped` carries a range, and `doc` is the document string the range was
+ * measured in: a range is never meaningful without the text it indexes
+ * (docs/17 row 102).
+ */
+type RefineTarget =
+  | { kind: 'mapped'; doc: string; from: number; to: number }
+  | { kind: 'refused'; reason: string };
+
+/** A resolved range, or the reason it could not be resolved. `loud` marks a
+ * failure (toasted as an error) against a plain user-state reason (info). */
+type ResolvedRefineRange =
+  | { ok: true; range: { doc: string; from: number; to: number } }
+  | { ok: false; reason: string; loud: boolean };
 
 /**
  * The first true condition of the three above (null = none is true). Callers

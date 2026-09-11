@@ -1620,7 +1620,9 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   **Refine selection** works on an explicit text SELECTION over the whole
   doc and grounds the model with the SELECTED RANGE (+ enclosing block) and
   the instruction — the full part text is never ambient context — returning
-  ONE span replacement; **Rewrite part** works on an explicitly PICKED part
+  ONE span replacement; in the PREVIEW that selection is the RENDERED one,
+  mapped back to the exact source range or refused by name (ledger 102,
+  below); **Rewrite part** works on an explicitly PICKED part
   (a dialog picker listing the plan; the confirm stays disabled until a part
   is picked — the editor selection is not consulted) and grounds the model
   with that part's current text, returning the COMPLETE part markdown (no
@@ -1641,7 +1643,44 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   synchronously at entry) refuses with `ModuleBusyError` — surfaced loudly,
   never queued. Stop rides the caller's abort signal (a user stop is not an
   error: the overlay simply drops). While a whole-part proposal is pending
-  or a refine is in flight, the other AI actions are disabled.
+  or a refine is in flight, the other AI actions are disabled — that is the
+  WHOLE gate: the view is not part of it (ledger 102).
+- **Applying in PREVIEW — no proposal overlay, same seam** (ledger 102):
+  the editor is unmounted in preview and the proposal machinery is CM6
+  state, so there is nothing to propose INTO. The confirm applies directly
+  instead: resolve the exact source range from the preview's own document
+  (the snapshot string), call `refineModuleText`, splice the validated reply
+  over exactly `[from, to)`, validate the resulting parts document at that
+  boundary (a reply that would break the scaffolding is refused loudly with
+  nothing written), then land it through `saveWholeModuleDocument` —
+  the SAME one save seam the preview chat uses, `origin: 'ai'`, a durable
+  pre-change version (`source: 'refine' | 'rewrite'`) first — and advance
+  the page's mirror state exactly as a settled preview chat turn does
+  (`applyPreviewTurnResult`), wash included. The dialog's display of the
+  exact SOURCE text it will replace is the confirmation; the durable
+  version is the undo (which is what the ledger-58 "no undo in preview"
+  caveat lacked for this path). The wait is visible ("Rewriting the part /
+  Refining — the change lands in the preview when the reply settles") and
+  **Stop proposal** aborts it with nothing written.
+- **Rendered selection → SOURCE** (ledger 102): with the preview open the
+  owner selects in the RENDERED text, so the surface that renders it maps
+  the DOM selection back. The preview renders each part through the shared
+  `WikiMarkdown` with its OPT-IN source map: every rendered text run sits in
+  a `<span data-md-from data-md-to>` carrying that run's exact byte range,
+  and `resolveSelectionRange` folds a selection's endpoints back to offsets
+  by rebuilding the run's pieces (text nodes, plus each wiki chip's
+  byte-exact `data-wiki-raw` `[[…]]` token) and REQUIRING them to
+  concatenate to exactly the source slice the run claims — byte-exact or
+  refuse, never a clamp. A point inside a chip's label is refused by name (a
+  chip is replaced as its whole token, never as its display text); a
+  cross-part selection, an unmapped span (inline code, image, the
+  unwritten-part placeholder), an empty selection and a capture from an
+  older document each have their own sentence. The capture is taken where
+  the selection is MADE (the store, per module) because a click on the
+  header button collapses the browser selection, and it is resolved AGAIN
+  when the action runs, so a document that moved under the dialog refuses
+  instead of replacing whatever now sits there. **The reader is untouched**:
+  no prop ⇒ no plugin, no attribute, byte-identical output (pinned).
 - **Acceptance IS persistence through the split-save** (v3, ledger 53): the
   accept dispatch already replaced the doc (one undo unit), so the page
   lands the result through `saveWholeModuleDocument`
@@ -1764,8 +1803,9 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   first open, the assembled/mount doc — through the shared
   `WikiMarkdown` with the reader pool and clickable entity chips, scaffolding
   stripped, empty parts marked explicitly unwritten; a doc whose scaffolding
-  no longer parses shows the splitter's loud reason. Header AI actions +
-  Save stay disabled in preview (unchanged).
+  no longer parses shows the splitter's loud reason. Save stays disabled in
+  preview (there is no editor to save from); the two AI actions DO work
+  there (ledger 102).
 - **Last-replacement highlight, both surfaces** (owner-directed, ledger 58:
   "just the last replacement"): page state `lastReplacement: {doc, from,
   to} | null` — whole-doc offsets plus the post-apply doc string
@@ -1780,7 +1820,15 @@ list row. Screen text is docs/05 §Module canvas; implementation in
   page can never leave a stale mark); preview = the SHARED `WikiMarkdown`'s
   OPTIONAL highlight prop (part-relative range, forwarded by `CanvasPreview`
   after mapping the whole-doc range to its part; reader output byte-identical
-  when absent). Chat only — refine keeps its ghost affordances.
+  when absent), rendered as an INLINE wash span over exactly the replaced
+  characters inside ONE parse of the part's markdown (ledger 102 — the wash
+  used to be a block-level `<div>` around three separately parsed markdown
+  SLICES, and MEASURED that lost every whitespace character at a slice
+  boundary: "one two three" with [4,7) washed rendered "onetwothree",
+  because CommonMark strips a paragraph's initial and final whitespace and
+  each slice was its own document). The wash rides the source-range span, so
+  a washed run is also mappable and it is set by chat AND by the two AI
+  actions.
 
 
 #### Provenance on the canvas — outside the document, always

@@ -32,17 +32,23 @@ import { flushAsyncUpdates } from '../helpers/flush';
  *
  * The owner's report was three canvas header controls that "did nothing". They
  * were implemented, pinned and correct — what was missing was a perceivable
- * reason: both AI buttons are gated on `aiBlocked || previewOpen`, the canvas
- * OPENS in preview, and the only stated reason lived in a `title` on a
- * natively disabled button (invisible in Chrome, unreachable by keyboard).
+ * reason: the two AI buttons were natively disabled, and the only stated reason
+ * lived in a `title` (invisible in Chrome, unreachable by keyboard).
  *
  * So every pin here asserts BOTH halves, and neither alone is enough:
- * the control is STILL disabled exactly as the spec'd gate says (unchanged
- * behaviour — no gate was re-litigated), AND the reason is present, associated
- * via `aria-describedby`, and reachable by hover (absent before the hover, so a
- * wrapper that never receives it fails the pin instead of passing vacuously).
- * States whose block is self-evident (a blank chat input) are pinned as exactly
- * that: disabled with NO wrapper at all.
+ * the control is STILL disabled exactly as the spec'd gate says, AND the reason
+ * is present, associated via `aria-describedby`, and reachable by hover (absent
+ * before the hover, so a wrapper that never receives it fails the pin instead
+ * of passing vacuously). States whose block is self-evident (a blank chat
+ * input) are pinned as exactly that: disabled with NO wrapper at all.
+ *
+ * ONE gate was lifted rather than explained (docs/17 row 102): the canvas opens
+ * in the preview and the AI actions used to be disabled there, so the first
+ * press of either did nothing AND, before the device existed, said nothing. The
+ * owner asked for both to work in the rendered view, so the preview is no
+ * longer part of any gate: the pins below assert the inverse — live in BOTH
+ * views, no wrapper, no reason — while the REAL blocks (generating, refine in
+ * flight, open proposal) still state themselves through the device.
  */
 
 vi.mock('@/lib/toast', () => ({
@@ -64,8 +70,6 @@ const PART_PLAN = [
   { title: 'The Flooded Nave', levelBand: '2', synopsis: '', levelUpTrigger: '' },
 ];
 
-const PREVIEW_REASON =
-  'Refine and Rewrite work on the editor — switch to Edit (the header toggle) to use them.';
 const GENERATING_REASON = 'The module is generating right now — wait for it (or press Stop).';
 const STREAMING_REASON = 'The proposal is still streaming — wait for it, or press Stop proposal.';
 
@@ -135,31 +139,21 @@ describe('the canvas header states why its controls cannot act', () => {
     await seedModule();
   });
 
-  it('first open (preview by default): both AI actions say to switch to Edit, and say it perceivably', async () => {
-    const user = userEvent.setup();
+  it('first open (preview by default): both AI actions are LIVE there — the view is not a gate', async () => {
     await renderCanvas();
     // The state the owner hit: the canvas lands in the preview.
     expect(screen.getByTestId('canvas-preview')).toBeInTheDocument();
 
     for (const testId of ['canvas-refine-selection', 'canvas-rewrite-part']) {
-      // The spec'd gate is UNCHANGED: still natively disabled.
-      expect(screen.getByTestId(testId)).toBeDisabled();
-      // The reason exists, is the preview copy, and is associated statically.
-      const reason = screen.getByTestId(`${testId}-reason`);
-      expect(reason).toHaveTextContent(PREVIEW_REASON);
-      expect(reason).toHaveClass('sr-only');
-      const trigger = screen.getByTestId(`${testId}-blocked`);
-      expect(trigger).toHaveAttribute('aria-describedby', reason.id);
-      // Keyboard reachable (a disabled control is not, and that is the half a
-      // `title` could never cover).
-      expect(trigger).toHaveAttribute('tabindex', '0');
-      // Mouse perceivable, and NOT vacuously: absent before the hover.
-      expect(screen.queryByTestId(`${testId}-blocked-reason`)).not.toBeInTheDocument();
-      await user.hover(trigger);
-      expect(
-        await screen.findByTestId(`${testId}-blocked-reason`, {}, { timeout: 5_000 }),
-      ).toHaveTextContent(PREVIEW_REASON);
-      await user.unhover(trigger);
+      // docs/17 row 102: both actions work in the rendered view, so there is
+      // no gate here and no reason to state — a wrapper would mean a block
+      // that is not real.
+      expect(screen.getByTestId(testId)).toBeEnabled();
+      expect(screen.queryByTestId(`${testId}-blocked`)).not.toBeInTheDocument();
+      expect(reasonTextOf(testId)).toBeNull();
+      // And the copy that used to explain the preview is not on screen either
+      // (the source-scan pin: tests/features/canvas-preview-ai-actions).
+      expect(document.body.textContent).not.toContain('switch to Edit (the header toggle)');
     }
 
     // The view toggle is NOT blocked in this state — no reason attached.
@@ -169,10 +163,11 @@ describe('the canvas header states why its controls cannot act', () => {
     await flushAsyncUpdates();
   }, 30_000);
 
-  it('switching to Edit lifts the reason with the gate (both are gone, both are back on return)', async () => {
+  it('Edit and Preview leave both AI actions live — the schedule gates them, not the view', async () => {
     const user = userEvent.setup();
     await renderCanvas();
-    expect(reasonTextOf('canvas-refine-selection')).toBe(PREVIEW_REASON);
+    expect(screen.getByTestId('canvas-refine-selection')).toBeEnabled();
+    expect(reasonTextOf('canvas-refine-selection')).toBeNull();
 
     await user.click(screen.getByTestId('canvas-preview-toggle'));
     await screen.findByTestId('canvas-editor', {}, { timeout: 10_000 });
@@ -181,10 +176,10 @@ describe('the canvas header states why its controls cannot act', () => {
     expect(screen.queryByTestId('canvas-refine-selection-blocked')).not.toBeInTheDocument();
 
     await user.click(screen.getByTestId('canvas-preview-toggle'));
-    await waitFor(() => {
-      expect(screen.getByTestId('canvas-refine-selection')).toBeDisabled();
-    });
-    expect(reasonTextOf('canvas-refine-selection')).toBe(PREVIEW_REASON);
+    await screen.findByTestId('canvas-preview', {}, { timeout: 10_000 });
+    expect(screen.getByTestId('canvas-refine-selection')).toBeEnabled();
+    expect(screen.queryByTestId('canvas-refine-selection-blocked')).not.toBeInTheDocument();
+    expect(reasonTextOf('canvas-refine-selection')).toBeNull();
     await flushAsyncUpdates();
   }, 30_000);
 

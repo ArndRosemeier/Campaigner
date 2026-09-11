@@ -299,20 +299,23 @@ describe('last-replacement highlight, both surfaces', () => {
     await flushAsyncUpdates();
   });
 
-  it('the preview wash is a block-level wrapper in the affected part article', async () => {
+  it('the preview wash sits inline over exactly the replaced words, and the part still reads as its source', async () => {
     const user = userEvent.setup();
     await renderCanvas();
     mockChatReply(
       'Making it rainier.\n<edit><search>Rain hammers the stones.</search><replace>Rain drowns every word.</replace></edit>',
     );
     await sendChat(user, 'make the rain heavier');
-    // The wash must paint: an inline <mark> around the rendered block
-    // content splits around it and leaves zero-area fragments (DOM present,
-    // nothing visible) — so the wrapper is block-level by contract.
+    // The wash must paint AND must not move the text: it is an inline span
+    // over the replaced characters inside the paragraph (docs/17 row 102 —
+    // the slice-per-paragraph version this replaced dropped every whitespace
+    // character at a slice boundary, because CommonMark trims the first and
+    // last whitespace of a paragraph and each slice was its own document).
     const article = screen.getByTestId('canvas-preview-part-0');
     const wash = await within(article).findByTestId('replacement-highlight');
-    expect(wash.tagName).toBe('DIV');
+    expect(wash.tagName).toBe('SPAN');
     expect(wash).toHaveTextContent('Rain drowns every word.');
+    expect(wash.closest('p')).not.toBeNull();
     // The unaffected part carries no wash.
     expect(
       within(screen.getByTestId('canvas-preview-part-1')).queryByTestId('replacement-highlight'),
@@ -420,20 +423,62 @@ describe('WikiMarkdown highlight contract', () => {
     absent.unmount();
   });
 
-  it('wraps exactly the highlighted slice in a block-level wash', () => {
+  it('washes exactly the highlighted slice, inline, leaving every other character in place', () => {
     const from = VALUE.indexOf('Rain hammers the stones.');
     const rendered = render(
       <WikiMarkdown value={VALUE} artifacts={[]} highlight={{ from, to: from + 'Rain hammers the stones.'.length }} />,
     );
     const mark = rendered.container.querySelector('[data-testid="replacement-highlight"]');
     expect(mark).not.toBeNull();
-    // Block-level by contract (an inline wrapper around the rendered
-    // blocks paints no background — the invisible-highlight breakage).
-    expect(mark?.tagName).toBe('DIV');
-    expect(mark?.textContent).toContain('Rain hammers the stones.');
-    // The surrounding text still renders around the mark.
-    expect(rendered.container.textContent).toContain('The party bargains with');
+    // Inline by contract: it is a decoration INSIDE one parse of one string,
+    // so the rendered text is the source text character for character — the
+    // whitespace at the wash's boundaries included (the block-level wrapper
+    // around separately parsed slices could not do that: MEASURED, it
+    // rendered "onetwothree" for "one two three" with [4,7) washed).
+    expect(mark?.tagName).toBe('SPAN');
+    expect(mark?.textContent).toBe('Rain hammers the stones.');
+    // React renders a newline between block elements: the ONLY difference
+    // from the source is that block separator, never a character of text.
+    expect(rendered.container.textContent).toBe(
+      'The party bargains with Keeper Ilse at the gate.\nRain hammers the stones.',
+    );
     rendered.unmount();
+  });
+
+  it('parses ONE string: a wash never re-chunks the surrounding markdown', () => {
+    // The wash's edges fall INSIDE one paragraph, around emphasis and across
+    // a blank line — none of it may split, trim or re-order the text.
+    const VALUE2 = 'One **two** three four.\n\nSecond para.';
+    const from = VALUE2.indexOf('two');
+    const rendered = render(
+      <WikiMarkdown value={VALUE2} artifacts={[]} highlight={{ from, to: from + 3 }} />,
+    );
+    expect(rendered.container.textContent).toBe('One two three four.\nSecond para.');
+    const mark = rendered.container.querySelector('[data-testid="replacement-highlight"]');
+    expect(mark?.textContent).toBe('two');
+    // A replacement that spans the emphasis and the blank line washes every
+    // covered RUN — one wash per run (the `two` inside `**`, the text after
+    // it, the second paragraph), never a second parse of a slice.
+    const wide = render(
+      <WikiMarkdown value={VALUE2} artifacts={[]} highlight={{ from: 4, to: VALUE2.length }} />,
+    );
+    expect(wide.container.textContent).toBe('One two three four.\nSecond para.');
+    expect(wide.container.querySelectorAll('[data-testid="replacement-highlight"]')).toHaveLength(3);
+    rendered.unmount();
+    wide.unmount();
+  });
+
+  it('keeps the whitespace around a wash that sits inside one run (the measured defect)', () => {
+    // MEASURED against the old slice-per-paragraph render: this exact case
+    // rendered "onetwothree", because CommonMark trims the initial and final
+    // whitespace of a paragraph and each slice was parsed as its own document.
+    const spaced = render(
+      <WikiMarkdown value="one two three" artifacts={[]} highlight={{ from: 4, to: 7 }} />,
+    );
+    expect(spaced.container.textContent).toBe('one two three');
+    const mark = spaced.container.querySelector('[data-testid="replacement-highlight"]');
+    expect(mark?.textContent).toBe('two');
+    spaced.unmount();
   });
 });
 
