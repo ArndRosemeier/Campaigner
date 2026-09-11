@@ -24,6 +24,11 @@ import {
 import { createModule as persistModule, deleteModule } from '@/db/moduleRepo';
 import { sha256Hex } from '@/lib/hash';
 import { runEngine } from '@/llm/runEngine';
+import {
+  enqueueInventedCreaturePortraits,
+  planMobPortraitBatch,
+  useMobPortraitQueue,
+} from '@/features/campaign/mob-portrait-queue';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -48,6 +53,9 @@ vi.mock('@/llm/openrouter', () => ({
   listModels: vi.fn(),
   listImageModels: vi.fn(),
 }));
+
+vi.mock('@/llm/imageGen', () => ({ generateImages: vi.fn() }));
+vi.mock('@/lib/imageIntake', () => ({ intakeImage: vi.fn() }));
 
 vi.mock('@/search', async (importOriginal) => {
   const actual = await importOriginal();
@@ -899,6 +907,166 @@ describe('encounter runs (M3-B)', () => {
     expect(repairContent).toContain('Not A Creature');
     expect(storedRun?.errorMessage).toContain('sourceName "Not A Creature" is not in the bestiary roster');
     expect(storedRun?.resultArtifactId).toBeNull();
+  });
+
+  /**
+   * The creature-level contract (owner report, docs/17 row 90): the two
+   * lumberjacks rendered "Level sourceName" because nothing validated a
+   * model-authored inline stat block's level — the model's own citation
+   * vocabulary leaked into the value and PERSISTED, and the app's one level
+   * parser (`encounterRoster.parseLevelSort`) throws on it. The acceptance set
+   * is what that parser accepts: a number, a fraction like "1/2", or "—".
+   *
+   * Revert-proof: delete the `statBlockLevelIssues` call inside
+   * `encounterSourceIssues` and these two fail — the first run COMPLETES with
+   * the junk level persisted instead of failing, and the second materializes an
+   * NPC whose `statBlock.level` is "sourceName".
+   */
+  it('refuses an inline stat block whose level is not a printed level — one named repair, then a loud failure', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    // The owner's exact shape: the model wrote its own citation key into the
+    // level field.
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [
+          { name: 'Risen Lumberjack', count: 2, notes: 'axes still in hand', statBlock: monsterBlock({ level: 'sourceName' }) },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'The footbridge scene',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('failed');
+    });
+    const storedRun = await getRun(runId);
+    // One repair attempt, then the run fails with the named issue.
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const repairContent = chatMock.mock.calls[1]?.[0].at(-1)?.content ?? '';
+    expect(repairContent).toContain('Risen Lumberjack');
+    expect(repairContent).toContain('sourceName');
+    expect(repairContent).toContain('a number ("3"), a fraction ("1/2"), or "—"');
+    expect(storedRun?.errorMessage).toContain('"sourceName"');
+    expect(storedRun?.resultArtifactId).toBeNull();
+    // Nothing was persisted: no encounter, no materialized monster row.
+    expect((await listArtifactsByCampaign(campaign.id)).filter((row) => row.kind === 'npc')).toEqual([]);
+  });
+
+  /**
+   * End-to-end version of the owner's report (docs/17 row 90), through the
+   * REAL pipeline: the prose stages a creature that exists in no imported
+   * bestiary, the encounter materializes it as an `npc-ref` monster, and the
+   * portrait batch then lists exactly that monster — instead of the
+   * "No creatures to illustrate" state he got.
+   *
+   * Revert-proof: restore the two lane guards in `enumerateBatchKinds` and the
+   * plan comes back empty while the roster still holds the materialized
+   * monster.
+   */
+  it("the materialized monster of a staged scene is exactly what the portrait batch lists", async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({
+        ...DRAFT,
+        monsters: [
+          { name: 'Risen Lumberjack', count: 2, notes: 'axes still in hand', statBlock: monsterBlock({ level: '3' }) },
+        ],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'Two risen lumberjacks, motionless on the narrow boggy footbridge',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const storedRun = await getRun(runId);
+    const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'encounter') throw new Error('no encounter artifact');
+    // The collision path of the assertion rule: a staged creature with no
+    // citable stat source becomes a REAL npc artifact, linked by reference.
+    expect(artifact.data.monsters[0]?.source.type).toBe('npc-ref');
+
+    const plan = await planMobPortraitBatch(artifact, campaign.id);
+    expect(plan.missing).toEqual(['Risen Lumberjack']);
+    expect(plan.imaged).toEqual([]);
+
+    const result = await enqueueInventedCreaturePortraits(artifact, campaign.id);
+    expect(result.enqueued).toBe(1);
+    useMobPortraitQueue.getState().reset();
+  });
+
+  it('a repaired level completes the run and the materialized monster carries the printed level', async () => {
+    const { campaign, persona, trollChunkId } = await seed();
+    const { db } = await import('@/db/db');
+    const chunk = await db.chunks.get(trollChunkId);
+    searchRulesMock.mockResolvedValue(
+      chunk !== undefined ? [{ chunk, score: 1, source: 'keyword' as const }] : [],
+    );
+    const badDraft = {
+      ...DRAFT,
+      monsters: [
+        { name: 'Risen Lumberjack', count: 2, notes: 'axes still in hand', statBlock: monsterBlock({ level: 'sourceName' }) },
+      ],
+    };
+    const goodDraft = {
+      ...DRAFT,
+      monsters: [
+        { name: 'Risen Lumberjack', count: 2, notes: 'axes still in hand', statBlock: monsterBlock({ level: '3' }) },
+      ],
+    };
+    chatMock
+      .mockResolvedValueOnce({ text: JSON.stringify(badDraft), modelUsed: 'test-model', fallback: null })
+      .mockResolvedValue({ text: JSON.stringify(goodDraft), modelUsed: 'test-model', fallback: null });
+
+    const runId = await runEngine.startRun({
+      campaign,
+      persona,
+      brief: 'The footbridge scene',
+      autonomy: 'auto',
+      pinnedChunkIds: [],
+    });
+
+    await vi.waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const storedRun = await getRun(runId);
+    const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
+    if (artifact?.kind !== 'encounter') throw new Error('no encounter artifact');
+    const entry = artifact.data.monsters[0];
+    expect(entry?.source.type).toBe('npc-ref');
+    if (entry?.source.type !== 'npc-ref') return;
+    const npc = await getArtifact(entry.source.artifactId);
+    if (npc?.kind !== 'npc') throw new Error('no materialized npc');
+    expect(npc.data.statBlock?.level).toBe('3');
+    // The repair really was the one-repair path, not a silent coercion: the
+    // encounter carries the value the SECOND reply printed.
+    expect(chatMock).toHaveBeenCalledTimes(2);
   });
 
   it('fails the run loudly when a Smith monster has no stat source at all (fix-02 decision 2)', async () => {

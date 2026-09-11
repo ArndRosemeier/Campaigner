@@ -161,6 +161,9 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Reject half-formed unicode escapes in generated text | `lib/encodingHygiene.findEscapeDebris` (pure: `?` + exactly 2 lowercase hex forming a non-ASCII tail, plus literal `\uXXXX` in decoded text) + `debrisIssuesForFields`/`collectTextLeaves` at the boundaries — `runEngine.runFinalize` scans the draft + statblock strings BEFORE any create/updateArtifact (hit → loud `rejected` with the debris named, nothing persists), `moduleGen.generatePart` scans normalized part prose before the ready write (hit → part `failed` with the debris named, chain continues). Detection backstop for the `language.ts` UTF-8 contract (prevention) | silent repair-and-continue; persisting debris as ready content; a second scanner implementation |
 | Bind an encounter to the scene its module text stages (the ASSERTION RULE — docs/11 §The scene is the truth, ledger 89) | FOUR pieces, each encounter-only: (a) the writer's contract clause `PARTS_ENCOUNTER_CASTING` (`llm/promptStyles.ts`) — state what the fight IS and where, a stated count is binding, personal names stay off the rank and file, and the pipeline owns the casting; (b) `SCENE_AUTHORITY_SECTION` (`llm/sceneAuthority.ts`) rendered by `runEngine.runDraft` for `kind === 'encounter'` ONLY and by `runEncounterBrief` — the scene states nothing ⇒ design freely; (c) `buildEntityBrief`'s additive `encounterScene` framing (`features/modules/persona-request.ts`, set true by the encounter path in `entity-batch.ts` only) — the surrounding text becomes "The scene this encounter must stage"; (d) the additive optional `substitutions` on BOTH roster contracts (`encounterDraftSchema`, `encounterGeneratorBriefSchema`, `llm/schemas.ts` — absent/null = none declared) read through `sceneAuthority.sceneSubstitutionsOf` and surfaced by `roomBudget.substitutionAdvisories` on the EXISTING `data.budgetAdvisory` + step-notice seam, at all four encounter finalize seams | editing the built-in encounter persona text (`llm/personas/builtins.ts` — personas are user-editable stored rows, so the change would never reach an app that already exists); a "is the prose specific enough?" threshold, a prose classifier or any runtime gate over the prose (§4 gotcha); rendering the section for non-encounter kinds (their prompts are byte-identical, exact-bytes pinned); a SECOND advisory surface beside `data.budgetAdvisory`; silently swapping a stated creature for a generic equivalent (the whole point of `substitutions`); a prose-vs-roster checker that guesses beyond what the model declares |
 
+| Validate a MODEL-AUTHORED inline stat block's `level` (ledger 90, docs/11 §D5 amendment) | `runEngine.statBlockLevelIssues` — the app's one level parser (`llm/encounterRoster.parseLevelSort`: number, fraction `"1/2"`, or `"—"`) as the spec, wired into `encounterSourceIssues` so BOTH model boundaries (the Smith draft and the Cartographer brief) get the existing one-repair-then-loud path, plus the independent refuse in `materializeMonsterNpc` before it writes an artifact row; the prompt's `statBlockSchemaHint` DESCRIBES the field (`"level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—"`) | tightening `domain/statblock.ts` (it is the READ boundary for the blank editor form's `level: ''` and for PDF best-effort chunks — §4); a second level grammar beside `parseLevelSort`; coercing or defaulting the value; dropping the monster |
+| Enumerate what the portrait batch acts on (ledger 90, docs/11 §D5 amendment) | `features/campaign/mob-portrait-queue.enumerateBatchKinds` — ONE enumeration for the read-only count (`planMobPortraitBatch`), the additive batch (`enqueueMobPortraits` + `enqueueInventedCreaturePortraits`) and both regen paths, routing EVERY roster participant by what its creature IS: chunk-backed (`rulebook`, or `npc-ref` → an artifact with `data.monsterChunkId`) shares the bestiary portrait deduped by artifact; anything else (`inline`/`none`, `npc-ref` → an artifact WITHOUT the marker) is a LOCAL job with NO `chunkId` | reading `source.type` as the routing rule (an `npc-ref` row matched neither lane — the owner's materialized monster was invisible to the batch); handing a `chunkId` to a local job (that is the only thing that can reach the global `mobPortraits` cache); enumerating into a second, divergent list for the surface |
+
 ### 2.3 App & UI
 
 | To do X | Use Y | NOT Z |
@@ -372,6 +375,44 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   point on, while the spine fixtures and the floor-message golden keep their
   original "byte-identical to the pre-styles builders" meaning. Regenerating a
   fixture from the current code is never evidence.
+- **A model-authored stat block is validated at the BOUNDARY, because
+  `parseLevelSort` THROWS downstream** (ledger 90, docs/11 §D5 amendment). The
+  inline `statBlock` a persona embeds is the ONE place a model writes a
+  creature level, and `llm/encounterRoster.parseLevelSort` — the app's single
+  level parser — rejects anything that is not a number, a fraction or `"—"` by
+  THROWING. Every consumer therefore has to be defensive, and only some are:
+  the bestiary roster turns the throw into a per-row data error (the creature
+  disappears behind an error), `roomBudget.parseBudgetLevel` reports
+  `unparseable` (a loud-unverified room), and `spawn-picker-logic.parseLevelOrLast`
+  catches and sorts last — but the value was still PERSISTED (the owner's
+  "Level sourceName" reached a real `npc` artifact and every view of it). The
+  fix is not a second level grammar and not a defensive catch at each reader:
+  the level is refused where the model authors it — `statBlockLevelIssues`
+  inside `encounterSourceIssues` (both encounter contracts, existing
+  repair-then-loud) plus the independent refuse in `materializeMonsterNpc`
+  (§2.2). Two traps: tightening `domain/statblock.ts` "for safety" breaks TWO
+  documented legitimate states — the editor's blank stat block
+  (`blankStatBlock` parses `level: ''`) and PDF-ingested chunks, whose
+  best-effort levels sort last by design (`tests/features/spawn-picker.test.tsx`
+  seeds a chunk at level `'high'` on purpose) — so the acceptance set lives at
+  the model boundary, not on the shared read schema; and the prompt's shape hint
+  is part of the contract, because a bare `"level": string` invites exactly the
+  slip that shipped.
+- **An `npc-ref` roster entry is not automatically someone else's portrait job**
+  (ledger 90, docs/11 §D5 amendment). Two batches used to split the roster by
+  `monsterSource.type` — `rulebook` in one, `inline`/`none` in the other — and a
+  materialized monster (`npc-ref` → the artifact the encounter created for a
+  creature the prose staged) matched neither, so the owner's click answered
+  *"No creatures to illustrate — add roster entries first"* while his two risen
+  lumberjacks sat in the roster with no cover. Route by what the row's creature
+  IS: a chunk-backed artifact (`data.monsterChunkId`) shares the one bestiary
+  portrait; anything else is a LOCAL job with NO `chunkId` — and that absent
+  `chunkId` is the ONLY thing standing between an invented creature and the
+  global `mobPortraits` cache (owner decision: *"A special look for a special
+  zombie is ok"*), so never hand a chunk to an invented job or a lane label to
+  a router. Enumeration has no art side effects: an artifact with a cover is
+  `alreadyImaged` and is never detached, replaced or regenerated — which is what
+  keeps a named NPC's own portrait safe.
 - **A settings-row field is never allowed to be load-bearing for the whole
   row.** One unvalidated CONVENIENCE field took down every settings read in the
   app (and with it every settings-dependent surface), because the row was parsed

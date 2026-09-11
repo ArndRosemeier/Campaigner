@@ -25,14 +25,22 @@ import {
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
- * Mob portraits (owner-ratified one-click batch, docs/11 D5 amendment):
- * rulebook-cited creature kinds get one cover portrait per mob artifact
- * (lazy retro-fill for old encounters), and uncited roster entries
- * (`inline` / `none` — model-invented mobs with no bestiary citation) get
- * an on-demand creature artifact plus a local portrait ("Create creature +
- * portrait", per entry and batch-all). Every instance of an illustrated
- * creature shares the artifact — and its portrait — on the battle board
- * via the existing `coverImageId` token path.
+ * Mob portraits (owner-ratified one-click batch, docs/11 D5 amendment;
+ * coverage widened by docs/17 row 90): EVERY roster participant that can own
+ * a portrait is enumerated. Chunk-backed creatures — rulebook citations and
+ * `npc-ref` rows pointing at a mob artifact — get one cover portrait per mob
+ * artifact (lazy retro-fill for old encounters) and share it, while every
+ * other participant gets its own LOCAL portrait: uncited roster entries
+ * (`inline` / `none` — model-invented mobs with no bestiary citation) get an
+ * on-demand creature artifact first ("Create creature + portrait", per entry
+ * and batch-all), and an `npc-ref` row whose artifact carries no chunk marker
+ * — the monster the encounter materialized for a creature the module prose
+ * staged, or a named NPC standing in the roster — is illustrated against the
+ * artifact it already points at (owner decision: *"A special look for a
+ * special zombie is ok."*). Every instance of an illustrated creature shares
+ * the artifact — and its portrait — on the battle board via the existing
+ * `coverImageId` token path; an existing cover is never regenerated or
+ * detached by enumeration.
  *
  * The batch press never guesses and never replaces anything silently
  * (owner report: "2 mobs already have an image and I just want to fill a
@@ -84,6 +92,31 @@ export function MobPortraitsSection({
   const uncited = data.monsters
     .map((monster, index) => ({ monster, index }))
     .filter(({ monster }) => monster.source.type === 'inline' || monster.source.type === 'none');
+  /**
+   * Every roster participant the batch counts (docs/17 row 90): the cited
+   * creature kinds the rulebook lane walks PLUS the uncited entries PLUS the
+   * `npc-ref` rows — a monster the encounter materialized for a creature the
+   * prose staged (which the batch used to skip entirely, so it could never be
+   * illustrated) and an ordinary named NPC standing in the roster. The queue
+   * routes each one by what its artifact IS; the surface only needs the count,
+   * and taking it from the roster rather than from a plan keeps the button
+   * enabled for the owner's exact report (a roster of nothing but materialized
+   * monsters has no rulebook entries and no uncited entries).
+   */
+  const participantCount =
+    rulebookCount +
+    uncited.length +
+    data.monsters.filter((monster) => monster.source.type === 'npc-ref').length;
+  const hasUncited = uncited.length > 0;
+  /**
+   * Whether the batch has anything to act on at all. NOT `rulebookCount` and
+   * NOT `uncited.length`: the invented lane also carries `npc-ref` rows (a
+   * materialized monster, a named NPC), so gating a lane on the roster's SHAPE
+   * is what left the owner's lumberjacks unreachable. The queue's own
+   * enumeration is the authority — `planMobPortraitBatch` still decides whether
+   * there is anything missing or imaged.
+   */
+  const hasParticipants = participantCount > 0;
 
   /** The additive path — the owner's ask: fill every kind with no portrait,
    * keep every portrait that exists. Never regenerates, never replaces. */
@@ -91,14 +124,16 @@ export function MobPortraitsSection({
     setBatchChoice(null);
     setBusy(true);
     try {
+      // The invented lane is loaded whenever the batch has participants — it
+      // carries npc-ref rows as well as uncited entries (row 90), so gating it
+      // on `uncited.length` left a materialized monster unfilled.
       const rulebook =
         rulebookCount === 0
           ? { enqueued: 0, alreadyImaged: [] as string[] }
           : await enqueueMobPortraits(artifact, campaignId);
-      const invented =
-        uncited.length === 0
-          ? { created: 0, enqueued: 0, alreadyImaged: [] as string[] }
-          : await enqueueInventedCreaturePortraits(artifact, campaignId);
+      const invented = hasParticipants
+        ? await enqueueInventedCreaturePortraits(artifact, campaignId)
+        : { created: 0, enqueued: 0, alreadyImaged: [] as string[] };
       const enqueued = rulebook.enqueued + invented.enqueued;
       const kept = rulebook.alreadyImaged.length + invented.alreadyImaged.length;
       if (enqueued === 0) {
@@ -133,7 +168,7 @@ export function MobPortraitsSection({
           ? { regenerated: 0, republishedCanonical: [] as string[] }
           : await regenerateMobPortraits(artifact, campaignId);
       const invented =
-        uncited.length === 0
+        !hasParticipants
           ? { created: 0, regenerated: 0 }
           : await regenerateInventedCreaturePortraits(artifact, campaignId);
       const regenerated = rulebook.regenerated + invented.regenerated;
@@ -239,8 +274,34 @@ export function MobPortraitsSection({
     toastInfo(`"${entry.name}" already has a portrait`);
   }
 
-  const batchLabel = rulebookCount === 0 ? 'Create creatures + portraits' : 'Generate mob portraits';
-  const batchDisabled = busy || busyIndex !== null || (rulebookCount === 0 && uncited.length === 0);
+  /**
+   * The section's own description of what the press will do — TRUE for this
+   * roster, never optimistic. The empty state appears only when the
+   * enumeration is genuinely empty (`participantCount === 0`), so a roster of
+   * materialized monsters can no longer read "No creatures to illustrate"
+   * (row 90's exact report). Roster rows whose creature is chunk-backed share
+   * the bestiary portrait; every other participant gets its own local one.
+   */
+  const batchCopy =
+    participantCount === 0
+      ? 'No creatures to illustrate — add roster entries first.'
+      : `${String(participantCount)} creature kind${participantCount === 1 ? '' : 's'} in this roster: cited creatures share one bestiary portrait on the battle board, and ${
+          hasUncited
+            ? 'the invented entries below get a creature artifact first, then their own portrait'
+            : 'every other creature gets its own portrait'
+        }.`;
+
+  /**
+   * The press's label states WHAT it will do and TO HOW MANY (the count is the
+   * roster's own participant count, the same number the plan resolves) — a
+   * batch that now includes materialized monsters must not read as a
+   * bestiary-only action.
+   */
+  const batchLabel =
+    participantCount > 0
+      ? `${hasUncited ? 'Create creatures + portraits' : 'Generate mob portraits'} (${String(participantCount)})`
+      : 'Generate mob portraits';
+  const batchDisabled = busy || busyIndex !== null || participantCount === 0;
 
   return (
     <div
@@ -248,14 +309,8 @@ export function MobPortraitsSection({
       data-testid="mob-portraits-section"
     >
       <div className="flex items-center justify-between gap-3">
-        <p className="text-xs text-muted-foreground">
-          {rulebookCount === 0 && uncited.length === 0
-            ? 'No creatures to illustrate — add roster entries first.'
-            : rulebookCount === 0
-              ? 'No bestiary-cited creatures — each invented entry gets its own creature artifact plus a portrait.'
-              : uncited.length === 0
-                ? 'One portrait per cited creature kind; every instance of that creature shares it on the battle board.'
-                : 'One portrait per cited creature kind, shared on the battle board — invented entries below get a creature artifact first, then a portrait.'}
+        <p className="text-xs text-muted-foreground" data-testid="mob-portraits-copy">
+          {batchCopy}
         </p>
         <Button
           variant="outline"

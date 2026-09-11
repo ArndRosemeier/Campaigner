@@ -24,8 +24,11 @@
  *   artifact through the queue (the mob-portrait precedent), never silently
  *   dropped.
  * - `image` — one artifact-keyed cover portrait (enqueueArtifactPortrait);
- * - `mobPortraits` — the encounter roster's rulebook-cited creature kinds
- *   (enqueueMobPortraits, the encounter editor's batch action).
+ * - `mobPortraits` — the encounter roster's creature kinds, BOTH lanes
+ *   (`enqueueMobPortraits` for chunk-backed creatures + the shared bestiary
+ *   portrait, `enqueueInventedCreaturePortraits` for every other participant
+ *   incl. materialized `npc-ref` monsters), i.e. exactly what the encounter
+ *   editor's own batch press does).
  *
  * The `battlemap` extra is GONE — the automatic path above replaced it (the
  * extra was unticked-by-default and one-off, exactly the manual trigger the
@@ -56,6 +59,7 @@ import { getRun } from '@/db/runRepo';
 import { runEngine } from '@/llm/runEngine';
 import {
   enqueueArtifactPortrait,
+  enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
 import {
@@ -109,7 +113,15 @@ async function runPostCreateExtras(runId: Id): Promise<void> {
     if (artifact.kind !== 'encounter') {
       throw new Error(`mob portraits need an encounter — "${artifact.name}" is a ${artifact.kind}`);
     }
+    // BOTH lanes, exactly like the editor's batch (the same section press the
+    // owner uses by hand): chunk-backed creature kinds share the bestiary
+    // portrait, and every other roster participant — an inline entry, or the
+    // `npc-ref` monster the assertion rule's collision path materialized for a
+    // creature the prose staged (docs/17 row 90) — gets its own local one.
+    // Enqueuing only the rulebook lane is what left a freshly created
+    // encounter's materialized monsters permanently cover-less.
     await enqueueMobPortraits(artifact, run.campaignId);
+    await enqueueInventedCreaturePortraits(artifact, run.campaignId);
   }
 }
 

@@ -35,6 +35,7 @@ import {
   parseLevelOrLast,
   spawnPickedEntry,
 } from '@/features/play/battle/spawn-picker-logic';
+import { parseLevelSort } from '@/llm/encounterRoster';
 import { clearDatabase } from '../db/helpers';
 import { actDrained, flushAsyncUpdates } from '../helpers/flush';
 
@@ -388,6 +389,12 @@ describe('spawn picker helpers', () => {
     expect(parseLevelOrLast('1/2')).toBe(0.5);
     expect(parseLevelOrLast('—')).toBe(Number.POSITIVE_INFINITY);
     expect(parseLevelOrLast('high')).toBe(Number.POSITIVE_INFINITY);
+    // The junk the owner's materialized monster carried (docs/17 row 90): the
+    // ONE level parser throws on it, and this wrapper is the picker's
+    // documented containment — the creature sorts last instead of taking the
+    // mid-fight picker down with it.
+    expect(() => parseLevelSort('sourceName')).toThrow();
+    expect(parseLevelOrLast('sourceName')).toBe(Number.POSITIVE_INFINITY);
     expect(parseLevelOrLast('')).toBe(Number.POSITIVE_INFINITY);
     expect(parseLevelOrLast(null)).toBe(Number.POSITIVE_INFINITY);
     expect(parseLevelOrLast(undefined)).toBe(Number.POSITIVE_INFINITY);

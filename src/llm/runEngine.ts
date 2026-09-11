@@ -66,7 +66,12 @@ import {
 } from '@/llm/campaignGrounding';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
 import { statblockExtraNotice } from '@/llm/personas/extras';
-import { collectPackRosterWithRetry, formatRosterSection, parseRosterTargetLevel } from '@/llm/encounterRoster';
+import {
+  collectPackRosterWithRetry,
+  formatRosterSection,
+  parseLevelSort,
+  parseRosterTargetLevel,
+} from '@/llm/encounterRoster';
 import { collectItemPoolWithRetry, formatItemPoolSection } from '@/llm/encounterItems';
 import { roomKeyGuidanceFor, treasureGuidanceFor } from '@/llm/treasureGuidance';
 import {
@@ -696,10 +701,18 @@ function encounterAdvisoryText(
  * The exact inline stat-block shape encounter personas must embed when no
  * rulebook excerpt matches. Shared by the statblock step and the Cartographer
  * brief so the contract is spelled out identically in both prompts.
+ *
+ * `level` is spelled out rather than left as a bare `string` (owner report:
+ * a materialized mob rendered "Level sourceName", because the shape hint gave
+ * the model no idea what the field was and it leaked its own citation
+ * vocabulary into the value). The description IS the acceptance set
+ * `encounterRoster.parseLevelSort` enforces — the system's printed level, a
+ * number or a fraction like "1/2", or "—" when the creature has none.
  */
 function statBlockSchemaHint(system: string): string {
   return (
-    `{ "system": "${system}", "level": string, "size": string, "creatureType": string, "ac": number, ` +
+    `{ "system": "${system}", "level": the creature's printed level — a number ("3"), a fraction ("1/2"), or "—" when it has none (NEVER a field name, a citation key or a label like "sourceName"), ` +
+    `"size": string, "creatureType": string, "ac": number, ` +
     '"acNote": string, "hp": number, "hpFormula": string, "speed": string, ' +
     '"abilities": { "str": number, "dex": number, "con": number, "int": number, "wis": number, "cha": number }, ' +
     '"saves": string, "skills": string, "senses": string, "languages": string, ' +
@@ -832,6 +845,48 @@ function invalidCitationIssues(
 }
 
 /**
+ * The creature-level contract a MODEL-AUTHORED stat block must meet, with the
+ * app's own level parser as the spec (`encounterRoster.parseLevelSort`): a
+ * number ("3", "-1"), a fraction ("1/2"), or "—" (the dnd5e system's own
+ * printed value for a CR-less creature). Anything else — a citation
+ * vocabulary token the model leaked into the value ("sourceName"), a band
+ * ("CR 5"), an empty string — is an ISSUE, never a value.
+ *
+ * Why this is enforced HERE and not in `domain/statblock.ts`: the shared
+ * schema is the READ boundary for every stat block in the app, including the
+ * editor's blank form (`domain/create.blankStatBlock` parses `level: ''`) and
+ * PDF-ingested chunks, whose detection is best-effort by design (docs/02) and
+ * whose unparseable levels are a documented sort-last state
+ * (`features/bestiary/roster`). Tightening that schema would reject both
+ * legitimate states. A model-authored block has no such excuse: it prints a
+ * level or it fails, and `parseLevelSort` is the exact set the encounter
+ * floor, the bestiary sort and the spawn picker accept.
+ *
+ * `parseLevelSort` THROWS on an unparseable level, so a junk value that got
+ * past a boundary would travel: it becomes a persisted `monsterSource`'s inline
+ * block, then a diffable roster line, then a hard throw in
+ * `collectPackRoster`'s level ordering. The named issue below is what keeps a
+ * model slip inside the existing one-repair-then-loud path instead.
+ */
+function statBlockLevelIssues(
+  monsters: readonly { name: string; statBlock?: StatBlock | undefined }[],
+): string[] {
+  const issues: string[] = [];
+  for (const [index, monster] of monsters.entries()) {
+    const statBlock = monster.statBlock;
+    if (statBlock === undefined) continue;
+    try {
+      parseLevelSort(statBlock.level);
+    } catch {
+      issues.push(
+        `monsters[${String(index)}] "${monster.name}": the inline statBlock's "level" is "${statBlock.level}" — print the creature's level as a number ("3"), a fraction ("1/2"), or "—" when the creature has none`,
+      );
+    }
+  }
+  return issues;
+}
+
+/**
  * Encounter monsters must resolve to a stat block: a cited excerpt index that
  * exists, an exact bestiary roster name (§7), or an inline block — checked in
  * that precedence order. Returns one named issue per offender so the repair
@@ -850,6 +905,10 @@ function encounterSourceIssues(
   rosterChunkByName: Readonly<Record<string, Id>>,
 ): string[] {
   const issues = invalidCitationIssues(monsters, statblockChunkIds, rosterChunkByName);
+  // A model-authored inline block must carry a level the app's parser can
+  // read (the same acceptance set as every level consumer) — a junk level is
+  // an issue HERE, where the one repair turn still exists.
+  issues.push(...statBlockLevelIssues(monsters));
   for (const [index, monster] of monsters.entries()) {
     if (monster.statBlock !== undefined) continue;
     if (
@@ -1005,6 +1064,17 @@ async function materializeMonsterNpc(
   const trimmedName = name.trim();
   if (trimmedName === '') {
     throw new Error('finalize: a monster to materialize has an empty name');
+  }
+  // The row this writes is a REAL artifact every level consumer reads later
+  // (the bestiary sort, the encounter floor, the spawn picker — all through
+  // `encounterRoster.parseLevelSort`). The draft boundary already refuses a
+  // junk level with a repairable issue, so a caller that got here with one is
+  // a bug — refuse it loudly rather than persisting a row that throws
+  // downstream (AGENTS rules 1/3). No stat block is written on this path.
+  const levelIssues = statBlockLevelIssues([{ name: trimmedName, statBlock }]);
+  const levelIssue = levelIssues[0];
+  if (levelIssue !== undefined) {
+    throw new Error(`finalize: refusing to materialize "${trimmedName}" — ${levelIssue}`);
   }
   const key = trimmedName.toLowerCase();
   const cached = cache.get(key);

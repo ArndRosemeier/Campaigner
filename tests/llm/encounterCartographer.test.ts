@@ -496,6 +496,71 @@ describe('Encounter Cartographer run', () => {
     ]);
   });
 
+  /**
+   * The level contract reaches the Cartographer's brief too (docs/17 row 90):
+   * the brief designs the roster AND the map, so an inline block with a junk
+   * level is refused HERE — named, one repair, then the loud rejection — rather
+   * than surviving into the finalized roster as a row that breaks every level
+   * consumer. Revert-proof: drop the `statBlockLevelIssues` call from
+   * `encounterSourceIssues` and this brief is ACCEPTED, with the junk level
+   * persisted on the encounter's inline source.
+   */
+  it('refuses a brief whose inline stat block carries a junk level (named issue, repairable)', async () => {
+    const { campaign, cartographer } = await setup();
+    const junkLevel = {
+      ...BRIEF,
+      monsters: [{ ...BRIEF.monsters[0], statBlock: { ...INLINE_STATBLOCK, level: 'CR 5' } }],
+    };
+    chatMock.mockResolvedValue({ text: JSON.stringify(junkLevel), modelUsed: 'test-model', fallback: null });
+    const runId = await runEngine.startRun(input(campaign, cartographer));
+    await waitForRun(async () => {
+      expect((await getRun(runId))?.status).toBe('awaiting_user');
+    });
+
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const repairTurn = (chatMock.mock.calls[1]?.[0] ?? []).at(-1);
+    expect(repairTurn?.content).toContain(
+      'monsters[0] "Ash Cultist": the inline statBlock\'s "level" is "CR 5"',
+    );
+    const step = (await getRun(runId))?.steps[0];
+    expect(step?.status).toBe('rejected');
+    expect(rejectionIssues(step ?? { output: null })).toEqual([
+      'monsters[0] "Ash Cultist": the inline statBlock\'s "level" is "CR 5" — print the creature\'s level as a number ("3"), a fraction ("1/2"), or "—" when the creature has none',
+    ]);
+  });
+
+  /**
+   * The acceptance set does NOT over-reject: the system's own printed values —
+   * a fraction and the CR-less "—" — pass the boundary untouched.
+   * Revert-proof: a stricter predicate (e.g. `Number.isFinite(Number(level))`)
+   * fails this test while the junk-level test above still passes.
+   */
+  it('accepts the printed-level forms the app\'s parser accepts (fraction, CR-less dash)', async () => {
+    const { campaign, cartographer } = await setup();
+    for (const level of ['1/2', '—']) {
+      chatMock.mockClear();
+      const printed = {
+        ...BRIEF,
+        monsters: [{ ...BRIEF.monsters[0], statBlock: { ...INLINE_STATBLOCK, level } }],
+      };
+      chatMock.mockResolvedValue({ text: JSON.stringify(printed), modelUsed: 'test-model', fallback: null });
+      const runId = await runEngine.startRun(input(campaign, cartographer));
+      await waitForRun(async () => {
+        expect((await getRun(runId))?.status).toBe('awaiting_user');
+      });
+      const step = (await getRun(runId))?.steps[0];
+      // No level issue: the brief step COMPLETES (the run pauses at the brief's
+      // own review gate, the step before layout) and the printed level survives
+      // verbatim. A rejected brief is the discriminator — the run status is
+      // 'awaiting_user' on both paths.
+      expect(step?.status).toBe('done');
+      const output = step?.output as
+        | { parsed?: { monsters?: { statBlock?: { level?: string } }[] } }
+        | undefined;
+      expect(output?.parsed?.monsters?.[0]?.statBlock?.level).toBe(level);
+    }
+  });
+
   it('accepts numeric strings and a missing guidance field from the model', async () => {
     const { campaign, cartographer } = await setup();
     const loose: Record<string, unknown> = {

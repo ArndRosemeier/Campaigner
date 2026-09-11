@@ -44,7 +44,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D2 | **Two autonomies**: interactive runs use the run-engine autonomy (manual/review pause at the checkpoints below; map pick always pauses, M3-A rule). **Unattended auto runs** (module generation) never pause: one stylize candidate, no pick gate — the `entity-image-queue` precedent (08 §M4-C). Any failure fails that encounter loudly; the batch continues. |
 | D3 | Rooms are **unions of rectangles** (1 rect = plain, 2–3 rects = L/T shapes). Every room carries a **mob sub-rectangle** (`mobsRect`) inscribed in the union — it is both the mob placement area and the source the per-group veil footprints are cut from (D4). |
 | D4 | **One veil per monster spawn group** (owner-ratified group veils — supersedes the old one-veil-per-room rule): each room's `mobsRect` is split per `monsterIndexes` entry, in the owner's group order, into the minimal cell bounding box of that group's `placeMonsters` cells (`veilsFromSpawnClusters`, beside the legacy `veilsFromRooms`) — kind `veil`, int cells ≥ `VEIL_MIN_CELLS`. Rooms with no monster groups seed no veil. The room's FIRST group keeps `id = room.id` so the Path rail's "Reveal next room" still resolves per room; later groups mint fresh ids and every group veil carries `roomId = room.id` (additive on `battleVeilSchema`). Corridors stay open (GM can add fog manually). Amended (veil-reachability arc): **cover convention** — each seeded group veil covers its spawn area PLUS a one-cell margin on every side, clamped to the board bounds (a 1x1 group seeds at most 3x3), so the GM can grab the veil body and reach the edge handles around the tokens, which stay directly clickable above. Amended (veil-overlap merge): same-room group covers that OVERLAP (share ground) merge at seed into one veil — the bounding-box union re-clamped to the board, keeping the room id + `roomId` — so single-room adjacent spawns seed exactly one veil; disjoint same-room covers stay separate and cross-room covers never merge. GM-created veils are untouched. Amended (ledger 65, owner-ratified): **fog RENDERS as its name — an opaque, blocking cover** (`bg-zinc-300` then, no alpha, same in GM and player view; the earlier "~10% in both views" fill was what made fog indistinguishable from a GM-drawn transparent veil — the owner's "there are no fogged rooms right now" report, when every seeded row was already `kind: 'fog'`). Seeding geometry, `kind`, `roomId`, the merge, and coverage/pruning/initiative are all byte-unchanged; only the fill and the tap behavior are keyed off `kind` (docs/18 seam row; ledger 65). Amended (fog-cloud arc, 2026-09-10, owner-directed — supersedes the ledger-65 `bg-zinc-300` fill AND the seeded kind): **the seeded group covers are kind `'veil'`** — owner, verbatim: "The mobs should be covered by a veil, not fog." The seeder emitted the opaque BLOCKING kind over mob clusters; a veil is the kind the job needs, because hiding is done by COVERAGE (kind-agnostic: `portraitCoveredByVeils`, player-view DOM removal, initiative pruning, auto-roll on reveal), while a plain cover also keeps the map readable, passes a sub-threshold tap through to the room-key marker beneath it — repairing a real access bug, since a keyed room's marker sits at its `mobsRect` centre, inside the seeded cover by construction, and markers stay BELOW veils, so an opaque fog over it was untappable — and stays draggable/resizable/deletable exactly as before. Fog remains the GM-drawn opaque blocking kind and now renders as an animated grey cloud (`battle-fog-cloud`, pure CSS, `prefers-reduced-motion` aware — 09-MILESTONE-5 M5-D fog-cloud amendment). Seeding geometry, `roomId`, the merge, coverage/pruning/initiative and the rail's per-room resolution via `veil.id`/`veil.roomId` are byte-unchanged: the rail never resolves by kind. No migration either: `kind` is persisted board data, so a battle seeded before the amendment keeps its opaque fog covers (rendered as the new cloud, still blocking) until the board is re-seeded from its encounter — every NEW seed emits veils. |
-| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below. Amended 2026-09-08: uncited entries (`inline` / `none`) gain on-demand creature artifacts + local portraits ("Create creature + portrait", per entry and batch-all); invented covers stay local-only, never the global cache. Amended 2026-09-09: all-imaged batches offer portrait regeneration (canonical slots republished with fresh bytes — future clones everywhere get the new art, other campaigns' existing covers unchanged; flavored/invented regenerate locally). |
+| D5 | **Token art is not generated**: npc-backed tokens use the artifact's cover/portrait, seedFighter tokens use the deterministic initials fallback (M5-D behavior). No image calls for tokens. Amended 2026-09-05 by afa23f4/070d4ba/64b30f9 (mob-artifact arc): *rulebook-cited creatures become real mob artifacts — ONE `npc` artifact per campaign per cited chunk — and gain a one-click owner-ratified portrait batch ("Generate mob portraits"); every other seedFighter token keeps the initials fallback. See "D5 amendment — mob portraits" below. Amended 2026-09-08: uncited entries (`inline` / `none`) gain on-demand creature artifacts + local portraits ("Create creature + portrait", per entry and batch-all); invented covers stay local-only, never the global cache. Amended 2026-09-09: all-imaged batches offer portrait regeneration (canonical slots republished with fresh bytes — future clones everywhere get the new art, other campaigns' existing covers unchanged; flavored/invented regenerate locally). Amended 2026-09-10 (docs/17 row 90): the batch covers EVERY roster participant that can own a portrait — `npc-ref` rows route by whether their artifact is chunk-backed (shared bestiary portrait, deduped) or not (its own local portrait) — and the inline stat block's `level` is validated at the encounter boundary against the app's one level parser. See "The portrait batch covers EVERY roster participant" and "The inline stat block's `level`" below.* |
 | D6 | **Geometry is layout-anchored, never screen-anchored.** When a battle carries the map layout, every cell metric — veil spans, veil resize quantization, token snapping, the visible grid overlay, token size — derives from `boardWidth / cols` (normalized), never from a fixed CSS-px grid. Without a layout the current behavior is unchanged. |
 | D7 | **Structure-first**: geometry exists as data *before* any pixels; the image stylizes a rendered schematic; geometry is **never read back from pixels**. Amended 2026-09-08 (D14): the vision check that "only flagged drift for human review" is GONE entirely — no pixel is read back anywhere, and the human is the judge at pick. Amended 2026-09-09 (D19): the vision-located path carves out ONE exception — room LABEL positions (plaques the pipeline itself painted, not geometry) are read back through the structured vision locate; packed geometry is still never read back, and vision rooms carry none. |
 | D8 | **Effect markers are geometric showpieces** (encounter-resume arc, owner-ratified): the battle surface stamps disc/square zones as an additive `board.effects` array — normalized center, `sizeCells` in grid cells (the D6/D7 rules apply verbatim: layout-anchored, never screen pixels), `TOKEN_STAMP_COLORS` fill at ~70% transparency (fill alpha 0x4d, border 0xcc — static, never opacity swings), optional non-stat label. Board material: rendered in BOTH GM and player views; never initiative members, never coverage-hidden (they are not tokens); carried by the stage snapshot; scenery lock gates their moves like veils. |
@@ -59,7 +59,7 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D18 | **Two-button regeneration (owner-directed, 2026-09-09)**: the encounter editor offers EXACTLY two automatic actions for BOTH shapes, plus the prose checkbox — the old one-fight content "Regenerate with AI" and the standalone battlemap "Generate layout & map / Regenerate" are DELETED (subsumed, never renamed). **Regenerate everything** = a new dungeon top to bottom (complex: a fresh full Cartographer run — new roster + new layout + new map, same as if module-generated fresh; a roomless complex resets the row first so the fill-grade machinery runs against the row's own preset; single: a fresh Smith one-fight draft + a fresh map, one action). **Repopulate** = the map looks fine, the spawn looks wrong — a NEW roster for ALL rooms (complex: ROSTER-ONLY Cartographer pass — brief with the 'empty'/'over' repair loop + room-mirror + fresh cap, finalize persisting ONLY `monsters` (+ lowered `targetLevel`s) onto the PRESERVED rooms/map; single: today's Smith one-fight fill). A dungeon's repopulation is NOT a Smith extension — its clauses key on the target's actual shape. The **prose checkbox** ("Also redesign name and prose", default OFF) chains AFTER the automatic pass: a Smith PROSE-ONLY run (persists name/prose/body; any roster drift fails the run loud with nothing persisted). Unticked, a dungeon's name and prose stay byte-identical (singles always get fresh Smith prose; the box additionally replaces the name there). Both buttons honor the draw-once fill grade, the row preset, the remembered-preset trap fix, the cap math and the repair-turn semantics; manual Clear (map deletion) and the invisible unattended map queue stay as-is. Amended 2026-09-09 (D19): the D18 section gains a complex-only per-run **Map path** control (Use default / Classic / Vision) for Regenerate everything — the choice rides `EncounterRegenOptions.dungeonMapPath` through the run row (explicit-only, never persisted as the Settings default); singles ignore it, repopulation takes none. See "D18 — two-button regeneration" below. |
 | D19 | **A second, vision-located dungeon path for complex maps (owner-directed, 2026-09-09; the lab's labeled-map recipe production-hardened — "31 of 32 letters found, success for this config")**: the Settings `dungeonMapPath: 'classic' \| 'vision'` (DEFAULT `'classic'` — vision is opt-in; select beside the encounter preset, labels "Classic (vector rooms)" / "Vision-located labels") governs complex/multi-room production (initial runs + the unattended queue + Regenerate everything); the D18 per-run choice beats it both ways for ONE run. SINGLES always map classic (one arena needs no registration — the override is ignored, never an error); REPOPULATION is path-independent (roster-only, never touches the map); the unattended queue passes no override (the setting governs). The vision pipeline is `brief → vision-map → finalize`: (a) SIDECAR FIRST — rooms (letter A..N in room order for 4–10 rooms, name, description, encounter assignment, declared graph edges) + the brief's `entryRoomIndex` room flagged as the entrance (entry keeps its letter; the prompt draws it AS the visual ingress — stairs/cave mouth/gate/portal per concept, plaque included — and its observed point doubles as party ingress) authored from the brief BEFORE any image exists; (b) ONE labeled map through the existing image pipeline + storage (same `mapImageId` home; no aspect normalization — the image IS the map); (c) ONE structured vision pass with the configured chat model (0–1000 grid, zod boundary — a vision-incapable model fails the map step loud); (d) VERIFY by count check + a focused re-ask per miss ("only label D", found points as context) — still missing ⇒ the MAP STEP FAILS LOUD (candidate pruned, nothing persisted) naming the letters, NEVER an invented coordinate. Geometry posture: vision rooms carry NO `rects`/`mobsRect`/`entrance`/corridor-`rects` (schema-enforced); corridors carry declared `a`/`b` edges; spawns, group veils and key markers resolve to the observed point (+ deterministic scatter/placement around a point); anything needing polygons fails loud, never silently centers; connectivity IS the sidecar's declared room graph. Shape follows each room's description + the dungeon concept — NO regular/irregular distinction or toggle anywhere in the vision path. KNOWN DEBT (accepted): layout drift (the painted map drifting from the declared graph) has no verifier this arc — Regenerate everything is the correction. See "Vision-located dungeon path" below. |
 
-### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9)
+### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9; coverage + level contract amended 2026-09-10, docs/17 row 90)
 
 The original D5 was written when a rulebook-cited monster had NO artifact
 identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
@@ -147,9 +147,65 @@ identity to hang art on. The owner ratified the mob-artifact arc, verbatim:
   and the roster entry is NOT rewritten, so battleSeed spawn paths stay
   identical), then flows through the EXISTING portrait queue as a
   LOCAL-only job (no `chunkId`: prompt grounded on the artifact's own
-  content, never the cache). With zero rulebook entries the batch stays
-  enabled as **"Create creatures + portraits"**. GM-only (editor surface);
+  content, never the cache). GM-only (editor surface);
   materialize/generation failures surface loudly, never placeholders.
+
+- **The portrait batch covers EVERY roster participant that can own a
+  portrait (owner report, 2026-09-10, docs/17 row 90; owner decision:
+  *"A special look for a special zombie is ok."*)**. The enumeration used to
+  be lane-by-`monsterSource.type`: `rulebook` entries in one lane,
+  `inline`/`none` in the other — so an `npc-ref` row matched NEITHER and a
+  materialized monster (the assertion rule's collision path, below) was
+  invisible to the batch: the owner's two risen lumberjacks produced
+  *"No creatures to illustrate — add roster entries first"* and could never be
+  illustrated. Routing is now by **what the row's creature IS**, resolved from
+  the artifact the row points at, never by the shape of its `source`:
+
+  | Roster row | Lane | Portrait |
+  |---|---|---|
+  | `rulebook` (chunk citation) | rulebook | the one shared bestiary portrait (canonical slots go through the global cache) |
+  | `npc-ref` → artifact WITH `data.monsterChunkId` (a mob artifact) | rulebook | the SAME shared portrait, deduped by artifact — never a second job, never a second cover |
+  | `npc-ref` → artifact WITHOUT the marker (a monster the encounter materialized from a model-authored inline block; a named NPC standing in the roster) | invented | its OWN **local** portrait, grounded on the artifact's content |
+  | `inline` / `none` (uncited) | invented | materialize the creature artifact first, then the same local portrait |
+
+  **The cache firewall is structural, not a lane label**: an invented job
+  carries NO `chunkId`, so the worker can build no `cacheKeyForMonsterSource`
+  and can neither read nor write the global `mobPortraits` table. That is what
+  keeps the owner's rule — a distinct invented creature never inherits a
+  bestiary creature's shared art, and a bestiary creature is never
+  re-illustrated locally because a roster row happens to point at its
+  artifact. An artifact that already carries art is enumerated as
+  `alreadyImaged`: enumeration attaches, detaches and regenerates NOTHING, so
+  a named NPC keeps whatever portrait she already had. A dangling `npc-ref`
+  throws loudly in BOTH the read-only count and the enqueue (the dangling
+  `mobArtifactId` rule), and the section's label and copy state the
+  participant count, so the empty state appears only when the enumeration is
+  genuinely empty. The same enumeration backs the encounter's post-create
+  `mobPortraits` extra (`derivePostCreateExtras`), which now runs BOTH lanes —
+  a fresh Smith encounter's materialized monsters are illustrated there too.
+
+- **The inline stat block's `level` is validated at the encounter boundary
+  (owner report, 2026-09-10, docs/17 row 90)**. The owner's two lumberjacks
+  rendered **"Level sourceName"**: the model's own citation vocabulary leaked
+  into the level field of its inline block, nothing validated it
+  (`statBlockSchema.level` was a bare `z.string()`), and the junk value
+  PERSISTED on the materialized `npc` artifact. The acceptance set is what the
+  app's one level parser (`llm/encounterRoster.parseLevelSort`) already
+  accepts — a number (`"3"`, `"-1"`), a fraction (`"1/2"`), or `"—"` (the dnd5e
+  system's own printed value for a CR-less creature). Anything else is refused
+  as a NAMED ISSUE at both model boundaries (the Smith's `encounterSourceIssues`
+  and the Cartographer's brief), through the existing one-repair-then-loud path:
+  the repair prompt names the monster and the printed-level contract, a second
+  offender fails the run (no silent coercion, no dropped monster), and
+  `materializeMonsterNpc` independently refuses to write an artifact row from a
+  block whose level does not parse. The prompt's shape hint now DESCRIBES the
+  field instead of printing `"level": string` — the bare type is what invited
+  the slip. The acceptance set is deliberately NOT tightened in
+  `domain/statblock.ts`: that schema is the READ boundary for every stat block
+  in the app, including the editor's blank form (`blankStatBlock` parses
+  `level: ''`) and PDF-ingested chunks, whose detection is best-effort by
+  design and whose unparseable levels are a documented sort-last state — see
+  docs/18 §4.
 
 - **Portrait regeneration (owner-ordered, 2026-09-09)**: when a batch would
   enqueue NOTHING because every portrait already exists, the section offers
@@ -307,7 +363,11 @@ shared-blob image row.
   invented-creature artifacts carry no `monsterChunkId` marker and their
   portrait jobs carry no `chunkId`, so both the materialize and the
   generate stay structurally off-seam (covers LOCAL ONLY) — pinned by
-  tests.
+  tests. The 2026-09-10 widening (above) added a THIRD such row shape — an
+  `npc-ref` pointing at a marker-less `npc` artifact — and it is off-seam for
+  the same structural reason, not because of its lane: the invented lane hands
+  the worker no `chunkId`, so no cache key can be built for it
+  (`tests/features/mob-portrait-npc-ref.test.ts` pins the cache count).
 
 ## Pipeline (run-engine steps)
 

@@ -58,6 +58,17 @@ import { ensureCanonicalMobPortrait, regenerateCanonicalMobPortrait } from '@/fe
  * instead of generating. Flavored citations generate locally and never touch
  * the cache — neither read nor write.
  *
+ * ENUMERATION COVERS EVERY ROSTER PARTICIPANT THAT CAN OWN A PORTRAIT
+ * (owner report, docs/17 row 90 — a materialized monster was invisible to this
+ * batch and could never be illustrated). Routing is by what a row's creature
+ * IS, never by the shape of its `source`: a row whose creature is chunk-backed
+ * (a `rulebook` citation, or an `npc-ref` to a mob artifact carrying
+ * `data.monsterChunkId`) is a RULEBOOK kind and shares the one bestiary
+ * portrait; every other participant — `inline`, `none`, and an `npc-ref` to an
+ * artifact with no chunk marker (the encounter's materialized inline-statblock
+ * monster, or a named NPC standing in the roster) — is an INVENTED kind with a
+ * local, artifact-grounded job that can never reach the cache.
+ *
  * The batch NEVER pre-clones while it counts (owner report, one-sided
  * replace-all confirm): enumerating with `getOrCreateMobArtifact`'s
  * cache read-through made a cover-less citation arrive already imaged, so a
@@ -337,7 +348,8 @@ interface BatchEnumeration {
   /** Roster rows that collapsed onto a kind already counted — the
    * one-portrait-per-creature-kind share. Counted, never silently dropped. */
   sharedRows: number;
-  /** Uncited roster rows the invented lane walked (its materialize count). */
+  /** Roster rows the invented lane walked (its materialize count): uncited
+   * entries plus `npc-ref` rows whose artifact carries no chunk marker. */
   inventedRows: number;
 }
 
@@ -351,7 +363,10 @@ interface BatchEnumeration {
  *
  * A dangling stamped `mobArtifactId` (its artifact was deleted) throws loud
  * in BOTH modes — the count must never promise a fill the enqueue would
- * refuse to perform (the message prefixes are per-lane and verbatim).
+ * refuse to perform (the message prefixes are per-lane and verbatim). The
+ * same holds for a dangling `npc-ref`: the linked row is READ for its chunk
+ * marker in both modes (one `getAnyArtifact` per roster row, no writes), so a
+ * vanished row names itself instead of being counted as a hole.
  */
 async function enumerateBatchKinds(
   encounter: AnyArtifact & { kind: 'encounter' },
@@ -376,18 +391,54 @@ async function enumerateBatchKinds(
   if (options.lanes.includes('rulebook')) {
     const artifactIdByChunk = new Map<Id, Id>();
     for (const entry of encounter.data.monsters) {
-      if (entry.source.type !== 'rulebook') continue;
-      const known = artifactIdByChunk.get(entry.source.chunkId);
-      const artifactId =
-        known ??
-        entry.source.mobArtifactId ??
-        (options.create
-          ? await getOrCreateMobArtifact(campaignId, entry.source.chunkId, entry.name)
-          : ((await findMobArtifactByChunk(campaignId, entry.source.chunkId))?.id ?? null));
+      // ROUTING (owner report: a materialized monster was invisible to this
+      // batch, so it could never get a cover). Every roster participant that
+      // can own a portrait rides the RULEBOOK lane when its creature is
+      // chunk-backed, and the invented lane otherwise:
+      // - `rulebook` entries cite a stat-block chunk directly;
+      // - `npc-ref` entries point at the artifact the encounter finalized for
+      //   them — a chunk-backed MOB artifact (a bestiary-cited creature) is
+      //   the SAME creature kind every other row citing that chunk shares, so
+      //   it must not produce a second job or a second cover (dedupe is by
+      //   artifact + chunk handle below); an artifact WITHOUT the
+      //   `monsterChunkId` marker (a materialized `inline` monster, or a named
+      //   NPC standing in the roster) belongs to the invented lane, whose jobs
+      //   carry no `chunkId` and can therefore never read or write the global
+      //   portrait cache — the canonical firewall stays intact.
+      let chunkId: Id | undefined;
+      let artifactId: Id | null;
+      if (entry.source.type === 'rulebook') {
+        chunkId = entry.source.chunkId;
+        const known = artifactIdByChunk.get(chunkId);
+        artifactId =
+          known ??
+          entry.source.mobArtifactId ??
+          (options.create
+            ? await getOrCreateMobArtifact(campaignId, chunkId, entry.name)
+            : ((await findMobArtifactByChunk(campaignId, chunkId))?.id ?? null));
+      } else if (entry.source.type === 'npc-ref') {
+        // The linked artifact is read for its marker (kindArtOf re-reads it
+        // for its art state — one extra read per distinct row, never a
+        // second interpretation of the marker).
+        const linked = await getAnyArtifact(entry.source.artifactId);
+        if (linked === undefined) {
+          throw new Error(
+            `${options.rulebookLabel}: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
+          );
+        }
+        const linkedChunkId = linked.kind === 'npc' ? linked.data.monsterChunkId : undefined;
+        if (linkedChunkId === undefined) continue;
+        chunkId = linkedChunkId;
+        artifactId = linked.id;
+      } else {
+        continue;
+      }
       if (artifactId === null) {
         // No artifact yet: a real hole the fill creates first (read-only mode
-        // only — `create` mode always returns one).
-        const key = `chunk:${entry.source.chunkId}`;
+        // only — `create` mode always returns one). The chunk handle is the
+        // kind identity, so a citation and an `npc-ref` on the same chunk
+        // still collapse onto one kind.
+        const key = `chunk:${chunkId}`;
         if (seenKinds.has(key)) enumerated.sharedRows += 1;
         else {
           seenKinds.add(key);
@@ -395,13 +446,13 @@ async function enumerateBatchKinds(
             lane: 'rulebook',
             name: entry.name,
             artifactId: null,
-            chunkId: entry.source.chunkId,
+            chunkId,
             art: 'none',
           });
         }
         continue;
       }
-      artifactIdByChunk.set(entry.source.chunkId, artifactId);
+      artifactIdByChunk.set(chunkId, artifactId);
       // One portrait per creature kind, not per roster entry.
       if (seenKinds.has(artifactId)) {
         enumerated.sharedRows += 1;
@@ -412,7 +463,7 @@ async function enumerateBatchKinds(
         lane: 'rulebook',
         name: entry.name,
         artifactId,
-        chunkId: entry.source.chunkId,
+        chunkId,
         art: await kindArtOf(artifactId, entry.name, options.rulebookLabel),
       });
     }
@@ -423,21 +474,43 @@ async function enumerateBatchKinds(
     const materialized = new Map<string, Id>();
     for (const [index, entry] of encounter.data.monsters.entries()) {
       if (only !== undefined && !only.has(index)) continue;
-      if (entry.source.type !== 'inline' && entry.source.type !== 'none') continue;
-      enumerated.inventedRows += 1;
-      const artifactId = options.create
-        ? await materializeInventedCreatureArtifact({
-            campaignId,
-            encounterId: encounter.id,
-            encounterName: encounter.name,
-            moduleId: encounter.moduleId,
-            name: entry.name,
-            notes: entry.notes,
-            treasure: entry.treasure,
-            statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
-            cache: materialized,
-          })
-        : ((await findInventedCreatureArtifact(campaignId, encounter.id, entry.name))?.id ?? null);
+      // Uncited entries (`inline` / `none`) materialize their on-demand
+      // creature; an `npc-ref` whose artifact is NOT chunk-backed (a
+      // materialized model-authored monster, or a named NPC standing in the
+      // roster) already HAS the artifact the portrait belongs on — it is
+      // enumerated against that artifact, never re-materialized. The
+      // rulebook lane already claimed every chunk-backed `npc-ref`, so the
+      // two lanes can never both list one artifact.
+      let artifactId: Id | null;
+      if (entry.source.type === 'inline' || entry.source.type === 'none') {
+        enumerated.inventedRows += 1;
+        artifactId = options.create
+          ? await materializeInventedCreatureArtifact({
+              campaignId,
+              encounterId: encounter.id,
+              encounterName: encounter.name,
+              moduleId: encounter.moduleId,
+              name: entry.name,
+              notes: entry.notes,
+              treasure: entry.treasure,
+              statBlock: entry.source.type === 'inline' ? entry.source.statBlock : null,
+              cache: materialized,
+            })
+          : ((await findInventedCreatureArtifact(campaignId, encounter.id, entry.name))?.id ?? null);
+      } else if (entry.source.type === 'npc-ref') {
+        const linked = await getAnyArtifact(entry.source.artifactId);
+        if (linked === undefined) {
+          throw new Error(
+            `${options.inventedLabel}: the artifact for "${entry.name}" no longer exists — re-run the encounter content to restore it`,
+          );
+        }
+        const linkedChunkId = linked.kind === 'npc' ? linked.data.monsterChunkId : undefined;
+        // A chunk-backed artifact is a rulebook kind (the other lane).
+        if (linkedChunkId !== undefined) continue;
+        artifactId = linked.id;
+      } else {
+        continue;
+      }
       const key = artifactId ?? `name:${entry.name.trim().toLowerCase()}`;
       if (seenKinds.has(key)) {
         enumerated.sharedRows += 1;
@@ -494,18 +567,23 @@ export interface MobPortraitBatchResult {
 }
 
 /**
- * The batch action (encounter editor): enumerates the encounter's
- * rulebook-cited entries, get-or-creates each mob artifact (lazy retro-fill
- * for encounters written before `mobArtifactId` — the same shared helper the
- * finalize and seed paths use), dedupes by artifact, skips imaged mobs and
- * enqueues the rest. A dangling stamped `mobArtifactId` (its artifact was
- * deleted) fails loudly instead of silently diverging identities.
+ * The batch action (encounter editor): enumerates the encounter's CHUNK-BACKED
+ * creature kinds — `rulebook` citations and `npc-ref` rows pointing at a mob
+ * artifact (docs/17 row 90 routing) — get-or-creates each mob artifact (lazy
+ * retro-fill for encounters written before `mobArtifactId` — the same shared
+ * helper the finalize and seed paths use), dedupes by artifact, skips imaged
+ * mobs and enqueues the rest. A dangling stamped `mobArtifactId` (its artifact
+ * was deleted) fails loudly instead of silently diverging identities, exactly
+ * like a dangling `npc-ref`.
  *
  * NO enumeration-time cache clone (owner report): a cover-less canonical
  * citation is a JOB here, and the worker's canonical branch clones the
  * populated global slot instead of generating (one generation per chunk,
  * unchanged) — so `alreadyImaged` names only the kinds that already showed a
- * portrait before this call, and a hole is always reported as work.
+ * portrait before this call, and a hole is always reported as work. A shared
+ * portrait already on a mob artifact is therefore never re-illustrated: the
+ * `npc-ref` row that reaches it is skipped as imaged (the owner's rule for a
+ * bestiary creature cited by two roster shapes — one image per creature).
  */
 export async function enqueueMobPortraits(
   encounter: AnyArtifact & { kind: 'encounter' },
@@ -542,7 +620,8 @@ export async function enqueueMobPortraits(
  * no creature), clones nothing, enqueues nothing; every number it returns is
  * exactly what the additive batch and the two regen paths will do, because it
  * walks the same enumeration (its counts are pinned against the run's own
- * result).
+ * result). Its one read beyond the roster is the `npc-ref` marker lookup
+ * (`getAnyArtifact` per linked row) — never a write, never an art mutation.
  */
 export interface MobPortraitBatchPlan {
   /** Creature kinds with no art at all — exactly what the fill enqueues. */
@@ -814,22 +893,42 @@ export interface InventedCreatureBatchResult {
 }
 
 /**
- * The on-demand invented-creature batch (docs/11 D5 amendment): for the
- * encounter's uncited roster entries (`inline` / `none` — model-invented
- * mobs with no bestiary citation), materializes ONE npc artifact per entry
- * name and enqueues a LOCAL portrait job per cover-less creature.
+ * The on-demand creature batch (docs/11 D5 amendment; owner decision
+ * 2026-09-10, docs/17 row 90 — *"A special look for a special zombie is ok"*):
+ * the encounter's roster participants whose creature is NOT chunk-backed get
+ * ONE creature artifact each and a LOCAL portrait job per cover-less
+ * creature. Two entry shapes ride it:
+ *
+ * - uncited roster entries (`inline` / `none` — model-invented mobs with no
+ *   bestiary citation): the artifact is materialized on demand;
+ * - `npc-ref` entries pointing at an artifact WITHOUT the `monsterChunkId`
+ *   marker: a monster the encounter materialized from a model-authored inline
+ *   stat block (what the assertion rule's collision path produces for a
+ *   creature the prose stages that exists in no imported bestiary), or an
+ *   ordinary named NPC standing in the roster. The artifact ALREADY EXISTS —
+ *   it is enumerated against that row, never re-materialized, and a cover it
+ *   already carries is reported as `alreadyImaged`, never detached, never
+ *   regenerated (enumeration has no side effects on art).
  *
  * Local-only by construction: the job carries NO chunkId, so the worker
  * grounds the prompt on the artifact's own content (appearance seeded from
  * the entry's notes/treasure) and can never reach the global `mobPortraits`
  * cache — neither read nor write (the canonical-cache firewall,
- * `db/mobPortraitCache`). A failed materialize throws loudly (no silent
- * skip, no placeholder); a failed generation lands on the queue's loud
- * per-mob failure path like every other job.
+ * `db/mobPortraitCache`). The firewall is enforced by the ABSENCE of the
+ * chunkId on the job, not by the lane label: an `npc-ref` monster is a real
+ * `npc` row with no `monsterChunkId`, so nothing about it can produce a
+ * `cacheKeyForMonsterSource` (the same structural argument as
+ * `materializeInventedCreatureArtifact`'s). One creature, one look: a
+ * distinct invented monster keeps its own art and never inherits a rulebook
+ * creature's shared portrait.
+ *
+ * A failed materialize throws loudly (no silent skip, no placeholder); a
+ * failed generation lands on the queue's loud per-mob failure path like every
+ * other job.
  *
  * Pass `entryIndexes` for the per-entry action (a single roster row);
- * omit it for batch-all. npc-ref entries already have artifacts and
- * rulebook entries belong to `enqueueMobPortraits` — both are skipped.
+ * omit it for batch-all. Chunk-backed creatures belong to
+ * `enqueueMobPortraits` — the two lanes never both list one artifact.
  */
 export async function enqueueInventedCreaturePortraits(
   encounter: AnyArtifact & { kind: 'encounter' },

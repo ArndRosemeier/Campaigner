@@ -91,7 +91,6 @@ function plan(overrides: Partial<MobPortraitBatchPlan> = {}): MobPortraitBatchPl
 const INLINE = { type: 'inline', statBlock: null };
 const NONE = { type: 'none' };
 const RULEBOOK = { type: 'rulebook', chunkId: 'chunk-1' };
-const NPC_REF = { type: 'npc-ref', artifactId: 'npc-1' };
 
 beforeEach(() => {
   enqueueMobPortraitsMock.mockReset();
@@ -116,12 +115,14 @@ describe('MobPortraitsSection invented-creature actions', () => {
     ]);
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
-    // The old dead-end copy is gone: the message names the new action.
+    // The old dead-end copy is gone: the message names the new action and the
+    // count it will act on (row 90 — the surface states what it will do and to
+    // how many).
     expect(
-      screen.getByText(/each invented entry gets its own creature artifact plus a portrait/i),
+      screen.getByText(/the invented entries below get a creature artifact first, then their own portrait/i),
     ).toBeDefined();
     const batch = screen.getByTestId('generate-mob-portraits');
-    expect(batch.textContent).toMatch(/Create creatures \+ portraits/);
+    expect(batch.textContent).toMatch(/Create creatures \+ portraits \(2\)/);
     expect(batch.hasAttribute('disabled')).toBe(false);
 
     const list = screen.getByTestId('mob-portraits-uncited');
@@ -143,7 +144,7 @@ describe('MobPortraitsSection invented-creature actions', () => {
     await flushAsyncUpdates();
   });
 
-  it('batch-all with both kinds calls both batches; rulebook-only keeps the portrait batch label', async () => {
+  it('batch-all with both kinds calls both batches and labels the combined count', async () => {
     const artifact = enc([
       { name: 'Goblin Boss', source: RULEBOOK },
       { name: 'Gloom Ooze', source: INLINE },
@@ -152,7 +153,11 @@ describe('MobPortraitsSection invented-creature actions', () => {
     planMock.mockResolvedValue(plan({ missing: ['Goblin Boss', 'Gloom Ooze'], creates: 1 }));
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
-    expect(screen.getByTestId('generate-mob-portraits').textContent).toMatch(/Generate mob portraits/);
+    // The label names BOTH halves of the batch: the creature artifacts it
+    // creates and the roster participants it counts (row 90).
+    expect(screen.getByTestId('generate-mob-portraits').textContent).toMatch(
+      /Create creatures \+ portraits \(2\)/,
+    );
     expect(screen.getByTestId('mob-portraits-uncited')).toBeDefined();
 
     const user = userEvent.setup();
@@ -418,21 +423,38 @@ describe('MobPortraitsSection batch confirm (fill vs replace)', () => {
     });
   });
 
-  it('a roster with nothing this batch owns (npc-ref only) stays a disabled no-creatures control, not a misleading dialog', async () => {
-    const artifact = enc([{ name: 'Captain Vell', source: NPC_REF }]);
+  it('a roster of ONE materialized npc-ref monster is a participant, not the empty state (the owner report)', async () => {
+    // The owner's exact shape: the prose staged two risen lumberjacks, the
+    // encounter materialized them into ONE npc artifact, and the roster holds a
+    // single `npc-ref` row — no rulebook citation, no uncited entry. This used
+    // to read "No creatures to illustrate — add roster entries first".
+    const lumberjack = { type: 'npc-ref', artifactId: 'lumberjack-1' };
+    const artifact = enc([{ name: 'Risen Lumberjack', source: lumberjack }]);
+    planMock.mockResolvedValue(plan({ missing: ['Risen Lumberjack'] }));
+    enqueueInventedMock.mockResolvedValue({ created: 0, enqueued: 1, alreadyImaged: [] });
     render(<MobPortraitsSection artifact={artifact} campaignId="campaign-1" />);
 
-    // npc-ref rows keep their portraits in the entity-image flow: the batch
-    // owns no kind here, so it is disabled with the reason on screen.
-    expect(screen.getByText(/No creatures to illustrate/i)).toBeDefined();
+    expect(screen.queryByText(/No creatures to illustrate/i)).toBeNull();
+    expect(screen.getByTestId('mob-portraits-copy').textContent).toMatch(
+      /1 creature kind in this roster/,
+    );
     const button = screen.getByTestId('generate-mob-portraits');
-    expect(button.hasAttribute('disabled')).toBe(true);
+    expect(button.hasAttribute('disabled')).toBe(false);
+    expect(button.textContent).toMatch(/Generate mob portraits \(1\)/);
+
     const user = userEvent.setup();
     await user.click(button);
+    await waitFor(() => {
+      // Pure gaps: it fills immediately, and the invented lane is one of the
+      // two batches the press runs.
+      expect(enqueueInventedMock).toHaveBeenCalledWith(artifact, 'campaign-1');
+    });
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith(
+        'Filling 1 missing portrait — nothing is replaced',
+      );
+    });
     await flushAsyncUpdates();
-    expect(screen.queryByTestId('mob-portraits-choice-dialog')).toBeNull();
-    expect(planMock).not.toHaveBeenCalled();
-    expect(enqueueMobPortraitsMock).not.toHaveBeenCalled();
   });
 });
 

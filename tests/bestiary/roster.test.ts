@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { RuleChunk, Rulebook, StatBlock } from '@/domain';
 import { ruleChunkSchema, statBlockSchema, stampNewEntity } from '@/domain';
 import { buildBestiaryRows, filterRosterRows } from '@/features/bestiary/roster';
+import { parseLevelSort } from '@/llm/encounterRoster';
 
 /**
  * Bestiary roster rows (source-viewers arc): level ordering over the
@@ -151,6 +152,41 @@ describe('buildBestiaryRows', () => {
     expect(rows).toHaveLength(2);
     const names = rows.map((row) => (row.kind === 'entry' ? row.name : 'ERR'));
     expect(names).toEqual(['Plain', 'Odd']); // Odd sorts last (best-effort ∞)
+  });
+
+  /**
+   * The user-visible damage a PERSISTED junk level does (owner report,
+   * docs/17 row 90): a pack chunk is guaranteed an exact printed level, so one
+   * that cannot be parsed is a loud data-error row — the creature vanishes from
+   * the roster behind an error. That is why the value is refused at the
+   * encounter boundary instead of being allowed to become durable.
+   *
+   * This is the damage pin, not the fix pin: the fix is
+   * `statBlockLevelIssues` in the run engine (`tests/llm/encounterRun.test.ts`)
+   * plus the materialize guard. Revert-proof here: it fails only if the parser
+   * starts accepting these values (which would retire the data-error row the
+   * viewer shows).
+   */
+  it('never lets a junk level slip past the one level parser (the damage a persisted row causes)', () => {
+    for (const junk of ['sourceName', '', 'CR 5', 'level 3', '3 (elite)']) {
+      expect(() => parseLevelSort(junk)).toThrow();
+    }
+    // The acceptance set: what the parser DOES accept is what the boundary
+    // contract allows — a number, a fraction, "—".
+    expect(parseLevelSort('3')).toBe(3);
+    expect(parseLevelSort('-1')).toBe(-1);
+    expect(parseLevelSort('1/2')).toBe(0.5);
+    expect(parseLevelSort('—')).toBe(Number.POSITIVE_INFINITY);
+
+    // A junk level on a PACK chunk surfaces as the loud data error (the
+    // creature is not silently mis-ordered).
+    const rows = buildBestiaryRows([packBook()], [
+      chunk({ bookId: PACK_ID, headingPath: ['Risen Lumberjack'], statBlock: statBlock({ level: 'sourceName' }) }),
+    ]);
+    expect(rows[0]).toMatchObject({
+      kind: 'data-error',
+      message: /cannot order creatures by level "sourceName"/,
+    });
   });
 });
 

@@ -235,7 +235,19 @@ describe('enqueueInventedCreaturePortraits (the batch action)', () => {
     expect(await inventedNpcs()).toHaveLength(1);
   });
 
-  it('skips rulebook and npc-ref entries (other batches own them)', async () => {
+  /**
+   * Behavior change, docs/17 row 90 (owner decision: *"A special look for a
+   * special zombie is ok."*): an `npc-ref` row whose artifact is NOT a mob
+   * artifact is a participant of THIS lane now — a named NPC standing in the
+   * roster is offered a portrait, and a monster the encounter materialized for
+   * a creature the prose staged is no longer invisible. Chunk-backed rows stay
+   * with the rulebook lane (pinned in `mob-portrait-npc-ref.test.ts`).
+   *
+   * Revert-proof: restore the old `entry.source.type !== 'inline' && !== 'none'`
+   * guard and the npc-ref row is skipped again — `created` drops back to 1 and
+   * the only queued job is the uncited wisp.
+   */
+  it('walks uncited entries AND npc-ref rows, while chunk-backed and dangling cases stay out', async () => {
     const npc = await createArtifact({
       campaignId,
       kind: 'npc',
@@ -250,9 +262,17 @@ describe('enqueueInventedCreaturePortraits (the batch action)', () => {
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
     const result = await enqueueInventedCreaturePortraits(encounter, campaignId);
-    expect(result.created).toBe(1);
-    expect(result.enqueued).toBe(1);
-    expect(useMobPortraitQueue.getState().queued[0]?.name).toBe('Whisper Wisp');
+    // `created` counts the artifacts this lane materialized (the uncited row);
+    // the npc-ref row already has its own.
+    expect(result).toEqual({ created: 1, enqueued: 2, alreadyImaged: [] });
+    expect(useMobPortraitQueue.getState().queued.map((job) => job.name)).toEqual([
+      'Captain Vane',
+      'Whisper Wisp',
+    ]);
+    // The local lane must never hand a chunk to the worker for these rows.
+    for (const job of useMobPortraitQueue.getState().queued) {
+      expect(job.chunkId).toBeUndefined();
+    }
   });
 
   it('per-entry indexes materialize and enqueue only that row', async () => {

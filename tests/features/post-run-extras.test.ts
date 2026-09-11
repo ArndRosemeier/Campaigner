@@ -295,6 +295,66 @@ describe('post-run extras', () => {
     );
   }, 20000);
 
+  /**
+   * The `mobPortraits` extra runs BOTH portrait lanes (docs/17 row 90). A
+   * fresh Smith encounter whose monsters were materialized from inline stat
+   * blocks has no `rulebook` entries at all — the rulebook lane alone enqueued
+   * nothing, so the ticked extra silently produced no portraits for exactly the
+   * monsters the encounter had just created.
+   *
+   * Revert-proof: drop the `enqueueInventedCreaturePortraits` call from
+   * `runPostCreateExtras` and this test fails — the queue is empty while the
+   * encounter's roster holds an `npc-ref` monster.
+   */
+  it('the mobPortraits extra illustrates a fresh encounter\'s materialized monsters', async () => {
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Cellars', system: 'dnd5e' });
+    const smith = await createPersona({
+      slug: 'encounter-smith-portraits-test',
+      name: 'Encounter Smith',
+      description: 'test',
+      systemPrompt: 'You are a test persona. Reply with JSON only.',
+      producesKind: 'encounter',
+      mode: 'generate',
+      builtIn: true,
+    });
+    chatMock.mockResolvedValue({ text: JSON.stringify(ENCOUNTER_DRAFT), modelUsed: 'test-model', fallback: null });
+
+    // RUN_INPUT carries the NPC-shaped persona object; this run needs the
+    // encounter persona's own shape (mode/producesKind drive the step plan).
+    const runId = await runEngine.startRun({
+      ...RUN_INPUT(campaign.id, smith.id),
+      persona: { ...smith, producesKind: 'encounter', mode: 'generate' },
+      extras: { image: false, statBlock: false, mobPortraits: true, battlemap: false },
+    });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+
+    // The fresh roster's monster is a materialized npc-ref artifact…
+    const run = await getRun(runId);
+    const encounter = await getAnyArtifact(run?.resultArtifactId ?? '');
+    if (encounter?.kind !== 'encounter') throw new Error('no encounter artifact');
+    expect(encounter.data.monsters[0]?.source.type).toBe('npc-ref');
+
+    // …and the portraits extra illustrates it through the invented lane (the
+    // lane the pre-fix extra never reached). The queue drains fast under the
+    // image mock, so the pin is the outcome: the monster's cover lands, and the
+    // prompt was built from the artifact's OWN content (a local, chunk-less
+    // job) — never from a bestiary chunk.
+    const entry = encounter.data.monsters[0];
+    if (entry?.source.type !== 'npc-ref') throw new Error('no npc-ref entry');
+    const monsterArtifactId: string = entry.source.artifactId;
+    await waitFor(async () => {
+      expect((await getAnyArtifact(monsterArtifactId))?.coverImageId).not.toBeNull();
+    }, { timeout: 15000 });
+    expect(generateImagesMock).toHaveBeenCalled();
+    expect(generateImagesMock.mock.calls[0]?.[1]).toBe(1);
+    // The invented portrait stays off the shared cache (firewall).
+    const { db } = await import('@/db/db');
+    expect(await db.mobPortraits.count()).toBe(0);
+  }, 20000);
+
   it('a completed npc run without the statblock extra attaches no notice', async () => {
     const { campaignId, personaId } = await seed();
     chatMock
