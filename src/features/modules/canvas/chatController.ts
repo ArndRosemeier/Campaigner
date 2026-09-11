@@ -15,6 +15,10 @@ import {
   type CanvasChatOutcome,
 } from '@/features/modules/canvas/chatStore';
 import { applyChatCommandsToDocument } from '@/features/modules/canvas/chatApply';
+import {
+  executeChatChange,
+  reportChatChangeOutcome,
+} from '@/features/modules/canvas/chatChanges';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import { scheduleChatPersist } from '@/features/modules/canvas/chatPersist';
 import { toastError } from '@/lib/toast';
@@ -184,6 +188,13 @@ export async function runChatTurn(
       history,
       model: options.modelSelection ?? undefined,
       turn: options.turn,
+      // THE WRITE HALF (docs/17 row 104): a `<change>` block runs the specialist
+      // for the resolved row's kind through the ONE changeArtifact seam, and
+      // each outcome is announced to the owner the moment it SETTLES — inside
+      // the turn, not after it, so a later stop or failure can never hide a
+      // change that already happened.
+      executeChange: executeChatChange,
+      reportChange: reportChatChangeOutcome,
       onDelta: (raw) => {
         latestRaw = raw;
         streamRafRef.current ??= requestAnimationFrame(flushStream);
@@ -264,12 +275,20 @@ export async function runChatTurn(
     // the first reply's work.
     if (result.details !== null) {
       const followUpMessage = ensureFollowUpMessage();
+      // What the follow-up turn answered, said exactly (the read half's copy
+      // for a details-only turn, extended by the write half — row 104).
+      const followed =
+        result.changes === null
+          ? 'your requested details'
+          : result.details.answers.length > 0
+            ? 'your requested details and changes'
+            : 'your requested changes';
       if (result.details.status === 'failed') {
         useCanvasChatStore.getState().updateMessage(options.key, followUpMessage.id, {
           status: 'failed',
           text: followUpRaw === '' ? '' : chatProseSoFar(followUpRaw).prose,
           raw: followUpRaw === '' ? null : followUpRaw,
-          error: `the follow-up reply after your requested details failed: ${result.details.error}`,
+          error: `the follow-up reply after ${followed} failed: ${result.details.error}`,
         });
       } else {
         useCanvasChatStore.getState().updateMessage(options.key, followUpMessage.id, {
@@ -290,6 +309,28 @@ export async function runChatTurn(
         }
       }
     }
+    // --- the change half's own loudness (docs/17 row 104) --------------------
+    // Each OUTCOME was already reported to the owner the moment it settled
+    // (`reportChatChangeOutcome`, called inside the turn) — never twice here.
+    // What is reported HERE is what the turn could not do with them:
+    if (result.changes !== null) {
+      if (result.changes.status === 'failed') {
+        // The results did not reach the model. Dangerous to leave silent: the
+        // model does not know the change happened and may ask for it AGAIN.
+        toastError(
+          `The chat's change results did not reach the model: ${result.changes.error} — the changes above still stand, but the model was NOT told about them, so check its next reply before letting it repeat a change.`,
+        );
+      } else if (result.changes.ignoredChanges.length > 0) {
+        // A change in the SECOND reply is NOT executed (one change round trip
+        // per message) — named LOUDLY, never a silent drop and never a third
+        // call. The owner must know nothing ran for it.
+        toastError(
+          `The chat asked for another artifact change in the same turn: ${result.changes.ignoredChanges
+            .map((change) => `«${change.name}»`)
+            .join(', ')} — one change round trip is served per message and a change is a real generation, so NOTHING was changed for it. Ask again in your next message if you want it.`,
+        );
+      }
+    }
     return { doc: options.view.state.doc.toString(), lastApplied };
   } catch (error) {
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
@@ -302,13 +343,15 @@ export async function runChatTurn(
       useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
         status: 'aborted',
         text: prose,
-        error: 'stopped — the reply was cut off and nothing was applied',
+        error:
+          'stopped — the reply was cut off and its edits were not applied (any artifact change already reported keeps its own notice)',
       });
       if (followUpMessageRef.current !== null) {
         useCanvasChatStore.getState().updateMessage(options.key, followUpMessageRef.current.id, {
           status: 'aborted',
           text: followUpRaw === '' ? '' : chatProseSoFar(followUpRaw).prose,
-          error: 'stopped — the reply after your requested details was cut off and nothing was applied',
+          error:
+            'stopped — the reply after your requested details or changes was cut off and its edits were not applied (any artifact change already reported keeps its own notice)',
         });
       }
       return { doc: options.view.state.doc.toString(), lastApplied: null };

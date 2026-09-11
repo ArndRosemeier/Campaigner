@@ -18,6 +18,10 @@ import {
   type CanvasChatOutcomePart,
 } from '@/features/modules/canvas/chatStore';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
+import {
+  executeChatChange,
+  reportChatChangeOutcome,
+} from '@/features/modules/canvas/chatChanges';
 import { scheduleChatPersist } from '@/features/modules/canvas/chatPersist';
 import { toastError } from '@/lib/toast';
 
@@ -387,6 +391,10 @@ export async function runSnapshotChatTurn(
       history,
       model: options.modelSelection ?? undefined,
       turn: options.turn,
+      // THE WRITE HALF (docs/17 row 104): the preview flow wires the SAME
+      // executor and the SAME settle-time owner report as the editor flow.
+      executeChange: executeChatChange,
+      reportChange: reportChatChangeOutcome,
       onDelta: (raw) => {
         latestRaw = raw;
         streamRafRef.current ??= requestAnimationFrame(flushStream);
@@ -458,12 +466,20 @@ export async function runSnapshotChatTurn(
     // --- the request round trip (docs/17 row 103) ---------------------------
     if (result.details !== null) {
       const followUpMessage = ensureFollowUpMessage();
+      // What the follow-up turn answered, said exactly (the read half's copy for
+      // a details-only turn, extended by the write half — row 104).
+      const followed =
+        result.changes === null
+          ? 'your requested details'
+          : result.details.answers.length > 0
+            ? 'your requested details and changes'
+            : 'your requested changes';
       if (result.details.status === 'failed') {
         useCanvasChatStore.getState().updateMessage(options.key, followUpMessage.id, {
           status: 'failed',
           text: followUpRaw === '' ? '' : chatProseSoFar(followUpRaw).prose,
           raw: followUpRaw === '' ? null : followUpRaw,
-          error: `the follow-up reply after your requested details failed: ${result.details.error}`,
+          error: `the follow-up reply after ${followed} failed: ${result.details.error}`,
         });
       } else {
         useCanvasChatStore.getState().updateMessage(options.key, followUpMessage.id, {
@@ -483,6 +499,23 @@ export async function runSnapshotChatTurn(
         }
       }
     }
+    // --- the change half's own loudness (docs/17 row 104) ---------------------
+    // Each OUTCOME was reported to the owner the moment it settled (inside the
+    // turn), never twice here; what is reported here is what the turn could not
+    // do with them.
+    if (result.changes !== null) {
+      if (result.changes.status === 'failed') {
+        toastError(
+          `The chat's change results did not reach the model: ${result.changes.error} — the changes above still stand, but the model was NOT told about them, so check its next reply before letting it repeat a change.`,
+        );
+      } else if (result.changes.ignoredChanges.length > 0) {
+        toastError(
+          `The chat asked for another artifact change in the same turn: ${result.changes.ignoredChanges
+            .map((change) => `«${change.name}»`)
+            .join(', ')} — one change round trip is served per message and a change is a real generation, so NOTHING was changed for it. Ask again in your next message if you want it.`,
+        );
+      }
+    }
     return { doc, docChanged, lastApplied };
   } catch (error) {
     if (streamRafRef.current !== null) cancelAnimationFrame(streamRafRef.current);
@@ -492,13 +525,15 @@ export async function runSnapshotChatTurn(
       useCanvasChatStore.getState().updateMessage(options.key, assistantMessage.id, {
         status: 'aborted',
         text: prose,
-        error: 'stopped — the reply was cut off and nothing was applied',
+        error:
+          'stopped — the reply was cut off and its edits were not applied (any artifact change already reported keeps its own notice)',
       });
       if (followUpMessageRef.current !== null) {
         useCanvasChatStore.getState().updateMessage(options.key, followUpMessageRef.current.id, {
           status: 'aborted',
           text: followUpRaw === '' ? '' : chatProseSoFar(followUpRaw).prose,
-          error: 'stopped — the reply after your requested details was cut off and nothing was applied',
+          error:
+            'stopped — the reply after your requested details or changes was cut off and its edits were not applied (any artifact change already reported keeps its own notice)',
         });
       }
       return { doc: options.doc, docChanged: false, lastApplied: null };

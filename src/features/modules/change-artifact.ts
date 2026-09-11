@@ -129,6 +129,22 @@ export interface ChangeArtifactRequest {
    * (never a silently ignored option, never a guessed operation).
    */
   encounter?: EncounterChangeOptions;
+  /**
+   * The caller's abort signal — OPTIONAL and ADDITIVE (docs/17 row 104): the
+   * canvas chat passes its turn's own controller, so a stop that landed before
+   * this change STARTED abandons it here — nothing is claimed, nothing is
+   * called and nothing is written. That is the boundary this seam can honestly
+   * own, and it is checked after the row and campaign reads (so a stop during
+   * those is honored) and BEFORE the module slot is claimed.
+   *
+   * WHAT IT DELIBERATELY DOES NOT DO: it does not cancel a generation that is
+   * already running. In-flight runs are stopped by the EXISTING Stop-all path
+   * (`features/progress/stop-all-generations` → `runEngine.cancelAllActive`),
+   * which lands the run in the resumable `cancelled` state the engine already
+   * defines — one cancel mechanism, never a second one invented at this seam
+   * (a per-run signal would be exactly that).
+   */
+  signal?: AbortSignal;
 }
 
 export interface ChangeArtifactChanged {
@@ -380,6 +396,12 @@ export async function changeArtifact(
   const resolved = resolveChangeRoute(artifact, request);
   if ('status' in resolved) return resolved;
   const campaign = await campaignForChange(artifact);
+  // The abort boundary (docs/17 row 104): a stop that landed while the row and
+  // campaign were read abandons the change HERE — before the slot is claimed
+  // and before any specialist runs, so a stopped change can never start work.
+  if (request.signal?.aborted === true) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
 
   // The module slot: claimed for the whole change and released in `finally` —
   // the EXISTING one-generation-per-module gate (the chat and the refine lane

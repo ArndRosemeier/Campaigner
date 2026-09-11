@@ -2016,6 +2016,51 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
   **The write half does not exist in this arc**: nothing on this path writes
   an artifact, a revision or a byte of module text; changing details goes
   through the ONE `changeArtifact` seam (row 101) in its own arc.
+- **Changing an artifact from the chat** (the WRITE half, docs/17 row 104 —
+  this bullet SUPERSEDES the "the write half does not exist in this arc" line
+  directly above, which was true of the read-half arc only): the model asks for
+  a change with `<change operation="repopulate|everything"><name>…</name>
+  <instruction>…</instruction></change>`, scanned by the SAME strict extractor
+  in the SAME one left-to-right walk as `<edit>`/`<request>` (the system prompt
+  states the protocol and its `operation` rule — an untold capability is not
+  one). A malformed block (unknown attribute, duplicated or invented
+  `operation`, wrong children, empty name/instruction, unterminated) or more
+  than `MAX_CHANGES_PER_REPLY = 3` blocks fails the WHOLE reply and NOTHING is
+  executed — the cap is checked before the first change runs. `operation` is
+  REQUIRED for an encounter and meaningless for every other kind: an encounter
+  change without one is refused BY NAME in the model's result block (both
+  operations spelled out with their exact scope) and there is **NO default** —
+  `repopulate` restocks the encounter leaving its prose alone, `everything`
+  regenerates it (prose included) and never sets the editor's own
+  `redesignProse` checkbox. Names resolve through the SAME
+  `resolveWikiLink(name, pool, { moduleId })` the chips and the read half use
+  (ONE pool load per turn, so chat and chip resolution cannot disagree), and an
+  unresolved or ambiguous name is a NAMED refusal carrying the resolver's own
+  candidate list — the app never guesses which row to OVERWRITE. Every change
+  in a reply runs SEQUENTIALLY (one at a time, in reply order) through the ONE
+  `changeArtifact` seam (row 101) with the resolved row's id, the instruction
+  and the operation; the chat path itself writes NO row. Each change is a REAL
+  generation, so the module's generation slot is HANDED OVER to the specialist
+  for the phase (a nested claim would be an immediate `ModuleBusyError` and no
+  change would ever run) and a slot another generation holds is a NAMED
+  `MODULE BUSY` outcome — never a silent skip. The phase is abortable at the
+  change boundaries (a stop starts nothing new, and a run stopped by Stop all
+  ends the turn as a stop rather than a failed change) and a landed change goes
+  through `updateArtifact` as a NEW revision with the previous one intact, so
+  the artifact editor's existing revision list + `restoreRevision` is the
+  recovery surface. Outcomes (`changed` / `refused` / `unsupported` /
+  `unresolved` / `ambiguous` / `busy` / `failed`) reach the model in the SAME
+  one follow-up turn the read half established, as a `<change-results>` block
+  (`CHANGE_RESULTS_HEADER` + `CANVAS_CHAT_CHANGES_INSTRUCTION`) whose every
+  non-applied verdict reads `NOT APPLIED: <VERDICT>` with the asked-for
+  instruction echoed (two changes to the same row never blur); a `<change>` in
+  THAT reply is a NAMED no-op (`ignoredChanges`, the caller toasts it, never a
+  third call). Each outcome is reported to the OWNER the moment it settles: a
+  toast naming the artifact, its kind, the operation and the instruction (the
+  `failed` copy never claims nothing changed — it tells the owner to read the
+  row and its revision history), plus a progress-dock job `Changing «<name>»`
+  linked to the row. Change outcomes are NOT persisted as chat outcome cards
+  (the stored card schema carries `<edit>` commands only).
 - **Apply semantics** (`chatApply.applyChatCommandsAcrossParts`): commands
   resolve per part against each part's CURRENT text at apply time
   (re-resolved per command against the live doc — earlier commands in one
