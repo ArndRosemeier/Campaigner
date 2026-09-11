@@ -340,7 +340,12 @@ neither is a green run produced by loading the machine.
   That file contains zero `statBlock` references, passes **9/9 in isolation** (the
   observing writer's measurement) and did not recur in two clean full-suite runs
   afterwards, so it reads as a load-timing flake in the peek modal rather than a defect
-  in the arc that observed it. It was NOT reproduced on demand and NO cause was
+  in the arc that observed it. **Second observation, same symptom, another arc's
+  bounded gate (the blocked-controls arc, `CAMPAIGNER_TEST_WORKERS=2`, full suite:
+  `1 failed | 2922 passed`, then 9/9 in isolation twice in a row):** the file and
+  the peek modal are untouched by that arc too, so the record stands as "load
+  timing in a mounted UI surface, cause still not established" — do not read a
+  red gate as a regression of whatever landed next to it before checking this. It was NOT reproduced on demand and NO cause was
   established — recorded with its evidence and nothing more, deliberately not chased
   here, not added to `ALLOWED_NOISE`, and neither that test file nor the peek modal was
   touched. No shared mechanism with the `PersonaRun` continuation above was shown: that
@@ -451,6 +456,10 @@ test) · ❌ gap.
 | Settings: key, models, personas, language, encounter map defaults, danger zone | `settings-page.test` | ✅ |
 | Global error boundary + uncaught-error toasts | `global-errors.test` | ✅ |
 | 404 page | `app-shell.test`, `ui-smoke.test` | ✅ |
+| Blocked controls state their reason PERCEIVABLY (the shared device): the control stays natively disabled, the reason is associated via `aria-describedby`, the popup opens on hover AND on focus, and a live control carries none of it | `blocked-control.test` | ✅ |
+| Canvas header + chat sidebar: a reason per reason-bearing blocked control (preview/open-editor, generating, refine running, streaming proposal, the chat's module-wide block and its live-reply block), each pinned together with the unchanged `toBeDisabled()` state | `blocked-reasons.test` (device), `module-canvas.test` (the AI flows themselves) | ✅ |
+| Converted reason sites keep their gate and gain the perceivable reason (`generate-everything`, the entity batch gate, encounter Repopulate/Regenerate everything) | `generate-everything.test`, `entity-classify-new.test`, `images-ui.test` | ✅ |
+| Self-evident blocks are pinned AS self-evident (no reason wrapper): a blank chat input, an already-`Reported` outcome, the Versions menu's clear-all beside its own empty-state paragraph | `blocked-reasons.test` | ✅ |
 
 ### Module Designer entities (08-MODULE-DESIGNER M4-C, fix-01)
 

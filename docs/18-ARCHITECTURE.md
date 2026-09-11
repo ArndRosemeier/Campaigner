@@ -176,6 +176,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Save a renderer-built file to disk (backup, campaign/artifact export, artifact PDF) | `lib/filePicker.openSaveTarget` — THE one way to save files: acquire the `SaveTarget` inside the click handler BEFORE the slow build, `target.write(blob)` after; picker cancel = silent no-op (no build, no toast), picker failure = loud `toastError`; `BACKUP_TYPES` / `EXPORT_JSON_TYPES` / `EXPORT_ZIP_TYPES` / `EXPORT_PDF_TYPES` are the one picker-type registry | `downloadBlob` from UI code (the no-picker fallback lives INSIDE `openSaveTarget` only); build-then-pick ordering (the picker needs transient user activation) |
 | Surface an error | `lib/toast.ts` (`toastError`/`toastErrorPersistent`), a failed run row with `errorMessage`, or the global boundary (`app/GlobalErrorBoundary` + `lib/globalErrors.installGlobalErrorHandlers`) — HUMANIZE-AT-THE-SEAM: a ZodError's `.message` is the raw `[{code,path,message}...]` array, so it is never rendered verbatim; the seam formats it via `lib/zodErrorSummary` (counted, grouped by table, first 3 + "and N more", version-skew mitigation; names never invented — issues carry no input values), keeps the leading title untouched (plain-Error copy passes byte-identical), and logs the full raw error to the console (one click away, never megabytes in the toast). Import failures append the same mitigation via `lib/exportImport.withImportMitigation`; `MissingDependenciesError.message` itself reads as numbered steps | `console.error` only (AGENTS 2); rendering `error.message` of a ZodError-shaped failure into a toast description |
 | Long-running progress | `lib/progress.useProgressStore` + the app-wide `<ProgressDock/>`; queue jobs report via `dockGroup` | a disabled button or a "Generating…" label (00-OVERVIEW, binding) |
+| State why a control cannot act | `components/blocked-control.BlockedControl` — THE one way: it wraps the control so the WRAPPER is the Tooltip trigger (a natively `disabled` form control fires no pointer events, and every shadcn Button adds `disabled:pointer-events-none`, so the control itself can never be hovered), it is focusable (`tabIndex=0`) while blocked so the reason opens on focus, and it renders the same sentence into a visually hidden node pointed at with `aria-describedby` (docs/05 §Why a control cannot act; one reason per state, naming the way out) | a `title` on the control itself (invisible in Chrome on a natively disabled control, unreachable by keyboard — docs/18 §4); a second tooltip idiom; a reason that is not true for the state that produces it; a wrapper when the block is self-evident (the label already says the state, an empty input, nothing to act on) |
 | Wiki-link handling | `lib/wikilinks.ts` (extract/strip/rewrite/resolve/count; `WIKI_LINK_PATTERN`) + `lib/remark-wikilinks.ts` → `WikiMarkdown` | a private `\[\[...\]\]` regex |
 | Write part text on the module row (ONE save path) | `features/modules/partText.saveModulePartText` → `moduleRepo.patchModulePartText` (row re-read INSIDE the rw tx — a concurrent parts write can't be lost; `status: 'ready'`, `edited: true`) + the post-save `promoteSecondModuleUses` scan. Callers: the reader's `savePartEdit` (PartTextEditor hand edits), the board rewrite's Apply and Discard | a stale-snapshot `parts` array written through plain `patchModule` (lost-update on concurrent saves); a part-text write that skips the promote scan; artifact revisions for part markdown (there are none — parts live on the module row) |
 | Streaming state on a screen (reader/board tails) | The emitter is NEVER the subscription: `features/modules/streamTails` (reader) / `features/modules/board/stagedRewrites` (board) hold it in an external store with value-diffed frozen snapshots, consumed by the ONE component that shows it (`useStreamTail` → `useSyncExternalStore`); ONE bridge component subscribes to `moduleGenEvents` for the whole screen (`ModuleGenTailsBridge`, renders `null`, ignores other modules) | page-level `useState` fed by a `moduleGenEvents` listener — every token re-renders the page and re-parses every part (measured on 12 parts × 4 KB: 200 tokens = 13,578 ms task time, 200 long tasks of 50–115 ms, 32,134 DOM mutations; after the store: 520 ms, 0 long tasks, 134 mutations) |
@@ -783,6 +784,38 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   surface the unhandled rejection as the global "Unhandled error in a background task"
   toast (deduced from the same chain, NOT measured in the app, and reported rather than
   fixed here): that cure belongs in `src/llm/runEngine.ts`, not in the guard.
+
+- **A `title` on a natively `disabled` control is invisible in Chrome and
+  unreachable by keyboard — "disabled with its reason in `title`" was a promise
+  the UI could not keep** (ledger 98). Long-standing, externally documented
+  browser behaviour, not a guess: a disabled form control fires no pointer
+  events (Chrome skips it in hit-testing, so the events go to its parent —
+  equinor/design-system issue 2724, microsoft/fluentui issue 17606, and the
+  standard "wrap the disabled button, put the tooltip on the wrapper" recipe in
+  KendoReact's tooltip-on-a-disabled-button guide), so a native tooltip on it
+  never appears (Firefox differs); and because a disabled control cannot take
+  focus, the same `title` is unreachable by Tab and unannounced by a screen
+  reader. This repo wrote the recipe down as its OWN device four times (docs/05
+  §Module reader, §Module canvas Save, §Module canvas header, §Entity panel)
+  while every shadcn Button additionally carries `disabled:pointer-events-none`
+  — measured at HEAD: a disabled `Button` renders
+  `<button disabled … class="… disabled:pointer-events-none …">`, i.e. the
+  control is not even a hit-test target. **The incident:** the owner reported
+  three canvas header controls (`canvas-preview-toggle`,
+  `canvas-refine-selection`, `canvas-rewrite-part`) as "doing nothing". They
+  were implemented, correct and heavily pinned — what was missing was any
+  PERCEIVABLE reason, because the canvas opens in Preview and both AI actions
+  are gated on `aiBlocked || previewOpen`, so on first open they are dead with
+  the reason living in a place no user could see. The cure is the device in
+  §2.3 (one home, `components/blocked-control`), and the corrected record:
+  never say "its reason is in `title`" again — a `title` may stay as a mirror
+  for the browsers that render it (and where an existing pin asserts it), but
+  the reason must be perceivable through the device. One measured exception
+  worth knowing before the next sweep: a disabled Base UI **Checkbox** renders
+  `<span role="checkbox" aria-disabled="true" tabindex="-1">` — no native
+  `disabled` attribute — so its `title` DOES render in Chrome, and its
+  `aria-label` can carry the same reason for AT; check the rendered element
+  before assuming a disabled control's `title` is invisible.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

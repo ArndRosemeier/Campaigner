@@ -308,6 +308,16 @@ describe('images ui', () => {
     const section = await screen.findByTestId('encounter-ai-section');
     expect(within(section).getByTestId('encounter-regenerate-everything')).toBeEnabled();
     expect(within(section).getByTestId('encounter-repopulate')).toBeDisabled();
+    // The reason is asked for where the control is, not only in a `title` on a
+    // natively disabled button (invisible in Chrome, unreachable by keyboard):
+    // the shared blocked-control device carries the same sentence and points at
+    // it with aria-describedby (docs/18 §2.3).
+    const repopulateReason = within(section).getByTestId('encounter-repopulate-reason');
+    expect(repopulateReason).toHaveTextContent('This dungeon has no rooms yet');
+    expect(within(section).getByTestId('encounter-repopulate-blocked')).toHaveAttribute(
+      'aria-describedby',
+      repopulateReason.id,
+    );
     await flushAsyncUpdates();
   }, 20000);
 

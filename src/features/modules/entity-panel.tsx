@@ -23,6 +23,7 @@ import {
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
+import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import {
@@ -774,24 +775,31 @@ export function EntityPanel({
               Images
             </Button>
             {generateAllWork > 0 ? (
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={generateAllBlocked !== null}
-                title={
-                  generateAllBlocked ??
-                  'Fill every generation gap of this module: entity details, images, encounter battle maps and mob portraits. Only what is missing is generated — the module text is never rewritten.'
-                }
-                data-testid="generate-everything"
-                onClick={() => {
-                  setGenerateAllOpen(true);
-                }}
+              <BlockedControl
+                testId="generate-everything"
+                // While the run is live the label itself says "Generating…" —
+                // that state is self-evident and gets no reason.
+                reason={generatingAll ? null : generateAllBlocked}
               >
-                <SparklesIcon aria-hidden data-icon="inline-start" />
-                {generatingAll
-                  ? 'Generating…'
-                  : `Generate everything (${String(generateAllWork)})`}
-              </Button>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={generateAllBlocked !== null}
+                  title={
+                    generateAllBlocked ??
+                    'Fill every generation gap of this module: entity details, images, encounter battle maps and mob portraits. Only what is missing is generated — the module text is never rewritten.'
+                  }
+                  data-testid="generate-everything"
+                  onClick={() => {
+                    setGenerateAllOpen(true);
+                  }}
+                >
+                  <SparklesIcon aria-hidden data-icon="inline-start" />
+                  {generatingAll
+                    ? 'Generating…'
+                    : `Generate everything (${String(generateAllWork)})`}
+                </Button>
+              </BlockedControl>
             ) : (
               // Never a permanently disabled button (docs/17: a control that can
               // never light up is indistinguishable from a broken one) — with
@@ -840,42 +848,69 @@ export function EntityPanel({
               const targets = unresolvedByKind.get(kind) ?? [];
               if (targets.length === 0) return null;
               return (
-                <Button
+                <BlockedControl
                   key={kind}
-                  variant="outline"
-                  size="xs"
-                  disabled={batching !== null || !batchGateOpen}
-                  title={batchGateReason}
-                  data-testid={`batch-${kind}`}
-                  onClick={() => {
-                    void generateBatch(kind);
-                  }}
+                  testId={`batch-${kind}`}
+                  // The reasons, in the order they hold the control: the gate
+                  // (already stated in place beside it), then a DIFFERENT
+                  // kind's batch running — the one state whose label says
+                  // nothing (this kind's own run renders "Generating…").
+                  reason={
+                    batchGateReason ??
+                    (batching !== null && batching !== kind
+                      ? 'Another entity batch is generating right now — wait for it.'
+                      : null)
+                  }
                 >
-                  <SparklesIcon aria-hidden data-icon="inline-start" />
-                  {batching === kind ? 'Generating…' : `Generate ${targets.length} ${kind}`}
-                </Button>
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    disabled={batching !== null || !batchGateOpen}
+                    title={batchGateReason}
+                    data-testid={`batch-${kind}`}
+                    onClick={() => {
+                      void generateBatch(kind);
+                    }}
+                  >
+                    <SparklesIcon aria-hidden data-icon="inline-start" />
+                    {batching === kind ? 'Generating…' : `Generate ${targets.length} ${kind}`}
+                  </Button>
+                </BlockedControl>
               );
             })}
             {batchGateOpen && unclassified.length > 0 && (
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={classifying || normalizing || module.status === 'generating'}
-                title={
+              <BlockedControl
+                testId="entity-classify-new"
+                reason={
                   module.status === 'generating'
                     ? 'The module is generating — its own normalization pass records the names when the parts land.'
-                    : 'Classify the names this text picked up since the last pass (one model call, the same pass as at creation) — their batch buttons then appear.'
+                    : classifying
+                      ? null // the label itself reads "Classifying…"
+                      : normalizing
+                        ? 'A normalization pass is running — wait for it.'
+                        : null
                 }
-                data-testid="entity-classify-new"
-                onClick={() => {
-                  void classifyNewNames();
-                }}
               >
-                <SparklesIcon aria-hidden data-icon="inline-start" />
-                {classifying
-                  ? 'Classifying…'
-                  : `Classify ${String(unclassified.length)} new name${unclassified.length === 1 ? '' : 's'}`}
-              </Button>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={classifying || normalizing || module.status === 'generating'}
+                  title={
+                    module.status === 'generating'
+                      ? 'The module is generating — its own normalization pass records the names when the parts land.'
+                      : 'Classify the names this text picked up since the last pass (one model call, the same pass as at creation) — their batch buttons then appear.'
+                  }
+                  data-testid="entity-classify-new"
+                  onClick={() => {
+                    void classifyNewNames();
+                  }}
+                >
+                  <SparklesIcon aria-hidden data-icon="inline-start" />
+                  {classifying
+                    ? 'Classifying…'
+                    : `Classify ${String(unclassified.length)} new name${unclassified.length === 1 ? '' : 's'}`}
+                </Button>
+              </BlockedControl>
             )}
             {!batchGateOpen && (
               <Button
@@ -1341,6 +1376,15 @@ function EntityRow({
         </Button>
       )}
       {imageMode ? (
+        /*
+         * NOT wrapped in the blocked-control device, and that is a MEASURED
+         * decision rather than an omission: a disabled Base UI Checkbox renders
+         * `<span role="checkbox" aria-disabled="true" tabindex="-1">` — no
+         * native `disabled` attribute — so its `title` DOES render on hover in
+         * Chrome, and the `aria-label` below already states the same reason to
+         * assistive tech. Wrapping it would add a second description of one
+         * sentence plus a redundant tab stop.
+         */
         <Checkbox
           className="mr-2 shrink-0"
           checked={imageState === 'has'}

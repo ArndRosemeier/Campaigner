@@ -644,6 +644,19 @@ describe('the entity sidebar control', () => {
       'title',
       'The module is generating right now — wait for it (or press Stop).',
     );
+    // …and the SAME sentence is perceivable, not merely present: a `title` on a
+    // natively disabled button never renders in Chrome (no pointer event reaches
+    // it — the shadcn Button carries `disabled:pointer-events-none` on top) and
+    // is unreachable by keyboard, so the shared blocked-control device carries
+    // it and associates it for AT (docs/18 §2.3).
+    const reason = screen.getByTestId('generate-everything-reason');
+    expect(reason).toHaveTextContent(
+      'The module is generating right now — wait for it (or press Stop).',
+    );
+    expect(screen.getByTestId('generate-everything-blocked')).toHaveAttribute(
+      'aria-describedby',
+      reason.id,
+    );
   }, 60_000);
 
   it('names the text path as the reason when the parts pass failed', async () => {

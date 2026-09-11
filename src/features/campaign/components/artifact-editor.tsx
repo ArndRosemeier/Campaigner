@@ -32,6 +32,7 @@ import {
   type PcArtifactData,
   type PlotArcArtifactData,
 } from '@/domain';
+import { BlockedControl } from '@/components/blocked-control';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -729,6 +730,13 @@ function CreatureRowAuthoringNotice({
           </Button>
         ) : (
           <>
+            {/*
+             * Left as a plain disabled Button ON PURPOSE (the 10-site sweep
+             * found this one self-evident): while `running` the control's own
+             * label reads "Creating…", so the reason is on the face of the
+             * control and no wrapper is needed. The `title` hint survives for
+             * the browsers that render it (Firefox).
+             */}
             <Button
               variant="outline"
               size="sm"
@@ -814,17 +822,25 @@ function CreatureRowPollutionReport({
       <p className="text-xs text-destructive" data-testid="creature-row-pollution-copy">
         {`This bestiary creature row carries authored text — ${fieldList} — that a smith run (or a hand edit) wrote onto it. The row is the ONE shared row for this creature, so every encounter citing ${label} reads that text, and it describes a character that is not this creature. Clearing removes only that text: name, aliases, the rulebook stat source, the portrait and every other field stay, and the previous text stays in the revision history.`}
       </p>
-      <Button
-        variant={armed ? 'destructive' : 'outline'}
-        size="sm"
+      <BlockedControl
+        testId="clear-creature-row-content"
         className="self-start"
-        disabled={busy}
-        title={busy ? 'Clearing the authored text — the creature row is being rewritten' : undefined}
-        data-testid="clear-creature-row-content"
-        onClick={() => void repair()}
+        reason={
+          busy ? 'Clearing the authored text — the creature row is being rewritten' : null
+        }
       >
-        {armed ? 'Clear the invented text — confirm?' : 'Clear the invented text'}
-      </Button>
+        <Button
+          variant={armed ? 'destructive' : 'outline'}
+          size="sm"
+          className="self-start"
+          disabled={busy}
+          title={busy ? 'Clearing the authored text — the creature row is being rewritten' : undefined}
+          data-testid="clear-creature-row-content"
+          onClick={() => void repair()}
+        >
+          {armed ? 'Clear the invented text — confirm?' : 'Clear the invented text'}
+        </Button>
+      </BlockedControl>
     </div>
   );
 }
@@ -911,37 +927,64 @@ function EncounterRegenControls({
           : ' Regenerate everything writes a fresh roster and prose, then a fresh map. Repopulate rewrites the roster as one fight and keeps the map.'}
       </p>
       <div className="flex flex-wrap items-center gap-2">
-        <Button
-          variant="default"
-          size="sm"
-          data-testid="encounter-regenerate-everything"
-          disabled={running !== null}
-          onClick={() => {
-            void run('everything');
-          }}
+        <BlockedControl
+          testId="encounter-regenerate-everything"
+          // Sibling of Repopulate below (a site the reason sweep named): while
+          // the OTHER action runs this label stays "Regenerate everything", so
+          // nothing on the control says why it is dead.
+          reason={
+            running === 'repopulate'
+              ? 'Repopulate is running right now — wait for it.'
+              : null
+          }
         >
-          <SparklesIcon aria-hidden data-icon="inline-start" />
-          {running === 'everything' ? 'Regenerating…' : 'Regenerate everything'}
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          data-testid="encounter-repopulate"
-          disabled={running !== null || repopulateBlocked}
-          title={
+          <Button
+            variant="default"
+            size="sm"
+            data-testid="encounter-regenerate-everything"
+            disabled={running !== null}
+            onClick={() => {
+              void run('everything');
+            }}
+          >
+            <SparklesIcon aria-hidden data-icon="inline-start" />
+            {running === 'everything' ? 'Regenerating…' : 'Regenerate everything'}
+          </Button>
+        </BlockedControl>
+        <BlockedControl
+          testId="encounter-repopulate"
+          // Reasons in the order they hold the control: the roomless complex
+          // (its own sentence, already in the `title`), then the OTHER action's
+          // run — the one blocked state whose label says nothing (this action's
+          // own run renders "Repopulating…").
+          reason={
             repopulateBlocked
               ? 'This dungeon has no rooms yet — Regenerate everything builds rooms and a map first'
-              : complex
-                ? 'New roster for all rooms — rooms, layout and map kept'
-                : 'New one-fight roster — map kept'
+              : running === 'everything'
+                ? 'Regenerate everything is running right now — wait for it.'
+                : null
           }
-          onClick={() => {
-            void run('repopulate');
-          }}
         >
-          <SwordsIcon aria-hidden data-icon="inline-start" />
-          {running === 'repopulate' ? 'Repopulating…' : 'Repopulate'}
-        </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            data-testid="encounter-repopulate"
+            disabled={running !== null || repopulateBlocked}
+            title={
+              repopulateBlocked
+                ? 'This dungeon has no rooms yet — Regenerate everything builds rooms and a map first'
+                : complex
+                  ? 'New roster for all rooms — rooms, layout and map kept'
+                  : 'New one-fight roster — map kept'
+            }
+            onClick={() => {
+              void run('repopulate');
+            }}
+          >
+            <SwordsIcon aria-hidden data-icon="inline-start" />
+            {running === 'repopulate' ? 'Repopulating…' : 'Repopulate'}
+          </Button>
+        </BlockedControl>
         <label className="flex cursor-pointer items-center gap-1.5 text-xs text-muted-foreground">
           <Checkbox
             checked={redesignProse}

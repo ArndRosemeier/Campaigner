@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 
 import { modulePath, modulesPath } from '@/app/routes';
+import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import {
   AlertDialog,
@@ -488,13 +489,23 @@ export function CanvasPage(): JSX.Element {
   const deviation = deriveAutomationDeviation(currentModule, artifacts);
   const resumable = !deviationIsEmpty(deviation);
   // Both actions rewrite the module's text/state ON DISK, so they are disabled
-  // while the editor holds unsaved edits (an honest reason, shown as the
-  // button's title), while a proposal is pending (a remount would drop it) and
-  // while the module is generating.
+  // while the editor holds unsaved edits (an honest reason, stated through the
+  // blocked-control device), while a proposal is pending (a remount would drop
+  // it) and while the module is generating.
   const derivedBlocked = derivedActionBlockedReason();
   const wholeProposal = suggestions.find((entry) => entry.wholePart);
   const aiBlocked = busy || refineInFlight || wholeProposal !== undefined;
   const viewBusy = busy || refineInFlight || suggestions.length > 0;
+  // WHY each blocked header control cannot act (docs/18 §2.3): the gates above
+  // are untouched and spec'd — these strings read the SAME flags in the same
+  // order, so a reason can never disagree with the state it explains, and each
+  // one names the way out. `previewOpen` is the state the canvas OPENS in, so
+  // without it the first press of Refine selection / Rewrite part did nothing
+  // and said nothing at all.
+  const aiBlockedReason =
+    busyReason(busy, refineInFlight, wholeProposal !== undefined) ??
+    (previewOpen ? PREVIEW_AI_ACTIONS_REASON : null);
+  const viewBusyReason = viewBusy ? busyReason(busy, refineInFlight, suggestions.length > 0) : null;
 
   // The preview highlight: the whole-doc replacement mapped onto its
   // part's range (identity-gated — a hand edit, proposal accept or next
@@ -1058,13 +1069,12 @@ export function CanvasPage(): JSX.Element {
 
   /**
    * Why the two derived controls are disabled right now (null = they are not).
-   * One function, so the button's `title` always tells the owner the honest
-   * reason instead of leaving a dead control to be guessed at.
+   * One function, so the blocked control states the honest reason through the
+   * shared device instead of leaving a dead control to be guessed at.
    */
   function derivedActionBlockedReason(): string | null {
-    if (busy) return 'The module is generating right now — wait for it (or press Stop).';
-    if (refineInFlight) return 'A refine is running.';
-    if (suggestions.length > 0) return 'Accept or discard the pending proposal first.';
+    const shared = busyReason(busy, refineInFlight, suggestions.length > 0);
+    if (shared !== null) return shared;
     if (saving) return 'A save is in flight.';
     if (dirty) {
       return 'Save or discard your edits first — this action rewrites the module text on disk, not the editor copy.';
@@ -1227,73 +1237,89 @@ export function CanvasPage(): JSX.Element {
           <Badge variant="secondary">{currentModule.status}</Badge>
         )}
         <div className="ml-auto flex items-center gap-2">
-          <Button
-            variant="ghost"
-            size="xs"
-            aria-pressed={previewOpen}
-            disabled={viewBusy}
-            data-testid="canvas-preview-toggle"
-            onClick={togglePreview}
-          >
-            {previewOpen ? <PencilIcon aria-hidden data-icon="inline-start" /> : <EyeIcon aria-hidden data-icon="inline-start" />}
-            {previewOpen ? 'Edit' : 'Preview'}
-          </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={aiBlocked || previewOpen}
-            data-testid="canvas-refine-selection"
-            onClick={() => {
-              setInstruction('');
-              setInstructionTarget('selection');
-            }}
-          >
-            <WandSparklesIcon aria-hidden data-icon="inline-start" />
-            Refine selection
-          </Button>
-          <Button
-            variant="outline"
-            size="xs"
-            disabled={aiBlocked || previewOpen}
-            data-testid="canvas-rewrite-part"
-            onClick={() => {
-              setInstruction('');
-              setRewritePartIndex(null);
-              setInstructionTarget('part');
-            }}
-          >
-            <NotebookPenIcon aria-hidden data-icon="inline-start" />
-            Rewrite part
-          </Button>
-          {fixableProblems.length > 0 && (
+          <BlockedControl testId="canvas-preview-toggle" reason={viewBusyReason}>
+            <Button
+              variant="ghost"
+              size="xs"
+              aria-pressed={previewOpen}
+              disabled={viewBusy}
+              data-testid="canvas-preview-toggle"
+              onClick={togglePreview}
+            >
+              {previewOpen ? <PencilIcon aria-hidden data-icon="inline-start" /> : <EyeIcon aria-hidden data-icon="inline-start" />}
+              {previewOpen ? 'Edit' : 'Preview'}
+            </Button>
+          </BlockedControl>
+          <BlockedControl testId="canvas-refine-selection" reason={aiBlockedReason}>
             <Button
               variant="outline"
               size="xs"
-              disabled={derivedBlocked !== null || fixRunning}
-              title={derivedBlocked ?? 'Rewrite the parts whose text falls short of the encounter floor'}
-              data-testid="canvas-fix-problems"
+              disabled={aiBlocked || previewOpen}
+              data-testid="canvas-refine-selection"
               onClick={() => {
-                setFixOpen(true);
+                setInstruction('');
+                setInstructionTarget('selection');
               }}
             >
-              <WrenchIcon aria-hidden data-icon="inline-start" />
-              {fixRunning ? 'Fixing…' : 'Fix module problems'}
+              <WandSparklesIcon aria-hidden data-icon="inline-start" />
+              Refine selection
             </Button>
+          </BlockedControl>
+          <BlockedControl testId="canvas-rewrite-part" reason={aiBlockedReason}>
+            <Button
+              variant="outline"
+              size="xs"
+              disabled={aiBlocked || previewOpen}
+              data-testid="canvas-rewrite-part"
+              onClick={() => {
+                setInstruction('');
+                setRewritePartIndex(null);
+                setInstructionTarget('part');
+              }}
+            >
+              <NotebookPenIcon aria-hidden data-icon="inline-start" />
+              Rewrite part
+            </Button>
+          </BlockedControl>
+          {fixableProblems.length > 0 && (
+            <BlockedControl
+              testId="canvas-fix-problems"
+              reason={fixRunning ? null : derivedBlocked}
+            >
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={derivedBlocked !== null || fixRunning}
+                title={derivedBlocked ?? 'Rewrite the parts whose text falls short of the encounter floor'}
+                data-testid="canvas-fix-problems"
+                onClick={() => {
+                  setFixOpen(true);
+                }}
+              >
+                <WrenchIcon aria-hidden data-icon="inline-start" />
+                {fixRunning ? 'Fixing…' : 'Fix module problems'}
+              </Button>
+            </BlockedControl>
           )}
           {resumable && (
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={derivedBlocked !== null || resumeRunning}
-              title={derivedBlocked ?? 'Generate only what creation was asked to automate and the module does not have yet'}
-              data-testid="canvas-resume-automation"
-              onClick={() => {
-                setResumeOpen(true);
-              }}
+            <BlockedControl
+              testId="canvas-resume-automation"
+              reason={resumeRunning ? null : derivedBlocked}
             >
-              <PlayIcon aria-hidden data-icon="inline-start" />
-              {resumeRunning ? 'Resuming…' : 'Resume automatic module creation'}
-            </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={derivedBlocked !== null || resumeRunning}
+                title={derivedBlocked ?? 'Generate only what creation was asked to automate and the module does not have yet'}
+                data-testid="canvas-resume-automation"
+                onClick={() => {
+                  setResumeOpen(true);
+                }}
+              >
+                <PlayIcon aria-hidden data-icon="inline-start" />
+                {resumeRunning ? 'Resuming…' : 'Resume automatic module creation'}
+              </Button>
+            </BlockedControl>
           )}
           <DropdownMenu>
             <DropdownMenuTrigger
@@ -1412,19 +1438,24 @@ export function CanvasPage(): JSX.Element {
             </Button>
           )}
           {saving || dirty ? (
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={saving || busy || previewOpen}
-              title={saving ? undefined : (saveBlockedReason(busy, previewOpen) ?? undefined)}
-              data-testid="canvas-save"
-              onClick={() => {
-                void saveDoc('user', 'Manual edit', 'Module saved');
-              }}
+            <BlockedControl
+              testId="canvas-save"
+              reason={saving ? null : saveBlockedReason(busy, previewOpen)}
             >
-              <SaveIcon aria-hidden data-icon="inline-start" />
-              {saving ? 'Saving…' : 'Save'}
-            </Button>
+              <Button
+                variant="outline"
+                size="xs"
+                disabled={saving || busy || previewOpen}
+                title={saving ? undefined : (saveBlockedReason(busy, previewOpen) ?? undefined)}
+                data-testid="canvas-save"
+                onClick={() => {
+                  void saveDoc('user', 'Manual edit', 'Module saved');
+                }}
+              >
+                <SaveIcon aria-hidden data-icon="inline-start" />
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </BlockedControl>
           ) : (
             /*
              * Nothing to save: a PASSIVE indicator, not a disabled button. A
@@ -1455,6 +1486,7 @@ export function CanvasPage(): JSX.Element {
             hasPlannedParts={plans.length > 0}
             pool={pool}
             aiBusy={aiBlocked}
+            aiBusyReason={aiBlockedReason}
             previewOpen={previewOpen}
             onPreviewSend={(text) => handlePreviewSend(text)}
             onPreviewReportOutcome={(messageId, outcome) => {
@@ -1509,34 +1541,44 @@ export function CanvasPage(): JSX.Element {
               >
                 {showPrevious ? 'Show proposed' : 'Show previous'}
               </Button>
-              <Button
-                variant="outline"
-                size="xs"
-                disabled={refineInFlight}
-                data-testid="canvas-proposal-apply"
-                onClick={() => {
-                  const view = activeCanvasView.current;
-                  if (view === null) return;
-                  acceptSuggestion(view, wholeProposal.id);
-                }}
+              <BlockedControl
+                testId="canvas-proposal-apply"
+                reason={refineInFlight ? PROPOSAL_STREAMING_REASON : null}
               >
-                Apply
-              </Button>
-              <Button
-                variant="ghost"
-                size="xs"
-                disabled={refineInFlight}
-                data-testid="canvas-proposal-discard"
-                onClick={() => {
-                  const view = activeCanvasView.current;
-                  if (view === null) return;
-                  rejectSuggestion(view, wholeProposal.id);
-                  proposalsRef.current.delete(wholeProposal.id);
-                  syncSuggestions();
-                }}
+                <Button
+                  variant="outline"
+                  size="xs"
+                  disabled={refineInFlight}
+                  data-testid="canvas-proposal-apply"
+                  onClick={() => {
+                    const view = activeCanvasView.current;
+                    if (view === null) return;
+                    acceptSuggestion(view, wholeProposal.id);
+                  }}
+                >
+                  Apply
+                </Button>
+              </BlockedControl>
+              <BlockedControl
+                testId="canvas-proposal-discard"
+                reason={refineInFlight ? PROPOSAL_STREAMING_REASON : null}
               >
-                Discard
-              </Button>
+                <Button
+                  variant="ghost"
+                  size="xs"
+                  disabled={refineInFlight}
+                  data-testid="canvas-proposal-discard"
+                  onClick={() => {
+                    const view = activeCanvasView.current;
+                    if (view === null) return;
+                    rejectSuggestion(view, wholeProposal.id);
+                    proposalsRef.current.delete(wholeProposal.id);
+                    syncSuggestions();
+                  }}
+                >
+                  Discard
+                </Button>
+              </BlockedControl>
             </div>
           )}
           {previewOpen && previewSource !== null ? (
@@ -1832,16 +1874,58 @@ export function CanvasPage(): JSX.Element {
 }
 
 /**
+ * The three conditions that hold up ANY canvas action, each one sentence used
+ * by every control it blocks (the header's AI actions and view toggle, the two
+ * derived repair controls, the proposal bar and the chat sidebar). ONE copy per
+ * condition: the same state must never be explained two different ways on one
+ * screen (docs/18 §2.3 — the device is shared, so the copy is too).
+ */
+const MODULE_GENERATING_REASON =
+  'The module is generating right now — wait for it (or press Stop).';
+const REFINE_RUNNING_REASON = 'A refine is running.';
+const PENDING_PROPOSAL_REASON = 'Accept or discard the pending proposal first.';
+/**
+ * The reason the canvas OPENS with: the editor (and with it the selection and
+ * the picked part these two actions work on) is not mounted while the preview
+ * is up — the canvas lands in preview by default.
+ */
+const PREVIEW_AI_ACTIONS_REASON =
+  'Refine and Rewrite work on the editor — switch to Edit (the header toggle) to use them.';
+/**
+ * The proposal bar's own gate: Apply/Discard are held while the replacement is
+ * still streaming in (a half-streamed replacement is never accepted), and Stop
+ * proposal is the way out.
+ */
+const PROPOSAL_STREAMING_REASON =
+  'The proposal is still streaming — wait for it, or press Stop proposal.';
+
+/**
+ * The first true condition of the three above (null = none is true). Callers
+ * read it with the SAME flags that build their own gate, so the reason and the
+ * gate cannot drift apart.
+ */
+function busyReason(
+  busy: boolean,
+  refineInFlight: boolean,
+  proposalPending: boolean,
+): string | null {
+  if (busy) return MODULE_GENERATING_REASON;
+  if (refineInFlight) return REFINE_RUNNING_REASON;
+  if (proposalPending) return PENDING_PROPOSAL_REASON;
+  return null;
+}
+
+/**
  * Why the header's Save button is disabled at a moment when the doc DOES
- * hold unsaved edits (null = it is live). The same convention as
- * `derivedActionBlockedReason`: a disabled control states its honest reason
- * in `title` instead of leaving the owner to guess why it does nothing.
- * `saving` is not here — that state renders "Saving…" rather than a reason.
- * Only reachable while `dirty`: with nothing to save the header shows the
- * passive "Saved" indicator and no button at all.
+ * hold unsaved edits (null = it is live). The same device as
+ * `derivedActionBlockedReason`: a blocked control states its honest reason
+ * through the shared blocked-control wrapper (docs/18 §2.3), which renders for
+ * mouse, keyboard and AT users alike. `saving` is not here — that state renders
+ * "Saving…" rather than a reason. Only reachable while `dirty`: with nothing to
+ * save the header shows the passive "Saved" indicator and no button at all.
  */
 function saveBlockedReason(busy: boolean, previewOpen: boolean): string | null {
-  if (busy) return 'The module is generating right now — wait for it (or press Stop).';
+  if (busy) return MODULE_GENERATING_REASON;
   if (previewOpen) return 'Preview is read-only. Switch to Edit (the header toggle) to save your edits.';
   return null;
 }

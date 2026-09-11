@@ -370,6 +370,17 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     expect(screen.getByTestId('batch-gate-reason')).toHaveTextContent(
       'Entity name normalization failed',
     );
+    // The gate's reason is stated twice on purpose, and now BOTH are real: the
+    // text beside the control (a visible surface) and the shared
+    // blocked-control device, which is what a mouse/keyboard/AT user can
+    // actually perceive on the control itself. The `title` mirror alone was not
+    // (a natively disabled button renders none in Chrome).
+    const batchReason = screen.getByTestId('batch-npc-reason');
+    expect(batchReason).toHaveTextContent('Entity name normalization failed');
+    expect(screen.getByTestId('batch-npc-blocked')).toHaveAttribute(
+      'aria-describedby',
+      batchReason.id,
+    );
   }, 20000);
 
   it('is idempotent: a repeated click classifies nothing twice and a re-render never calls the model', async () => {

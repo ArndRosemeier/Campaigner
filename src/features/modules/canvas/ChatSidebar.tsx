@@ -25,6 +25,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
+import { BlockedControl } from '@/components/blocked-control';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ModelInput } from '@/features/settings/model-input';
@@ -75,6 +76,13 @@ export interface ChatSidebarProps {
   pool: readonly AnyArtifact[];
   /** Module generating / refine in flight / block proposal pending. */
   aiBusy: boolean;
+  /**
+   * WHY `aiBusy` is true, in the user's words — the page owns the state that
+   * produces it (generating / refine in flight / pending proposal), and the
+   * copy must exist once (docs/18 §2.3). It is REQUIRED, and non-null exactly
+   * when `aiBusy` is true: a blocked chat control must never have to guess.
+   */
+  aiBusyReason: string | null;
   /** Preview mode: the editor is unmounted, so sends + reports ride the
    * preview snapshot through the page's snapshot turn runner (the chat is
    * fully live in preview — same protocol, same outcome cards). */
@@ -106,6 +114,7 @@ export function ChatSidebar({
   hasPlannedParts,
   pool,
   aiBusy,
+  aiBusyReason,
   previewOpen,
   onPreviewSend,
   onPreviewReportOutcome,
@@ -133,6 +142,15 @@ export function ChatSidebar({
   const effectiveModel = modelSelection ?? settings?.defaultChatModel ?? '';
   const canBrowse = settings !== undefined && settings.openRouterApiKey !== '';
   const sendDisabled = aiBusy || inFlight || input.trim() === '';
+  // WHY a chat control cannot act (null = it can), stated through the shared
+  // blocked-control device. Nothing here is self-evident EXCEPT the two states
+  // the control itself shows (a blank input, and the Report button that already
+  // reads "Reported"), so those get no wrapper. The render path matters: while a
+  // reply is in flight the Send button is REPLACED by Stop, so `sendDisabled`'s
+  // in-flight branch is unreachable for Send and only the module-wide block can
+  // be its reason — a reason that would never render is not a reason.
+  const reportBlockedReason = chatBlockedReason(aiBusyReason, inFlight);
+  const sendBlockedReason = chatBlockedReason(aiBusyReason, false);
 
   async function send(text: string): Promise<void> {
     // Preview mode: the editor is unmounted — the turn runs against the
@@ -342,6 +360,7 @@ export function ChatSidebar({
                 pool={pool}
                 moduleId={moduleId}
                 disabled={inFlight || aiBusy}
+                disabledReason={reportBlockedReason}
                 onReportOutcome={(outcome) => {
                   onReportOutcome(message.id, outcome);
                 }}
@@ -399,20 +418,27 @@ export function ChatSidebar({
               <BanIcon aria-hidden />
             </Button>
           ) : (
-            <Button
-              size="icon"
-              className="size-11 shrink-0"
-              aria-label="Send chat message"
-              data-testid="canvas-chat-send"
-              disabled={sendDisabled}
-              onClick={() => {
-                const text = input.trim();
-                if (text === '') return;
-                void send(text);
-              }}
+            <BlockedControl
+              testId="canvas-chat-send"
+              reason={sendBlockedReason}
+              side="top"
+              className="shrink-0"
             >
-              <SendHorizonalIcon aria-hidden />
-            </Button>
+              <Button
+                size="icon"
+                className="size-11 shrink-0"
+                aria-label="Send chat message"
+                data-testid="canvas-chat-send"
+                disabled={sendDisabled}
+                onClick={() => {
+                  const text = input.trim();
+                  if (text === '') return;
+                  void send(text);
+                }}
+              >
+                <SendHorizonalIcon aria-hidden />
+              </Button>
+            </BlockedControl>
           )}
         </div>
       <AlertDialog open={clearConfirmOpen} onOpenChange={setClearConfirmOpen}>
@@ -453,6 +479,7 @@ function ChatBubble({
   pool,
   moduleId,
   disabled,
+  disabledReason,
   onReportOutcome,
   onReportMessage,
 }: {
@@ -460,6 +487,8 @@ function ChatBubble({
   pool: readonly AnyArtifact[];
   moduleId: Id;
   disabled: boolean;
+  /** Why the Report buttons are held (null = they are live). */
+  disabledReason: string | null;
   onReportOutcome: (outcome: CanvasChatOutcome) => void;
   onReportMessage: () => void;
 }): JSX.Element {
@@ -488,16 +517,23 @@ function ChatBubble({
               The reply failed: {message.error}
             </span>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="h-11 self-start"
-            data-testid="canvas-chat-report-error"
-            disabled={disabled}
-            onClick={onReportMessage}
+          <BlockedControl
+            testId="canvas-chat-report-error"
+            reason={disabled ? disabledReason : null}
+            side="top"
+            className="self-start"
           >
-            Report to LLM
-          </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-11 self-start"
+              data-testid="canvas-chat-report-error"
+              disabled={disabled}
+              onClick={onReportMessage}
+            >
+              Report to LLM
+            </Button>
+          </BlockedControl>
         </div>
       )}
       {message.text !== '' && (
@@ -509,7 +545,13 @@ function ChatBubble({
         <div className="rounded-lg border px-3 py-2 text-sm text-muted-foreground">…</div>
       )}
       {message.outcomes.map((outcome) => (
-        <OutcomeCard key={outcome.id} outcome={outcome} disabled={disabled} onReport={onReportOutcome} />
+        <OutcomeCard
+          key={outcome.id}
+          outcome={outcome}
+          disabled={disabled}
+          disabledReason={disabledReason}
+          onReport={onReportOutcome}
+        />
       ))}
     </div>
   );
@@ -518,10 +560,13 @@ function ChatBubble({
 function OutcomeCard({
   outcome,
   disabled,
+  disabledReason,
   onReport,
 }: {
   outcome: CanvasChatOutcome;
   disabled: boolean;
+  /** Why the Report button is held (null = it is live). */
+  disabledReason: string | null;
   onReport: (outcome: CanvasChatOutcome) => void;
 }) {
   const partNames = outcome.targetParts
@@ -581,18 +626,40 @@ function OutcomeCard({
           </span>
         </div>
       )}
-      <Button
-        variant="outline"
-        size="sm"
-        className={cn('h-11 self-start')}
-        data-testid="canvas-chat-report-outcome"
-        disabled={disabled || outcome.reported}
-        onClick={() => {
-          onReport(outcome);
-        }}
+      <BlockedControl
+        testId="canvas-chat-report-outcome"
+        // `reported` is SELF-EVIDENT: the control's own label reads "Reported".
+        // Only the held state needs a reason.
+        reason={!outcome.reported && disabled ? disabledReason : null}
+        side="top"
+        className="self-start"
       >
-        {outcome.reported ? 'Reported' : 'Report to LLM'}
-      </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          className={cn('h-11 self-start')}
+          data-testid="canvas-chat-report-outcome"
+          disabled={disabled || outcome.reported}
+          onClick={() => {
+            onReport(outcome);
+          }}
+        >
+          {outcome.reported ? 'Reported' : 'Report to LLM'}
+        </Button>
+      </BlockedControl>
     </div>
   );
+}
+
+/**
+ * Why a chat control cannot act (null = it can). `aiBusyReason` is the PAGE's
+ * reason for the module-wide block (generating / refine in flight / pending
+ * proposal) — the sidebar holds neither the state that produces it nor a second
+ * copy of the sentence; the in-flight half is the sidebar's own (its Stop
+ * button is the way out).
+ */
+function chatBlockedReason(aiBusyReason: string | null, inFlight: boolean): string | null {
+  if (aiBusyReason !== null) return aiBusyReason;
+  if (inFlight) return 'A reply is still streaming — wait for it, or press Stop.';
+  return null;
 }
