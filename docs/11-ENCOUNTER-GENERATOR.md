@@ -1890,8 +1890,12 @@ data model, run-engine threading, UI, docs); the gate at completion is
 - Line-of-sight simulation, lighting, dynamic fog reveal by movement.
 - Hand-editing room rectangles (regenerate instead); free-form/organic rooms.
 - Multiple maps or multiple "floors" per encounter.
-- Token art generation (D5 — amended 2026-09-05 for rulebook-cited creatures
-  only: the "Generate mob portraits" batch above), token `tracks`. (3D dice
+- Token art generation *during the run* (D5 — the "Generate mob portraits"
+  batch above owns it, amended 2026-09-05; rows 90/96 widened that batch to
+  EVERY roster participant that can own a portrait, so this non-goal is about
+  WHEN the art is made, not about which creatures: rulebook-cited creatures
+  share the global bestiary portrait cache, while materialized and invented
+  creatures are imaged locally), token `tracks`. (3D dice
   left this list 2026-09-06: the M5-D dice-roller amendment — 09-MILESTONE-5
   §M5-D, 4e3de75 — ships `@3d-dice/dice-box` in the battle surface's roller.)
 - Player-facing second render surface / sync (M5 non-goal stands).
