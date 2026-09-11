@@ -84,8 +84,11 @@ writer stages, commits and pushes at a time. When separate worktrees are
 used:
 
 1. File disjointness still applies (no shared files across the slices).
-2. Gate budget: combined test workers ≤ cores — the second agent runs
-   gates with a reduced `--maxWorkers`.
+2. Gate budget: combined test workers ≤ cores. `vite.config.ts` already
+   defaults `maxWorkers` to `DEFAULT_TEST_WORKERS` (2) and the CLI
+   `--maxWorkers` flag does NOT bind here (§Host hygiene 3), so a bare
+   `pnpm exec vitest run` is bounded as it stands; lower it further only via
+   `CAMPAIGNER_TEST_WORKERS`.
 3. Rebase discipline: `git pull --rebase origin main` before every push;
    any conflict means the disjointness check missed something — stop and
    report instead of resolving.
@@ -124,7 +127,15 @@ Real incident, owner-visible (the host became unusable and DSH had to be
 restarted): four writers in flight PLUS a load generator one of them had
 written drove the load average to ~106 on this 8-core box and starved
 everything. The box is shared with the owner's own tools — it is NOT a test
-fixture. Binding rules:
+fixture.
+
+Real incident, SECOND occurrence, owner-directed (ledger row 94): a writer's
+bare, UNBOUNDED `vitest run` outlived its turn — the harness restarted
+mid-turn and the run kept going, 8 processes and 7 workers, until the
+dispatcher reaped it. The owner's instruction, verbatim: **"Second time
+something like that happened. Please put a rule up to not use up all
+resources."** So the rule below is STRUCTURAL, not a reminder: the bound is
+the config default, and it holds for whoever forgets. Binding rules:
 
 1. **At most TWO writers in flight** (this supersedes the "≤ cores" gate
    note above). The dispatcher counts the registry before dispatching, and a
@@ -136,30 +147,42 @@ fixture. Binding rules:
    loading the machine. "Prove it under load" in a brief means "prove the
    race is gone deterministically"; the dispatcher must say exactly that and
    must never invite unbounded parallelism.
-3. **Gates are bounded by the ENVIRONMENT, not by a flag.** The only form
-   that binds is
-   `CAMPAIGNER_TEST_WORKERS=2 pnpm exec vitest run`.
+3. **Gates are bounded BY DEFAULT — the config is the bound, the env var
+   raises it.** `vite.config.ts` defaults `maxWorkers` to
+   `DEFAULT_TEST_WORKERS` (2), so the bare `pnpm exec vitest run` — the very
+   form behind both incidents — cannot exceed two workers. Raising it is an
+   explicit act for a run that owns the machine:
+   `CAMPAIGNER_TEST_WORKERS=4 pnpm exec vitest run`.
    MEASURED with an isolated `/proc` CPU sampler that counts only the suite's
-   own process tree (one suite at a time):
+   own process tree (one suite at a time), when the default was still 6:
    - `pnpm exec vitest run --maxWorkers=2` → **6 CPU-busy workers, 10 alive**;
-   - no flag → the same 6 (the config default);
+   - no flag → the same 6 (that config default at the time);
    - `CAMPAIGNER_TEST_WORKERS=2 pnpm exec vitest run` → **2 busy, 5 alive**.
    Why no flag can work here: `vite.config.ts` declares two `test.projects`
    (`node` + `jsdom`) with `extends: true`, so each project inherits the
    file-level `maxWorkers` and vitest resolves a project's own value ahead of
    the root config that a CLI override lands on. `pnpm test -- --maxWorkers=2`
    is broken twice over — the literal `--` also stops vitest receiving it (a
-   single-file filter after `--` ran all 235 files). Two writers on the flag
-   form meant up to twelve workers on 8 cores: the documented incident
-   mechanism, and the reason the unidentified flake reproduced on a writer's
-   very first run. A mis-set `CAMPAIGNER_TEST_WORKERS` fails loudly instead of
-   silently defaulting. One suite run at a time per writer, no overnight
-   loops, no background job left pumping when a turn ends.
-4. **Nothing outlives the writer.** Scratch harnesses live under that
+   single-file filter after `--` ran all 235 files). A mis-set
+   `CAMPAIGNER_TEST_WORKERS` fails loudly instead of silently defaulting. One
+   suite run at a time per writer, no overnight loops, no background job left
+   pumping when a turn ends.
+4. **An interrupted turn's processes are the DISPATCHER's to reap.** A turn
+   that dies — harness restart, crash, killed session — does NOT kill what it
+   started, and a survivor keeps burning the shared box invisibly. After ANY
+   restart, resume or interrupted writer, the dispatcher's FIRST action is a
+   process audit (`pgrep -af "vitest"`) and it kills the orphans before
+   dispatching anything new; a killed suite means the writer's gate must be
+   re-run from clean, never assumed. Killing by pattern must not match the
+   killer: a command line containing that pattern kills its own shell (real
+   incident, row 94 — `pkill -f "vitest run --reporter=dot"` SIGTERMed
+   itself), so use a self-excluding pattern (`pgrep -af "vites[t]"`) and kill
+   by PID.
+5. **Nothing outlives the writer.** Scratch harnesses live under that
    writer's own `/tmp/<worktree>` directory, every process it starts is
    foreground or killed before it reports, and load-generating scripts are
    DELETED rather than left executable.
-5. **The dispatcher verifies the host, not just the diff**: `uptime` and a
+6. **The dispatcher verifies the host, not just the diff**: `uptime` and a
    process scan (`pgrep -af "vitest|loadgen"`) before dispatching and after
    every landing; it cleans up its own writers' leftovers and reports the
    incident to the owner.

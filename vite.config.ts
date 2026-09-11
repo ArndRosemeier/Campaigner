@@ -46,31 +46,45 @@ const nodeTestGlobs = [
 ];
 
 /**
+ * The worker budget a test run uses when nothing says otherwise.
+ *
+ * TWO, not the dev box's six, and that is deliberate (owner-directed,
+ * `docs/17-DECISION-LEDGER.md` row 94): a resource bound that depends on every
+ * writer REMEMBERING an environment variable is not a bound. Real incident,
+ * twice — a writer ran the bare form, and the second time an interrupted turn
+ * left that unbounded run (7 workers, 8 processes) alive straight through a
+ * harness restart on a box shared with the owner's own desktop. With this
+ * default, `pnpm exec vitest run` cannot exceed two workers whatever anyone
+ * forgets; raising it is an explicit act by whoever owns the machine's load.
+ */
+export const DEFAULT_TEST_WORKERS = 2;
+
+/**
  * The worker budget for a test run — the ONE bound that actually binds.
  *
  * `maxWorkers` must be set at the root AND in every project: vitest resolves a
  * project's own value ahead of the root config, and `extends: true` copies the
  * root value into each project, so a CLI `--maxWorkers=N` (which lands on the
- * root) is silently ignored and both projects keep running the file-level 6.
- * MEASURED on this shared 8-core box: `pnpm exec vitest run --maxWorkers=2`
- * runs 6 CPU-busy workers and 10 alive — i.e. the flag the agent rules used to
- * prescribe was never a bound, and two writers meant up to twelve workers. A
- * real bound comes from the environment instead:
+ * root) is silently ignored and both projects keep running the file-level
+ * value. MEASURED on this shared 8-core box: `pnpm exec vitest run
+ * --maxWorkers=2` runs 6 CPU-busy workers and 10 alive — i.e. the flag the
+ * agent rules used to prescribe was never a bound, and two writers meant up to
+ * twelve workers. The bound lives in the config (and, to raise it, in the
+ * environment):
  *
- *   CAMPAIGNER_TEST_WORKERS=2 pnpm exec vitest run
+ *   CAMPAIGNER_TEST_WORKERS=4 pnpm exec vitest run
  *
- * Absent, the value stays 6 for the owner's own runs on his dev box. A value
- * that is present but not a positive integer is a loud error rather than a
- * silent fallback (AGENTS rule 1).
+ * A value that is present but not a positive integer is a loud error rather
+ * than a silent fallback (AGENTS rule 1).
  */
-function testMaxWorkers(): number {
+export function testMaxWorkers(): number {
   const raw = process.env.CAMPAIGNER_TEST_WORKERS?.trim();
-  if (raw === undefined || raw === '') return 6;
+  if (raw === undefined || raw === '') return DEFAULT_TEST_WORKERS;
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error(
       `CAMPAIGNER_TEST_WORKERS must be a positive integer (got "${raw}") — ` +
-        'unset it to use the default of 6.',
+        `unset it to use the default of ${String(DEFAULT_TEST_WORKERS)}.`,
     );
   }
   return parsed;
@@ -106,12 +120,13 @@ export default defineConfig(({ mode }) => {
       css: false,
       // jsdom + PDF/image suites are memory-heavy; unbounded workers caused
       // event-loop starvation and false 5s timeouts on constrained CI/dev VMs.
-      // 6 workers on the 8-core dev box (peak ~480-490MB RSS per worker,
-      // ~3GB tree) measured the full suite 84.8s -> 58.1s with no timeouts;
-      // 4 workers left half the machine idle. Bound it with
-      // CAMPAIGNER_TEST_WORKERS (see testMaxWorkers above) — the CLI flag does
-      // not work here, and this value is repeated in each project for that
-      // reason.
+      // Historical measurement on this 8-core box, when the machine was
+      // exclusively ours: 6 workers (peak ~480-490MB RSS per worker, ~3GB tree)
+      // ran the full suite 84.8s -> 58.1s. The default is now 2 because the box
+      // is shared with the owner's desktop; raise it deliberately with
+      // CAMPAIGNER_TEST_WORKERS for a run that owns the machine (see
+      // testMaxWorkers above). The CLI flag does NOT work here, and this value
+      // is repeated in each project for that reason.
       maxWorkers,
       testTimeout: 20_000,
       projects: [

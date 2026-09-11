@@ -157,7 +157,7 @@ hygiene forbids synthetic load and N-way suite hammering, because that is what
 drove the shared host to a load average of ~106 and starved the owner's tools.
 "The box is not a test fixture." So the evidence recorded here is the
 delay-injection reproduction plus SEQUENTIAL repetition of the affected files;
-a single green run at `--maxWorkers 2` is not evidence for this class, and
+a single green run at the default worker bound is not evidence for this class, and
 neither is a green run produced by loading the machine.
 
 - **A debounced write is pinned by GATING THE WRITE, not by racing its window.**
