@@ -23,6 +23,21 @@ conventions` are binding.
 3. **Validate at every boundary.** LLM/JSON output is parsed with zod; a
    validation failure is an error (fail the run / pause for review), never a
    path to empty data.
+4. **Centralize what is duplicated, and keep it simple** (owner-directed,
+   verbatim: *"Always try to centralize when you see distributed code pieces
+   that do basically the same. KISS principle, keep it simple."*). When one
+   idea is implemented in more than one place, make it ONE seam and have the
+   callers go through it — a rule enforced at three call sites is a bug
+   waiting at the fourth, and two mechanisms for one idea drift apart (the
+   owner-visible run this rule came from: "a deliberate owner action is not a
+   failure" had to be fixed at three separate surfaces in a row, one slice
+   each). When you touch a pattern that is ALREADY distributed, folding it
+   into one seam is part of the change unless that is genuinely more expensive
+   than the defect — in which case say so plainly and leave a note where the
+   next reader will hit it.
+   Simplicity cuts the other way too: prefer the smallest design that does the
+   job — no speculative generality, no abstraction serving a single caller, no
+   new mechanism where an existing one already answers the question.
 
 ## Standing rule: critique the instruction (owner-directed)
 
