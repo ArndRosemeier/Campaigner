@@ -59,13 +59,86 @@ const SPINE_BESTIARY =
   ' When an NPC is a MEMORABLE CHARACTER who happens to use a common creature\u2019s numbers \u2014 the zombie is really old Aunt Agatha, the bandit captain is the miller everyone knows \u2014 give that entity a bestiary slot naming the library creature\u2019s own name ("bestiary": { "creature": "Zombie" }). The NPC keeps its OWN name and your prose about them and borrows only the creature\u2019s stats; add "book" (the book\u2019s title) only when the library holds several creatures of that name. A generic mob that is not a character gets no NPC entity and no slot \u2014 write it into the scene instead.';
 
 /**
- * The entity-kind clause as one run renders it: the vocabulary, plus the
- * bestiary slot when the workspace actually holds a creature to cast
- * (docs/17 row 107). `null` = no library creature ⇒ the clause is the
- * pre-change constant itself, byte for byte.
+ * The RULE half of the bestiary vocabulary (docs/17 row 114): what a slot may
+ * name, what the cast does with the numbers, and what to do when the library
+ * has no such creature.
+ *
+ * Why this exists at all, in the owner's terms. The clause above told a model
+ * to name a library creature and showed it ONE example — so a German module
+ * answered «Zombie-Schläger», «Zombie-Schlurfer» and a name that tried to
+ * encode a level-adapted variant, and all four cast entities were refused by a
+ * lookup that was working exactly as designed. The vocabulary that follows this
+ * paragraph (the actual list, from the pool the cast resolves against) is the
+ * missing half; this half is what keeps the list readable and honest:
+ *
+ * - the value must be COPIED from the list (a remembered or translated name is
+ *   the defect the list exists to stop);
+ * - the cast borrows the creature's numbers AS THE LIBRARY HAS THEM — an
+ *   entity's own level band is the module's business and the creature's block
+ *   is not adapted, so a decorated variant of a name names nothing;
+ * - when the creature is in no line, the slot is LEFT OFF and the mob is
+ *   written into the scene (the clause above says the same for a generic mob:
+ *   a module never depends on inventing a creature).
  */
-export function spineEntityKindsClause(bestiaryAvailable: boolean): string {
-  return bestiaryAvailable ? `${SPINE_ENTITY_KINDS}${SPINE_BESTIARY}` : SPINE_ENTITY_KINDS;
+const SPINE_BESTIARY_RULES = [
+  ' You may name ONLY a creature from the library list below, copied exactly as it is written there \u2014 that list IS this workspace\u2019s bestiary, and a name that is not on it cannot be cast.',
+  ' A cast borrows that creature\u2019s numbers exactly as the library holds them: an entity is never given a level-adapted, renamed or otherwise decorated variant of a creature, and never a translation or a remembered name \u2014 if the creature you want is not on the list, give the entity NO bestiary slot and write the mob into the scene instead.',
+  ' The NPC keeps her own name, level and prose either way; the slot only says whose numbers she uses.',
+].join('');
+
+/** The opening line of the vocabulary block; the creatures follow, one per line. */
+const SPINE_BESTIARY_HEADER = 'Creatures this workspace\u2019s library holds (name only \u2014 copy it exactly):';
+
+/**
+ * The creatures a spine run may name, as the vocabulary half of the bestiary
+ * clause (docs/17 row 114): the window `llm/creatorRoster` builds from the pool
+ * the cast resolves against — the library's OWN spelling of each name, one per
+ * line, in window order, with the ratified `(roster truncated; N more)` note.
+ *
+ * `null`/empty means there is nothing to offer, and the caller must leave the
+ * slot off entirely: a slot offered with no vocabulary is exactly the defect
+ * this arc removes (§4 gotcha).
+ */
+export interface BestiaryVocabulary {
+  lines: readonly string[];
+  truncated: number;
+}
+
+/** The vocabulary block as the prompt carries it, or `null` when empty. */
+export function bestiaryVocabularyBlock(vocabulary: BestiaryVocabulary | null): string | null {
+  if (vocabulary === null || vocabulary.lines.length === 0) return null;
+  return [
+    SPINE_BESTIARY_HEADER,
+    ...vocabulary.lines,
+    vocabulary.truncated > 0 ? `(roster truncated; ${String(vocabulary.truncated)} more)` : null,
+  ]
+    .filter((line) => line !== null)
+    .join('\n');
+}
+
+/**
+ * The entity-kind clause as one run renders it: the vocabulary, plus the
+ * bestiary clause when the workspace actually holds a creature to cast — and
+ * always with the RULE above and the ACTUAL LIST below it (docs/17 rows
+ * 107/114). `false`/`null`/an empty window ⇒ the clause is the pre-change
+ * constant itself, byte for byte, and the slot is not offered at all.
+ *
+ * The boolean arm is kept for callers that have only the availability flag (the
+ * settings preview and the pre-114 tests); the roster arm is what a real run
+ * passes, because a slot whose vocabulary is missing is uncastable by
+ * construction.
+ */
+export function spineEntityKindsClause(
+  bestiary: boolean | BestiaryVocabulary | null | undefined,
+): string {
+  const vocabulary = typeof bestiary === 'boolean' ? null : (bestiary ?? null);
+  const offered =
+    typeof bestiary === 'boolean'
+      ? bestiary
+      : vocabulary !== null && vocabulary.lines.length > 0;
+  if (!offered) return SPINE_ENTITY_KINDS;
+  const block = bestiaryVocabularyBlock(vocabulary) ?? '';
+  return `${SPINE_ENTITY_KINDS}${SPINE_BESTIARY}${SPINE_BESTIARY_RULES}\n${block}`.trimEnd();
 }
 
 /**
@@ -589,13 +662,16 @@ export function promptStyleForModule(module: {
 export function spineContractValues(input: {
   floorClause: string | null;
   /**
-   * Whether the workspace holds a library creature an entity could be cast
-   * from (docs/17 row 107). `false` — an EMPTY library, which is every
-   * workspace that never imported a bestiary — renders EXACTLY the bytes this
-   * builder rendered before the field existed: the additive discipline
-   * (docs/18 §4). A run that cannot cast is not told about casting.
+   * The creature vocabulary an entity's bestiary slot may name (docs/17 rows
+   * 107/114): the window the caller built from the SAME library pool the cast
+   * resolves against (`llm/creatorRoster.collectCreatorRoster`). An EMPTY
+   * window — and every workspace that never imported a bestiary — renders
+   * EXACTLY the bytes this builder rendered before the field existed AND leaves
+   * the slot off: a slot with no vocabulary is uncastable, so it must never be
+   * offered (docs/18 §4, the additive discipline). `true`/`false` keep the
+   * pre-114 availability-only rendering for callers that hold no window.
    */
-  bestiaryAvailable: boolean;
+  bestiaryAvailable: boolean | BestiaryVocabulary | null | undefined;
 }): Record<string, string> {
   return {
     'contract.replyFormat': SPINE_REPLY_FORMAT,

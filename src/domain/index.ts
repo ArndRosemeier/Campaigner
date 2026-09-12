@@ -9,6 +9,7 @@ export * from '@/domain/campaign';
 export * from '@/domain/create';
 export * from '@/domain/creature';
 export * from '@/domain/creatureImage';
+export * from '@/domain/creatureName';
 export * from '@/domain/documentPlan';
 export * from '@/domain/embedding';
 export * from '@/domain/entity';

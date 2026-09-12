@@ -136,7 +136,9 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Image generation | `imageGen.generateImages` — UNCONDITIONAL model-chain escalation on ANY error (typed OpenRouter error envelopes classify structurally); `cappedToOne`/`fallback`/`filteredCount` surface as user-visible step notices; a single-entry chain's failure names the missing fallback config | raw image API calls elsewhere |
 | Monster stat lookups | `monsterResolve.resolveMonsterEntryWithRepos`; fighter shapes via `db/fighterStats.ts` (`fighterStatsFromArtifact`, `buildFighterStatsLookup`) | re-parsing `statBlock` ad hoc |
 | Rulebook citation identity (chunk-hash-fallback) | the rulebook `monsterSource` carries additive optional `contentHash` + reserved `creatureName` (`domain/artifact.ts`); EVERY birth stamps both through the pure `contentIdentityFor` (`domain/encounterResolve.ts`) — runEngine finalize (both remap sites, via `rulebookSourceFor`, which throws loud on a vanished chunk), the editor rulebook-link dialog, the spawn picker (`buildMobPickEntry`); `resolveMonsterEntry` falls back to `getChunkByContentHash` on a uuid miss (exact hash only — same creature/new version stays `missing ref`; L1 deferred, docs/11); `collectDependencies` carries a dangling entry's own stamp onto its `missing-chunk` citation (chunk wins when present) so re-exports stay L0-clearable | stamping citations uuid-only; a same-creature fuzzy match at resolve; healing chunkIds to local rows |
-| Monster level → sort key | `encounterRoster.parseLevelSort` | a second level parser |
+| Monster level → sort key | `encounterRoster.parseLevelSort` | a second level parser — the module creator's window reads it too, over the chunk's own `statBlock.level` (docs/17 row 114) |
+| **Show a prompt the creatures it may name** (docs/17 row 114, docs/12 §7) | `llm/creatorRoster.collectCreatorRoster(targetLevel?)` — builds the creator's window from `db/creatureRepo.listLibraryCreatures()` (the SAME pool the cast resolves against: every stat-block chunk, ANY book origin), orders it with the SHARED `encounterRoster.libraryLevelOrder` (level distance to the module's band midpoint, ties by levelSort then locale name, `"—"` last) and caps it at `CREATOR_ROSTER_LIMIT = 300` with the `(roster truncated; N more)` note; `moduleGen.spineMessages` is the ONE caller (its target is the module's `(levelMin + levelMax) / 2`) and hands the window to `promptStyles.spineContractValues`, which appends the rule plus the listing to the entity-kind clause. Recomputed per run, never persisted | a pack-only window (the encounter roster's own filter — it would be EMPTY for a rulebook-built library while the slot stayed on offer, i.e. the owner's defect with a different trigger); a second chunk read to find a level (the pool carries the `statBlock`); a second level parser; a private comparator; a slot offered without its vocabulary; a persisted or cached window |
+| **Turn a cast refusal into a NEXT STEP** (docs/17 row 114) | `llm/creatorRoster.nearestLibraryCreatures(wanted, pool, limit = 3)` over `domain/creatureName.creatureNameSimilarity` (token overlap or normalized edit similarity — case, whitespace, umlauts/diacritics, hyphen-vs-space and a trailing `(…)` qualifier all normalized away), rendered with the library's own book labels by `features/modules/entity-batch`'s no-such-creature refusal, and ONLY there. Below `CREATURE_SUGGESTION_FLOOR = 0.4` the list is EMPTY and the pre-114 sentence stands, byte for byte | fuzzy RESOLUTION of any kind (that is `sameName`'s exact match, unchanged — a near miss still fails); auto-substituting the nearest creature; widening `sameName`; rendering a suggestion when nothing is close (a second wrong answer is worse than none) |
 | Bestiary/item pack data | `ingest/packFetch` (only networked surface; newest-first with pinned-verified-ref fallback) → `packImport` → `packs/registry` adapters | fetching upstream files anywhere else; adapters stay network-free (test-pinned) |
 | PF2e rules text (journal pages, conditions, feats/spells/actions corpus) | the same pack lane, third entry type: rules-text fetch sources (`packFetch`, `packDirs`-scoped) → `packImport` `sections` → `packs/pf2e-journal` / `pf2e-conditions` / `pf2e-rules` adapters → `section` chunks with per-entry Source lines | HTML scraping (there is none — the machine-readable packs are the one way; docs/12 §15); a second retrieval path — `encounterRoster` skips `section` chunks like `item` chunks |
 | Ground a mob portrait in a creature chunk | `portraitGroundingForChunk` (`llm/imagePromptDraft.ts` — stat-exempt: size + creatureType identity plus traits/actions/reactions/legendary prose, every numeric field out by field, 800-char cap; null statBlock falls back to raw `chunk.text` as the loud residual render risk) + the default-on text-render guard (docs/11 D5, generalized: `IMAGE_TEXT_NEGATIVE` is the DEFAULT `negative` of the shared Illustrator contract — covers, entity images, portraits, the run-engine prompt draft, classic stylize, and the appearance shortcut are all guarded; the `negative` option stays the explicit-override seam; `MOB_PORTRAIT_TEXT_NEGATIVE` survives as the identical alias; the vision dungeon path is the one documented carve-out — its tailored plaque clause instead of the blanket list) — docs/11 D5 | feeding raw `chunk.text` into `buildImagePrompt` (image models render stat digits into portraits) |
@@ -402,6 +404,32 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   two callers state the origin they hold (the seam's optional `authorship`),
   and the Discard's answer is captured at stage time because the rewrite
   overwrites the row before the decision is made.
+- **A slot must never be offered without its VOCABULARY, and the window and the
+  resolution must share ONE source** (ledger 114). The module creator's
+  bestiary slot was offered on the strength of a BOOLEAN
+  (`listLibraryCreatures().length > 0`) while the clause showed a single
+  EXAMPLE name — so a German module answered «Zombie-Schläger»,
+  «Zombie-Schlurfer» and a name that tried to encode a level-adapted variant,
+  and every one of them was refused by a lookup that was working exactly as
+  designed. The refusal was never the fault; asking a model to name a creature
+  from a list it cannot see is. Two rules follow, and both are measured:
+  1. **The vocabulary and the lookup are the SAME population**
+     (`db/creatureRepo.listLibraryCreatures` — every stat-block chunk of ANY
+     book origin). A window built from a narrower pool (the encounter roster's
+     `origin === 'pack'` filter) is *empty* for a library imported from an
+     ordinary rulebook while the slot is still offered: the same defect with a
+     different trigger, and one that no pack-based test would catch. Where a
+     window and a resolution could disagree, the WINDOW is wrong.
+  2. **No vocabulary ⇒ no offer.** An empty library AND an empty window both
+     compose the pre-change prompt byte for byte, slot included — a slot whose
+     list is empty is uncastable by construction, so offering it can only
+     produce invented names. The clause rides the EXISTING entity-kind bullet
+     (no new placeholder, no template change), which is what keeps this
+     additive: a style's own bytes never move.
+  The refusal's other half is a MESSAGE, never a match: the nearest creatures
+  are computed for the sentence only, the resolution stays exact
+  (`sameName` is untouched), nothing is auto-substituted, and when nothing is
+  close the suggestion is EMPTY rather than a wrong "did you mean".
 - **An offer the deleter will refuse is a bug** (ledger 92). The orphan
   panel used to tag rows with its own read-time predicate while
   `sweepOrphanedArtifacts` applied FIVE guards inside its transaction, so the

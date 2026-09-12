@@ -34,14 +34,16 @@ import {
   spineContractValues,
 } from '@/llm/promptStyles';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
-// The library tier is READ here, for ONE question (docs/17 row 107): does the
-// workspace hold a library creature a module entity could be cast from? The
-// spine prompt offers the bestiary slot only when one exists, so a workspace
-// without a bestiary composes the pre-change prompt byte for byte. The cast
-// itself is not this module's — the entity batch resolves the requested name
-// and casts through `db/creatureRepo.castCreatureAsNpc`, the ONE cast
-// function (docs/18 §2.2).
-import { listLibraryCreatures } from '@/db/creatureRepo';
+// The library tier is READ here, for ONE question (docs/17 rows 107 and 114):
+// WHICH creatures may a module entity be cast from? The answer is the window
+// `llm/creatorRoster` builds from `db/creatureRepo.listLibraryCreatures()` —
+// the SAME pool the batch's cast resolves a requested name against, ordered by
+// level distance to the module's band and capped, so the prompt names real
+// creatures instead of offering a slot with no vocabulary. The cast itself is
+// not this module's — the entity batch resolves the requested name and casts
+// through `db/creatureRepo.castCreatureAsNpc`, the ONE cast function
+// (docs/18 §2.2).
+import { collectCreatorRoster } from '@/llm/creatorRoster';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
@@ -868,13 +870,18 @@ async function spineMessages(
           .map((artifact) => `- ${artifact.name} (${artifact.kind})${artifact.summary === '' ? '' : ` — ${artifact.summary}`}`)
           .join('\n')}`;
   const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
-  // The bestiary slot (docs/17 row 107): the spine prompt offers casting ONLY
-  // when the workspace actually holds a library creature to name — an empty
-  // library composes the pre-change prompt byte for byte (docs/18 §4), and a
-  // module created before any bestiary was imported is not told about a
-  // library it does not have. Read here, like every other prompt input, so the
-  // clause and the slot the model answers with describe the same library.
-  const bestiaryAvailable = (await listLibraryCreatures()).length > 0;
+  // The bestiary slot AND its vocabulary (docs/17 rows 107/114): the spine
+  // prompt offers casting only with the actual list of creatures this
+  // workspace holds — built from the SAME pool the cast will resolve the
+  // requested name against (`collectCreatorRoster` →
+  // `db/creatureRepo.listLibraryCreatures`, any book origin), ordered by level
+  // distance to this module's band midpoint (the docs/12 §7 chain's spine
+  // step) and capped like the encounter roster. An empty window composes the
+  // pre-change prompt byte for byte AND leaves the slot off, because a slot
+  // with no vocabulary is uncastable by construction (docs/18 §4). Read here,
+  // like every other prompt input, so the clause, the list and the lookup that
+  // judges the model's answer all describe the same library.
+  const bestiaryRoster = await collectCreatorRoster((module.levelMin + module.levelMax) / 2);
 
   const levelCount = module.levelMax - module.levelMin + 1;
   // Tone dial teeth (08 §M4-B): the module's tone rules out a few OUTCOMES,
@@ -910,7 +917,7 @@ async function spineMessages(
         toneBans.length === 0
           ? ''
           : ` This module’s tone rules out these outcomes, each because it would erase the choice that produced it: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
-      ...spineContractValues({ floorClause: floorRequirement, bestiaryAvailable }),
+      ...spineContractValues({ floorClause: floorRequirement, bestiaryAvailable: bestiaryRoster }),
     },
   });
 

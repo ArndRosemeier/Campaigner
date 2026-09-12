@@ -219,6 +219,21 @@ export function creatureRefIdentical(
 }
 
 /**
+ * ONE library creature of the pool below — the row-derived facts every caller
+ * of `listLibraryCreatures` needs. `statBlock` is the creature's OWN validated
+ * block, carried because the chunk row already holds it and because a prompt
+ * window that must ORDER the library by level has nowhere else to read it from
+ * without a second chunk read (docs/17 row 114).
+ */
+export interface LibraryCreature {
+  chunkId: Id;
+  name: string;
+  contentHash: string;
+  headingPath: readonly string[];
+  statBlock: StatBlock | null;
+}
+
+/**
  * THE library creature pool (docs/11 D10): every stat-block chunk as a DERIVED
  * creature — its identity (the chunk) and the library's own spelling of its
  * name (the last non-empty `headingPath` element, `canonicalCreatureName`'s one
@@ -231,17 +246,18 @@ export function creatureRefIdentical(
  * each (a name is not an identity); the FIRST wins for the name-addressed
  * wiki-link lookup, which is why the list is ordered by name then chunk id (a
  * stable answer rather than a race).
+ *
+ * It is ALSO the population of the module creator's bestiary window
+ * (`llm/creatorRoster`, docs/17 row 114) and therefore the ONE source of truth
+ * for "which creature names may a generated module ask to cast": the window
+ * lists these names and `features/modules/entity-batch` resolves against them,
+ * so the vocabulary a prompt shows and the lookup that judges the reply cannot
+ * disagree. Deliberately NOT filtered by book origin — a creature imported from
+ * an ordinary rulebook is as castable as a pack one.
  */
-export async function listLibraryCreatures(): Promise<
-  { chunkId: Id; name: string; contentHash: string; headingPath: readonly string[] }[]
-> {
+export async function listLibraryCreatures(): Promise<LibraryCreature[]> {
   const chunks = await db.chunks.where('chunkType').equals('statblock').toArray();
-  const creatures: {
-    chunkId: Id;
-    name: string;
-    contentHash: string;
-    headingPath: readonly string[];
-  }[] = [];
+  const creatures: LibraryCreature[] = [];
   for (const chunk of chunks) {
     if (chunk.statBlock === null) continue;
     const name = canonicalCreatureName(chunk);
@@ -251,6 +267,7 @@ export async function listLibraryCreatures(): Promise<
       name,
       contentHash: chunk.contentHash,
       headingPath: chunk.headingPath,
+      statBlock: chunk.statBlock,
     });
   }
   creatures.sort((left, right) => {

@@ -13,7 +13,8 @@ import { seedBuiltInPersonas } from '@/db/seed';
 import { runEntityBatch } from '@/features/modules/entity-batch';
 import { runSpine, spineReplySchema } from '@/llm/moduleGen';
 import { sha256Hex } from '@/lib/hash';
-import { spineEntityKindsClause } from '@/llm/promptStyles';
+import { collectCreatorRoster } from '@/llm/creatorRoster';
+import { bestiaryVocabularyBlock, spineEntityKindsClause } from '@/llm/promptStyles';
 import { strictJsonSchema } from '@/llm/strictSchema';
 import {
   createModule,
@@ -142,6 +143,8 @@ async function seedCreature(options: {
   name: string;
   hp: number;
   page?: number;
+  /** The printed level the window orders by (default '1'). */
+  level?: string;
 }): Promise<string> {
   const book = await createRulebook({
     title: options.bookTitle,
@@ -160,7 +163,7 @@ async function seedCreature(options: {
     contentHash: await sha256Hex(text),
     statBlock: statBlockSchema.parse({
       system: 'dnd5e',
-      level: '1',
+      level: options.level ?? '1',
       size: 'Medium',
       creatureType: 'undead',
       ac: 8,
@@ -185,15 +188,18 @@ async function seedCreature(options: {
 }
 
 /** A campaign + module row ready for a spine run. */
-async function seedModule(): Promise<{ campaign: Campaign; moduleId: string }> {
+async function seedModule(levels: { min: number; max: number } = { min: 1, max: 1 }): Promise<{
+  campaign: Campaign;
+  moduleId: string;
+}> {
   const campaign = await createCampaign({ name: 'Millford', system: 'dnd5e' });
   const saved = await saveModule(
     createModule({
       campaignId: campaign.id,
       title: 'The Walking Mill',
       concept: 'The village dead rise, and one of them is somebody’s aunt.',
-      levelMin: 1,
-      levelMax: 1,
+      levelMin: levels.min,
+      levelMax: levels.max,
       tone: 'grief',
       sizeDial: 'sketch',
     }),
@@ -749,25 +755,30 @@ describe('the additive prompt discipline (docs/18 §4)', () => {
       fs.readFile('tests/fixtures/promptStyles/spine-classic-default.txt', 'utf8'),
     );
     expect(prompt.trimEnd()).toBe(golden.trimEnd());
+    // No library ⇒ no bestiary clause AND no vocabulary: not the field, not the
+    // rule, not the listing (docs/17 rows 107/114 — the additive discipline).
     expect(prompt).not.toContain('bestiary');
+    expect(prompt).not.toContain('library list below');
+    expect(prompt).not.toContain('Creatures this workspace');
   });
 
-  it('the delta with a library is EXACTLY the bestiary clause, appended to the entity-kind bullet', async () => {
+  it('the delta with a library is the bestiary clause PLUS its vocabulary block', async () => {
     await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
     const { campaign, moduleId } = await seedModule();
     await runSpineWith(moduleId, campaign);
 
     const prompt = spinePrompt();
-    const withLibrary = spineEntityKindsClause(true);
     const withoutLibrary = spineEntityKindsClause(false);
+    const withLibrary = spineEntityKindsClause(await collectCreatorRoster(1));
     expect(prompt).toContain(withLibrary);
     // The vocabulary itself is byte-identical with and without a library: the
-    // delta is exactly the appended clause and nothing else.
+    // delta is exactly the appended clause plus the vocabulary it governs.
     expect(withLibrary.startsWith(withoutLibrary)).toBe(true);
     const clause = withLibrary.slice(withoutLibrary.length);
     expect(clause).toContain('bestiary');
     expect(clause).toContain('Aunt Agatha');
     expect(clause).toContain('generic mob that is not a character');
+    expect(clause).toContain(ZOMBIE);
     expect(prompt.split('bestiary').length - 1).toBe(clause.split('bestiary').length - 1);
   });
 
@@ -778,5 +789,205 @@ describe('the additive prompt discipline (docs/18 §4)', () => {
     // …and the slot still parses on such a run: the field is additive, not
     // conditional on the library the prompt saw.
     expect(moduleSpineSchema.safeParse(JSON.parse(spineReply())).success).toBe(true);
+  });
+});
+
+describe('the creator is shown the library it may name (docs/17 row 114)', () => {
+  /** The user message of the first (spine) chat call. */
+  function spinePrompt(): string {
+    const messages = chatMock.mock.calls[0]?.[0] ?? [];
+    const content = messages.find((message) => message.role === 'user')?.content;
+    return typeof content === 'string' ? content : '';
+  }
+
+  it('carries the ACTUAL creature names, the rule that governs them and the truncation note', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    await seedCreature({ bookTitle: 'Tome of Horrors', name: 'Ghoul', hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await runSpineWith(moduleId, campaign);
+
+    // The window the prompt carried is the SAME window `collectCreatorRoster`
+    // builds for this module — the module's own band midpoint (levels 1–1 ⇒
+    // 1) is the ordering target.
+    const roster = await collectCreatorRoster(1);
+    expect(roster.lines).toEqual(['Ghoul', ZOMBIE]);
+    const vocabulary = bestiaryVocabularyBlock(roster);
+    if (vocabulary === null) throw new Error('the vocabulary block is missing');
+
+    const prompt = spinePrompt();
+    expect(prompt).toContain(vocabulary);
+    // Both real names, each on its own line, copied exactly as the library
+    // spells them — this is the whole defect: before this arc the prompt named
+    // ONE example creature and nothing this workspace actually holds.
+    expect(prompt).toContain(`\n${ZOMBIE}\n`);
+    expect(prompt).toContain('\nGhoul\n');
+    // The rule half: copy from the list, borrow the numbers as they are, and
+    // leave the slot OFF rather than invent a name.
+    expect(prompt).toContain('copied exactly as it is written there');
+    expect(prompt).toContain('NO bestiary slot and write the mob into the scene instead');
+    expect(prompt).toContain('never given a level-adapted, renamed or otherwise decorated variant');
+    // The advisory block rides INSIDE the entity-kind clause — no new
+    // placeholder, no new template line, so the built-in styles are untouched.
+    expect(prompt).toContain(spineEntityKindsClause(roster));
+  });
+
+  it('notices a TRUNCATED window instead of silently listing 300 of 305 creatures', async () => {
+    for (let index = 0; index < 305; index += 1) {
+      await seedCreature({
+        bookTitle: 'Bestiary',
+        name: `Creature ${String(index).padStart(3, '0')}`,
+        hp: 22,
+      });
+    }
+    const { campaign, moduleId } = await seedModule();
+    await runSpineWith(moduleId, campaign);
+
+    const roster = await collectCreatorRoster(1);
+    expect(roster.lines).toHaveLength(300);
+    expect(roster.truncated).toBe(5);
+    const prompt = spinePrompt();
+    expect(prompt).toContain('(roster truncated; 5 more)');
+  });
+
+  it('targets the module’s OWN band MIDPOINT, not one of its edges', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: 'Low Thing', hp: 22, level: '1' });
+    await seedCreature({ bookTitle: 'Bestiary', name: 'Mid Thing', hp: 22, level: '4' });
+    await seedCreature({ bookTitle: 'Bestiary', name: 'High Thing', hp: 22, level: '7' });
+    // Levels 1–6 ⇒ target 3.5: level 4 (0.5), level 1 (2.5), level 7 (3.5).
+    // An edge (1 or 6) would order them 1, 4, 7 or 7, 4, 1 — so this pin fails
+    // if the chain's spine step is ever replaced by levelMin or levelMax.
+    const { campaign, moduleId } = await seedModule({ min: 1, max: 6 });
+    await runSpineWith(moduleId, campaign);
+
+    const prompt = spinePrompt();
+    const header = 'Creatures this workspace’s library holds (name only — copy it exactly):';
+    const listed = prompt.slice(prompt.indexOf(header)).split('\n').slice(1, 4);
+    expect(listed).toEqual(['Mid Thing', 'Low Thing', 'High Thing']);
+  });
+
+  it('offers NO slot and composes the pre-change prompt when the window is EMPTY', async () => {
+    // The library holds nothing castable: a statblock chunk whose own stat
+    // block was never validated. The slot must be left off — a slot with no
+    // vocabulary is uncastable by construction — and the clause must be the
+    // pre-change constant, byte for byte.
+    const book = await createRulebook({
+      title: 'Broken Import',
+      system: 'dnd5e',
+      filename: 'broken.pdf',
+    });
+    const text = 'Not a creature';
+    await putChunks([
+      ruleChunkSchema.parse({
+        ...stampNewEntity(),
+        bookId: book.id,
+        pageStart: 1,
+        pageEnd: 1,
+        chunkType: 'statblock',
+        headingPath: ['Not a creature'],
+        text,
+        contentHash: await sha256Hex(text),
+        statBlock: null,
+      }),
+    ]);
+    const { campaign, moduleId } = await seedModule();
+    await runSpineWith(moduleId, campaign);
+
+    const prompt = spinePrompt();
+    // The window is empty ⇒ the clause is the pre-change constant, byte for
+    // byte, and the slot is not offered anywhere in the prompt.
+    expect(spineEntityKindsClause(await collectCreatorRoster(1))).toBe(
+      spineEntityKindsClause(false),
+    );
+    expect(prompt).toContain(spineEntityKindsClause(false));
+    expect(prompt).not.toContain('library list below');
+    expect(prompt).not.toContain('roster truncated');
+  });
+});
+
+describe('the cast path names real creatures (docs/17 row 114 regression)', () => {
+  it('casts the creature the WINDOW listed, by the name the window printed', async () => {
+    const zombieChunkId = await seedCreature({ bookTitle: 'Bestiary', name: ZOMBIE, hp: 22 });
+    const { campaign, moduleId } = await seedModule();
+    await runSpineWith(moduleId, campaign);
+
+    // What the prompt showed is what the slot answers with: the line the model
+    // copies IS a resolvable name.
+    const roster = await collectCreatorRoster(1);
+    expect(roster.lines).toContain(ZOMBIE);
+    const listed = roster.lines[0];
+    if (listed === undefined) throw new Error('the window is empty');
+
+    await seedPart(moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    const module = await getModule(moduleId);
+    if (module === undefined) throw new Error('module row is missing');
+    const result = await runEntityBatch({
+      module,
+      campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.cast).toEqual([AGATHA]);
+    const npc = (await listArtifactsByCampaign(campaign.id)).find((row) => row.name === AGATHA);
+    if (npc?.kind !== 'npc') throw new Error('the cast row is missing');
+    expect(npcCreatureRef(npc)?.chunkId).toBe(zombieChunkId);
+    expect(npcCreatureRef(npc)?.creatureName).toBe(listed);
+  });
+
+  it('refuses a NEAR MISS by naming the nearest creatures, and stays silent when nothing is close', async () => {
+    await seedCreature({ bookTitle: 'Bestiary', name: 'Zombie-Schläger', hp: 22 });
+
+    const near = await seedModule();
+    await runSpineWith(near.moduleId, near.campaign, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: 'zombie schlager' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(near.moduleId, LONG_ENOUGH_PROSE);
+    await seedBuiltInPersonas();
+    const nearRow = await getModule(near.moduleId);
+    if (nearRow === undefined) throw new Error('module row is missing');
+    const refused = await runEntityBatch({
+      module: nearRow,
+      campaign: near.campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+
+    expect(refused.failed).toHaveLength(1);
+    const message = refused.failed[0]?.message ?? '';
+    // The resolution was NOT loosened: the umlaut/hyphen/case variant still
+    // fails, and nothing was written.
+    expect(message).toContain('no creature of that name');
+    // …but the refusal is now ACTIONABLE: it names the creature the library
+    // actually holds, with the book it comes from.
+    expect(message).toContain('the nearest creatures this library holds: Zombie-Schläger (Bestiary)');
+    expect(refused.cast).toEqual([]);
+    expect((await listArtifactsByCampaign(near.campaign.id)).filter((row) => row.kind === 'npc')).toEqual(
+      [],
+    );
+
+    // A query with nothing close keeps the pre-114 sentence: the suggestion is
+    // appended only when there is something worth naming.
+    const far = await seedModule();
+    await runSpineWith(far.moduleId, far.campaign, [
+      { name: AGATHA, kind: 'npc', bestiary: { creature: 'Ancient Red Dragon' } },
+      { name: 'The Walking Mill', kind: 'location', bestiary: null },
+      { name: 'The Graves Walk', kind: 'encounter', bestiary: null },
+    ]);
+    await seedPart(far.moduleId, LONG_ENOUGH_PROSE);
+    const farRow = await getModule(far.moduleId);
+    if (farRow === undefined) throw new Error('module row is missing');
+    const cleaned = await runEntityBatch({
+      module: farRow,
+      campaign: far.campaign,
+      kind: 'npc',
+      targets: [{ name: AGATHA }],
+    });
+    const cleanedMessage = cleaned.failed[0]?.message ?? '';
+    expect(cleanedMessage).toContain('no creature of that name');
+    expect(cleanedMessage).not.toContain('the nearest creatures this library holds');
   });
 });

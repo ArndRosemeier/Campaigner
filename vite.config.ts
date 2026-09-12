@@ -22,14 +22,14 @@ import { configDefaults, defineConfig } from 'vitest/config';
 // lib/globalErrors touch window; features/module-post-generation's
 // real-chain Dexie timing only settles under jsdom.
 const nodeTestGlobs = [
-  // llm (21 of 29 — see jsdom stragglers above)
-  'tests/llm/{campaignGrounding,canvasChat,draftSchemas,encounter-items,encounter-roster,encounterRun,encounterVision,image-caps,image-timeout,imageGen-fallback,imagePromptDraft}.test.ts',
+  // llm (22 of 30 — see jsdom stragglers above)
+  'tests/llm/{campaignGrounding,canvasChat,creatorRoster,draftSchemas,encounter-items,encounter-roster,encounterRun,encounterVision,image-caps,image-timeout,imageGen-fallback,imagePromptDraft}.test.ts',
   'tests/llm/{jsonReply,language,modelFallback,openrouter,openrouterErrors,openrouter-stream,persona-extras,retry-hardening,schemaTolerances,treasureGuidance}.test.ts',
   // db (all 17 — m2kinds/battleSeed are .tsx but pure-Dexie, no rendering)
   'tests/db/**/*.test.ts',
   'tests/db/{m2kinds,battleSeed}.test.tsx',
-  // domain (12 of 13 — encounterMap draws on canvas)
-  'tests/domain/{artifact-ownership,battle-engine,battle-pointer-frame,create-defaults,encounterNeonDetector,encounter-location-kind,entityNormalization}.test.ts',
+  // domain (13 of 14 — encounterMap draws on canvas)
+  'tests/domain/{artifact-ownership,battle-engine,battle-pointer-frame,create-defaults,creatureName,encounterNeonDetector,encounter-location-kind,entityNormalization}.test.ts',
   'tests/domain/{itemData,module,pc-artifact,settings-onboarding,wikiGraph}.test.ts',
   // lib (8 of 13 — file-picker/globalErrors touch window, imageAspect/
   // imageIntake use canvas, graphLayout renders)

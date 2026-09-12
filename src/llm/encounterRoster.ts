@@ -111,13 +111,30 @@ export function parseRosterTargetLevel(levelHint: string): number | undefined {
 }
 
 /**
- * Distance from the window's target level. The CR-less "—" creatures
- * (`levelSort` +Infinity) sit at +Infinity so they always sort after every
- * leveled creature, exactly as today — the guard keeps `∞ − ∞` from becoming
- * a NaN comparator result when two of them tie.
+ * Distance from the window's target level (`levelDistanceTo`). The CR-less "—"
+ * creatures (`levelSort` +Infinity) sit at +Infinity so they always sort after
+ * every leveled creature, exactly as today — the guard keeps `∞ − ∞` from
+ * becoming a NaN comparator result when two of them tie.
  */
-function levelDistance(levelSort: number, targetLevel: number): number {
+export function levelDistanceTo(levelSort: number, targetLevel: number): number {
   return Number.isFinite(levelSort) ? Math.abs(levelSort - targetLevel) : Number.POSITIVE_INFINITY;
+}
+
+/**
+ * The ONE level-distance ordering key of a prompt window (ratified §7
+ * amendment): `|levelSort − target|` ascending, ties by `levelSort` ascending,
+ * then by locale name. Two windows — the encounter roster's pack listing and
+ * the module creator's LIBRARY listing (docs/17 row 114) — sort through this
+ * function, so "ordered by level distance to the target" cannot come to mean
+ * two different orders.
+ */
+export function libraryLevelOrder<T extends { name: string; levelSort: number }>(
+  targetLevel: number,
+): (left: T, right: T) => number {
+  return (left, right) =>
+    levelDistanceTo(left.levelSort, targetLevel) - levelDistanceTo(right.levelSort, targetLevel) ||
+    left.levelSort - right.levelSort ||
+    left.name.localeCompare(right.name);
 }
 
 function rosterLine(entry: PackRosterEntry, duplicatedNames: ReadonlySet<string>): string {
@@ -161,10 +178,7 @@ export function buildPackRoster(entries: readonly PackRosterEntry[], targetLevel
   const sorted = [...entries].sort(
     targetLevel === undefined
       ? (a, b) => a.levelSort - b.levelSort || a.name.localeCompare(b.name)
-      : (a, b) =>
-          levelDistance(a.levelSort, targetLevel) - levelDistance(b.levelSort, targetLevel) ||
-          a.levelSort - b.levelSort ||
-          a.name.localeCompare(b.name),
+      : libraryLevelOrder<PackRosterEntry>(targetLevel),
   );
   const duplicatedNames = duplicatedAcrossBooks(entries);
   return {

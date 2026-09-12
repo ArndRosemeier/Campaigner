@@ -30,6 +30,18 @@ import { partsContractValues, spineContractValues } from '@/llm/promptStyles';
 const SAMPLE_FLOOR_CLAUSE =
   'REQUIREMENT — encounter floor: name at least one distinct encounter per level of this module’s range.';
 
+/**
+ * The bestiary vocabulary the preview renders (docs/17 row 114): visibly SAMPLE
+ * creature names, never a claim about the author's library. The preview shows
+ * the clause WITH its list because that is what a run with a library receives —
+ * and the list is what makes the clause actionable, so a style author who cannot
+ * see it cannot judge the clause.
+ */
+const SAMPLE_BESTIARY_VOCABULARY = {
+  lines: ['‹Creature name›', '‹Creature name›'],
+  truncated: 0,
+};
+
 /** Sample data values, one per non-contract placeholder, all visibly fake. */
 function sampleDataValues(): Record<string, string> {
   const values: Record<string, string> = {};
@@ -85,14 +97,18 @@ function previewSurface(
  *
  * The conditional clauses a run may not carry are rendered as PRESENT here,
  * because this surface documents what a style's placeholders hold when they
- * hold anything: the sample encounter floor, and the bestiary slot
- * (`bestiaryAvailable: true`) — a workspace WITH a bestiary is the case a style
- * author needs to see, and the template itself is the same either way. */
+ * hold anything: the sample encounter floor, and the bestiary slot WITH its
+ * creature vocabulary (`SAMPLE_BESTIARY_VOCABULARY`, docs/17 row 114) — a
+ * workspace WITH a bestiary is the case a style author needs to see, and the
+ * template itself is the same either way. */
 export function previewPromptStyle(style: Pick<PromptStyle, 'templateText'>): PromptStylePreviewSet {
   const shared = sampleDataValues();
   const spine = previewSurface(style.templateText, 'spine', {
     ...shared,
-    ...spineContractValues({ floorClause: SAMPLE_FLOOR_CLAUSE, bestiaryAvailable: true }),
+    ...spineContractValues({
+      floorClause: SAMPLE_FLOOR_CLAUSE,
+      bestiaryAvailable: SAMPLE_BESTIARY_VOCABULARY,
+    }),
   });
   const parts = previewSurface(style.templateText, 'parts', {
     ...shared,

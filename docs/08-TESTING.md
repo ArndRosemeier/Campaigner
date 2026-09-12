@@ -725,6 +725,31 @@ was restored byte-identically and verified with `git hash-object`).
 | The banner sentence is derived, not asserted: it names the documents held in plan order, counts the rewrites, says nothing was changed, and contains no authorship claim; the writer labels come from the row (`you` / the model id / "the model" / "written by hand — or before the app recorded authorship") | `features/module-problems.test` | ✅ |
 | The generator stamps its OWN premise: a `runSpine` premise is `origin: 'model'` + the serving id, so the next normalization pass rewrites it in place instead of proposing it (the owner's report, end to end) | `llm/module-edit-origin.test` | ✅ |
 
+### The creator's bestiary window (docs/17 row 114, docs/12 §7)
+
+The owner's four refused casts were never a lookup bug: the spine prompt offered
+a bestiary slot and showed NO creature it could name. What this matrix covers is
+(a) that the window is built from the population the LOOKUP uses, (b) that its
+order/cap are §7's, (c) that an empty window offers nothing, and (d) that a name
+which still misses gets an actionable refusal without the resolution ever
+loosening.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| The window lists a creature from a **`pdf`-imported** book (not just a pack) and from a book still `processing`, and every line names a creature `listLibraryCreatures` returns — so the vocabulary a prompt shows and the lookup that judges the reply cannot disagree | `llm/creatorRoster.test` (2). REVERT-PROVEN: replacing the source with the encounter roster's `origin === 'pack' && status === 'ready'` filter turns 11 pins RED, including the prompt and cast ones | ✅ |
+| The window prints the library's OWN spelling of a nested name (the innermost heading — what the cast compares), never `headingPath[0]` | `llm/creatorRoster.test` (1). REVERT-PROVEN: `headingPath[0]` RED | ✅ |
+| The §7 window order: level distance to the target through the SHARED comparator, ties by `levelSort` then locale name, `"—"`/unparsable levels LAST (two of them included — no NaN comparator result) | `llm/creatorRoster.test` (4). REVERT-PROVEN: replacing the comparator with level/name ascending RED (3); a fake `Number(level) \\|\\| 0` parser RED on the `—` pin | ✅ |
+| The spine's target is the module's `levelMin`/`levelMax` **midpoint**, not one of its edges | `llm/moduleGen-cast.test` (`targets the module's OWN band MIDPOINT` — levels 1–6 ⇒ 3.5, so a level-1/4/7 library must list 4, 1, 7). REVERT-PROVEN: passing a literal `1` as the target RED | ✅ |
+| The cap is 300 lines with the `(roster truncated; N more)` note, and a library that fits claims none | `llm/creatorRoster.test` (2, synthetic) + `llm/moduleGen-cast.test` (305 seeded creatures ⇒ 300 lines + `(roster truncated; 5 more)` in the real prompt) | ✅ |
+| Determinism: two builds over the same library produce the same lines, in the same order | `llm/creatorRoster.test` (1) | ✅ |
+| The composed spine prompt carries the REAL names (one per line, copied as the library spells them), the rule ("copied exactly as it is written there", "never given a level-adapted, renamed or otherwise decorated variant", "NO bestiary slot and write the mob into the scene instead") and the truncation note | `llm/moduleGen-cast.test` (2) | ✅ |
+| **Additive discipline**: a workspace with NO bestiary, and a library whose only statblock chunks carry no validated stat block (an EMPTY window), both compose the PRE-CHANGE prompt byte for byte — measured against the pre-style golden fixture — with no clause, no listing and NO slot offered | `llm/moduleGen-cast.test` (2 inherited + 1 new empty-window pin). REVERT-PROVEN: dropping the empty-window guard RED (3 pins) | ✅ |
+| A creature named EXACTLY from the window still resolves, casts, and carries the window's own spelling into the citation (the owner's Aunt Agatha path, regression) | `llm/moduleGen-cast.test` (`casts the creature the WINDOW listed`) | ✅ |
+| The no-such-creature refusal names the nearest creatures (case/hyphen/umlaut/qualifier-insensitive, bounded to three, deduped, each with its book) and stays SILENT when nothing is close | `llm/moduleGen-cast.test` (1, both halves through `runEntityBatch`) + `llm/creatorRoster.test` (4) + `domain/creatureName.test` (13). REVERT-PROVEN: making the suggestion unconditional RED | ✅ |
+| The normalization and similarity measures themselves: case, whitespace, hyphen-vs-space, umlauts and NFKD-invisible ligatures (æ/ø/ß/þ), a trailing `(…)` qualifier, and an empty side scoring 0 (never a division artifact) | `domain/creatureName.test` (13) | ✅ |
+| **REGRESSION GUARD — the encounter roster is unchanged by the shared-comparator extraction**: its own 29 pins (order, cap, note, name index, duplicate-book suffix, retry, item/section skipping) stay green with `buildPackRoster` reading `libraryLevelOrder` | `llm/encounter-roster.test` (29, untouched) | ✅ |
+| **UNPROVEN — stated, not implied:** no live-provider run observed a model naming a creature from the list (every pin mocks the transport at the protocol boundary), so "the model copies a listed name in production" is intent rather than measurement; the suggestion FLOOR (`0.4`) was calibrated against hand-written cases only — no real library was swept — so a compound-language near miss below it stays silent, which is the designed direction but not a measured one; the window's ORDER cannot be observed in a finished module, only in the composed prompt; and 300 lines is §7's cap inherited for this consumer rather than re-derived | `docs/18 §4`; `docs/12 §7`; `docs/17 row 114` | stated |
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

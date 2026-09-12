@@ -363,6 +363,46 @@ a compact **roster index** from the pack books:
   into `buildPackRoster` via `collectPackRosterWithRetry`; `parseRosterTargetLevel`
   takes the FIRST digit run of the hint ("4–6" → 4, "CR 5" → 5). Without a
   target the window is byte-identical to the pre-amendment ascending order.
+- **The SAME WINDOW, a SECOND consumer: the module creator’s bestiary clause
+  (added 2026-09-16, docs/17 row 114).** The paragraph above describes the
+  encounter roster; the module creator now gets a listing of the same SHAPE —
+  ordered the same way, capped the same way — and the differences are the
+  whole point, so they are stated here rather than left to be inferred:
+  1. **Source of truth is the CAST’S OWN population, not the pack filter.**
+     The creator window (`src/llm/creatorRoster.ts`) is built from
+     `db/creatureRepo.listLibraryCreatures()` — every `statblock` chunk of ANY
+     book origin (`pdf` or `pack`), because that is exactly what the
+     bestiary-slot lookup (`features/modules/entity-batch.libraryCitationForEntity`)
+     resolves a requested name against. A window built from the pack-only
+     filter above would be EMPTY for a library imported from an ordinary
+     rulebook while the slot stayed on offer — i.e. it would re-create the
+     defect the window exists to remove. **The rule: the window and the
+     resolution share ONE source; where the two would disagree, the window is
+     wrong.**
+  2. **Level parsing is the SAME parser, over the creature’s own stat block.**
+     `listLibraryCreatures` names a creature and not a level, so the window
+     derives `levelSort` with `encounterRoster.parseLevelSort` over the chunk’s
+     `statBlock.level` (which the pool now carries; a second chunk read was the
+     alternative and would have been a second source). A second level grammar
+     stays forbidden (docs/18 §2.2).
+  3. **Ordering, ties and cap are §7’s, through SHARED code.** The comparator
+     lives in `encounterRoster.libraryLevelOrder` (`|levelSort − target|`
+     ascending, ties by `levelSort` then locale name, `levelDistanceTo` putting
+     `"—"`/unparsable levels last) and `buildPackRoster` itself now reads it, so
+     "ordered by level distance" cannot come to mean two orders. The cap is
+     `CREATOR_ROSTER_LIMIT = 300` with the same `(roster truncated; N more)`
+     note.
+  4. **The target-level chain for the spine** is step (b) of the chain above —
+     the module’s `levelMin`/`levelMax` band midpoint — there being no
+     encounter `levelHint` on a module; with no band the order is the same
+     level/name ascending as (c).
+  5. **What the line may contain.** The creator window prints the library’s OWN
+     spelling of the name and NOTHING else (no `(level, traits)` decoration):
+     the slot’s value must be the creature name exactly as the lookup compares
+     it, and the encounter roster’s richer line format is for a prompt that
+     CITES a chunk rather than names one.
+  6. **Not persisted, recomputed per run** — the same accepted behavior as
+     above, and the same determinism for an unchanged library.
 - Draft contract (`/src/llm/schemas.ts`): per-monster optional
   `sourceName: z.string().optional()` alongside `sourceChunkIndex` (both the
   encounter draft schema and the roster-regeneration variant).

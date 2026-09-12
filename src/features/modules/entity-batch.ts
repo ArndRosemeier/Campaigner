@@ -5,6 +5,7 @@ import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
 import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
+import { nearestLibraryCreatures } from '@/llm/creatorRoster';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
@@ -132,10 +133,18 @@ async function creatureBookTitle(chunkId: Id): Promise<string> {
  * drop of the prose the model wrote:
  *
  * - no creature of that name in the workspace (a module designed before the
- *   bestiary was imported, a typo, a creature the owner deleted);
+ *   bestiary was imported, a typo, a creature the owner deleted) — the message
+ *   also names the nearest creatures the library DOES hold, so the failure is
+ *   actionable rather than a dead end;
  * - the name is ambiguous — two creatures share it, which happens the moment
  *   two books are installed — and the slot named no book, or named a book that
  *   holds no such creature.
+ *
+ * The matching rule itself is EXACT (trimmed, case-insensitive) and stays that
+ * way: the same pool is now also the VOCABULARY the spine prompt carries
+ * (`llm/creatorRoster`, docs/17 row 114), so the model is shown the names it
+ * may copy — and a fuzzy match here would silently cast a different creature
+ * than the module asked for. The suggestion half runs ONLY for the message.
  */
 async function libraryCitationForEntity(
   entityName: string,
@@ -166,9 +175,21 @@ async function libraryCitationForEntity(
     return lines.join(', ');
   };
   if (sameName.length === 0) {
+    // The nearest names the library holds, over a normalization that forgives
+    // case, whitespace, umlauts/diacritics, hyphen-vs-space and a trailing
+    // "(…)" qualifier (docs/17 row 114). A query with nothing close yields an
+    // empty list, and then the sentence is byte-identical to the pre-114
+    // refusal: saying nothing beats misleading, because a "did you mean" that
+    // names a creature nothing like the request is a second wrong answer.
+    const nearest = nearestLibraryCreatures(wanted, pool);
+    const suggestion =
+      nearest.length === 0
+        ? ''
+        : ` — the nearest creatures this library holds: ${await describe(nearest)}`;
     throw new Error(
       `bestiary cast: ${named}, but this workspace's library holds no creature of that name — ` +
-        'import the book it comes from, or name a creature the library has (never a guess)',
+        'import the book it comes from, or name a creature the library has (never a guess)' +
+        suggestion,
     );
   }
   let candidates = sameName;
