@@ -36,6 +36,7 @@ import { exportSingleArtifact } from '@/features/campaign/components/export-sing
 import { RemoveKindDialog } from '@/features/campaign/components/remove-kind-dialog';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
+import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
 import { ImageThumb } from '@/features/images/image-thumb';
 import {
   AlertDialog,
@@ -74,12 +75,20 @@ import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
 /**
- * The module group's PDF action: it resolves the row it was rendered for and
- * defers to the ONE `ModulePdfButton` (the canvas header's own control). A
- * module row that has gone missing between render and click renders NOTHING —
- * never a button that would print a ghost.
+ * The module group's two document actions, in the OWNER's order (docs/17
+ * rows 108/111): it resolves the row it was rendered for and defers to the
+ * SAME two components the canvas header mounts — the ONE `ModulePdfButton`
+ * and the ONE `ModulePlanButton` — so the two surfaces cannot drift into
+ * different books or into a second way to decide one. A module row that has
+ * gone missing between render and click renders NOTHING — never a button
+ * that would print a ghost.
+ *
+ * Both controls get the SAME pool (the campaign's artifacts plus the shared
+ * library, exactly as the canvas passes them) and the canvas's own defaults,
+ * so "Document plan" in the tree reaches exactly what "Document plan" in the
+ * canvas reaches (the owner's answer, verbatim: *"Yes, both places."*).
  */
-function ModulePdfGroupAction({
+function ModuleGroupActions({
   moduleId,
   modules,
   artifacts,
@@ -92,7 +101,13 @@ function ModulePdfGroupAction({
 }): JSX.Element | null {
   const module = modules?.find((row) => row.id === moduleId);
   if (module === undefined) return null;
-  return <ModulePdfButton module={module} artifacts={[...artifacts, ...globals]} />;
+  const pool = [...artifacts, ...globals];
+  return (
+    <>
+      <ModulePdfButton module={module} artifacts={pool} />
+      <ModulePlanButton module={module} artifacts={pool} />
+    </>
+  );
 }
 
 /** Shared collapsible group shell for Library / module / kind sections. */
@@ -419,9 +434,15 @@ export function CampaignTree({
              * mounts, so the two can never print different books. Its
              * artifacts are the campaign pool plus the shared library, exactly
              * as the canvas passes them; the renderer scopes them itself.
+             *
+             * Next to it, "Document plan" (docs/17 row 111): the owner asked
+             * whether the plan surface belongs here as well as on the canvas
+             * and answered *"Yes, both places."* — so the header mounts the
+             * SAME `ModulePlanButton`, with the same pool, and there is still
+             * exactly ONE plan dialog and ONE way to regenerate a plan.
              */
             actions={
-              <ModulePdfGroupAction
+              <ModuleGroupActions
                 moduleId={group.id}
                 modules={modules}
                 artifacts={artifacts}

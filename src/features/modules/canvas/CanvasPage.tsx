@@ -217,6 +217,9 @@ export function CanvasPage(): JSX.Element {
     useCanvasPreviewStore.getState().resetFor(moduleId);
     return () => {
       // A debounced thread write still pending at leave/unmount lands now.
+      // (The page-hide half of the same flush is registered by the writer
+      // itself — `chatPersist`, docs/17 row 111 — because the debounce and
+      // its queue live there, not on this screen.)
       void flushChatPersist();
     };
   }, [moduleId]);

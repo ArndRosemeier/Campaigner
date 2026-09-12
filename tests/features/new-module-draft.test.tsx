@@ -71,6 +71,14 @@ function delayDraftWrites(ms: number): void {
   draftWriteDelayMs = ms;
 }
 
+/**
+ * How many settings WRITES this file's mock has performed. The draft has ONE
+ * write seam (`updateSettings`), so counting it is how the page-hide pins
+ * (docs/17 row 111) tell "the debounce landed it" from "a lifecycle event
+ * re-wrote the row" — the row's bytes are identical either way.
+ */
+let settingsWrites = 0;
+
 function holdSettingsRead(): () => void {
   let release!: () => void;
   const promise = new Promise<void>((resolve) => {
@@ -96,6 +104,7 @@ vi.mock('@/db/settingsRepo', async (importOriginal) => {
       return held.promise.then(() => actual.readSettings());
     },
     updateSettings: (patch: Parameters<typeof SettingsRepo.updateSettings>[0]) => {
+      settingsWrites += 1;
       const delayMs = draftWriteDelayMs;
       if (delayMs === 0) return actual.updateSettings(patch);
       return new Promise((resolve) => {
@@ -181,6 +190,7 @@ beforeEach(async () => {
   heldSettingsRead?.release();
   heldSettingsRead = null;
   draftWriteDelayMs = 0;
+  settingsWrites = 0;
   await clearDatabase();
   vi.clearAllMocks();
   createModuleAndRunMock.mockResolvedValue('00000000-0000-4000-8000-00000000feed');
@@ -461,6 +471,63 @@ describe('the draft round-trips through the settings row', () => {
       expect.anything(),
       expect.objectContaining({ encounterFloorGuardrail: defaultEncounterFloorGuardrail() }),
     );
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('lands a typed draft on pagehide, inside the debounce window (docs/17 row 111)', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    await user.type(within(dialog).getByLabelText('Concept'), 'Bell');
+    // INSIDE the 500 ms window: nothing has been written, and the row holds no
+    // draft — so the assertion below cannot pass by the debounce firing first.
+    expect(settingsWrites).toBe(0);
+    expect((await actDrained(() => readSettings())).newModuleDraft ?? null).toBeNull();
+
+    // A frozen or discarded tab never unmounts, so the browser's own signal is
+    // the only chance this edit has.
+    window.dispatchEvent(new Event('pagehide'));
+
+    // Capped BELOW the dialog's 500 ms debounce (DRAFT_DEBOUNCE_MS): a timer
+    // firing on its own cannot make this pass — with no page-hide flush the
+    // draft is still unwritten when the cap expires and the test fails.
+    await waitFor(
+      async () => {
+        expect((await readSettings()).newModuleDraft?.concept).toBe('Bell');
+      },
+      { timeout: 300, interval: 10 },
+    );
+    expect(settingsWrites).toBe(1);
+    await flushAsyncUpdates();
+  }, 30_000);
+
+  it('writes NOTHING on a later pagehide or tab switch once the debounce landed (the pending gate)', async () => {
+    const user = userEvent.setup();
+    const campaign = await seedCampaign();
+    const dialog = await openDialog(campaign);
+
+    await user.type(within(dialog).getByLabelText('Concept'), 'Bell');
+    // Let the DEBOUNCE land the draft on its own.
+    await waitFor(
+      async () => {
+        expect((await readSettings()).newModuleDraft?.concept).toBe('Bell');
+      },
+      { timeout: 5_000 },
+    );
+    expect(settingsWrites).toBe(1);
+
+    // The page then goes hidden (a tab switch) and finally away. Nothing is
+    // queued, so nothing is written: the dialog's UNMOUNT flush is deliberately
+    // not pending-gated (a touched draft is written even after its timer), and
+    // that is exactly why the page-hide registration uses its own gated
+    // wrapper instead of the unmount one.
+    const hidden = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    window.dispatchEvent(new Event('pagehide'));
+    await flushAsyncUpdates();
+    expect(settingsWrites).toBe(1);
+    hidden.mockRestore();
     await flushAsyncUpdates();
   }, 30_000);
 

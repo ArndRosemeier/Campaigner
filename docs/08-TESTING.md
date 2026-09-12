@@ -599,6 +599,67 @@ aesthetics; the plan cannot suppress or reorder the back matter; and the
 byte-determinism claim holds per `(module, plan, compiledAt)` (the compile day is
 printed on the cover, so tomorrow's build differs on purpose).
 
+### The plan surface in the campaign tree, and the page-hide flush (docs/17 row 111)
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| The campaign tree's module-group header mounts the SHARED plan component — asserted on the component's own PROPS (the module row and the artifact pool), not on a button existing | `campaign-tree-plan-control.test` | ✅ |
+| The pool is the SAME reach the "Module PDF" control beside it gets (the campaign's rows plus the shared library, in that order) — asserted against the PDF control's own recorded props | `campaign-tree-plan-control.test` | ✅ |
+| Clicking it opens the SAME dialog, rendering THIS module's stored plan (its sections, its counted model, its Regenerate label) | `campaign-tree-plan-control.test` | ✅ |
+| No second plan surface can be built by copying: the dialog's markup, the `planModuleDocument` call and the `patchModule(module.id, { documentPlan … })` write each live in exactly ONE file under `src/`, and the tree carries none of them | `campaign-tree-plan-control.test` — source scans over `src/**` | ✅ |
+| The stale comments (item 2) | **No test, deliberately** — comment-only, and a test that reads a comment's text pins nothing about behaviour. `src/` was grepped instead (49 `deliverable*` lines, 3 corrected) and the result is recorded in docs/17 row 111 | n/a |
+| A settled chat turn queued in the debounce is persisted by `pagehide`, and by `visibilitychange` → hidden — with the row asserted UNWRITTEN first and the wait CAPPED BELOW the 600 ms debounce | `page-flush.test` | ✅ |
+| A `visibilitychange` to VISIBLE writes nothing while a write IS queued (the gate that keeps a tab switch from being a write) | `page-flush.test` | ✅ |
+| `hidden` followed by `pagehide` performs ONE write, and a page with nothing queued writes nothing at all (asserted with a row sentinel, so a write would be visible as changed data and not only as a call count) | `page-flush.test` | ✅ |
+| The seam itself: a registered flush runs on `pagehide`, stops running once unregistered; and a second flush through the writer's own entry point writes nothing (the debounce contract survives) | `page-flush.test` | ✅ |
+| The DRAFT writer flushes a typed draft on `pagehide` inside the 500 ms window, and writes NOTHING on a later `pagehide`/tab switch once the debounce landed (the pending gate; counted through the settings write seam) | `new-module-draft.test` | ✅ |
+| The module BOARD's layout write on page hide | **NOT covered, by instruction** — `features/modules/board/BoardPage.tsx` was occupied by another writer's uncommitted work and was left byte-identical to the base commit; its 600 ms debounce still flushes on unmount only (docs/17 row 111 (4b), docs/18 §2.3) | ❌ |
+| The cast count in the module-automation toast (row 107's gap) | **NOT covered, by instruction** — the fix was written, tested and injected on this branch and then dropped whole because `features/modules/post-generation.ts` was occupied by another writer's uncommitted work; the item is queued for a later slice and NO test of it remains here (docs/17 row 111 (4a)) | ❌ |
+
+**NON-VACUITY (injections, each restored byte-identically and verified with
+`git hash-object` before/after — every hash matched).** Five load-bearing lines
+were injected one at a time, and each killed its named test:
+
+- item 1, injection A — the `<ModulePlanButton>` mount deleted from the tree
+  header: **3/3** `campaign-tree-plan-control.test` fail;
+- item 1, injection B — the shared component replaced by a FORKED local
+  `<button data-testid="module-plan-button">`: **3/3** fail (the props
+  assertion, the dialog assertion and the source scans), i.e. the tests really
+  do pin the shared component, not a button;
+- item 4, injection A — the chat writer's `registerPageFlush` deleted: **4**
+  `page-flush.test` fail;
+- item 4, injection B — the seam's `visibilityState !== 'hidden'` gate removed:
+  **1** fails ("visible is not a write");
+- item 4, injection C — the draft writer's pending gate removed (its page-hide
+  flush becomes the ungated unmount `flush`): **1** fails (the draft is written
+  a second time on a tab switch).
+
+**ONE INJECTION CAME BACK GREEN, and it is the reason the flush pins look the
+way they do.** The first version of the chat page-hide test asserted with a 5 s
+`waitFor` and PASSED with `registerPageFlush` deleted: the 600 ms debounce
+landed the write inside the wait, so the test proved the timer, not the flush.
+Every flush pin now asserts the row is unwritten BEFORE the event and caps its
+wait below the writer's debounce (400 ms against 600 ms, 300 ms against 500 ms) —
+re-run, injection A reds 4 tests. Recorded in docs/18 §4 as a general rule.
+
+Two further injections — the cast toast's `parts` entry removed (2 tests red)
+and a fixed singular instead of the count (1 test red), plus the board's
+`registerPageFlush` removed (1 test red) — were measured on this branch BEFORE
+the scope change that dropped those two slices, and their code and tests are not
+in the commit. They are recorded here as the measurements they were, not as
+coverage that exists (docs/17 row 111 (4a)/(4b)).
+
+**UNPROVEN.** jsdom has no tab lifecycle: `pagehide`/`visibilitychange` are
+dispatched by hand, and no browser was asked to freeze, bfcache or discard a
+real tab, so whether an IndexedDB transaction issued from a lifecycle handler
+COMMITS before teardown is unmeasured — the pins cover "the write left the
+debounce window and was issued", nothing more (docs/17 row 111 (a)/(b)). The
+tree's two header controls were asserted at the component/props level and by
+source scan, never in a real browser at a narrow pane width, so the header's
+layout is not measured (row 111 (c)). Item 2 has no test by design. The cast
+count and the board's layout write are untested here because they are not in
+this commit at all.
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

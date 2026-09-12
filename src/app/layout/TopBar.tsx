@@ -19,7 +19,7 @@ import { cn } from '@/lib/utils';
  * Top bar shown on all routes: app name, campaign switcher, the app-level
  * nav (Rules / Settings / last-module shortcut) and the theme toggle
  * (05-UI.md §Top bar). The campaign-level sections (Modules / Workspace /
- * Deliverables / Graph) live in the campaign bar rendered below this bar.
+ * Graph) live in the campaign bar rendered below this bar.
  *
  * The last-module shortcut sits next to Settings: an arrow + the last module
  * opened in a reader, one click back to the table-prep view. Hidden until a

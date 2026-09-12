@@ -45,6 +45,7 @@ import {
 } from '@/components/ui/select';
 import { createModuleAndRun } from '@/llm/moduleGen';
 import { toastError } from '@/lib/toast';
+import { registerPageFlush } from '@/lib/pageFlush';
 
 /**
  * "New Module" creation dialog (08-MODULE-DESIGNER M4-B): concept, level
@@ -428,8 +429,24 @@ function NewModuleDialogContent({
     persist,
   ]);
 
+  /**
+   * The page-hide flush (docs/17 row 111, `lib/pageFlush`). It calls `flush`
+   * ONLY while a debounce is queued, because `visibilitychange` fires on every
+   * tab switch and the unmount flush above is deliberately NOT pending-gated
+   * (a touched draft is written even after its timer fired). Without the gate,
+   * switching tabs would re-write the settings row's draft every time.
+   */
+  const flushPendingDraft = useCallback((): void => {
+    if (timerRef.current === null) return;
+    flush();
+  }, [flush]);
+
   // Unmount (route change, campaign switch) must not lose the last edit.
   useEffect(() => flush, [flush]);
+
+  // A frozen or discarded tab never unmounts, so the same last edit needs the
+  // browser's own going-away signals too.
+  useEffect(() => registerPageFlush(flushPendingDraft), [flushPendingDraft]);
 
   const handleOpenChange = useCallback(
     (next: boolean): void => {

@@ -116,8 +116,13 @@ export type ModulePart = z.infer<typeof modulePartSchema>;
  * the whole-module canvas — one position per node key plus the persisted
  * viewport. Node keys are STABLE identifiers, never indexes that renumber:
  * `'premise'` and `'part-<planIndex>'` for this module's own cards
- * (`planIndex` is IDENTITY — deliverable seeding and encounter-floor bands
- * depend on it), `'prior-<moduleId>'` for prior-module text groups. The
+ * (`planIndex` is IDENTITY, never a position in a list: every part write and
+ * single-part rewrite addresses a part BY it — `moduleRepo.patchModulePartText`
+ * and `moduleGen`'s parts pass, whose stream events carry it too — the reader
+ * orders and labels parts by it, the encounter floor's per-part bands and its
+ * `repairModuleEncounterFloor` repairs are keyed on it, and the canvas's
+ * `?part=<planIndex>` scroll target and this node key both spell it),
+ * `'prior-<moduleId>'` for prior-module text groups. The
  * layout rides the module row through `patchModule` (backup/export follow);
  * NO Dexie version, NO localStorage (parse-on-read precedent, additive
  * `.default(null)` like the cover backfill).

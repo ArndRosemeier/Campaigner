@@ -6,6 +6,7 @@ import {
   type CanvasChatMessage,
 } from '@/features/modules/canvas/chatStore';
 import { toastError } from '@/lib/toast';
+import { registerPageFlush } from '@/lib/pageFlush';
 
 /**
  * Canvas chat thread persistence (08-MODULE-DESIGNER §Module canvas chat,
@@ -171,3 +172,21 @@ export async function flushChatPersist(key?: string): Promise<void> {
     await fireChatPersist(pending);
   }
 }
+
+/**
+ * The page-hide flush (docs/17 row 111, `lib/pageFlush`). Registered HERE, at
+ * module scope, because the queue being flushed is this module's: a settled
+ * chat turn can be sitting in the 600 ms debounce when the tab is
+ * BACKGROUNDED and then frozen or discarded — and a frozen tab never unmounts,
+ * so the canvas's own unmount flush never runs.
+ *
+ * The flush is the file's existing `flushChatPersist` with no key: it visits
+ * every module with a QUEUED timer (a key whose debounce already fired is not
+ * in `pendingTimers`), takes the timer out before writing, and reports its own
+ * failures loudly — so a tab switch writes nothing, a hidden-then-closed page
+ * writes once, and a failed write still reaches the owner (AGENTS 2). No new
+ * write path, no second serialization, no Dexie version.
+ */
+registerPageFlush(() => {
+  void flushChatPersist();
+});

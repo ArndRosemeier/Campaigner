@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils';
 
 /**
  * Campaign bar (05-UI.md §Top bar): the campaign-level tabs — Modules /
- * Workspace / Deliverables / Graph, Modules first (the central view) —
+ * Workspace / Graph, Modules first (the central view) —
  * rendered on every route directly below the top bar so the app's structure
  * stays visible. Tabs are disabled (with a hint) while no campaign is open
  * instead of hidden.
