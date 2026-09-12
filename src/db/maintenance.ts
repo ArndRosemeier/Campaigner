@@ -96,6 +96,14 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
   for (const module of prelisted) {
     cancelModuleGen(module.id);
   }
+  // The same rule for the RUNS this clear deletes (docs/17 row 116): a run
+  // still generating is stopped FIRST, or its next write meets a row that is
+  // gone and `fail` reports the clear as a failure
+  // (`Encounter step "brief" failed: PersonaRun not found: …`). Position is
+  // load-bearing for the same reason as above: `cancel()` writes the row
+  // through its own transaction and must not join one that is already open.
+  const { stopGeneratingRunsForCampaign } = await import('@/llm/runEngine');
+  await stopGeneratingRunsForCampaign(campaignId);
 
   return db.transaction(
     'rw',

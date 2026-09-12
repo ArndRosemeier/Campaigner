@@ -83,6 +83,16 @@ export async function updateCampaign(id: string, patch: CampaignPatch): Promise<
  * route (dead route).
  */
 export async function deleteCampaign(id: string): Promise<void> {
+  // Runs still GENERATING are stopped before their rows go (docs/17 row 116):
+  // a live pipeline whose row vanishes reports the owner's delete as a failure
+  // (`Encounter step "brief" failed: PersonaRun not found: …`), and its next
+  // write would land on a row this wipe has removed. Deliberately OUTSIDE the
+  // transaction — `cancel()` writes the row through its own Dexie transaction,
+  // which would join this open scope and commit it early (the
+  // `cancelModuleGen` precedent in `removeAllGeneratedContent`).
+  const { stopGeneratingRunsForCampaign } = await import('@/llm/runEngine');
+  await stopGeneratingRunsForCampaign(id);
+
   await db.transaction(
     'rw',
     [
@@ -247,6 +257,13 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
   for (const module of prelisted) {
     cancelModuleGen(module.id);
   }
+  // The same rule for the RUNS this wipe deletes (docs/17 row 116): a run still
+  // generating is stopped first, or its next write meets a row that is gone and
+  // `fail` toasts the wipe back at the owner as a failure. Same reason for the
+  // position: `cancel()` writes through its own transaction and must not join
+  // one that is already open.
+  const { stopGeneratingRunsForCampaign } = await import('@/llm/runEngine');
+  await stopGeneratingRunsForCampaign(campaignId);
 
   return db.transaction(
     'rw',

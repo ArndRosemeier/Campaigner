@@ -1336,6 +1336,40 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   wraps, still toasts and still writes its failed row. Do not "simplify" any of
   the three by keying on an error's KIND (`AbortError`, `NotFoundError`): a
   genuine failure arriving in the same clothes would be swallowed (ledger 115).
+- **Deleting a run is an owner INTENT too, and every path that deletes run ROWS
+  stops the run FIRST through the same cancel the Stop button records.** The Runs
+  tab's delete is offered for every row whatever its status
+  (`features/campaign/components/persona-panel.tsx:1903`), so the owner can delete
+  a run whose step is still parked on a model reply. Without a stop, that step's
+  next write meets a row that is gone: `runRepo.updateRun` throws `NotFoundError`
+  (`src/db/runRepo.ts:50`), the pipeline's catch wraps it as
+  `Encounter step "brief" failed: PersonaRun not found: …` and `fail` toasts the
+  owner's own delete back at him plus a `'failed'` row it cannot write — ledger
+  97's real-app analogue, row 115's UNPROVEN item (5), paid by ledger 116. The
+  ONE way to do it is `RunEngine.stopRunsBeforeDelete(ids)`
+  (`src/llm/runEngine.ts:2053`), wired at `persona-panel.tsx:1785` and — for the
+  campaign-level wipes that delete a campaign's runs wholesale — through
+  `stopGeneratingRunsForCampaign(campaignId)` (`:426`) at
+  `db/campaignRepo.ts:93-94` + `:265-266` and `db/maintenance.ts:105-106`.
+  Three rules hold it: (a) the stop is the EXISTING cancel intent (row 115), not a
+  second "this run was deliberately stopped" mechanism — a late step result is
+  already discarded before any write, and `recordCancelled` already tolerates a
+  row that is gone; (b) it must be awaited BEFORE the caller opens a Dexie
+  transaction (`cancel()` writes the row through its own, which would join and
+  early-commit an open scope — the `cancelModuleGen` precedent in the same
+  functions, and why the `db` → `llm/runEngine` import is dynamic); (c) a row that
+  is NOT generating is left alone, so deleting a finished run writes nothing and
+  moves no verdict — while `fail` STAYS loud for a step that dies with no stop and
+  no delete in play (pinned both ways: `tests/features/run-delete-running.test.tsx`
+  asserts `cancel` is never called for a failed row, and its contrast pin asserts a
+  self-inflicted death still toasts and still writes its failed row). MEASURED
+  residue, not hidden: a run the unattended encounter-map queue is watching adds a
+  SECOND surface this seam does not own — with the run stopped and its row deleted
+  the queue still reports `Could not generate a map for "…"` and files the job on
+  its retryable `failed` list (`features/modules/encounter-map-queue.ts:135` →
+  `lib/jobQueue.ts:202`), and probe (C) measured the same toast for a plain
+  `cancel()` with NO delete at all: pre-existing, not introduced by the delete
+  gesture, and out of scope while that queue's own pins are frozen (ledger 116).
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
@@ -1344,6 +1378,10 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   `llm/personas/builtins` (the built-in persona definitions);
   `db/campaignRepo.ts`, `db/moduleRepo.ts` and `db/maintenance.ts` → dynamic
   `import('@/llm/moduleGen')` (a static import would be a cycle);
+  `db/campaignRepo.ts` + `db/maintenance.ts` → dynamic
+  `import('@/llm/runEngine')` for the pre-transaction run stop that a run-row
+  delete owes (docs/17 row 116) — the same cycle reason: `llm/runEngine` already
+  imports `db/campaignRepo`;
   `llm/moduleGen` → `features/modules/post-generation.runModulePostGeneration`
   (the sweep has ONE implementation, and a copy inside `llm` would drift from
   the code the UI reads — docs/17 row 80; the retired

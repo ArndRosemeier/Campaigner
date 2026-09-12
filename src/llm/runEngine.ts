@@ -61,7 +61,7 @@ import {
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
 import { convergeBoardsToRegeneratedMap } from '@/db/battleRepo';
-import { createRun, updateRun, getRun, waitForRunRowChange } from '@/db/runRepo';
+import { createRun, updateRun, getRun, listRunsByCampaign, waitForRunRowChange } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
 import { listModulesByCampaign, getModule } from '@/db/moduleRepo';
@@ -407,6 +407,29 @@ export interface WaitForRunOptions {
  * resume) must still end the wait — the ROW is the contract, and Dexie reports
  * every write to it.
  */
+/**
+ * Stop every GENERATING run of a campaign before its rows are deleted — the
+ * campaign-level half of `RunEngine.stopRunsBeforeDelete` (docs/17 row 116).
+ *
+ * The callers (`campaignRepo.deleteCampaign`,
+ * `campaignRepo.removeAllGeneratedContent`, `maintenance.deleteCampaignWorkspace`)
+ * delete a campaign's run rows wholesale; a run still generating during such a
+ * wipe is the same defect as deleting one run from the Runs tab — its next write
+ * meets a row that is gone and `fail` reports the wipe as a failure. It answers
+ * with a stop instead, exactly as those wipes already abort the module
+ * generation passes they would otherwise strand.
+ *
+ * MUST be awaited BEFORE the caller opens its Dexie transaction: `cancel()`
+ * writes the row through its own transaction, which would join an open scope
+ * (the `cancelModuleGen` precedent in the same functions).
+ */
+export async function stopGeneratingRunsForCampaign(campaignId: Id): Promise<Id[]> {
+  const generating = (await listRunsByCampaign(campaignId)).filter(
+    (run) => run.status === 'running',
+  );
+  return runEngine.stopRunsBeforeDelete(generating.map((run) => run.id));
+}
+
 export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}): Promise<PersonaRun> {
   for (;;) {
     // An aborted wait wins even over a just-reached terminal status: the
@@ -1999,6 +2022,54 @@ export class RunEngine {
     this.encounterSchematics.delete(runId);
     this.encounterLayoutVariants.delete(runId);
     useProgressStore.getState().finish(encounterProgressId(runId));
+  }
+
+  /**
+   * The STOP half of a DELETE gesture (docs/17 row 116).
+   *
+   * Every path that removes run ROWS — the Runs tab's own delete button and the
+   * campaign-level wipes that delete a campaign's runs wholesale — calls this
+   * BEFORE the rows go. A run that is still GENERATING is stopped first, with
+   * the same deliberate cancel INTENT the Stop button records, because the step
+   * in flight has observed nothing yet: its next write meets a row that no
+   * longer exists, `runRepo.updateRun` throws `NotFoundError`, the pipeline's
+   * catch wraps it and `fail` reports the owner's own delete back at him as
+   * `Encounter step "brief" failed: PersonaRun not found: <uuid>` — plus a
+   * 'failed' row written for a run he deliberately removed. That is ledger 97's
+   * real-app analogue and row 115's UNPROVEN item (5), paid here.
+   *
+   * WHY it lives in the engine and not in the caller: the engine is the only
+   * thing that knows a run is GENERATING (`controllers`) as opposed to merely
+   * saying so in a row — and the stop it records is the one the cancel path
+   * already understands (late results discarded at the pipeline's boundaries,
+   * `recordCancelled` for a row that is gone, intent consumed where the pipeline
+   * ends). Nothing new is invented here; a second mechanism for "this run was
+   * deliberately stopped" is exactly what docs/18 §4 forbids.
+   *
+   * A row that is NOT generating is left completely alone: deleting a
+   * finished/failed/cancelled run writes nothing and moves no verdict (pinned).
+   * Returns the ids it actually stopped.
+   */
+  async stopRunsBeforeDelete(ids: Iterable<Id>): Promise<Id[]> {
+    const stopped: Id[] = [];
+    for (const id of ids) {
+      if (!(await this.isGenerating(id))) continue;
+      await this.cancel(id);
+      stopped.push(id);
+    }
+    return stopped;
+  }
+
+  /**
+   * Is this run working RIGHT NOW? The engine's own controller registry is the
+   * in-flight set (a pipeline this page is driving); the ROW is the second half
+   * — a run whose opening write landed before its controller registered, or one
+   * another tab is driving. Anything else (completed, failed, cancelled,
+   * paused, awaiting) is not generating and must not be stopped on its way out.
+   */
+  private async isGenerating(runId: Id): Promise<boolean> {
+    if (this.controllers.has(runId)) return true;
+    return (await getRun(runId))?.status === 'running';
   }
 
   /**

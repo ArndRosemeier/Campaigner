@@ -1776,6 +1776,13 @@ function RunsList({
   async function handleDeleteRun(id: string): Promise<void> {
     if (openRunId === id) setOpenRunId(null);
     try {
+      // The owner's delete of a run that is still GENERATING is a delete of
+      // live work, so it stops the run FIRST — the same deliberate stop the
+      // Stop button records (docs/17 row 116). Without it the step in flight
+      // writes into a row that is gone, and the engine reports the owner's own
+      // delete back at him as `Encounter step "brief" failed: PersonaRun not
+      // found: …` (rows 97/115). A finished/failed run is not touched.
+      await runEngine.stopRunsBeforeDelete([id]);
       await deleteRun(id);
       toastSuccess('Run deleted');
     } catch (error) {
