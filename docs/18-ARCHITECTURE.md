@@ -176,6 +176,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | **Stop a module generation — the ONE behaviour behind every Stop control** (docs/17 row 110) | `llm/moduleGenReconcile.stopModuleGeneration(id)` returns what actually happened and each outcome ends in something the owner can SEE: a live controller in THIS page → `cancelModuleGen(id)` (a real abort, `'cancelled'`); another tab holds the generation lock → nothing stopped, nothing failed, a toast naming the other tab (`'elsewhere'`); nobody owns the row → `reconcileInterruptedModuleGen(id)` (`'reconciled'`); the row already settled → a toast saying so (`'idle'`). `features/progress/stop-all-generations` asks the same guard and reports `{ stopped, reconciled }`, counting a reconciled row as a SEPARATE number and never as work the sweep stopped | a bare `cancelModuleGen` from a Stop control (on a row no live controller owns it is `controllers.get(id)?.abort()` — a silent no-op, which is the defect the seam closes); reconciling a row another tab is generating; counting a dead row as "stopped" and toasting that it was stopped; letting `stopped === 0` claim "Nothing was running" while a dead row was reconciled |
 | **Measure a stream watchdog against LIVENESS, and report only a limit that was ARMED** (docs/17 row 110) | `lib/pageLiveness`: `installPageLiveness()` (auto-installed on `visibilitychange`/`freeze`/`resume`/`pagehide`/`pageshow`) records the SUSPENDED GAPS, and `activeElapsedMs(from, to)` is wall time minus those gaps. `llm/openrouter.readStream` computes all three watchdog deltas through it, records `trippedLimit` when it actually calls `reader.cancel()`, and the post-loop diagnosis throws ONLY that limit — otherwise the accumulated text is the answer | `Date.now()` deltas in the watchdog OR in the post-loop diagnosis (a hidden/frozen page's gap then reads as silence and a healthy stream is cancelled; worse, the diagnosis ran after a CLEAN `done` close and discarded complete answers); loosening a limit to compensate (a genuinely dead stream must still fail on the same numbers); re-deriving the failure from elapsed time after the loop instead of asking what the watchdog DID; treating a cancelled stream as an error while keeping its partial text as if it were complete |
 | **Wait for a run to leave `'running'`** (docs/17 row 110) | `runRepo.waitForRunRowChange(runId, known, signal)` — a Dexie `liveQuery` over the ONE run row, resolving on any change (including rows written by another tab's run) or when the row disappears — wrapped by `runEngine.waitForRunStatus` (which loops: read the row, check abort/terminal/paused, then await the change) | a `setTimeout` poll (250 ms chained ticks are a PACING bug: Chromium throttles a hidden page's timers to ~1/minute, so a chain or batch step boundary can idle for a minute); resolving on a write that is not terminal; dropping the `AbortError` or the "Run … disappeared while waiting for it to finish" contract (both are preserved to the character and pinned) |
+| **Refill an existing artifact in place** (a persona run with `targetArtifactId` — the artifact editor's "Generate/Regenerate with AI", the persona panel's targeted run) | `runEngine.startRun({ targetArtifactId })`: the pipeline runs normally, `runFinalize` merges through the ONE `mergeRefillData(kind, draftData, target)` and writes with `updateArtifact` (which parses `anyArtifactSchema` — the write seam that makes a bad merge a loud failure, never a silent row). A refill target's OWN shape decides steps: a target that cites a library creature (`isCastCreatureNpc`, read through `npcCreatureRef`) is NEVER asked for a stat block — the step finishes `'skipped'` naming the citation, before the model call (docs/11 §A cited row's REFILL, ledger 112). `mergeRefillData` REFUSES, by name, a draft that carries a stat block for a cited row | a step plan that asks a cited row for stats because the draft said they matter; a merge that silently prefers one side of an exclusive pair (drop the block or drop the citation); pre-filtering the draft contract by kind instead of deciding at the step |
 
 ### 2.3 App & UI
 
@@ -1208,6 +1209,52 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   the mitigation and nothing else. Neither surface may become a progress meter:
   the label is the caller's ("The Drowned Vault"), never a guessed
   "part 2 of 5".
+- **A citation and an authored stat block are mutually exclusive BY
+  CONSTRUCTION — no seam may build the pair** (ledger 112). `npcDataSchema`
+  refuses an npc that carries both a `creatureRef` and a `statBlock`, and the
+  refusal is the ONLY reason a cited row's numbers can never quietly become a
+  second, divergent source of truth: the cast tier births such a row with
+  `statBlock: null` in the SAME literal (`db/creatureRepo`, the sole creator),
+  readers prefer the authored block and otherwise DERIVE from the citation
+  (`roomBudget.fixedCastStatsFor`), and the one place that could assemble the
+  pair is the refill merge (`runEngine.mergeRefillData`) — which now THROWS a
+  named sentence instead of writing, and whose statblock-step force-off keeps
+  that refusal unreachable from the pipeline it just ran. Hunted and verified
+  at every other `creatureRef`+stat-block site: `canvasChat`'s two renderers
+  are read-only (one narrows to `statBlock === null`), the entity/roster
+  batches cannot reach a cited row (`entity-batch` starts a run only when
+  `target.artifactId === undefined`; `change-artifact` refuses cast rows), and
+  the cast writer writes both fields in one literal. The rule for a future
+  writer: never add a second creator/merger of these two fields, and never
+  "resolve" the pair by preferring one side — a silent preference is how a
+  derived number starts disagreeing with the library it cites.
+- **A zod issue dump is not a user-facing message, and a UNION makes it
+  worse** (ledger 112, measured). `ZodError.message` IS the raw
+  `[{code,path,message}…]` JSON, and `lib/toast` humanizes only a toast's
+  DESCRIPTION — the headline is passed through untouched — so any fail site
+  that hands `errorMessage(error)` to `toastError` for a zod failure puts
+  megabytes-shaped JSON in front of the owner (his own words: *"tons of
+  text … looked like lots of json"*) while the run row keeps the same dump and
+  a kind label ("Unusable model reply") that blames the model. Use
+  `runEngine.composedFailureMessage` for a surface: it composes a sentence for
+  a zod failure and passes every other error's message through VERBATIM (so
+  named refusals keep their wording). It also digs through union branches, and
+  that part is a MEASURED trap: `anyArtifactSchema` IS a union (campaign-scoped
+  row vs library row), and zod 4 renders a failed union as ONE issue whose own
+  `path` is `[]` and whose `message` is the literal "Invalid input" — the
+  field names live only in the nested `errors` branches, so the obvious
+  `formatZodIssues`/`parseErrorSummary` route yields "reply: Invalid input",
+  a sentence that names nothing (measured on this branch before
+  `readableZodIssues` existed; `formatZodIssues` still does this where a repair
+  PROMPT consumes it, which is acceptable there — a prompt is not a surface).
+  One residual, stated rather than smoothed over: a NAMED refusal the engine
+  throws is a plain `Error`, so `failureKindOf` classifies it `'unknown'`
+  ("Unclassified failure") where the schema failure it replaces was
+  `'invalid-output'` ("Unusable model reply"). That is the honest kind of the
+  three available (`invalid-output` blamed the model for a refusal the app
+  made; `bug` would tell the owner to report a deliberate refusal), the kind
+  only ANNOTATES — the message is the surface — and `llm/failureKind.ts` is a
+  different seam than this one, so it is left alone.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

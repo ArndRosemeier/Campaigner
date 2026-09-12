@@ -25,7 +25,9 @@ import {
   encounterLocationKindSchema,
   entranceMarkerConfig,
   gridDimensionsFor,
+  isCastCreatureNpc,
   moduleDocumentText,
+  npcCreatureRef,
   spawnFirstPath,
   abilityScoreFromModifier,
   drawFillGrade,
@@ -1092,18 +1094,45 @@ function mergeRefillData(
   if (target.kind !== kind) return draftData;
   if (kind === 'npc' && target.kind === 'npc' && 'appearance' in draftData) {
     const previous = target.data;
+    const citation = previous.creatureRef;
+    // THE REFUSED PAIR IS NEVER CONSTRUCTED (docs/11 §A cited row's REFILL,
+    // docs/17 row 112).
+    // `npcDataSchema`'s refine refuses a citation beside an authored stat block
+    // BY NAME, and that parse is what `updateArtifact` runs — so a merge that
+    // assembled both would throw a zod issue dump out of a Dexie transaction
+    // instead of saying what happened. The statblock step is forced off for a
+    // cited target (`runStatblock`), so this is unreachable from the pipeline
+    // it just ran; it is reachable from a run PERSISTED before that rule
+    // (resumed, or with an edited statblock step), which is exactly why the
+    // refusal is here rather than assumed away. Verified 2026-09-11: this is
+    // the ONLY place in `src/` that can put the two fields on one row (the
+    // other reader/writer sites are recorded in docs/18 §4).
+    //
+    // LOUD, and by neither precedence nor omission: dropping the citation
+    // would sever the identity that states where the numbers come from, and
+    // dropping the block would discard what a (user-edited) step produced.
+    if (citation !== undefined && draftData.statBlock !== null) {
+      throw new Error(
+        `Refusing to write «${target.name}»: it draws its stat block from ` +
+          `${citation.creatureName === undefined ? 'the library creature it cites' : `the library creature «${citation.creatureName}»`} ` +
+          `(creatureRef), so no run may author a stat block beside that citation. ` +
+          `Nothing was written — its prose is unchanged and the citation stands.`,
+      );
+    }
     return {
       appearance: draftData.appearance,
       personality: draftData.personality,
-      // A refill that skipped its statblock step (needsStatBlock=false) or
-      // produced none keeps the target's curated block.
+      // A refill that skipped its statblock step keeps the target's curated
+      // block. On a CITED row `previous.statBlock` is null by construction —
+      // the ONE cast function (`db/creatureRepo`) births such a row that way,
+      // and `npcDataSchema` refuses the pair on every read — so this cannot
+      // smuggle a block in beside the citation; the refusal above is what
+      // makes that structural rather than assumed.
       statBlock: draftData.statBlock ?? previous.statBlock,
       // The creature citation survives the refill (IDENTITY, not content): a
       // smith writing an Aunt Agatha's prose must not also delete the fact
-      // that her numbers are the library zombie's. `statBlock` stays null on
-      // such a row (the zod refine forbids both), so `?? previous.statBlock`
-      // above cannot smuggle a block in beside it.
-      ...(previous.creatureRef === undefined ? {} : { creatureRef: previous.creatureRef }),
+      // that her numbers are the library zombie's.
+      ...(citation === undefined ? {} : { creatureRef: citation }),
       // The run stamp survives only while the row is still MACHINE-owned: it
       // is what tells a later cast that this row has not been written in yet
       // (docs/11 D4). A refill IS the writing-in, so it is cleared here and
@@ -1434,6 +1463,78 @@ function resolveBriefMapPath(
 /** Draft fields are schema-validated strings; coerce defensively. */
 function asString(value: unknown): string {
   return typeof value === 'string' ? value : '';
+}
+
+/**
+ * The message a failure carries to the OWNER: the toast headline and the run
+ * row's `errorMessage` (AGENTS rule 2). Both are the same string on purpose —
+ * the run row is the durable surface a transient toast cannot be.
+ *
+ * WHY zod is special-cased: a `ZodError.message` IS the raw `[{code,path,
+ * message}, …]` JSON dump (zod 4), and `lib/toast`'s humanizer deliberately
+ * leaves a toast's TITLE untouched (it rewrites only the description —
+ * `lib/toast.ts`, "humanize-at-the-seam"), so a run that fails on a schema
+ * parse headlines a toast with megabytes-shaped JSON and writes the same dump
+ * into the run row. That is the owner's own report of it, verbatim: *"There is
+ * a warning message shown briefly with tons of text, but its only shown briefly
+ * and looked like lots of json (not sure though)."* A data check is not a
+ * sentence, so one is composed: what refused, and that nothing was written.
+ * The raw dump stays available — `fail` logs it, `lib/toast` console.errors it.
+ *
+ * Every other error keeps its message verbatim: the named refusals this engine
+ * throws (a cited row's stat block, an empty body, a missing module) already
+ * ARE owner-readable sentences, and rewriting them here would flatten exactly
+ * the wording that makes them actionable.
+ */
+export function composedFailureMessage(error: unknown): string {
+  if (!(error instanceof ZodError)) return errorMessage(error);
+  const issues = readableZodIssues(error);
+  return `Refused by a data check: ${
+    issues.length === 0 ? 'the write did not match its stored shape' : issues.join('; ')
+  }. Nothing was written.`;
+}
+
+/**
+ * One readable line per zod issue, digging through `union` branches.
+ *
+ * MEASURED, and it is why this is not `parseErrorSummary`: the artifact schema
+ * is a UNION (a campaign-scoped row vs a global/library row), and zod 4 renders
+ * a failed union as ONE issue whose own `path` is `[]` and whose `message` is
+ * the literal string "Invalid input" — the field names live in the nested
+ * `errors` branches. Composing from that top-level issue alone produced
+ * "reply: Invalid input", a sentence that names NOTHING about what refused the
+ * write (measured on this branch before this helper existed). The nested leaves
+ * carry the real paths ("data.pointsOfInterest.0.description: Invalid input:
+ * expected string, received undefined"), so they are what the composed message
+ * uses — deduped, since every branch repeats the complaint the branches agree
+ * on, and capped, because a sentence has to stay a sentence.
+ */
+function readableZodIssues(error: ZodError): string[] {
+  /** Structural view of zod's issue tree (`$ZodIssue` plus the union's nested
+   * `errors`), read without reaching for zod's internal type names. */
+  interface IssueNode {
+    path?: readonly (string | number | symbol)[] | undefined;
+    message?: unknown;
+    errors?: readonly (readonly IssueNode[])[] | undefined;
+  }
+  const lines: string[] = [];
+  const walk = (issue: IssueNode): void => {
+    const branches = issue.errors;
+    // (`!== undefined`, not `Array.isArray`: on a `readonly T[]` the latter
+    // narrows to `any[]`, which the lint boundary refuses.)
+    if (branches !== undefined && branches.length > 0) {
+      for (const branch of branches) for (const child of branch) walk(child);
+      return;
+    }
+    const path = (issue.path ?? [])
+      .map((part) => (typeof part === 'symbol' ? part.toString() : String(part)))
+      .join('.');
+    const message = typeof issue.message === 'string' ? issue.message : 'invalid';
+    const line = `${path === '' ? 'the row' : path}: ${message}`;
+    if (!lines.includes(line)) lines.push(line);
+  };
+  for (const issue of error.issues as readonly IssueNode[]) walk(issue);
+  return lines.slice(0, 3);
 }
 
 /**
@@ -2852,6 +2953,41 @@ export class RunEngine {
     extraInstruction: string,
   ): Promise<{ step: RunStep; runStatus?: PersonaRun['status'] }> {
     debugLog('run', 'statblock start');
+    // THE AUNT AGATHA RULE (docs/11 §A cited row's REFILL, docs/17 row 112): a
+    // refill target that CITES a library creature is never asked for a stat
+    // block, whatever the draft said — its numbers are DERIVED from that
+    // creature, and `npcDataSchema` refuses a citation beside an authored block
+    // by name.
+    // Decided BEFORE the model call, so the step is not merely discarded
+    // afterwards: no call is spent, and nothing the model could reply is left
+    // in the run row for finalize to merge into the refused pair.
+    //
+    // WHY the draft's own answer cannot own this decision: the draft does not
+    // know the row is cited (its contract carries `needsStatBlock`, not the
+    // target's shape), and a cited creature is by definition one that fights —
+    // the owner's zombie Aunt Agatha — so the model's honest answer is exactly
+    // the one that used to build the refused pair.
+    if (input.targetArtifactId !== undefined) {
+      const refillTarget = await getAnyArtifact(input.targetArtifactId);
+      if (refillTarget !== undefined && isCastCreatureNpc(refillTarget)) {
+        // The field is read through its ONE accessor (`domain/creature`), never
+        // by reaching into `data` here.
+        const citation = npcCreatureRef(refillTarget);
+        debugLog('run', 'statblock skipped: the refill target cites a library creature');
+        return {
+          step: this.finishStep(
+            steps[stepIndex],
+            {
+              skipped:
+                `this npc draws its stat block from the library creature it cites ` +
+                `(${citation?.creatureName === undefined ? 'creatureRef' : `«${citation.creatureName}»`}) — ` +
+                `the numbers are the library's and are never authored here`,
+            },
+            'skipped',
+          ),
+        };
+      }
+    }
     // M4-C: the draft decides whether this character needs stats at all —
     // generating a full stat block for a contact or merchant is wasted
     // effort. The step is marked skipped (visible in the run row).
@@ -5817,7 +5953,13 @@ export class RunEngine {
       this.emit({ kind: 'run', runId, status: 'failed' });
       return;
     }
-    const message = errorMessage(error);
+    const message = composedFailureMessage(error);
+    if (error instanceof ZodError) {
+      // The RAW error stays the logged cause (AGENTS rule 2: the surface is
+      // the sentence, the detail is one devtools line away — `lib/toast`
+      // console.errors it too, for every zod-shaped failure).
+      debugLog('run', 'run failed on a data check — raw zod error:', errorMessage(error));
+    }
     toastError(message, error);
     try {
       // The kind annotates the message (docs/05 run views) — the raw text

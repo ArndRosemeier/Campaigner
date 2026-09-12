@@ -158,6 +158,45 @@ convention the panel and the module automation already toast — so the entity i
 reported exactly like any other per-entity generation failure, and NOTHING is
 written: no statless twin, no half-cast row.
 
+### A cited row's REFILL — the Aunt Agatha rule (docs/17 row 112)
+
+One rule for every path that writes a cast creature npc in place (the artifact
+editor's "Generate/Regenerate with AI", the persona panel's targeted run), and
+it has two halves that must never be separated. (The D3/D4 labels in this doc's
+decisions table are the room-geometry and group-veil decisions; this rule is
+recorded here, beside the cast it constrains, rather than as another D number.)
+
+**NEVER ASK a cited row for a stat block.** A row that carries `creatureRef`
+derives its numbers from the library creature, so `runStatblock` resolves the
+REFILL TARGET (`getAnyArtifact(input.targetArtifactId)`) and, when
+`isCastCreatureNpc` holds, finishes the step `'skipped'` with a reason naming
+the citation and the library creature — decided BEFORE the model call. The
+step-off is scoped to the TARGET, not to the kind or the draft: a NEW npc is
+unaffected (nothing cites anything yet), a non-cited refill still produces its
+block, and the draft's own `needsStatBlock` answer no longer gets a vote on a
+cited row, because whether stats MATTER is a different question from where a
+row's stats COME FROM. Asking anyway is not merely a wasted call: the answer is
+a block the row cannot keep, so the run would fail after spending it.
+
+**NEVER CONSTRUCT the refused pair.** `npcDataSchema` refuses an npc carrying
+both a `creatureRef` and an authored `statBlock`, by name — so a refill merge
+that assembled both would surface as a schema parse, not as an explanation.
+`runEngine.mergeRefillData`'s npc branch therefore REFUSES a draft block on a
+cited row with a sentence naming the row and the library creature and saying
+nothing was written, and keeps the citation on the row it returns. Never drop
+the citation (that severs the identity stating where the numbers come from),
+never drop the block (that discards what a user-edited step produced), and never
+"prefer one" silently. The step-off above makes this refusal unreachable from
+the pipeline it just ran; it stays because a run PERSISTED before this rule —
+resumed, or with a hand-edited statblock step — can still deliver one.
+
+**The citation is IDENTITY, not content: a refill never deletes it.** Refilling
+Aunt Agatha's prose leaves her `creatureRef` byte-identical and her `statBlock`
+null, which is what keeps her numbers the library zombie's (the owner's own
+words for this path: *"she will have zombie stats but with prose"*). Pinned in
+`tests/llm/refill-creature-stats.test.ts`; the failure surface this rule's
+refusal speaks through is recorded in docs/05 §Error surfaces and docs/18 §4.
+
 **The asymmetry stays structural.** The encounter side can cite and cannot cast,
 because it holds no cast seam and no schema field to express one; the new tests
 extend that pin from the encounter ARTIFACT's data schema to the encounter
