@@ -62,6 +62,17 @@ vi.mock('@/llm/openrouter', async (importOriginal) => ({
   chat: vi.fn(),
 }));
 
+// A module seeded at `status: 'generating'` means "a live forge owns this
+// module", and that is the page-local lease the reconcile guard reads (docs/17
+// row 110). The engine is not exercised in this file, so there is no real
+// controller to ask — without this, app-start reconciliation would (correctly)
+// fail the seeded row as an interrupted generation and the busy-state reasons
+// below would be pinning a state the app no longer shows for such a row.
+vi.mock('@/llm/moduleGen', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  hasLiveModuleGen: vi.fn(() => true),
+}));
+
 const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 

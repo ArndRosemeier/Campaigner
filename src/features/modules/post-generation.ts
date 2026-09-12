@@ -25,6 +25,7 @@ import { runEntityBatch } from '@/features/modules/entity-batch';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { errorMessage } from '@/lib/errors';
+import { moduleGenLockName, withGenerationLock } from '@/lib/generationLocks';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
 import { toastError, toastSuccess } from '@/lib/toast';
 
@@ -239,6 +240,23 @@ export function encountersNeedingMobPortraits(
  * `FULL_AUTOMATION_TARGET`.
  */
 export async function runModulePostGeneration(
+  moduleId: Id,
+  campaign: Campaign,
+  target?: ModuleAutomationIntent,
+): Promise<void> {
+  // The sweep holds the module's Web Lock for its whole duration (docs/17 row
+  // 110, lib/generationLocks): it is the app's longest-lived orchestration —
+  // several entity batches, then three enqueue blocks — and a held Web Lock is
+  // one of Chromium's documented freeze opt-outs. `withGenerationLock` NEVER
+  // blocks: without the API, or with the lock already held by another tab, the
+  // sweep runs exactly as before.
+  return withGenerationLock(moduleGenLockName(moduleId), () =>
+    runModulePostGenerationUnlocked(moduleId, campaign, target),
+  );
+}
+
+/** The sweep body (see `runModulePostGeneration` for the public contract). */
+async function runModulePostGenerationUnlocked(
   moduleId: Id,
   campaign: Campaign,
   target?: ModuleAutomationIntent,

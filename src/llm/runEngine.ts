@@ -51,10 +51,15 @@ import {
 import { getChunksByIds } from '@/db/chunkRepo';
 import { contentIdentityFor } from '@/domain/encounterResolve';
 import { additionalInstructionSection } from '@/llm/additionalInstruction';
+import {
+  backgroundActivityLabel,
+  clearBackgroundActivity,
+  setBackgroundActivity,
+} from '@/lib/backgroundTitle';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
 import { convergeBoardsToRegeneratedMap } from '@/db/battleRepo';
-import { createRun, updateRun, getRun } from '@/db/runRepo';
+import { createRun, updateRun, getRun, waitForRunRowChange } from '@/db/runRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getPersona } from '@/db/personaRepo';
 import { listModulesByCampaign, getModule } from '@/db/moduleRepo';
@@ -384,10 +389,21 @@ export interface WaitForRunOptions {
  *
  * Unified contract — resolves with the run row once it reaches a terminal
  * status (plus the pause statuses when `includePaused` is set); throws when
- * the run row disappears mid-wait; polls the row every 250ms, which also
- * covers the already-terminal race (the first read returns immediately).
- * The event emitter stays the liveness surface for UIs; waiting code does
- * not need to subscribe.
+ * the run row disappears mid-wait; the wait itself is EVENTS, not a timer
+ * (`runRepo.waitForRunRowChange`): the row is read once, then the wait
+ * resolves the moment Dexie reports a change to it, which also covers the
+ * already-terminal race (the first read returns immediately).
+ *
+ * A timer poll was a PACING bug, not a safety net (docs/17 row 110): under
+ * Chromium's intensive throttling a hidden tab's timers run at most once a
+ * minute, so a 250 ms wait boundary could idle for ~60 s — and every caller of
+ * this function (chainRunner, entity-batch, encounter-map-queue,
+ * encounterRegen) sits at a step boundary while it waits, i.e. the tab looked
+ * stalled precisely when the user was in another app. The emitter stays the
+ * liveness surface for UIs; waiting code does not subscribe to it, because a
+ * status written by a path that emits nothing (a user resolving a pause, a
+ * resume) must still end the wait — the ROW is the contract, and Dexie reports
+ * every write to it.
  */
 export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}): Promise<PersonaRun> {
   for (;;) {
@@ -407,9 +423,7 @@ export async function waitForRunStatus(runId: Id, opts: WaitForRunOptions = {}):
     ) {
       return run;
     }
-    await new Promise((resolve) => {
-      window.setTimeout(resolve, 250);
-    });
+    await waitForRunRowChange(runId, run, opts.signal);
   }
 }
 
@@ -1836,7 +1850,11 @@ export class RunEngine {
   async cancel(runId: Id): Promise<void> {
     this.cancelRequested.add(runId);
     this.controllers.get(runId)?.abort();
-    await updateRun(runId, { status: 'cancelled' });
+    // A cancelled run is not a failed one: the stale interruption text an
+    // earlier reconcile may have left goes, and the background line stops
+    // claiming the run is working (docs/17 row 110).
+    await updateRun(runId, { status: 'cancelled', errorMessage: '' });
+    clearBackgroundActivity(`run-${runId}`);
     this.emit({ kind: 'run', runId, status: 'cancelled' });
     this.controllers.delete(runId);
     this.cancelRequested.delete(runId);
@@ -1898,6 +1916,13 @@ export class RunEngine {
     const controller = new AbortController();
     this.controllers.set(runId, controller);
     let activeStepName: StepName | null = null;
+    // Background completion surface (docs/17 row 110): while the owner is in
+    // another app, the tab says which run is working and — at the end — whether
+    // it finished. Set HERE (not in startRun/resumeRun/retryStep) because this
+    // is the one place every way of driving a run funnels through, so no entry
+    // point can forget it.
+    const activityId = `run-${runId}`;
+    setBackgroundActivity(activityId, { label: input.persona.name, state: 'running' });
 
     try {
       for (let i = startIndex; i < kinds.length; i += 1) {
@@ -1905,7 +1930,8 @@ export class RunEngine {
         if (name === undefined) break;
         activeStepName = name;
         if (this.cancelRequested.has(runId)) {
-          await updateRun(runId, { status: 'cancelled' });
+          await updateRun(runId, { status: 'cancelled', errorMessage: '' });
+          clearBackgroundActivity(activityId);
           this.emit({ kind: 'run', runId, status: 'cancelled' });
           return;
         }
@@ -1952,6 +1978,14 @@ export class RunEngine {
           steps: [...steps],
           status: outcome.runStatus ?? 'running',
           resultArtifactId: outcome.artifactId ?? run.resultArtifactId,
+          // A live run carries NO failure verdict (docs/17 row 110): a step
+          // write restores 'running' after the row was wrongly reconciled to
+          // 'failed' (the AppShell render-body defect — a theme toggle used to
+          // mark a streaming run failed), so the stale error text and its
+          // classification go with it instead of surviving into the completed
+          // row.
+          errorMessage: '',
+          failureKind: null,
         });
         this.emit({
           kind: 'step',
@@ -1963,6 +1997,10 @@ export class RunEngine {
 
         if (outcome.runStatus !== undefined && outcome.runStatus !== 'running') {
           this.emit({ kind: 'run', runId, status: outcome.runStatus });
+          // A pause is not an ending and not a failure: the run is waiting for
+          // the owner, who is by definition not looking at a background tab —
+          // so the background line stops claiming work is happening.
+          clearBackgroundActivity(activityId);
           if (input.persona.mode === 'encounter') {
             useProgressStore.getState().update(encounterProgressId(runId), {
               detail: outcome.runStatus === 'needs_review' ? 'Map needs review' : 'Waiting for your approval',
@@ -1998,23 +2036,34 @@ export class RunEngine {
             useProgressStore.getState().finish(encounterProgressId(runId));
           }
           this.emit({ kind: 'run', runId, status: 'failed' });
+          setBackgroundActivity(activityId, { label: input.persona.name, state: 'failed' });
           return;
         }
       }
 
-      await updateRun(runId, { status: 'completed' });
+      // Belt and braces (docs/17 row 110): every path to this write passes a
+      // step write, which clears the verdict already — MEASURED (removing this
+      // clearing leaves the suite green), so it is redundant TODAY and kept so
+      // a future path that completes without a step write cannot resurrect a
+      // 'completed' row still saying "Interrupted by reload".
+      await updateRun(runId, { status: 'completed', errorMessage: '', failureKind: null });
       this.draftRetried.delete(runId);
       this.statblockRetried.delete(runId);
       this.sourceRepaired.delete(runId);
       this.encounterSchematics.delete(runId);
       useProgressStore.getState().finish(encounterProgressId(runId));
       this.emit({ kind: 'run', runId, status: 'completed' });
+      setBackgroundActivity(activityId, { label: input.persona.name, state: 'completed' });
     } catch (error) {
       if (
         this.cancelRequested.has(runId) ||
         (error instanceof DOMException && error.name === 'AbortError')
       ) {
-        await updateRun(runId, { status: 'cancelled' });
+        // A user stop is not a failure and leaves no verdict behind: the row
+        // must not keep a stale interruption message from an earlier reconcile,
+        // and the background line must not claim a completion (docs/17 row 110).
+        await updateRun(runId, { status: 'cancelled', errorMessage: '' });
+        clearBackgroundActivity(activityId);
         this.emit({ kind: 'run', runId, status: 'cancelled' });
       } else if (input.persona.mode === 'encounter' && activeStepName !== null) {
         const message = errorMessage(error);
@@ -5780,6 +5829,14 @@ export class RunEngine {
       });
     } finally {
       this.emit({ kind: 'run', runId, status: 'failed' });
+      // A run that failed AFTER its progress surface was registered says so on
+      // the background title (docs/17 row 110). The label is the persona's name
+      // only if this engine start registered one — a run that never reached
+      // executeFrom has no entry and gets a generic one, never a blank title.
+      setBackgroundActivity(`run-${runId}`, {
+        label: backgroundActivityLabel(`run-${runId}`) ?? 'A run',
+        state: 'failed',
+      });
     }
   }
 }

@@ -12,14 +12,14 @@ import {
   publishToLibrary,
 } from '@/db/artifactRepo';
 import { updateSettings } from '@/db/settingsRepo';
-import { getRun, listRunsByCampaign } from '@/db/runRepo';
+import { failRunningRuns, getRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
 import { createModule as createModuleRow, deleteModule } from '@/db/moduleRepo';
 import { runEngine, rulebookSourceFor } from '@/llm/runEngine';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { sha256Hex } from '@/lib/hash';
 import { BUILT_IN_PERSONAS } from '@/llm/personas/builtins';
-import { waitFor } from '@testing-library/react';
+import { act, waitFor } from '@testing-library/react';
 import { clearDatabase } from '../db/helpers';
 
 import type { Id } from '@/domain';
@@ -110,6 +110,19 @@ async function seed(): Promise<{ campaignId: Id; persona: Persona }> {
     builtIn: true,
   });
   return { campaignId: campaign.id, persona };
+}
+
+/** A promise the test resolves by hand (the engine parked in a model call). */
+function deferred(): {
+  promise: Promise<{ text: string; modelUsed: string; fallback: null }>;
+  resolve: (value: { text: string; modelUsed: string; fallback: null }) => void;
+} {
+  let resolve: (value: { text: string; modelUsed: string; fallback: null }) => void = () =>
+    undefined;
+  const promise = new Promise<{ text: string; modelUsed: string; fallback: null }>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
 }
 
 const INPUT = (campaignId: Id, persona: Persona) => ({
@@ -581,6 +594,81 @@ describe('runEngine', () => {
     // Chat was called 3 times total: draft (initial), statblock (failed), statblock (recovered retry).
     // Draft was NOT re-executed!
     expect(chatMock).toHaveBeenCalledTimes(3);
+  }, 20000);
+
+  it('a mid-flight interruption does not survive into the live or completed row (docs/17 row 110)', async () => {
+    const { campaignId, persona } = await seed();
+    // The defect's real sequence, and why BOTH writes clear the verdict: a
+    // re-render used to call `failRunningRuns()` (it lived in AppShell's RENDER
+    // BODY), so a LIVE streaming run was marked 'failed' with 'Interrupted by
+    // reload' by an unrelated UI change — repeatedly, on every render. The
+    // engine's next step write restored 'running' but (at HEAD) left the stale
+    // message, and the completion write did not clear it either, so a
+    // 'completed' run told the owner it had been interrupted by a reload.
+    //
+    // Phase 1 pins the STEP write (the verdict is gone while the run is live)
+    // and is injection-proven: removing that clearing fails this test. Phase 2
+    // is a REGRESSION GUARD, not an independently proven pin, and the
+    // measurement says so: removing the completion write's clearing leaves this
+    // test green, because every path to completion passes a step write that
+    // cleared the verdict already. It is asserted anyway so a future path that
+    // completes without a step write cannot resurrect the defect silently.
+    const draft = deferred();
+    const statblock = deferred();
+    let calls = 0;
+    chatMock.mockImplementation(() => {
+      calls += 1;
+      return calls === 1 ? draft.promise : statblock.promise;
+    });
+
+    const runId = await runEngine.startRun({
+      ...INPUT(campaignId, persona),
+      autonomy: 'auto' as const,
+    });
+    // The run is genuinely live and parked in its draft model call.
+    await waitFor(() => {
+      expect(chatMock).toHaveBeenCalled();
+    });
+
+    // What the old render-body call site did to a live run.
+    await failRunningRuns();
+    const interrupted = await getRun(runId);
+    expect(interrupted?.status).toBe('failed');
+    expect(interrupted?.errorMessage).toBe('Interrupted by reload');
+
+    // The draft lands: the run is live again and carries NO stale verdict.
+    await act(() => {
+      draft.resolve({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+      return Promise.resolve();
+    });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('running');
+    });
+    const live = await getRun(runId);
+    expect(live?.errorMessage).toBe('');
+    expect(live?.failureKind).toBeNull();
+
+    // Phase 2: one MORE spurious reconcile, this time between the last step
+    // write and the completion write (a re-render could land anywhere).
+    await updateRun(runId, {
+      status: 'running',
+      errorMessage: 'Interrupted by reload',
+      failureKind: 'cancelled',
+    });
+    await act(() => {
+      statblock.resolve({
+        text: JSON.stringify(VALID_STATBLOCK),
+        modelUsed: 'test-model',
+        fallback: null,
+      });
+      return Promise.resolve();
+    });
+    await waitFor(async () => {
+      expect((await getRun(runId))?.status).toBe('completed');
+    });
+    const completed = await getRun(runId);
+    expect(completed?.errorMessage).toBe('');
+    expect(completed?.failureKind).toBeNull();
   }, 20000);
 
   it('passes persona reasoningEffort to chat calls and falls back to settings', async () => {

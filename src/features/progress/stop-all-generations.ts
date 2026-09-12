@@ -4,13 +4,18 @@ import { listModulesByCampaign } from '@/db/moduleRepo';
 import { cancelCanvasGenerations } from '@/llm/canvasBusy';
 import { chainRunner } from '@/llm/chainRunner';
 import { cancelModuleGen } from '@/llm/moduleGen';
+import {
+  formatInterruptedModuleGenReport,
+  isModuleGenClaimed,
+  reconcileInterruptedModuleGens,
+} from '@/llm/moduleGenReconcile';
 import { runEngine } from '@/llm/runEngine';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import { useCoverImageQueue } from '@/features/covers/cover-image-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { bumpStopEpoch } from '@/lib/stopEpoch';
-import { toastInfo, toastSuccess } from '@/lib/toast';
+import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
  * Stop-all generations (owner request: "a button to stop all ongoing
@@ -57,9 +62,12 @@ import { toastInfo, toastSuccess } from '@/lib/toast';
  * its underlying run count once (the queues are drained BEFORE the run sweep,
  * and `cancelAll` resolves only after the aborted jobs — and their abort
  * reactions — have settled, so the map runs are already out of the engine
- * registry when the sweep snapshots it).
+ * registry when the sweep snapshots it). `reconciled` is the second, honest
+ * number (docs/17 row 110): module rows that claimed to be generating with no
+ * live pass behind them — they were NOT stopped, they were failed loudly so
+ * they can be resumed, and the toast says exactly that.
  */
-export async function stopAllGenerations(): Promise<{ stopped: number }> {
+export async function stopAllGenerations(): Promise<{ stopped: number; reconciled: number }> {
   // Seal the "no new units" gate FIRST (lib/stopEpoch): every orchestration
   // mid-flight captured the previous epoch, so from here on nothing they were
   // about to launch can start — not the next kind of the post-generation
@@ -91,18 +99,34 @@ export async function stopAllGenerations(): Promise<{ stopped: number }> {
   const cancelledRunIds = await runEngine.cancelAllActive();
 
   // The module row's persisted status is the truth about a forge in flight
-  // ('generating' from spine start until the pass settles); cancelModuleGen
-  // is a no-op for a row without a live controller.
+  // ('generating' from spine start until the pass settles), and `cancelModuleGen`
+  // is a no-op for a row without a live controller — which is exactly how this
+  // sweep used to LIE to the owner (docs/17 row 110): a module killed by a
+  // reload was counted as "stopped" and toasted as stopped, while nothing was
+  // stopped and the dead row stayed 'generating' forever.
+  //
+  // So the two cases are now told apart by the liveness guard and each gets what
+  // it needs: a LIVE forge is cancelled (a real unit of work), an unclaimed row
+  // is RECONCILED (its own loud failed state + rewind, counted separately —
+  // never as work this sweep stopped).
   let moduleForges = 0;
   const forgedModuleIds = new Set<Id>();
+  const unclaimedModuleIds: Id[] = [];
   for (const campaign of await listCampaigns()) {
     for (const module of await listModulesByCampaign(campaign.id)) {
       if (module.status !== 'generating') continue;
-      cancelModuleGen(module.id);
-      forgedModuleIds.add(module.id);
-      moduleForges += 1;
+      if (await isModuleGenClaimed(module.id)) {
+        cancelModuleGen(module.id);
+        forgedModuleIds.add(module.id);
+        moduleForges += 1;
+        continue;
+      }
+      unclaimedModuleIds.push(module.id);
     }
   }
+  const reconciledModules = await reconcileInterruptedModuleGens(unclaimedModuleIds, {
+    notify: false,
+  });
 
   // Canvas AI turns (chat co-editor, refine, report-to-LLM): no run row to
   // find, no forge row either — the shared canvasBusy registry publishes one
@@ -126,9 +150,17 @@ export async function stopAllGenerations(): Promise<{ stopped: number }> {
     canvasModules +
     chainStopped;
   if (stopped === 0) {
-    toastInfo('Nothing was running');
+    // Honest in both directions: "nothing was running" is a claim about WORK,
+    // and reconciled dead rows were never work this sweep stopped.
+    if (reconciledModules.length === 0) {
+      toastInfo('Nothing was running');
+    }
   } else {
     toastSuccess(`Stopped ${String(stopped)} generation${stopped === 1 ? '' : 's'}`);
   }
-  return { stopped };
+  if (reconciledModules.length > 0) {
+    // The loud half for the unclaimed rows: what they were and what to do.
+    toastError(formatInterruptedModuleGenReport(reconciledModules.length));
+  }
+  return { stopped, reconciled: reconciledModules.length };
 }

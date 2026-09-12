@@ -13,6 +13,12 @@ import { InstallHint } from '@/app/layout/install-hint';
 import { QuickFindHotkey } from '@/features/quickfind/quickfind-hotkey';
 import { ProgressDock } from '@/features/progress/progress-dock';
 import { failRunningRuns } from '@/db/runRepo';
+import { reconcileInterruptedModuleGens } from '@/llm/moduleGenReconcile';
+import { onPageResumed } from '@/lib/pageLiveness';
+import {
+  applyBackgroundTitle,
+  clearFinishedBackgroundActivities,
+} from '@/lib/backgroundTitle';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { ensurePersistentStorage } from '@/lib/deviceCapabilities';
 import { toastError, toastInfo } from '@/lib/toast';
@@ -30,8 +36,14 @@ import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
  * Rules/Settings nav, theme toggle) above the campaign bar (campaign-level
  * tabs + breadcrumb), above the routed page content (05-UI.md §Top bar).
  * Hosts the app-wide TooltipProvider and the single Toaster (errors surface
- * through `lib/toast.ts` only). On start, runs left 'running' by a reload are
- * marked failed (04-LLM-PERSONAS "Interrupted by reload").
+ * through `lib/toast.ts` only). On START (a mount effect, never the render
+ * body — docs/17 row 110) it reconciles rows a previous page left behind: runs
+ * still 'running' are marked failed (04-LLM-PERSONAS "Interrupted by reload")
+ * and module rows still 'generating' with no live pass are failed LOUDLY with a
+ * named recovery instruction (`llm/moduleGenReconcile`); the same module
+ * reconciliation runs on the way back into a tab that was hidden, frozen or
+ * discarded, and the shell owns restoring the app's own `document.title` when
+ * the tab is visible again (the background line belongs to the trip away).
  *
  * Tablet/PWA frame (05-UI.md §Tablet): the shell pads itself with the
  * platform safe-area insets on all four sides (landscape iPad notches sit
@@ -145,20 +157,58 @@ export function AppShell(): JSX.Element {
     };
   }, [openHelp]);
 
-  void failRunningRuns().catch((error: unknown) => {
-    // Startup reconciliation failure must be visible, not console-only.
-    toastError('Could not reconcile interrupted runs', error);
-  });
-  // Built-in personas: insert-if-missing on every app start (01-DATA-MODEL).
-  // Seeding after mount (not in main.tsx) so failures surface as toasts.
-  void seedBuiltInPersonas().catch((error: unknown) => {
-    toastError('Could not load built-in personas — generation stays unavailable', error);
-  });
-  // Persistence request: best-effort on first run; denial is not an error but
-  // its status is shown in Settings → Backup & restore.
-  void ensurePersistentStorage().catch((error: unknown) => {
-    toastError('Could not request persistent storage', error);
-  });
+  useEffect(() => {
+    // Startup reconciliation, in a MOUNT EFFECT and never in the render body
+    // (docs/17 row 110). It used to run inline, which meant EVERY render — a
+    // theme toggle, opening help, the wizard store — called
+    // `failRunningRuns()` again, and a live streaming run whose row said
+    // 'running' was marked failed with 'Interrupted by reload' by a user who
+    // only switched the theme. The engine restores 'running' at its next step
+    // write and clears the stale verdict with it (runEngine.executeFrom), but
+    // the defect was the call site: reconciliation is a STARTUP act.
+    void failRunningRuns().catch((error: unknown) => {
+      // Startup reconciliation failure must be visible, not console-only.
+      toastError('Could not reconcile interrupted runs', error);
+    });
+    // The module twin of that reconciliation (docs/17 row 110): a module row
+    // left at 'generating' by a discarded/reloaded tab has NO engine to restore
+    // it — without this it stayed 'generating' forever, with a Stop button that
+    // did nothing and every retry affordance gated behind `!busy`. Loud, and
+    // never touching a row a live pass (or another tab's lock) still owns.
+    void reconcileInterruptedModuleGens().catch((error: unknown) => {
+      toastError('Could not reconcile interrupted module generations', error);
+    });
+    // Built-in personas: insert-if-missing on every app start (01-DATA-MODEL).
+    // Seeding after mount (not in main.tsx) so failures surface as toasts.
+    void seedBuiltInPersonas().catch((error: unknown) => {
+      toastError('Could not load built-in personas — generation stays unavailable', error);
+    });
+    // Persistence request: best-effort on first run; denial is not an error but
+    // its status is shown in Settings → Backup & restore.
+    void ensurePersistentStorage().catch((error: unknown) => {
+      toastError('Could not request persistent storage', error);
+    });
+  }, []);
+
+  useEffect(() => {
+    // Coming back IN is the second reconciliation moment (docs/17 row 110): a
+    // tab that was frozen or discarded while a module was generating returns
+    // with a dead 'generating' row, and this is the first instant the app can
+    // see it — the same guard makes it safe (a live pass is never touched).
+    // Runs are deliberately NOT reconciled here: a merely hidden tab keeps
+    // running its engine, so failing 'running' rows on a tab switch would
+    // invent exactly the defect this slice removes.
+    const unsubscribe = onPageResumed(() => {
+      void reconcileInterruptedModuleGens().catch((error: unknown) => {
+        toastError('Could not reconcile interrupted module generations', error);
+      });
+      // The visible app owns its own title again: the background line (and the
+      // ✓/⚠ it was carrying) is news for the trip away, not for now.
+      clearFinishedBackgroundActivities();
+      applyBackgroundTitle();
+    });
+    return unsubscribe;
+  }, []);
 
   return (
     <TooltipProvider>

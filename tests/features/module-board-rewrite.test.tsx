@@ -47,6 +47,14 @@ vi.mock('@/llm/moduleGen', async (importOriginal) => {
     ...actual,
     runParts: vi.fn(),
     cancelModuleGen: vi.fn(),
+    // The reconcile guard reads this page-local lease (docs/17 row 110), and
+    // the stop control's first case reads it too. The engine is mocked at
+    // `runParts` here, so there is no real controller to ask: the tests seed a
+    // 'generating' row precisely to mean "a live forge owns this module", and
+    // that is what this answers. Without it, app-start reconciliation would
+    // (correctly) fail the seeded row as an interrupted generation and the
+    // busy-state pins below would be pinning a different state.
+    hasLiveModuleGen: vi.fn(() => true),
   };
 });
 

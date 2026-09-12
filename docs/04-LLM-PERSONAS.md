@@ -361,3 +361,21 @@ personas produce one.
 - Invalid API key surfaces a clear error and opens Settings; the run is 'failed'.
 - Reloading the page mid-run: run row shows 'failed' with message
   "Interrupted by reload" (engine marks running runs failed on app start).
+- Reloading the page mid-MODULE-GENERATION is reconciled the same way and just
+  as loudly (docs/17 row 110): the module row shows 'failed' with
+  `INTERRUPTED_MODULE_GEN_MESSAGE` — the page writing it is gone, finished
+  parts are untouched, unfinished parts are back to pending, press "Resume
+  module generation" — every part slot that was mid-write rewinds to
+  `'pending'`, and that press writes exactly those parts (and re-runs nothing
+  that was already complete). This runs on app start (a discarded tab RELOADS
+  and gets no visibility event at all) and again on the way back into a
+  backgrounded tab, and it never touches a module a live pass — or another tab
+  — owns.
+- A tab that is merely HIDDEN keeps generating; while it is hidden the outcome
+  is reported in the tab title (`Working: <label> — Campaigner`, then
+  `✓ Finished: …` or `⚠ Failed: …`), which is the only surface a backgrounded
+  page has. A user stop reaches no verdict and clears the line.
+- A completed run never keeps a stale failure message: the step write, the
+  completion write, the cancel path and `cancel(runId)` all clear
+  `errorMessage`/`failureKind`, so a 'completed' row cannot still read
+  "Interrupted by reload".

@@ -43,6 +43,55 @@ export async function countModules(): Promise<number> {
   return db.modules.count();
 }
 
+/**
+ * Every module row whose persisted status is `'generating'` (docs/17 row 110).
+ *
+ * The rows INDEX carries no `status` (adding one would be a Dexie version for
+ * a query that runs a handful of times per session), so this filters the
+ * collection; the row count is a workspace's modules, never a hot path.
+ */
+export async function listGeneratingModules(): Promise<Module[]> {
+  const rows = await db.modules.filter((row) => row.status === 'generating').toArray();
+  return rows.map(parseModuleRow);
+}
+
+/**
+ * The interrupted-generation reconcile write (docs/17 row 110): marks a module
+ * whose row says `'generating'` as FAILED with `errorMessage`, and rewinds
+ * every part slot still at `'generating'` to `'pending'` so the EXISTING
+ * recovery path (`moduleGen.generateMissingParts`/`runParts`, which re-runs
+ * every part whose status is not `'ready'`) can write them again.
+ *
+ * `isClaimed` is the liveness guard and it is called INSIDE the transaction,
+ * where it cannot race the write it protects: a row is only failed when no
+ * live controller claims it at the moment of the write. A caller that cannot
+ * answer "is this owned right now?" must not call this at all — the guard is
+ * what makes the write safe, and there is deliberately no way to skip it.
+ *
+ * Returns the failed row, or `undefined` when the row is gone, no longer says
+ * `'generating'`, or is claimed (all three are no-ops, so the call is
+ * idempotent: after it lands, the row is no longer `'generating'`).
+ */
+export async function failInterruptedModuleGen(
+  id: Id,
+  errorMessage: string,
+  isClaimed: () => boolean,
+): Promise<Module | undefined> {
+  return db.transaction('rw', db.modules, async () => {
+    const current = await db.modules.get(id);
+    if (current === undefined) return undefined;
+    const module = moduleSchema.parse(current);
+    if (module.status !== 'generating') return undefined;
+    if (isClaimed()) return undefined;
+    const parts = module.parts.map((part) =>
+      part.status === 'generating'
+        ? { ...part, status: 'pending' as const, errorMessage: '' }
+        : part,
+    );
+    return saveModule({ ...module, status: 'failed', errorMessage, parts });
+  });
+}
+
 /** Creates a module row (factory builds + validates). */
 export async function createModule(module: Module): Promise<Module> {
   const valid = moduleSchema.parse({ ...module, updatedAt: Date.now() });

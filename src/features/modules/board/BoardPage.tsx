@@ -27,7 +27,8 @@ import {
 } from '@/domain';
 import { getModule, patchModule } from '@/db/moduleRepo';
 import { saveModulePartText } from '@/features/modules/partText';
-import { cancelModuleGen, moduleGenEvents, ModuleBusyError, runParts } from '@/llm/moduleGen';
+import { moduleGenEvents, ModuleBusyError, runParts } from '@/llm/moduleGen';
+import { stopModuleGeneration } from '@/llm/moduleGenReconcile';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModule, useModules } from '@/features/modules/hooks';
@@ -467,15 +468,19 @@ export function BoardPage(): JSX.Element {
                     <LoaderCircleIcon aria-hidden className="size-3 animate-spin" />
                     generating
                   </Badge>
-                  {/* cancelModuleGen is the ONE module-forge stop path (the
-                      dock's Stop all composes it too); the board honours the
-                      same one-generation-per-module serialization. */}
+                  {/* ONE stop behaviour for every Stop control (the reader's
+                      too, and the dock's Stop all composes cancelModuleGen):
+                      a live forge is aborted, a row nobody owns is reconciled
+                      loudly, and a row another TAB owns is reported rather than
+                      silently ignored (docs/17 row 110). */}
                   <Button
                     variant="outline"
                     size="xs"
                     data-testid="board-stop"
                     onClick={() => {
-                      cancelModuleGen(currentModule.id);
+                      void stopModuleGeneration(currentModule.id).catch((error: unknown) => {
+                        toastError('Could not stop or reconcile that generation', error);
+                      });
                     }}
                   >
                     <BanIcon aria-hidden data-icon="inline-start" />

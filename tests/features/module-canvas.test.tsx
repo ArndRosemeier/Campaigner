@@ -739,9 +739,17 @@ describe('canvas AI actions (cursor plays no role)', () => {
   }, 30_000);
 
   it('a busy module disables the AI actions and keeps the forge Stop affordance', async () => {
-    await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
     await renderCanvas();
-    expect(screen.getByTestId('canvas-refine-selection')).toBeDisabled();
+    // The row goes busy AFTER the app is up: app START now reconciles a
+    // 'generating' row that no live pass owns (docs/17 row 110), so a fixture
+    // patched before render would be failed as an interrupted generation —
+    // which is the behavior pinned in tests/features/app-shell-boot-reconcile.
+    // Here the busy gate itself is the subject; the forge's own stop path is
+    // pinned in tests/features/module-board-rewrite.test.tsx.
+    await patchModule(world.moduleId, { status: 'generating', errorMessage: '' });
+    await waitFor(() => {
+      expect(screen.getByTestId('canvas-refine-selection')).toBeDisabled();
+    });
     expect(screen.getByTestId('canvas-rewrite-part')).toBeDisabled();
     expect(screen.getByTestId('canvas-stop')).toBeInTheDocument();
     await flushAsyncUpdates();

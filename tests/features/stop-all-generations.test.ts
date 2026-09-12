@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createModule as saveModule, patchModule } from '@/db/moduleRepo';
+import { createModule as saveModule, getModule, patchModule } from '@/db/moduleRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { listRunsByCampaign } from '@/db/runRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
@@ -35,7 +35,13 @@ import { clearDatabase } from '../db/helpers';
  * under-reporting to the user.
  */
 
-vi.mock('@/llm/moduleGen', () => ({ cancelModuleGen: vi.fn() }));
+// The liveness guard the sweep now reads (docs/17 row 110): `cancelModuleGen`
+// alone cannot tell a live forge from a row a reloaded tab left behind, so the
+// sweep asks. Per-test value; the default below is "nobody owns it".
+vi.mock('@/llm/moduleGen', () => ({
+  cancelModuleGen: vi.fn(),
+  hasLiveModuleGen: vi.fn(() => false),
+}));
 vi.mock('@/llm/imageGen', () => ({ generateImages: vi.fn() }));
 vi.mock('@/lib/imageIntake', () => ({ intakeImage: vi.fn() }));
 vi.mock('@/lib/toast', () => ({
@@ -53,8 +59,9 @@ const { chat } = await import('@/llm/openrouter');
 const chatMock = vi.mocked(chat);
 const { generateImages } = await import('@/llm/imageGen');
 const generateImagesMock = vi.mocked(generateImages);
-const { cancelModuleGen } = await import('@/llm/moduleGen');
+const { cancelModuleGen, hasLiveModuleGen } = await import('@/llm/moduleGen');
 const cancelModuleGenMock = vi.mocked(cancelModuleGen);
+const hasLiveModuleGenMock = vi.mocked(hasLiveModuleGen);
 const { toastSuccess, toastInfo, toastError } = await import('@/lib/toast');
 const toastSuccessMock = vi.mocked(toastSuccess);
 const toastInfoMock = vi.mocked(toastInfo);
@@ -82,6 +89,8 @@ beforeEach(async () => {
   chatMock.mockReset();
   generateImagesMock.mockReset();
   cancelModuleGenMock.mockReset();
+  hasLiveModuleGenMock.mockReset();
+  hasLiveModuleGenMock.mockReturnValue(false);
   toastSuccessMock.mockReset();
   toastInfoMock.mockReset();
   toastErrorMock.mockReset();
@@ -110,6 +119,10 @@ describe('stopAllGenerations', () => {
       sizeDial: 'sketch',
     }));
     await patchModule(module.id, { status: 'generating' });
+    // "A forge is in flight" is now TWO facts: the row says 'generating' and a
+    // live pass owns it (the guard). Both are declared here, in the fixture, so
+    // the sweep's count below is a count of real work.
+    hasLiveModuleGenMock.mockReturnValue(true);
     const goblin = await createArtifact({
       campaignId: campaign.id, kind: 'npc', name: 'Goblin Boss', summary: 'A mean goblin commander.',
     });
@@ -167,7 +180,7 @@ describe('stopAllGenerations', () => {
     // 3 queue jobs (mob portrait, entity image, cover) + 1 in-flight run +
     // 1 module forge (whose live canvas turn counts inside that same unit) —
     // distinct units.
-    expect(result).toEqual({ stopped: 5 });
+    expect(result).toEqual({ stopped: 5, reconciled: 0 });
     expect(toastSuccessMock).toHaveBeenCalledWith('Stopped 5 generations');
     expect(toastInfoMock).not.toHaveBeenCalled();
     expect(toastErrorMock).not.toHaveBeenCalled();
@@ -195,8 +208,39 @@ describe('stopAllGenerations', () => {
 
   it('reports "Nothing was running" when there is no work to stop', async () => {
     const result = await stopAllGenerations();
-    expect(result).toEqual({ stopped: 0 });
+    expect(result).toEqual({ stopped: 0, reconciled: 0 });
     expect(toastInfoMock).toHaveBeenCalledWith('Nothing was running');
     expect(toastSuccessMock).not.toHaveBeenCalled();
+  });
+
+  it('never counts a row nobody owns as stopped — it reconciles it loudly instead', async () => {
+    const campaign = await createCampaign({ name: 'Dead forge', system: 'dnd5e' });
+    const module = await saveModule(
+      createModule({
+        campaignId: campaign.id,
+        title: 'The Drowned Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    // Exactly the state a reloaded tab leaves: the row says 'generating' and
+    // no live pass and no other tab owns it.
+    await patchModule(module.id, { status: 'generating' });
+    hasLiveModuleGenMock.mockReturnValue(false);
+
+    const result = await stopAllGenerations();
+
+    // The count is the honest one the owner never got before: nothing was
+    // STOPPED, and the dead row was FAILED with its recovery sentence.
+    expect(result).toEqual({ stopped: 0, reconciled: 1 });
+    expect(toastSuccessMock).not.toHaveBeenCalled();
+    expect(toastInfoMock).not.toHaveBeenCalledWith('Nothing was running');
+    expect(String(toastErrorMock.mock.calls[0]?.[0])).toContain('Interrupted 1 module generation');
+    expect(cancelModuleGenMock).not.toHaveBeenCalled();
+    const row = await getModule(module.id);
+    expect(row?.status).toBe('failed');
+    expect(row?.errorMessage).toContain('Resume module generation');
   });
 });

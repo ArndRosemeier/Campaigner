@@ -45,6 +45,8 @@ import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { getSettings, readPromptStyles } from '@/db/settingsRepo';
+import { setBackgroundActivity, clearBackgroundActivity } from '@/lib/backgroundTitle';
+import { moduleGenLockName, withGenerationLock } from '@/lib/generationLocks';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { repairModel } from '@/llm/modelFallback';
@@ -131,6 +133,69 @@ function controllerFor(moduleId: Id): AbortController {
 export function cancelModuleGen(moduleId: Id): void {
   controllers.get(moduleId)?.abort();
   controllers.delete(moduleId);
+}
+
+/**
+ * Is a forge pass (spine, parts, post-generation) live for this module IN THIS
+ * PAGE? (docs/17 row 110, docs/18 §2.2.)
+ *
+ * The row's `status: 'generating'` is a LEASE, not a fact: it says somebody was
+ * writing, and the only authority for "somebody" is this registry. The
+ * interrupted-generation reconciler (`llm/moduleGenReconcile`) fails such a row
+ * ONLY when this answers `false`, so a live pass can never be reconciled out
+ * from under itself — the guard is the whole reason that write is safe.
+ *
+ * Deliberately per-PAGE: a second browser tab's controller is invisible here,
+ * which is why the reconciler reads the generation lock (lib/generationLocks)
+ * as its second half.
+ */
+export function hasLiveModuleGen(moduleId: Id): boolean {
+  return controllers.has(moduleId);
+}
+
+/**
+ * One forge pass with its two presentation duties (docs/17 row 110):
+ *
+ * 1. **A Web Lock for the whole pass** (`lib/generationLocks`, released when
+ *    the pass settles, never blocking anything when the API is absent or the
+ *    lock is held elsewhere). Chromium's freeze criteria list a held Web Lock
+ *    as an opt-out, so this is the cheap half of "let the browser keep giving
+ *    the app its resources"; it doubles as the cross-tab lease the reconciler
+ *    reads.
+ * 2. **The background title** (`lib/backgroundTitle`): while the tab is
+ *    elsewhere, the title says what is running and — when it ends — whether it
+ *    finished. The VERDICT comes from the ROW, never from the error: a user
+ *    stop throws as well, and a stop reaches no verdict, so it clears the
+ *    entry instead of reporting a failure that did not happen.
+ *
+ * The label read happens before the pass body, which starts the controller: the
+ * lock is already held by then, and the reconcile write re-checks liveness
+ * inside its own transaction (see `features/progress/stop-all-generations` and
+ * `llm/moduleGenReconcile`), so the order is safe.
+ */
+async function withForgePresentation<T>(
+  moduleId: Id,
+  pass: () => Promise<T>,
+  verdictOf: (result: T) => 'completed' | 'failed' | 'aborted',
+): Promise<T> {
+  const activityId = `module-gen-${moduleId}`;
+  const title = (await getModule(moduleId))?.title ?? 'Module generation';
+  setBackgroundActivity(activityId, { label: title, state: 'running' });
+  try {
+    const result = await withGenerationLock(moduleGenLockName(moduleId), pass);
+    const verdict = verdictOf(result);
+    if (verdict === 'aborted') clearBackgroundActivity(activityId);
+    else setBackgroundActivity(activityId, { label: title, state: verdict });
+    return result;
+  } catch (error) {
+    const live = await getModule(moduleId);
+    if (live?.status === 'failed') {
+      setBackgroundActivity(activityId, { label: title, state: 'failed' });
+    } else {
+      clearBackgroundActivity(activityId);
+    }
+    throw error;
+  }
 }
 
 function isAbort(error: unknown): boolean {
@@ -230,6 +295,19 @@ export interface SpineRunOptions {
  * `errorMessage`.
  */
 export async function runSpine(
+  moduleId: Id,
+  campaign: Campaign,
+  options: SpineRunOptions = {},
+): Promise<Module> {
+  return withForgePresentation(
+    moduleId,
+    () => runSpinePass(moduleId, campaign, options),
+    (module) => (module.status === 'failed' ? 'failed' : 'completed'),
+  );
+}
+
+/** The spine pass body (see `runSpine` for the public contract). */
+async function runSpinePass(
   moduleId: Id,
   campaign: Campaign,
   options: SpineRunOptions = {},
@@ -1110,6 +1188,20 @@ export interface PartsPassResult {
 
 /** The pass body: see `runParts`, which is the only public entry. */
 async function runPartsPass(
+  moduleId: Id,
+  campaign: Campaign,
+  options: PartsRunOptions = {},
+): Promise<PartsPassResult> {
+  return withForgePresentation(
+    moduleId,
+    () => runPartsPassUnlocked(moduleId, campaign, options),
+    (result) =>
+      result.aborted ? 'aborted' : result.module.status === 'failed' ? 'failed' : 'completed',
+  );
+}
+
+/** The parts-pass body (wrapped by `runPartsPass`; `aborted` is its verdict). */
+async function runPartsPassUnlocked(
   moduleId: Id,
   campaign: Campaign,
   options: PartsRunOptions = {},

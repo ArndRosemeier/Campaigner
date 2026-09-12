@@ -70,10 +70,18 @@ vi.mock('react-markdown', async (importOriginal) => {
 // The emitter itself stays REAL — the tests drive it directly, which is
 // exactly the seam the reader subscribes to. Only the LLM work behind it is
 // mocked away.
+//
+// `hasLiveModuleGen` answers TRUE: the fixture below is "a ready module whose
+// LAST part is mid-stream", i.e. a module a live forge owns — and since the
+// engine is mocked away there is no real controller to ask. It is the
+// page-local LEASE the reconcile guard reads (docs/17 row 110): with it true,
+// app-start reconciliation leaves the streaming row alone exactly as a real
+// in-flight pass would, and the reader stays `busy`.
 vi.mock('@/llm/moduleGen', async (importOriginal) => {
   const actual = await importOriginal<typeof moduleGenModule>();
   return {
     ...actual,
+    hasLiveModuleGen: vi.fn(() => true),
     runSpine: vi.fn(),
     runParts: vi.fn(),
     approveSpineAndRun: vi.fn(),

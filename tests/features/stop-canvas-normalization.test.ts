@@ -104,7 +104,10 @@ describe('stopAllGenerations covers canvas turns', () => {
 
     const result = await stopAllGenerations();
 
-    expect(result).toEqual({ stopped: 1 });
+    // `reconciled` is the second, honest count (docs/17 row 110): rows that
+    // only CLAIMED to be generating and were failed loudly instead — never
+    // counted as work this sweep stopped.
+    expect(result).toEqual({ stopped: 1, reconciled: 0 });
     expect(handle.signal.aborted).toBe(true);
     expect(caller.signal.aborted).toBe(true);
     handle.releaseHandle();

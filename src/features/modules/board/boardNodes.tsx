@@ -107,7 +107,8 @@ const BODY_TEXT_CLASS = 'prose-module text-sm leading-relaxed';
  * canvas uses for the same state, so one state is never explained two ways in
  * this app. The way out is real and reachable on this very screen: the board
  * header shows the live "generating" badge and the board's own **Stop**
- * (`board-stop` → `cancelModuleGen`, the one module-forge stop path).
+ * (`board-stop` → `stopModuleGeneration`, the one module-forge stop behaviour —
+ * docs/17 row 110).
  *
  * Needed at all because the card is NOT covered by that badge: the rewrite
  * affordance renders only for a part whose status is already `ready`, so a

@@ -53,12 +53,12 @@ import { StubPopover, type StubPopoverState } from '@/features/modules/stub-popo
 import { streamTails, useStreamTail } from '@/features/modules/streamTails';
 import { sentenceAround, surroundingParagraphs } from '@/lib/wikilinks';
 import {
-  cancelModuleGen,
   generateMissingParts,
   moduleGenEvents,
   rewritePart,
   retrySpine,
 } from '@/llm/moduleGen';
+import { stopModuleGeneration } from '@/llm/moduleGenReconcile';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
 
@@ -399,7 +399,23 @@ export function ModuleReaderPage(): JSX.Element {
                   player-safe battle view never mounts this surface). */}
               <GenerateModuleCoverButton module={module} />
               {busy && (
-                <Button variant="outline" size="xs" onClick={() => { cancelModuleGen(module.id); }}>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  data-testid="module-stop"
+                  onClick={() => {
+                    // The Stop control must never be a silent no-op (docs/17 row
+                    // 110): with a live pass behind the row it cancels it, as it
+                    // always did; with NO live pass — the state left by a
+                    // reloaded/discarded tab, where `busy` is a lease nobody
+                    // holds — it performs the RECONCILIATION instead: the row
+                    // lands failed with a named reason, its unfinished part slots
+                    // rewind, and the reader's own recovery controls appear.
+                    void stopModuleGeneration(module.id).catch((error: unknown) => {
+                      toastError('Could not stop or reconcile that generation', error);
+                    });
+                  }}
+                >
                   <BanIcon aria-hidden data-icon="inline-start" />
                   Stop
                 </Button>

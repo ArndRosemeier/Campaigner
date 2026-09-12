@@ -2,6 +2,7 @@ import { getSettings } from '@/db/settingsRepo';
 import { getCachedModels, modelsResponseSchema, setCachedModels, type CachedModel } from '@/llm/modelCache';
 import { applyLanguageDirective } from '@/llm/language';
 import { debugLog } from '@/lib/debug';
+import { activeElapsedMs } from '@/lib/pageLiveness';
 import { buildModelChain, walkModelChain } from '@/llm/modelFallback';
 import { MissingApiKeyError, OpenRouterError, errorTypeFromBody } from '@/llm/openrouterErrors';
 import type { FallbackReason } from '@/llm/openrouterErrors';
@@ -456,6 +457,13 @@ export class SseEventParser {
  * mid-stream errors arrive as data events with a top-level `error` field and
  * `finish_reason: "error"` (both throw), and a connection with no bytes at
  * all for `stallTimeoutMs` is aborted by a watchdog.
+ *
+ * The watchdog measures LIVENESS, not wall-clock time (docs/17 row 110): the
+ * suspended intervals the page reports (lib/pageLiveness) are credited back,
+ * so a tab that was hidden/frozen/discarded mid-stream does not have a healthy
+ * stream cancelled on resume, and a stream that closed cleanly is returned as
+ * the complete answer it is. A dead stream still trips its limit after the
+ * resume — the fix is gap crediting, not a looser limit.
  */
 async function readStream(
   response: Response,
@@ -479,32 +487,61 @@ async function readStream(
   let lastContentAt = Date.now();
   const startedAt = Date.now();
   const { stallTimeoutMs, contentStallMs, maxDurationMs } = limits;
+  /**
+   * WHICH limit the watchdog actually tried to trip, or null if it never did
+   * (docs/17 row 110). The post-loop diagnosis below used to re-derive the
+   * failure from wall-clock deltas alone, so a stream that closed CLEANLY
+   * after a long quiet stretch (`if (done) break`) had its complete answer
+   * thrown away as a `content-stall`/`max-duration` error — a silent loss of
+   * the model's whole reply. The diagnosis now reports the limit the watchdog
+   * armed, and nothing else.
+   */
+  let trippedLimit: 'stall' | 'content-stall' | 'max-duration' | null = null;
+  /**
+   * Read through a function on purpose: `trippedLimit` is assigned inside the
+   * watchdog callback, which TS's control-flow analysis cannot see — a direct
+   * read of it after the loop looks statically `null` to the compiler (and the
+   * linter says so), even though at runtime it is exactly how the diagnosis
+   * knows which limit was armed.
+   */
+  const watchdogVerdict = (): 'stall' | 'content-stall' | 'max-duration' | null => trippedLimit;
 
   const watchdog = setInterval(() => {
     const now = Date.now();
+    // The clocks are LIVENESS clocks, not wall clocks: time the page spent
+    // suspended (hidden/frozen/bfcache) was time it could not observe, so it is
+    // credited back instead of billed to the stream (lib/pageLiveness). A
+    // stream that really died still trips its limit — after the resume, its
+    // silence accumulates in full.
+    const silentMs = activeElapsedMs(lastActivity, now);
+    const contentSilentMs = activeElapsedMs(lastContentAt, now);
+    const durationMs = activeElapsedMs(startedAt, now);
     // Liveness probe first: a caller showing progress must hear from us every
     // tick, whatever else the watchdog decides about the stream's health.
     onActivity?.({
-      elapsedMs: now - startedAt,
+      elapsedMs: durationMs,
       receivedChars: full.length,
       phase: full.length > 0 ? 'content' : reasoned ? 'thinking' : 'waiting',
     });
     // Order matters for the post-loop diagnosis: the FIRST tripped limit
     // describes the failure (silence vs keep-alive-only vs plain too long).
-    if (now - lastActivity > stallTimeoutMs) {
-      debugLog('llm', 'watchdog: no bytes — cancelling stream', { silentMs: now - lastActivity });
+    if (silentMs > stallTimeoutMs) {
+      debugLog('llm', 'watchdog: no bytes — cancelling stream', { silentMs });
+      trippedLimit ??= 'stall';
       void reader.cancel().catch(() => undefined);
-    } else if (now - lastContentAt > contentStallMs) {
+    } else if (contentSilentMs > contentStallMs) {
       debugLog('llm', 'watchdog: keep-alives but no content — cancelling stream', {
-        contentSilentMs: now - lastContentAt,
+        contentSilentMs,
         receivedChars: full.length,
       });
+      trippedLimit ??= 'content-stall';
       void reader.cancel().catch(() => undefined);
-    } else if (now - startedAt > maxDurationMs) {
+    } else if (durationMs > maxDurationMs) {
       debugLog('llm', 'watchdog: total duration exceeded — cancelling stream', {
-        durationMs: now - startedAt,
+        durationMs,
         receivedChars: full.length,
       });
+      trippedLimit ??= 'max-duration';
       void reader.cancel().catch(() => undefined);
     }
   }, 1000);
@@ -632,17 +669,20 @@ async function readStream(
   } finally {
     clearInterval(watchdog);
   }
-  // The reader was cancelled by a watchdog (or the socket closed): diagnose
-  // WHICH limit tripped — in the watchdog's order — and fail loudly.
-  const now = Date.now();
-  if (now - startedAt > maxDurationMs) {
+  // The stream ended without a completion sentinel: EITHER a watchdog
+  // cancelled it (then the limit it armed is the verdict) OR the socket simply
+  // closed. A clean close after a long silence is a COMPLETE answer (some
+  // providers close the connection instead of sending [DONE]) — the old code
+  // re-derived a stall from the wall-clock delta and threw the answer away.
+  const verdict = watchdogVerdict();
+  if (verdict === 'max-duration') {
     throw new OpenRouterError(
       'max-duration',
       response.status,
       `stream exceeded ${String(Math.round(maxDurationMs / 1000))}s total — aborted; retry the run`,
     );
   }
-  if (now - lastContentAt > contentStallMs) {
+  if (verdict === 'content-stall') {
     throw new OpenRouterError(
       'content-stall',
       response.status,
@@ -650,7 +690,7 @@ async function readStream(
         '(keep-alives only) — the provider accepted the request but never answered; retry the run',
     );
   }
-  if (now - lastActivity > stallTimeoutMs) {
+  if (verdict === 'stall') {
     throw new OpenRouterError(
       'stall',
       response.status,
