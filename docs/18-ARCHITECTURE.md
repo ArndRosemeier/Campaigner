@@ -1362,14 +1362,44 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   moves no verdict — while `fail` STAYS loud for a step that dies with no stop and
   no delete in play (pinned both ways: `tests/features/run-delete-running.test.tsx`
   asserts `cancel` is never called for a failed row, and its contrast pin asserts a
-  self-inflicted death still toasts and still writes its failed row). MEASURED
-  residue, not hidden: a run the unattended encounter-map queue is watching adds a
-  SECOND surface this seam does not own — with the run stopped and its row deleted
-  the queue still reports `Could not generate a map for "…"` and files the job on
-  its retryable `failed` list (`features/modules/encounter-map-queue.ts:135` →
-  `lib/jobQueue.ts:202`), and probe (C) measured the same toast for a plain
-  `cancel()` with NO delete at all: pre-existing, not introduced by the delete
-  gesture, and out of scope while that queue's own pins are frozen (ledger 116).
+  self-inflicted death still toasts and still writes its failed row). The measured
+  residue this seam left — a run the unattended encounter-map queue is watching
+  still reported the owner's own stop as a failure — is CURED by ledger 117: the
+  queue now reads the engine's ONE withdrawal predicate and settles silently (see
+  the next gotcha). Do not revive the private status comparison there.
+- **A queue job whose RUN was withdrawn by an owner action settles SILENTLY, and
+  the withdrawal is one named fact the ENGINE owns** (docs/17 row 117; AGENTS
+  rule 4 — this idea had a fourth surface waiting). `isRunWithdrawn(run)`
+  (`src/llm/runEngine.ts:372`) is THE spelling: true when the row is
+  `'cancelled'` (the owner's Stop, Stop all, every cancel seam) or when the row
+  is GONE (every run-row delete stops the run first, ledger 116, so a vanished
+  row is that same gesture one step later); FALSE for a run that died on its own
+  (`'failed'` with its `errorMessage`) — including `failRunningRuns`' reload
+  reconcile, whose `failureKind: 'cancelled'` names the KIND of failure, not a
+  withdrawal. Read it wherever a caller must decide between silence and a
+  failure verdict, never an error's kind or its message; three callers are
+  already folded onto it (`features/modules/encounter-map-queue.ts:149` and the
+  re-read at `:140`, `features/modules/entity-batch.ts:501`,
+  `llm/chainRunner.ts:201` + `:318`). The verdict crosses the job-queue seam
+  through `ctx.withdraw()` (`src/lib/jobQueue.ts:63`) — NOT a new outcome and not
+  a swallowed error: it rides the SAME withdrawal path as `dequeue`
+  (`withdrawJob`, `:203`: abort the job's signal, decrement its dock counter
+  instead of ticking it done, no toast, no retry entry), idempotent per key and
+  cleared when that key is enqueued again. `processJob` also guarantees that an
+  ABORTED job can never settle as `'done'`/`'skipped'`/`'failed'`, whatever the
+  body returns. MEASURED before/after, all three shapes (the map job parked on a
+  run the test stops by hand, no `dequeue` in play): at the base SHA the queue
+  toasted `Could not generate a map for "…"` carrying `run ended cancelled`
+  (plain `cancel()`), `Run <id> disappeared while waiting for it to finish`
+  (delete, and cancel-then-delete) and filed the job on the retryable `failed`
+  list; now all three settle silently with the dock drained. The two rules that
+  keep this from becoming a blanket catch: only a run that was WITHDRAWN goes
+  quiet (a `'failed'` run still throws, still toasts the queue's own title and
+  still lands retryable — injecting `true` for the predicate REDs three pins,
+  two of them pre-existing), and a job that cannot even START still reports
+  (`campaign no longer exists`, `encounter no longer exists`, the missing
+  Cartographer persona). Two lines of the seam are consistency rather than
+  coverage, named in §5.
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
@@ -1411,6 +1441,33 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 - **Queue reload survival is deferred BY OWNER DECISION** (`lib/jobQueue`
   header): the in-memory queues lose queued/failed jobs on reload; run rows
   reconcile via `runRepo.failRunningRuns`. Do not invent persistence.
+- **The shared job-queue contract gained ONE member and ONE guarantee** (docs/17
+  row 117), both documented at their seam and both additive for the three queues
+  that do not use them: `JobContext.withdraw()` (`src/lib/jobQueue.ts:63`) is the
+  body's own withdrawal — the SAME settlement as `dequeue`'s, for an owner action
+  the queue cannot see by itself — and `processJob` now settles an ABORTED job as
+  `'cancelled'` even when the body returns normally (`:222`). Consequences a
+  reader must know: `dequeue`/`cancelAll` and a body's withdrawal share one
+  idempotent path (`withdrawJob`, `:203`), so a single dequeue can no longer
+  double-decrement the dock counter, and a withdrawal is spent per JOB — the key
+  is cleared on enqueue (`:315`) because the regen sweeps
+  (`features/campaign/mob-portrait-queue.ts:452`,
+  `features/covers/cover-image-queue.ts:223`) deliberately dequeue a key and
+  re-enqueue it. TWO lines of that seam are consistency, not coverage, and no pin
+  reaches either: the idempotence guard itself (removing it leaves every suite
+  green — it protects the concurrent `cancelAll`-during-a-body's-own-unwinding
+  race) and the aborted-never-settles-as-work return (the encounter-map body
+  always throws after `withdraw()`; it protects a body that resolves after a
+  dequeue). Both were injected and came back GREEN (docs/08 §A run the owner
+  withdrew).
+- **`features/campaign/encounterRegen.ts:93` still reports a cancelled run as a
+  failure** (`awaitCompletedRun` throws `` `${label} ended ${run.status}` `` for
+  anything but `completed`). That is the MANUAL regen button's own contract —
+  its caller owns what the surface says when the owner stops the run it asked
+  for — and it is deliberately NOT folded onto `isRunWithdrawn` (docs/17 row
+  117): a queue job's withdrawal is moot work, while a manual regen that
+  evaporates has a caller to answer to. Listed so nobody "discovers" it as a
+  leftover of row 117; changing it is a surface decision, not a refactor.
 - **Fresh-encounter finalize embeds `imageIds` at birth** via `createArtifact`
   instead of the attach seam — single-row create, no desync window. Listed
   so nobody "fixes" it without reading why.

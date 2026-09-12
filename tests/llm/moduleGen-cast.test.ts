@@ -11,6 +11,7 @@ import { createRulebook } from '@/db/rulebookRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { runEntityBatch } from '@/features/modules/entity-batch';
+import type * as runEngineModule from '@/llm/runEngine';
 import { runSpine, spineReplySchema } from '@/llm/moduleGen';
 import { sha256Hex } from '@/lib/hash';
 import { collectCreatorRoster } from '@/llm/creatorRoster';
@@ -62,10 +63,17 @@ const { startRunMock, waitForRunStatusMock } = vi.hoisted(() => ({
   waitForRunStatusMock: vi.fn(),
 }));
 
-vi.mock('@/llm/runEngine', () => ({
-  runEngine: { on: () => () => undefined, startRun: startRunMock },
-  waitForRunStatus: waitForRunStatusMock,
-}));
+// The engine is faked (this file pins the cast prompts), but the withdrawal
+// predicate is the REAL one: `runEntityBatch` reads it to tell an owner stop
+// from a failure (docs/17 row 117).
+vi.mock('@/llm/runEngine', async (importOriginal) => {
+  const actual = await importOriginal<typeof runEngineModule>();
+  return {
+    isRunWithdrawn: actual.isRunWithdrawn,
+    runEngine: { on: () => () => undefined, startRun: startRunMock },
+    waitForRunStatus: waitForRunStatusMock,
+  };
+});
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 

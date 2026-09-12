@@ -13,7 +13,7 @@ import { createModule, defaultSettings, type Id } from '@/domain';
 import { encounterNeedsMap, isEncounterMapPending, useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { useProgressStore } from '@/lib/progress';
 import { chat } from '@/llm/openrouter';
-import { encounterRunAdapters } from '@/llm/runEngine';
+import { encounterRunAdapters, runEngine } from '@/llm/runEngine';
 import { clearDatabase } from '../db/helpers';
 import { toastError } from '@/lib/toast';
 
@@ -195,6 +195,96 @@ function parkThisRunsBrief(campaignName: string, onParked: (release: () => void)
 function takeResolver<T extends (...args: never[]) => void>(resolver: T | undefined, what: string): T {
   if (resolver === undefined) throw new Error(`${what} never parked on the test's hand`);
   return resolver;
+}
+
+/**
+ * Park THIS run's brief on a promise the TEST rejects by hand: the provider's
+ * hard error, with no stop and no delete in play (the contrast half of
+ * docs/17 row 117 — the cure is the withdrawal, never a quieter `fail`).
+ */
+function parkThisRunsBriefError(
+  campaignName: string,
+  onParked: (kill: (error: Error) => void) => void,
+): void {
+  chatMock.mockImplementation((messages: unknown) => {
+    const reply = { text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null };
+    if (!JSON.stringify(messages).includes(campaignName)) return Promise.resolve(reply);
+    return new Promise((_resolve, reject) => {
+      onParked((error: Error) => {
+        reject(error);
+      });
+    });
+  });
+}
+
+/**
+ * The withdrawn-run fixture (docs/17 row 117): one campaign, the Cartographer
+ * persona, an API key with images enabled, and ONE unmapped encounter — the
+ * minimum a map job needs to start a real run.
+ */
+async function withdrawnRunFixture(
+  campaignName: string,
+  encounterName: string,
+): Promise<{ campaignId: Id; encounterId: Id }> {
+  const campaign = await createCampaign({ name: campaignName, system: 'dnd5e' });
+  await savePersona({
+    slug: 'encounter-cartographer',
+    name: 'Encounter Cartographer',
+    description: '',
+    systemPrompt: '',
+    mode: 'encounter',
+    producesKind: 'encounter',
+    builtIn: true,
+  });
+  await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+  const encounter = await createArtifact({
+    campaignId: campaign.id, kind: 'encounter', name: encounterName,
+    data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+  });
+  return { campaignId: campaign.id, encounterId: encounter.id };
+}
+
+/**
+ * Enqueue the encounter's map job, park THIS run's brief on the test's hand and
+ * return the still-`running` run row the job is now WAITING on — the job keeps
+ * its place in the queue (`dequeue`/`cancelAll` are deliberately NOT called, so
+ * the queue's own abort signal is not the seam under test). The parked reply is
+ * never released: nothing but the queue may speak in these pins.
+ */
+async function watchRunningRun(
+  campaignId: Id,
+  encounterId: Id,
+  encounterName: string,
+  campaignName: string,
+): Promise<Id> {
+  parkThisRunsBrief(campaignName, () => undefined);
+  useEncounterMapQueue.getState().enqueue([
+    { campaignId, moduleId: null as Id | null, artifactId: encounterId, name: encounterName },
+  ]);
+  await waitFor(() => {
+    expect(useEncounterMapQueue.getState().active).toHaveLength(1);
+  }, { timeout: 10000 });
+  await waitFor(async () => {
+    const openRun = (await listRunsByCampaign(campaignId)).find(
+      (run) => run.targetArtifactId === encounterId,
+    );
+    expect(openRun?.status).toBe('running');
+  }, { timeout: 10000 });
+  const openRun = (await listRunsByCampaign(campaignId)).find(
+    (run) => run.targetArtifactId === encounterId,
+  );
+  if (openRun === undefined) throw new Error('the map run never appeared');
+  return openRun.id;
+}
+
+/** The settlement the owner's own withdrawal owes: no toast, no retry entry, dock drained. */
+function expectWithdrawnSilently(encounterId: Id): void {
+  expect(useEncounterMapQueue.getState().active).toEqual([]);
+  expect(useEncounterMapQueue.getState().queued).toEqual([]);
+  expect(useEncounterMapQueue.getState().failed).toEqual([]);
+  expect(toastErrorMock).not.toHaveBeenCalled();
+  expect(useProgressStore.getState().jobs).toEqual([]);
+  expect(isEncounterMapPending(null, encounterId)).toBe(false);
 }
 
 describe('module encounter map queue', () => {
@@ -753,5 +843,153 @@ describe('module encounter map queue', () => {
     const failedRun = runs.find((run) => run.targetArtifactId === encounter.id);
     expect(failedRun?.status).toBe('failed');
     expect(failedRun?.errorMessage).toContain('provider exploded');
+  }, 30000);
+
+  /**
+   * THE RESIDUE THIS SLICE CURES (docs/17 row 116's measured three variants,
+   * row 117's decision): a run the OWNER withdrew is not a failure to report.
+   * Every pin below FORCES the ordering — the map job is left WAITING on a run
+   * the test then stops or deletes by hand, with no `dequeue`/`cancelAll` in
+   * play, so the queue's own abort signal is not the seam under test and the
+   * run's ROW is the only fact the job can read.
+   */
+  it('a run the OWNER cancelled under a watching job is not a queue failure: silent, no retry entry, dock drained', async () => {
+    const { campaignId, encounterId } = await withdrawnRunFixture('Cancelled under watch', 'Stopped by owner');
+    const runId = await watchRunningRun(campaignId, encounterId, 'Stopped by owner', 'Cancelled under watch');
+
+    // The owner's Stop on the RUN itself — the Runs tab's own button, and
+    // nothing else: the map job keeps its place in the queue.
+    await runEngine.cancel(runId);
+    // The premise, asserted rather than assumed: the row IS withdrawn before the
+    // job settles.
+    expect((await getRun(runId))?.status).toBe('cancelled');
+
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+    }, { timeout: 10000 });
+    // At HEAD this is the sighting, verbatim: toast `Could not generate a map
+    // for "Stopped by owner"` carrying `run ended cancelled`, and the job lands
+    // on the retryable failed list.
+    expectWithdrawnSilently(encounterId);
+    const after = await getArtifact(encounterId);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.data.layout).toBeNull();
+  }, 30000);
+
+  it('a run row DELETED under a watching job (the owner\u2019s delete) is that same withdrawal, seen one step later: silent', async () => {
+    const { campaignId, encounterId } = await withdrawnRunFixture('Deleted under watch', 'Row deleted');
+    const runId = await watchRunningRun(campaignId, encounterId, 'Row deleted', 'Deleted under watch');
+
+    await deleteRun(runId);
+
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+    }, { timeout: 10000 });
+    // At HEAD this is variant (A): toast `Could not generate a map for "Row
+    // deleted"` carrying `Run <id> disappeared while waiting for it to finish`,
+    // plus a retryable failed entry.
+    expectWithdrawnSilently(encounterId);
+    expect(await getRun(runId)).toBeUndefined();
+    const after = await getArtifact(encounterId);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.data.layout).toBeNull();
+  }, 30000);
+
+  it('cancel-then-delete (the Runs tab\u2019s own gesture) is the same withdrawal on both halves: silent', async () => {
+    const { campaignId, encounterId } = await withdrawnRunFixture('Cancelled then deleted', 'Stop then delete');
+    const runId = await watchRunningRun(campaignId, encounterId, 'Stop then delete', 'Cancelled then deleted');
+
+    // The owner's gesture as docs/17 row 116 wired it: the stop is recorded
+    // FIRST, the row goes second.
+    await runEngine.cancel(runId);
+    expect((await getRun(runId))?.status).toBe('cancelled');
+    await deleteRun(runId);
+
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+    }, { timeout: 10000 });
+    // Variant (B) at HEAD: the pipeline's toast is gone (row 116), the queue's
+    // `… disappeared while waiting for it to finish` remains.
+    expectWithdrawnSilently(encounterId);
+    expect(await getRun(runId)).toBeUndefined();
+  }, 30000);
+
+  it('a withdrawn job key enqueued AGAIN is new work: the second withdrawal owes its own counter decrement (no stuck dock)', async () => {
+    const { campaignId, encounterId } = await withdrawnRunFixture('Withdrawn twice', 'Withdrawn twice');
+    const first = await watchRunningRun(campaignId, encounterId, 'Withdrawn twice', 'Withdrawn twice');
+    await runEngine.cancel(first);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+    }, { timeout: 10000 });
+    expectWithdrawnSilently(encounterId);
+
+    // The same encounter, enqueued again (its own automation re-entry: the map
+    // is still missing) and withdrawn again. A withdrawal is spent per JOB, not
+    // per key: the second one owes its OWN decrement, or the group's counter
+    // would sit at 0/1 forever — the dock claiming work nobody is doing.
+    const second = await watchRunningRun(campaignId, encounterId, 'Withdrawn twice', 'Withdrawn twice');
+    expect(second).not.toBe(first);
+    await runEngine.cancel(second);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+    }, { timeout: 10000 });
+    expectWithdrawnSilently(encounterId);
+  }, 30000);
+
+  it('the contrast: a run that FAILED on its own still toasts the queue failure and still lands retryable', async () => {
+    const { campaignId, encounterId } = await withdrawnRunFixture('Queue genuine failure', 'Provider died in queue');
+    // Nobody stopped anything and nothing was deleted: the step itself dies.
+    // This is the guard against curing the withdrawal by swallowing every
+    // non-completed run (AGENTS rules 1-2).
+    let killBrief: ((error: Error) => void) | undefined;
+    parkThisRunsBriefError('Queue genuine failure', (kill) => {
+      killBrief = kill;
+    });
+    useEncounterMapQueue.getState().enqueue([
+      { campaignId, moduleId: null as Id | null, artifactId: encounterId, name: 'Provider died in queue' },
+    ]);
+    await waitFor(() => {
+      expect(killBrief).toBeTypeOf('function');
+    }, { timeout: 10000 });
+    takeResolver(killBrief, "this run's brief reply")(new Error('provider exploded'));
+
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().failed.map((job) => job.artifactId)).toEqual([encounterId]);
+    }, { timeout: 15000 });
+    // The queue's own loud verdict, and the run row that carries the reason.
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      'Could not generate a map for "Provider died in queue"',
+      expect.any(Error),
+    );
+    expect(useEncounterMapQueue.getState().active).toEqual([]);
+    expect(useProgressStore.getState().jobs).toEqual([]);
+    const runs = await listRunsByCampaign(campaignId);
+    const failedRun = runs.find((run) => run.targetArtifactId === encounterId);
+    expect(failedRun?.status).toBe('failed');
+    expect(failedRun?.errorMessage).toContain('provider exploded');
+  }, 30000);
+
+  it('a job whose run COMPLETED normally is unchanged: it maps, it never toasts, it never lands retryable', async () => {
+    const { campaignId, encounterId } = await withdrawnRunFixture('Queue completed', 'Mapped normally');
+    useEncounterMapQueue.getState().enqueue([
+      { campaignId, moduleId: null as Id | null, artifactId: encounterId, name: 'Mapped normally' },
+    ]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().active).toEqual([]);
+      expect(useEncounterMapQueue.getState().queued).toEqual([]);
+    }, { timeout: 15000 });
+    expect(useEncounterMapQueue.getState().failed).toEqual([]);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(useProgressStore.getState().jobs).toEqual([]);
+    const after = await getArtifact(encounterId);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.data.layout).not.toBeNull();
+    // The normal completion still writes its own verdict (the withdrawal branch
+    // must not answer for it).
+    const runs = await listRunsByCampaign(campaignId);
+    expect(runs.find((run) => run.targetArtifactId === encounterId)?.status).toBe('completed');
   }, 30000);
 });

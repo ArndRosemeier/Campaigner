@@ -22,6 +22,17 @@ import { toastError } from '@/lib/toast';
  *   silently (no toast, no failed-list entry). `cancelAll` withdraws
  *   EVERY queued + in-flight job through that same per-job path — the
  *   stop-all generations seam (features/progress/stop-all-generations).
+ * - **Withdrawal the BODY observes** (docs/17 row 117): a body that
+ *   establishes from an explicit fact that an owner action withdrew the work
+ *   it drives (the run it waits for was stopped, or its row was deleted)
+ *   calls `ctx.withdraw()` and stops. It is the SAME settlement as
+ *   `dequeue`'s — one withdrawal path, one decrement of the dock counter —
+ *   because a withdrawal the queue did not initiate must look exactly like
+ *   the one it did. A body that ignores the new outcome stays loud: silence
+ *   is opt-in at the seam, never a blanket catch.
+ *   `processJob`'s `signal.aborted` check is the whole mechanism: an aborted
+ *   job can never settle as `'done'`/`'skipped'`/`'failed'`, whatever the
+ *   body returns or throws.
  * - **Failed list + retry**: failures toast loud per artifact (AGENTS rule
  *   2) and land on `failed`; `retryFailed(filter?)` re-enqueues them, and
  *   re-enqueueing a failed job directly clears its failed entry.
@@ -44,9 +55,35 @@ import { toastError } from '@/lib/toast';
 /** How one job settled. `cancelled` is silent everywhere (user withdrew it). */
 export type JobOutcome = 'done' | 'skipped' | 'failed' | 'cancelled';
 
-/** The in-flight context handed to `process`: the job's abort signal. */
+/** The in-flight context handed to `process`. */
 export interface JobContext {
+  /**
+   * The job's abort signal. Aborted by `dequeue`/`cancelAll` (the QUEUE
+   * withdrew the job) and by `withdraw()` below (the BODY observed the
+   * withdrawal of the work it drives). An aborted job settles as `'cancelled'`
+   * — silent, no toast and no failed entry — whatever the body returns or
+   * throws.
+   */
   signal: AbortSignal;
+  /**
+   * Settle THIS job as withdrawn because the body ESTABLISHED, from an
+   * explicit fact about the work it drives, that an owner action withdrew it —
+   * e.g. the run it waits for is `'cancelled'` or its row is gone
+   * (`llm/runEngine`'s `isRunWithdrawn`), never an error's kind or message.
+   *
+   * The settlement is IDENTICAL to `dequeue`'s: the job's signal is aborted so
+   * the job cannot settle as work, no failure toast, no `failed` entry, and its
+   * dock counter is decremented instead of ticked done (the work never
+   * happened, so reporting it would push the group's bar past its total). The
+   * body must then stop by throwing: its own result is discarded either way
+   * (`processJob` never lets an aborted job settle `'done'`/`'skipped'`/
+   * `'failed'`).
+   *
+   * This is NOT a general error swallow (AGENTS rules 1-2): a genuine failure
+   * still throws with a live signal, and it still toasts and still lands on the
+   * failed list.
+   */
+  withdraw: () => void;
 }
 
 export interface JobQueueConfig<T> {
@@ -72,7 +109,8 @@ export interface JobQueueConfig<T> {
    * The job body: resolves `'done'` or `'skipped'`, THROWS to fail loud
    * (toast + failed list). The `signal` is aborted by `dequeue` — observe it
    * to stop work early; an abort settles the job as `'cancelled'` (silent),
-   * whatever the throwing error is.
+   * whatever the throwing error is. `ctx.withdraw()` is the body's own
+   * withdrawal, for an owner action the queue cannot see by itself.
    */
   process: (job: T, ctx: JobContext) => Promise<'done' | 'skipped'>;
   /**
@@ -121,6 +159,13 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
   const settleWaiters = new Map<string, () => void>();
   /** Per-dock-group counters: done/total keep the bar monotonic. */
   const counters = new Map<string, { total: number; done: number }>();
+  /** Keys whose dock counter has already been decremented by a WITHDRAWAL —
+   * whether the queue withdrew the job (`dequeue`/`cancelAll`) or its own body
+   * did (`ctx.withdraw`). One withdrawal per job, so a `cancelAll` that lands
+   * while a body is unwinding from its own withdrawal cannot decrement the
+   * group's counter twice. Cleared when the key is enqueued again: that is new
+   * work, and it owes a fresh decrement if it is withdrawn again. */
+  const withdrawn = new Set<string>();
   let pumping = false;
 
   function bumpTotal(job: T): void {
@@ -191,11 +236,44 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
     }));
   }
 
+  /**
+   * THE withdrawal, once per job key: abort the job's controller (the fact
+   * `processJob` reads to settle it silent) and drop it from its dock group's
+   * counter instead of ever ticking that counter done — the work did not
+   * happen, and a done tick would push the group's bar past its total. Both
+   * withdrawal doors go through here: `dequeue`/`cancelAll` (the queue
+   * withdraws the job) and a body's own `ctx.withdraw` (the body established
+   * from an explicit fact that an owner action withdrew the work it drives —
+   * docs/17 row 117), so the two cannot drift apart and cannot double-count.
+   *
+   * It does NOT touch `queued`/`active`: `dequeue` removes the job from the
+   * queue itself, and a body's withdrawal leaves the removal to the pump's
+   * `releaseJob`, which keeps the job visible as active for the rest of its
+   * unwinding (a re-enqueue of the same key must not slip in behind it).
+   */
+  function withdrawJob(job: T): void {
+    const key = config.key(job);
+    if (withdrawn.has(key)) return;
+    withdrawn.add(key);
+    controllers.get(key)?.abort();
+    bumpRemoved(job);
+  }
+
   async function processJob(job: T): Promise<JobOutcome> {
     const controller = new AbortController();
     controllers.set(config.key(job), controller);
     try {
-      return await config.process(job, { signal: controller.signal });
+      const outcome = await config.process(job, {
+        signal: controller.signal,
+        withdraw: () => {
+          withdrawJob(job);
+        },
+      });
+      // An aborted job is a withdrawn one, whatever the body did with the fact:
+      // `ctx.withdraw()` and `dequeue` both abort, and its counter was already
+      // decremented by that withdrawal — settling it as 'done' here would
+      // report work that never happened.
+      return controller.signal.aborted ? 'cancelled' : outcome;
     } catch (error) {
       if (controller.signal.aborted) return 'cancelled';
       // Loud per-artifact failure (AGENTS rule 2); the queue continues.
@@ -283,7 +361,12 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
           ),
         };
       });
-      for (const job of kept) bumpTotal(job);
+      for (const job of kept) {
+        // New work for this key: a withdrawal it survived is spent (see
+        // `withdrawn`).
+        withdrawn.delete(config.key(job));
+        bumpTotal(job);
+      }
       void pump();
     },
     dequeue: (job) => {
@@ -291,8 +374,7 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
         queued: state.queued.filter((candidate) => config.key(candidate) !== config.key(job)),
         active: state.active.filter((candidate) => config.key(candidate) !== config.key(job)),
       }));
-      controllers.get(config.key(job))?.abort();
-      bumpRemoved(job);
+      withdrawJob(job);
     },
     cancelAll: async () => {
       const jobs = [...get().queued, ...get().active];
@@ -319,6 +401,7 @@ export function createJobQueue<T>(config: JobQueueConfig<T>): JobQueueStore<T> {
       for (const controller of controllers.values()) controller.abort();
       controllers.clear();
       counters.clear();
+      withdrawn.clear();
       pumping = false;
       set({ queued: [], active: [], failed: [] });
     },

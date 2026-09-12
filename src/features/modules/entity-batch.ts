@@ -8,7 +8,7 @@ import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
 import { nearestLibraryCreatures } from '@/llm/creatorRoster';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
-import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
+import { isRunWithdrawn, runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 import { errorMessage } from '@/lib/errors';
 import {
   buildEntityBrief,
@@ -498,11 +498,13 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         const runId = await runEngine.startRun(runInput);
         runNames.set(runId, target.name);
         const outcome = await waitForRunStatus(runId);
-        if (outcome.status === 'cancelled') {
-          // WITHDRAWN, not failed (mirrors jobQueue's silent 'cancelled'
-          // JobOutcome): the user stopped this generation, so there is no
-          // failure to report and no artifact to expect. Stop the pool too —
-          // every later target would just start a run that is already doomed.
+        if (isRunWithdrawn(outcome)) {
+          // WITHDRAWN, not failed — the engine's ONE withdrawal predicate
+          // (docs/17 row 117), the same fact the map queue and the chain runner
+          // read, mirroring jobQueue's silent 'cancelled' JobOutcome: the user
+          // stopped this generation, so there is no failure to report and no
+          // artifact to expect. Stop the pool too — every later target would
+          // just start a run that is already doomed.
           if (!withdrawn) {
             withdrawn = true;
             updateDetail();

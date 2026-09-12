@@ -1,5 +1,5 @@
 import type { Autonomy, Campaign, Id, Persona, PersonaRun } from '@/domain';
-import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
+import { isRunWithdrawn, runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
 
 /**
  * Writers' room (06-MILESTONES M2: persona chaining) — runs a sequence of
@@ -195,7 +195,10 @@ export class ChainRunner {
     if (outcome.status === 'completed' && outcome.resultArtifactId !== null) {
       producedArtifactIds.push(outcome.resultArtifactId);
     } else {
-      this.state.status = outcome.status === 'cancelled' ? 'cancelled' : 'failed';
+      // A withdrawn step (the owner stopped its run) ends the CHAIN as
+      // 'cancelled', never as a failure — the engine's ONE withdrawal predicate
+      // (docs/17 row 117), not a private status comparison.
+      this.state.status = isRunWithdrawn(outcome) ? 'cancelled' : 'failed';
       this.emit();
       return this.state;
     }
@@ -312,7 +315,9 @@ export class ChainRunner {
       };
       this.emit();
 
-      if (outcome.status === 'cancelled') {
+      if (isRunWithdrawn(outcome)) {
+        // The step's run was withdrawn by the owner: the chain ends 'cancelled'
+        // rather than reporting a failure the owner caused (docs/17 row 117).
         this.state.status = 'cancelled';
         this.emit();
         return this.state;

@@ -365,6 +365,32 @@ export function isTerminalRunStatus(status: PersonaRun['status']): boolean {
   return (TERMINAL_RUN_STATUSES as readonly string[]).includes(status);
 }
 
+/**
+ * THE one spelling of "this run was WITHDRAWN by an owner action, so there is
+ * nothing left to do and nothing to report" (docs/18 §4; docs/17 row 117).
+ *
+ * Two faces, ONE gesture. The owner's own Stop marks the row `'cancelled'`
+ * (`RunEngine.cancel`, i.e. the Runs tab's Stop, Stop all, every cancel seam),
+ * and every path that DELETES a run row stops it FIRST
+ * (`RunEngine.stopRunsBeforeDelete`, docs/17 row 116) — so a row that is GONE
+ * under a caller still holding it is that same withdrawal seen one step later,
+ * never a lost record to shout about.
+ *
+ * What it deliberately does NOT cover, so no caller can widen it by accident:
+ * a run that died ON ITS OWN is `'failed'` with its `errorMessage` and must
+ * stay loud (AGENTS rules 1-2), and `failRunningRuns`' reload reconcile is
+ * `'failed'` TOO — its `failureKind: 'cancelled'` names the KIND of failure,
+ * not a withdrawal. A run still `'running'`/paused simply has not settled.
+ *
+ * Callers use it to decide SILENCE (`features/modules/encounter-map-queue.ts`,
+ * `features/modules/entity-batch.ts`, `llm/chainRunner.ts`) — never to decide
+ * loudness, which stays the failure path's job. Pass a row you actually READ;
+ * `undefined` means the row is GONE, so never invent it for "not loaded yet".
+ */
+export function isRunWithdrawn(run: PersonaRun | undefined): boolean {
+  return run === undefined || run.status === 'cancelled';
+}
+
 export interface WaitForRunOptions {
   /**
    * Also return when the run PAUSES for the user (`awaiting_user` /

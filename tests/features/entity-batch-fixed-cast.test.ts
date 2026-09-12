@@ -8,6 +8,7 @@ import { createModule, type Campaign, type Module, type PersonaRun, type StatBlo
 import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { runEntityBatch } from '@/features/modules/entity-batch';
+import type * as runEngineModule from '@/llm/runEngine';
 import { useProgressStore } from '@/lib/progress';
 import { clearDatabase } from '../db/helpers';
 
@@ -24,10 +25,18 @@ const { startRunMock, waitForRunStatusMock } = vi.hoisted(() => ({
   waitForRunStatusMock: vi.fn(),
 }));
 
-vi.mock('@/llm/runEngine', () => ({
-  runEngine: { on: () => () => undefined, startRun: startRunMock },
-  waitForRunStatus: waitForRunStatusMock,
-}));
+// The engine is faked (this file pins brief STRINGS), but the withdrawal
+// predicate is the REAL one: `runEntityBatch` reads it to tell an owner stop
+// from a failure (docs/17 row 117), and a mock that re-implemented that rule
+// would judge the fold against a fake.
+vi.mock('@/llm/runEngine', async (importOriginal) => {
+  const actual = await importOriginal<typeof runEngineModule>();
+  return {
+    isRunWithdrawn: actual.isRunWithdrawn,
+    runEngine: { on: () => () => undefined, startRun: startRunMock },
+    waitForRunStatus: waitForRunStatusMock,
+  };
+});
 
 vi.mock('@/lib/toast', () => ({ toastError: vi.fn(), toastSuccess: vi.fn() }));
 

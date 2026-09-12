@@ -2,10 +2,11 @@ import type { Id, PersonaRun } from '@/domain';
 import { resolveEncounterPreset } from '@/domain';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
+import { getRun } from '@/db/runRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { listPersonas } from '@/db/personaRepo';
-import { runEngine, waitForRunStatus } from '@/llm/runEngine';
-import { createJobQueue } from '@/lib/jobQueue';
+import { isRunWithdrawn, runEngine, waitForRunStatus } from '@/llm/runEngine';
+import { createJobQueue, type JobContext } from '@/lib/jobQueue';
 
 export interface EncounterMapJob {
   campaignId: Id;
@@ -80,7 +81,7 @@ function progressId(moduleId: Id | null): string {
 
 async function processJob(
   job: EncounterMapJob,
-  ctx: { signal: AbortSignal },
+  ctx: JobContext,
 ): Promise<'done' | 'skipped'> {
   const [campaign, artifact, personas, settings] = await Promise.all([
     getCampaign(job.campaignId),
@@ -129,10 +130,34 @@ async function processJob(
       // surfaces as the rethrown error; the factory classifies the job
       // cancelled either way (the signal is aborted).
       await runEngine.cancel(runId);
+      throw error;
+    }
+    // The wait can also end for a reason the ERROR does not name: the run row
+    // was removed under it (the owner's delete — every run-row delete stops the
+    // run first, docs/17 row 116). NEVER classify that by the error's kind or
+    // its message — read the ROW and ask the engine's ONE withdrawal predicate
+    // (AGENTS rule 4), the same fact every other caller reads.
+    const observed = await getRun(runId);
+    if (isRunWithdrawn(observed)) {
+      // A withdrawn run is not a failure to report and its map is moot; the job
+      // settles silently (docs/05 §Progress dock). This throw only stops the
+      // body — the withdrawal already decided the job's outcome.
+      ctx.withdraw();
     }
     throw error;
   }
+  if (isRunWithdrawn(run)) {
+    // The owner stopped this run (the Runs tab's Stop, Stop all, or a delete
+    // that stops it first). Nothing to generate a map for and nothing to
+    // report: the owner's own stop is never handed back to him as a failure
+    // (docs/05; docs/17 row 117), so the job is WITHDRAWN, not failed.
+    ctx.withdraw();
+    throw new Error(run.errorMessage || `run ended ${run.status}`);
+  }
   if (run.status !== 'completed') {
+    // A run that died ON ITS OWN: loud, retryable, and the errorMessage the
+    // engine wrote is what the owner reads (AGENTS rules 1-2). Reachable only
+    // for 'failed' — the other terminal statuses are answered above.
     throw new Error(run.errorMessage || `run ended ${run.status}`);
   }
   return 'done';

@@ -3,6 +3,7 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { buildEntityBrief } from '@/features/modules/persona-request';
+import type * as runEngineModule from '@/llm/runEngine';
 
 /**
  * The instruction's ARRIVAL — the half of the change seam that is about bytes
@@ -27,10 +28,18 @@ const { startRunMock, waitForRunStatusMock } = vi.hoisted(() => ({
   waitForRunStatusMock: vi.fn(),
 }));
 
-vi.mock('@/llm/runEngine', () => ({
-  runEngine: { on: () => () => undefined, startRun: startRunMock },
-  waitForRunStatus: waitForRunStatusMock,
-}));
+// The engine is faked (this file pins the appended instruction paragraph), but
+// the withdrawal predicate is the REAL one — `changeArtifact` reaches
+// `runEntityBatch`, which reads it to tell an owner stop from a failure
+// (docs/17 row 117).
+vi.mock('@/llm/runEngine', async (importOriginal) => {
+  const actual = await importOriginal<typeof runEngineModule>();
+  return {
+    isRunWithdrawn: actual.isRunWithdrawn,
+    runEngine: { on: () => () => undefined, startRun: startRunMock },
+    waitForRunStatus: waitForRunStatusMock,
+  };
+});
 
 const { changeArtifact } = await import('@/features/modules/change-artifact');
 const { createArtifact } = await import('@/db/artifactRepo');
