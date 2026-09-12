@@ -82,6 +82,7 @@ import { resumeModuleAutomation } from '@/features/modules/resume-automation';
 import { enclosingBlockOf, refineModuleText } from '@/llm/canvasRefine';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModule, useModuleVersions } from '@/features/modules/hooks';
+import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
@@ -1466,6 +1467,12 @@ export function CanvasPage(): JSX.Element {
           <Badge variant="secondary">{currentModule.status}</Badge>
         )}
         <div className="ml-auto flex items-center gap-2">
+          {/*
+            The module PDF (docs/17 row 108): the module IS the document, so
+            its export lives here, next to the document it prints — and in the
+            campaign tree's module row (ONE component, both surfaces).
+          */}
+          <ModulePdfButton module={currentModule} artifacts={pool} />
           <BlockedControl testId="canvas-preview-toggle" reason={viewBusyReason}>
             <Button
               variant="ghost"

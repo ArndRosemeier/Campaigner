@@ -87,7 +87,7 @@ export async function getImage(id: Id): Promise<StoredImage | undefined> {
   return db.images.get(id);
 }
 
-/** Every image row of one campaign (deliverables gallery; no particular order). */
+/** Every image row of one campaign (image gallery; no particular order). */
 export async function listImagesByCampaign(campaignId: Id): Promise<StoredImage[]> {
   return db.images.where('campaignId').equals(campaignId).toArray();
 }

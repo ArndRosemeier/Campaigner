@@ -27,6 +27,7 @@ import {
   type ArtifactKind,
   type GlobalArtifact,
   type Id,
+  type Module,
   defaultScopeToggles,
   globalArtifactKindSchema,
 } from '@/domain';
@@ -34,6 +35,7 @@ import { defaultArtifactName } from '@/domain';
 import { exportSingleArtifact } from '@/features/campaign/components/export-single-artifact';
 import { RemoveKindDialog } from '@/features/campaign/components/remove-kind-dialog';
 import { exportArtifactPdfFile } from '@/lib/pdfExport';
+import { ModulePdfButton } from '@/features/modules/module-pdf-button';
 import { ImageThumb } from '@/features/images/image-thumb';
 import {
   AlertDialog,
@@ -70,6 +72,28 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { matchesFilter } from '@/features/campaign/filter';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { cn } from '@/lib/utils';
+
+/**
+ * The module group's PDF action: it resolves the row it was rendered for and
+ * defers to the ONE `ModulePdfButton` (the canvas header's own control). A
+ * module row that has gone missing between render and click renders NOTHING —
+ * never a button that would print a ghost.
+ */
+function ModulePdfGroupAction({
+  moduleId,
+  modules,
+  artifacts,
+  globals,
+}: {
+  moduleId: Id;
+  modules: readonly Module[] | undefined;
+  artifacts: readonly Artifact[];
+  globals: readonly GlobalArtifact[];
+}): JSX.Element | null {
+  const module = modules?.find((row) => row.id === moduleId);
+  if (module === undefined) return null;
+  return <ModulePdfButton module={module} artifacts={[...artifacts, ...globals]} />;
+}
 
 /** Shared collapsible group shell for Library / module / kind sections. */
 function TreeGroup({
@@ -389,6 +413,21 @@ export function CampaignTree({
             count={group.rows.length}
             open={!closedGroups.has(group.id)}
             onToggle={setGroupOpenState}
+            /*
+             * The group IS a module, so its header offers the module's own
+             * document (docs/17 row 108) — the SAME control the canvas header
+             * mounts, so the two can never print different books. Its
+             * artifacts are the campaign pool plus the shared library, exactly
+             * as the canvas passes them; the renderer scopes them itself.
+             */
+            actions={
+              <ModulePdfGroupAction
+                moduleId={group.id}
+                modules={modules}
+                artifacts={artifacts}
+                globals={globals}
+              />
+            }
           >
             <ul className="mt-0.5">
               {group.rows.map((artifact) => (

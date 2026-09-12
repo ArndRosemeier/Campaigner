@@ -1,11 +1,4 @@
-import type {
-  AnyArtifact,
-  Battle,
-  Deliverable,
-  EncounterArtifact,
-  Id,
-  Module,
-} from '@/domain';
+import type { AnyArtifact, Battle, EncounterArtifact, Id, Module } from '@/domain';
 import { battleSchema, ENTITY_KINDS, moduleSchema } from '@/domain';
 import { buildWikiGraph, type WikiGraphNode } from '@/domain/wikiGraph';
 import { resolveWikiLink } from '@/lib/wikilinks';
@@ -18,7 +11,6 @@ import {
   listArtifactsByModule,
   listGlobalArtifacts,
 } from '@/db/artifactRepo';
-import { listDeliverablesByCampaign } from '@/db/deliverableRepo';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
 import { NotFoundError } from '@/lib/errors';
 
@@ -67,8 +59,9 @@ import { NotFoundError } from '@/lib/errors';
  * - battle board `tokens[].artifactId` + `seedFighters[].id` on ANY
  *   campaign battle;
  * - encounter roster `npc-ref source.artifactId` on any SURVIVING encounter
- *   (a `rulebook` entry cites the read-only library, so it names no owned row);
- * - deliverable outline artifact nodes.
+ *   (a `rulebook` entry cites the read-only library, so it names no owned row).
+ * The deliverable-outline carrier family is GONE with the deliverables concept
+ * (docs/17 row 108): there is no outline left to cite a row.
  * Unlike deleteModule's scan, SAME-module encounters/battles count: the
  * module SURVIVES this sweep, so `modulesReferencingOwnedArtifacts`' cascade
  * exclusion does not apply.
@@ -173,8 +166,6 @@ export interface OrphanGuardInput {
   pool: readonly AnyArtifact[];
   /** Parsed battles of the campaign (portrait tokens + frozen seed fighters). */
   battles: readonly Battle[];
-  /** Artifact id → the deliverable title whose outline cites it. */
-  deliverableNodeTitles: ReadonlyMap<Id, string>;
 }
 
 /** Which guard refused a candidate — the discriminator the panel reads. */
@@ -183,7 +174,6 @@ export type OrphanGuardKind =
   | 'ambiguity'
   | 'battle-token'
   | 'seed-fighter'
-  | 'outline-node'
   | 'encounter-roster';
 
 /** One refusal: the guard and the LOUD reason text both surfaces show verbatim. */
@@ -216,8 +206,8 @@ export interface OrphanGuardEvaluation {
  * reports) and must never be reordered: (1) campaign-wide mentions — the
  * campaign graph CONTAINS this module's prose, so it covers both scopes;
  * (2) the ambiguity shadow; (3) a portrait token on any campaign battle
- * board; (4) a frozen seed-fighter row on any campaign battle; (5) a
- * deliverable outline artifact node; (6) an encounter roster citation
+ * board; (4) a frozen seed-fighter row on any campaign battle; (5) an
+ * encounter roster citation
  * (`npc-ref` `artifactId`) — applied to the SURVIVING encounters only, because
  * an encounter this evaluation finds deletable takes its citations with it.
  */
@@ -225,7 +215,7 @@ export function evaluateOrphanGuards(
   candidates: readonly AnyArtifact[],
   input: OrphanGuardInput,
 ): OrphanGuardEvaluation {
-  const { module, campaignModules, pool, battles, deliverableNodeTitles } = input;
+  const { module, campaignModules, pool, battles } = input;
   const modulesById = new Map<Id, Module>(campaignModules.map((row) => [row.id, row]));
 
   // Campaign-wide resolving mentions (uncapped — the link-health-report
@@ -307,23 +297,11 @@ export function evaluateOrphanGuards(
       });
       continue;
     }
-    // Guard 5 — a deliverable outline node.
-    const deliverableTitle = deliverableNodeTitles.get(candidate.id);
-    if (deliverableTitle !== undefined) {
-      verdicts.push({
-        artifact: candidate,
-        refusal: {
-          guard: 'outline-node',
-          reason: `an outline node of the deliverable "${deliverableTitle}"`,
-        },
-      });
-      continue;
-    }
-    // Every structural guard passed; the roster pass below decides guard 6.
+    // Every structural guard passed; the roster pass below decides guard 5.
     verdicts.push({ artifact: candidate, refusal: null });
   }
 
-  // Guard 6 — encounter rosters, applied to the SURVIVING encounters: an
+  // Guard 5 — encounter rosters, applied to the SURVIVING encounters: an
   // encounter this evaluation finds deletable takes its citations with it.
   // Encounters outside the candidate set survive by construction (they are
   // mentioned or shadowed, never deletable).
@@ -347,37 +325,6 @@ export function evaluateOrphanGuards(
   return { verdicts, moduleMentionedIds, shadowedIds };
 }
 
-/**
- * Recursively collects artifact-outline node ids of one deliverable.
- *
- * ONE shared reader (exported): the sweep's guard below and the module-delete
- * reference scan (`artifactAutoPromote.modulesReferencingOwnedArtifacts`)
- * must agree on what an outline node references — a second walk of
- * `Deliverable['outline']` would let the two surfaces disagree about whether a
- * row is still pointed at. Ids only: the sweep keeps its own title map, the
- * delete scan just needs "is it cited".
- */
-export function outlineArtifactIds(outline: Deliverable['outline'], into: Set<Id>): void {
-  for (const node of outline) {
-    if (node.type === 'artifact') into.add(node.artifactId);
-    if (node.type === 'chapter' || node.type === 'part') {
-      outlineArtifactIds(node.children, into);
-    }
-  }
-}
-
-/** Recursively collects artifact-outline node ids of one deliverable, with the
- * deliverable's title as the guard's loud reason (the sweep's shape). */
-function collectArtifactNodes(
-  nodes: Deliverable['outline'],
-  title: string,
-  into: Map<Id, string>,
-): void {
-  const ids = new Set<Id>();
-  outlineArtifactIds(nodes, ids);
-  for (const id of ids) into.set(id, title);
-}
-
 /** The roster guard: a surviving encounter's entry citing `artifactId`. */
 function rosterReasonFor(encounter: EncounterArtifact, artifactId: Id): string | undefined {
   for (const entry of encounter.data.monsters) {
@@ -399,23 +346,12 @@ export async function sweepOrphanedArtifacts(
 ): Promise<OrphanSweepOutcome> {
   return db.transaction(
     'rw',
-    // Array form (docs/18 gotcha — past the variadic cap). `deliverables`
-    // rides the scope for the outline-node guard; deleteModule needs
-    // `settings` for its shortcut, this sweep deletes no module row.
-    // `creatureImages` rides it because the per-row delete path below reaches
-    // the campaign image prune (the reference walk reads it) — a scope that
-    // omits it throws "object store not found" mid-sweep, which is exactly the
+    // Array form (docs/18 gotcha — past the variadic cap). `creatureImages`
+    // rides the scope because the per-row delete path below reaches the
+    // campaign image prune (the reference walk reads it) — a scope that omits
+    // it throws "object store not found" mid-sweep, which is exactly the
     // half-applied delete this transaction exists to prevent.
-    [
-      db.artifacts,
-      db.revisions,
-      db.images,
-      db.battles,
-      db.modules,
-      db.campaigns,
-      db.deliverables,
-      db.creatureImages,
-    ],
+    [db.artifacts, db.revisions, db.images, db.battles, db.modules, db.campaigns, db.creatureImages],
     async () => {
       // Re-read INSIDE the tx (recount): the module row must still exist —
       // a module deleted between the panel render and the confirm fails
@@ -457,12 +393,6 @@ export async function sweepOrphanedArtifacts(
       const battles = (await db.battles.where('campaignId').equals(module.campaignId).toArray()).map(
         (row) => battleSchema.parse(row),
       );
-      // Deliverable outline artifact nodes (campaign-wide).
-      const deliverableNodeTitles = new Map<Id, string>();
-      for (const deliverable of await listDeliverablesByCampaign(module.campaignId)) {
-        collectArtifactNodes(deliverable.outline, deliverable.title, deliverableNodeTitles);
-      }
-
       // THE guard evaluation (one function, shared with the panel's read-time
       // derivation): every guard, in its documented order, decided from the
       // rows re-listed above — the panel's count never decides what goes.
@@ -471,7 +401,6 @@ export async function sweepOrphanedArtifacts(
         campaignModules,
         pool,
         battles,
-        deliverableNodeTitles,
       });
 
       // Deletes: the candidates that passed every guard, via the frozen

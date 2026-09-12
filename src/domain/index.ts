@@ -9,7 +9,6 @@ export * from '@/domain/campaign';
 export * from '@/domain/create';
 export * from '@/domain/creature';
 export * from '@/domain/creatureImage';
-export * from '@/domain/deliverable';
 export * from '@/domain/embedding';
 export * from '@/domain/entity';
 export * from '@/domain/entityNormalization';

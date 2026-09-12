@@ -9,19 +9,14 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createDeliverable } from '@/db/deliverableRepo';
 import { saveModule } from '@/db/moduleRepo';
 import {
   createModule,
-  fullInclude,
-  moduleDocumentText,
   modulePartSchema,
   moduleSpineSchema,
   type Artifact,
   type AnyArtifact,
-  type Deliverable,
   type Module,
-  type OutlineNode,
 } from '@/domain';
 import { markdownToDisplayText } from '@/lib/markdown';
 import { buildModuleDefinition } from '@/lib/modulePdf';
@@ -41,7 +36,7 @@ import { clearDatabase } from '../db/helpers';
  *
  * Two pipelines, one rule, and this file pins them TOGETHER:
  *
- * - `buildModuleDefinition` (deliverables, module PDF) renders markdown through
+ * - `buildModuleDefinition` (the module PDF) renders markdown through
  *   `lib/mdToPdfmake`, which has been wiki-aware since it existed — a token
  *   becomes its bold DISPLAY text and no brackets survive. UNCHANGED by row 105.
  * - `buildGmNotesDefinition` / `buildPlayerHandoutDefinition` (single-artifact
@@ -108,12 +103,7 @@ function source(relative: string): string {
   return readFileSync(resolve(import.meta.dirname, '..', '..', relative), 'utf8');
 }
 
-async function seed(): Promise<{
-  deliverable: Deliverable;
-  module: Module;
-  gate: Artifact;
-  literal: Artifact;
-}> {
+async function seed(): Promise<{ module: Module; gate: Artifact; literal: Artifact }> {
   const campaign = await createCampaign({ name: 'Export Campaign', system: 'dnd5e' });
   const gate = owned(
     await createArtifact({
@@ -162,28 +152,11 @@ async function seed(): Promise<{
     ],
   });
 
-  const outline: OutlineNode[] = [
-    {
-      type: 'chapter',
-      title: 'Act I',
-      children: [
-        { type: 'part', title: 'The Dockyards', children: [] },
-        // The module's own document text, exactly as a deliverable carries it.
-        { type: 'text', markdown: moduleDocumentText(module) },
-        { type: 'artifact', artifactId: gate.id, include: fullInclude() },
-      ],
-    },
-  ];
-  const deliverable = await createDeliverable({
-    campaignId: campaign.id,
-    title: 'Beneath the Docks',
-    subtitle: 'An urban crawl',
-    audience: 'gm',
-    coverImageId: null,
-    outline,
-  });
-
-  return { deliverable, module, gate, literal };
+  // No outline and no deliverable: the module's OWN prose scopes the document
+  // (docs/17 row 108). The premise names `[[Kael]]` and the part names the
+  // gate, so the gate's body — which carries every token of the fixture — is
+  // in the document without a hand-built reference list.
+  return { module, gate, literal };
 }
 
 beforeEach(async () => {
@@ -246,9 +219,9 @@ describe('an export renders the DISPLAY of a wiki token, never the token', () =>
   });
 
   it('the two pipelines agree: one body, the display in both, brackets in neither', async () => {
-    const { deliverable, gate } = await seed();
+    const { module, gate } = await seed();
 
-    const moduleDefinition = JSON.stringify(buildModuleDefinition(deliverable, [gate]));
+    const moduleDefinition = JSON.stringify(buildModuleDefinition({ module, artifacts: [gate] }));
     const gmNotes = exportedBody(buildGmNotesDefinition(gate));
     const handout = exportedBody(buildPlayerHandoutDefinition(gate));
 
@@ -261,10 +234,24 @@ describe('an export renders the DISPLAY of a wiki token, never the token', () =>
     // …and no pipeline prints the syntax (the module definition's own
     // non-vacuity — the tokens ARE in the row and the document text — is the
     // assertion block above).
-    expect(moduleDefinition).not.toContain('[[');
-    expect(moduleDefinition).not.toContain(']]');
+    // …and no pipeline prints the SYNTAX. The check is on the TOKENS, never on
+    // a bare `[[`: a pdfmake table's body is literally `"body":[[…]]`, so a
+    // bracket-substring check would fail on the part-plan table while proving
+    // nothing about wiki syntax (the old outline fixture had no table).
+    for (const { token } of TOKENS) {
+      expect(moduleDefinition).not.toContain(token);
+      expect(gmNotes).not.toContain(token);
+      expect(handout).not.toContain(token);
+    }
+    // The single-artifact templates carry exactly ONE body node, so there the
+    // bracket check is still exact — and it is what pins the naive
+    // `\[\[|\]\]` strip.
     expect(gmNotes).not.toContain('[[');
+    expect(gmNotes).not.toContain(']]');
     expect(handout).not.toContain('[[');
+    expect(handout).not.toContain(']]');
+    // The token's TARGET half never survives either (it is the internal name).
+    expect(moduleDefinition).not.toContain('Encounter:Ash Gate');
   });
 
   it('the wiki strip has ONE implementation, in lib/markdown, and no carrier reaches an export', () => {

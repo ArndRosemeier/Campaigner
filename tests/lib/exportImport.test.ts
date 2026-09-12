@@ -11,13 +11,15 @@ import { listCampaigns } from '@/db/campaignRepo';
 import { createImage, getImage } from '@/db/imageRepo';
 import { createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { putChunks } from '@/db/chunkRepo';
-import { createModule as saveModuleRow, listModulesByCampaign } from '@/db/moduleRepo';
+import {
+  createModule as saveModuleRow,
+  listModulesByCampaign,
+  patchModule,
+} from '@/db/moduleRepo';
 import { ensureBattle, patchBattle } from '@/db/battleRepo';
 import { createRun, listRunsByCampaign, updateRun } from '@/db/runRepo';
-import { createDeliverable, listDeliverablesByCampaign } from '@/db/deliverableRepo';
 import {
   createModule as buildModule,
-  fullInclude,
   newId,
   ruleChunkSchema,
   statBlockSchema,
@@ -32,6 +34,7 @@ import {
   buildZip,
   EXPORT_FORMAT_VERSION,
   exportFileName,
+  formatRetiredTableRows,
   importExport,
   importZip,
   MissingDependenciesError,
@@ -466,7 +469,7 @@ describe('export v2', () => {
     expect(manifest.unmetLibraryRefs).toEqual([]);
   });
 
-  it('round-trips modules, battles, runs and deliverables with remapped references', async () => {
+  it('round-trips modules, battles and runs with remapped references', async () => {
     const campaign = await createCampaign({ name: 'Full', system: 'dnd5e' });
     const module = await saveModuleRow(
       buildModule({
@@ -532,20 +535,14 @@ describe('export v2', () => {
       height: 10,
       source: 'uploaded',
     });
-    const deliverable = await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Module PDF',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: image.id,
-      outline: [{ type: 'artifact', artifactId: npc.id, include: fullInclude() }],
-    });
+    // The image rides the MODULE's cover slot: the deliverable-carried cover
+    // went with the deliverables concept (docs/17 row 108).
+    await patchModule(module.id, { coverImageId: image.id });
 
     const exported = await buildCampaignExport(campaign.id, undefined, { images: true });
     expect(exported.modules).toHaveLength(1);
     expect(exported.battles).toHaveLength(1);
     expect(exported.runs).toHaveLength(1);
-    expect(exported.deliverables).toHaveLength(1);
 
     const result = await importExport(JSON.parse(JSON.stringify(exported)) as unknown);
     expect(result.createdArtifacts).toBe(2);
@@ -578,12 +575,8 @@ describe('export v2', () => {
     expect(runs[0]?.targetArtifactId).toBe(importedNpc.id);
     expect(runs[0]?.resultArtifactId).toBe(importedNpc.id);
 
-    const deliverables = await listDeliverablesByCampaign(result.campaignId);
-    expect(deliverables).toHaveLength(1);
-    expect(deliverables[0]?.coverImageId).toBe(image.id);
-    const node = deliverables[0]?.outline[0];
-    expect(node).toMatchObject({ type: 'artifact', artifactId: importedNpc.id });
-    expect(deliverable.id).not.toBe(deliverables[0]?.id);
+    const importedModules = await listModulesByCampaign(result.campaignId);
+    expect(importedModules[0]?.coverImageId).toBe(image.id);
 
     const restored = await getImage(image.id);
     expect(restored?.campaignId).toBe(result.campaignId);
@@ -636,7 +629,6 @@ describe('export v2', () => {
     delete v1.modules;
     delete v1.battles;
     delete v1.runs;
-    delete v1.deliverables;
     delete v1.dependencies;
 
     const result = await importExport(v1);
@@ -659,7 +651,6 @@ describe('export v2', () => {
     delete v1.modules;
     delete v1.battles;
     delete v1.runs;
-    delete v1.deliverables;
     delete v1.dependencies;
     delete v1.images;
     delete v1.missingImages;
@@ -1057,6 +1048,17 @@ describe('import content-identity healing', () => {
     const ghostMap = newId();
     const ghostCover = newId();
     const ghostGallery = newId();
+    const module = await saveModuleRow(
+      buildModule({
+        campaignId: campaign.id,
+        title: 'Coverless Vault',
+        concept: '',
+        levelMin: 1,
+        levelMax: 3,
+        sizeDial: 'sketch',
+      }),
+    );
+    await patchModule(module.id, { coverImageId: ghostCover });
     const encounter = await createArtifact({
       campaignId: campaign.id,
       kind: 'encounter',
@@ -1065,15 +1067,6 @@ describe('import content-identity healing', () => {
     });
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
     await updateArtifact(encounter.id, { imageIds: [ghostGallery] });
-    await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Coverless',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: ghostCover,
-      outline: [],
-    });
-
     const exported = await buildCampaignExport(campaign.id);
     expect(exported.images).toEqual([]);
     const missing = exported.missingImages ?? [];
@@ -1084,8 +1077,7 @@ describe('import content-identity healing', () => {
     // revision snapshot updateArtifact wrote (both referrers are named).
     expect(byId.get(ghostGallery)).toContain(`artifact:${encounter.id}`);
     expect(byId.get(ghostGallery)).toHaveLength(2);
-    const deliverables = await listDeliverablesByCampaign(campaign.id);
-    expect(byId.get(ghostCover)).toEqual([`deliverable:${deliverables[0]?.id}:cover`]);
+    expect(byId.get(ghostCover)).toEqual([`module:${module.id}:cover`]);
     // The manifest still builds — missing binaries never break the export.
     expect(exported.dependencies).toBeDefined();
   });
@@ -1545,6 +1537,76 @@ describe('import retired-row tolerance', () => {
     expect(result.createdArtifacts).toBe(1);
     expect(result.skippedRetired).toBe(1);
     expect(result.skippedNames).toEqual(['Session 3']);
+  });
+});
+
+/**
+ * RETIRED TABLES (docs/17 row 108): `deliverables` was a whole table, and a
+ * file written before the concept was deleted still contains its rows. There
+ * is nowhere to put them, so they are SKIPPED — and the skip is REPORTED with
+ * a count, never silent (AGENTS rule 1) and never a crash on the extra key.
+ */
+describe('retired-table import tolerance', () => {
+  beforeEach(clearDatabase);
+
+  it('imports an old file carrying `deliverables` rows, skipping them with a reported count', async () => {
+    const campaign = await createCampaign({ name: 'Old File', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Kept note' });
+    const exported = JSON.parse(JSON.stringify(await buildCampaignExport(campaign.id))) as Record<
+      string,
+      unknown
+    >;
+    // NO CURRENT EXPORT carries this key — add it by hand, exactly as the
+    // pre-v21 files do, so the tolerance is exercised against the real shape.
+    expect(exported.deliverables).toBeUndefined();
+    exported.deliverables = [
+      {
+        id: newId(),
+        campaignId: campaign.id,
+        title: 'Beneath the Docks',
+        subtitle: 'An urban crawl',
+        audience: 'gm',
+        coverImageId: null,
+        outline: [{ type: 'artifact', artifactId: newId(), include: {} }],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+      {
+        id: newId(),
+        campaignId: campaign.id,
+        title: 'Player handouts',
+        subtitle: '',
+        audience: 'player',
+        coverImageId: null,
+        outline: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+
+    // No throw, and the campaign lands.
+    const result = await importExport(exported);
+    expect(result.createdArtifacts).toBe(1);
+    expect(
+      (await listCampaigns()).find((row) => row.id === result.campaignId)?.name,
+    ).toBe('Old File');
+
+    // LOUD: the count is reported, and the table is not in this build at all.
+    expect(result.retiredRows).toEqual({ deliverables: 2 });
+    expect(db.tables.map((table) => table.name)).not.toContain('deliverables');
+    // The sentence the picker toasts names the table, the count and the reason.
+    const note = formatRetiredTableRows(result.retiredRows);
+    expect(note).toContain('2 rows');
+    expect(note).toContain('deliverables');
+    expect(note).toContain('module PDF');
+  });
+
+  it('reports nothing for a current file (an empty count is never announced)', async () => {
+    const campaign = await createCampaign({ name: 'Current', system: 'dnd5e' });
+    const exported = await buildCampaignExport(campaign.id);
+    const result = await importExport(JSON.parse(JSON.stringify(exported)) as unknown);
+    expect(result.retiredRows).toEqual({});
+    expect(formatRetiredTableRows(result.retiredRows)).toBeNull();
   });
 });
 

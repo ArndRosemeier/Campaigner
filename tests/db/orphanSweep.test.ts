@@ -11,14 +11,12 @@ import {
   publishToLibrary,
 } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createDeliverable } from '@/db/deliverableRepo';
 import { createModule, saveSpine } from '@/db/moduleRepo';
 import { AMBIGUITY_KEEP_REASON, sweepOrphanedArtifacts } from '@/db/orphanSweep';
 import { clearDatabase } from './helpers';
 import {
   battleSchema,
   createModule as createModuleSchema,
-  fullInclude,
   newId,
   stampNewEntity,
   type Battle,
@@ -391,38 +389,6 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
     ]);
     expect(await getArtifact(encounter.id)).toBeUndefined();
     expect(await getArtifact(guard.id)).toBeUndefined();
-  });
-
-  it('keeps an artifact sitting in a deliverable outline node', async () => {
-    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
-    const module = await proseModule(campaign.id, 'Ember Crypt', 'A quiet shore.');
-    const relic = await createArtifact({
-      campaignId: campaign.id,
-      moduleId: module.id,
-      kind: 'note',
-      name: 'Relic Ledger',
-    });
-    await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Ember PDF',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [
-        {
-          type: 'chapter',
-          title: 'Chapter 1',
-          children: [{ type: 'artifact', artifactId: relic.id, include: fullInclude() }],
-        },
-      ],
-    });
-
-    const outcome = await sweepOrphanedArtifacts(module.id);
-
-    expect(outcome.deleted).toEqual([]);
-    expect(outcome.kept[0]?.reason).toBe(
-      'an outline node of the deliverable "Ember PDF"',
-    );
   });
 
   it('excludes ambiguity-shadowed rows from delete-all and refuses them loudly when attempted', async () => {

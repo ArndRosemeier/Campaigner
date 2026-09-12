@@ -66,8 +66,8 @@ export async function updateCampaign(id: string, patch: CampaignPatch): Promise<
  * Deletes a campaign and everything that hangs off it in one transaction:
  * its artifacts, those artifacts' revisions, its persona runs, its images
  * (M3-A), plus the campaign-anchored rows that carry its id but have no
- * delete path of their own — its modules, the modules' live battles and
- * their deliverable outlines. Everything else prunes only by reference;
+ * delete path of their own — its modules and the modules' live battles.
+ * Everything else prunes only by reference;
  * these tables key on `campaignId` directly, so leaving them behind would
  * strand permanent orphans that every backup re-exports forever.
  *
@@ -93,7 +93,6 @@ export async function deleteCampaign(id: string): Promise<void> {
       db.images,
       db.modules,
       db.battles,
-      db.deliverables,
       db.creatureImages,
       db.settings,
       db.moduleVersions,
@@ -125,7 +124,6 @@ export async function deleteCampaign(id: string): Promise<void> {
       await pruneOrphanedModuleVersions();
       await db.modules.where('campaignId').equals(id).delete();
       await db.battles.where('campaignId').equals(id).delete();
-      await db.deliverables.where('campaignId').equals(id).delete();
       const settings = await db.settings.get('settings');
       if (settings?.lastModule?.campaignId === id) {
         await db.settings.update('settings', { lastModule: null });
@@ -155,16 +153,14 @@ export interface GeneratedContentCounts {
   modules: number;
   battles: number;
   runs: number;
-  deliverables: number;
 }
 
 export async function describeGeneratedContent(campaignId: string): Promise<GeneratedContentCounts> {
-  const [artifacts, modules, battles, runs, deliverables] = await Promise.all([
+  const [artifacts, modules, battles, runs] = await Promise.all([
     listArtifactsByCampaign(campaignId),
     listModulesByCampaign(campaignId),
     db.battles.where('campaignId').equals(campaignId).toArray(),
     db.runs.where('campaignId').equals(campaignId).count(),
-    db.deliverables.where('campaignId').equals(campaignId).count(),
   ]);
   const kindCounts = new Map<string, number>();
   let pcCount = 0;
@@ -185,7 +181,6 @@ export async function describeGeneratedContent(campaignId: string): Promise<Gene
     modules: modules.length,
     battles: battles.length,
     runs,
-    deliverables,
   };
 }
 
@@ -200,7 +195,6 @@ export interface RemovedContentCounts {
   modules: number;
   battles: number;
   runs: number;
-  deliverables: number;
   /**
    * Cited creatures' presentation portraits this campaign held
    * (`db/creatureImages`, docs/11 D5 amendment): the rows ARE campaign state,
@@ -215,17 +209,17 @@ export interface RemovedContentCounts {
  * Fresh-generation wipe (owner-ordered "remove all"): deletes everything a
  * campaign's generation produced — every non-`pc` artifact (campaign- AND
  * module-owned, with revisions scrubbed through the artifact delete path),
- * every module row, every battle of the campaign, plus the campaign runs and
- * deliverable outlines that would otherwise dangle into deleted rows (the
- * `deleteCampaign` table set minus the campaign row itself) — while the Party
+ * every module row, every battle of the campaign, plus the campaign runs that
+ * would otherwise dangle into deleted rows (the `deleteCampaign` table set
+ * minus the campaign row itself) — while the Party
  * (`pc` artifacts, untouched with their revisions/images/links), the campaign
  * row, settings, personas and the global library survive.
  *
  * Transaction discipline (no half-applied wipe): in-flight module passes are
  * aborted BEFORE the transaction opens (a native-promise dynamic import must
  * never gap a Dexie scope), then the whole disposal is ONE `rw` transaction
- * over every touched table. Modules, artifacts, battles, runs and
- * deliverables are ALL re-listed INSIDE it — the dialog's counts never decide
+ * over every touched table. Modules, artifacts, battles and runs are ALL
+ * re-listed INSIDE it — the dialog's counts never decide
  * what goes — and any failure rolls the entire wipe back loudly (AGENTS rule
  * 1: a partial wipe with a success toast is the failure mode this exists to
  * prevent).
@@ -265,7 +259,6 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       db.battles,
       db.settings,
       db.runs,
-      db.deliverables,
       db.moduleVersions,
       // Creature presentation rows ride the scope: this wipe deletes them and
       // every per-row `deleteArtifact` below reaches the image prune, whose
@@ -293,7 +286,6 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       // the same pass, versions included.
       const modules = await db.modules.where('campaignId').equals(campaignId).toArray();
       const runCount = await db.runs.where('campaignId').equals(campaignId).count();
-      const deliverableCount = await db.deliverables.where('campaignId').equals(campaignId).count();
 
       // The existing artifact delete path per doomed row (nested: its tables
       // are a subset of this scope, so it joins this transaction): revision
@@ -316,11 +308,9 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       await pruneOrphanedModuleVersions();
       await db.modules.where('campaignId').equals(campaignId).delete();
       // Runs point at deleted artifacts/modules (targetArtifactId /
-      // placementModuleId) and deliverables belong to deleted modules (their
-      // covers may un-anchor campaign images) — both would dangle, so both
-      // go (deleteCampaign precedent).
+      // placementModuleId) — they would dangle, so they go (deleteCampaign
+      // precedent).
       await db.runs.where('campaignId').equals(campaignId).delete();
-      await db.deliverables.where('campaignId').equals(campaignId).delete();
       // Cited creatures' presentation rows are this campaign's own state and
       // go with it (docs/11 D5 amendment): the library rows and the shared
       // canonical portrait slots survive untouched, so the next campaign still
@@ -342,8 +332,8 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       // concept. It holds no generated content, and its campaign tag still
       // matches. (Clear workspace keeps it too; `deleteCampaign` clears it,
       // because there the campaign itself is gone.)
-      // Final image sweep: catches blobs orphaned by the battle/deliverable
-      // deletes above (covers, battlemaps) that no per-artifact prune saw.
+      // Final image sweep: catches blobs orphaned by the battle deletes above
+      // (covers, battlemaps) that no per-artifact prune saw.
       const imagesPruned = await pruneUnreferencedImages(campaignId);
 
       return {
@@ -355,7 +345,6 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
         modules: modules.length,
         battles: battles.length,
         runs: runCount,
-        deliverables: deliverableCount,
         creaturePortraitsCleared,
         imagesPruned,
       };

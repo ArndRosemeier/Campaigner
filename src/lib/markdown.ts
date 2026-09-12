@@ -31,7 +31,7 @@ export function markdownToText(markdown: string): string {
  * A PDF, a text export and a handout are RENDERINGS, so they print the
  * display and never the token: the token is the app's INTERNAL representation
  * (`[[…]]`), and one that reaches a reader is a leaked internal — the module /
- * deliverable pipeline has rendered the display since `mdToPdfmake` existed,
+ * module-PDF pipeline has rendered the display since `mdToPdfmake` existed,
  * and this function is what makes the single-artifact export agree with it
  * (docs/18 §2.3, docs/07 §Wiki-links in an exported document, docs/17 row 105).
  *

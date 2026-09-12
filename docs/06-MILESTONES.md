@@ -91,6 +91,13 @@ Run `pnpm lint && pnpm typecheck && pnpm test` before every commit.
   Genuinely corrupt live-kind rows still abort via the original aggregated
   ZodError; skipped rows' dependency citations leave with them so the
   abort-by-default check only ever sees landing content.
+- The RETIRED-TABLE form of the same rule (docs/17 row 108): a table the app no
+  longer HAS — `deliverables`, dropped by Dexie v21 — is counted in the RAW file
+  BEFORE tolerant parsing (`RETIRED_EXPORT_TABLES` + `retiredTableRows`; a
+  post-parse census would always read zero, because the tolerant shell strips
+  unknown keys) and reported as `Skipped N rows from the retired "deliverables"
+  table …`, so an old file imports everything else and says exactly what it
+  dropped.
 
 ## Non-goals (never in scope unless the user says so)
 

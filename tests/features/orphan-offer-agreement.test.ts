@@ -4,14 +4,12 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createDeliverable } from '@/db/deliverableRepo';
 import { createModule, saveSpine } from '@/db/moduleRepo';
 import { sweepOrphanedArtifacts, type OrphanSweepOutcome } from '@/db/orphanSweep';
 import { db } from '@/db/db';
 import {
   battleSchema,
   createModule as createModuleSchema,
-  fullInclude,
   newId,
   stampNewEntity,
   type Battle,
@@ -45,8 +43,8 @@ import { clearDatabase } from '../db/helpers';
  * Now ONE function (`evaluateOrphanGuards`) decides, and this file pins the
  * two surfaces per candidate on ONE fixture set covering every guard:
  * (1) campaign-wide mention, (2) ambiguity shadow, (3) battle portrait token,
- * (4) frozen seed fighter, (5) deliverable outline node, (6) encounter roster
- * (both `npc-ref` and rulebook `mobArtifactId`). Guards 3–5 plus the
+ * (4) frozen seed fighter, (5) encounter roster
+ * (both `npc-ref` and rulebook `mobArtifactId`). Guards 3–4 plus the
  * cross-module half of guard 1 need data the panel's props do not carry
  * (docs/18 §4 names the limitation), so the panel's agreement is pinned on
  * its EFFECTIVE OFFER: the read-time derivation composed with the refusals a
@@ -238,9 +236,9 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
    * ONE fixture set, every guard: `Echo` is mentioned by ANOTHER module's
    * prose (guard 1), `Doppel` twice (guard 2), `Tokened Wraith` on a battle
    * board (guard 3), `Seeded Wraith` as a frozen seed fighter (guard 4),
-   * `Relic Ledger` in a deliverable outline (guard 5), `Gate Guard` and
+   * `Gate Guard` and
    * `Goblin` cited by the surviving encounter's roster in both flavors
-   * (guard 6) — and `The Long Winter`, which nothing references, deletes.
+   * (guard 5) — and `The Long Winter`, which nothing references, deletes.
    */
   async function guardFixture(): Promise<{
     module: Module;
@@ -280,12 +278,6 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
       moduleId: module.id,
       kind: 'npc',
       name: 'Seeded Wraith',
-    });
-    const relic = await createArtifact({
-      campaignId: campaign.id,
-      moduleId: module.id,
-      kind: 'note',
-      name: 'Relic Ledger',
     });
     const guard = await createArtifact({
       campaignId: campaign.id,
@@ -343,21 +335,6 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
     await putBattle(campaign.id, other.id, { tokens: [tokenFor(tokened.id)] }, [
       { id: seeded.id, name: 'Seeded Wraith', maxHp: 9, initiativeBonus: 2 },
     ]);
-    await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Ember PDF',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [
-        {
-          type: 'chapter',
-          title: 'Chapter 1',
-          children: [{ type: 'artifact', artifactId: relic.id, include: fullInclude() }],
-        },
-      ],
-    });
-
     return { module, ids: { first: first.id, second: second.id, free: free.id } };
   }
 
@@ -379,13 +356,12 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
     expect(inUseReasonFor(view, 'Cave Fisher')).toBeNull();
     expect(view.hidden.map((row) => row.artifact.name)).toEqual(['Doppel', 'Doppel']);
 
-    // NOT derivable from these props (docs/18 §4): the cross-module mention,
-    // the battle carriers and the outline node are still offered until a
+    // NOT derivable from these props (docs/18 §4): the cross-module mention
+    // and the battle carriers are still offered until a
     // sweep has spoken — named here so the limitation cannot be forgotten.
     expect(offeredNames(view)).toEqual([
       'Cave Fisher',
       'Echo',
-      'Relic Ledger',
       'Seeded Wraith',
       'The Long Winter',
       'Tokened Wraith',
@@ -410,9 +386,6 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
     );
     expect(inUseReasonFor(view, 'Seeded Wraith')).toBe(
       'a frozen seed fighter on the battle of "Tide Gate"',
-    );
-    expect(inUseReasonFor(view, 'Relic Ledger')).toBe(
-      'an outline node of the deliverable "Ember PDF"',
     );
     for (const entry of view.group) {
       if (entry.inUseReason === null) continue;

@@ -6,9 +6,7 @@ import {
   listArtifactsByModule,
   listGlobalArtifacts,
 } from '@/db/artifactRepo';
-import { listDeliverablesByCampaign } from '@/db/deliverableRepo';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
-import { outlineArtifactIds } from '@/db/orphanSweep';
 import { db } from '@/db/db';
 import { buildWikiGraph } from '@/domain/wikiGraph';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
@@ -214,7 +212,7 @@ export async function promoteRosterUses(
   return promoted;
 }
 
-export type ReferenceVia = 'link' | 'relation' | 'roster' | 'battle' | 'outline';
+export type ReferenceVia = 'link' | 'relation' | 'roster' | 'battle';
 
 /**
  * The artifact ids a roster points at: its `npc-ref` entries' targets, and
@@ -246,8 +244,8 @@ export interface ReferencedOwnedArtifact {
  * set unions the wiki-link graph edges, artifact `links[]` (the Relations
  * editor), artifact BODY wiki-links, the encounter roster scan
  * (`rosterArtifactIds`: `npc-ref` targets — a `rulebook` entry cites the
- * library and can never point at an owned row), the battle token/seed-fighter
- * scan and deliverable outline artifact nodes. References from the module's OWN
+ * library and can never point at an owned row) and the battle token/seed-
+ * fighter scan. References from the module's OWN
  * encounters/battles do not count — those rows die with the module under
  * cascade.
  *
@@ -257,9 +255,6 @@ export interface ReferencedOwnedArtifact {
  * missing kind here is not a cosmetic gap: the dialog's third state is the
  * only warning before a cascade, so every kind of reference it cannot see is
  * a row destroyed while something still points at it.
- *
- * The outline walk is `orphanSweep.outlineArtifactIds` — the sweep's own
- * guard reading, not a second interpretation of the deliverable outline.
  */
 export async function modulesReferencingOwnedArtifacts(
   moduleId: Id,
@@ -320,14 +315,6 @@ export async function modulesReferencingOwnedArtifacts(
       if (hit !== undefined && ownedIds.has(hit.id)) mark(hit.id, 'link');
     }
   }
-
-  // Deliverable outline nodes: the campaign's outlines may carry a module row
-  // as a chapter/part node (the orphan sweep guards exactly this).
-  const outlineIds = new Set<Id>();
-  for (const deliverable of await listDeliverablesByCampaign(campaignId)) {
-    outlineArtifactIds(deliverable.outline, outlineIds);
-  }
-  for (const id of outlineIds) mark(id, 'outline');
 
   // Battles: live tokens + frozen seed-fighter rows on OTHER modules' boards.
   const battles = await db.battles.where('campaignId').equals(campaignId).toArray();

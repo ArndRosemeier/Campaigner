@@ -8,7 +8,6 @@ import {
   ROUTES,
   boardPath,
   canvasPath,
-  deliverablesPath,
   graphPath,
   workspacePath,
 } from '@/app/routes';
@@ -338,11 +337,12 @@ describe('route smoke sweep', () => {
     expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument();
   });
 
-  it('deliverables page mounts', async () => {
-    renderAppAt(deliverablesPath(world.campaignId));
-
-    expect(await screen.findByTestId('deliverables-page', {}, { timeout: 5_000 })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'New deliverable' })).toBeInTheDocument();
+  it('the retired deliverables route falls through to 404', async () => {
+    // The Deliverables page and its route are GONE (docs/17 row 108): the
+    // module PDF is generated from the module now, so an old bookmark lands
+    // on the app's own not-found page rather than a blank shell.
+    renderAppAt(`/c/${world.campaignId}/deliverables`);
+    expect(await screen.findByRole('heading', { name: 'Page not found' })).toBeInTheDocument();
   });
 
   it('rules page mounts with the seeded book', async () => {

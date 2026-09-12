@@ -25,7 +25,7 @@ failures loud; gate + one logical task per commit).
 | D8 | Bare-name wiki-link resolution across scopes, fixed precedence **module-owned → campaign → global**; no cross-scope ambiguity warnings (fix-01 keeps working within each scope). |
 | D9 | Persona runs may **target global artifacts** (`runs.campaignId` stays NOT NULL — the run is anchored where it started; the write lands on the global row). |
 | D10 | **Battles anchor per module**: `battles` gains `moduleId`, "Run battle" lives in the module view, battle route moves under the module reader. The `session` artifact kind is **removed** along with the play view. |
-| D11 | A campaign can **restart generation clean** ("Remove all generated content…", campaign settings danger zone): ONE transaction deletes every non-`pc` artifact (revisions scrubbed through the artifact delete path), every module row, every battle, and the campaign runs + deliverable outlines that would dangle — the Party (`pc` artifacts, untouched), the campaign row, settings, personas and the global library survive. The confirm lists live counts by kind + module/battle counts; the execute path re-lists inside the transaction, so any failure rolls the whole wipe back loudly. |
+| D11 | A campaign can **restart generation clean** ("Remove all generated content…", campaign settings danger zone): ONE transaction deletes every non-`pc` artifact (revisions scrubbed through the artifact delete path), every module row, every battle, and the campaign runs that would dangle — the Party (`pc` artifacts, untouched), the campaign row, settings, personas and the global library survive. The confirm lists live counts by kind + module/battle counts; the execute path re-lists inside the transaction, so any failure rolls the whole wipe back loudly. |
 
 ## M6-A — Storage: the ownership fields (v10, additive only)
 
@@ -88,7 +88,7 @@ failures loud; gate + one logical task per commit).
   `moduleId: null`).
 - Adopt/move preserve ids, images, revisions.
 - Fresh-generation wipe (D11): PCs survive with revisions/images/links;
-  modules + battles + runs + deliverables gone; artifact revisions of doomed
+  modules + battles + runs gone; artifact revisions of doomed
   rows scrubbed; orphaned campaign images pruned, library images untouched;
   returned counts match the execution-time recount; a mid-wipe failure rolls
   everything back and rejects.
@@ -126,7 +126,7 @@ failures loud; gate + one logical task per commit).
   renders, reference-listing confirm.
 - Battle lookup resolves a global monster; its tokens stay token-owned.
 
-## M6-D — Cross-scope runs, images, deliverables
+## M6-D — Cross-scope runs and images
 
 - **Runs** (D9): run targeting accepts global artifacts; engine writes land
   on the global row; `runs.campaignId` keeps anchoring the run to where it
@@ -138,7 +138,8 @@ failures loud; gate + one logical task per commit).
   implementation time, one breaking concern per version). Global artifacts
   carry their images; `pruneUnreferencedImages` gains a global pass tied to
   artifact deletion (D2: images follow their artifact's lifecycle).
-- **Deliverables / module PDFs**: module-owned artifacts included; global
+- **The module PDF** (docs/17 row 108; the deliverable outline is gone):
+  module-owned artifacts included; global
   artifacts only when explicitly added to the outline.
 - **Retrieval context**: persona context building may read global artifacts
   (read-only) when the scope control includes them.
@@ -148,7 +149,9 @@ failures loud; gate + one logical task per commit).
   another campaign's view of the same artifact reflects the edit (D7).
 - Global images survive campaign-scoped prunes; deleting the global
   artifact removes its images.
-- Deliverable outlines accept globals only explicitly.
+- A global Library row prints only when the module's own prose mentions it
+  (`[[…]]`) or an encounter roster cites it — never through an automatic
+  gallery/ledger sweep.
 
 ## M6-E — Play retirement (module-anchored battles, session removal, v11)
 
@@ -222,7 +225,7 @@ play mechanic and re-anchors battles:
 - **Delete**: `modulesReferencingOwnedArtifacts` unions wiki-graph edges
   (uncapped `buildWikiGraph`) + artifact `links[]` relations + artifact-body
   wiki-links + roster npc-ref/mobArtifactId scan + battle token/seed-fighter
-  scan + deliverable outline nodes, over the READER'S pool (campaign rows plus
+  scan, over the READER'S pool (campaign rows plus
   the global library, so a published encounter's citation counts); no stored
   index. The list dialog grows a third state listing referenced artifacts:
   [Promote & keep referenced, cascade rest] vs [Force-delete all]. Keep does
@@ -270,4 +273,4 @@ pnpm test` before every commit; push to `origin/main`.
 - Any duplication/copy of artifacts between scopes (D7 — import/export may
   revisit later, including pregen PC sharing from D6).
 - Sharing by reference between two campaigns without going global.
-- Transfer of personas/deliverables across scopes.
+- Transfer of personas across scopes.

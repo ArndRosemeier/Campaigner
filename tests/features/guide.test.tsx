@@ -81,7 +81,7 @@ describe('guide content registry', () => {
       if (link.route.kind === 'static') {
         expect(staticPaths.has(link.route.path)).toBe(true);
       } else {
-        expect(['workspace', 'modules', 'deliverables']).toContain(link.route.section);
+        expect(['workspace', 'modules']).toContain(link.route.section);
       }
     }
   });

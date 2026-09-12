@@ -810,6 +810,7 @@ describe('v14 → v15 migration (dungeon preset, docs/11 D10)', () => {
       id: 'settings',
       encounterMapAspect: '4:3',
       retiredSessionNotesRemoved: 0,
+      deliverablesRemoved: 0,
     });
     legacy.close();
 
@@ -1275,12 +1276,13 @@ describe('v18 → v19 migration (durable module document versions)', () => {
     legacy.close();
 
     // Opening the app's DB walks the chain to its head. v18 → v19 is additive
-    // (no upgrade function runs, no row is rewritten) and v19 → v20 (the
+    // (no upgrade function runs, no row is rewritten), v19 → v20 (the
     // creature tier, ledger row 106) finds no creature state in this fixture,
-    // so both are no-ops on these rows.
+    // and v20 → v21 (the deliverables table drop, ledger row 108) finds no
+    // `deliverables` table at all — so all three are no-ops on these rows.
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(20);
+    expect(db.verno).toBe(21);
 
     const module = await db.modules.get('00000000-0000-4000-8000-000000000b19');
     expect(module?.parts[0]?.markdown).toBe('Pre-undo part text.');
@@ -1465,7 +1467,9 @@ describe('v19 → v20 migration (the creature tier)', () => {
     await seedLegacyV19();
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(20);
+    // The chain walks to its head: v20 repaired the citations and v21 dropped
+    // the (empty here) `deliverables` table without touching creature state.
+    expect(db.verno).toBe(21);
 
     // 1. The slot answers to the creature IDENTITY now, not to a chunk id.
     const slot = await db.mobPortraits.get(SLOT);
@@ -1531,6 +1535,96 @@ describe('v19 → v20 migration (the creature tier)', () => {
     const settings = await db.settings.get('settings');
     expect(settings?.creatureCitationRepair?.citationsRewritten).toBe(1);
     expect(await db.creatureImages.where('campaignId').equals(CAMPAIGN).count()).toBe(1);
+    await db.delete();
+  }, 20000);
+});
+
+describe('v20 → v21 migration (the deliverables table is deleted)', () => {
+  const CAMPAIGN = '00000000-0000-4000-8000-000000000c21';
+  const DELIVERABLE = '00000000-0000-4000-8000-000000000d21';
+  const DELIVERABLE_2 = '00000000-0000-4000-8000-000000000e21';
+
+  /**
+   * A v20 database in the shape the app really wrote: the `deliverables` table
+   * with two saved module outlines, and a settings row with no report field.
+   */
+  async function seedLegacyV20(): Promise<void> {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(20).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &creatureKey',
+      moduleVersions: 'id, moduleId, createdAt',
+      creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('campaigns').put({
+      id: CAMPAIGN,
+      name: 'Ember',
+      system: 'dnd5e',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    for (const id of [DELIVERABLE, DELIVERABLE_2]) {
+      await legacy.table('deliverables').put({
+        id,
+        createdAt: 1,
+        updatedAt: 1,
+        campaignId: CAMPAIGN,
+        title: `Outline ${id.slice(-2)}`,
+        subtitle: '',
+        audience: 'gm',
+        coverImageId: null,
+        outline: [],
+      });
+    }
+    await legacy.table('settings').put({ id: 'settings' });
+    legacy.close();
+  }
+
+  it('drops the table and reports the LOUD count the shell shows once', async () => {
+    await seedLegacyV20();
+    const { db } = await import('@/db/db');
+    await db.open();
+    expect(db.verno).toBe(21);
+
+    // The table is GONE from the schema (not merely empty).
+    expect(db.tables.map((table) => table.name)).not.toContain('deliverables');
+
+    // NON-VACUITY: the rows really were there, so the count is a real census.
+    const settings = await db.settings.get('settings');
+    expect(settings?.deliverablesRemoved).toBe(2);
+
+    // Everything else survives untouched (the campaign row is the premise).
+    expect((await db.campaigns.get(CAMPAIGN))?.name).toBe('Ember');
+    await db.delete();
+  }, 20000);
+
+  it('reports ZERO for a database that never had a deliverable', async () => {
+    await seedLegacyV20();
+    // Delete the rows BEFORE the upgrade so the census has nothing to find.
+    const legacy = new Dexie('campaigner');
+    await legacy.open();
+    await legacy.table('deliverables').clear();
+    legacy.close();
+
+    const { db } = await import('@/db/db');
+    await db.open();
+    expect((await db.settings.get('settings'))?.deliverablesRemoved).toBe(0);
     await db.delete();
   }, 20000);
 });

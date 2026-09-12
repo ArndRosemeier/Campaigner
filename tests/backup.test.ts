@@ -14,6 +14,7 @@ import { getSettings, updateSettings } from '@/db/settingsRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { getPersona } from '@/db/personaRepo';
 import { backupFileName, buildBackup, importBackup } from '@/lib/backup';
+import { formatRetiredTableRows } from '@/lib/exportImport';
 import { putBookPdf } from '@/db/pdfRepo';
 import { createRulebook, createPackBook, finalizePackBook } from '@/db/rulebookRepo';
 import { sha256Hex } from '@/lib/hash';
@@ -288,6 +289,51 @@ describe('app backup', () => {
     expect((await db.modules.toArray()).some((row) => row.title === 'The Pre-Undo Vault')).toBe(true);
     expect(await db.moduleVersions.toArray()).toEqual([]);
     expect(result.tableCounts.moduleVersions).toBe(0);
+  });
+
+  it('still restores a pre-v21 zip carrying the retired `deliverables` table, loudly', async () => {
+    await seedBuiltInPersonas();
+    const campaign = await createCampaign({ name: 'Pre-v21 Ember', system: 'dnd5e' });
+    await createArtifact({ campaignId: campaign.id, kind: 'note', name: 'Kept note' });
+    const { bytes } = await buildBackup();
+
+    // Simulate a zip made BEFORE the deliverables concept was deleted: the
+    // manifest carries a `deliverables` table this build no longer has
+    // (docs/17 row 108). Nothing in `db.tables` can even name it, so without
+    // an explicit count those rows would vanish in silence.
+    const entries = unzipSync(bytes);
+    const manifest = JSON.parse(
+      new TextDecoder().decode(entries['campaigner-backup.json'] ?? new Uint8Array()),
+    ) as { data?: Record<string, unknown[]>; tableCounts?: Record<string, number> };
+    if (manifest.data === undefined || manifest.tableCounts === undefined) {
+      throw new Error('backup manifest is missing data/tableCounts');
+    }
+    manifest.data.deliverables = [
+      {
+        id: '00000000-0000-4000-8000-0000000000f1',
+        campaignId: campaign.id,
+        title: 'Pre-v21 outline',
+        subtitle: '',
+        audience: 'gm',
+        coverImageId: null,
+        outline: [],
+        createdAt: 1,
+        updatedAt: 1,
+      },
+    ];
+    manifest.tableCounts.deliverables = 1;
+    const oldZip = zipSync({ ...entries, 'campaigner-backup.json': strToU8(JSON.stringify(manifest)) });
+
+    await clearDatabase();
+    const result = await importBackup(new Uint8Array(oldZip));
+
+    // Restored, not crashed: the extra key is tolerated.
+    expect((await db.artifacts.toArray()).some((row) => row.name === 'Kept note')).toBe(true);
+    // LOUD: the skipped rows are counted and reported by table name.
+    expect(result.retiredRows).toEqual({ deliverables: 1 });
+    expect(formatRetiredTableRows(result.retiredRows)).toContain('retired "deliverables" table');
+    // And the table really is gone from this build.
+    expect(db.tables.map((table) => table.name)).not.toContain('deliverables');
   });
 
   it('heals legacy persona rows on restore and fails loudly on a truly invalid kind', async () => {

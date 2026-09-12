@@ -4,20 +4,16 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createDeliverable } from '@/db/deliverableRepo';
 import { saveModule } from '@/db/moduleRepo';
 import {
   createModule,
-  fullInclude,
   moduleDocumentText,
   modulePartSchema,
   moduleSpineSchema,
   recordedWritingModel,
   type AnyArtifact,
   type Artifact,
-  type Deliverable,
   type Module,
-  type OutlineNode,
   type StatBlock,
 } from '@/domain';
 import { buildModuleDefinition } from '@/lib/modulePdf';
@@ -27,7 +23,7 @@ import { clearDatabase } from '../db/helpers';
 
 /**
  * PROVENANCE, owner decision 3 (docs/17 row 93): the model ids are APP ONLY —
- * "NEVER in exported PDFs/deliverables; player-facing handouts stay clean."
+ * "NEVER in exported PDFs; player-facing handouts stay clean."
  *
  * The chosen shape is that the value has NO route into a document: the
  * builders receive domain rows and pre-rendered strings and read explicit
@@ -95,8 +91,7 @@ function owned(artifact: AnyArtifact): Artifact {
   return artifact;
 }
 
-async function seedDeliverable(): Promise<{
-  deliverable: Deliverable;
+async function seedModuleDocument(): Promise<{
   artifacts: AnyArtifact[];
   module: Module;
   plain: Artifact;
@@ -148,8 +143,9 @@ async function seedDeliverable(): Promise<{
   });
 
   // A real module row whose spine + part BOTH carry provenance: the module is
-  // the other half of the owner's request, and its document text feeds the
-  // deliverable (and the model context) — so it is the likeliest leak route.
+  // the other half of the owner's request, and its document text IS the
+  // printed document (docs/17 row 108) and the model context — so it is the
+  // likeliest leak route.
   const draft = createModule({
     campaignId: campaign.id,
     title: 'The Drowned Vault',
@@ -158,10 +154,25 @@ async function seedDeliverable(): Promise<{
     levelMax: 3,
     sizeDial: 'standard',
   });
+  const coverRow = await buildStoredImage({
+    campaignId: campaign.id,
+    blob: new Blob(['cover'], { type: 'image/png' }),
+    mimeType: 'image/png',
+    width: 8,
+    height: 8,
+    model: 'probe-model-image-88be21',
+    source: 'generated',
+  });
   const module = await saveModule({
     ...draft,
     spine: moduleSpineSchema.parse({
-      premise: 'A drowned vault beneath the tower.',
+      // The prose MENTIONS the rows below, which is what puts them in the
+      // document at all (docs/17 row 108: the module's own prose is the
+      // scoping rule, not a hand-built outline).
+      premise:
+        'A drowned vault beneath the tower. The party meets [[Vexra]] by the ' +
+        '[[Old Tower]], then springs the [[Pier Ambush]]; the ' +
+        '[[GM cheat sheet]] holds the bell.',
       themes: [],
       partPlan: [{ title: 'The Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
       writerModel: PROBE.spine,
@@ -176,33 +187,11 @@ async function seedDeliverable(): Promise<{
         writerModel: PROBE.part,
       }),
     ],
-  });
-
-  const outline: OutlineNode[] = [
-    {
-      type: 'chapter',
-      title: 'Act I',
-      children: [
-        { type: 'part', title: 'The Dockyards', children: [] },
-        // The module's own document text, exactly as the deliverable carries it.
-        { type: 'text', markdown: moduleDocumentText(module) },
-        { type: 'artifact', artifactId: location.id, include: fullInclude() },
-        { type: 'artifact', artifactId: npc.id, include: fullInclude() },
-        { type: 'artifact', artifactId: encounter.id, include: fullInclude() },
-        { type: 'artifact', artifactId: note.id, include: fullInclude() },
-      ],
-    },
-  ];
-  const deliverable = await createDeliverable({
-    campaignId: campaign.id,
-    title: 'Beneath the Docks',
-    subtitle: 'An urban crawl',
-    audience: 'gm',
-    coverImageId: null,
-    outline,
+    // The module's OWN cover slot: the image half of the request, on the row
+    // the document is built from.
+    coverImageId: coverRow.id,
   });
   return {
-    deliverable,
     artifacts: [location, npc, encounter, note],
     module,
     plain: location,
@@ -212,11 +201,11 @@ async function seedDeliverable(): Promise<{
 beforeEach(clearDatabase);
 
 describe('model ids never reach a delivered document', () => {
-  it('the module/gm deliverable definition carries no id — and the rows really do have one', async () => {
-    const { deliverable, artifacts, module } = await seedDeliverable();
+  it('the module definition carries no id — and the rows really do have one', async () => {
+    const { artifacts, module } = await seedModuleDocument();
 
     // NON-VACUITY: the ids exist on the rows and the module document text is
-    // in the deliverable, so the negative below is a real exclusion.
+    // what the definition prints, so the negative below is a real exclusion.
     expect(artifacts.map((artifact) => recordedWritingModel(artifact.writerModel))).toEqual([
       PROBE.location,
       PROBE.npc,
@@ -230,18 +219,12 @@ describe('model ids never reach a delivered document', () => {
     expect(documentText).toContain('The party climbs down into the wet dark.');
 
     // The real builder, over content that carries provenance.
-    const embedded = await buildStoredImage({
-      campaignId: null,
-      blob: new Blob(['cover'], { type: 'image/png' }),
-      mimeType: 'image/png',
-      width: 8,
-      height: 8,
-      model: 'probe-model-image-88be21',
-      source: 'generated',
-    });
-    const definition = buildModuleDefinition(deliverable, artifacts, {
-      cover: 'data:image/png;base64,AAAA',
-      [embedded.id]: 'data:image/png;base64,AAAA',
+    const coverId = module.coverImageId;
+    if (coverId === null) throw new Error('module cover missing');
+    const definition = buildModuleDefinition({
+      module,
+      artifacts,
+      images: { dataUrls: { [coverId]: 'data:image/png;base64,AAAA' }, failures: [] },
     });
     const text = serialize(definition);
 
@@ -258,7 +241,7 @@ describe('model ids never reach a delivered document', () => {
   });
 
   it('the GM-notes and player-handout definitions never print the id', async () => {
-    const { artifacts, plain } = await seedDeliverable();
+    const { artifacts, plain } = await seedModuleDocument();
     const npcRow = artifacts.find((artifact) => artifact.kind === 'npc');
     if (npcRow === undefined) throw new Error('npc artifact missing');
     const withNpc = owned(npcRow);
@@ -289,7 +272,7 @@ describe('model ids never reach a delivered document', () => {
   });
 
   it('the artifact PDF builder reads no provenance field from the row', async () => {
-    const { artifacts } = await seedDeliverable();
+    const { artifacts } = await seedModuleDocument();
     // Structural pin, independent of the probe strings: the artifact's own
     // serialized row minus provenance equals what the definition contains, so
     // a future "just spread the artifact in" refactor trips here.
@@ -308,8 +291,8 @@ describe('model ids never reach a delivered document', () => {
     }
   });
 
-  it('the module document text — model context and deliverable source — excludes the ids', async () => {
-    const { module } = await seedDeliverable();
+  it('the module document text — model context and the printed document — excludes the ids', async () => {
+    const { module } = await seedModuleDocument();
     const text = moduleDocumentText(module);
     for (const probe of [PROBE.spine, PROBE.part]) expect(text).not.toContain(probe);
     expect(text).not.toContain('writerModel');
@@ -319,8 +302,8 @@ describe('model ids never reach a delivered document', () => {
   });
 
   it('the persisted artifact rows keep the ids (the exclusion is at render time, not a wipe)', async () => {
-    const { deliverable } = await seedDeliverable();
-    const rows = await listArtifactsByCampaign(deliverable.campaignId);
+    const { module } = await seedModuleDocument();
+    const rows = await listArtifactsByCampaign(module.campaignId);
     const recorded = rows.map((row) => row.writerModel).filter((value) => value !== '');
     expect(recorded).toHaveLength(4);
     expect(recorded).toContain(PROBE.npc);

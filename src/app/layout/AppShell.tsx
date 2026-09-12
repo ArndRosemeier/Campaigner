@@ -82,6 +82,30 @@ export function AppShell(): JSX.Element {
   }, []);
 
   useEffect(() => {
+    // The v21 migration notice (docs/17 row 108): the Dexie upgrade DROPPED
+    // the `deliverables` table, because the module is now the PDF's document
+    // model and the outline has no reader left. The upgrade body cannot toast
+    // (it runs before React exists, inside Dexie), so it wrote the removed row
+    // count into settings; this reads it ONCE and says what happened, in the
+    // open. Those rows were the owner's own work — a table that vanished
+    // without a word is the silent-loss shape AGENTS rule 1 forbids.
+    void readSettings()
+      .then(async (settings) => {
+        const removed = settings.deliverablesRemoved;
+        if (removed === 0) return;
+        toastInfo(
+          `The deliverables table was removed — its ${String(removed)} saved module ${removed === 1 ? 'outline' : 'outlines'} ${
+            removed === 1 ? 'is' : 'are'
+          } gone. A module PDF is now generated from the module itself, so no outline is needed; nothing else changed.`,
+        );
+        await updateSettings({ deliverablesRemoved: 0 });
+      })
+      .catch((error: unknown) => {
+        toastError('Could not report the deliverables migration', error);
+      });
+  }, []);
+
+  useEffect(() => {
     // ONE loud migration report (docs/11 D7): the core-mob arc's Dexie upgrade
     // rewrote citations that pointed at a retired bestiary creature row and
     // deleted those rows as cache. The upgrade body cannot toast (it runs

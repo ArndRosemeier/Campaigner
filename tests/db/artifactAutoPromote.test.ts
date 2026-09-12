@@ -6,7 +6,6 @@ import { createModule as createModuleSchema, encounterDataSchema, newId } from '
 import type { Id, MonsterEntry } from '@/domain';
 import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { createDeliverable } from '@/db/deliverableRepo';
 import { createModule, deleteModule, getModule, patchModule } from '@/db/moduleRepo';
 import {
   modulesReferencingOwnedArtifacts,
@@ -32,15 +31,6 @@ const toastErrorMock = vi.mocked(toastError);
 let campaignId: Id;
 let moduleA: Id;
 let moduleB: Id;
-
-/** One artifact outline node of a deliverable (all facets on). */
-function artifactNode(artifactId: Id) {
-  return {
-    type: 'artifact' as const,
-    artifactId,
-    include: { body: true, data: true, statBlocks: true, images: true },
-  };
-}
 
 /** One encounter data block (module- or campaign-scoped) carrying a roster. */
 function encounterData(monsters: unknown[]) {
@@ -343,27 +333,6 @@ describe('modulesReferencingOwnedArtifacts (delete scan)', () => {
 });
 
 describe('modulesReferencingOwnedArtifacts — reference kinds the old scan missed', () => {
-  it("sees a deliverable outline node (the sweep's own guard reading, shared)", async () => {
-    const chapter = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Outline Hero' });
-    const lonely = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Uncited Extra' });
-    await createDeliverable({
-      campaignId,
-      title: 'Beneath the Docks',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [
-        { type: 'chapter', title: 'Act I', children: [artifactNode(chapter.id)] },
-        { type: 'text', markdown: 'nothing to see' },
-      ],
-    });
-
-    const found = await modulesReferencingOwnedArtifacts(moduleA);
-    const byId = new Map(found.map((entry) => [entry.artifact.id, entry.via]));
-    expect(byId.get(chapter.id)).toBe('outline');
-    expect(byId.has(lonely.id)).toBe(false);
-  });
-
   it("sees artifact links[] entries and artifact body wiki-links (buildWikiGraph reads module prose only)", async () => {
     const related = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Related Sage' });
     const mentioned = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Body Mention' });
@@ -408,26 +377,28 @@ describe('modulesReferencingOwnedArtifacts — reference kinds the old scan miss
     expect(byId.has(lonely.id)).toBe(false);
   });
 
-  it("cascade no longer silently destroys a row a deliverable outline still points at", async () => {
-    const chapter = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Outline Hero' });
-    await createDeliverable({
+  it("cascade no longer silently destroys a row another module's roster still points at", async () => {
+    const hero = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Roster Hero' });
+    // A SECOND module's encounter cites the row: before this arc the scan
+    // returned [] for a roster-only reference, so the dialog offered plain
+    // cascade/keep and the citation dangled.
+    await createArtifact({
       campaignId,
-      title: 'Beneath the Docks',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [artifactNode(chapter.id)],
+      moduleId: moduleB,
+      kind: 'encounter',
+      name: 'The Reckoning',
+      data: encounterData([
+        { name: 'Roster Hero', count: 1, notes: '', treasure: '', source: { type: 'npc-ref', artifactId: hero.id } },
+      ]),
     });
-    // Before this arc the scan returned [] here, so the dialog offered plain
-    // cascade/keep and the outline node dangled.
     const found = await modulesReferencingOwnedArtifacts(moduleA);
-    expect(found.map((entry) => entry.artifact.id)).toEqual([chapter.id]);
+    expect(found.map((entry) => entry.artifact.id)).toEqual([hero.id]);
 
     await deleteModule(moduleA, 'promote-referenced');
 
     expect(await getModule(moduleA)).toBeUndefined();
     // The referenced row survives as a shared campaign row.
-    expect((await getAnyArtifact(chapter.id))?.moduleId).toBeNull();
+    expect((await getAnyArtifact(hero.id))?.moduleId).toBeNull();
   });
 });
 

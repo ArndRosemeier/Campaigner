@@ -33,7 +33,7 @@
  *     (`patchModulePartText`, the artifact editor's autosave) leave the field
  *     alone by omission — only a MODEL write sets it.
  *   - The third decision, verbatim: APP ONLY — never in an exported
- *     PDF/deliverable. Player-facing handouts stay clean. The pdfmake builders
+ *     module PDF. Player-facing handouts stay clean. The pdfmake builders
  *     (`lib/modulePdf`, `lib/pdfExport`) never receive this value because they
  *     build from domain rows and rendered strings; the exclusion is pinned by
  *     `tests/lib/provenance-export.test.ts`.

@@ -392,6 +392,15 @@ export const settingsSchema = z.object({
   /** v11 migration notice, consumed once by AppShell after it is shown. */
   retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
   /**
+   * The v21 migration notice (docs/17 row 108): how many rows the dropped
+   * `deliverables` table held, written by the Dexie upgrade body and consumed
+   * once by AppShell (which resets it to 0). The deliverables CONCEPT is gone
+   * with the module being its own document model, so those rows have no
+   * reader — but a drop the owner cannot see is silent loss, and his work was
+   * in that table. 0 = nothing to report.
+   */
+  deliverablesRemoved: z.number().int().nonnegative().default(0),
+  /**
    * The one-shot core-mob citation repair report (docs/11 D7), consumed once by
    * AppShell and then reset to null. `null` = nothing to report.
    */
@@ -468,6 +477,7 @@ export function defaultSettings(): Settings {
     runExtras: { image: false, statBlock: false, mobPortraits: false },
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
+    deliverablesRemoved: 0,
     creatureCitationRepair: null,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,

@@ -9,7 +9,7 @@ import { getImage } from '@/db/imageRepo';
 import { createModule as saveModuleRow, deleteModule, getModule } from '@/db/moduleRepo';
 import { buildCampaignExport, importExport } from '@/lib/exportImport';
 import { buildModuleDefinition } from '@/lib/modulePdf';
-import { createModule, newId, type Deliverable, type Id } from '@/domain';
+import { createModule, newId, type Id } from '@/domain';
 import { clearDatabase } from './helpers';
 
 /**
@@ -227,38 +227,31 @@ describe('cover storage honesty', () => {
     ]);
   });
 
-  it('the module PDF cover page prefers the deliverable cover, then the module fallback', () => {
-    const deliverable = {
-      id: newId(),
+  it('the module PDF cover page prints the module cover — the module is the document now', () => {
+    // The deliverable-carried cover and its `fallbackCoverImageId` are gone
+    // with the deliverables concept (docs/17 row 108): the module's OWN
+    // `coverImageId` is the one cover slot the module PDF reads.
+    const base = createModule({
       campaignId: newId(),
       title: 'Vault PDF',
-      subtitle: 'A module',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [],
-      createdAt: 1,
-      updatedAt: 1,
-    } satisfies Deliverable;
-    const moduleArt = 'data:image/jpeg;base64,bW9kdWxl';
-    const deliverableArt = 'data:image/jpeg;base64,ZGVsaXZlcmFibGU';
-
-    // No art anywhere: no image on the cover page.
-    expect(JSON.stringify(buildModuleDefinition(deliverable, [], {}))).not.toContain('data:image');
-    // Fallback art lands on the cover page.
-    const fallbackId = newId();
-    const withFallback = buildModuleDefinition(deliverable, [], { [fallbackId]: moduleArt }, {
-      fallbackCoverImageId: fallbackId,
+      concept: 'A module',
+      levelMin: 1,
+      levelMax: 1,
+      sizeDial: 'sketch',
     });
-    expect(JSON.stringify(withFallback)).toContain(moduleArt);
-    // The deliverable's own cover wins over the fallback.
+    const moduleArt = 'data:image/jpeg;base64,bW9kdWxl';
     const ownId = newId();
-    const withOwn = buildModuleDefinition(
-      { ...deliverable, coverImageId: ownId },
-      [],
-      { [ownId]: deliverableArt, [fallbackId]: moduleArt },
-      { fallbackCoverImageId: fallbackId },
+
+    // No cover: no image on the cover page, and the cover says so loudly.
+    expect(JSON.stringify(buildModuleDefinition({ module: base, artifacts: [] }))).not.toContain(
+      'image/jpeg',
     );
-    expect(JSON.stringify(withOwn)).toContain(deliverableArt);
-    expect(JSON.stringify(withOwn)).not.toContain(moduleArt);
+    // The module's own cover lands on the cover page.
+    const withOwn = buildModuleDefinition({
+      module: { ...base, coverImageId: ownId },
+      artifacts: [],
+      images: { dataUrls: { [ownId]: moduleArt }, failures: [] },
+    });
+    expect(JSON.stringify(withOwn)).toContain(moduleArt);
   });
 });

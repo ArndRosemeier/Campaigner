@@ -14,7 +14,7 @@ export type GuideAppRoute =
   | { kind: 'static'; path: string }
   /** Campaign-scoped: resolves against the most recently updated campaign;
       renders as a disabled hint while no campaign exists. */
-  | { kind: 'campaign'; section: 'workspace' | 'modules' | 'deliverables' };
+  | { kind: 'campaign'; section: 'workspace' | 'modules' };
 
 export interface GuideAppLink {
   label: string;
@@ -245,12 +245,12 @@ export const GUIDE_CHAPTERS: readonly GuideChapter[] = [
       {
         heading: 'Print',
         markdown:
-          'Deliverables → "Seed from module" turns the finished module into a printable outline: the premise as intro, one chapter per part with its resolved entities attached. Export GM notes or player handouts as PDF.',
+          'The module canvas header → "Module PDF" prints the module itself: cover, contents, the premise, the part plan, every part in order, the artifacts its prose owns or mentions (with map plates at the encounters), the NPC gallery and the treasure ledger. The same button offers the player version, which leaves out the planning and the secrets. Individual artifacts still export GM notes or a player handout from the campaign tree.',
       },
     ],
     appLink: {
-      label: 'Open Deliverables in the app',
-      route: { kind: 'campaign', section: 'deliverables' },
+      label: 'Open the modules in the app',
+      route: { kind: 'campaign', section: 'modules' },
     },
     checkpoint: 'You are done when the module has survived a session or a printout — welcome to the loop. The next module automates what you just learned.',
   },

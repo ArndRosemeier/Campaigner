@@ -24,8 +24,6 @@ export const ROUTES = {
   /** Document co-authoring canvas for ONE module (whole-module document,
    * 08 §Module canvas). */
   canvas: '/c/:campaignId/m/:moduleId/canvas',
-  /** Deliverable builder for module PDFs (M3-D). */
-  deliverables: '/c/:campaignId/deliverables',
   /** Module list (M4). */
   modules: '/c/:campaignId/modules',
   /** Module reader for one module (M4). */
@@ -119,11 +117,6 @@ export function canvasChatPath(
   return `/c/${encodeURIComponent(campaignId)}/m/${encodeURIComponent(moduleId)}/canvas?chat=open`;
 }
 
-/** Path of the deliverable builder for a given campaign (M3-D). */
-export function deliverablesPath(campaignId: string): `/c/${string}/deliverables` {
-  return `/c/${encodeURIComponent(campaignId)}/deliverables`;
-}
-
 /** Path of the module list for a given campaign (M4). */
 export function modulesPath(campaignId: string): `/c/${string}/modules` {
   return `/c/${encodeURIComponent(campaignId)}/modules`;
@@ -175,7 +168,6 @@ export function campaignIdFromPath(pathname: string): string | undefined {
     matchPath(ROUTES.battle, pathname)?.params.campaignId ??
     matchPath(ROUTES.board, pathname)?.params.campaignId ??
     matchPath(ROUTES.canvas, pathname)?.params.campaignId ??
-    matchPath(ROUTES.deliverables, pathname)?.params.campaignId ??
     matchPath(ROUTES.modules, pathname)?.params.campaignId ??
     matchPath(ROUTES.module, pathname)?.params.campaignId ??
     matchPath(ROUTES.workspace, pathname)?.params.campaignId

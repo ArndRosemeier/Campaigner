@@ -68,6 +68,7 @@ import {
   parseZipExport,
   withImportMitigation,
   type DependencyPolicy,
+  formatRetiredTableRows,
 } from '@/lib/exportImport';
 import { groupCitationsByArtifact, type DependencyAnalysis } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
@@ -115,6 +116,10 @@ export function CampaignPickerPage(): JSX.Element {
         ? await importZip(payload.bytes, { dependencyPolicy: policy })
         : await importExport(payload.raw, {}, { dependencyPolicy: policy });
     toastSuccess(`Imported ${result.createdArtifacts} artifact(s) as a new campaign`);
+    // Retired tables (docs/17 row 108): an older file may still carry rows for
+    // a table this build deleted. Skipped LOUDLY, with the count.
+    const retiredNote = formatRetiredTableRows(result.retiredRows);
+    if (retiredNote !== null) toastInfo(retiredNote);
     if (result.skippedRetired > 0) {
       // Retired-row tolerance (M2 import rules): the skip is never silent —
       // the count and the skipped record names ride alongside success.

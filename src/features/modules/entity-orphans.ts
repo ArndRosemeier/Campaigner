@@ -41,7 +41,7 @@ import {
  * as in use (docs/08 §M4-C). Two guards are derivable from the panel's props
  * — the ambiguity shadow and the encounter roster. The rest (the campaign-wide
  * mention gate, which needs the campaign's OTHER modules' prose; battle
- * tokens/seed fighters; deliverable outline nodes) are NOT: their refusals
+ * tokens/seed fighters) are NOT: their refusals
  * arrive with a sweep's outcome and are held in the panel's view state
  * (`orphanOfferView`), so a refusal never leaves the same rows offered again.
  */
@@ -79,11 +79,10 @@ export const NO_SWEEP_REFUSALS: ReadonlyMap<Id, string> = new Map<Id, string>();
  * - `campaignModules: [module]` — this module's prose only; the campaign-wide
  *   gate needs the campaign's OTHER modules' prose, which the props do not
  *   carry;
- * - `battles: []` and an empty outline map — battle boards and deliverable
- *   outlines are not artifacts.
+ * - `battles: []` — battle boards are not artifacts.
  * The roster guard and the ambiguity shadow ARE complete here (the pool holds
  * every campaign encounter), which is why the owner's case is fixed at read
- * time; the three underivable guards are closed by the panel's recorded
+ * time; the two underivable guards are closed by the panel's recorded
  * refusals after the first sweep (`orphanOfferView`) and named as a
  * limitation in docs/18 §4.
  */
@@ -96,7 +95,6 @@ export function panelOrphanGuardInput(
     campaignModules: [module],
     pool: artifacts,
     battles: [],
-    deliverableNodeTitles: new Map<Id, string>(),
   };
 }
 

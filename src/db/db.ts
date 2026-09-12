@@ -7,7 +7,6 @@ import type {
   Campaign,
   ChunkEmbedding,
   CreatureImage,
-  Deliverable,
   Module,
   MobPortraitCacheEntry,
   ModuleDocumentVersion,
@@ -66,6 +65,12 @@ import { repairCreatureCitations } from '@/db/creatureRepair';
  * table — durable whole-module-document snapshots taken before every AI
  * change (docs/18 §2.3). Additive store, no migration: the table starts
  * empty and pre-v19 databases carry no undo history.
+ *
+ * Version 21 (docs/17 row 108): the `deliverables` table is DROPPED. The
+ * module IS the PDF's document model, so the outline table (M3-D) has no
+ * reader left; the upgrade counts the rows it removed into
+ * `settings.deliverablesRemoved`, which `AppShell` reports once — a table
+ * drop is never silent.
  */
 export class CampaignerDB extends Dexie {
   campaigns!: Table<Campaign, Id>;
@@ -77,7 +82,6 @@ export class CampaignerDB extends Dexie {
   embeddings!: Table<ChunkEmbedding, string>;
   personas!: Table<Persona, Id>;
   runs!: Table<PersonaRun, Id>;
-  deliverables!: Table<Deliverable, Id>;
   modules!: Table<Module, Id>;
   battles!: Table<Battle, Id>;
   pdfFiles!: Table<StoredPdf, Id>;
@@ -677,6 +681,53 @@ export class CampaignerDB extends Dexie {
         }
         // 2. The citation repair (docs/11 D7) — the incident's own medicine.
         await repairCreatureCitations({ tx });
+      });
+
+    // **The deliverables table is GONE** (owner decision, docs/17 row 108:
+    // "no need to have 'deliverables' at all, just export decisions if
+    // needed"). The module IS the document, so the outline model that stood
+    // between a module and its PDF — its own table, its own domain shape, its
+    // own editor page — is deleted rather than kept in sync with the module
+    // forever.
+    //
+    // The rows cannot follow the concept: they hold a user-curated OUTLINE no
+    // longer has a reader, and keeping the table keeps the concept. So the
+    // upgrade DROPS it and COUNTS what it dropped. The count is written to
+    // settings and read ONCE by the app shell (`AppShell` —
+    // `retiredSessionNotesRemoved`'s precedent) because an upgrade body runs
+    // inside Dexie, before React exists, and therefore cannot toast:
+    // `deliverablesRemoved` is the owner's account of what the migration
+    // deleted. A silent table drop is exactly the silent-loss shape AGENTS
+    // rule 1 forbids — this is the loud form.
+    this.version(21)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: null,
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, &moduleId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        const removed = await tx.table('deliverables').count();
+        const settings = tx.table('settings');
+        const existing = (await settings.get('settings')) as Record<string, unknown> | undefined;
+        await settings.put({
+          ...(existing ?? {}),
+          id: 'settings',
+          deliverablesRemoved: removed,
+        });
       });
   }
 }

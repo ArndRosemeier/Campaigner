@@ -35,7 +35,7 @@ cover hero and the campaign cover art (`features/images/use-image-model.ts` +
 `components/writer-model-id.WriterModelId`; the details are in docs/05
 §Provenance captions). The field itself is unchanged — no schema edit, no
 migration — and `''` (uploads, and any row written before) shows NOTHING. The
-caption is app-only: it is never part of an exported PDF or deliverable.
+caption is app-only: it is never part of an exported PDF.
 
 - `ArtifactBase` gains `imageIds: Id[]` and `coverImageId: Id | null`.
   Migration: default `[]` / `null` on all existing artifacts (upgrade fn).
@@ -320,151 +320,181 @@ the page), with "Pin to Assistant" available.
 
 ---
 
-## M3-D — Module PDF deliverable
+## M3-D — The module PDF (the module IS the document)
 
 Modeled on how commercial adventure modules are actually built — the reference
 here is the Age of Ashes hardcover in `Sample rules/` (Zeit der Asche, 554
 pages): curated chapter/part hierarchy, area entries with difficulty budgets in
 the header, boxed read-aloud prose, inline stat blocks, per-area labeled
 sections (Treasure / Development), and auto-generated back matter (NPC gallery,
-treasure ledger). A publishable adventure-module PDF built from an explicit,
-user-curated outline — **never derived implicitly from the tree**.
+treasure ledger).
 
-### New entity
+**The document is DERIVED, not authored** (owner's decision, verbatim: *"I think
+this can be completely simplified, no need to have 'deliverables' at all, just
+export decisions if needed."* — docs/17 row 108). There is no deliverable
+entity, no outline, no page, no route and no nav entry: the module row already
+carries the premise, the part plan and the parts, and its artifacts are already
+in the tree, so the PDF is a RENDER FUNCTION over what exists. A second authored
+copy of the module could only drift from it.
 
-```ts
-interface Deliverable extends BaseEntity {
-  campaignId: Id;
-  title: string;
-  subtitle: string;
-  audience: 'gm' | 'player';    // player: secrets/GM-only stripped
-  coverImageId: Id | null;
-  outline: OutlineNode[];
-}
-type OutlineNode =
-  | { type: 'chapter'; title: string; children: OutlineNode[] }   // page-break banner, ToC entry
-  | { type: 'part'; title: string; children: OutlineNode[] }      // group header inside a chapter, no page break
-  | { type: 'artifact'; artifactId: Id; include: { body: boolean; data: boolean; statBlocks: boolean; images: boolean } }
-  | { type: 'text'; markdown: string }    // interstitial prose
-  | { type: 'gallery'; gallery: 'npcs' | 'treasure' };            // auto-generated back matter
-// table: deliverables: 'id, campaignId'
-```
+### The source of the document
 
-The node set mirrors the book's skeleton: **chapter** = Kapitel (banner page),
-**part** = Teil (grouping header), **gallery nodes** are the back matter the
-book puts in appendices — `npcs` is the NSC-Galerie (every NPC artifact, stat
-box each), `treasure` is the Schätze appendix (a ledger aggregated from the
-`treasure` fields of all included encounter artifacts).
+| Printed | Read from |
+|---|---|
+| Cover (title, concept, system, "Compiled with Campaigner · date") | the module row + optional `coverImageId` |
+| Contents | pdfmake `toc` over the chapters below (real page numbers) |
+| Premise | `module.spine.premise` |
+| Part plan | `module.spine.partPlan` (GM document only) |
+| Parts | `module.parts`, assembled with `spine.partPlan` through `assembleModulePartsDocument` and re-split with `splitPartsDocument` |
+| Kind chapters (locations, events, encounters, factions, party; plot arcs and notes GM-only) | the artifact pool, restricted to rows the module's own text MENTIONS (`[[…]]`) plus rows owned by the module (`moduleId`) |
+| Map plates | `encounter.data.mapImageId`, else the live battle's `board.mapImageId` |
+| NPC gallery / Treasure ledger | the printed NPCs / the `treasure` fields of the printed encounters (ledger: GM only) |
 
-### Wiki-links in an exported document — the DISPLAY rule
+The parts are read through the **canvas's own seam** on purpose: the stored
+document the canvas edits carries `==========` separators and `[Part n of total]`
+scaffold labels, and printing that text would put the app's internal editing
+scaffolding on a reader's page. `splitPartsDocument` is what removes it, so the
+module PDF and the canvas can never disagree about where a part begins.
 
-**An export renders the DISPLAY text of a wiki token, never the token itself**
-(owner's standing rule, docs/17 row 105). `[[Name]]` exports as the name,
-`[[Name|display]]` as the display — in every export, through ONE
-implementation per pipeline:
+### GM and player: ONE code path, audience as an option
 
-- module and deliverable PDFs → `lib/mdToPdfmake` (bold display runs; docs/08
-  §M4-D);
-- the single-artifact **GM notes** and **player handout** PDFs (06-MILESTONES
-  M2) → `lib/markdown.markdownToDisplayText`, which is `markdownToText` plus
-  `lib/wikilinks.stripWikiLinks` — never a second `\[\[…\]\]` regex at an
-  export site.
+`buildModulePdf(module, artifacts, generate, { audience })` — the audience is an
+argument to the ONE builder (`ModulePdfAudience = 'gm' | 'player'`), never a
+second renderer. The player document omits:
 
-A PDF is a RENDERING: the `[[…]]` token is the app's INTERNAL representation,
-so one that reaches a reader has leaked that internal. Text that only LOOKS
-like a token (`[[ not even this one`, an unclosed `[[`) is not a token and
-stays literal. The single-artifact export printed the token verbatim until row
-105 — the defect row 100's arc found and recorded (docs/18 §4) — and the
-faithful-source stripper `markdownToText` remains the image-prompt builder's
-input, where nothing is read by the owner and the token is the only place the
-target's NAME survives.
+- artifacts tagged `gm-only`;
+- every `note` artifact, every `plotArc` artifact;
+- faction `methods`; encounter `tactics`, `treasure`, `terrain`; PC `notes`;
+- the part plan and the treasure ledger (both are GM planning surfaces).
 
-### Rendering conventions (the book's craft, mapped to pdfmake)
+Maps stay in BOTH documents. Two honest consequences of "the display text of a
+token, verbatim":
 
-- **Read-aloud boxes**: markdown **blockquotes** in any artifact body render as
-  bordered, shaded, italic "read aloud" boxes. The book marks player-facing
-  prose purely visually (no textual marker); we make the convention explicit
-  and reuse it later in Play mode. Document it in the editor's body placeholder.
-- **Area headers with difficulty**: an encounter artifact renders its title
-  with a difficulty kicker — `difficulty` and `levelHint` already exist in
-  `encounterDataSchema`, and the book prints exactly this in area headers
-  ("Durchschnittlich 1", "Ernsthaft 2").
-- **Labeled sections per kind** (the book's per-area structure: description →
-  creatures → treasure → development), rendered from kind data:
-  NPC → appearance / personality;
-  Faction → goals / methods / resources / ranks; Encounter → monsters
-  (resolved via M3-B, with count badges), then terrain / tactics / treasure as
-  labeled paragraphs; PlotArc → premise / stakes / beats / hooks / climax;
-  Session → number / recap / prep / open threads.
-- **Inline cross-references**: artifact links render as "see <name>" with a
-  pdfmake internal link to that node's ToC destination when the target is in
-  the outline; plain italic name otherwise (the book's "siehe Teil 4" pattern).
-- **Kicker lines instead of running headers**: pdfmake header callbacks cannot
-  know the current chapter, so every part/artifact header carries a small-caps
-  kicker with its chapter title; the footer carries
-  `<deliverable title> · page N`. Cover page: title, subtitle, cover image,
-  "Compiled with Campaigner · <date>".
-- **Stat boxes**: bordered two-column box (reuse the export templates' layout
-  concepts). Hazard/environment blocks (the book's GEFAHR entries) are out of
-  scope until the data model has a hazard type — note for the future.
-- **Images**: thumbnails at ≤ 45% width via `columns` (pdfmake has no float);
-  an artifact's cover image may span full width when the outline includes
-  images and the artifact is a Location.
+- **The module's premise and part prose print VERBATIM for both audiences.** A
+  gm-only row's NAME can therefore appear inside quoted module prose while its
+  body, card and chapter never do. That is the correct behavior — the owner
+  wrote that prose and it is the module's own text — but it means the player
+  variant is not a redaction of arbitrary names, only of GM-only MATERIAL.
+- **The spec's literal list disagreed with the code, in both directions, and the
+  code is what a reader sees.** `plotarc` was absent from the list above while
+  the renderer prints plot arcs (GM-only today); and the treasure ledger
+  rendered for the player audience until this arc. Both are recorded here
+  because a spec that quietly differs from the renderer is rot (docs/17 "How to
+  veto"): the list above is now the shipped rule.
 
-### Renderer (`/src/lib/modulePdf.ts`, extends the pdfmake setup)
+### Maps: a plate where an image exists, and NOTHING where it does not
+
+**Owner's decision, verbatim:** *"Encounter maps should obviously be part of the
+PDF. They need to be included at the right places."*
+
+- The plate is printed **at its anchor** — inside the encounter it belongs to,
+  immediately after that encounter's header — never collected into an appendix.
+- The image is `encounter.data.mapImageId`, and for a battle with a live board
+  the board's `mapImageId` is the fallback (the same row the table shows).
+- **No stored image ⇒ NO plate.** No schematic, no room geometry, no outline
+  drawing, no placeholder graphic. A `data.layout` a row may carry is geometry
+  for the table's own renderer and is **never** drawn in a PDF: an approximate
+  map on a printed page is a wrong map, and a wrong map is worse than none.
+- Maps decode at `PDF_MAP_MAX_LONG_EDGE = 4096` (print quality; the map
+  pipeline's own ceiling), covers at `PDF_COVER_MAX_LONG_EDGE = 1024`, and a
+  plate is fitted to the content width so a wide map is scaled, never cropped.
+- An image that cannot be read or decoded prints a **named placeholder** and is
+  reported in the `problems` list the export surfaces (see below).
+
+### Renderer (`/src/lib/modulePdf.ts` + `/src/lib/pdfImages.ts`)
 
 - Cover page, generated table of contents (pdfmake `toc`), chapters as H1 with
-  page breaks, parts as H2, artifacts as H3.
+  page breaks. Part headers carry a kicker (`PART 1 OF 2 · LEVELS 1–2`).
 - Markdown → pdfmake via `/src/lib/mdToPdfmake.ts`: paragraphs, bold/italic,
-  h1–h3, bullet/numbered lists, blockquote (→ read-aloud box); ignore
-  html/tables — document this limit.
-- `audience:'player'`: omit faction `methods`, encounter
-  `tactics`/`treasure`, all Notes, and any outline node whose artifact is
-  tagged `gm-only`. Read-aloud boxes and public body prose survive — the
-  player variant of an area reads like the book's boxed prose, which is
-  exactly what the box convention is for.
-- Dangling artifact refs in the outline render as a visible placeholder box
-  ("missing artifact") rather than failing the build; a gallery node over an
-  empty set renders nothing (the builder UI notes it).
+  h1–h3, bullet/numbered lists, blockquote (→ read-aloud box); html/tables are
+  ignored — that limit is the module's own vocabulary, and it stays honest
+  (docs/18 §2.3).
+- **Kind data renders**: encounter `difficulty`/`levelHint` kickers, monsters
+  with counts and **roster origins**, terrain/tactics/treasure; location/event
+  `locationType`, `inhabitants`, `pointsOfInterest`, `hooks`; NPC appearance and
+  personality; faction goals/methods/resources/ranks; plot arc stakes, beats,
+  hooks, climax; PC summary/notes. A roster entry's origin is printed for every
+  source: an `npc-ref` cross-reference (an internal link to that row's
+  destination), an `inline` stat box (its own box, no origin line), a `rulebook`
+  citation's `(see Bestiary)` form, and a name-only entry's **named missing-ref
+  reason** (`isMissingRefOrigin`) — never a bare, unexplained name.
+- **Images** (the seam, `loadPdfImages`): the requests are collected from the
+  document plan, each id decoded ONCE at the LARGER budget it needs, and every
+  failure recorded as `{ id, where, reason }`. `loadPdfImages` never throws; the
+  renderer prints a placeholder naming the site; `buildModulePdf` returns the
+  deduped `problems` list and the export reports it. `assertPdfmakeImageDataUrl`
+  fails LOUDLY for a media type pdfmake cannot embed (`jpeg`/`jpg`/`png` only) —
+  a WebP data URL once threw inside pdfmake's measurement pass, i.e. outside any
+  error handling, so the format boundary is checked at the seam that owns it.
+- Dangling artifact refs render as a visible placeholder box ("missing
+  artifact") rather than failing the build.
 
-### Builder UI (`/c/:campaignId/deliverables`)
+### The export surface
 
-Left: deliverable list (+ create). Right: outline editor — nested list with
-add-chapter / add-part / add-text / add-artifact (quick-find picker) /
-add-gallery, up/down/indent reordering buttons (no drag-and-drop libs),
-per-artifact include toggles, audience switch, cover picker (campaign images).
-"Generate PDF" button → progress → download. Also "Seed from Module Forge
-output" if a forge run exists: chapter per session group, the arc as lead
-artifact, gallery nodes for NPCs and treasure.
+`ModulePdfButton` (`src/features/modules/module-pdf-button.tsx`), mounted in the
+canvas header and in the campaign tree's module-group header — ONE component for
+both entry points, offering "GM document" and "Player document". The
+destination is acquired first, inside the click's gesture window (the
+artifact-PDF export precedent), and the finished blob is written to it. The
+problems list is REPORTED: a build that recorded any problem announces them by
+site instead of claiming a clean export, and a document is still produced (a
+broken image never costs the owner the book). The single-artifact GM/handout
+exports in the campaign tree are unchanged.
+
+### What was deleted (docs/17 row 108)
+
+`Deliverable`, `deliverableRepo`, `DeliverablesPage`, the seed-from-module path,
+the `/c/:campaignId/deliverables` route and nav entry, the outline node model,
+and every `deliverables` reference in export/import, backup, maintenance,
+census, orphan sweep and auto-promote. Old data is NOT migrated (no
+compatibility requirement) but it never disappears silently:
+
+- an old **export file** reports `Skipped N rows from the retired
+  "deliverables" table …` on import and imports everything else;
+- an old **database** is upgraded by Dexie v21, which drops the table, stores
+  the removed row count in `settings.deliverablesRemoved`, and `AppShell` toasts
+  it once.
 
 ### Acceptance
 
-- A 3-chapter outline mixing text nodes, locations with images, NPCs with stat
-  blocks, and an encounter produces a PDF with cover, working ToC page numbers,
-  chapter banners with kickers, boxed read-aloud quotes, two-column stat boxes,
-  images at ≤ 45% width, and NPC-gallery + treasure-ledger appendices rendered
-  from campaign data.
-- The player variant of the same deliverable contains no secrets, no GM-only
-  nodes, and no encounter tactics/treasure — its area prose reads as the boxed
-  read-aloud text.
-- A dangling artifact reference renders a visible placeholder; the build never
-  fails on missing data.
+- A module becomes a PDF with cover, working ToC, premise, part plan (GM), its
+  parts with kickers, kind chapters, an NPC gallery and a treasure ledger —
+  with **no** `==========` and no `[Part n of total]` anywhere.
+- An encounter whose row carries `data.mapImageId` prints its map INSIDE that
+  encounter; an encounter with no image prints no plate and no substitute
+  geometry.
+- The player variant of the same module contains no GM-only artifact, no note,
+  no plot arc, no faction methods, no encounter tactics/treasure/terrain, no
+  part plan and no treasure ledger — while every map still prints.
+- Every roster entry states its origin or its named missing-ref reason.
+- An unreadable image (or a format pdfmake cannot embed) produces a named
+  placeholder plus a reported problem; the export never fails silently and never
+  claims success for a document with problems.
+- **Unproven in the test environment** (declared, not implied — docs/17 row 108
+  and docs/18 §4 carry the same list): jsdom has no `createImageBitmap` and no
+  real canvas, so the REAL decode/encode of a JPEG or WebP byte stream is not
+  exercised by any test. The suite covers the seam with (a) a genuine 1×1 PNG
+  rendered through the real pdfmake path (asserted as `/Subtype /Image` in the
+  produced bytes) and (b) an injected `PdfImageCodec` for the budget and
+  failure branches; the browser codec itself is verified by inspection only.
 
 ---
 
 ## M3-E — Campaign export v2 with dependency manifest
 
 An export carries everything needed to resume the campaign elsewhere:
-the campaign row, artifacts + revisions, modules, battles, runs,
-deliverables, referenced images, plus a `dependencies` manifest describing
-everything the export cites but does NOT carry.
+the campaign row, artifacts + revisions, modules, battles, runs, referenced
+images, plus a `dependencies` manifest describing everything the export cites
+but does NOT carry. (The `deliverables` table was a v2 member until Dexie v21
+deleted it — docs/17 row 108; an old file's rows are COUNTED and reported on
+import rather than dropped in silence.)
 
 ### Scope: carried vs excluded (owner-confirmed)
 
 | Carried | Excluded (never in the file) |
 |---|---|
 | Campaign row, artifacts + revisions | `mobPortraits` cache (regenerable shared blobs) |
-| Modules, battles, runs, deliverables | Embeddings (regenerable vectors) |
+| Modules, battles, runs | Embeddings (regenerable vectors) |
 | Referenced image blobs (zip) / metadata refs (plain JSON) | `pdfFiles` bytes (original PDFs stay local) |
 | `dependencies` manifest + `missingImages` note | Personas, settings |
 | | Rulebooks/chunks themselves — the manifest replaces them |
@@ -473,7 +503,7 @@ everything the export cites but does NOT carry.
 
 `CampaignExport.version` is `1 | 2` (`EXPORT_FORMAT_VERSION = 2`,
 `src/lib/exportImport.ts`). New writes are v2; every v2 field
-(`modules`/`battles`/`runs`/`deliverables`/`dependencies`/`missingImages`)
+(`modules`/`battles`/`runs`/`dependencies`/`missingImages`)
 is optional, so v1 files still parse unchanged. v1 imports demote
 module-owned artifacts to campaign level when their module is not in the
 file (v1 never exported modules) — the only silent-looking migration, stated
@@ -519,13 +549,13 @@ plus the pack provenance needed to re-fetch the same upstream source.
 Plain JSON lists image metadata refs with `dataBase64: null` (binaries ride
 the zip as `images/<id>.<ext>`, or inline with `images: true`). The sweep
 covers artifact galleries/covers incl. revision snapshots (M3-A) plus
-encounter `mapImageId` and deliverable `coverImageId` (M3-E). Known gap:
+encounter `mapImageId` and module/campaign `coverImageId` (M3-E). Known gap:
 battle-board `mapImageId`s are not swept separately (in practice they repeat
 the encounter's map image, which IS swept) — stated, not hidden.
 
 A referenced id with no image row is never silently dropped: it lands on
 `missingImages` with every referrer named (`artifact:<id>`,
-`artifact:<id>:map`, `revision:<id>`, `deliverable:<id>:cover`). The import
+`artifact:<id>:map`, `revision:<id>`, `module:<id>:cover`). The import
 restore loop's plain-JSON skip (`bytes === undefined → continue`) now
 operates on these explicitly-modeled null refs; the manifest field itself is
 the loud surface slice B (abort-by-default on missing deps) reports from —
@@ -535,9 +565,8 @@ this slice only WRITES the honest manifest.
 
 One rw transaction over all eight tables (array form past Dexie's
 five-table variadic cap). Modules re-id first; artifacts follow the module
-map; battle tokens/`encounterArtifactId`, run result/target artifacts and
-deliverable outline nodes follow the artifact map (unknown ids survive
-verbatim for selection exports). `dependencies`/`missingImages` are
+map; battle tokens/`encounterArtifactId` and run result/target artifacts
+follow the artifact map (unknown ids survive verbatim for selection exports). `dependencies`/`missingImages` are
 zod-validated metadata, not imported.
 
 ### Acceptance
@@ -545,8 +574,9 @@ zod-validated metadata, not imported.
 - Golden manifest: a Monster-Core encounter cites `{bookTitle,
   contentHash, …}` with the pack provenance rollup; run pins land as
   advisories.
-- Whole-campaign round-trip restores modules/battles/runs/deliverables with
-  references rewritten to the new ids; images restore from zip/inline blobs.
+- Whole-campaign round-trip restores modules/battles/runs with references
+  rewritten to the new ids; images restore from zip/inline blobs. Rows for a
+  RETIRED table are counted and reported, never silently dropped.
 - v1 files import unchanged; `tests/backup.test.ts` stays green (untouched).
 - A dangling image ref appears on `missingImages` with its referrers named.
 

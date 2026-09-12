@@ -5,7 +5,6 @@ import { ArrowLeftIcon, ArrowRightIcon, SparklesIcon } from 'lucide-react';
 
 import { NotFoundPage } from '@/components/NotFoundPage';
 import {
-  deliverablesPath,
   guidePath,
   modulesPath,
   workspacePath,
@@ -178,11 +177,7 @@ function GuideLinkButton({ link }: { link: GuideAppLink }): JSX.Element {
   }
 
   const path =
-    link.route.section === 'modules'
-      ? modulesPath(campaignId)
-      : link.route.section === 'deliverables'
-        ? deliverablesPath(campaignId)
-        : workspacePath(campaignId);
+    link.route.section === 'modules' ? modulesPath(campaignId) : workspacePath(campaignId);
 
   return (
     <div>

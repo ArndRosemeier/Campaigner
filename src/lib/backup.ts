@@ -13,12 +13,12 @@ import {
   type StoredImage,
   type StoredPdf,
 } from '@/domain';
-import { imageFileExtension } from '@/lib/exportImport';
+import { imageFileExtension, retiredTableRows } from '@/lib/exportImport';
 
 /**
  * Full-app backup (M4-C): zips the ENTIRE IndexedDB state — campaigns,
  * artifacts, revisions, rulebooks, chunks, embeddings, personas, runs,
- * deliverables, modules, images — as one `campaigner-backup.zip`. The
+ * modules, images — as one `campaigner-backup.zip`. The
  * OpenRouter API key never leaves the browser: it is stripped from the
  * export and the locally stored key is preserved on import. Image binaries
  * ride the zip as `images/<id>.<ext>` files referenced by the manifest rows
@@ -127,6 +127,14 @@ export interface BackupImportResult {
   /** Restored row count per table. */
   tableCounts: Record<string, number>;
   totalRows: number;
+  /**
+   * Rows of RETIRED TABLES the zip still carried and this restore skipped, by
+   * table name (`retiredTableRows`): a pre-v21 backup holds the `deliverables`
+   * table the app no longer has. Skipped LOUDLY — the backup UI toasts
+   * `formatRetiredTableRows` — never crashed on, never silently discarded
+   * (docs/17 row 108).
+   */
+  retiredRows: Record<string, number>;
 }
 
 /**
@@ -173,6 +181,10 @@ export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportRe
   const { 'campaigner-backup.json': _manifest, ...files } = unzipped;
   void _manifest;
   const parsed = backupSchema.parse(JSON.parse(new TextDecoder().decode(manifestEntry[1])));
+  // Retired tables: a pre-v21 zip carries `deliverables`, which this build
+  // does not have. `db.tables` cannot see it, so without this count the rows
+  // would be dropped by silence — the one outcome AGENTS rule 1 forbids.
+  const retiredRows = retiredTableRows(parsed.data);
 
   for (const table of db.tables) {
     if (parsed.data[table.name] === undefined && !OPTIONAL_TABLES.has(table.name)) {
@@ -243,6 +255,7 @@ export async function importBackup(zipBytes: Uint8Array): Promise<BackupImportRe
   return {
     tableCounts,
     totalRows: Object.values(tableCounts).reduce((sum, count) => sum + count, 0),
+    retiredRows,
   };
 }
 

@@ -24,7 +24,6 @@ import { createImage } from '@/db/imageRepo';
 import { createModule } from '@/db/moduleRepo';
 import { createPersona } from '@/db/personaRepo';
 import { createRun } from '@/db/runRepo';
-import { createDeliverable } from '@/db/deliverableRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { countChunksByBook, putChunks } from '@/db/chunkRepo';
@@ -48,7 +47,7 @@ import { clearDatabase, expectNotFound, seedModuleVersion } from './helpers';
  * deletes EVERYTHING under one campaign — modules (parts, board canvas and
  * chat threads live on the rows), artifacts of every kind INCLUDING `pc`
  * (unlike `removeAllGeneratedContent`, which keeps the Party), battles, runs
- * and deliverables — while the campaign row itself (the premise) and the
+ * and runs — while the campaign row itself (the premise) and the
  * global rulebook ingests survive. One transaction, rows re-listed inside;
  * a mid-clear failure rolls everything back loudly.
  */
@@ -193,14 +192,6 @@ describe('deleteCampaignWorkspace — one campaign cleared, premise kept', () =>
       targetArtifactId: npc.id,
       placementModuleId: moduleId,
     });
-    await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Doomed outline',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [],
-    });
     const battle = await ensureBattle(campaign.id, moduleId);
     // Campaign B's everything — must survive byte-identical.
     const neighbourModule = await makeModule(other.id, 'Neighbour Vault');
@@ -211,14 +202,6 @@ describe('deleteCampaignWorkspace — one campaign cleared, premise kept', () =>
       personaId,
       autonomy: 'manual',
       userBrief: 'other brief',
-    });
-    await createDeliverable({
-      campaignId: other.id,
-      title: 'Other outline',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [],
     });
     const rowBefore = JSON.stringify(await getCampaign(campaign.id));
 
@@ -234,10 +217,9 @@ describe('deleteCampaignWorkspace — one campaign cleared, premise kept', () =>
     expect(cleared.modules).toBe(1);
     expect(cleared.battles).toBe(1);
     expect(cleared.runs).toBe(1);
-    expect(cleared.deliverables).toBe(1);
 
     // Campaign A's workspace is gone — modules (with parts/canvas/threads on
-    // the rows), artifacts with revisions, battles, runs, deliverables.
+    // the rows), artifacts with revisions, battles, runs.
     expect(await db.modules.where('campaignId').equals(campaign.id).count()).toBe(0);
     expect(await db.artifacts.where('campaignId').equals(campaign.id).count()).toBe(0);
     for (const id of [pc, npc.id, note.id, encounter.id]) {
@@ -246,7 +228,6 @@ describe('deleteCampaignWorkspace — one campaign cleared, premise kept', () =>
     expect(await getBattleByModule(moduleId)).toBeUndefined();
     expect(await db.battles.get(battle.id)).toBeUndefined();
     expect(await db.runs.get(run.id)).toBeUndefined();
-    expect(await db.deliverables.where('campaignId').equals(campaign.id).count()).toBe(0);
     // The campaign row itself is byte-identical — premise kept.
     expect(JSON.stringify(await getCampaign(campaign.id))).toBe(rowBefore);
 
@@ -255,7 +236,6 @@ describe('deleteCampaignWorkspace — one campaign cleared, premise kept', () =>
     expect(await getArtifact(neighbourPc)).toBeDefined();
     expect(await db.modules.get(neighbourModule)).toBeDefined();
     expect(await db.runs.get(otherRun.id)).toBeDefined();
-    expect(await db.deliverables.where('campaignId').equals(other.id).count()).toBe(1);
   });
 
   it('keeps rulebook ingests, the campaign cover, settings, personas and the global library', async () => {

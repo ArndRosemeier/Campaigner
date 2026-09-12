@@ -6,10 +6,8 @@ import type {
   ArtifactRevision,
   Battle,
   Campaign,
-  Deliverable,
   Id,
   Module,
-  OutlineNode,
   PersonaRun,
 } from '@/domain';
 import {
@@ -20,7 +18,6 @@ import {
   campaignSchema,
   collectDependencies,
   creatureImageSchema,
-  deliverableSchema,
   exportDependenciesSchema,
   exportMissingImageSchema,
   moduleSchema,
@@ -47,8 +44,15 @@ import { db } from '@/db/db';
  * carries the blobs only with `images: true`. Imports are zod-validated and
  * re-id'd so they can never collide with existing rows (image ids are kept
  * so artifact `imageIds`/`coverImageId` references stay valid; module,
- * battle, run and deliverable ids are remapped with their artifact
- * references rewritten to the new ids).
+ * battle and run ids are remapped with their artifact references rewritten to
+ * the new ids).
+ *
+ * RETIRED TABLES (docs/17 row 108): a file written before the deliverables
+ * concept was deleted may still carry rows for the `deliverables` table. The
+ * table is gone and there is nowhere to put them, so an import SKIPS them —
+ * and reports the count through `ImportResult.retiredRows`, because silently
+ * discarding rows an owner's file still holds is exactly the loss AGENTS rule
+ * 1 forbids. Nothing crashes on the extra key.
  */
 
 export const EXPORT_FORMAT_VERSION = 2;
@@ -81,7 +85,6 @@ export interface CampaignExport {
   modules?: Module[];
   battles?: Battle[];
   runs?: PersonaRun[];
-  deliverables?: Deliverable[];
   /**
    * Per-campaign PRESENTATION rows for cited creatures (docs/11 D5 amendment):
    * the campaign's own portrait for a bestiary creature it mentions but does
@@ -151,12 +154,12 @@ export async function buildCampaignExport(
   const exported = buildExport(campaign, withRevisions);
 
   // Whole-campaign tables ride every campaign export (M3-E) — including
-  // selection exports, whose artifact subset may dangle a battle token or
-  // deliverable node; the manifest and the re-id map keep that honest.
+  // selection exports, whose artifact subset may dangle a battle token; the
+  // manifest and the re-id map keep that honest.
   // Rows are schema-parsed (the battle/run parse-normalize precedent) so
   // legacy rows materialize current defaults — including the dropped
   // encounter `verify` step healing on run rows.
-  const [modules, battles, runs, deliverables, creatureImageRows] = await Promise.all([
+  const [modules, battles, runs, creatureImageRows] = await Promise.all([
     db.modules
       .where('campaignId')
       .equals(campaignId)
@@ -172,11 +175,6 @@ export async function buildCampaignExport(
       .equals(campaignId)
       .toArray()
       .then((rows) => rows.map((row) => personaRunSchema.parse(row))),
-    db.deliverables
-      .where('campaignId')
-      .equals(campaignId)
-      .toArray()
-      .then((rows) => rows.map((row) => deliverableSchema.parse(row))),
     db.creatureImages
       .where('campaignId')
       .equals(campaignId)
@@ -186,7 +184,6 @@ export async function buildCampaignExport(
   exported.modules = modules;
   exported.battles = battles;
   exported.runs = runs;
-  exported.deliverables = deliverables;
   exported.creatureImages = creatureImageRows;
 
   // Dependency manifest (M3-E): chunk→book joins for rulebook citations,
@@ -241,7 +238,7 @@ export async function buildCampaignExport(
 
   // Every image referenced by the export — artifact galleries and covers
   // (including revision snapshots, 07-MILESTONE-3 M3-A §Export), encounter
-  // battlemaps (`mapImageId`) and deliverable covers (M3-E). Plain JSON
+  // battlemaps (`mapImageId`) and module covers. Plain JSON
   // lists the metadata refs with `dataBase64: null`; `images: true` fills
   // the inline payloads (the zip then swaps them for binary files).
   //
@@ -266,9 +263,6 @@ export async function buildCampaignExport(
       for (const id of snapshot?.imageIds ?? []) noteRef(id, `revision:${revision.id}`);
       if (snapshot?.coverImageId != null) noteRef(snapshot.coverImageId, `revision:${revision.id}:cover`);
     }
-  }
-  for (const deliverable of deliverables) {
-    noteRef(deliverable.coverImageId, `deliverable:${deliverable.id}:cover`);
   }
   // Module/campaign cover slots (cover-generation arc): the blobs are image
   // rows owned by the campaign, referenced from outside the artifact tables
@@ -363,6 +357,44 @@ function sanitize(name: string): string {
 
 // --- Import -----------------------------------------------------------------
 
+/**
+ * Tables a file may still carry that THIS build no longer has (docs/17 row
+ * 108). `deliverables` held the M3-D outline model, deleted with the concept:
+ * the module IS the PDF's document now. A file written before the deletion
+ * still contains its rows, and there is nowhere to put them — so the import
+ * SKIPS them and reports the count (`ImportResult.retiredRows`), which the
+ * picker toasts. Never a crash on the extra key, never a silent discard.
+ */
+export const RETIRED_EXPORT_TABLES: readonly string[] = ['deliverables'];
+
+/** Row counts of retired tables a raw exported file still carries (0 rows or
+ * an absent key ⇒ no entry). */
+export function retiredTableRows(raw: unknown): Record<string, number> {
+  if (typeof raw !== 'object' || raw === null) return {};
+  const source = raw as Record<string, unknown>;
+  const counts: Record<string, number> = {};
+  for (const table of RETIRED_EXPORT_TABLES) {
+    const rows = source[table];
+    if (Array.isArray(rows) && rows.length > 0) counts[table] = rows.length;
+  }
+  return counts;
+}
+
+/**
+ * The ONE sentence a retired-table skip becomes, so the campaign picker and
+ * the backup restore report it in the same words (AGENTS rule 2). `null` when
+ * there is nothing to report.
+ */
+export function formatRetiredTableRows(counts: Readonly<Record<string, number>>): string | null {
+  const entries = Object.entries(counts).filter(([, count]) => count > 0);
+  if (entries.length === 0) return null;
+  const parts = entries.map(
+    ([table, count]) =>
+      `${String(count)} row${count === 1 ? '' : 's'} from the retired "${table}" table`,
+  );
+  return `Skipped ${parts.join(' and ')} — that table is gone (a module PDF is generated from the module itself now), so those rows had nowhere to land. Everything else imported.`;
+}
+
 export interface ImportResult {
   campaignId: Id;
   createdArtifacts: number;
@@ -376,6 +408,12 @@ export interface ImportResult {
   skippedRetired: number;
   /** Names of the skipped retired artifacts (battles carry no names). */
   skippedNames: string[];
+  /**
+   * Rows of RETIRED TABLES the file still carried and this import skipped
+   * (`retiredTableRows`), by table name. Loud, never silent: the picker toasts
+   * `formatRetiredTableRows` whenever this is non-empty.
+   */
+  retiredRows: Record<string, number>;
 }
 
 /** Dependency policy for `importExport`/`importZip` (07-MILESTONE-3 M3-E
@@ -564,32 +602,19 @@ function healRulebookSources(
   };
 }
 
-/** Rewrites a deliverable outline's artifact references to imported ids. */
-function remapOutlineNodes(nodes: OutlineNode[], artifactIds: ReadonlyMap<Id, Id>): OutlineNode[] {  return nodes.map((node) => {
-    switch (node.type) {
-      case 'artifact':
-        return { ...node, artifactId: artifactIds.get(node.artifactId) ?? node.artifactId };
-      case 'chapter':
-      case 'part':
-        return { ...node, children: remapOutlineNodes(node.children, artifactIds) };
-      default:
-        return node;
-    }
-  });
-}
-
 /**
  * Imports an export as a NEW campaign (existing data is never merged or
  * overwritten): fresh ids for the campaign, every module/artifact/revision/
- * battle/run/deliverable; image ids are kept so artifact
+ * battle/run; image ids are kept so artifact
  * `imageIds`/`coverImageId` references stay valid (M3-A). `files` carries
  * zip image binaries keyed by archive path.
  *
  * Reference rewriting (M3-E): artifact `moduleId`s follow the module re-id
- * map; battle tokens/`encounterArtifactId`, run
- * result/target artifacts and deliverable outline nodes follow the artifact
+ * map; battle tokens/`encounterArtifactId` and run
+ * result/target artifacts follow the artifact
  * re-id map, falling back to the original id when the target was outside a
- * selection export. The dependency manifest and `missingImages` are metadata
+ * selection export. Retired tables (see the module doc) are skipped with a
+ * reported count. The dependency manifest and `missingImages` are metadata
  * only (no tables) — validated, not imported.
  *
  * An artifact whose module is NOT in the export is decided BY VERSION, never
@@ -631,6 +656,9 @@ export async function importExport(
   files: Record<string, Uint8Array> = {},
   options: ImportOptions = {},
 ): Promise<ImportResult> {
+  // Read BEFORE parsing: the tolerant shell strips unknown keys, so the
+  // retired tables have to be counted off the RAW file (docs/17 row 108).
+  const retiredRows = retiredTableRows(raw);
   const { export: parsed, skippedRetired, skippedNames } = parseExportTolerant(raw);
 
   if (options.dependencyPolicy !== 'import-anyway') {
@@ -681,7 +709,6 @@ export async function importExport(
       db.modules,
       db.battles,
       db.runs,
-      db.deliverables,
       db.creatureImages,
     ],
     async () => {
@@ -877,21 +904,15 @@ export async function importExport(
         );
       }
 
-      for (const exported of parsed.deliverables ?? []) {
-        await db.deliverables.add(
-          deliverableSchema.parse({
-            ...exported,
-            id: crypto.randomUUID(),
-            campaignId: newCampaignId,
-            outline: remapOutlineNodes(exported.outline, artifactIds),
-            createdAt: stamp,
-            updatedAt: stamp,
-          }),
-        );
-      }
     },
   );
-  return { campaignId: newCampaignId, createdArtifacts: created, skippedRetired, skippedNames };
+  return {
+    campaignId: newCampaignId,
+    createdArtifacts: created,
+    skippedRetired,
+    skippedNames,
+    retiredRows,
+  };
 }
 
 /**
@@ -939,7 +960,6 @@ const exportSchema = z.object({
   modules: z.array(moduleSchema).optional(),
   battles: z.array(battleSchema).optional(),
   runs: z.array(personaRunSchema).optional(),
-  deliverables: z.array(deliverableSchema).optional(),
   /** Cited creatures' per-campaign presentation rows (docs/11 D5 amendment):
    * campaign state, so a v20+ file carries them and a v1/v2 file simply has
    * none (a restore then shows initials until each portrait is generated). */
@@ -1112,7 +1132,6 @@ const tolerantShellSchema = z.object({
   modules: z.array(moduleSchema).optional(),
   battles: z.array(z.unknown()).optional(),
   runs: z.array(personaRunSchema).optional(),
-  deliverables: z.array(deliverableSchema).optional(),
   /** Cited creatures' per-campaign presentation rows (docs/11 D5 amendment):
    * campaign state, so a v20+ file carries them and a v1/v2 file simply has
    * none (a restore then shows initials until each portrait is generated). */

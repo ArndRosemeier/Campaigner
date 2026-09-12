@@ -1,4 +1,4 @@
-import { ROUTES, deliverablesPath, graphPath, modulesPath, workspacePath } from '@/app/routes';
+import { ROUTES, graphPath, modulesPath, workspacePath } from '@/app/routes';
 
 /** One navigation entry rendered as a link. */
 export interface NavItem {
@@ -34,7 +34,7 @@ export function appNavItems(): readonly NavItem[] {
 
 /**
  * The campaign-level tabs, rendered by the campaign bar on EVERY route so the
- * app's structure stays visible: Modules / Workspace / Deliverables / Graph.
+ * app's structure stays visible: Modules / Workspace / Graph.
  * Modules is FIRST — it is the central view (the play view the rest feeds;
  * owner-ratified landing). Without an open campaign the tabs render disabled
  * (with a hint) instead of disappearing — a changing nav reads as different
@@ -44,7 +44,6 @@ export function campaignTabs(campaignId: string | undefined): readonly CampaignT
   return [
     { label: 'Modules', to: modulesPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
     { label: 'Workspace', to: workspacePath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
-    { label: 'Deliverables', to: deliverablesPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
     { label: 'Graph', to: graphPath(campaignId ?? ''), end: false, disabled: campaignId === undefined },
   ];
 }

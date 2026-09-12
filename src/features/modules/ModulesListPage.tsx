@@ -38,7 +38,6 @@ const REFERENCE_VIA_LABELS: Readonly<Record<ReferencedOwnedArtifact['via'], stri
   relation: 'an artifact relation',
   roster: 'an encounter roster',
   battle: 'a battle',
-  outline: 'a deliverable outline',
 };
 
 /**

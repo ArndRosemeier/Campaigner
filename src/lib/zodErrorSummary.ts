@@ -66,8 +66,6 @@ function groupLabel(segment: string): string {
       return 'modules';
     case 'runs':
       return 'run history';
-    case 'deliverables':
-      return 'deliverables';
     case 'images':
       return 'images';
     case 'campaign':

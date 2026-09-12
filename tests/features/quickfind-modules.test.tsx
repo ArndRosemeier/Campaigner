@@ -185,7 +185,6 @@ describe('quick-find Go-to group (P5: palette as app map)', () => {
     expect(base.map((entry) => entry.label)).toEqual([
       'Workspace',
       'Modules',
-      'Deliverables',
       'Graph',
       'Rules',
       'Settings',

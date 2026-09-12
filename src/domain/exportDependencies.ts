@@ -136,7 +136,7 @@ export type ExportDependencies = z.infer<typeof exportDependenciesSchema>;
  * table (M3-E): the LOUD missing-binary note. The export never silently
  * drops the reference — the id stays in the `images` metadata (or here,
  * when the row itself is gone) with every referrer named, so import
- * (slice B) can report exactly which artifact/deliverable loses its image.
+ * (slice B) can report exactly which artifact loses its image.
  */
 export const exportMissingImageSchema = z.object({
   id: z.uuid(),

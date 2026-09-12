@@ -76,6 +76,7 @@ const SETTINGS = {
   dungeonMapPath: 'classic' as const,
   runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,
+  deliverablesRemoved: 0,
   creatureCitationRepair: null,
   language: 'en' as const,
   onboarding: { status: 'fresh' as const, stepState: [] },

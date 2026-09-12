@@ -7,7 +7,6 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { createAppRouter } from '@/app/router';
 import {
   ROUTES,
-  deliverablesPath,
   graphPath,
   modulePath,
   modulesPath,
@@ -80,7 +79,7 @@ describe('app shell', () => {
     // its reason (iPad batch E: the hover-only title is mirrored into the
     // accessible name so touch + screen-reader users get it too).
     expect(screen.getByTestId('campaign-bar')).toBeInTheDocument();
-    for (const label of ['Workspace', 'Modules', 'Deliverables', 'Graph']) {
+    for (const label of ['Workspace', 'Modules', 'Graph']) {
       expect(
         screen.getByRole('button', { name: `${label} — open a campaign first` }),
       ).toBeDisabled();
@@ -188,7 +187,7 @@ describe('campaign switcher', () => {
     });
     // Modules is the FIRST tab (the central view the rest feeds).
     const tabs = within(screen.getByTestId('campaign-bar')).getAllByRole('link');
-    expect(tabs.map((tab) => tab.textContent)).toEqual(['Modules', 'Workspace', 'Deliverables', 'Graph']);
+    expect(tabs.map((tab) => tab.textContent)).toEqual(['Modules', 'Workspace', 'Graph']);
     expect(screen.getByRole('link', { name: 'Workspace' })).toHaveAttribute(
       'href',
       workspacePath(campaign.id),
@@ -196,10 +195,6 @@ describe('campaign switcher', () => {
     expect(screen.getByRole('link', { name: 'Modules' })).toHaveAttribute(
       'href',
       modulesPath(campaign.id),
-    );
-    expect(screen.getByRole('link', { name: 'Deliverables' })).toHaveAttribute(
-      'href',
-      deliverablesPath(campaign.id),
     );
     expect(screen.getByRole('link', { name: 'Graph' })).toHaveAttribute(
       'href',

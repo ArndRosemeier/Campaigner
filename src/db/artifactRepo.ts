@@ -900,7 +900,8 @@ export async function describeArtifactKindRemoval(
  * loud, and `pc` is refused outright.
  *
  * Deliberately NOT scrubbed (audited, docs/18 §2.1 / the decision ledger):
- * deliverable outline nodes (they render the loud "missing artifact"), run
+ * surviving `links[]` entries whose target is gone
+ * (they render the loud "missing artifact"), run
  * `targetArtifactId` / `contextArtifactIds` (rendered as no target; the
  * context list simply omits the gone row), battle `seedFighters` rows (inert
  * once their tokens are scrubbed) and encounter rosters (`npc-ref` — they fall

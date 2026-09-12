@@ -28,7 +28,6 @@ import {
 } from '@/db/moduleVersionRepo';
 import { createPersona } from '@/db/personaRepo';
 import { createRun } from '@/db/runRepo';
-import { createDeliverable } from '@/db/deliverableRepo';
 import { updateSettings } from '@/db/settingsRepo';
 import { db } from '@/db/db';
 import {
@@ -43,7 +42,7 @@ import { clearDatabase, expectNotFound, seedModuleVersion } from './helpers';
 /**
  * Fresh-generation wipe (owner-ordered "remove all"): `removeAllGeneratedContent`
  * deletes every non-`pc` artifact (revisions scrubbed), every module row,
- * every battle, and the campaign runs/deliverables that would dangle —
+ * every battle, and the campaign runs that would dangle —
  * while the Party, the campaign row, settings, personas and the global
  * library survive. The whole disposal is ONE transaction over every touched
  * table with rows re-listed INSIDE it (the deleteModule precedent): a
@@ -259,7 +258,7 @@ describe('removeAllGeneratedContent — Party survives, everything generated goe
     expect(await db.modules.get(neighbourModule)).toBeDefined();
   });
 
-  it('deletes campaign runs and deliverables — both would dangle into deleted rows', async () => {
+  it('deletes campaign runs — they would dangle into deleted rows', async () => {
     const campaign = await addCampaign({ name: 'Runs', system: 'dnd5e' });
     const other = await addCampaign({ name: 'Other', system: 'dnd5e' });
     const moduleId = await makeModule(campaign.id, 'Doomed Vault');
@@ -279,31 +278,11 @@ describe('removeAllGeneratedContent — Party survives, everything generated goe
       autonomy: 'manual',
       userBrief: 'other brief',
     });
-    await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Doomed outline',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [],
-    });
-    await createDeliverable({
-      campaignId: other.id,
-      title: 'Other outline',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [],
-    });
-
     const removed = await removeAllGeneratedContent(campaign.id);
 
     expect(removed.runs).toBe(1);
-    expect(removed.deliverables).toBe(1);
     expect(await db.runs.get(run.id)).toBeUndefined();
-    expect(await db.deliverables.where('campaignId').equals(campaign.id).count()).toBe(0);
     expect(await db.runs.get(otherRun.id)).toBeDefined();
-    expect(await db.deliverables.where('campaignId').equals(other.id).count()).toBe(1);
   });
 
   it('prunes orphaned campaign images; PC and stray-orphan handling stays exact', async () => {
@@ -321,8 +300,13 @@ describe('removeAllGeneratedContent — Party survives, everything generated goe
       height: 8,
       source: 'uploaded',
     });
-    // A deliverable cover: deliverables die AFTER the artifacts, so only the
-    // final sweep can collect this blob — it proves the sweep runs.
+    // A MODULE cover: module rows die AFTER the artifacts (no per-artifact
+    // prune can see the slot), so only the FINAL sweep in this wipe can
+    // collect this blob — the case that proves the sweep runs. The former
+    // deliverable cover played this role until the deliverables concept was
+    // deleted (docs/17 row 108).
+    const moduleId = await makeModule(campaign.id, 'Covers Vault');
+    const { patchModule } = await import('@/db/moduleRepo');
     const cover = await createImage({
       campaignId: campaign.id,
       blob: new Blob(['cover'], { type: 'image/png' }),
@@ -331,22 +315,15 @@ describe('removeAllGeneratedContent — Party survives, everything generated goe
       height: 8,
       source: 'uploaded',
     });
-    await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Doomed outline',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: cover.id,
-      outline: [],
-    });
+    await patchModule(moduleId, { coverImageId: cover.id });
 
     const removed = await removeAllGeneratedContent(campaign.id);
 
     // The per-artifact prunes inside the delete path already collect every
-    // campaign orphan (covers and strays are never in any reference set, so
-    // the first prune takes them) — the final sweep is defense-in-depth and
-    // reports 0 here. The row assertions below are the real proof.
-    expect(removed.imagesPruned).toBe(0);
+    // campaign orphan that is unreferenced at that moment (a stray is never in
+    // any reference set, so the first prune takes it); what is left for the
+    // final sweep is the module cover, whose slot outlives the artifacts.
+    expect(removed.imagesPruned).toBe(1);
     expect(await db.images.get(pcImage)).toBeDefined();
     expect(await db.images.get(npcImage)).toBeUndefined();
     expect(await db.images.get(stray.id)).toBeUndefined();
@@ -393,7 +370,6 @@ describe('removeAllGeneratedContent — count honesty', () => {
       modules: 0,
       battles: 0,
       runs: 0,
-      deliverables: 0,
     });
 
     const removed = await removeAllGeneratedContent(campaign.id);

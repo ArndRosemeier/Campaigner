@@ -79,7 +79,7 @@ worth stating because they are easy to break:
   its serving model otherwise, and a settings lookup would lie after an
   escalation).
 - The field is **not** part of any LLM-facing contract (the spine's emitted
-  schema omits it, docs/18 §4), and it never reaches a deliverable or a PDF.
+  schema omits it, docs/18 §4), and it never reaches a PDF.
 
 Repo `moduleRepo.ts`: CRUD + `saveModule` (full-row validate + put; modules
 are NOT revisioned — parts are individually regenerable, that is the undo).
@@ -209,9 +209,9 @@ document text (`moduleDocumentText` — premise + parts), styled by the owning
 campaign's system; empty grounding refuses loudly (describe the module
 first). Skip-if-imaged for first generation, delete-after-replace for regen
 (fresh cover commits first, ONLY the superseded blob is freed — the
-preservation rule). The module cover doubles as the module-PDF cover fallback:
-a module-seeded deliverable without its own cover borrows the source
-module's art on the PDF cover page (session memory, never persisted).
+preservation rule). The module cover row is ALSO the module PDF's cover
+(`coverImageId`); a module with no cover prints NO cover image — a derived
+document borrows nothing (docs/17 row 108).
 
 ---
 
@@ -1124,9 +1124,9 @@ whatever it still finds in use.
   guard and the ambiguity shadow** are complete read time (the pool holds
   every campaign encounter) — that is what makes the owner's case (two
   creatures a live encounter's roster cites) refused BEFORE any sweep. The
-  other three (the campaign-wide mention gate, which needs the campaign's
-  OTHER modules' prose; battle tokens/seed fighters; deliverable outline
-  nodes) need rows the panel's props do not carry, so the panel's offer is
+  other two (the campaign-wide mention gate, which needs the campaign's
+  OTHER modules' prose; battle tokens/seed fighters) need rows the panel's
+  props do not carry, so the panel's offer is
   composed with the refusals a sweep RETURNED: `orphanOfferView` holds them
   for the mounted module and renders those rows in use with the sweep's
   reason, excluded from the count and the offer — a refusal never leaves the
@@ -1137,15 +1137,15 @@ whatever it still finds in use.
   (count in the title, the same rows in a scroll list, destructive confirm)
   → `sweepOrphanedArtifacts` (db/orphanSweep.ts): ONE
   `rw` transaction (array form: artifacts, revisions, images, battles,
-  modules, campaigns, deliverables) that RE-DERIVES the orphans + every
+  modules, campaigns) that RE-DERIVES the orphans + every
   guard from re-listed rows INSIDE the tx (recount doctrine — the dialog's
   list never decides what goes). Hard guards per artifact: campaign-wide
   mentions (a row another module's prose mentions is KEPT — cross-module
   prose is never broken), the ambiguity shadow (render→confirm race belt),
   battle board `tokens[].artifactId` + `seedFighters[].id` on ANY campaign
   battle, encounter roster `npc-ref`/rulebook `mobArtifactId` on any
-  SURVIVING encounter (SAME-module encounters count — the module survives),
-  and deliverable outline nodes. Per-artifact outcomes ride the failed[]
+  SURVIVING encounter (SAME-module encounters count — the module survives).
+  Per-artifact outcomes ride the failed[]
   convention: deleted N / kept M with the kept names + reasons in ONE loud
   toast — never silent. Safe cascades are named in the confirm copy
   (relations pointing at deleted rows are scrubbed; images only they
@@ -1491,8 +1491,8 @@ own group.
   board arms a second pointer-gesture path (the battle gesture machine is
   battle-board-scoped; the module board never touches it).
 - **Node keys are STABLE**: `'premise'`, `'part-<planIndex>'` — planIndex is
-  IDENTITY (never renumbered; deliverable seeding and the encounter floor's
-  band allocation depend on it) — and `'prior-<moduleId>'`. One parse site:
+  IDENTITY (never renumbered; the encounter floor's band allocation and the
+  canvas↔module seam depend on it) — and `'prior-<moduleId>'`. One parse site:
   `planIndexFromCanvasNodeKey` (`src/domain/module.ts`).
 - **Layout persistence**: the module row's `canvas` field (`nodes/zoom/pan`,
   additive nullable — docs/01) holds dragged positions and the viewport;
@@ -2193,12 +2193,13 @@ control is a 44px touch target (iPad-proportioned). Protocol + engine in
 
 ## M4-D — Integration & retirement
 
-- **Deliverable seeding**: "Seed from module" on the Deliverable builder maps
-  spine premise → intro text node, each part → chapter with a text node of
-  the part markdown (wiki-links rendered as plain bold names in PDF), plus
-  artifact nodes for each resolved entity of that part (deduped, first
-  occurrence wins). `mdToPdfmake` must handle the `[[...]]` tokens (render
-  display text, bold).
+- **Module PDF rendering REPLACES deliverable seeding** (docs/17 row 108):
+  there is no outline to seed because there is no outline — the renderer reads
+  the module's premise, part plan and parts directly (through
+  `assembleModulePartsDocument`/`splitPartsDocument`, so no `==========`
+  scaffolding prints) and selects its artifacts from the module's own mentions
+  plus its owned rows. `mdToPdfmake` renders the `[[...]]` tokens as display
+  text, bold (docs/17 row 105).
 - **Play mode**: quick-find gains modules/parts as a third result group;
   selecting scrolls the reader. (The peek-modal "Focus in Play" button was
   removed when module mode became the play mode — M4-C.)

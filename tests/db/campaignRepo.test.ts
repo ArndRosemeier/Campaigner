@@ -121,20 +121,20 @@ describe('campaignRepo', () => {
 });
 
 /**
- * Cascade completeness pin (F2): modules, live battles and deliverable
- * outlines all carry the campaign's id but had no delete path — deleting a
- * campaign stranded them as permanent orphans that every backup re-exports.
+ * Cascade completeness pin (F2): modules and live battles all carry the
+ * campaign's id but had no delete path — deleting a campaign stranded them as
+ * permanent orphans that every backup re-exports. (Deliverable outlines were
+ * the third family; the whole concept is gone since docs/17 row 108.)
  * The TopBar's last-module shortcut is cleared when it pointed into the
  * deleted campaign (a stale shortcut navigates to a dead reader route).
  */
 describe('deleteCampaign cascade completeness', () => {
   beforeEach(clearDatabase);
 
-  it('deletes the campaign\'s modules, battles and deliverables in the same transaction', async () => {
+  it('deletes the campaign\'s modules and battles in the same transaction', async () => {
     const { createModule } = await import('@/db/moduleRepo');
     const { createModule: buildModule } = await import('@/domain');
     const { ensureBattle } = await import('@/db/battleRepo');
-    const { createDeliverable } = await import('@/db/deliverableRepo');
 
     const campaign = await addCampaign({ name: 'Doomed', system: 'dnd5e' });
     const other = await addCampaign({ name: 'Survivor', system: 'dnd5e' });
@@ -145,20 +145,11 @@ describe('deleteCampaign cascade completeness', () => {
       buildModule({ campaignId: other.id, title: 'Kept Vault', concept: '', levelMin: 1, levelMax: 3, sizeDial: 'sketch' }),
     );
     const battle = await ensureBattle(campaign.id, doomedModule.id);
-    await createDeliverable({
-      campaignId: campaign.id,
-      title: 'Vault outline',
-      subtitle: '',
-      audience: 'gm',
-      coverImageId: null,
-      outline: [],
-    });
 
     await deleteCampaign(campaign.id);
 
     expect(await db.modules.get(doomedModule.id)).toBeUndefined();
     expect(await db.battles.get(battle.id)).toBeUndefined();
-    expect(await db.deliverables.where('campaignId').equals(campaign.id).count()).toBe(0);
     // Neighbouring campaign keeps its rows.
     expect(await db.modules.get(keptModule.id)).toBeDefined();
     expect(await db.battles.where('campaignId').equals(other.id).count()).toBe(0);

@@ -302,8 +302,7 @@ export function EditCampaignDialog({
               : wipeSummary.removableArtifacts === 0 &&
                   wipeSummary.modules === 0 &&
                   wipeSummary.battles === 0 &&
-                  wipeSummary.runs === 0 &&
-                  wipeSummary.deliverables === 0
+                  wipeSummary.runs === 0
                 ? 'This campaign holds no generated content — only the Party (which is kept) or nothing at all.'
                 : `This permanently deletes ${formatCensus(wipeSummary)}. The Party (${String(wipeSummary.pcCount)} PC${wipeSummary.pcCount === 1 ? '' : 's'}) stays untouched, and the global library is never affected.`}
           </AlertDialogDescription>
@@ -397,7 +396,6 @@ function formatCensus(summary: {
   modules: number;
   battles: number;
   runs: number;
-  deliverables: number;
 }): string {
   const parts: string[] = [];
   if (summary.removableArtifacts > 0) {
@@ -407,7 +405,6 @@ function formatCensus(summary: {
   if (summary.modules > 0) parts.push(pluralize(summary.modules, 'module'));
   if (summary.battles > 0) parts.push(pluralize(summary.battles, 'battle'));
   if (summary.runs > 0) parts.push(pluralize(summary.runs, 'run'));
-  if (summary.deliverables > 0) parts.push(pluralize(summary.deliverables, 'outline'));
   return parts.join(', ');
 }
 
@@ -422,7 +419,6 @@ function formatCleared(campaignName: string, cleared: ClearedWorkspaceCounts): s
   parts.push(pluralize(cleared.modules, 'module'));
   parts.push(pluralize(cleared.battles, 'battle'));
   if (cleared.runs > 0) parts.push(pluralize(cleared.runs, 'run'));
-  if (cleared.deliverables > 0) parts.push(pluralize(cleared.deliverables, 'outline'));
   if (cleared.creaturePortraitsCleared > 0) {
     parts.push(
       pluralize(cleared.creaturePortraitsCleared, 'creature portrait', 'creature portraits'),
@@ -443,7 +439,6 @@ function formatRemoved(removed: RemovedContentCounts): string {
   parts.push(pluralize(removed.modules, 'module'));
   parts.push(pluralize(removed.battles, 'battle'));
   if (removed.runs > 0) parts.push(pluralize(removed.runs, 'run'));
-  if (removed.deliverables > 0) parts.push(pluralize(removed.deliverables, 'outline'));
   if (removed.creaturePortraitsCleared > 0) {
     parts.push(
       pluralize(removed.creaturePortraitsCleared, 'creature portrait', 'creature portraits'),

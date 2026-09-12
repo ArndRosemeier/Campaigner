@@ -133,9 +133,9 @@ export const HELP_CONTENT: Record<HelpTopic, HelpEntry> = {
       '[[Names]] in the text become colored chips: a solid chip means the artifact exists and opens a peek; a dashed chip is unresolved and can create, generate, or use an existing entity.',
       'Every part can be edited in place (✎) and rewritten (↺) with an optional instruction; rewriting a hand-edited part asks first. Failed parts show a Retry button without touching the rest.',
       'The entity panel can batch-generate unresolved entities, including encounter stubs. “Generate encounter maps” runs the Cartographer unattended for mapless module encounters and keeps failures retryable.',
-      'Deliverables → "Seed from module" turns a finished module into a printable outline: premise as intro, one chapter per part with its resolved entities attached.',
+      'The "Module PDF" button in the module canvas header prints the module itself — cover, contents, premise, part plan, every part in order, its artifacts (map plates at the encounters), the NPC gallery and the treasure ledger. The player version leaves out the planning and the secrets.',
     ],
-    keywords: 'module wiki links spine parts entities stub batch pdf deliverable',
+    keywords: 'module wiki links spine parts entities stub batch pdf export',
   },
   runs: {
     title: 'Runs',

@@ -41,7 +41,6 @@ export interface ClearedWorkspaceCounts {
   modules: number;
   battles: number;
   runs: number;
-  deliverables: number;
   /**
    * Cited creatures' presentation portraits the cleared workspace held
    * (`db/creatureImages`, docs/11 D5 amendment). Campaign state, so it goes;
@@ -60,8 +59,8 @@ export interface ClearedWorkspaceCounts {
  * all live on the module rows, so they go with them), artifacts (EVERY kind
  * including `pc` — unlike `removeAllGeneratedContent`, which keeps the Party
  * — campaign- AND module-owned, revisions scrubbed through the artifact
- * delete path), battles, runs and deliverables (all three would dangle into
- * deleted modules/artifacts). Images prune by reference (the campaign cover
+ * delete path), battles and runs (all three would dangle into deleted
+ * modules/artifacts). Images prune by reference (the campaign cover
  * blob survives — the prune pins the kept campaign row's `coverImageId` —
  * while module covers and battlemaps go with their rows). The TopBar
  * last-module shortcut is cleared when it pointed into this campaign.
@@ -110,7 +109,6 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       db.creatureImages,
       db.settings,
       db.runs,
-      db.deliverables,
       db.moduleVersions,
     ],
     async () => {
@@ -129,7 +127,6 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       // sweep needs — the count is unchanged and equally in-tx honest.
       const modules = await db.modules.where('campaignId').equals(campaignId).toArray();
       const runCount = await db.runs.where('campaignId').equals(campaignId).count();
-      const deliverableCount = await db.deliverables.where('campaignId').equals(campaignId).count();
 
       // The existing artifact delete path per doomed row (nested: its tables
       // are a subset of this scope, so it joins this transaction): revision
@@ -138,9 +135,9 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       for (const artifact of artifacts) {
         await deleteArtifact(artifact.id);
       }
-      // Battles anchor to the deleted modules and deliverables belong to
-      // them; runs point at deleted artifacts/modules — all would dangle, so
-      // all go (deleteCampaign precedent, minus the campaign row itself).
+      // Battles anchor to the deleted modules; runs point at deleted
+      // artifacts/modules — all would dangle, so all go (deleteCampaign
+      // precedent, minus the campaign row itself).
       await db.battles.where('campaignId').equals(campaignId).delete();
       // The modules' durable document versions go with their modules (docs/18
       // §2.3 simple undo): SAME transaction, through the ONE sweep seam
@@ -151,7 +148,6 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       await pruneOrphanedModuleVersions();
       await db.modules.where('campaignId').equals(campaignId).delete();
       await db.runs.where('campaignId').equals(campaignId).delete();
-      await db.deliverables.where('campaignId').equals(campaignId).delete();
       // The campaign's own creature presentation rows go with the rest of its
       // state (docs/11 D5 amendment); the library and the shared canonical
       // portrait slots survive.
@@ -170,8 +166,8 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       // draft is authored input, not workspace output. Its campaign tag still
       // matches (the campaign row is the one thing a clear keeps).
       // `deleteCampaign` is the path that clears it.
-      // Final image sweep: catches blobs orphaned by the battle/deliverable
-      // deletes above that no per-artifact prune saw. The kept campaign row's
+      // Final image sweep: catches blobs orphaned by the battle deletes above
+      // that no per-artifact prune saw. The kept campaign row's
       // cover stays pinned (referencedImageIds reads it).
       const imagesPruned = await pruneUnreferencedImages(campaignId);
 
@@ -183,7 +179,6 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
         modules: modules.length,
         battles: battles.length,
         runs: runCount,
-        deliverables: deliverableCount,
         creaturePortraitsCleared,
         imagesPruned,
       };

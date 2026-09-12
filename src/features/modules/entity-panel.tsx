@@ -214,8 +214,8 @@ export function EntityPanel({
   /**
    * The refusals SWEEPS have returned in this mounted panel, by artifact id
    * (08 §M4-C, docs/17 row 92): a refusal must never leave the same rows
-   * offered again, and three of the guards (cross-module mentions, battle
-   * tokens/seeds, deliverable outline nodes) need data these props do not
+   * offered again, and two of the guards (cross-module mentions, battle
+   * tokens/seeds) need data these props do not
    * carry — so the deleter's own decision is recorded here and the row is
    * rendered in use with the sweep's reason instead of being offered again.
    *
@@ -1198,8 +1198,7 @@ export function EntityPanel({
               module&apos;s prose, and every reference the app can see has been
               checked. The delete re-checks all of them once more before it
               writes: an entity still cited by another module&apos;s prose, a
-              battle, an encounter roster, or a deliverable outline is kept and
-              named in the result. Deleting removes their revision history,
+              battle or an encounter roster is kept and named in the result. Deleting removes their revision history,
               scrubs relations pointing at them, and prunes images only they
               referenced.
             </AlertDialogDescription>

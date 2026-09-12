@@ -17,7 +17,7 @@ import { toastError, toastSuccess } from '@/lib/toast';
  *
  * A PDF is a RENDERING, so both bodies print a wiki token's DISPLAY text
  * (`markdownToDisplayText` — the same rule `lib/mdToPdfmake` applies to the
- * module/deliverable pipeline), never the `[[…]]` token the app stores
+ * module pipeline), never the `[[…]]` token the app stores
  * (docs/07 §Wiki-links in an exported document, docs/18 §2.3, docs/17 row 105).
  */
 

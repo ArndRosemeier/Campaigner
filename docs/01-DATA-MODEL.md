@@ -82,8 +82,8 @@ model we ASKED for and mislabel the text after any fallback escalation
   omitted key means "carry" — only the writers that actually author text set
   it), so the id keeps answering "which model wrote this" after the owner
   edits a passage.
-- **App only**: never in an exported PDF, a deliverable, or an LLM-facing
-  contract (docs/18 §2.2/§4).
+- **App only**: never in an exported PDF or an LLM-facing contract
+  (docs/18 §2.2/§4).
 
 Provenance is a TOP-LEVEL field and must never appear inside `data` — every
 exporter renders `data`, so putting it there would ship it.
@@ -370,34 +370,22 @@ write path ever produced — still fails loudly at the boundary (AGENTS rule
 1). When a future arc removes an artifact kind again, the removed value is
 added HERE with its provenance.
 
-### Deliverable (M3-D)
+### There is NO deliverable entity (REMOVED — docs/17 row 108, Dexie v21)
 
-A publishable adventure-module PDF built from an explicit, user-curated
-outline — never derived implicitly from the tree. Own table
-(`deliverables: 'id, campaignId'`, Dexie `version(5)`).
+The `deliverables` table (`'id, campaignId'`, Dexie v5 → **dropped in v21**),
+`Deliverable` and its `OutlineNode` model are GONE. The module PDF is DERIVED
+from the module row and its artifacts, so there is no second stored document to
+keep in sync; the outline, the page and the route are deleted with it. Old data
+is not migrated (no compatibility requirement) but never disappears silently:
+Dexie v21 records the dropped row count in `settings.deliverablesRemoved` (the
+shell toasts it once) and an old export file reports
+`Skipped N rows from the retired "deliverables" table …` on import.
 
-```ts
-interface Deliverable extends BaseEntity {
-  campaignId: Id;
-  title: string;
-  subtitle: string;
-  audience: 'gm' | 'player';    // player: secrets/GM-only/tactics+treasure stripped
-  coverImageId: Id | null;
-  outline: OutlineNode[];
-}
-type OutlineNode =
-  | { type: 'chapter'; title: string; children: OutlineNode[] }   // page-break banner, ToC entry
-  | { type: 'part'; title: string; children: OutlineNode[] }      // group header inside a chapter
-  | { type: 'artifact'; artifactId: Id; include: { body: boolean; data: boolean; statBlocks: boolean; images: boolean } }
-  | { type: 'text'; markdown: string }    // interstitial prose
-  | { type: 'gallery'; gallery: 'npcs' | 'treasure' };            // auto-generated back matter
-```
-
-Rendering conventions live in 07-MILESTONE-3.md (read-aloud blockquote boxes,
-difficulty kickers, labeled per-kind sections, two-column stat boxes, images
-at ≤ 45% width, NPC gallery + treasure ledger appendices, "missing artifact"
-placeholders for dangling references). Renderer: `/src/lib/modulePdf.ts` +
-`/src/lib/mdToPdfmake.ts`.
+Rendering conventions live in 07-MILESTONE-3.md §M3-D (read-aloud blockquote
+boxes, difficulty kickers, labeled per-kind sections, two-column stat boxes,
+map plates at their anchor, NPC gallery + treasure ledger appendices, "missing
+artifact" placeholders for dangling references). Renderer:
+`/src/lib/modulePdf.ts` + `/src/lib/pdfImages.ts` + `/src/lib/mdToPdfmake.ts`.
 
 ### Battle (M5, re-anchored in M6-E)
 
@@ -447,9 +435,10 @@ reference scans (`referencedImageIds` + the global variant) pin both slots,
 so routine artifact prunes never GC cover blobs; export pins them as
 `module:<id>:cover` / `campaign:<id>:cover` refs (JSON carries the binaries,
 the import re-id path keeps image ids so the slots stay valid); and the
-module PDF cover page borrows the seed-source module's cover when the
-deliverable carries none. Regen is delete-after-replace (fresh cover commits
-first, ONLY the superseded id is freed) — the preservation rule.
+module PDF cover page renders the module's own `coverImageId`, and NO cover
+image when it has none (a derived document borrows nothing). Regen is
+delete-after-replace (fresh cover commits first, ONLY the superseded id is
+freed) — the preservation rule.
 
 ```ts
 interface StoredImage extends BaseEntity {
@@ -653,6 +642,13 @@ modules and campaigns is additive `z.uuid().nullable().default(null)` with
 parse-on-read defaults (the v7/v13/v15/v17 precedent) — no index changes, no
 upgrade function. Campaigns additionally parse on read (`getCampaign` /
 `listCampaigns`) so pre-cover rows surface `null`, never `undefined`.
+
+**Current head is v21** (the creature tier v20, then the deliverables drop v21):
+v21 is the ONLY version block that REMOVES a store — its `.stores({…
+deliverables: null …})` deletes the table and its upgrade body counts the rows
+it dropped into `settings.deliverablesRemoved` (the loud form; docs/17 row 108).
+The `deliverables` line in the v9 listing above is therefore accurate HISTORY,
+not the current schema.
 
 No version bump for the whole-module canvas (canvas arc): the module row
 gains `canvas` — `{ nodes: { key, x, y }[], zoom, pan: { x, y } } | null`,

@@ -62,7 +62,7 @@ Ported rules that are kept verbatim (they are the mechanism's substance):
 ## M5-A — Party: the `pc` artifact kind
 
 Player characters become artifacts (kind `'pc'`) — useful before any board
-exists (tree, quick-find, player-audience deliverables) and required by the
+exists (tree, quick-find, the player-audience module PDF) and required by the
 battle (auto-included fighters).
 
 ### Schema (extend `src/domain/artifact.ts`, one `db.version(8)`)
@@ -90,8 +90,8 @@ export const pcDataSchema = z.object({
   manual entry is acceptable — full statblock required only before a battle).
 - Portrait comes from the existing image pipeline (`coverImageId`) and later
   doubles as the token art.
-- Deliverables: `audience: 'player'` renders PC cards (name, portrait, HP —
-  no notes with secrets).
+- The module PDF's player document renders PC cards (name, portrait, HP — no
+  `notes`, which are GM material; docs/07 §M3-D).
 
 ### Dexie (version 8)
 
