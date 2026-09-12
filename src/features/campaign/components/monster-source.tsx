@@ -6,6 +6,7 @@ import { BookOpenIcon, FileWarningIcon, LinkIcon, PenLineIcon, UsersIcon } from 
 import type { AnyArtifact, Id, MonsterEntry, MonsterSource, StatBlock } from '@/domain';
 import type { GameSystem } from '@/domain/gameSystem';
 import { blankStatBlock } from '@/domain';
+import { isMissingRefOrigin } from '@/domain/encounterResolve';
 import { StatBlockCard, StatBlockForm } from '@/features/campaign/components/stat-block';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -361,7 +362,7 @@ export function MonsterStatblocksPanel({
             <div className="flex items-center gap-2">
               <span className="text-sm font-medium">{monster.name}</span>
               <Badge variant="outline">×{monster.count}</Badge>
-              {entry.origin === 'missing ref' ? (
+              {isMissingRefOrigin(entry.origin) ? (
                 <Badge variant="destructive" aria-label="Missing reference">
                   <FileWarningIcon aria-hidden className="size-3" /> missing ref
                 </Badge>

@@ -6,10 +6,10 @@ import { join } from 'node:path';
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { creaturePortraitArt } from '@/db/creatureRepo';
 import { createCampaign, getCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
-import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { createRulebook } from '@/db/rulebookRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { saveSettings, updateSettings } from '@/db/settingsRepo';
@@ -21,6 +21,7 @@ import {
   ruleChunkSchema,
   stampNewEntity,
   statBlockSchema,
+  libraryCreatureKey,
 } from '@/domain';
 import { enqueueCampaignCover, useCoverImageQueue } from '@/features/covers/cover-image-queue';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
@@ -227,13 +228,20 @@ describe('guarded caller families (prompt capture)', () => {
     const { db } = await import('@/db/db');
     const chunk = await db.chunks.where('bookId').equals(book.id).first();
     if (chunk === undefined) throw new Error('chunk missing');
-    const artifactId = await getOrCreateMobArtifact(campaign.id, chunk.id, 'Goblin Boss');
+    // The portrait is keyed by creature IDENTITY (docs/11 D6): no artifact is
+    // created for a bestiary creature, and the guard is about the PROMPT.
+    const creatureKey = libraryCreatureKey(chunk.id);
     useMobPortraitQueue.getState().enqueue([
-      { campaignId: campaign.id, encounterId: newId(), artifactId, name: 'Goblin Boss', chunkId: chunk.id },
+      {
+        campaignId: campaign.id,
+        encounterId: newId(),
+        name: 'Goblin Boss',
+        creatureKey,
+        chunkId: chunk.id,
+      },
     ]);
     await waitFor(async () => {
-      const mob = await getAnyArtifact(artifactId);
-      expect(mob?.coverImageId).not.toBeNull();
+      expect(await creaturePortraitArt(campaign.id, creatureKey)).toBe('cover');
     });
     expect(chatMock).not.toHaveBeenCalled();
     const finalPrompt = generateImagesMock.mock.calls[0]?.[0] ?? '';

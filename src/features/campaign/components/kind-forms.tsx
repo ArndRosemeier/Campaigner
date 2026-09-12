@@ -69,12 +69,11 @@ export interface NpcFormProps {
   data: NpcArtifactData;
   onChange: (data: NpcArtifactData) => void;
   campaignSystem: GameSystem;
-  /** Bestiary creature row (`features/campaign/creature-row-guard`): appearance
-   * and personality are AUTHORED TEXT and are read-only there — the row is ONE
-   * shared row per rulebook creature whose content comes from the stat block
-   * and the portrait, so a hand-typed change would be refused by the write
-   * boundary anyway and the field says so instead of dropping keystrokes.
-   * Deliberately NOT the stat block: this prop never reaches it. */
+  /** Read-only mode for the NPC's AUTHORED text, used by any caller that
+   * presents the row without owning it (the module reader's cards, a peek).
+   * A bestiary creature no longer needs it — it is a read-only library row with
+   * no artifact, so no editor can open one (docs/11 D1/D8). Deliberately NOT
+   * the stat block: this prop never reaches it. */
   authoredTextReadOnly?: boolean;
   /** The reason each locked field carries in its own `title` (one per field, so
    * neither says the other field's name). */

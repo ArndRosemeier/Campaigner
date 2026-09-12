@@ -262,7 +262,10 @@ export async function attachImagesToArtifact(
       asCover: newImage.asCover === true,
     });
   }
-  return db.transaction('rw', [db.images, db.artifacts, db.revisions, db.battles, db.modules, db.campaigns], async () => {
+  return db.transaction(
+    'rw',
+    [db.images, db.artifacts, db.revisions, db.battles, db.modules, db.campaigns, db.creatureImages],
+    async () => {
     const created: Id[] = [];
     let createdCover: Id | null = null;
     for (const { image, asCover } of preparedImages) {
@@ -680,7 +683,18 @@ export async function deleteArtifact(id: Id): Promise<void> {
   // deleteModule's cascade whose scope is fixed — a cache-table read in
   // there throws "not included in parent transaction").
   let globalImagesToRecheck: Id[] = [];
-  await db.transaction('rw', [db.artifacts, db.revisions, db.images, db.battles, db.modules, db.campaigns], async () => {
+  await db.transaction(
+    'rw',
+    [
+      db.artifacts,
+      db.revisions,
+      db.images,
+      db.battles,
+      db.modules,
+      db.campaigns,
+      db.creatureImages,
+    ],
+    async () => {
     const artifact = await db.artifacts.get(id);
     await db.revisions.where('artifactId').equals(id).delete();
     await db.artifacts.delete(id);
@@ -747,9 +761,11 @@ export interface ArtifactKindRemovalCounts {
   battleProvenancesLost: number;
   /** Campaign image blobs the cascade frees (nothing else references them). */
   imagesPruned: number;
-  /** Surviving encounter roster entries left citing a deleted row (`npc-ref` /
-   * `mobArtifactId`): they resolve to the loud `missing ref` badge (docs/11,
-   * `resolveMonsterEntry`) — the delete never rewrites an encounter's roster. */
+  /** Surviving encounter roster entries left citing a deleted AUTHORED NPC
+   * (`npc-ref`): they resolve to the loud `missing ref` badge (docs/11,
+   * `resolveMonsterEntry`) — the delete never rewrites an encounter's roster.
+   * A `rulebook` entry can never appear here: it cites the read-only library
+   * and names no campaign row (docs/11 D9). */
   rosterRefsDangling: number;
 }
 
@@ -819,13 +835,11 @@ async function inspectKindRemoval(
     if (!Array.isArray(roster)) continue;
     for (const entry of roster) {
       const source = entry.source;
-      const cited =
-        source.type === 'npc-ref'
-          ? source.artifactId
-          : source.type === 'rulebook'
-            ? source.mobArtifactId
-            : undefined;
-      if (cited !== undefined && doomedIds.has(cited)) counts.rosterRefsDangling += 1;
+      // ONLY an authored-NPC citation can dangle (docs/11 D9): a `rulebook`
+      // entry names a library chunk, and no library row is ever in `doomedIds`.
+      if (source.type === 'npc-ref' && doomedIds.has(source.artifactId)) {
+        counts.rosterRefsDangling += 1;
+      }
     }
   }
   for (const row of battles) {
@@ -889,10 +903,11 @@ export async function describeArtifactKindRemoval(
  * deliverable outline nodes (they render the loud "missing artifact"), run
  * `targetArtifactId` / `contextArtifactIds` (rendered as no target; the
  * context list simply omits the gone row), battle `seedFighters` rows (inert
- * once their tokens are scrubbed) and encounter rosters (`npc-ref` /
- * `mobArtifactId` — they fall back to the loud `missing ref` badge, and
- * rewriting an authored roster behind the GM's back would be worse). All of
- * these dangle identically through the per-item trash today.
+ * once their tokens are scrubbed) and encounter rosters (`npc-ref` — they fall
+ * back to the loud `missing ref` badge, and rewriting an authored roster behind
+ * the GM's back would be worse). All of these dangle identically through the
+ * per-item trash today. A `rulebook` entry is not in this list at all: it
+ * cites the read-only library, so no delete here can touch it.
  */
 export async function deleteArtifactsOfKind(
   campaignId: Id,
@@ -901,7 +916,7 @@ export async function deleteArtifactsOfKind(
   assertBulkRemovableKind(kind);
   return db.transaction(
     'rw',
-    [db.artifacts, db.revisions, db.images, db.battles, db.modules, db.campaigns],
+    [db.artifacts, db.revisions, db.images, db.battles, db.modules, db.campaigns, db.creatureImages],
     async () => {
       const campaign = await db.campaigns.get(campaignId);
       if (campaign === undefined) throw new NotFoundError('Campaign', campaignId);

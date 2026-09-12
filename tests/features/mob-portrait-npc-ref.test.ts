@@ -5,12 +5,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
+import { creatureCoverImageId } from '@/db/creatureRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { db } from '@/db/db';
 import { createRulebook } from '@/db/rulebookRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
-import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import {
   newId,
   ruleChunkSchema,
@@ -41,10 +41,15 @@ import { clearDatabase } from '../db/helpers';
  * other, so an `npc-ref` monster fell through BOTH and could never be
  * illustrated.
  *
- * What is pinned here:
+ * What is pinned here (rewritten for the two-writer model, ledger row 106):
  * - every roster participant that can own a portrait is enumerated, routed by
- *   what its artifact IS (chunk-backed = the shared bestiary portrait; no
- *   chunk marker = a LOCAL portrait of its own);
+ *   what its artifact IS: a CAST npc (`creatureRef`) or a direct citation is
+ *   the CREATURE lane and shares the bestiary portrait; a plain authored NPC
+ *   is the AUTHORED lane and keeps its own cover; an uncited row is the
+ *   INVENTED lane and gets a local portrait of its own;
+ * - WHICH batch owns which lane is structural, not incidental: the encounter
+ *   side may cite but never cast (docs/11 D4/D5), so an `npc-ref` row is never
+ *   the invented lane's work;
  * - the canonical-portrait firewall: a local invented job carries NO chunkId,
  *   so it can never read or write the global `mobPortraits` cache — and a
  *   distinct invented creature never inherits a rulebook creature's art;
@@ -53,11 +58,10 @@ import { clearDatabase } from '../db/helpers';
  *   the fight keeps her portrait);
  * - the existing `inline` lane is unchanged (non-regression).
  *
- * Revert-proof: restore the two `if (entry.source.type !== …) continue;`
- * guards in `enumerateBatchKinds` (i.e. drop the routing) and every npc-ref
- * test below fails — the plan is empty, `enqueueInventedCreaturePortraits`
- * enqueues nothing, and the owner's "No creatures to illustrate" state comes
- * back.
+ * Revert-proof: restore the retired `npc-ref`-into-the-invented-lane routing in
+ * `enumerateBatchKinds` and the lane-ownership pins below fail — the invented
+ * batch reports the authored row as its own work while the authored lane
+ * reports it too.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -227,17 +231,20 @@ describe('an npc-ref monster is visible to the portrait batch (the owner report)
     expect(plan).toEqual({
       missing: ['Risen Lumberjack'],
       imaged: [],
-      artWithoutCover: [],
       sharedRows: 0,
-      creates: 0,
       sharedPortraitNames: [],
       unreadableCitations: [],
     });
 
-    const result = await enqueueInventedCreaturePortraits(encounter, campaignId);
-    // `created` counts the on-demand artifacts this lane materialized: an
-    // npc-ref row already HAS its artifact, so it is enumerated, not created.
-    expect(result).toEqual({ created: 0, enqueued: 1, alreadyImaged: [] });
+    // REWRITTEN (ledger row 106): the lane that owns this row is
+    // `enqueueMobPortraits`. The retired model routed every `npc-ref` that was
+    // not a hidden mob artifact into the INVENTED lane, which also MATERIALIZED
+    // a creature row for it; the lane split made that lane cite-only (the
+    // encounter path may never cast, docs/11 D4/D5), so an authored NPC is the
+    // `authored` lane's work — and the owner-visible outcome is unchanged: the
+    // monster IS enumerated and DOES get its portrait.
+    const result = await enqueueMobPortraits(encounter, campaignId);
+    expect(result).toEqual({ enqueued: 1, alreadyImaged: [] });
     const queued = inFlight();
     expect(queued).toHaveLength(1);
     // LOCAL job: no chunkId — the artifact's OWN content grounds the prompt,
@@ -265,7 +272,7 @@ describe('an npc-ref monster is visible to the portrait batch (the owner report)
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
     // First pass: the local portrait lands.
-    await enqueueInventedCreaturePortraits(encounter, campaignId);
+    await enqueueMobPortraits(encounter, campaignId);
     await waitFor(async () => {
       expect((await getAnyArtifact(lumberjack))?.coverImageId).not.toBeNull();
     });
@@ -275,10 +282,11 @@ describe('an npc-ref monster is visible to the portrait batch (the owner report)
     const plan = await planMobPortraitBatch(encounter, campaignId);
     expect(plan.missing).toEqual([]);
     expect(plan.imaged).toEqual(['Risen Lumberjack']);
-    expect(plan.artWithoutCover).toEqual([]);
+    // No `artWithoutCover` state exists any more: art IS the portrait row, so
+    // "the creature is imaged" and "its portrait is attached" are one fact.
 
-    const result = await enqueueInventedCreaturePortraits(encounter, campaignId);
-    expect(result).toEqual({ created: 0, enqueued: 0, alreadyImaged: ['Risen Lumberjack'] });
+    const result = await enqueueMobPortraits(encounter, campaignId);
+    expect(result).toEqual({ enqueued: 0, alreadyImaged: ['Risen Lumberjack'] });
     expect(inFlight()).toHaveLength(0);
     // One generation, one cover — enumeration never detaches or regenerates.
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
@@ -300,7 +308,7 @@ describe('an npc-ref monster is visible to the portrait batch (the owner report)
     // The portrait the roster row's owner already has (uploaded by hand, the
     // ordinary npc path): one local pass lays it down, the batch then leaves it
     // alone.
-    await enqueueInventedCreaturePortraits(encounter, campaignId);
+    await enqueueMobPortraits(encounter, campaignId);
     await waitFor(async () => {
       expect((await getAnyArtifact(npc.id))?.coverImageId).not.toBeNull();
     });
@@ -310,8 +318,8 @@ describe('an npc-ref monster is visible to the portrait batch (the owner report)
 
     const plan = await planMobPortraitBatch(encounter, campaignId);
     expect(plan.imaged).toEqual(['Captain Vell']);
-    const again = await enqueueInventedCreaturePortraits(encounter, campaignId);
-    expect(again).toEqual({ created: 0, enqueued: 0, alreadyImaged: ['Captain Vell'] });
+    const again = await enqueueMobPortraits(encounter, campaignId);
+    expect(again).toEqual({ enqueued: 0, alreadyImaged: ['Captain Vell'] });
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
     expect((await getAnyArtifact(npc.id))?.coverImageId).toBe(cover);
   });
@@ -320,11 +328,29 @@ describe('an npc-ref monster is visible to the portrait batch (the owner report)
 describe('rulebook-backed npc-ref rows share the bestiary portrait (no second local job)', () => {
   it('routes an npc-ref to a mob artifact into the rulebook lane, deduped with the citation', async () => {
     const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
-    const mobArtifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
+    // REWRITTEN (ledger row 106): the second row used to link a hidden `npc`
+    // artifact that WAS the creature (`libraryCreatureKey`). A creature is not
+    // an artifact any more — the shape that exists is the CAST npc (docs/11
+    // D3/D4): an authored row carrying `creatureRef`, its own prose, the
+    // library's stats. It must therefore route to the SAME creature kind as the
+    // direct citation, which is what this test is about.
+    const mobArtifactId = (
+      await createArtifact({
+        campaignId,
+        kind: 'npc',
+        name: 'Goblin Boss',
+        data: {
+          appearance: '',
+          personality: '',
+          statBlock: null,
+          creatureRef: { chunkId, creatureName: 'Goblin Boss' },
+        },
+      })
+    ).id;
     const encounter = await addEncounter([
       { name: 'Goblin Boss', count: 1, source: { type: 'rulebook', chunkId } },
-      // The same creature cited a second time through its artifact — the shape
-      // an encounter ends up with when a roster row is linked directly.
+      // The same creature cited a second time through its row — the shape an
+      // encounter ends up with when a roster row is linked to a cast NPC.
       { name: 'Goblin Boss', count: 2, source: { type: 'npc-ref', artifactId: mobArtifactId } },
     ]);
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
@@ -341,21 +367,44 @@ describe('rulebook-backed npc-ref rows share the bestiary portrait (no second lo
     // it goes through the canonical cache path exactly as before.
     expect(queued).toHaveLength(1);
     expect(queued[0]?.chunkId).toBe(chunkId);
-    expect(queued[0]?.artifactId).toBe(mobArtifactId);
+    // ONE creature, ONE portrait slot: the kind's name and route come from the
+    // FIRST roster row that cites it (the direct citation here), so the job
+    // carries no artifactId and the art lands on the campaign's presentation
+    // row for the identity — the cast row's own cover is NOT a second slot, or
+    // the same goblin would have two portraits that can drift apart.
+    expect(queued[0]?.artifactId).toBeUndefined();
+    expect(queued[0]?.creatureKey).toBe(`chunk:${chunkId}`);
 
     await waitFor(async () => {
-      expect((await getAnyArtifact(mobArtifactId))?.coverImageId).not.toBeNull();
+      expect(
+        await creatureCoverImageId({ campaignId, creatureKey: `chunk:${chunkId}` }),
+      ).not.toBeNull();
     });
+    // The cast row keeps its own cover slot for its OWN portrait, untouched by
+    // this pass: nothing wrote to the artifact.
+    expect((await getAnyArtifact(mobArtifactId))?.coverImageId).toBeNull();
     // The canonical citation published the shared slot — the bestiary art is
     // ONE image per creature, and the invented lane enqueued nothing for it.
     expect(await db.mobPortraits.count()).toBe(1);
     const localAgain = await enqueueInventedCreaturePortraits(encounter, campaignId);
-    expect(localAgain).toEqual({ created: 0, enqueued: 0, alreadyImaged: [] });
+    expect(localAgain).toEqual({ enqueued: 0, alreadyImaged: [] });
   });
 
   it('does not re-illustrate locally a rulebook creature that already has shared art', async () => {
     const chunkId = await seedCreatureChunk('Goblin Boss', GOBLIN_TEXT);
-    const mobArtifactId = await getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
+    const mobArtifactId = (
+      await createArtifact({
+        campaignId,
+        kind: 'npc',
+        name: 'Goblin Boss',
+        data: {
+          appearance: '',
+          personality: '',
+          statBlock: null,
+          creatureRef: { chunkId, creatureName: 'Goblin Boss' },
+        },
+      })
+    ).id;
     await enqueueMobPortraits(
       await (async () => {
         const encounter = await addEncounter([
@@ -381,9 +430,11 @@ describe('rulebook-backed npc-ref rows share the bestiary portrait (no second lo
     const plan = await planMobPortraitBatch(second, campaignId);
     expect(plan.missing).toEqual([]);
     expect(plan.imaged).toEqual(['Goblin Boss']);
+    // The invented lane owns nothing here: the row's creature is chunk-backed
+    // (a CAST npc, docs/11 D3), so it is the creature lane's kind — and the
+    // bestiary lane has nothing left to do either.
     const result = await enqueueInventedCreaturePortraits(second, campaignId);
-    // The invented lane owns nothing here: the row's creature is chunk-backed.
-    expect(result).toEqual({ created: 0, enqueued: 0, alreadyImaged: [] });
+    expect(result).toEqual({ enqueued: 0, alreadyImaged: [] });
     const rulebook = await enqueueMobPortraits(second, campaignId);
     expect(rulebook).toEqual({ enqueued: 0, alreadyImaged: ['Goblin Boss'] });
     expect(generateImagesMock).not.toHaveBeenCalled();
@@ -406,7 +457,7 @@ describe('the existing lanes are untouched (non-regression)', () => {
     const rulebook = await enqueueMobPortraits(encounter, campaignId);
     expect(rulebook.enqueued).toBe(1);
     const invented = await enqueueInventedCreaturePortraits(encounter, campaignId);
-    expect(invented).toEqual({ created: 1, enqueued: 1, alreadyImaged: [] });
+    expect(invented).toEqual({ enqueued: 1, alreadyImaged: [] });
 
     const queued = inFlight();
     expect(queued).toHaveLength(2);
@@ -433,12 +484,31 @@ describe('the existing lanes are untouched (non-regression)', () => {
     ]);
     if (encounter.kind !== 'encounter') throw new Error('not an encounter');
 
+    // REWRITTEN (ledger row 106): the per-entry index used to reach the
+    // npc-ref row through the INVENTED lane (which routed every non-mob npc-ref
+    // there and materialized a creature for it). The lane split means the index
+    // addresses this lane's OWN rows, so index 1 (the authored row) selects
+    // nothing here — and the authored lane, asked for the same roster, is where
+    // that row is illustrated. Both halves are pinned, so a regression that
+    // re-widens either lane fails.
     const result = await enqueueInventedCreaturePortraits(encounter, campaignId, [1]);
-    expect(result).toEqual({ created: 0, enqueued: 1, alreadyImaged: [] });
+    expect(result).toEqual({ enqueued: 0, alreadyImaged: [] });
+    expect(inFlight()).toHaveLength(0);
+
+    // The invented lane's own row IS selectable by index.
+    const local = await enqueueInventedCreaturePortraits(encounter, campaignId, [0]);
+    expect(local).toEqual({ enqueued: 1, alreadyImaged: [] });
     const queued = inFlight();
     expect(queued).toHaveLength(1);
-    expect(queued[0]?.name).toBe('Risen Lumberjack');
-    expect(queued[0]?.artifactId).toBe(lumberjack);
+    expect(queued[0]?.name).toBe('Gloom Ooze');
+    expect(queued[0]?.artifactId).toBeUndefined();
+    useMobPortraitQueue.getState().reset();
+
+    // And the authored lane illustrates the npc-ref row through its own seam.
+    const authored = await enqueueMobPortraits(encounter, campaignId);
+    expect(authored).toEqual({ enqueued: 1, alreadyImaged: [] });
+    expect(inFlight()[0]?.name).toBe('Risen Lumberjack');
+    expect(inFlight()[0]?.artifactId).toBe(lumberjack);
   });
 });
 
@@ -458,7 +528,7 @@ describe('a dangling npc-ref is loud, never a silent skip', () => {
     await expect(planMobPortraitBatch(encounter, campaignId)).rejects.toThrow(
       /the artifact for "Risen Lumberjack" no longer exists/,
     );
-    await expect(enqueueInventedCreaturePortraits(encounter, campaignId)).rejects.toThrow(
+    await expect(enqueueMobPortraits(encounter, campaignId)).rejects.toThrow(
       /the artifact for "Risen Lumberjack" no longer exists/,
     );
     expect(inFlight()).toHaveLength(0);

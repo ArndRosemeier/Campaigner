@@ -1,5 +1,6 @@
 import type { Campaign, Id, ModuleAutomationIntent } from '@/domain';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
+import { presentationArtOfCampaign } from '@/features/campaign/mob-portrait-participants';
 import { getModule } from '@/db/moduleRepo';
 import { classifyNewModuleEntityNames, normalizeModuleEntityNames } from '@/llm/moduleGen';
 import { getStopEpoch, stoppedSince } from '@/lib/stopEpoch';
@@ -147,6 +148,9 @@ async function runResume(
     module,
     await listArtifactsByCampaign(campaign.id),
     target,
+    // The async flow can read the presentation rows outright, so the resume
+    // decision and the batch it triggers see the same portraits.
+    await presentationArtOfCampaign(campaign.id),
   );
   // Nothing missing: no call, no write, no enqueue — a no-op with no side
   // effects (the control is hidden in this state anyway).

@@ -22,7 +22,7 @@ import { getCampaign } from '@/db/campaignRepo';
 import { listArtifactsByModule } from '@/db/artifactRepo';
 import { modulesReferencingOwnedArtifacts, type ReferencedOwnedArtifact } from '@/db/artifactAutoPromote';
 import { deleteModule } from '@/db/moduleRepo';
-import { countMobArtifactsCitedByModule, type ModuleMobCitations } from '@/db/mobArtifacts';
+import { countCreaturesCitedByModule, type ModuleCreatureCitations } from '@/db/creatureCitations';
 import { useModules } from '@/features/modules/hooks';
 import { GenerateModuleCoverButton, ModuleCoverThumb } from '@/features/covers/cover-art';
 import { NewModuleDialog } from '@/features/modules/new-module-dialog';
@@ -73,16 +73,16 @@ export function ModulesListPage(): JSX.Element {
     return (await listArtifactsByModule(deleteTarget.id)).length;
   }, [deleteTarget]);
   /**
-   * Shared mob artifacts the target's encounters CITE (rulebook-cited
-   * creatures: ONE campaign-scoped row per cited chunk, docs/11 D5). A
-   * REFERENCE, never ownership — the cascade does not touch them and must
-   * not: they outlive the module by design. Counted so the dialog states the
-   * blast radius before the click.
+   * LIBRARY creatures the target's encounters CITE (docs/11 D5 amendment): a
+   * citation of a read-only bestiary row, so there is nothing for the cascade
+   * to delete or release. A REFERENCE, never ownership. Counted so the dialog
+   * states the blast radius — and its real limit — before the click.
    */
   const citedMobs = useLiveQuery(async () => {
     if (deleteTarget === null) return null;
-    if ((await listArtifactsByModule(deleteTarget.id)).length === 0) return null;
-    return countMobArtifactsCitedByModule(deleteTarget.id);
+    const rows = await listArtifactsByModule(deleteTarget.id);
+    if (rows.length === 0) return null;
+    return countCreaturesCitedByModule(rows);
   }, [deleteTarget]);
   /**
    * Owned artifacts referenced from OUTSIDE the delete target (auto-promote
@@ -99,7 +99,7 @@ export function ModulesListPage(): JSX.Element {
   // the dialog branches below stay total.
   const owned: number | null = ownedCount ?? null;
   const refs: ReferencedOwnedArtifact[] | null = referenced ?? null;
-  const cited: ModuleMobCitations | null = citedMobs ?? null;
+  const cited: ModuleCreatureCitations | null = citedMobs ?? null;
 
   /** Runs one delete branch (10-MILESTONE-6 D5): the user picked what happens
    * to the owned artifacts; the module row always goes. */
@@ -310,15 +310,19 @@ export function ModulesListPage(): JSX.Element {
                     ? ` ${String(refs.length)} owned artifact${refs.length === 1 ? ' is' : 's are'} still used outside this module — deleting would strand those references. Choose what happens:`
                     : ` This module owns ${String(owned)} artifact${owned === 1 ? '' : 's'}. Choose what happens to them:`}
             </AlertDialogDescription>
-            {cited !== null && cited.artifacts.length > 0 && (
+            {cited !== null && cited.creatures.length > 0 && (
               <p className="text-sm text-muted-foreground" data-testid="delete-module-cited-mobs">
-                Its encounters also cite {String(cited.artifacts.length)} shared creature
-                {cited.artifacts.length === 1 ? '' : 's'} ({cited.artifacts
+                Its encounters also cite {String(cited.creatures.length)} creature
+                {cited.creatures.length === 1 ? '' : 's'} from the bestiary ({cited.creatures
                   .slice(0, 3)
-                  .map((artifact) => `“${artifact.name}”`)
+                  .map((creature) =>
+                    creature.resolved ? `“${creature.name}”` : `“${creature.name}” (not installed)`,
+                  )
                   .join(', ')}
-                {cited.artifacts.length > 3 ? ` and ${String(cited.artifacts.length - 3)} more` : ''}).
-                Those are campaign-level references, not part of this module — deleting it never
+                {cited.creatures.length > 3
+                  ? ` and ${String(cited.creatures.length - 3)} more`
+                  : ''}
+                ). Those are library references, not part of this module — deleting it never
                 removes them.
               </p>
             )}

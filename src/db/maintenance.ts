@@ -42,6 +42,12 @@ export interface ClearedWorkspaceCounts {
   battles: number;
   runs: number;
   deliverables: number;
+  /**
+   * Cited creatures' presentation portraits the cleared workspace held
+   * (`db/creatureImages`, docs/11 D5 amendment). Campaign state, so it goes;
+   * the library and the shared canonical slots are untouched.
+   */
+  creaturePortraitsCleared: number;
   imagesPruned: number;
 }
 
@@ -101,6 +107,7 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       db.revisions,
       db.images,
       db.battles,
+      db.creatureImages,
       db.settings,
       db.runs,
       db.deliverables,
@@ -145,6 +152,13 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
       await db.modules.where('campaignId').equals(campaignId).delete();
       await db.runs.where('campaignId').equals(campaignId).delete();
       await db.deliverables.where('campaignId').equals(campaignId).delete();
+      // The campaign's own creature presentation rows go with the rest of its
+      // state (docs/11 D5 amendment); the library and the shared canonical
+      // portrait slots survive.
+      const creaturePortraitsCleared = await db.creatureImages
+        .where('campaignId')
+        .equals(campaignId)
+        .delete();
       // The TopBar last-module shortcut must not outlive the cleared modules —
       // a stale shortcut navigates to a dead reader route.
       const settings = await db.settings.get('settings');
@@ -170,6 +184,7 @@ export async function deleteCampaignWorkspace(campaignId: string): Promise<Clear
         battles: battles.length,
         runs: runCount,
         deliverables: deliverableCount,
+        creaturePortraitsCleared,
         imagesPruned,
       };
     },

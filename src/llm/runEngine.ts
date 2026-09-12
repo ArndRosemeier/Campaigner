@@ -51,8 +51,6 @@ import {
 import { getChunksByIds } from '@/db/chunkRepo';
 import { contentIdentityFor } from '@/domain/encounterResolve';
 import { additionalInstructionSection } from '@/llm/additionalInstruction';
-import { carryMobCoversForward, getOrCreateMobArtifact, isMobArtifact } from '@/db/mobArtifacts';
-import { creatureRowAiRefusal } from '@/features/campaign/creature-row-guard';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
 import { createImage, deleteUnreferencedImages, getImage } from '@/db/imageRepo';
 import { convergeBoardsToRegeneratedMap } from '@/db/battleRepo';
@@ -1086,8 +1084,16 @@ function mergeRefillData(
       // A refill that skipped its statblock step (needsStatBlock=false) or
       // produced none keeps the target's curated block.
       statBlock: draftData.statBlock ?? previous.statBlock,
-      // Mob-artifact marker survives the refill (identity, not content).
-      ...(previous.monsterChunkId === undefined ? {} : { monsterChunkId: previous.monsterChunkId }),
+      // The creature citation survives the refill (IDENTITY, not content): a
+      // smith writing an Aunt Agatha's prose must not also delete the fact
+      // that her numbers are the library zombie's. `statBlock` stays null on
+      // such a row (the zod refine forbids both), so `?? previous.statBlock`
+      // above cannot smuggle a block in beside it.
+      ...(previous.creatureRef === undefined ? {} : { creatureRef: previous.creatureRef }),
+      // The run stamp survives only while the row is still MACHINE-owned: it
+      // is what tells a later cast that this row has not been written in yet
+      // (docs/11 D4). A refill IS the writing-in, so it is cleared here and
+      // dropped from this draft below.
     };
   }
   if (kind === 'pc' && target.kind === 'pc' && 'notes' in draftData) {
@@ -1140,7 +1146,6 @@ function resolveEncounterMonsterSource(
 export async function rulebookSourceFor(
   chunkId: Id,
   entryName: string,
-  mobArtifactId: Id,
 ): Promise<Extract<MonsterEntry['source'], { type: 'rulebook' }>> {
   const chunk = (await getChunksByIds([chunkId]))[0];
   if (chunk === undefined) {
@@ -1149,9 +1154,12 @@ export async function rulebookSourceFor(
     );
   }
   return {
+    // A CITATION of a read-only library creature (docs/11 D5 amendment): it
+    // names the chunk, the content identity that lets a re-ingest still answer
+    // it, and the creature's own name — never a campaign row, because no such
+    // row exists.
     type: 'rulebook',
     chunkId,
-    mobArtifactId,
     ...contentIdentityFor(chunk.contentHash, chunk.headingPath[0], entryName),
   };
 }
@@ -3365,7 +3373,9 @@ export class RunEngine {
       const sceneContext = surroundingParagraphs(moduleDocumentText(owner), target.name);
       if (sceneContext === '') return null;
       const pool = await listArtifactsByCampaign(input.campaign.id);
-      return fixedCastSectionFor(fixedCastForEncounter(target.name, sceneContext, pool, owner.id));
+      return fixedCastSectionFor(
+        await fixedCastForEncounter(target.name, sceneContext, pool, owner.id),
+      );
     })();
     // Regenerate mode keeps the roster verbatim INCLUDING mob treasure: a
     // map run replaces layout + room keys, never the encounter-scoped
@@ -4514,15 +4524,12 @@ export class RunEngine {
       ? (target.data.fillGrade ?? fillGrade)
       : target.data.fillGrade;
     // The fresh roster materializes through the first-materialization path
-    // (rulebook citations → shared mob artifacts, inline blocks stay inline)
-    // — every entry, since no verbatim pin exists.
+    // (rulebook citations stay CITATIONS of library creatures, inline blocks
+    // stay inline) — every entry, since no verbatim pin exists.
     const monsters = await this.materializeBriefRoster(
       parsed.monsters,
-      input.campaign.id,
-      runId,
       statblockChunkIds,
       rosterChunkByName,
-      new Map<Id, Id>(),
     );
     await promoteRosterUses(target.moduleId ?? null, monsters);
     // Room-tagging comes straight from the brief's stocking contract: the
@@ -4646,13 +4653,11 @@ export class RunEngine {
       },
       { source: 'persona', runId },
     );
-    // Portrait preservation (docs/11 D5): same-named re-cited entries carry
-    // covers forward. Best-effort: never fails the finalize.
-    await carryMobCoversForward({
-      campaignId: input.campaign.id,
-      oldMonsters: target.data.monsters,
-      newMonsters: monsters,
-    });
+    // Portrait preservation needs no work any more (docs/11 D5 amendment): a
+    // creature's portrait lives on the campaign's presentation row keyed by
+    // its IDENTITY (`db/creatureImages`), so re-citing a creature — even after
+    // a re-chunk with new row ids — resolves to the same slot. The old
+    // carry-forward existed because a portrait hung off a per-chunk ARTIFACT.
     const step = this.finishStep(
       steps[stepIndex],
       withNotice(
@@ -4730,22 +4735,16 @@ export class RunEngine {
       const expandedMonsters = freshPopulation
         ? await this.materializeBriefRoster(
           parsed.monsters,
-          input.campaign.id,
-          runId,
           statblockChunkIds,
           rosterChunkByName,
-          new Map<Id, Id>(),
         )
         : parsed.monsters.length > target.data.monsters.length
           ? [
               ...target.data.monsters,
               ...await this.materializeBriefRoster(
                 parsed.monsters.slice(target.data.monsters.length),
-                input.campaign.id,
-                runId,
                 statblockChunkIds,
                 rosterChunkByName,
-                new Map<Id, Id>(),
               ),
             ]
           : target.data.monsters;
@@ -4825,19 +4824,17 @@ export class RunEngine {
         );
       }
     } else {
-      // Mob artifacts (owner-ratified): a rulebook citation gets ONE
-      // image-able npc artifact per campaign per chunkId — roster name +
-      // the data.monsterChunkId marker, NO stat duplication (the chunk
-      // stays the source of truth). The entry stamps mobArtifactId so
-      // seeding pins shared token identity + the portrait path.
-      const mobArtifacts = new Map<Id, Id>();
+      // Library citations (owner-ratified core-mob arc): a rulebook entry is
+      // a CITATION of a bestiary creature — chunk id + content identity +
+      // creature name. NOTHING is created for it: the creature's portrait is
+      // the campaign's presentation row, keyed by the creature's identity
+      // (docs/11 D5 amendment / D10), so the generator has no artifact to
+      // mint here and no writer to reach for (see the ABSENCE of a cast call
+      // in this file's encounter path — docs/11 D5).
       const monsters = await this.materializeBriefRoster(
         parsed.monsters,
-        input.campaign.id,
-        runId,
         statblockChunkIds,
         rosterChunkByName,
-        mobArtifacts,
       );
       // Auto-promote on second-module use (ROSTER hook): a freshly drafted
       // encounter placed in a module shares any other-module roster
@@ -4917,11 +4914,8 @@ export class RunEngine {
       sourceName?: string | undefined;
       statBlock?: StatBlock | undefined;
     }[],
-    campaignId: Id,
-    runId: Id,
     statblockChunkIds: readonly Id[],
     rosterChunkByName: Readonly<Record<string, Id>>,
-    mobArtifacts: Map<Id, Id>,
   ): Promise<MonsterEntry[]> {
     const entries: MonsterEntry[] = [];
     for (const monster of monsters) {
@@ -4938,19 +4932,12 @@ export class RunEngine {
         });
         continue;
       }
-      const mobArtifactId = await getOrCreateMobArtifact(
-        campaignId,
-        chunkId,
-        monster.name,
-        { source: 'persona', runId },
-        mobArtifacts,
-      );
       entries.push({
         name: monster.name,
         count: monster.count,
         notes: monster.notes,
         treasure: monster.treasure,
-        source: await rulebookSourceFor(chunkId, monster.name, mobArtifactId),
+        source: await rulebookSourceFor(chunkId, monster.name),
       });
     }
     return entries;
@@ -5119,7 +5106,7 @@ export class RunEngine {
     const sceneContext = surroundingParagraphs(moduleDocumentText(owner), encounterName);
     if (sceneContext === '') return [];
     const pool = await listArtifactsByCampaign(campaignId);
-    const cast = fixedCastForEncounter(encounterName, sceneContext, pool, owner.id);
+    const cast = await fixedCastForEncounter(encounterName, sceneContext, pool, owner.id);
     if (cast.length === 0) return [];
     const partyLevel =
       partLevelForMention(owner, encounterName) ?? parseRosterTargetLevel(levelHint);
@@ -5209,9 +5196,6 @@ export class RunEngine {
         }
       ).monsters;
       const materializedNpcs = new Map<string, Id>();
-      // Mob artifacts share the materialize cache pattern, keyed by chunkId
-      // (owner-ratified: one artifact per creature kind per campaign).
-      const mobArtifacts = new Map<Id, Id>();
       const monsters: typeof data.monsters = [];
       for (const [index, monster] of data.monsters.entries()) {
         const cited = draftMonsters?.[index];
@@ -5220,19 +5204,14 @@ export class RunEngine {
             ? undefined
             : resolveEncounterMonsterSource(cited, statblockChunkIds, rosterChunkByName);
         if (chunkId !== undefined) {
-          const mobArtifactId = await getOrCreateMobArtifact(
-            input.campaign.id,
-            chunkId,
-            monster.name,
-            { source: 'persona', runId },
-            mobArtifacts,
-          );
+          // A citation, not a row (docs/11 D5 amendment): nothing is created
+          // for a bestiary creature here.
           monsters.push({
             name: monster.name,
             count: monster.count,
             notes: monster.notes,
             treasure: monster.treasure,
-            source: await rulebookSourceFor(chunkId, monster.name, mobArtifactId),
+            source: await rulebookSourceFor(chunkId, monster.name),
           });
           continue;
         }
@@ -5391,29 +5370,20 @@ export class RunEngine {
       }
       const target = await getAnyArtifact(input.targetArtifactId);
       if (target === undefined) throw new Error('The artifact to fill no longer exists');
-      // Bestiary creature rows are never a generation's write destination (the
-      // refill chokepoint). A creature row is a real `npc` artifact carrying
-      // the additive `data.monsterChunkId` marker — ONE campaign-scoped row per
-      // cited rulebook chunk, pointed at by EVERY encounter that cites the
-      // creature, with battle seeding resolving its stats through it and its
-      // portrait cached globally. `isMobArtifact` is the ONLY classification of
-      // "creature row" (shared with the artifact editor's refusal and the
-      // entity paths) — never a second predicate.
+      // The refill chokepoint used to REFUSE a bestiary creature row here: a
+      // shared `npc` artifact carrying `data.monsterChunkId`, pointed at by
+      // every encounter that cited the creature, whose invented prose then
+      // became text they all read (owner-reported). Under the ratified model
+      // (docs/11 D1/D4/D5 amendment) that row does not exist — a cited creature
+      // is a read-only LIBRARY row — so the refusal has nothing left to guard
+      // and is gone rather than generalised.
       //
-      // Owner-reported bug this closes: a smith refill targeting such a row
-      // wrote invented prose onto it, and `mergeRefillData` preserved the
-      // marker — so the row kept the creature's identity and name while
-      // describing a DIFFERENT character, in text every citing encounter
-      // shares. Refused at DESTINATION RESOLUTION, before any write of any
-      // branch below: the row is left byte-identical. The throw fails the run
-      // loudly (run row `errorMessage` + toastError, AGENTS rules 1-2) — never
-      // a silent skip that would leave the owner staring at an unchanged row.
-      // Campaign-level creature rows are exactly the ones
-      // `targetModuleGrounding` calls `not-module-owned`, which is why the
-      // unguarded refill ran with no module context and invented a stranger.
-      if (isMobArtifact(target)) {
-        throw new Error(`In-place refill refused: ${creatureRowAiRefusal(target.name)}`);
-      }
+      // What replaces it is the reason the guard existed, made structural: a
+      // cast creature npc (this module's own row for a library creature) is a
+      // legitimate refill target, and `mergeRefillData` preserves its
+      // `creatureRef` through the write, so a smith filling in Aunt Agatha's
+      // prose cannot sever the citation that gives her the zombie's numbers.
+
       if (kind === 'encounter' && target.kind === 'encounter') {
       if (!('monsters' in data)) {
         throw new Error('In-place generation produced no monster roster to fill the encounter with');
@@ -5659,18 +5629,9 @@ export class RunEngine {
         },
         { source: 'persona', runId },
       );
-      // Portrait preservation (docs/11 D5): re-cited roster entries converge
-      // on NEW cover-less mob-artifact rows when the chunk changed
-      // (re-chunked/re-imported bestiary) — the old row's cover would strand
-      // as an orphan while tokens render initials. Carry covers forward
-      // (same-named old row → new row, cloned bytes, old row untouched).
-      // Best-effort: never fails the finalize (the helper never throws for
-      // missing rows).
-      await carryMobCoversForward({
-        campaignId: input.campaign.id,
-        oldMonsters: target.data.monsters,
-        newMonsters: data.monsters,
-      });
+      // Nothing to carry: a creature's portrait is keyed by its identity on
+      // the campaign's presentation row, and the content-hash fallback keeps
+      // that identity answerable across a re-chunk (docs/11 D5 amendment/D9).
       const step = this.finishStep(
         steps[stepIndex],
         withNotice(

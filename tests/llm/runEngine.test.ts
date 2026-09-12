@@ -987,23 +987,27 @@ describe('rulebookSourceFor', () => {
     return { chunkId: chunk.id, contentHash };
   }
 
-  it('stamps the cited chunk hash and creature name alongside the uuid', async () => {
+  it('stamps the cited chunk hash and creature name alongside the uuid — and NO artifact identity', async () => {
     const { chunkId, contentHash } = await installChunk();
-    const mobArtifactId = newId();
 
-    const source = await rulebookSourceFor(chunkId, 'Goblin Warrior', mobArtifactId);
+    const source = await rulebookSourceFor(chunkId, 'Goblin Warrior');
+    // REWRITTEN (ledger row 106): the citation names the LIBRARY row and its
+    // content identity, never a campaign artifact. The retired `mobArtifactId`
+    // was the field that turned a deleted bestiary row into two encounters
+    // stuck on a permanent `missing ref`.
     expect(source).toEqual({
       type: 'rulebook',
       chunkId,
-      mobArtifactId,
       contentHash,
       creatureName: 'Goblin Warrior',
     });
+    expect(Object.keys(source)).not.toContain('mobArtifactId');
+    // Creating the citation created NOTHING: no artifact is a creature.
+    const { db } = await import('@/db/db');
+    expect(await db.artifacts.count()).toBe(0);
   });
 
   it('throws loudly for a chunk that vanished between retrieve and finalize', async () => {
-    await expect(rulebookSourceFor(newId(), 'Goblin Warrior', newId())).rejects.toThrow(
-      /no longer exists/,
-    );
+    await expect(rulebookSourceFor(newId(), 'Goblin Warrior')).rejects.toThrow(/no longer exists/);
   });
 });

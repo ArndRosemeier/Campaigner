@@ -8,6 +8,7 @@ import { getCampaign } from '@/db/campaignRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
+import { resolveCreatureCitation } from '@/db/creatureRepo';
 import { getChunksByIds } from '@/db/chunkRepo';
 import { GAME_SYSTEM_LABELS } from '@/domain/gameSystem';
 import { resolveWikiLink } from '@/lib/wikilinks';
@@ -1448,7 +1449,10 @@ function monsterSourceLabel(entry: MonsterEntry, byId: ReadonlyMap<Id, AnyArtifa
         : `the NPC artifact «${target.name}»`;
     }
     case 'rulebook':
-      return `the ingested rulebook chunk ${source.chunkId}${source.contentHash === undefined ? '' : ` (content hash ${source.contentHash})`}${source.mobArtifactId === undefined ? '' : `, shared creature row ${source.mobArtifactId}`}`;
+      // A library CREATURE citation, with no campaign row behind it (docs/11 D5
+      // amendment): naming a "shared creature row" here would send the model
+      // looking for an artifact that does not exist.
+      return `the bestiary creature ${source.creatureName === undefined ? '' : `«${source.creatureName}» `}from the ingested rulebook chunk ${source.chunkId}${source.contentHash === undefined ? '' : ` (content hash ${source.contentHash})`}`;
     case 'none':
       return 'none — a name-only entry (no stat source was recorded)';
   }
@@ -1539,21 +1543,21 @@ function artifactKindLines(artifact: AnyArtifact, extras: ArtifactDetailsExtras)
       const data = artifact.data;
       if (data.appearance !== '') lines.push(`appearance: ${data.appearance}`);
       if (data.personality !== '') lines.push(`personality: ${data.personality}`);
-      if (data.monsterChunkId !== undefined) {
+      if (data.creatureRef !== undefined) {
         lines.push(
-          `rulebook creature marker: this row IS the shared creature row for the ingested chunk ${data.monsterChunkId} (one row per campaign per cited creature — its stats live in that chunk, never duplicated on the row)`,
+          `derived stats: this NPC draws its stat block from the library creature ${data.creatureRef.creatureName === undefined ? '' : `«${data.creatureRef.creatureName}» `}(chunk ${data.creatureRef.chunkId ?? 'unknown'}${data.creatureRef.contentHash === undefined ? '' : `, content hash ${data.creatureRef.contentHash}`}) — its own prose is what makes it this campaign's character`,
         );
       }
       if (data.statBlock !== null) {
         lines.push('stat block (stored on this row):', ...statBlockLines(data.statBlock, '  '));
       } else if (extras.creatureStats !== undefined) {
-        lines.push(`stat block (from the cited rulebook chunk — ${extras.creatureStats.label}):`, ...extras.creatureStats.lines);
-      } else if (data.monsterChunkId === undefined) {
-        lines.push('stat block: NOT RECORDED (null on the row) — this NPC has no stat block');
-      } else {
+        lines.push(`stat block (derived from the library creature — ${extras.creatureStats.label}):`, ...extras.creatureStats.lines);
+      } else if (data.creatureRef !== undefined) {
         lines.push(
-          `stat block: NOT AVAILABLE — the cited rulebook chunk ${data.monsterChunkId} is not in this workspace; nothing was substituted for it`,
+          `stat block: NOT AVAILABLE — the cited library creature (chunk ${data.creatureRef.chunkId ?? 'unknown'}) is not in this workspace; nothing was substituted for it`,
         );
+      } else {
+        lines.push('stat block: NOT RECORDED (null on the row) — this NPC has no stat block');
       }
       break;
     }
@@ -1822,8 +1826,13 @@ async function resolveDetailsExtras(artifact: AnyArtifact, byId: ReadonlyMap<Id,
     const rosterStatsLines = await Promise.all(artifact.data.monsters.map((entry) => rosterStatsLinesFor(entry)));
     return { byId, rosterStatsLines };
   }
-  if (artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined && artifact.data.statBlock === null) {
-    const creatureStats = await creatureStatsFor(artifact.data.monsterChunkId);
+  if (artifact.kind === 'npc' && artifact.data.creatureRef !== undefined && artifact.data.statBlock === null) {
+    // Resolved through the ONE creature seam (uuid, then content-hash
+    // fallback — docs/11 D9), so the model reads the same numbers the card
+    // does; an absent creature resolves to undefined and is reported as NOT
+    // AVAILABLE, never substituted.
+    const listing = await resolveCreatureCitation(artifact.data.creatureRef, artifact.name);
+    const creatureStats = listing.chunk === null ? undefined : await creatureStatsFor(listing.chunk.id);
     return creatureStats === undefined ? { byId } : { byId, creatureStats };
   }
   return { byId };

@@ -423,6 +423,11 @@ function formatCleared(campaignName: string, cleared: ClearedWorkspaceCounts): s
   parts.push(pluralize(cleared.battles, 'battle'));
   if (cleared.runs > 0) parts.push(pluralize(cleared.runs, 'run'));
   if (cleared.deliverables > 0) parts.push(pluralize(cleared.deliverables, 'outline'));
+  if (cleared.creaturePortraitsCleared > 0) {
+    parts.push(
+      pluralize(cleared.creaturePortraitsCleared, 'creature portrait', 'creature portraits'),
+    );
+  }
   if (parts.length === 0) return `Cleared the workspace of “${campaignName}” — nothing to remove.`;
   return `Cleared the workspace of “${campaignName}” — removed ${parts.join(', ')}.`;
 }
@@ -439,6 +444,11 @@ function formatRemoved(removed: RemovedContentCounts): string {
   parts.push(pluralize(removed.battles, 'battle'));
   if (removed.runs > 0) parts.push(pluralize(removed.runs, 'run'));
   if (removed.deliverables > 0) parts.push(pluralize(removed.deliverables, 'outline'));
+  if (removed.creaturePortraitsCleared > 0) {
+    parts.push(
+      pluralize(removed.creaturePortraitsCleared, 'creature portrait', 'creature portraits'),
+    );
+  }
   const kept =
     removed.pcsKept > 0
       ? `${pluralize(removed.pcsKept, 'PC')} kept`

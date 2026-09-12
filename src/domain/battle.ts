@@ -128,6 +128,15 @@ export const battleTokenSchema = z.object({
   artifactId: z.uuid().nullable(),
   /** For npc-backed tokens: which roster entry instance this is ("Goblin 2"). */
   label: z.string(),
+  /**
+   * The token's CREATURE IDENTITY — `domain/creature`'s portrait key — when
+   * the token stands for a cited library creature or for an invented mob
+   * (docs/11 D5 amendment): the board resolves its portrait by identity alone,
+   * with no artifact required. Absent for PCs, stamps and any token whose
+   * creature has no identity (a plain authored NPC token keeps its portrait on
+   * its own artifact cover).
+   */
+  creatureKey: z.string().optional(),
   /** Normalized board coords (1 = map width/height); may leave 0..1 while dragging. */
   x: z.number(),
   y: z.number(),
@@ -256,10 +265,12 @@ export const battleSchema = z.object({
   /**
    * Monster fighters seeded from rulebook/inline roster entries have NO
    * backing artifact; their resolved stats are frozen here at seed time
-   * (M5-C) and their tokens carry the synthetic `id` as `artifactId`. This
-   * lets the repo's stats lookup treat them exactly like npc artifacts
-   * (initiative, HP clamping) without re-resolving rulebooks on every write.
-   * npc-ref/pc tokens resolve through the real artifacts instead.
+   * (M5-C). The synthetic `id` is what the repo's stats lookup keys on
+   * (initiative, HP clamping), so no rulebook re-resolution is needed on
+   * every write. npc-ref/pc tokens resolve through the real artifacts
+   * instead — and since the ratified model (docs/11 D1/D5) NOTHING is a
+   * creature artifact, so `creatureKey` is the row's stable identity and the
+   * `id` is only a fresh per-expansion handle.
    */
   seedFighters: z
     .array(
@@ -268,6 +279,14 @@ export const battleSchema = z.object({
         name: z.string(),
         maxHp: z.number().int().min(0),
         initiativeBonus: z.number().int(),
+        /**
+         * The CREATURE IDENTITY this row was frozen for (docs/11 D6). Two
+         * expansions of the same roster entry resolve the same identity, so
+         * this — not the synthetic `id` — is what dedupes the row. Absent on
+         * rows written before the field existed and on npc-ref/pc fighters,
+         * which resolve through a real artifact instead.
+         */
+        creatureKey: z.string().optional(),
       }),
     )
     .default([]),

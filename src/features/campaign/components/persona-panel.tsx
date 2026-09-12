@@ -41,7 +41,6 @@ import { Textarea } from '@/components/ui/textarea';
 import { HelpButton } from '@/help/HelpButton';
 import { ROUTES, artifactPath } from '@/app/routes';
 import { getAnyArtifact, listArtifactsByCampaign, listGlobalArtifacts } from '@/db/artifactRepo';
-import { isMobArtifact } from '@/db/mobArtifacts';
 import { getPersona, listPersonas } from '@/db/personaRepo';
 import { listRulebooks } from '@/db/rulebookRepo';
 import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
@@ -51,7 +50,6 @@ import { rejectionIssues, runEngine, type StartRunInput } from '@/llm/runEngine'
 import { usePinnedChunksStore } from '@/features/rules/pinStore';
 import { useIllustrationRequest } from '@/features/campaign/illustrationRequest';
 import { useContentRefillRequest } from '@/features/campaign/contentRefillRequest';
-import { creatureRowAiRefusal } from '@/features/campaign/creature-row-guard';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { extrasForPersona } from '@/llm/personas/extras';
 import type { PostCreateExtra } from '@/domain';
@@ -242,28 +240,18 @@ export function PersonaPanel({
   const isRefillPersona =
     selectedPersona?.mode === 'generate' && selectedPersona.producesKind !== 'encounter';
   const isTargetedRefill = isRefillPersona && targetArtifactId !== '';
-  // A bestiary creature row is NEVER a refill target: it is ONE
-  // campaign-scoped `npc` artifact carrying the additive `data.monsterChunkId`
-  // marker, pointed at by every encounter that cites the creature, its content
-  // is the rulebook stat block and its portrait is cached globally — so a
-  // smith's invented prose written there becomes text every citing encounter
-  // reads (the owner-reported bug; `runEngine`'s finalize refuses it at the
-  // write). `isMobArtifact` is the ONE classification of "creature row" (the
-  // same predicate the artifact editor's refusal, the entity paths and that
-  // chokepoint read) — never a second predicate here. The picker does not
-  // OFFER one; a creature row that is nevertheless selected (an Illustrator
-  // target, then a switch to a smith persona) is marked refused with the
-  // honest reason and cannot start a run. The Illustrator and the Continuity
-  // Editor keep the full list — a creature row is a legitimate portrait and
-  // review target.
-  const refusedRefillTarget = isRefillPersona
-    ? targetArtifacts.find(
-        (artifact) => artifact.id === targetArtifactId && isMobArtifact(artifact),
-      )
-    : undefined;
-  const offerableTargets = isRefillPersona
-    ? targetArtifacts.filter((artifact) => !isMobArtifact(artifact))
-    : targetArtifacts;
+  // A CAST CREATURE npc is a legitimate refill target — it is an authored NPC
+  // whose prose is exactly what a smith should write (docs/11 D4: the cast
+  // makes the ROW, the module's generation writes its prose). What must never
+  // happen is a refill REWRITING its `creatureRef` or its name: its stats are
+  // the library creature's and its name is the citation. The instruction guard
+  // (`features/modules/change-artifact`) refuses that outright, so the picker
+  // offers these rows and the write boundary keeps them honest.
+  //
+  // There is no "creature row" to exclude any more: under the ratified model a
+  // bestiary creature is a read-only library row with no artifact at all, so a
+  // row of that shape cannot be selected in the first place (docs/11 D1/D8).
+  const offerableTargets = targetArtifacts;
   const needsTarget = isReview || isImage || isTargetedRefill;
   // The creation-dialog controls (module placement + post-create extras)
   // apply to NEW artifacts only: a targeted run fills an existing one and
@@ -536,18 +524,6 @@ export function PersonaPanel({
                     ))}
                   </SelectContent>
                 </Select>
-                {refusedRefillTarget !== undefined && (
-                  // Reachable path (not a dead control): an Illustrator or
-                  // Continuity target stays selected when the persona switches
-                  // to a smith. The reason is the SAME copy the artifact
-                  // editor's refusal and the run's own failure carry.
-                  <p
-                    className="text-xs text-destructive"
-                    data-testid="refill-target-refused"
-                  >
-                    {creatureRowAiRefusal(refusedRefillTarget.name)}
-                  </p>
-                )}
                 <Textarea
                   id="brief"
                   rows={2}
@@ -705,14 +681,8 @@ export function PersonaPanel({
               <Button
                 disabled={
                   selectedPersona === undefined ||
-                  refusedRefillTarget !== undefined ||
                   (needsTarget ? targetArtifactId === '' : brief.trim() === '')
                 }
-                // A disabled control always says why (the refusal paragraph
-                // above carries the same copy at length).
-                {...(refusedRefillTarget === undefined
-                  ? {}
-                  : { title: creatureRowAiRefusal(refusedRefillTarget.name) })}
                 onClick={() => void start()}
                 data-testid="start-run"
               >

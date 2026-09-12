@@ -1,6 +1,8 @@
 import type { GameSystem } from '@/domain/gameSystem';
 import { FILL_GRADE_MAX, FILL_GRADE_MIN } from '@/domain/artifact';
 import type { AnyArtifact, Id, Module, MonsterEntry, RuleChunk, StatBlock } from '@/domain';
+import { creatureRefIsEmpty, npcCreatureRef } from '@/domain';
+import { resolveCreatureCitation } from '@/db/creatureRepo';
 import { parseLevelSort } from '@/llm/encounterRoster';
 import type { SceneSubstitution } from '@/llm/schemas';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
@@ -456,10 +458,11 @@ export function fillGradeStockingFor(
 
 /**
  * A named, already-drafted participant the prose pins into an encounter
- * (docs/11 fixed cast): an npc-kind artifact (NPCs and monsters are both
- * `npc` rows — mob artifacts carry the `monsterChunkId` marker, the Smith
- * details both) whose `[[Name]]` mention falls in the encounter's scene
- * context.
+ * (docs/11 fixed cast): an npc-kind artifact whose `[[Name]]` mention falls in
+ * the encounter's scene context. That includes a CAST CREATURE npc (docs/11 D4)
+ * — a real `npc` row with its own prose whose numbers come from a library
+ * creature — so `statBlock` here is the block the encounter should actually
+ * use, derived from the citation when the row has none of its own.
  */
 export interface FixedCastMember {
   /** Exact artifact name — the roster entry must carry it verbatim. */
@@ -490,12 +493,12 @@ function fixedCastSummary(name: string, statBlock: StatBlock | null): string {
  * follows the reader's winner — and the caller keeps today's behavior when
  * the cast is empty.
  */
-export function fixedCastForEncounter(
+export async function fixedCastForEncounter(
   encounterName: string,
   sceneContext: string,
   artifacts: readonly AnyArtifact[],
   moduleId: Id | null,
-): FixedCastMember[] {
+): Promise<FixedCastMember[]> {
   const self = encounterName.trim().toLowerCase();
   const seen = new Set<string>();
   const cast: FixedCastMember[] = [];
@@ -509,15 +512,47 @@ export function fixedCastForEncounter(
       moduleId === null ? undefined : { moduleId },
     ).artifact;
     if (artifact?.kind !== 'npc') continue;
-    const statBlock = artifact.data.statBlock;
     cast.push({
       name: artifact.name,
-      level: statBlock?.level,
-      summary: fixedCastSummary(artifact.name, statBlock),
-      statBlock,
+      ...(await fixedCastStatsFor(artifact)),
     });
   }
   return cast;
+}
+
+/**
+ * The stats ONE cast member contributes, and where they came from.
+ *
+ * An authored block is used as-is. A row with NO block but a `creatureRef` is a
+ * CAST CREATURE (docs/11 D3/D4): its numbers are the library creature's, read
+ * through the ONE creature seam (uuid, then the content-hash fallback — docs/11
+ * D9). Reporting `null` there would put "no stat block is on file — design
+ * their stats" into the brief for a creature the bestiary fully describes, which
+ * is the silent hole AGENTS rule 1 forbids. A reference that resolves to nothing
+ * keeps `null`: the brief then says so, honestly.
+ */
+async function fixedCastStatsFor(
+  artifact: Extract<AnyArtifact, { kind: 'npc' }>,
+): Promise<{ level: string | undefined; summary: string; statBlock: StatBlock | null }> {
+  if (artifact.data.statBlock !== null) {
+    const statBlock = artifact.data.statBlock;
+    return {
+      level: statBlock.level,
+      summary: fixedCastSummary(artifact.name, statBlock),
+      statBlock,
+    };
+  }
+  const citation = npcCreatureRef(artifact);
+  if (citation === undefined || creatureRefIsEmpty(citation)) {
+    return { level: undefined, summary: fixedCastSummary(artifact.name, null), statBlock: null };
+  }
+  const listing = await resolveCreatureCitation(citation, artifact.name);
+  const statBlock = listing.chunk?.statBlock ?? null;
+  return {
+    level: statBlock?.level,
+    summary: fixedCastSummary(artifact.name, statBlock),
+    statBlock,
+  };
 }
 
 /**

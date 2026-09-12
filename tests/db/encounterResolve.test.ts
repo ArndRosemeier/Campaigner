@@ -16,7 +16,7 @@ import { clearDatabase } from './helpers';
 /**
  * Monster source resolution (07-MILESTONE-3 M3-B): NPC links, rulebook
  * chunks, inline stats — and dangling references that degrade to a
- * "missing ref" origin instead of crashing.
+ * named `missing ref (Name)` origin instead of crashing.
  */
 
 function statBlock(over: Partial<StatBlock> = {}): StatBlock {
@@ -94,7 +94,7 @@ describe('resolveMonsterEntryWithRepos', () => {
     expect(resolved.statBlock).toBeNull();
   });
 
-  it('degrades a dangling npc-ref to "missing ref"', async () => {
+  it('degrades a dangling npc-ref to the NAMED missing-ref reason', async () => {
     const resolved = await resolveMonsterEntryWithRepos({
       name: 'Ghost',
       count: 1,
@@ -102,7 +102,9 @@ describe('resolveMonsterEntryWithRepos', () => {
       treasure: '',
       source: { type: 'npc-ref', artifactId: newId() },
     });
-    expect(resolved.origin).toBe('missing ref');
+    // The ONE surviving reason, and it NAMES the creature (docs/11 D9): the old
+    // bare 'missing ref' left the panel with nothing to search the library for.
+    expect(resolved.origin).toBe('missing ref (Ghost)');
     expect(resolved.statBlock).toBeNull();
   });
 
@@ -217,7 +219,7 @@ describe('resolveMonsterEntryWithRepos', () => {
       treasure: '',
       source: { type: 'rulebook', chunkId: newId() },
     });
-    expect(resolved.origin).toBe('missing ref');
+    expect(resolved.origin).toBe('missing ref (Owlbear)');
     expect(resolved.statBlock).toBeNull();
   });
 
@@ -387,7 +389,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       treasure: '',
       source: { type: 'rulebook', chunkId: newId(), contentHash, creatureName: 'Goblin Warrior' },
     });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref' });
+    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
 
   it('uuid-miss + unknown hash stays missing', async () => {
@@ -405,7 +407,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
         creatureName: 'Goblin Warrior',
       },
     });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref' });
+    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
 
   it('same creature under a new hash stays missing (L1 deferred, exact-only)', async () => {
@@ -421,7 +423,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       treasure: '',
       source: { type: 'rulebook', chunkId: newId(), contentHash: revisedHash, creatureName: 'Goblin Warrior' },
     });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref' });
+    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
     expect(contentHash).not.toBe(revisedHash);
   });
 
@@ -435,7 +437,7 @@ describe('resolveMonsterEntry content-hash fallback', () => {
       treasure: '',
       source: { type: 'rulebook', chunkId: newId() },
     });
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref' });
+    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
 });
 

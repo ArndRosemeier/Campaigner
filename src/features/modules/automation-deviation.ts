@@ -202,6 +202,10 @@ export function deriveAutomationDeviation(
   module: Module,
   campaignArtifacts: readonly AnyArtifact[],
   target?: ModuleAutomationIntent,
+  /** The campaign's creature PRESENTATION snapshot (`app/use-creature-presentation`),
+   * so the portrait half of the deviation agrees with the batch's own plan
+   * instead of over-offering. Omitted ⇒ the documented conservative answer. */
+  presentationByKey?: ReadonlyMap<string, Id>,
 ): AutomationDeviation {
   const intent = target ?? module.automationIntent;
   // Legacy row, no explicit target: nothing was recorded, so nothing may be
@@ -232,7 +236,7 @@ export function deriveAutomationDeviation(
     images,
     battlemaps: intent.autoGenerateBattlemaps ? encountersNeedingMaps(module, artifacts) : [],
     mobPortraits: intent.autoGenerateMobImages
-      ? encountersNeedingMobPortraits(module, artifacts)
+      ? encountersNeedingMobPortraits(module, artifacts, presentationByKey)
       : [],
   };
 }

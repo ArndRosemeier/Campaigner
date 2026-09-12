@@ -6,7 +6,7 @@ import {
   type ViewUpdate,
 } from '@codemirror/view';
 import { RangeSetBuilder, type Extension } from '@codemirror/state';
-import type { AnyArtifact, Id } from '@/domain';
+import type { AnyArtifact, Id, WikiLinkCreature } from '@/domain';
 import { WIKI_LINK_PATTERN, resolveWikiLink } from '@/lib/wikilinks';
 import { cn } from '@/lib/utils';
 
@@ -50,14 +50,20 @@ export function wikiMarkClassFor(
   name: string,
   artifacts: readonly AnyArtifact[],
   moduleId?: Id,
+  creatures?: readonly WikiLinkCreature[],
 ): string {
-  const resolution = resolveWikiLink(
-    name,
-    artifacts,
-    moduleId === undefined ? undefined : { moduleId },
-  );
-  if (resolution.status === 'unresolved' || resolution.artifact === undefined) {
+  const resolution = resolveWikiLink(name, artifacts, {
+    ...(moduleId === undefined ? {} : { moduleId }),
+    ...(creatures === undefined ? {} : { creatures }),
+  });
+  if (resolution.status === 'unresolved') {
     return cn(MARK_BASE, MARK_UNRESOLVED);
+  }
+  if (resolution.artifact === undefined) {
+    // A library creature mention (docs/11 D10): resolved, and colored with the
+    // npc palette — a creature IS the kind of thing an npc chip stands for, and
+    // the whole point of D10 is that the mention never reads as broken.
+    return cn(MARK_BASE, KIND_MARK_CLASSES.npc);
   }
   const ambiguous = resolution.status === 'ambiguous';
   return cn(
@@ -71,6 +77,7 @@ function buildWikiDecorations(
   view: EditorView,
   artifacts: readonly AnyArtifact[],
   moduleId: Id | undefined,
+  creatures: readonly WikiLinkCreature[] | undefined,
 ): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   for (const { from, to } of view.visibleRanges) {
@@ -79,21 +86,19 @@ function buildWikiDecorations(
       const start = from + match.index;
       const end = start + match[0].length;
       const name = (match[1] ?? '').trim();
-      const resolution = resolveWikiLink(
-        name,
-        artifacts,
-        moduleId === undefined ? undefined : { moduleId },
-      );
-      const status =
-        resolution.status === 'resolved' && resolution.artifact === undefined
-          ? 'unresolved'
-          : resolution.status;
+      const resolution = resolveWikiLink(name, artifacts, {
+        ...(moduleId === undefined ? {} : { moduleId }),
+        ...(creatures === undefined ? {} : { creatures }),
+      });
+      // A resolved CREATURE mention is 'resolved' (docs/11 D10): its node is
+      // derived, not absent, so the editor's mark is never dashed for it.
+      const status = resolution.status;
       const ambiguous = status === 'ambiguous';
       builder.add(
         start,
         end,
         Decoration.mark({
-          class: wikiMarkClassFor(name, artifacts, moduleId),
+          class: wikiMarkClassFor(name, artifacts, moduleId, creatures),
           attributes: {
             'data-wiki-name': name,
             'data-wiki-status': status,
@@ -102,7 +107,9 @@ function buildWikiDecorations(
                 ? `⚠ multiple artifacts match “${name}”`
                 : resolution.artifact !== undefined
                   ? resolution.artifact.name
-                  : `${name} — not detailed yet`,
+                  : resolution.creature !== undefined
+                    ? `${resolution.creature.name} — a library creature (the citation is the reference)`
+                    : `${name} — not detailed yet`,
           },
         }),
       );
@@ -119,16 +126,17 @@ function buildWikiDecorations(
 export function wikiLinkDecorations(
   artifacts: readonly AnyArtifact[],
   moduleId: Id | undefined,
+  creatures?: readonly WikiLinkCreature[],
 ): Extension {
   const plugin = ViewPlugin.fromClass(
     class {
       decorations: DecorationSet;
       constructor(view: EditorView) {
-        this.decorations = buildWikiDecorations(view, artifacts, moduleId);
+        this.decorations = buildWikiDecorations(view, artifacts, moduleId, creatures);
       }
       update(update: ViewUpdate): void {
         if (update.docChanged || update.viewportChanged) {
-          this.decorations = buildWikiDecorations(update.view, artifacts, moduleId);
+          this.decorations = buildWikiDecorations(update.view, artifacts, moduleId, creatures);
         }
       }
     },

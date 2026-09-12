@@ -228,7 +228,12 @@ describe('fixedCastForEncounter', () => {
   it('collects drafted scene NPCs in mention order with name, level and stats', async () => {
     const { campaign, moduleId } = await seedWorld();
     const artifacts = await listArtifactsByCampaign(campaign.id);
-    const cast = fixedCastForEncounter('The Howling Pit', SCENE_MARKDOWN, artifacts, moduleId);
+    const cast = await fixedCastForEncounter(
+      'The Howling Pit',
+      SCENE_MARKDOWN,
+      artifacts,
+      moduleId,
+    );
     expect(cast.map((member) => member.name)).toEqual(['Halvar', 'Mira']);
     const halvar = cast[0];
     expect(halvar?.level).toBe('6');
@@ -251,14 +256,14 @@ describe('fixedCastForEncounter', () => {
     const scene = surroundingParagraphs(moduleDocumentText(module), 'The Howling Pit');
     expect(extractWikiLinks(scene).map((link) => link.name)).toContain('Halvar');
     const artifacts = await listArtifactsByCampaign(campaign.id);
-    const cast = fixedCastForEncounter('The Howling Pit', scene, artifacts, moduleId);
+    const cast = await fixedCastForEncounter('The Howling Pit', scene, artifacts, moduleId);
     expect(cast.map((member) => member.name)).toEqual(['Halvar', 'Mira']);
   });
 
   it('returns empty for an empty scene', async () => {
     const { campaign, moduleId } = await seedWorld();
     const artifacts = await listArtifactsByCampaign(campaign.id);
-    expect(fixedCastForEncounter('The Howling Pit', '', artifacts, moduleId)).toEqual([]);
+    expect(await fixedCastForEncounter('The Howling Pit', '', artifacts, moduleId)).toEqual([]);
   });
 });
 
@@ -266,7 +271,12 @@ describe('buildEntityBrief fixed cast', () => {
   it('renders the summary plus the must-appear, as-is instruction', async () => {
     const { campaign, moduleId } = await seedWorld();
     const artifacts = await listArtifactsByCampaign(campaign.id);
-    const cast = fixedCastForEncounter('The Howling Pit', SCENE_MARKDOWN, artifacts, moduleId);
+    const cast = await fixedCastForEncounter(
+      'The Howling Pit',
+      SCENE_MARKDOWN,
+      artifacts,
+      moduleId,
+    );
     const brief = buildEntityBrief(
       'The Howling Pit',
       SCENE_MARKDOWN,

@@ -58,7 +58,7 @@ import {
 } from '@/features/modules/automation-deviation';
 import { useEntityImageQueue } from '@/features/modules/entity-image-queue';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
-import { creatureRowOnlyNotice } from '@/features/modules/detailed-entity';
+import { creatureOnlyNotice } from '@/features/modules/detailed-entity';
 import { FULL_AUTOMATION_TARGET } from '@/features/modules/post-generation';
 import { resumeEverything } from '@/features/modules/resume-automation';
 import { KIND_PLURALS, runEntityBatch } from '@/features/modules/entity-batch';
@@ -185,6 +185,14 @@ export interface EntityPanelProps {
   onStub: (name: string, anchor: { x: number; y: number }) => void;
   /** Opens the entity card (peek modal) for a resolved entity. */
   onOpenCard: (artifact: AnyArtifact) => void;
+  /**
+   * The campaign's creature PRESENTATION snapshot (`app/use-creature-presentation`),
+   * supplied by the PAGE that owns data — this panel reads no table itself, so
+   * its answers are a pure function of its props. It makes the portrait half of
+   * the "Generate everything" deviation agree with the batch's own plan (docs/11
+   * D6); omitting it keeps the documented conservative over-offer.
+   */
+  creaturePresentation?: ReadonlyMap<string, Id>;
 }
 
 export function EntityPanel({
@@ -193,6 +201,7 @@ export function EntityPanel({
   campaign,
   onStub,
   onOpenCard,
+  creaturePresentation,
 }: EntityPanelProps): JSX.Element {
   const { entries } = useModuleEntities(module, artifacts);
   const [collapsed, setCollapsed] = useState(false);
@@ -323,9 +332,12 @@ export function EntityPanel({
   // would go stale on the first hand edit, which is the state this exists for)
   // and never a permanently disabled button: with nothing missing it renders a
   // passive statement instead.
+  // The portrait half of the deviation reads the campaign's presentation
+  // snapshot, so the confirmation lists exactly the portraits the batch will
+  // fill (docs/11 D6: ONE art reading).
   const fullTargetDeviation = useMemo(
-    () => deriveAutomationDeviation(module, artifacts, FULL_AUTOMATION_TARGET),
-    [module, artifacts],
+    () => deriveAutomationDeviation(module, artifacts, FULL_AUTOMATION_TARGET, creaturePresentation),
+    [module, artifacts, creaturePresentation],
   );
   const generateAllWork = deviationWorkCount(fullTargetDeviation);
 
@@ -1320,23 +1332,22 @@ function EntityRow({
         {/* The honest verdict (owner-reported: a name that only resolved to a
             shared bestiary creature row counted as a DEFINED entity while its
             row carried nothing but the global portrait). The row is offered as
-            work to do — and it says why a campaign row of that name is not it,
-            instead of leaving the owner to guess: the marker's title names the
-            shared creature row and the remedy, and the sr-only mirror carries
-            the same sentence to touch and screen readers (the ambiguous marker's
-            convention above). */}
-        {entry.creatureRow !== undefined && (
+            work to do — and it says WHY, instead of leaving the owner to guess:
+            the marker's title names the library creature this text cites and the
+            remedy, and the sr-only mirror carries the same sentence to touch and
+            screen readers (the ambiguous marker's convention above). */}
+        {entry.creatureName !== undefined && (
           <>
             <span
               className="shrink-0 rounded border border-dashed px-1 text-[10px] whitespace-nowrap text-muted-foreground"
-              title={creatureRowOnlyNotice(entry.name)}
+              title={creatureOnlyNotice(entry.name)}
               data-testid="entity-creature-only"
               data-name={entry.name}
               aria-hidden
             >
               bestiary only
             </span>
-            <span className="sr-only">{creatureRowOnlyNotice(entry.name)}</span>
+            <span className="sr-only">{creatureOnlyNotice(entry.name)}</span>
           </>
         )}
         {entry.resolved ? (

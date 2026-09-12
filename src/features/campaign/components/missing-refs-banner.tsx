@@ -5,6 +5,7 @@ import { useLiveQuery } from 'dexie-react-hooks';
 import { ROUTES, campaignIdFromPath } from '@/app/routes';
 import { db } from '@/db/db';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
+import { isMissingRefOrigin } from '@/domain/encounterResolve';
 
 /**
  * Missing-refs campaign banner (07-MILESTONE-3 M3-E slice B): a campaign
@@ -33,7 +34,7 @@ export function MissingRefsBanner(): JSX.Element | null {
         // The banner contract IS the row contract: a `missing ref` origin
         // here is a `missing ref` badge on the encounter row.
         const resolved = await resolveMonsterEntryWithRepos(entry);
-        if (resolved.origin === 'missing ref') {
+        if (isMissingRefOrigin(resolved.origin)) {
           dangling += 1;
           names.add(artifact.name);
         }

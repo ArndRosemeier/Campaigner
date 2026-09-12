@@ -378,13 +378,24 @@ a compact **roster index** from the pack books:
   never a silent fallback to name-only). Duplicate names across books resolve
   deterministically (most recently updated pack book first) and are visible
   in the origin badge (§8), which names the book.
-  Amended 2026-09-05 by afa23f4 (mob-artifact arc): *a RESOLVED rulebook
-  citation now also get-or-creates the campaign's mob artifact — ONE `npc`
-  artifact per cited chunk (`data.monsterChunkId` marker, roster name, no
-  stat duplication; the chunk stays the source of truth) — and stamps its
-  id as the entry's additive `mobArtifactId` so battles seed shared
-  identity and one-click portraits. See 11 §"D5 amendment — mob
-  portraits".*
+  **Amended 2026-09-05 by afa23f4 (mob-artifact arc), then SUPERSEDED by the
+  creature tier (docs/17 row 106, 11 §"D5 amendment, SECOND revision").** The
+  2026-09-05 text said a resolved citation *"get-or-creates the campaign's mob
+  artifact — ONE `npc` artifact per cited chunk (`data.monsterChunkId` marker …
+  and stamps its id as the entry's additive `mobArtifactId`)"*. That artifact no
+  longer exists and neither does the field, so do not implement from it. What a
+  resolved citation does now: it is stored as the roster entry's `source` and
+  resolves to the **LIBRARY** creature at read time
+  (`db/creatureRepo.resolveCreatureCitation` — chunk id, else the content hash
+  recorded at citation birth, and a THROW on an empty ref). Nothing is
+  materialized: the chunk stays the single source of truth, battles seed shared
+  identity from the creature identity (`libraryCreatureKey(chunkId)`), and
+  portraits come from the presentation tier. To give a creature an `npc` row of
+  its own — the owner's Aunt Agatha path — the MODULE side calls
+  `db/creatureRepo.castCreatureAsNpc`; the encounter/bestiary-roster citation
+  path deliberately has no cast seam. The bestiary pack's own tier is therefore
+  READ-ONLY: a pack publishes statblock chunks, and nothing here writes a
+  campaign artifact.
 - **Pinned chunks join the citable list.** A chunk the user pinned in the run
   dialog is an explicit instruction to use it, so when it parsed
   (`statBlock !== null` — the same invariant as every ranked citable chunk) it

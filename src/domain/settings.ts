@@ -17,6 +17,35 @@ import {
   userPromptStyleSchema,
 } from '@/domain/promptStyle';
 
+/**
+ * The one-shot report of the core-mob citation repair (docs/11 D7): what the
+ * v20 upgrade converted, and — BY NAME — everything it could not convert.
+ * Written by the upgrade, consumed once by AppShell, then nulled.
+ *
+ * The by-name half is the point (AGENTS rule 1): a repair that cannot convert
+ * a citation must never leave it to render as a bare `missing ref` with no
+ * explanation of what was lost.
+ */
+export const creatureCitationRepairReportSchema = z.object({
+  /** `npc-ref` citations rewritten to the `rulebook` citation of the identity
+   * the deleted mob artifact's marker named — the owner's incident, healed. */
+  citationsRewritten: z.number().int().nonnegative(),
+  /** Marked `npc` rows deleted as cache (they were never authored content). */
+  emptyRowsDeleted: z.number().int().nonnegative(),
+  /** Marked rows whose cover was carried onto the campaign's presentation row
+   * for the creature identity, so no portrait was lost with the row. */
+  coversCarriedForward: z.number().int().nonnegative(),
+  /** Rows that still carried authored text when they were deleted — reported
+   * because the owner may want to re-create them as real NPCs (docs/11 D7). */
+  authoredRowsRemoved: z.array(z.string()).default([]),
+  /** Citations that could NOT be converted, by name, with the reason. */
+  unconverted: z
+    .array(z.object({ where: z.string(), name: z.string(), reason: z.string() }))
+    .default([]),
+});
+
+export type CreatureCitationRepairReport = z.infer<typeof creatureCitationRepairReportSchema>;
+
 /** The settings table holds a single row with this fixed id. */
 export const SETTINGS_ID = 'settings';
 
@@ -362,6 +391,11 @@ export const settingsSchema = z.object({
   maxParallelRequests: z.number().int().min(1).max(4).default(2),
   /** v11 migration notice, consumed once by AppShell after it is shown. */
   retiredSessionNotesRemoved: z.number().int().nonnegative().default(0),
+  /**
+   * The one-shot core-mob citation repair report (docs/11 D7), consumed once by
+   * AppShell and then reset to null. `null` = nothing to report.
+   */
+  creatureCitationRepair: creatureCitationRepairReportSchema.nullable().default(null),
   /** First-run setup wizard (see onboardingSchema above). */
   onboarding: onboardingSchema.default({ status: 'fresh', stepState: [] }),
   /** Last-used module shortcut (see lastModuleSchema above). */
@@ -434,6 +468,7 @@ export function defaultSettings(): Settings {
     runExtras: { image: false, statBlock: false, mobPortraits: false },
     maxParallelRequests: 2,
     retiredSessionNotesRemoved: 0,
+    creatureCitationRepair: null,
     onboarding: { status: 'fresh', stepState: [] },
     lastModule: null,
     newModuleDraft: null,

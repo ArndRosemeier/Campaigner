@@ -274,7 +274,12 @@ describe('the entity card shows the writing model and the image model', () => {
     await user.click(towerRow);
 
     const peek = await screen.findByTestId('peek-modal', {}, { timeout: 5_000 });
-    expect(within(peek).getByTestId('peek-image')).toBeInTheDocument();
+    // The modal mounts before its IMAGE does (the blob arrives through a live
+    // query, then an object URL), so a synchronous read here is a race: under a
+    // loaded full-suite run this test failed with "Unable to find
+    // [data-testid=peek-image]" while passing in isolation. The barrier waits
+    // for the thing being asserted instead of for the frame it usually lands in.
+    expect(await within(peek).findByTestId('peek-image', {}, { timeout: 5_000 })).toBeInTheDocument();
     // The image is there; its id is not — nothing was recorded for an upload.
     expect(within(peek).queryByTestId('peek-image-model')).not.toBeInTheDocument();
     expect(within(peek).queryByTestId('peek-writer-model')).not.toBeInTheDocument();

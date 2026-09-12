@@ -6,6 +6,7 @@ import type {
   Battle,
   Campaign,
   ChunkEmbedding,
+  CreatureImage,
   Deliverable,
   Module,
   MobPortraitCacheEntry,
@@ -20,6 +21,7 @@ import type {
 } from '@/domain';
 import type { Id } from '@/domain';
 import { LEGACY_COMPLEX_BUDGET_NOTE, normalizeEncounterShapeData } from '@/domain';
+import { repairCreatureCitations } from '@/db/creatureRepair';
 
 /**
  * The single Dexie database (01-DATA-MODEL §Dexie schema). All IndexedDB
@@ -81,6 +83,7 @@ export class CampaignerDB extends Dexie {
   pdfFiles!: Table<StoredPdf, Id>;
   mobPortraits!: Table<MobPortraitCacheEntry, Id>;
   moduleVersions!: Table<ModuleDocumentVersion, Id>;
+  creatureImages!: Table<CreatureImage, Id>;
   settings!: Table<Settings, string>;
 
   constructor() {
@@ -612,6 +615,69 @@ export class CampaignerDB extends Dexie {
       moduleVersions: 'id, moduleId, createdAt',
       settings: 'id',
     });
+
+    // Core-mob arc (owner-ratified; docs/11 D5 amendment, docs/17 row 106): a
+    // bestiary creature is a LIBRARY CITATION, never an artifact, so the table
+    // that held a row for one stops being keyed on it and the table that holds
+    // what a creature NEEDS appears:
+    //
+    // - `mobPortraits` keeps its user-visible behaviour and is RE-KEYED from
+    //   `&chunkId` to `&creatureKey` (`domain/creature`'s identity: a library
+    //   creature's chunk, or an invented mob's content hash). Existing rows are
+    //   re-keyed in the upgrade, so generated art survives; a creature with no
+    //   artifact at all can now have a canonical portrait.
+    // - `creatureImages` is NEW: the per-campaign PRESENTATION row for a
+    //   creature that is cited but not owned (an encounter's generic zombie, a
+    //   battle token, a prose mention) — one row per (campaign, identity),
+    //   holding this campaign's own image blob.
+    //
+    // The upgrade ALSO runs the ONE loud, idempotent citation repair
+    // (`db/creatureRepair`, docs/11 D7): every `npc-ref` whose target carried
+    // the retired `data.monsterChunkId` marker is rewritten to the `rulebook`
+    // citation of that identity (the marker WAS the identity — lossless), the
+    // marked rows are deleted as cache (their covers carried onto the campaign's
+    // presentation row first, so no portrait dies with them), and the counts —
+    // plus anything the repair could NOT convert, BY NAME — land in settings for
+    // the app to show once.
+    this.version(20)
+      .stores({
+        campaigns: 'id, name',
+        artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+        revisions: 'id, artifactId, [artifactId+revision]',
+        images: 'id, campaignId',
+        rulebooks: 'id, system, status',
+        chunks: 'id, bookId, chunkType, contentHash',
+        embeddings: 'contentHash',
+        personas: 'id, &slug',
+        runs: 'id, campaignId, personaId, status, updatedAt',
+        deliverables: 'id, campaignId',
+        modules: 'id, campaignId, updatedAt',
+        battles: 'id, campaignId, &moduleId',
+        pdfFiles: 'id, &bookId',
+        mobPortraits: 'id, &creatureKey',
+        moduleVersions: 'id, moduleId, createdAt',
+        creatureImages: 'id, campaignId, [campaignId+creatureKey]',
+        settings: 'id',
+      })
+      .upgrade(async (tx) => {
+        // 1. Re-key the portrait slots: an old row keyed by a chunkId becomes
+        //    the same creature's IDENTITY key (`domain/creature`'s ONE
+        //    spelling), so every generated portrait survives the arc.
+        const portraits = tx.table('mobPortraits');
+        const rows = (await portraits.toArray()) as Record<string, unknown>[];
+        for (const row of rows) {
+          const chunkId = row.chunkId;
+          if (typeof chunkId !== 'string' || chunkId === '') continue;
+          await portraits.delete(row.id);
+          // The old key field is dropped, not carried: the schema no longer
+          // has it and the identity is the only key a slot answers to.
+          const next: Record<string, unknown> = { ...row, creatureKey: `chunk:${chunkId}` };
+          delete next.chunkId;
+          await portraits.put(next);
+        }
+        // 2. The citation repair (docs/11 D7) — the incident's own medicine.
+        await repairCreatureCitations({ tx });
+      });
   }
 }
 

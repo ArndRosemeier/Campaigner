@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { creatureRefSchema } from '@/domain/creature';
 import { BaseEntitySchema, type BaseEntity, type Id } from '@/domain/entity';
 import { sha256HexSchema } from '@/domain/rulebook';
 import { statBlockSchema } from '@/domain/statblock';
@@ -202,19 +203,46 @@ export const pcDataSchema = z.object({
 
 export type PcArtifactData = z.infer<typeof pcDataSchema>;
 
-export const npcDataSchema = z.object({
-  appearance: z.string(),
-  personality: z.string(),
-  statBlock: statBlockSchema.nullable(),
-  /**
-   * Mob-artifact marker (owner-ratified mob-artifact arc): set ⇔ this npc
-   * artifact is the ONE image-able artifact for a bestiary creature cited by
-   * `chunkId` in this campaign (keyed by chunkId, never by name). Stats are
-   * NOT duplicated here — the chunk stays the source of truth. Additive +
-   * optional: old rows (and real NPCs) simply leave it unset.
-   */
-  monsterChunkId: z.uuid().optional(),
-});
+/**
+ * An authored NPC's stat block is one of THREE things (owner-ratified
+ * core-mob arc, docs/11 D5 amendment):
+ *
+ * - authored inline (`statBlock`);
+ * - absent (both null/undefined — a named NPC with no numbers);
+ * - DERIVED from a library creature (`creatureRef` — the Aunt Agatha path,
+ *   docs/11 D3): this NPC's prose, the rulebook creature's stats.
+ *
+ * The two are MUTUALLY EXCLUSIVE and the conflict is a loud named error, never
+ * a silent precedence: a row that carried both would make the numbers the GM
+ * reads depend on which reader won.
+ */
+export const npcDataSchema = z
+  .object({
+    appearance: z.string(),
+    personality: z.string(),
+    statBlock: statBlockSchema.nullable(),
+    /**
+     * The library creature this authored NPC's stat block is derived FROM
+     * (docs/11 D3). Resolves exactly like a `rulebook` citation — chunk uuid
+     * first, then the content-hash fallback — and the origin label DISCLOSES
+     * the derivation so a GM is never misled about where the numbers came
+     * from. Additive + optional: every pre-existing row leaves it unset.
+     */
+    creatureRef: creatureRefSchema.optional(),
+    /**
+     * The run that CAST this NPC (`db/creatureRepo.castCreatureAsNpc`), when
+     * one did: the GENERATION seam's own provenance, so a later pass can tell a
+     * freshly cast, prose-less row from one a module designer has since written
+     * in. It is never authored text and never rendered; an NPC a human wrote
+     * from scratch has no reason to carry it.
+     */
+    castByRunId: z.string().optional(),
+  })
+  .refine((data) => !(data.creatureRef !== undefined && data.statBlock !== null), {
+    error:
+      'an npc carries either an authored stat block or a library creatureRef to derive one from, never both — clear the stat block or drop the creature reference',
+    path: ['creatureRef'],
+  });
 
 export type NpcArtifactData = z.infer<typeof npcDataSchema>;
 
@@ -254,11 +282,21 @@ export const noteDataSchema = z.record(z.string(), z.never());
 export type NoteArtifactData = z.infer<typeof noteDataSchema>;
 
 /**
- * Where a monster's stats come from (07-MILESTONE-3 M3-B):
- * - npc-ref: links an NPC artifact (stats live with the NPC);
+ * Where a monster's stats come from (07-MILESTONE-3 M3-B; re-based on the
+ * library tier by the owner-ratified core-mob arc, docs/11 D5 amendment):
+ * - npc-ref: links an authored NPC artifact — stats live with it (or are
+ *   DERIVED from a library creature through that NPC's own `creatureRef`);
  * - inline: a one-off embedded StatBlock;
- * - rulebook: an ingested statblock chunk;
+ * - rulebook: **a library creature citation.** A read-only bestiary creature
+ *   addressed by IDENTITY (chunk uuid, then its content hash) — never a row
+ *   this app owns, never orphaned, never deletable, never authored;
  * - none: name-only entry (pre-M3 rows migrate to this).
+ *
+ * The `rulebook` variant name is PERSISTED and deliberately kept (docs/11
+ * D2): a legacy `rulebook` citation already IS exactly this form, and zod
+ * strips the two dropped fields, so old rows keep parsing and resolving with
+ * zero migration. Renaming it to `creature` would rewrite every stored
+ * citation for no behavioural gain.
  */
 export const monsterSourceSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('npc-ref'), artifactId: z.uuid() }),
@@ -266,14 +304,6 @@ export const monsterSourceSchema = z.discriminatedUnion('type', [
   z.object({
     type: z.literal('rulebook'),
     chunkId: z.uuid(),
-    /**
-     * Mob artifact identity (owner-ratified mob-artifact arc): the ONE
-     * campaign-scoped npc artifact standing in for this creature kind
-     * (`data.monsterChunkId === chunkId`), stamped by finalize — or lazily
-     * at seed time for encounters written before the marker existed.
-     * Additive + optional: old rows parse unchanged and retro-fill at seed.
-     */
-    mobArtifactId: z.uuid().optional(),
     /**
      * Content identity (chunk-hash-fallback arc): SHA-256 of the cited
      * chunk's text at citation birth. `resolveMonsterEntry` falls back to a
@@ -284,11 +314,11 @@ export const monsterSourceSchema = z.discriminatedUnion('type', [
      */
     contentHash: sha256HexSchema.optional(),
     /**
-     * Reserved L1 creature identity (chunk-hash-fallback arc):
-     * `chunk.headingPath[0]` trimmed, roster entry-name fallback — stamped
-     * at citation birth for a future same-creature resolver. UNUSED by the
-     * resolver in this slice (exact content-hash only): a same-creature
-     * chunk under a new hash still resolves 'missing ref' by design.
+     * The creature's own name — `chunk.headingPath[0]` trimmed, roster
+     * entry-name fallback — stamped at citation birth, and the name the
+     * portrait key's grounding and the citation's display prefer. NOT a
+     * resolution key (`resolveMonsterEntry` resolves by chunk uuid, then by
+     * content hash, exactly as documented in docs/11 D9).
      */
     creatureName: z.string().optional(),
   }),

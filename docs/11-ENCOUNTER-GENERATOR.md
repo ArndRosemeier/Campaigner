@@ -59,7 +59,45 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D18 | **Two-button regeneration (owner-directed, 2026-09-09)**: the encounter editor offers EXACTLY two automatic actions for BOTH shapes, plus the prose checkbox — the old one-fight content "Regenerate with AI" and the standalone battlemap "Generate layout & map / Regenerate" are DELETED (subsumed, never renamed). **Regenerate everything** = a new dungeon top to bottom (complex: a fresh full Cartographer run — new roster + new layout + new map, same as if module-generated fresh; a roomless complex resets the row first so the fill-grade machinery runs against the row's own preset; single: a fresh Smith one-fight draft + a fresh map, one action). **Repopulate** = the map looks fine, the spawn looks wrong — a NEW roster for ALL rooms (complex: ROSTER-ONLY Cartographer pass — brief with the 'empty'/'over' repair loop + room-mirror + fresh cap, finalize persisting ONLY `monsters` (+ lowered `targetLevel`s) onto the PRESERVED rooms/map; single: today's Smith one-fight fill). A dungeon's repopulation is NOT a Smith extension — its clauses key on the target's actual shape. The **prose checkbox** ("Also redesign name and prose", default OFF) chains AFTER the automatic pass: a Smith PROSE-ONLY run (persists name/prose/body; any roster drift fails the run loud with nothing persisted). Unticked, a dungeon's name and prose stay byte-identical (singles always get fresh Smith prose; the box additionally replaces the name there). Both buttons honor the draw-once fill grade, the row preset, the remembered-preset trap fix, the cap math and the repair-turn semantics; manual Clear (map deletion) and the invisible unattended map queue stay as-is. Amended 2026-09-09 (D19): the D18 section gains a complex-only per-run **Map path** control (Use default / Classic / Vision) for Regenerate everything — the choice rides `EncounterRegenOptions.dungeonMapPath` through the run row (explicit-only, never persisted as the Settings default); singles ignore it, repopulation takes none. See "D18 — two-button regeneration" below. |
 | D19 | **A second, vision-located dungeon path for complex maps (owner-directed, 2026-09-09; the lab's labeled-map recipe production-hardened — "31 of 32 letters found, success for this config")**: the Settings `dungeonMapPath: 'classic' \| 'vision'` (DEFAULT `'classic'` — vision is opt-in; select beside the encounter preset, labels "Classic (vector rooms)" / "Vision-located labels") governs complex/multi-room production (initial runs + the unattended queue + Regenerate everything); the D18 per-run choice beats it both ways for ONE run. SINGLES always map classic (one arena needs no registration — the override is ignored, never an error); REPOPULATION is path-independent (roster-only, never touches the map); the unattended queue passes no override (the setting governs). The vision pipeline is `brief → vision-map → finalize`: (a) SIDECAR FIRST — rooms (letter A..N in room order for 4–10 rooms, name, description, encounter assignment, declared graph edges) + the brief's `entryRoomIndex` room flagged as the entrance (entry keeps its letter; the prompt draws it AS the visual ingress — stairs/cave mouth/gate/portal per concept, plaque included — and its observed point doubles as party ingress) authored from the brief BEFORE any image exists; (b) ONE labeled map through the existing image pipeline + storage (same `mapImageId` home; no aspect normalization — the image IS the map); (c) ONE structured vision pass with the configured chat model (0–1000 grid, zod boundary — a vision-incapable model fails the map step loud); (d) VERIFY by count check + a focused re-ask per miss ("only label D", found points as context) — still missing ⇒ the MAP STEP FAILS LOUD (candidate pruned, nothing persisted) naming the letters, NEVER an invented coordinate. Geometry posture: vision rooms carry NO `rects`/`mobsRect`/`entrance`/corridor-`rects` (schema-enforced); corridors carry declared `a`/`b` edges; spawns, group veils and key markers resolve to the observed point (+ deterministic scatter/placement around a point); anything needing polygons fails loud, never silently centers; connectivity IS the sidecar's declared room graph. Shape follows each room's description + the dungeon concept — NO regular/irregular distinction or toggle anywhere in the vision path. KNOWN DEBT (accepted): layout drift (the painted map drifting from the declared graph) has no verifier this arc — Regenerate everything is the correction. See "Vision-located dungeon path" below. |
 
-### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9; coverage + level contract amended 2026-09-10, docs/17 row 90)
+### D5 amendment, SECOND revision — the creature tier supersedes the mob artifact (docs/17 row 106)
+
+**READ THIS BEFORE THE BLOCK BELOW.** The first revision of this amendment
+(kept verbatim underneath, as the record of what was decided then) is
+**superseded in its mechanism** by the creature tier. Everything in it that
+describes a *hidden `npc` artifact per cited chunk* — `data.monsterChunkId`,
+`db/mobArtifacts.ts` (`getOrCreateMobArtifact`, `spawnMobArtifactIntoModule`,
+`materializeInventedCreatureArtifact`, `carryMobCoversForward`,
+`countMobArtifactsCitedByModule`, `isMobArtifact`),
+`features/campaign/creature-row-guard.ts`, and the "a creature row is not an
+authored NPC, so refuse the AI/refill/editor writes on it" family — describes a
+model that NO LONGER EXISTS. Do not implement from it.
+
+What replaced it, in one paragraph: a creature is a **library** row (a statblock
+chunk, read-only, addressed by identity); an encounter roster **cites** it and
+materializes **nothing** (`db/creatureRepo.resolveCreatureCitation`, resolved by
+chunk id with a content-hash fallback, throwing on an empty ref); an `npc` that
+**carries** `data.creatureRef` is a **CAST CREATURE** — an authored row with
+derived stats, created only by `db/creatureRepo.castCreatureAsNpc` (idempotent
+per campaign/module/name/identity, never overwriting, refusing a rival or an
+authored npc of that name, stamping the module tag), held by the **module
+generator** and the bestiary spawn dialog and by **no encounter path at all**
+(the roster schema cannot express a cast — pinned in
+`tests/db/creatureRepo.test.ts`); portraits are **presentation**, keyed by
+creature identity in the global `mobPortraits` table plus the per-campaign
+`creatureImages` rows, read through the ONE seam `creatureCoverImageId`. The
+three roster `source` variants on disk are UNCHANGED (`rulebook` / `npc-ref` /
+`inline` / `none`, D2 stands), and the `missing ref` reason is ONE shape with an
+optional name (`missing ref (Ghost Lumberjack)`, read through
+`isMissingRefOrigin`).
+
+The owner's intent for this area is unchanged and is the reason the tier exists:
+*"Often modules want lets say a zombie, but its old aunt agatha. So, she will
+have zombie stats but with prose. ... the encounter generated mobs wont need it,
+they should not introduce important NPCs on their own."*
+
+---
+
+### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9; coverage + level contract amended 2026-09-10, docs/17 row 90) — SUPERSEDED IN MECHANISM, kept as the record
 
 The original D5 was written when a rulebook-cited monster had NO artifact
 identity to hang art on. The owner ratified the mob-artifact arc, verbatim:

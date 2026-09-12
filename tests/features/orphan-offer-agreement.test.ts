@@ -293,11 +293,25 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
       kind: 'npc',
       name: 'Gate Guard',
     });
-    const mob = await createArtifact({
+    // A CAST creature npc (docs/11 D3/D4): the roster below links it, so it is
+    // in use like any other cited row.
+    const goblin = await createArtifact({
       campaignId: campaign.id,
       moduleId: module.id,
       kind: 'npc',
       name: 'Goblin',
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: newId() } },
+    });
+    // REWRITTEN (ledger row 106): the roster used to reach this row by NAME —
+    // a `rulebook` citation called "Cave Fisher" kept a same-named npc alive,
+    // which is the name-matching the core-mob arc removed. A citation names the
+    // LIBRARY, so an authored npc that merely shares the name is NOT in use and
+    // is offered like any other orphan. This row pins exactly that.
+    await createArtifact({
+      campaignId: campaign.id,
+      moduleId: module.id,
+      kind: 'npc',
+      name: 'Cave Fisher',
     });
     const free = await createArtifact({
       campaignId: campaign.id,
@@ -313,12 +327,15 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
       name: 'Ambush',
       data: encounterDataWith([
         npcRefEntry('Gate Guard', guard.id),
+        npcRefEntry('Goblin', goblin.id),
+        // A library citation: it resolves to the bestiary, never to the npc
+        // above that shares its name.
         {
-          name: 'Goblin',
+          name: 'Cave Fisher',
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: newId(), mobArtifactId: mob.id },
+          source: { type: 'rulebook', chunkId: newId() },
         },
       ]),
     });
@@ -355,14 +372,18 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
       'roster entry "Gate Guard" of the encounter "Ambush"',
     );
     expect(inUseReasonFor(view, 'Goblin')).toBe(
-      'mob artifact for roster entry "Goblin" of the encounter "Ambush"',
+      'roster entry "Goblin" of the encounter "Ambush"',
     );
+    // The name twin is NOT in use: the citation above names a library creature,
+    // not this row, and no name-matching survives (ledger row 106).
+    expect(inUseReasonFor(view, 'Cave Fisher')).toBeNull();
     expect(view.hidden.map((row) => row.artifact.name)).toEqual(['Doppel', 'Doppel']);
 
     // NOT derivable from these props (docs/18 §4): the cross-module mention,
     // the battle carriers and the outline node are still offered until a
     // sweep has spoken — named here so the limitation cannot be forgotten.
     expect(offeredNames(view)).toEqual([
+      'Cave Fisher',
       'Echo',
       'Relic Ledger',
       'Seeded Wraith',
@@ -380,7 +401,7 @@ describe('the panel derivation and the sweep agree per candidate (all five guard
     // Per candidate: offered ⇔ deleted, and every kept row's reason is the
     // reason the panel renders for it — one predicate, no drift.
     expect(offeredNames(view)).toEqual([...outcome.deleted.map((row) => row.name)].sort());
-    expect(offeredNames(view)).toEqual(['The Long Winter']);
+    expect(offeredNames(view)).toEqual(['Cave Fisher', 'The Long Winter']);
     expect(inUseReasonFor(view, 'Echo')).toBe(
       'mentioned in campaign prose — "Tide Gate" premise ×1',
     );

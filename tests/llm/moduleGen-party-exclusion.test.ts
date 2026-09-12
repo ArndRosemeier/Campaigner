@@ -298,7 +298,7 @@ describe('party-derived context that must not regress', () => {
     );
   });
 
-  it('keeps the fixed cast npc-only — a party member named in the scene is not cast', () => {
+  it('keeps the fixed cast npc-only — a party member named in the scene is not cast', async () => {
     const pool = [
       {
         id: 'pc-1',
@@ -322,7 +322,7 @@ describe('party-derived context that must not regress', () => {
       },
     ] as never;
 
-    const cast = fixedCastForEncounter(
+    const cast = await fixedCastForEncounter(
       'The Ringing Below',
       `[[${PC_NAME}]] argues with [[${SHARED_NPC}]] beside the bell.`,
       pool,

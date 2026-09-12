@@ -2,7 +2,6 @@ import 'fake-indexeddb/auto';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { creatureRowAiRefusal } from '@/features/campaign/creature-row-guard';
 import { changeArtifact } from '@/features/modules/change-artifact';
 import {
   claimModuleGeneration,
@@ -264,8 +263,22 @@ describe('the instruction is optional and only ever ADDS a paragraph', () => {
   });
 });
 
-describe('what the seam refuses, it refuses out loud and writes nothing', () => {
-  it('a bestiary creature row is REFUSED with the shared reason, and no engine is called', async () => {
+describe('the citation survives every writer', () => {
+  it('REFUSES the AI on a creature-carrying npc, naming the reason and the remedy', async () => {
+    // REWRITTEN (ledger row 106). The old model's guard refused because an
+    // `npc` carrying a hidden `monsterChunkId` was "really" a creature. The
+    // ratified model splits the facts apart: `creatureRef` is a CITATION and
+    // the row around it is AUTHORED (docs/11 D3/D4, the owner's Aunt Agatha
+    // path). The refusal survives anyway — and is now the ONLY sensible answer,
+    // for a reason the old model could not state: `castCreatureAsNpc` is
+    // idempotent per (campaign, module, NAME, identity), so a writer that
+    // renamed this row would let the module generator cast a SECOND row for the
+    // same creature while this one still exists. The refusal names that, and it
+    // writes nothing at all (docs/17 row 101, re-based on the cast seam).
+    //
+    // The alternative — let the AI rewrite the prose and protect only
+    // `creatureRef` — is a real option the owner may prefer; it is NOT what the
+    // code does, and a test may not pin a behaviour the code refuses to have.
     const world = await seedWorld();
     const chunkId = newId();
     const creature = await createArtifact({
@@ -274,28 +287,31 @@ describe('what the seam refuses, it refuses out loud and writes nothing', () => 
       name: 'Goblin Boss',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: chunkId },
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
     });
-    const before = JSON.stringify(await getAnyArtifact(creature.id));
     const { db } = await import('@/db');
     const runsBefore = await db.runs.count();
-    const revisionsBefore = await db.revisions.count();
 
     const result = await changeArtifact({ artifactId: creature.id, instruction: 'Make it a chief.' });
 
-    expect(result).toEqual({
-      status: 'refused',
-      artifactId: creature.id,
-      kind: 'npc',
-      reason: creatureRowAiRefusal('Goblin Boss'),
-    });
-    // Nothing was called and NOTHING was written (row bytes, runs, revisions).
+    expect(result.status).toBe('refused');
+    if (result.status !== 'refused') throw new Error('expected a refusal');
+    // ASCII apostrophe, like the message itself (the mojibake rule the other
+    // copy pins follow).
+    expect(result.reason).toContain("is this campaign's own npc for a library creature");
+    expect(result.reason).toContain('Edit its prose instead');
+    expect(result.reason).toContain('or make a separate npc of that name');
+    // The label names the KIND of row it is (docs/11 D4), so the refusal is
+    // never mistaken for a generic "cannot change this".
+    expect(result.reason).toContain('cast creature');
+    // Nothing ran, nothing was written: no run row, and the citation — which is
+    // what every encounter and battle resolves through — is byte-identical.
     expect(runEntityBatchMock).not.toHaveBeenCalled();
-    expect(repopulateMock).not.toHaveBeenCalled();
-    expect(regenerateMock).not.toHaveBeenCalled();
-    expect(JSON.stringify(await getAnyArtifact(creature.id))).toBe(before);
     expect(await db.runs.count()).toBe(runsBefore);
-    expect(await db.revisions.count()).toBe(revisionsBefore);
+    const after = await getAnyArtifact(creature.id);
+    if (after?.kind !== 'npc') throw new Error('the row is not an npc');
+    expect(after.data.creatureRef).toEqual({ chunkId });
+    expect(after.name).toBe('Goblin Boss');
   });
 
   it('a player character is UNSUPPORTED — the Party is authored, and nothing runs', async () => {
@@ -355,7 +371,10 @@ describe('what the seam refuses, it refuses out loud and writes nothing', () => 
     expect(runEntityBatchMock).not.toHaveBeenCalled();
   });
 
-  it('a refusal never holds the module generation slot', async () => {
+  it('a creature-carrying npc never claims the module generation slot — it is refused before the slot is taken', async () => {
+    // The refusal above must be a TRUE no-op: not a claim that is taken and
+    // then released, and not a claimed slot leaked on the refusal path (a leak
+    // would block every later write for that module with no visible reason).
     const world = await seedWorld();
     const creature = await createArtifact({
       campaignId: world.campaign.id,
@@ -364,11 +383,13 @@ describe('what the seam refuses, it refuses out loud and writes nothing', () => 
       name: 'Goblin Boss',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: newId() },
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: newId() } },
     });
 
-    await changeArtifact({ artifactId: creature.id, instruction: 'x' });
+    const result = await changeArtifact({ artifactId: creature.id, instruction: 'x' });
 
+    expect(result.status).toBe('refused');
+    expect(runEntityBatchMock).not.toHaveBeenCalled();
     expect(isModuleGenerationClaimed(world.module.id)).toBe(false);
   });
 

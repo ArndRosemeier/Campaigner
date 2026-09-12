@@ -15,7 +15,10 @@ import {
   enqueueInventedCreaturePortraits,
   enqueueMobPortraits,
 } from '@/features/campaign/mob-portrait-queue';
-import { encounterNeedsMobPortraitWork } from '@/features/campaign/mob-portrait-participants';
+import {
+  encounterNeedsMobPortraitWork,
+  presentationArtOfCampaign,
+} from '@/features/campaign/mob-portrait-participants';
 import { hasDetailedEntity } from '@/features/modules/detailed-entity';
 import { useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
 import { runEntityBatch } from '@/features/modules/entity-batch';
@@ -120,10 +123,10 @@ function namesOfKind(module: Module, kind: EntityKind): string[] {
  * - docs/17 row 69: a name matching a player character does NOT count as
  *   detailed, so it becomes the module's own entity instead of silently binding
  *   the module to the Party;
- * - a name whose only resolution is a shared bestiary creature row (an `npc`
- *   carrying `data.monsterChunkId`) does NOT count either — the row is the
- *   rulebook creature's own shared artifact, with no authored detail, so the
- *   module gets ITS entity of that name (and the module tier then prefers it).
+ * - a name whose only resolution is a LIBRARY CREATURE (docs/11 D10) does NOT
+ *   count either — the creature is a read-only bestiary row with no authored
+ *   detail, so the module gets ITS entity of that name (and the module tier
+ *   then prefers it).
  *
  * Exported so the "Resume automatic module creation" deviation can list the
  * SAME work the sweep would do.
@@ -172,29 +175,26 @@ export function encountersNeedingMaps(
  * work — an encounter the portrait batch would enqueue for.
  *
  * THE predicate is the queue's own (`encounterNeedsMobPortraitWork`,
- * features/campaign/mob-portrait-participants): the SAME routing (by what a
- * row's creature IS: a `rulebook` citation or an `npc-ref` to a chunk-backed
- * mob artifact shares the one bestiary portrait; an `npc-ref` to an artifact
- * without the marker — the monster the encounter materialized from a
- * model-authored block, a named NPC standing in the roster — and every
- * uncited `inline`/`none` entry gets its own local one), the SAME art reading
- * and the SAME per-kind identity the two enqueue lanes use. It is computed
- * over the artifact snapshot the other steps already hold: no DB read, no
- * write, no art mutation.
+ * features/campaign/mob-portrait-participants): the SAME routing (by what an
+ * entry's creature IS — a `rulebook` citation of a LIBRARY creature shares the
+ * one bestiary portrait, and an invented `inline`/`none` entry gets its own
+ * local one keyed by its content; an `npc-ref` keeps its portrait on the
+ * artifact it points at), the SAME art reading and the SAME per-kind identity
+ * the two enqueue lanes use. It is computed over the artifact snapshot the
+ * other steps already hold: no DB read, no write, no art mutation — and, for a
+ * caller with no campaign image rows to hand, the creature lanes answer
+ * conservatively (work), which the skip-if-imaged queue then costs nothing.
  *
  * Why it is shared rather than re-derived (owner report, docs/17 row 96): this
  * detector used to answer with its OWN rule — roster rows whose
- * `source.type === 'rulebook'` — so every `npc-ref` row (the artifacts the
- * encounter materializes its creatures into, INCLUDING the core/bestiary
- * creatures that carry the `monsterChunkId` marker) and every uncited entry
+ * `source.type === 'rulebook'` — so every `npc-ref` row and every uncited entry
  * was invisible to the module path, and the sweep behind it enqueued the
  * rulebook lane alone. Both halves are the same defect rows 90/92 fixed for
  * the encounter editor: an offer and the work it names must read ONE rule.
  *
  * The one honest residue, and it is deliberately the loud direction: a roster
- * row pointing OUTSIDE the snapshot (a dangling stamped `mobArtifactId`, a
- * dangling `npc-ref`, a link to a row this campaign does not own) counts as
- * work. The enqueue resolves those from the DB — it enqueues the portrait it
+ * row pointing OUTSIDE the snapshot (a dangling `npc-ref`, a link to a row this
+ * campaign does not own) counts as work. The enqueue resolves those from the DB — it enqueues the portrait it
  * finds, and THROWS with the citing name when the row is gone (the sweep
  * aggregates that into one loud per-encounter toast). Reporting them as
  * "nothing to do" would be the silent miss this seam exists to remove, and the
@@ -204,6 +204,12 @@ export function encountersNeedingMaps(
 export function encountersNeedingMobPortraits(
   module: Module,
   artifacts: readonly AnyArtifact[],
+  /** The campaign's presentation snapshot, when the caller has it (docs/11
+   * D6): a caller that passes it gets an answer that AGREES with the batch; a
+   * caller without it gets the conservative over-offer the predicate documents
+   * (harmless — the batch is skip-if-imaged — but it can promise work the batch
+   * then declines, so a surface that names specific work should pass it). */
+  presentationByKey?: ReadonlyMap<string, Id>,
 ): (AnyArtifact & { kind: 'encounter' })[] {
   return artifacts.filter(
     // listArtifactsByCampaign yields OWNED rows only (never global), so the
@@ -211,7 +217,7 @@ export function encountersNeedingMobPortraits(
     // batch entry's `AnyArtifact & { kind: 'encounter' }` parameter as-is.
     (artifact): artifact is Artifact & { kind: 'encounter' } => {
       if (artifact.kind !== 'encounter' || artifact.moduleId !== module.id) return false;
-      return encounterNeedsMobPortraitWork(artifact, artifacts);
+      return encounterNeedsMobPortraitWork(artifact, artifacts, presentationByKey);
     },
   );
 }
@@ -373,8 +379,16 @@ export async function runModulePostGeneration(
     // true`) offered mob portraits in its confirmation and then never enqueued
     // them for a module whose row had the toggle off, which is the default
     // (owner report, docs/17 row 96, second symptom).
+    // The presentation snapshot is read HERE, for the same reason it is read
+    // for the confirmation: the sweep's target list and the batch's own plan
+    // must answer the same question, or the run enqueues work it cannot do (a
+    // creature the campaign already shows a portrait for).
     const portraitTargets = autoGenerateMobImages
-      ? encountersNeedingMobPortraits(module, artifacts)
+      ? encountersNeedingMobPortraits(
+          module,
+          artifacts,
+          await presentationArtOfCampaign(campaign.id),
+        )
       : [];
     let portraitJobs = 0;
     if (portraitTargets.length > 0 && !settings.imagesEnabled) {

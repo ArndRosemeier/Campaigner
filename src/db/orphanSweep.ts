@@ -66,8 +66,8 @@ import { NotFoundError } from '@/lib/errors';
  * - ambiguity shadow (belt for a race between render and confirm);
  * - battle board `tokens[].artifactId` + `seedFighters[].id` on ANY
  *   campaign battle;
- * - encounter roster `npc-ref source.artifactId` + rulebook
- *   `source.mobArtifactId` on any SURVIVING encounter;
+ * - encounter roster `npc-ref source.artifactId` on any SURVIVING encounter
+ *   (a `rulebook` entry cites the read-only library, so it names no owned row);
  * - deliverable outline artifact nodes.
  * Unlike deleteModule's scan, SAME-module encounters/battles count: the
  * module SURVIVES this sweep, so `modulesReferencingOwnedArtifacts`' cascade
@@ -218,9 +218,8 @@ export interface OrphanGuardEvaluation {
  * (2) the ambiguity shadow; (3) a portrait token on any campaign battle
  * board; (4) a frozen seed-fighter row on any campaign battle; (5) a
  * deliverable outline artifact node; (6) an encounter roster citation
- * (`npc-ref` `artifactId` or a `rulebook` `mobArtifactId`) — applied to the
- * SURVIVING encounters only, because an encounter this evaluation finds
- * deletable takes its citations with it.
+ * (`npc-ref` `artifactId`) — applied to the SURVIVING encounters only, because
+ * an encounter this evaluation finds deletable takes its citations with it.
  */
 export function evaluateOrphanGuards(
   candidates: readonly AnyArtifact[],
@@ -385,9 +384,6 @@ function rosterReasonFor(encounter: EncounterArtifact, artifactId: Id): string |
     if (entry.source.type === 'npc-ref' && entry.source.artifactId === artifactId) {
       return `roster entry "${entry.name}" of the encounter "${encounter.name}"`;
     }
-    if (entry.source.type === 'rulebook' && entry.source.mobArtifactId === artifactId) {
-      return `mob artifact for roster entry "${entry.name}" of the encounter "${encounter.name}"`;
-    }
   }
   return undefined;
 }
@@ -403,10 +399,23 @@ export async function sweepOrphanedArtifacts(
 ): Promise<OrphanSweepOutcome> {
   return db.transaction(
     'rw',
-    // Array form (docs/18 gotcha — seven tables, past the variadic cap).
-    // `deliverables` rides the scope for the outline-node guard; deleteModule
-    // needs `settings` for its shortcut, this sweep deletes no module row.
-    [db.artifacts, db.revisions, db.images, db.battles, db.modules, db.campaigns, db.deliverables],
+    // Array form (docs/18 gotcha — past the variadic cap). `deliverables`
+    // rides the scope for the outline-node guard; deleteModule needs
+    // `settings` for its shortcut, this sweep deletes no module row.
+    // `creatureImages` rides it because the per-row delete path below reaches
+    // the campaign image prune (the reference walk reads it) — a scope that
+    // omits it throws "object store not found" mid-sweep, which is exactly the
+    // half-applied delete this transaction exists to prevent.
+    [
+      db.artifacts,
+      db.revisions,
+      db.images,
+      db.battles,
+      db.modules,
+      db.campaigns,
+      db.deliverables,
+      db.creatureImages,
+    ],
     async () => {
       // Re-read INSIDE the tx (recount): the module row must still exist —
       // a module deleted between the panel render and the confirm fails

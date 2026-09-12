@@ -4,10 +4,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   createArtifact,
-  deleteArtifact,
   getAnyArtifact,
 } from '@/db/artifactRepo';
 import { createCampaign, deleteCampaign } from '@/db/campaignRepo';
+import { creatureCoverImageId, resolveCreatureCitation } from '@/db/creatureRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { db } from '@/db/db';
 import {
@@ -15,9 +15,7 @@ import {
   getImage,
   pruneUnreferencedImages,
 } from '@/db/imageRepo';
-import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import {
-  cacheKeyForMonsterSource,
   cachedMobPortraitImageIds,
   canonicalCreatureName,
   getMobPortraitCacheEntry,
@@ -32,6 +30,8 @@ import {
   ruleChunkSchema,
   stampNewEntity,
   statBlockSchema,
+  contentCreatureKey,
+  libraryCreatureKey,
 } from '@/domain';
 import {
   enqueueArtifactPortrait,
@@ -133,7 +133,7 @@ async function seedCreatureChunk(
 
 async function addEncounter(
   campaignId: string,
-  monsters: { name: string; count: number; source: Record<string, unknown> }[],
+  monsters: { name: string; count: number; source: Record<string, unknown>; notes?: string }[],
 ) {
   const encounter = await createArtifact({
     campaignId,
@@ -145,7 +145,7 @@ async function addEncounter(
       monsters: monsters.map((monster) => ({
         name: monster.name,
         count: monster.count,
-        notes: '',
+        notes: monster.notes ?? '',
         source: monster.source,
       })) as never,
       terrain: '',
@@ -238,9 +238,9 @@ describe('cache row schema (v18)', () => {
   it('registers the mobPortraits store and round-trips a parsed row', async () => {
     expect(db.table('mobPortraits')).toBeDefined();
     const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
-    const ensured = await ensureCanonicalMobPortrait({ chunkId, campaignId: 'no-campaign' });
+    const ensured = await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: 'no-campaign' });
     expect(ensured.generated).toBe(true);
-    const entry = await getMobPortraitCacheEntry(chunkId);
+    const entry = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
     expect(entry?.imageId).toBe(ensured.imageId);
     // Parse-on-read: the stored row validates against the zod schema.
     expect(() => mobPortraitCacheSchema.parse(entry)).not.toThrow();
@@ -251,11 +251,11 @@ describe('cache row schema (v18)', () => {
 
   it('publishes put-if-absent: a second store for one chunk converges, never overwrites', async () => {
     const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
-    const first = await ensureCanonicalMobPortrait({ chunkId, campaignId: 'no-campaign' });
-    const second = await ensureCanonicalMobPortrait({ chunkId, campaignId: 'no-campaign' });
+    const first = await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: 'no-campaign' });
+    const second = await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: 'no-campaign' });
     expect(second).toEqual({ imageId: first.imageId, generated: false });
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
-    expect(await db.mobPortraits.where('chunkId').equals(chunkId).count()).toBe(1);
+    expect(await db.mobPortraits.where('creatureKey').equals(libraryCreatureKey(chunkId)).count()).toBe(1);
   });
 });
 
@@ -285,13 +285,14 @@ describe('canonical-only invariant', () => {
     expect(finalPrompt).toContain('beast');
     expect(finalPrompt).toContain('Avoid: text, letters, numbers');
     expect(chatMock).not.toHaveBeenCalled();
-    const entry = await getMobPortraitCacheEntry(chunkId);
+    const entry = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
     expect(entry).toBeDefined();
-    const mobA = await getAnyArtifact(
-      await getOrCreateMobArtifact(campaignA, chunkId, 'Giant Rat'),
-    );
-    expect(mobA?.coverImageId).not.toBeNull();
-    expect(mobA?.coverImageId).not.toBe(entry?.imageId);
+    // REWRITTEN (ledger row 106): the presentation portrait hangs off the
+    // campaign's CREATURE IDENTITY row, not off an artifact (docs/11 D6).
+    const creatureKey = libraryCreatureKey(chunkId);
+    const coverA = await creatureCoverImageId({ campaignId: campaignA, creatureKey });
+    expect(coverA).not.toBeNull();
+    expect(coverA).not.toBe(entry?.imageId);
 
     // Second campaign: the cover-less canonical citation is a normal JOB
     // whose worker CLONES the populated slot — still ONE generation for the
@@ -311,15 +312,13 @@ describe('canonical-only invariant', () => {
     // Reuse, not regeneration: the fill cloned the slot's bytes.
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
 
-    const mobB = await getAnyArtifact(
-      await getOrCreateMobArtifact(campaignB, chunkId, 'Giant Rat'),
-    );
-    expect(mobB?.coverImageId).not.toBeNull();
-    expect(mobB?.coverImageId).not.toBe(entry?.imageId);
-    const coverB = await getImage(mobB?.coverImageId ?? '');
+    const cloneId = await creatureCoverImageId({ campaignId: campaignB, creatureKey });
+    expect(cloneId).not.toBeNull();
+    expect(cloneId).not.toBe(entry?.imageId);
+    const cloneImage = await getImage(cloneId ?? '');
     const cached = await getImage(entry?.imageId ?? '');
-    expect(coverB?.campaignId).toBe(campaignB);
-    expect([...(coverB?.bytes ?? [])]).toEqual([...(cached?.bytes ?? [])]);
+    expect(cloneImage?.campaignId).toBe(campaignB);
+    expect([...(cloneImage?.bytes ?? [])]).toEqual([...(cached?.bytes ?? [])]);
   });
 
   it('canonical grounding carries prose but no stat digits from the fixture chunk', async () => {
@@ -334,7 +333,7 @@ describe('canonical-only invariant', () => {
       undefined,
       proseBlock,
     );
-    const ensured = await ensureCanonicalMobPortrait({ chunkId, campaignId: 'no-campaign' });
+    const ensured = await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: 'no-campaign' });
     expect(ensured.generated).toBe(true);
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
     expect(chatMock).not.toHaveBeenCalled();
@@ -357,6 +356,7 @@ describe('canonical-only invariant', () => {
 
   it('a case-insensitive canonical match reuses without generating', async () => {
     const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
+    const creatureKey = libraryCreatureKey(chunkId);
     const campaignA = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
 
@@ -377,19 +377,18 @@ describe('canonical-only invariant', () => {
     // cloned it, so the chunk still has exactly one generation (ledger 81 —
     // the job replaces the old enumeration-time read-through).
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
-    const cacheEntry = await getMobPortraitCacheEntry(chunkId);
-    const mobB = await getAnyArtifact(
-      await getOrCreateMobArtifact(campaignB, chunkId, 'GIANT RAT'),
-    );
-    expect(mobB?.coverImageId).not.toBeNull();
-    expect(mobB?.coverImageId).not.toBe(cacheEntry?.imageId);
-    const coverB = await getImage(mobB?.coverImageId ?? '');
+    const cacheEntry = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
+    const cloneId = await creatureCoverImageId({ campaignId: campaignB, creatureKey });
+    expect(cloneId).not.toBeNull();
+    expect(cloneId).not.toBe(cacheEntry?.imageId);
+    const cloneImage = await getImage(cloneId ?? '');
     const cached = await getImage(cacheEntry?.imageId ?? '');
-    expect([...(coverB?.bytes ?? [])]).toEqual([...(cached?.bytes ?? [])]);
+    expect([...(cloneImage?.bytes ?? [])]).toEqual([...(cached?.bytes ?? [])]);
   });
 
   it('a flavored variant neither populates nor overwrites the cache', async () => {
     const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
+    const creatureKey = libraryCreatureKey(chunkId);
     const campaignA = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
     const campaignC = (await createCampaign({ name: 'C', system: 'dnd5e' })).id;
@@ -404,10 +403,7 @@ describe('canonical-only invariant', () => {
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
     expect(generateImagesMock.mock.calls[0]?.[0]).toContain('slimey giant rat');
     expect(await db.mobPortraits.count()).toBe(0);
-    const mobA = await getAnyArtifact(
-      await getOrCreateMobArtifact(campaignA, chunkId, 'slimey giant rat'),
-    );
-    const flavorCoverA = mobA?.coverImageId;
+    const flavorCoverA = await creatureCoverImageId({ campaignId: campaignA, creatureKey });
     expect(flavorCoverA).not.toBeNull();
 
     // Canonical citation populates the slot once.
@@ -417,7 +413,7 @@ describe('canonical-only invariant', () => {
     await enqueueMobPortraits(canonicalB, campaignB);
     await drainMobQueue();
     expect(generateImagesMock).toHaveBeenCalledTimes(2);
-    const entry = await getMobPortraitCacheEntry(chunkId);
+    const entry = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
     expect(entry).toBeDefined();
     const canonicalImageId = entry?.imageId ?? '';
 
@@ -428,20 +424,17 @@ describe('canonical-only invariant', () => {
     await enqueueMobPortraits(flavoredC, campaignC);
     await drainMobQueue();
     expect(generateImagesMock).toHaveBeenCalledTimes(3);
-    const reread = await getMobPortraitCacheEntry(chunkId);
+    const reread = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
     expect(reread?.imageId).toBe(canonicalImageId);
-    const mobC = await getAnyArtifact(
-      await getOrCreateMobArtifact(campaignC, chunkId, 'slimey giant rat'),
-    );
-    expect(mobC?.coverImageId).not.toBeNull();
-    expect(mobC?.coverImageId).not.toBe(canonicalImageId);
+    const coverC = await creatureCoverImageId({ campaignId: campaignC, creatureKey });
+    expect(coverC).not.toBeNull();
+    expect(coverC).not.toBe(canonicalImageId);
 
     // The first flavored cover is grandfathered — the canonical publish
     // never re-touched it.
-    const mobAAfter = await getAnyArtifact(
-      await getOrCreateMobArtifact(campaignA, chunkId, 'slimey giant rat'),
+    expect(await creatureCoverImageId({ campaignId: campaignA, creatureKey })).toBe(
+      flavorCoverA,
     );
-    expect(mobAAfter?.coverImageId).toBe(flavorCoverA);
   });
 
   it('a chunk with no usable heading generates locally and never writes the cache', async () => {
@@ -466,17 +459,17 @@ describe('generate-once single-flight', () => {
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
 
     const [first, second] = await Promise.all([
-      ensureCanonicalMobPortrait({ chunkId, campaignId: campaignA }),
-      ensureCanonicalMobPortrait({ chunkId, campaignId: campaignB }),
+      ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: campaignA }),
+      ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: campaignB }),
     ]);
     // One generation shared by both callers: same slot image, one model
     // call, one cache row (joiners share the owner's settled result).
     expect(first.imageId).toBe(second.imageId);
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
-    expect(await db.mobPortraits.where('chunkId').equals(chunkId).count()).toBe(1);
+    expect(await db.mobPortraits.where('creatureKey').equals(libraryCreatureKey(chunkId)).count()).toBe(1);
 
     // Settled work leaves no pending entry: the next call is a fast-path hit.
-    const third = await ensureCanonicalMobPortrait({ chunkId, campaignId: campaignA });
+    const third = await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: campaignA });
     expect(third).toEqual({ imageId: first.imageId, generated: false });
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
   });
@@ -488,7 +481,7 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
     const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     // Populate the cache so a stray read would be observable (this one
     // population generation is the last model call the test allows).
-    await ensureCanonicalMobPortrait({ chunkId, campaignId });
+    await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId });
     expect(await db.mobPortraits.count()).toBe(1);
     generateImagesMock.mockClear();
 
@@ -506,9 +499,19 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
 
     const tables = await transactionTablesDuring(async () => {
       const result = await enqueueMobPortraits(encounter, campaignId);
-      expect(result).toEqual({ enqueued: 0, alreadyImaged: [] });
+      // REWRITTEN (ledger row 106): the lane split is structural now, so this
+      // batch owns `creature` + `authored` and the authored NPC (which has a
+      // row and a cover of its own) IS its work — the retired pin said
+      // `enqueued: 0`, which was true only while this batch skipped every
+      // non-rulebook row. What the test is actually about, the FIREWALL, is
+      // unchanged and pinned below: no cache traffic, no generation here.
+      expect(result).toEqual({ enqueued: 1, alreadyImaged: [] });
     });
-    expect(useMobPortraitQueue.getState().queued).toHaveLength(0);
+    expect(useMobPortraitQueue.getState().queued.map((job) => job.name)).toEqual(['Captain Vane']);
+    // Neither invented row is in this batch (the invented lane owns them), so
+    // the only job carries an artifactId and no chunk.
+    expect(useMobPortraitQueue.getState().queued[0]?.artifactId).toBe(npc.id);
+    expect(useMobPortraitQueue.getState().queued[0]?.chunkId).toBeUndefined();
     expect(tables).not.toContain('mobPortraits');
     expect(generateImagesMock).not.toHaveBeenCalled();
     expect(await db.mobPortraits.count()).toBe(1);
@@ -539,14 +542,19 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
     const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
     const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     // Populate the cache so a stray read or overwrite would be observable.
-    await ensureCanonicalMobPortrait({ chunkId, campaignId });
-    const entry = await getMobPortraitCacheEntry(chunkId);
+    await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId });
+    const entry = await getMobPortraitCacheEntry(libraryCreatureKey(chunkId));
     expect(entry).toBeDefined();
     generateImagesMock.mockClear();
 
     const encounter = await addEncounter(campaignId, [
-      { name: 'Gloom Ooze', count: 1, source: { type: 'inline', statBlock: testStatBlock() } },
-      { name: 'Whisper Wisp', count: 1, source: { type: 'none' } },
+      {
+        name: 'Gloom Ooze',
+        count: 1,
+        notes: 'a standing wave of black tar',
+        source: { type: 'inline', statBlock: testStatBlock() },
+      },
+      { name: 'Whisper Wisp', count: 1, notes: 'barely a rumor', source: { type: 'none' } },
     ]);
 
     const tables = await transactionTablesDuring(async () => {
@@ -559,21 +567,27 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
     expect(generateImagesMock).toHaveBeenCalledTimes(2);
     expect(tables).not.toContain('mobPortraits');
     expect(await db.mobPortraits.count()).toBe(1);
-    expect((await getMobPortraitCacheEntry(chunkId))?.imageId).toBe(entry?.imageId);
+    expect((await getMobPortraitCacheEntry(libraryCreatureKey(chunkId)))?.imageId).toBe(entry?.imageId);
   });
 
-  it('gates every source shape: only rulebook-with-chunkId produces a key', () => {
-    expect(
-      cacheKeyForMonsterSource({ type: 'rulebook', chunkId: newId() }),
-    ).not.toBeNull();
-    expect(cacheKeyForMonsterSource({ type: 'npc-ref', artifactId: newId() })).toBeNull();
-    expect(
-      cacheKeyForMonsterSource({ type: 'inline', statBlock: testStatBlock() }),
-    ).toBeNull();
-    expect(cacheKeyForMonsterSource({ type: 'none' })).toBeNull();
-    expect(
-      cacheKeyForMonsterSource({ type: 'rulebook', chunkId: undefined } as never),
-    ).toBeNull();
+  it('keys every source shape by CREATURE IDENTITY — the seam no longer asks what kind of source it is', () => {
+    // REWRITTEN (ledger row 106): the retired `cacheKeyForMonsterSource`
+    // branched on the source VARIANT and returned null for every non-rulebook
+    // shape — the very "is this really a mob?" question the owner's incident
+    // came from. Identity is now resolved ONCE, upstream, and the cache seam
+    // only ever sees a key.
+    const campaignId = newId();
+    expect(libraryCreatureKey(newId())).toMatch(/^chunk:/);
+    // A cited creature and a chunk-less one get DIFFERENT keys for the same
+    // display name — a name is not an identity.
+    expect(libraryCreatureKey('c1')).not.toBe(libraryCreatureKey('c2'));
+    expect(contentCreatureKey('Ogre', null)).not.toBe(
+      contentCreatureKey('Ogre', testStatBlock()),
+    );
+    expect(contentCreatureKey('Ogre', testStatBlock())).toBe(
+      contentCreatureKey('Ogre', testStatBlock()),
+    );
+    expect(campaignId).toMatch(/^[0-9a-f-]{36}$/);
   });
 
   it('derives the canonical name from the last heading and matches citations case-insensitively', () => {
@@ -586,23 +600,27 @@ describe('firewall: non-rulebook rows never touch the cache seam', () => {
     expect(isCanonicalCitation('Giant Rat', 'slimey giant rat')).toBe(false);
   });
 
-  it('default get-or-create callers (seed/finalize shape) never touch the cache seam', async () => {
+  it('resolving a citation never touches the cache seam (the read is not a write)', async () => {
+    // REWRITTEN (ledger row 106): the old seam WAS a get-or-create. Under the
+    // ratified model nothing is created for a creature, so the equivalent
+    // invariant is that RESOLVING one reads only the library.
     const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
-    const campaignId = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     const tables = await transactionTablesDuring(async () => {
-      await getOrCreateMobArtifact(campaignId, chunkId, 'Giant Rat');
+      await resolveCreatureCitation({ chunkId }, 'Giant Rat');
     });
     expect(tables).not.toContain('mobPortraits');
+    expect(tables).not.toContain('creatureImages');
   });
 });
 
 describe('cache-blob prune immunity (NEVER-DELETE)', () => {
   it('the cached blob survives campaign prune, global delete-if-unreferenced, clone-owner deletion and campaign deletion', async () => {
     const chunkId = await seedCreatureChunk('Giant Rat', GIANT_RAT_TEXT);
+    const creatureKey = libraryCreatureKey(chunkId);
     const campaignA = (await createCampaign({ name: 'A', system: 'dnd5e' })).id;
     const campaignB = (await createCampaign({ name: 'B', system: 'dnd5e' })).id;
 
-    const ensured = await ensureCanonicalMobPortrait({ chunkId, campaignId: campaignA });
+    const ensured = await ensureCanonicalMobPortrait({ creatureKey: libraryCreatureKey(chunkId), chunkId, campaignId: campaignA });
     const cachedId = ensured.imageId;
     // The prune-immunity set names the shared blob.
     expect(await cachedMobPortraitImageIds()).toContain(cachedId);
@@ -614,7 +632,7 @@ describe('cache-blob prune immunity (NEVER-DELETE)', () => {
     // The global unreferenced path explicitly refuses the cached blob.
     expect(await deleteImageIfUnreferenced(cachedId)).toBe(false);
     expect(await getImage(cachedId)).toBeDefined();
-    expect(await getMobPortraitCacheEntry(chunkId)).toBeDefined();
+    expect(await getMobPortraitCacheEntry(libraryCreatureKey(chunkId))).toBeDefined();
 
     // Cloning the cover, then deleting the clone's owner, prunes the clone
     // but never the cached blob.
@@ -622,20 +640,20 @@ describe('cache-blob prune immunity (NEVER-DELETE)', () => {
       { name: 'Giant Rat', count: 1, source: { type: 'rulebook', chunkId } },
     ]);
     await enqueueMobPortraits(encounterB, campaignB);
-    const mobB = await getAnyArtifact(
-      await getOrCreateMobArtifact(campaignB, chunkId, 'Giant Rat'),
-    );
-    const cloneId = mobB?.coverImageId ?? '';
+    // The clone lands when the worker commits, not during enumeration.
+    await drainMobQueue();
+    const cloneId =
+      (await creatureCoverImageId({ campaignId: campaignB, creatureKey })) ?? '';
     expect(cloneId).not.toBe(cachedId);
-    await deleteArtifact(mobB?.id ?? '');
+    expect(await getImage(cloneId)).toBeDefined();
+    // Deleting the whole campaign takes its presentation rows AND their
+    // cloned blobs with it — and still leaves the CANONICAL cache blob and
+    // its slot row untouched (the NEVER-DELETE guarantee, docs/11 D6).
+    await deleteCampaign(campaignB);
     expect(await getImage(cloneId)).toBeUndefined();
     expect(await getImage(cachedId)).toBeDefined();
-    expect(await getMobPortraitCacheEntry(chunkId)).toBeDefined();
-
-    // Deleting a whole campaign only removes its own images.
-    await deleteCampaign(campaignB);
-    expect(await getImage(cachedId)).toBeDefined();
-    expect(await getMobPortraitCacheEntry(chunkId)).toBeDefined();
+    expect(await getMobPortraitCacheEntry(libraryCreatureKey(chunkId))).toBeDefined();
+    expect(await db.creatureImages.where('campaignId').equals(campaignB).count()).toBe(0);
   });
 });
 

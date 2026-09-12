@@ -1274,11 +1274,13 @@ describe('v18 → v19 migration (durable module document versions)', () => {
     });
     legacy.close();
 
-    // Opening the app's DB upgrades 18 → 19 (additive: no upgrade function
-    // runs, no row is rewritten).
+    // Opening the app's DB walks the chain to its head. v18 → v19 is additive
+    // (no upgrade function runs, no row is rewritten) and v19 → v20 (the
+    // creature tier, ledger row 106) finds no creature state in this fixture,
+    // so both are no-ops on these rows.
     const { db } = await import('@/db/db');
     await db.open();
-    expect(db.verno).toBe(19);
+    expect(db.verno).toBe(20);
 
     const module = await db.modules.get('00000000-0000-4000-8000-000000000b19');
     expect(module?.parts[0]?.markdown).toBe('Pre-undo part text.');
@@ -1296,6 +1298,239 @@ describe('v18 → v19 migration (durable module document versions)', () => {
     const versions = await listModuleVersions('00000000-0000-4000-8000-000000000b19');
     expect(versions).toHaveLength(1);
     expect(versions[0]?.docText).toContain('Pre-undo part text.');
+    await db.delete();
+  }, 20000);
+});
+
+/**
+ * v19 → v20 (the creature tier, docs/17 ledger row 106): the owner's incident
+ * was two `npc` artifacts that WERE bestiary creatures and were deleted,
+ * leaving two roster entries on a permanent `missing ref`. This is the golden
+ * pin for the ONE loud repair seam that heals such a database on upgrade, and
+ * for the invariant that a portrait survives it.
+ */
+describe('v19 → v20 migration (the creature tier)', () => {
+  const CAMPAIGN = '00000000-0000-4000-8000-000000000c20';
+  const MODULE = '00000000-0000-4000-8000-000000000b20';
+  const CHUNK = '00000000-0000-4000-8000-000000000d20';
+  const MARKED = '00000000-0000-4000-8000-000000000e20';
+  const ENCOUNTER = '00000000-0000-4000-8000-000000000f20';
+  const COVER = '00000000-0000-4000-8000-000000000a20';
+  const SLOT = '00000000-0000-4000-8000-000000000920';
+
+  /** A v19 database in the RETIRED shape: a marked creature row, an encounter
+   * citing it by `mobArtifactId`, and a portrait on the row. */
+  async function seedLegacyV19(): Promise<void> {
+    await Dexie.delete('campaigner');
+    const legacy = new Dexie('campaigner');
+    legacy.version(19).stores({
+      campaigns: 'id, name',
+      artifacts: 'id, campaignId, kind, [campaignId+kind], name, updatedAt, moduleId, [moduleId+kind]',
+      revisions: 'id, artifactId, [artifactId+revision]',
+      images: 'id, campaignId',
+      rulebooks: 'id, system, status',
+      chunks: 'id, bookId, chunkType, contentHash',
+      embeddings: 'contentHash',
+      personas: 'id, &slug',
+      runs: 'id, campaignId, personaId, status, updatedAt',
+      deliverables: 'id, campaignId',
+      modules: 'id, campaignId, updatedAt',
+      battles: 'id, campaignId, &moduleId',
+      pdfFiles: 'id, &bookId',
+      mobPortraits: 'id, &chunkId',
+      moduleVersions: 'id, moduleId, createdAt',
+      settings: 'id',
+    });
+    await legacy.open();
+    await legacy.table('campaigns').put({
+      id: CAMPAIGN,
+      name: 'Ember',
+      system: 'dnd5e',
+      description: '',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('modules').put({
+      id: MODULE,
+      campaignId: CAMPAIGN,
+      title: 'Ember Crypt',
+      concept: 'A vault.',
+      levelMin: 1,
+      levelMax: 3,
+      parts: [],
+      createdAt: 1,
+      updatedAt: 1,
+      autoGenerateMobImages: false,
+      autoGenerateBattlemaps: false,
+      autoApproveSpine: false,
+    });
+    await legacy.table('rulebooks').put({
+      id: '00000000-0000-4000-8000-000000000820',
+      system: 'dnd5e',
+      status: 'ready',
+      title: 'Monster Core',
+      createdAt: 1,
+      updatedAt: 1,
+    });
+    await legacy.table('chunks').put({
+      id: CHUNK,
+      bookId: '00000000-0000-4000-8000-000000000820',
+      pageStart: 1,
+      pageEnd: 1,
+      chunkType: 'statblock',
+      headingPath: ['Owlbear'],
+      text: 'Owlbear. HP 59, AC 13.',
+      contentHash: 'hash-owlbear',
+    });
+    await legacy.table('images').put({
+      id: COVER,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: CAMPAIGN,
+      bytes: new Uint8Array([7, 7]),
+      mimeType: 'image/png',
+      width: 8,
+      height: 8,
+      source: 'generated',
+      role: 'artwork',
+    });
+    // The retired creature row: an `npc` whose identity was the marker.
+    await legacy.table('artifacts').put({
+      id: MARKED,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: CAMPAIGN,
+      moduleId: MODULE,
+      kind: 'npc',
+      name: 'Owlbear',
+      summary: '',
+      body: '',
+      aliases: [],
+      tags: [],
+      links: [],
+      imageIds: [],
+      coverImageId: COVER,
+      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: CHUNK },
+    });
+    await legacy.table('artifacts').put({
+      id: ENCOUNTER,
+      createdAt: 1,
+      updatedAt: 1,
+      campaignId: CAMPAIGN,
+      moduleId: MODULE,
+      kind: 'encounter',
+      name: 'Ash Gate',
+      summary: '',
+      body: '',
+      aliases: [],
+      tags: [],
+      links: [],
+      imageIds: [],
+      coverImageId: null,
+      data: {
+        difficulty: 'medium',
+        levelHint: '3',
+        monsters: [
+          {
+            name: 'Owlbear',
+            count: 2,
+            notes: '',
+            treasure: '',
+            source: { type: 'npc-ref', artifactId: MARKED },
+          },
+        ],
+        terrain: '',
+        tactics: '',
+        treasure: '',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    await legacy.table('mobPortraits').put({
+      id: SLOT,
+      createdAt: 1,
+      updatedAt: 1,
+      chunkId: CHUNK,
+      imageId: COVER,
+    });
+    await legacy.table('settings').put({ id: 'settings', creatureCitationRepair: null });
+    legacy.close();
+  }
+
+  it('re-keys the portrait slot, rewrites the citation to the library and deletes only cache', async () => {
+    await seedLegacyV19();
+    const { db } = await import('@/db/db');
+    await db.open();
+    expect(db.verno).toBe(20);
+
+    // 1. The slot answers to the creature IDENTITY now, not to a chunk id.
+    const slot = await db.mobPortraits.get(SLOT);
+    expect(slot?.creatureKey).toBe(`chunk:${CHUNK}`);
+    expect((slot as unknown as { chunkId?: unknown }).chunkId).toBeUndefined();
+
+    // 2. The roster citation names the LIBRARY — the form that cannot dangle
+    //    on a campaign row that no longer exists.
+    const encounter = await db.artifacts.get(ENCOUNTER);
+    if (encounter?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(encounter.data.monsters[0]?.source).toEqual({
+      type: 'rulebook',
+      chunkId: CHUNK,
+      contentHash: 'hash-owlbear',
+      creatureName: 'Owlbear',
+    });
+
+    // 3. The retired row is GONE (it was cache, never authored content).
+    expect(await db.artifacts.get(MARKED)).toBeUndefined();
+
+    // 4. Its portrait did NOT die with it: the campaign's presentation row
+    //    carries the same bytes, so the board still shows the owlbear.
+    const presentation = await db.creatureImages.where('campaignId').equals(CAMPAIGN).toArray();
+    expect(presentation).toHaveLength(1);
+    expect(presentation[0]?.creatureKey).toBe(`chunk:${CHUNK}`);
+    const carried = await db.images.get(presentation[0]?.imageId ?? '');
+    expect(carried?.bytes).toEqual(new Uint8Array([7, 7]));
+    expect(carried?.campaignId).toBe(CAMPAIGN);
+
+    // 5. The report is LOUD and persisted where the shell reads it.
+    const settings = await db.settings.get('settings');
+    expect(settings?.creatureCitationRepair).toEqual({
+      citationsRewritten: 1,
+      emptyRowsDeleted: 1,
+      coversCarriedForward: 1,
+      authoredRowsRemoved: [],
+      unconverted: [],
+    });
+    await db.delete();
+  }, 20000);
+
+  it('is IDEMPOTENT: a second run finds nothing left to repair and says so', async () => {
+    await seedLegacyV19();
+    const { db } = await import('@/db/db');
+    await db.open();
+    const { repairCreatureCitations } = await import('@/db/creatureRepair');
+    // An ordinary transaction over the same five tables the upgrade body uses:
+    // the seam takes the TRANSACTION, so it can be run twice.
+    const second = await db.transaction(
+      'rw',
+      [db.artifacts, db.chunks, db.images, db.creatureImages, db.settings],
+      async (tx) => repairCreatureCitations({ tx }),
+    );
+    expect(second).toEqual({
+      citationsRewritten: 0,
+      emptyRowsDeleted: 0,
+      coversCarriedForward: 0,
+      authoredRowsRemoved: [],
+      unconverted: [],
+    });
+    // And nothing moved: the encounter, the presentation row and the settings
+    // report are byte-identical to the first run's outcome.
+    const settings = await db.settings.get('settings');
+    expect(settings?.creatureCitationRepair?.citationsRewritten).toBe(1);
+    expect(await db.creatureImages.where('campaignId').equals(CAMPAIGN).count()).toBe(1);
     await db.delete();
   }, 20000);
 });

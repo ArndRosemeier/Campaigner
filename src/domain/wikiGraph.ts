@@ -1,4 +1,5 @@
 import type { AnyArtifact, ArtifactKind } from '@/domain/artifact';
+import type { WikiLinkCreature } from '@/domain/creature';
 import type { Id } from '@/domain/entity';
 import type { Module } from '@/domain/module';
 
@@ -26,14 +27,24 @@ import { extractWikiLinks, resolveWikiLink, WIKI_LINK_PATTERN } from '@/lib/wiki
  * graph never claims a resolution the reader would not make.
  */
 
-/** One node of the derived graph: an entity (resolved/ambiguous) or a phantom. */
+/** One node of the derived graph: an entity (resolved/ambiguous) — an artifact
+ * or a cited LIBRARY CREATURE — or a phantom. */
 export interface WikiGraphNode {
-  /** The winning artifact's id (resolved/ambiguous) or `name:<lowercase>` (phantom). */
+  /** The winning artifact's id (resolved/ambiguous), `chunk:<chunkId>` for a
+   * creature node, or `name:<lowercase>` (phantom). */
   key: string;
   /** The wiki-link names that resolve here, first-seen spelling first. */
   names: string[];
-  /** The winning artifact; undefined for phantom nodes. */
+  /** The winning artifact; undefined for creature and phantom nodes. */
   artifact: AnyArtifact | undefined;
+  /**
+   * The LIBRARY CREATURE this node stands for, when it stands for one
+   * (docs/11 D10): a DERIVED node — computed from the citation and the
+   * bestiary chunk, never a database row and never an artifact. A creature
+   * mention is therefore RESOLVED in the graph, the mentions panel and
+   * link-health; it is never a dangling link and never a phantom to-do.
+   */
+  creature?: WikiLinkCreature | undefined;
   /** Mirrors `resolveWikiLink`: 'resolved' | 'unresolved' | 'ambiguous'. */
   status: 'resolved' | 'unresolved' | 'ambiguous';
   /** Total wiki-link mentions across the filtered scope. */
@@ -77,10 +88,17 @@ export interface WikiGraph {
  */
 export const WIKI_GRAPH_NODE_CAP = 120;
 
-/** Node scope for the kind filter: one resolved kind, or phantoms only. */
-export type WikiGraphKindFilter = ArtifactKind | 'unresolved';
+/** Node scope for the kind filter: one resolved artifact kind, `creature` for
+ * the derived library-creature nodes (docs/11 D10), or phantoms only. */
+export type WikiGraphKindFilter = ArtifactKind | 'creature' | 'unresolved';
 
 export interface WikiGraphFilters {
+  /**
+   * The library's creatures, when the caller has them (`domain/creature`).
+   * Present ⇒ a name that matches no artifact but names a bestiary creature
+   * becomes a resolved CREATURE node instead of a phantom (docs/11 D10).
+   */
+  creatures?: readonly WikiLinkCreature[] | undefined;
   /** Prose scope: one module, or every module (undefined). */
   moduleId?: Id | undefined;
   /** Node scope: one resolved artifact kind, phantoms only, or everything. */
@@ -116,6 +134,7 @@ export function buildWikiGraph(
     key: string;
     names: string[];
     artifact: AnyArtifact | undefined;
+    creature?: WikiLinkCreature | undefined;
     status: 'resolved' | 'unresolved' | 'ambiguous';
     mentionsByDocument: Map<string, WikiGraphMention>;
   }>();
@@ -140,9 +159,13 @@ export function buildWikiGraph(
         const lower = link.name.toLowerCase();
         const count = tokenCounts.get(lower);
         if (count === undefined) continue; // extractWikiLinks only returns tokened names
-        const resolution = resolveOnce(resolutions, link.name, module.id, pool);
+        const resolution = resolveOnce(resolutions, link.name, module.id, pool, filters.creatures);
         const nodeKey =
-          resolution.artifact !== undefined ? resolution.artifact.id : `name:${lower}`;
+          resolution.artifact !== undefined
+            ? resolution.artifact.id
+            : resolution.creature !== undefined
+              ? `chunk:${resolution.creature.chunkId}`
+              : `name:${lower}`;
 
         const node = nodes.get(nodeKey);
         if (node === undefined) {
@@ -150,7 +173,13 @@ export function buildWikiGraph(
             key: nodeKey,
             names: [link.name],
             artifact: resolution.artifact,
-            status: resolution.artifact === undefined ? 'unresolved' : resolution.status,
+            creature: resolution.creature,
+            // A creature node is RESOLVED (docs/11 D10): the mention cites a
+            // library creature, which exists and is not a to-do.
+            status:
+              resolution.artifact === undefined && resolution.creature === undefined
+                ? 'unresolved'
+                : resolution.status,
             mentionsByDocument: new Map<string, WikiGraphMention>(),
           });
         } else {
@@ -185,6 +214,7 @@ export function buildWikiGraph(
       key: node.key,
       names: [...node.names],
       artifact: node.artifact,
+      creature: node.creature,
       status: node.status,
       mentions: mentionsByDocument.reduce((sum, mention) => sum + mention.count, 0),
       mentionsByDocument,
@@ -197,7 +227,9 @@ export function buildWikiGraph(
       ? allNodes
       : filters.kind === 'unresolved'
         ? allNodes.filter((node) => node.status === 'unresolved')
-        : allNodes.filter((node) => node.artifact?.kind === filters.kind);
+        : filters.kind === 'creature'
+          ? allNodes.filter((node) => node.creature !== undefined)
+          : allNodes.filter((node) => node.artifact?.kind === filters.kind);
 
   // Cap: most-mentioned first, ties by display name then key — deterministic.
   const ranked = [...kept].sort(
@@ -229,9 +261,10 @@ export function buildWikiGraph(
   };
 }
 
-/** The node's label: the artifact's canonical name, else the first spelling. */
+/** The node's label: the artifact's canonical name, else the creature's
+ * library name, else the first spelling. */
 export function wikiGraphNodeLabel(node: WikiGraphNode): string {
-  return node.artifact?.name ?? node.names[0] ?? node.key;
+  return node.artifact?.name ?? node.creature?.name ?? node.names[0] ?? node.key;
 }
 
 /** A module's prose documents in reading order (entity panel's convention). */
@@ -263,11 +296,15 @@ function resolveOnce(
   name: string,
   moduleId: Id,
   pool: readonly AnyArtifact[],
+  creatures: readonly WikiLinkCreature[] | undefined,
 ): WikiLinkResolution {
   const key = name.trim().toLowerCase();
   const cached = cache.get(key);
   if (cached !== undefined) return cached;
-  const resolution = resolveWikiLink(name, pool, { moduleId });
+  const resolution = resolveWikiLink(name, pool, {
+    moduleId,
+    ...(creatures === undefined ? {} : { creatures }),
+  });
   cache.set(key, resolution);
   return resolution;
 }

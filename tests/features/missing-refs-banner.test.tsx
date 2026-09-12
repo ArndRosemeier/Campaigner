@@ -83,7 +83,12 @@ describe('MissingRefsBanner', () => {
     renderBannerAt(campaign.id);
 
     const banner = await screen.findByTestId('missing-refs-banner');
-    expect(banner.textContent).toContain('missing ref');
+    // The banner is AGGREGATE ("1 encounter entry cites…"), so it quotes the
+    // reason's STEM, not one creature's name — the named `missing ref (Name)`
+    // belongs on the row badge, where a row names exactly one creature. The
+    // copy is still exactly true: every reason starts with this stem, and the
+    // library (the rules link) is the only remedy there is.
+    expect(banner.textContent).toContain("'missing ref'");
     const link = await screen.findByTestId('missing-refs-rules-link');
     expect(link.getAttribute('href')).toBe('/rules');
   });
@@ -120,7 +125,7 @@ describe('MissingRefsBanner', () => {
     });
   });
 
-  it('uses ASCII quotes around missing ref (no curly-quote mojibake)', async () => {
+  it('uses ASCII quotes around the named missing ref (no curly-quote mojibake)', async () => {
     const campaign = await createCampaign({ name: 'Gappy', system: 'dnd5e' });
     await createArtifact({
       campaignId: campaign.id,

@@ -27,21 +27,27 @@ import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
  * Mob portraits (owner-ratified one-click batch, docs/11 D5 amendment;
- * coverage widened by docs/17 row 90): EVERY roster participant that can own
- * a portrait is enumerated. Chunk-backed creatures — rulebook citations and
- * `npc-ref` rows pointing at a mob artifact — get one cover portrait per mob
- * artifact (lazy retro-fill for old encounters) and share it, while every
- * other participant gets its own LOCAL portrait: uncited roster entries
- * (`inline` / `none` — model-invented mobs with no bestiary citation) get an
- * on-demand creature artifact first ("Create creature + portrait", per entry
- * and batch-all), and an `npc-ref` row whose artifact carries no chunk marker
- * — the monster the encounter materialized for a creature the module prose
- * staged, or a named NPC standing in the roster — is illustrated against the
- * artifact it already points at (owner decision: *"A special look for a
- * special zombie is ok."*). Every instance of an illustrated creature shares
- * the artifact — and its portrait — on the battle board via the existing
- * `coverImageId` token path; an existing cover is never regenerated or
- * detached by enumeration.
+ * coverage widened by docs/17 row 90; re-keyed by ledger row 106): EVERY
+ * roster participant that can own a portrait is enumerated, and every
+ * portrait is keyed by the participant's CREATURE IDENTITY (docs/11 D6) —
+ * never by a creature artifact, because under the ratified model (D1/D5) no
+ * artifact is a creature.
+ *
+ * Two lanes, both identity-keyed:
+ *
+ * - **cited** — a rulebook citation, or an `npc-ref` row pointing at an
+ *   `npc` artifact that carries a creature reference. These share the GLOBAL
+ *   canonical bestiary portrait for the identity (lazy retro-fill for old
+ *   encounters), and the auto-generated one is published to the cache so
+ *   future campaigns clone it;
+ * - **authored** — an `npc-ref` row at a plain authored NPC, and
+ *   **invented** — an uncited (`inline` / `none`) roster entry, which is
+ *   illustrated from the entry's own prose alone. Neither creates anything:
+ *   the portrait is a per-campaign presentation row against the identity.
+ *
+ * Every instance of an illustrated creature shares its portrait on the battle
+ * board through the token's `creatureKey`; an existing portrait is never
+ * regenerated or detached by enumeration.
  *
  * The batch press never guesses and never replaces anything silently
  * (owner report: "2 mobs already have an image and I just want to fill a
@@ -342,7 +348,7 @@ export function MobPortraitsSection({
       ? 'No creatures to illustrate — add roster entries first.'
       : `${String(participantCount)} creature kind${participantCount === 1 ? '' : 's'} in this roster: cited creatures share one bestiary portrait on the battle board, and ${
           hasUncited
-            ? 'the invented entries below get a creature artifact first, then their own portrait'
+            ? 'the invented entries below are illustrated from their own roster notes'
             : 'every other creature gets its own portrait'
         }.`;
 
@@ -354,7 +360,7 @@ export function MobPortraitsSection({
    */
   const batchLabel =
     participantCount > 0
-      ? `${hasUncited ? 'Create creatures + portraits' : 'Generate mob portraits'} (${String(participantCount)})`
+      ? `${hasUncited ? 'Create portraits' : 'Generate mob portraits'} (${String(participantCount)})`
       : 'Generate mob portraits';
   const batchDisabled = busy || busyIndex !== null || participantCount === 0;
   /** Why the batch button cannot act, in `batchDisabled`'s own order. */
@@ -553,11 +559,9 @@ function batchChoiceCopy(plan: MobPortraitBatchPlan): string[] {
   }
   if (plan.missing.length > 0) {
     lines.push(
-      `Filling adds only the missing portrait${plan.missing.length === 1 ? '' : 's'}${
-        plan.creates > 0
-          ? ` (creating ${String(plan.creates)} creature artifact${plan.creates === 1 ? '' : 's'} first)`
-          : ''
-      } and keeps the ${String(plan.imaged.length)} that exist${plan.imaged.length === 1 ? 's' : ''} — nothing is replaced.`,
+      `Filling adds only the missing portrait${plan.missing.length === 1 ? '' : 's'} and keeps the ${String(
+        plan.imaged.length,
+      )} that exist${plan.imaged.length === 1 ? 's' : ''} — nothing is replaced, and nothing is created: a cited creature is a bestiary row, not a campaign artifact.`,
     );
   } else {
     lines.push('Nothing is missing, so there is nothing to fill.');
@@ -571,9 +575,9 @@ function batchChoiceCopy(plan: MobPortraitBatchPlan): string[] {
   );
   if (plan.sharedPortraitNames.length > 0) {
     lines.push(
-      `Monster Core (bestiary-cited) portraits are shared: republishing ${named(
+      `Bestiary creature portraits are shared: republishing ${named(
         plan.sharedPortraitNames,
-      )} changes the shared portrait every future campaign clones — existing covers elsewhere keep theirs.`,
+      )} changes the shared portrait every future campaign clones — existing covers elsewhere keep theirs, and this campaign's own presentation portraits are its own.`,
     );
   }
   if (plan.unreadableCitations.length > 0) {
@@ -581,15 +585,6 @@ function batchChoiceCopy(plan: MobPortraitBatchPlan): string[] {
       `The bestiary citation for ${named(plan.unreadableCitations)} can no longer be read — replacing ${
         plan.unreadableCitations.length === 1 ? 'it' : 'them'
       } fails loudly and keeps ${plan.unreadableCitations.length === 1 ? 'its' : 'their'} cover.`,
-    );
-  }
-  if (plan.artWithoutCover.length > 0) {
-    lines.push(
-      `${named(plan.artWithoutCover)} already carr${
-        plan.artWithoutCover.length === 1 ? 'ies' : 'y'
-      } art on the creature artifact that is not set as its cover — the battle board still shows initials until you set it (open the creature artifact → Images → Set as cover). Filling leaves ${
-        plan.artWithoutCover.length === 1 ? 'it' : 'them'
-      } alone; replacing regenerates ${plan.artWithoutCover.length === 1 ? 'it' : 'them'}.`,
     );
   }
   if (plan.sharedRows > 0) {

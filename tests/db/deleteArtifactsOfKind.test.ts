@@ -304,8 +304,13 @@ describe('deleteArtifactsOfKind — the cascade it reports', () => {
       links: [{ targetId: goblin.id, relation: 'ally' }],
     });
     const locationImage = await attachOneImage(location.id, campaign.id);
-    // A surviving encounter citing both doomed NPCs — one npc-ref, one mob
-    // artifact: the delete never rewrites a roster, both go to `missing ref`.
+    // A surviving encounter citing a doomed NPC (`npc-ref`, which WILL dangle)
+    // beside a LIBRARY creature citation whose chunk is stamped for this test.
+    // REWRITTEN (ledger row 106): the second entry used to be a `rulebook`
+    // citation that also reached a doomed mob artifact, so it dangled too. A
+    // citation names the bestiary, not a row, so deleting rows cannot dangle it
+    // — the census must report ONE dangling roster ref, and the citation must
+    // survive byte-identically (pinned below).
     const encounter = await createArtifact({
       campaignId: campaign.id,
       kind: 'encounter',
@@ -317,7 +322,7 @@ describe('deleteArtifactsOfKind — the cascade it reports', () => {
           count: 1,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: stampNewEntity().id, mobArtifactId: hobgoblin.id },
+          source: { type: 'rulebook', chunkId: stampNewEntity().id },
         },
       ]),
     });
@@ -337,7 +342,9 @@ describe('deleteArtifactsOfKind — the cascade it reports', () => {
     expect(census.backLinkedArtifacts).toBe(1);
     expect(census.battleTokensScrubbed).toBe(2);
     expect(census.battlesDeleted).toBe(1);
-    expect(census.rosterRefsDangling).toBe(2);
+    // ONE: only the `npc-ref` names a row. A `rulebook` citation is a library
+    // reference and is untouched by any artifact delete.
+    expect(census.rosterRefsDangling).toBe(1);
     expect(census.imagesPruned).toBe(1); // Goblin's gallery blob only
 
     const removed = await deleteArtifactsOfKind(campaign.id, 'npc');
@@ -353,7 +360,8 @@ describe('deleteArtifactsOfKind — the cascade it reports', () => {
     // The survivor's back-link was scrubbed, the survivor itself kept.
     expect((await getArtifact(location.id))?.links).toEqual([]);
     // The encounter is byte-identical: its roster dangles into the loud
-    // `missing ref` badge instead of being silently rewritten.
+    // `missing ref` badge instead of being silently rewritten, and the library
+    // citation beside it was never a candidate in the first place.
     expect(await rows([encounter.id])).toEqual(encounterBefore);
     // Boards: the doomed-token board deleted itself, the mixed one survives
     // with only the PC token.

@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getAnyArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { getImage } from '@/db/imageRepo';
@@ -276,16 +276,6 @@ async function pickIndexOf(runId: string): Promise<number> {
 }
 
 
-/** Looks up THE mob artifact created for `chunkId` — the get-or-create is
- *  idempotent, so at most one exists per campaign (the arc's core pin). */
-async function mobArtifactIdOf(campaignId: Id, chunkId: Id): Promise<Id> {
-  const mob = (await listArtifactsByCampaign(campaignId)).find(
-    (row) => row.kind === 'npc' && row.data.monsterChunkId === chunkId,
-  );
-  if (mob === undefined) throw new Error(`no mob artifact for chunk ${chunkId}`);
-  return mob.id;
-}
-
 describe('Encounter Cartographer run', () => {
   it('pauses at brief and pick and finalizes one complete encounter', async () => {
     const { campaign, cartographer } = await setup();
@@ -383,7 +373,7 @@ describe('Encounter Cartographer run', () => {
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // The map finalize remapped the roster citation to the pack chunk —
     // stamped with content identity at birth (chunk-hash-fallback arc).
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId), contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
   });
 
   it('finalizes a brief citing a pinned statblock chunk to {type:"rulebook", chunkId}', async () => {
@@ -419,7 +409,7 @@ describe('Encounter Cartographer run', () => {
     // The pinned citation (persisted with the brief through the pick pause)
     // resolved in map finalize to the pinned chunk — stamped with content
     // identity at birth (chunk-hash-fallback arc).
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId), contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
   });
 
   it('does not approve a rejected brief into an opaque downstream failure', async () => {
@@ -1630,7 +1620,6 @@ describe('Encounter Cartographer run', () => {
         expect(artifact.data.monsters[index]?.source).toEqual({
           type: 'rulebook',
           chunkId: goblinChunkId,
-          mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId),
           contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
           creatureName: 'Goblin Boss',
         });
@@ -1925,7 +1914,6 @@ describe('Encounter Cartographer run', () => {
         expect(artifact.data.monsters[index]?.source).toEqual({
           type: 'rulebook',
           chunkId: goblinChunkId,
-          mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId),
           contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
           creatureName: 'Goblin Boss',
         });

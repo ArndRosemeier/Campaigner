@@ -341,6 +341,9 @@ describe('CampaignPickerPage import failure toasts', () => {
     if (encounter?.kind !== 'encounter') throw new Error('imported encounter missing');
     const first = encounter.data.monsters[0];
     if (first === undefined) throw new Error('imported roster entry missing');
-    expect((await resolveMonsterEntryWithRepos(first)).origin).toBe('missing ref');
+    // Named, like every other missing-ref surface (docs/11 D9).
+    expect((await resolveMonsterEntryWithRepos(first)).origin).toBe(
+      'missing ref (Goblin Warrior)',
+    );
   });
 });

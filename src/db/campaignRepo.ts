@@ -94,6 +94,7 @@ export async function deleteCampaign(id: string): Promise<void> {
       db.modules,
       db.battles,
       db.deliverables,
+      db.creatureImages,
       db.settings,
       db.moduleVersions,
     ],
@@ -106,6 +107,10 @@ export async function deleteCampaign(id: string): Promise<void> {
       }
       await db.artifacts.where('campaignId').equals(id).delete();
       await db.runs.where('campaignId').equals(id).delete();
+      // The campaign's creature presentation rows go with its images
+      // (docs/11 D5 amendment): a row whose blob is gone would read as a
+      // portrait that exists and render nothing.
+      await db.creatureImages.where('campaignId').equals(id).delete();
       await db.images.where('campaignId').equals(id).delete();
       // Module rows re-listed INSIDE the transaction: the ids the version
       // sweep needs are the ones that exist at delete time (docs/18 §2.1) —
@@ -196,6 +201,13 @@ export interface RemovedContentCounts {
   battles: number;
   runs: number;
   deliverables: number;
+  /**
+   * Cited creatures' presentation portraits this campaign held
+   * (`db/creatureImages`, docs/11 D5 amendment): the rows ARE campaign state,
+   * so the wipe takes them; the creatures themselves are the library's and the
+   * shared canonical slots are untouched.
+   */
+  creaturePortraitsCleared: number;
   imagesPruned: number;
 }
 
@@ -255,6 +267,12 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       db.runs,
       db.deliverables,
       db.moduleVersions,
+      // Creature presentation rows ride the scope: this wipe deletes them and
+      // every per-row `deleteArtifact` below reaches the image prune, whose
+      // reference walk READS this table (docs/18 §2.1 — a scope that omits it
+      // throws "object store did not exist" mid-wipe, the half-applied delete
+      // this transaction exists to prevent).
+      db.creatureImages,
     ],
     async () => {
       const campaign = await db.campaigns.get(campaignId);
@@ -303,6 +321,14 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
       // go (deleteCampaign precedent).
       await db.runs.where('campaignId').equals(campaignId).delete();
       await db.deliverables.where('campaignId').equals(campaignId).delete();
+      // Cited creatures' presentation rows are this campaign's own state and
+      // go with it (docs/11 D5 amendment): the library rows and the shared
+      // canonical portrait slots survive untouched, so the next campaign still
+      // clones the same art.
+      const creaturePortraitsCleared = await db.creatureImages
+        .where('campaignId')
+        .equals(campaignId)
+        .delete();
       // The TopBar last-module shortcut must not outlive the wiped modules —
       // a stale shortcut navigates to a dead reader route.
       const settings = await db.settings.get('settings');
@@ -330,6 +356,7 @@ export async function removeAllGeneratedContent(campaignId: string): Promise<Rem
         battles: battles.length,
         runs: runCount,
         deliverables: deliverableCount,
+        creaturePortraitsCleared,
         imagesPruned,
       };
     },

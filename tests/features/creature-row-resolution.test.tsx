@@ -2,18 +2,24 @@ import 'fake-indexeddb/auto';
 
 import type { JSX } from 'react';
 import { cleanup, render as rtlRender, screen, waitFor } from '@testing-library/react';
+import { sha256Hex } from '@/lib/hash';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { getOrCreateMobArtifact, rosterArtifactIds } from '@/db/mobArtifacts';
+import { putChunks } from '@/db/chunkRepo';
+import { createRulebook } from '@/db/rulebookRepo';
+import { publishLibraryCreaturePool, resolveCreatureCitation } from '@/db/creatureRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import {
   createModule,
   moduleSchema,
+  ruleChunkSchema,
+  statBlockSchema,
+  stampNewEntity,
   type AnyArtifact,
   type Artifact,
   type Campaign,
@@ -160,19 +166,64 @@ function creatureModule(campaignId: Id, overrides?: Partial<Module>): Module {
   });
 }
 
-/** The creature row exactly as a rulebook citation creates it: name + marker,
- * empty content, campaign scope, no images. */
+/** The creature row as the CAST path creates it (docs/11 D4): name + a
+ * `creatureRef` citation + empty authored content, campaign scope, no images.
+ * REWRITTEN (ledger row 106): the retired `getOrCreateMobArtifact` created a
+ * HIDDEN artifact that stood in for the creature itself; `castCreatureAsNpc`
+ * creates a real, visible AUTHORED row that CITES the library instead. */
 async function seedCreature(campaignId: Id, name = 'Zombie'): Promise<Artifact> {
-  const id = await getOrCreateMobArtifact(campaignId, CHUNK_ID, name);
-  const row = await getArtifact(id);
-  if (row === undefined) throw new Error('the seeded creature row is missing');
-  return row;
+  return createArtifact({
+    campaignId,
+    kind: 'npc',
+    name,
+    summary: '',
+    body: '',
+    coverImageId: null,
+    data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: CHUNK_ID } },
+  });
 }
 
-async function rowOf(id: Id): Promise<Artifact> {
-  const row = await getArtifact(id);
-  if (row === undefined) throw new Error(`artifact ${id} is missing`);
-  return row;
+/** A LIBRARY creature of this name — a statblock chunk in the bestiary and
+ * nothing else (docs/11 D10). This is the whole of what the owner's bug was
+ * about under the ratified model: there is NO artifact to land on, so a
+ * mention that names it resolves to a DERIVED creature node. */
+async function seedLibraryCreature(name = 'Zombie'): Promise<string> {
+  const book = await createRulebook({ title: 'Bestiary', system: 'dnd5e', filename: 'bestiary.pdf' });
+  const text = `${name}\nLarge undead, unaligned\nArmor Class 8\nHit Points 22 (3d10 + 6)\nSpeed 20 ft.`;
+  const chunk = ruleChunkSchema.parse({
+    ...stampNewEntity(),
+    bookId: book.id,
+    pageStart: 12,
+    pageEnd: 12,
+    chunkType: 'statblock',
+    headingPath: [name],
+    text,
+    contentHash: await sha256Hex(text),
+    statBlock: statBlockSchema.parse({
+      system: 'dnd5e',
+      level: '1/4',
+      size: 'Medium',
+      creatureType: 'undead',
+      ac: 8,
+      acNote: '',
+      hp: 22,
+      hpFormula: '3d10 + 6',
+      speed: '20 ft.',
+      abilities: { str: 13, dex: 6, con: 16, int: 3, wis: 6, cha: 5 },
+      saves: '',
+      skills: '',
+      senses: 'darkvision 60 ft.',
+      languages: 'understands Common but cannot speak',
+      traits: [],
+      actions: [],
+      reactions: [],
+      legendary: [],
+      extras: {},
+    }),
+  });
+  await putChunks([chunk]);
+  await publishLibraryCreaturePool();
+  return chunk.id;
 }
 
 /** One authored campaign NPC (the legitimate entity of that name). */
@@ -231,50 +282,62 @@ beforeEach(async () => {
 afterEach(cleanup);
 
 describe('the module entity view: a creature row is never a DETAILED entity', () => {
-  it('shows a creature-only name as not detailed, offers the batch, and says why the row is bare', async () => {
+  it('shows a library-only creature name as not detailed, offers the batch, and says why the row is bare', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const module = creatureModule(campaign.id);
     await saveModule(module);
-    const creature = await seedCreature(campaign.id);
+    // REWRITTEN (ledger row 106): the fixture used to be a hidden "creature
+    // row" ARTIFACT. There is no such artifact any more — the creature lives in
+    // the library and NOTHING in the campaign points at it. The verdict must
+    // still be "not detailed, this is work": that is the owner's bug
+    // ("...this still counts as a defined entity, so no 'generate x npcs'
+    // catches it") and it is what makes D10 a fix rather than a rename.
+    const chunkId = await seedLibraryCreature();
     const onStub = vi.fn<(name: string, anchor: { x: number; y: number }) => void>();
     const onOpenCard = vi.fn<(artifact: AnyArtifact) => void>();
 
-    renderPanel(module, [creature], campaign, { onStub, onOpenCard });
+    renderPanel(module, [], campaign, { onStub, onOpenCard });
 
-    // The verdict: the name has NO authored entity of its own, so it is work
-    // to do — not "detailed".
     expect(screen.getByText('0 detailed · 1 mentioned')).toBeInTheDocument();
     const row = screen.getByTestId('entity-row');
     expect(row).toHaveTextContent('Zombie');
     expect(row).not.toHaveAttribute('data-resolved');
     expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 1 npc');
 
-    // And the row says WHY it is bare instead of pretending the creature row is
-    // the module's entity (the honest-verdict surface): the marker names the
-    // shared row and the remedy.
+    // The row says WHY it is bare instead of pretending the library is the
+    // module's entity: the marker names the creature the text cites and the
+    // remedy.
     const marker = screen.getByTestId('entity-creature-only');
     expect(marker).toHaveAttribute('title', expect.stringContaining('«Zombie»'));
-    expect(marker).toHaveAttribute('title', expect.stringContaining('bestiary creature row'));
+    expect(marker).toHaveAttribute('title', expect.stringContaining('library creature'));
+    expect(marker).toHaveAttribute(
+      'title',
+      expect.stringContaining("generating it here creates this module's own NPC of that name"),
+    );
     expect(marker).toHaveAttribute('title', expect.stringContaining('not detailed yet'));
 
     // A not-detailed row opens the stub popover (the panel's per-entity
-    // generation affordance), never the shared row's card.
+    // generation affordance), never a card: there is no artifact to show.
     await user.click(row);
     expect(onStub).toHaveBeenCalledTimes(1);
     expect(onStub.mock.calls[0]?.[0]).toBe('Zombie');
     expect(onOpenCard).not.toHaveBeenCalled();
 
-    // Images attach to an authored artifact, never to the shared creature row:
-    // the checkbox is off (Base UI: aria-disabled, not [disabled]) and the
-    // reason is its accessible NAME, not a hover-only title (the panel's
-    // disabled-control convention).
+    // Images attach to an authored artifact, never to the library: the checkbox
+    // is off (Base UI: aria-disabled, not [disabled]) and the reason is its
+    // accessible NAME, not a hover-only title.
     await user.click(screen.getByTestId('entity-images'));
     const checkbox = screen.getByRole('checkbox', {
       name: 'Detail Zombie first — images attach to its artifact',
     });
     expect(checkbox).toHaveAttribute('aria-disabled', 'true');
     expect(checkbox).toHaveAttribute('title', expect.stringContaining('Detail this entity first'));
+
+    // And the citation the text carries IS resolvable — the name is not merely
+    // "unresolved", it is a creature (docs/11 D10).
+    const listing = await resolveCreatureCitation({ chunkId, creatureName: 'Zombie' }, 'Zombie');
+    expect(listing.chunk?.id).toBe(chunkId);
     await flushAsyncUpdates();
   }, 20_000);
 
@@ -313,7 +376,15 @@ describe('the module entity view: a creature row is never a DETAILED entity', ()
       },
     });
     if (encounter.kind !== 'encounter') throw new Error('fixture row is not an encounter');
-    expect(rosterArtifactIds(encounter.data.monsters)).toEqual([authored.id]);
+        // REWRITTEN (ledger row 106): `rosterArtifactIds` collected the artifacts
+    // a roster points at, which is exactly the model that stranded references.
+    // The only row-backed participants are `npc-ref` rows now, and the
+    // AUTHORED npc is the one they name.
+    expect(
+      encounter.data.monsters
+        .map((entry) => (entry.source.type === 'npc-ref' ? entry.source.artifactId : undefined))
+        .filter((id) => id !== undefined),
+    ).toEqual([authored.id]);
 
     renderPanel(module, [authored, encounter], campaign);
 
@@ -369,79 +440,69 @@ describe('the module entity view: a creature row is never a DETAILED entity', ()
 });
 
 describe('the generation the verdict unlocks', () => {
-  it('lands a module-owned npc of the exact name and leaves the creature row byte-identical', async () => {
+  it('lands a module-owned npc of the exact name for a LIBRARY-only name, and creates no creature row', async () => {
     const user = userEvent.setup();
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const module = creatureModule(campaign.id);
     await saveModule(module);
     await seedBuiltInPersonas();
-    const creature = await seedCreature(campaign.id);
+    // REWRITTEN (ledger row 106): the fixture used to be a campaign-scoped
+    // "creature row" artifact, and half of this test pinned that the batch left
+    // THAT ROW alone. Under the ratified model the library creature is not a row
+    // at all, so the pin becomes the stronger statement it always meant: the
+    // batch creates the module's npc and NOTHING for the creature — no cast row
+    // (docs/11 D5: only the module GENERATOR may cast) and no artifact citing
+    // the library.
+    const chunkId = await seedLibraryCreature();
     chatMock.mockImplementation(respondToBatch());
-    const before = await rowOf(creature.id);
 
-    renderPanel(module, [creature], campaign);
+    renderPanel(module, [], campaign);
     await user.click(screen.getByTestId('batch-npc'));
 
-    // The batch drains: the button is back to its resting label.
-    await waitFor(() => {
-      expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 1 npc');
+    // The batch is async: wait for the write rather than assuming the click
+    // drained it (the old fixture got away with it because the barrier below
+    // held the label; nothing about the model guarantees the timing).
+    const landed = await waitFor(async () => {
+      const rows = (await listArtifactsByCampaign(campaign.id)).filter(
+        (artifact) => artifact.name === 'Zombie',
+      );
+      expect(rows).toHaveLength(1);
+      return rows;
     });
-    const landed = (await listArtifactsByCampaign(campaign.id)).filter(
-      (artifact) => artifact.name === 'Zombie' && artifact.id !== creature.id,
-    );
-
-    // ONE npc of the exact link name, MODULE-OWNED, and NOT a creature row: the
-    // module's own authored entity — the gap the owner could not fill.
-    expect(landed).toHaveLength(1);
     const npc = landed[0];
     if (npc?.kind !== 'npc') throw new Error('no npc of that name landed');
-    expect(npc.id).not.toBe(creature.id);
     expect(npc.moduleId).toBe(module.id);
     expect(npc.campaignId).toBe(campaign.id);
-    expect(npc.data.monsterChunkId).toBeUndefined();
+    expect(npc.data.creatureRef).toBeUndefined();
     expect(npc.tags).toContain('module:Ember Crypt');
     expect(npc.summary).toBe(NPC_DRAFT.summary);
     expect(npc.body).toBe(NPC_DRAFT.body);
-    // The model's invented name survives as an alias (nothing authored is lost).
     expect(npc.aliases).toContain(NPC_DRAFT.name);
     expect(toastErrorMock).not.toHaveBeenCalled();
 
-    // The module context now prefers it (tier 0), so the entity and the reader
-    // show the module's own NPC from here on.
+    // The module's own row wins the name, and the verdict is closed.
     const pool = await listArtifactsByCampaign(campaign.id);
     const resolution = resolveWikiLink('Zombie', pool, { moduleId: module.id });
     expect(resolution.artifact?.id).toBe(npc.id);
     expect(batchTargets(module, pool, 'npc')).toEqual([]);
 
-    // The shared creature row is untouched — every field the arc names, and the
-    // whole row byte-for-byte.
-    const after = await rowOf(creature.id);
-    expect(after.name).toBe('Zombie');
-    expect(after.aliases).toEqual(before.aliases);
-    expect(after.summary).toBe('');
-    expect(after.body).toBe('');
-    expect(after.kind).toBe('npc');
-    expect(after.kind === 'npc' ? after.data.monsterChunkId : undefined).toBe(CHUNK_ID);
-    expect(after.kind === 'npc' ? after.data.statBlock : undefined).toBeNull();
-    expect(after.coverImageId).toBeNull();
-    expect(after.imageIds).toEqual([]);
-    expect(after.tags).toEqual([]);
-    expect(after.links).toEqual([]);
-    expect(after.moduleId).toBeNull();
-    expect(after.campaignId).toBe(campaign.id);
-    expect(after.currentRevision).toBe(1);
-    expect(JSON.stringify(after)).toBe(JSON.stringify(before));
+    // NOTHING exists for the library creature itself: the batch may cite it,
+    // never materialize it.
+    expect(
+      pool.filter((artifact) => artifact.kind === 'npc' && artifact.data.creatureRef !== undefined),
+    ).toEqual([]);
+    // The library row is still there to cite — untouched by the generation.
+    expect((await resolveCreatureCitation({ chunkId }, 'Zombie')).chunk?.id).toBe(chunkId);
     await flushAsyncUpdates();
   }, 30_000);
 
-  it('the automation sweep lands it too, leaving the creature row byte-identical', async () => {
+  it('the automation sweep lands it too, and still creates no artifact for the creature', async () => {
     const campaign = await createCampaign({ name: 'Emberfall', system: 'dnd5e' });
     const module = creatureModule(campaign.id);
     await saveModule(module);
     await seedBuiltInPersonas();
-    const creature = await seedCreature(campaign.id);
+    const chunkId = await seedLibraryCreature();
     chatMock.mockImplementation(respondToBatch());
-    const before = await rowOf(creature.id);
 
     await runModulePostGeneration(module.id, campaign, {
       autoGenerateKinds: ['npc'],
@@ -451,13 +512,21 @@ describe('the generation the verdict unlocks', () => {
     });
 
     const landed = (await listArtifactsByCampaign(campaign.id)).filter(
-      (artifact) => artifact.name === 'Zombie' && artifact.id !== creature.id,
+      (artifact) => artifact.name === 'Zombie',
     );
     expect(landed).toHaveLength(1);
     expect(landed[0]?.moduleId).toBe(module.id);
     expect(landed[0]?.kind).toBe('npc');
-    expect(landed[0]?.kind === 'npc' ? landed[0].data.monsterChunkId : CHUNK_ID).toBeUndefined();
-    expect(await rowOf(creature.id)).toEqual(before);
-    expect(toastErrorMock).not.toHaveBeenCalled();
+    expect(landed[0]?.kind === 'npc' ? landed[0].data.creatureRef : chunkId).toBeUndefined();
+    // The sweep materializes the MODULE's entity and nothing else: the library
+    // creature is never turned into an artifact by an automation pass (docs/11
+    // D5 — the encounter/sweep side may cite, never cast).
+    expect(
+      (await listArtifactsByCampaign(campaign.id)).filter(
+        (artifact) => artifact.kind === 'npc' && artifact.data.creatureRef !== undefined,
+      ),
+    ).toEqual([]);
+    expect((await resolveCreatureCitation({ chunkId }, 'Zombie')).chunk?.id).toBe(chunkId);
+    expect(toastErrorMock.mock.calls).toEqual([]);
   }, 30_000);
 });

@@ -4,10 +4,20 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createCampaign } from '@/db/campaignRepo';
 import { listArtifactsByCampaign, createArtifact } from '@/db/artifactRepo';
+import { setCreatureCover } from '@/db/creatureRepo';
+import { createImage } from '@/db/imageRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { saveSettings } from '@/db/settingsRepo';
-import { createModule, defaultSettings, ENTITY_KINDS, modulePartSchema, moduleSpineSchema, type Module } from '@/domain';
+import {
+  createModule,
+  defaultSettings,
+  ENTITY_KINDS,
+  libraryCreatureKey,
+  modulePartSchema,
+  moduleSpineSchema,
+  type Module,
+} from '@/domain';
 import { orderedKinds, runModulePostGeneration } from '@/features/modules/post-generation';
 import { chainRunner } from '@/llm/chainRunner';
 import { useProgressStore } from '@/lib/progress';
@@ -91,7 +101,12 @@ const npcData = { appearance: '', personality: '', statBlock: null };
 const CHUNK_ID = '00000000-0000-4000-8000-00000000c001';
 
 /** A rulebook-cited roster entry (mobArtifactId when the row is stamped). */
-function rulebookEntry(mobArtifactId?: string) {
+function rulebookEntry(chunkId: string = CHUNK_ID) {
+  // REWRITTEN (ledger row 106): this used to stamp a `mobArtifactId` naming a
+  // covered `npc` artifact — the retired way of saying "this citation is
+  // already imaged". A citation's portrait is the campaign's PRESENTATION row
+  // for the creature identity now (docs/11 D6), so what makes a citation
+  // imaged is that row, and the source carries no artifact pointer at all.
   return {
     name: 'Goblin',
     count: 2,
@@ -99,8 +114,7 @@ function rulebookEntry(mobArtifactId?: string) {
     treasure: '',
     source: {
       type: 'rulebook' as const,
-      chunkId: CHUNK_ID,
-      ...(mobArtifactId === undefined ? {} : { mobArtifactId }),
+      chunkId,
     },
   };
 }
@@ -403,19 +417,30 @@ describe('runModulePostGeneration', () => {
       autoGenerateKinds: [],
       autoGenerateMobImages: true,
     });
-    // Campaign-level mob artifact (mobArtifacts are not module-owned) that
-    // the encounter's roster entry already points at, cover included.
-    const mob = await createArtifact({
+    // The first encounter's cited creature already HAS this campaign's
+    // portrait (a presentation row), so it is not work.
+    const art = await createImage({
       campaignId: campaign.id,
-      kind: 'npc',
-      name: 'Goblin',
-      summary: '',
-      body: '',
-      coverImageId: '00000000-0000-4000-8000-00000000a001',
-      data: npcData,
+      blob: new Blob(['goblin art'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 8,
+      height: 8,
+      source: 'uploaded',
     });
-    await seedEncounter(campaign.id, module.id, [rulebookEntry(mob.id)]);
-    await seedEncounter(campaign.id, module.id, [rulebookEntry()], 'Flooded Stair');
+    await setCreatureCover({
+      campaignId: campaign.id,
+      creatureKey: libraryCreatureKey(CHUNK_ID),
+      imageId: art.id,
+    });
+    await seedEncounter(campaign.id, module.id, [rulebookEntry()]);
+    // The second encounter cites a DIFFERENT creature, which has no portrait —
+    // so it is the one encounter that still needs work.
+    await seedEncounter(
+      campaign.id,
+      module.id,
+      [rulebookEntry('00000000-0000-4000-8000-00000000c002')],
+      'Flooded Stair',
+    );
     await saveSettings({ ...defaultSettings(), imagesEnabled: true });
     enqueueMobPortraits.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
 

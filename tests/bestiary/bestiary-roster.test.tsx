@@ -4,7 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter } from 'react-router-dom';
 
 import type { StatBlock } from '@/domain';
-import { createModule as createModuleSchema, ruleChunkSchema, statBlockSchema, stampNewEntity } from '@/domain';
+import {
+  createModule as createModuleSchema,
+  isCastCreatureNpc,
+  ruleChunkSchema,
+  statBlockSchema,
+  stampNewEntity,
+} from '@/domain';
 import { BestiaryRoster } from '@/features/bestiary/bestiary-roster';
 import { RulesPage } from '@/features/rules/RulesPage';
 import { putChunks } from '@/db/chunkRepo';
@@ -274,12 +280,15 @@ describe('BestiaryRoster', () => {
     // transition-reset rAF on the timed queue — the raw await used to hand
     // both an outside-act window (the intermittent 'An update to
     // DialogRoot…' leak).
-    const mobs = (await actDrained(() => db.artifacts.toArray())).filter(
-      (artifact) => artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined,
+    // A bestiary spawn CASTS a creature as an NPC (docs/11 D4/D5): a real
+    // `npc` row carrying the library citation — never the retired hidden
+    // creature artifact the old model materialized.
+    const mobs = (await actDrained(() => db.artifacts.toArray())).filter((artifact) =>
+      isCastCreatureNpc(artifact),
     );
     expect(mobs).toHaveLength(1);
     const mob = mobs[0];
-    if (mob === undefined) throw new Error('mob artifact missing');
+    if (mob === undefined) throw new Error('cast creature artifact missing');
     expect(mob.campaignId).toBe(campaign.id);
     expect(mob.moduleId).toBe(vault.id);
     expect(mob.tags).toContain('module:Vault of Whispers');
@@ -316,8 +325,8 @@ describe('BestiaryRoster', () => {
     // this test was reported with). The trailing drain absorbs any
     // straggler before cleanup.
     expect(
-      (await actDrained(() => db.artifacts.toArray())).filter(
-        (artifact) => artifact.kind === 'npc' && artifact.data.monsterChunkId !== undefined,
+      (await actDrained(() => db.artifacts.toArray())).filter((artifact) =>
+        isCastCreatureNpc(artifact),
       ),
     ).toHaveLength(0);
     await flushAsyncUpdates();

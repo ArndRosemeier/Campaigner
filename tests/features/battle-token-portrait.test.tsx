@@ -5,19 +5,20 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testi
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 
-import { createArtifact, getAnyArtifact, updateArtifact } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact } from '@/db/artifactRepo';
 import { db } from '@/db/db';
 import { getBattleByModule } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createImage } from '@/db/imageRepo';
+import { creatureCoverImageId, setCreatureCover } from '@/db/creatureRepo';
 import { createModule, statBlockSchema } from '@/domain';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { createRulebook } from '@/db/rulebookRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { updateSettings } from '@/db/settingsRepo';
-import { ruleChunkSchema, stampNewEntity } from '@/domain';
+import { libraryCreatureKey, ruleChunkSchema, stampNewEntity } from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { useMobPortraitQueue } from '@/features/campaign/mob-portrait-queue';
 import type * as MobPortraitQueue from '@/features/campaign/mob-portrait-queue';
@@ -36,7 +37,15 @@ import { actDrained, flushAsyncUpdates } from '../helpers/flush';
  *
  * The queue module is a pass-through spy (real queue, mocked image backend),
  * so generate/regen assertions prove the wiring end-to-end: the call AND the
- * cover landing on the token's artifact.
+ * portrait landing where the board reads it.
+ *
+ * REWRITTEN (ledger row 106): the token used to name a hidden `npc` artifact
+ * that WAS the creature, and the portrait landed on that row's cover. A
+ * rulebook token carries `artifactId: null` now (docs/11 D1/D5) and the board
+ * resolves its portrait through `creatureCoverImageId` — so the assertions
+ * below read the campaign's PRESENTATION row via that same production seam,
+ * which is what makes them a statement about the real render path rather than
+ * about a test-only lookup.
  */
 
 vi.mock('@/llm/openrouter', () => ({
@@ -341,11 +350,29 @@ async function tapToken(label: string, moduleId: string): Promise<void> {
   await flushAsyncUpdates();
 }
 
-async function tokenArtifactId(moduleId: string, label: string): Promise<string> {
-  const battle = await currentBattle(moduleId);
-  const token = battle.board.tokens.find((entry) => entry.label === label);
-  if (token?.artifactId === null || token?.artifactId === undefined) throw new Error(`${label} has no artifact`);
-  return token.artifactId;
+/** The campaign's portrait for a library creature, read through the SAME seam
+ * the board uses. */
+async function creaturePortrait(chunkId: string): Promise<string | null> {
+  return creatureCoverImageId({ campaignId, creatureKey: libraryCreatureKey(chunkId) });
+}
+
+/** Seed a portrait for a library creature exactly as a batch would: a
+ * campaign-scoped image plus the presentation row that points at it. */
+async function seedCreaturePortrait(chunkId: string, text: string): Promise<string> {
+  const image = await createImage({
+    campaignId,
+    blob: blobOf(text),
+    mimeType: 'image/png',
+    width: 10,
+    height: 10,
+    source: 'uploaded',
+  });
+  await setCreatureCover({
+    campaignId,
+    creatureKey: libraryCreatureKey(chunkId),
+    imageId: image.id,
+  });
+  return image.id;
 }
 
 describe('battle-card mob portrait action', () => {
@@ -363,15 +390,31 @@ describe('battle-card mob portrait action', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByTestId('generate-token-portrait'));
-    const artifactId = await tokenArtifactId(moduleId, 'Goblin Boss');
     await waitFor(() => {
       expect(enqueueSingleMock).toHaveBeenCalledTimes(1);
     });
-    expect(enqueueSingleMock).toHaveBeenCalledWith({ campaignId, artifactId, chunkId, name: 'Goblin Boss' });
-    // The same queue the editor batch uses lands the cover on the token's
-    // mob artifact (tokens render it via the existing coverImageId path).
+    // NO artifactId: a library creature has no artifact to illustrate, so the
+    // target names the identity and the campaign — the token's `artifactId` is
+    // null by design and reading it here would be reading a retired field.
+    expect(enqueueSingleMock).toHaveBeenCalledWith({
+      campaignId,
+      creatureKey: libraryCreatureKey(chunkId),
+      chunkId,
+      name: 'Goblin Boss',
+    });
+    // The token identifies its creature by `creatureKey`, and its `artifactId`
+    // is a SYNTHETIC seed-row id (db/battleSeed) that names no artifact at all —
+    // so the old "hang the portrait on the token's artifact" assertion was
+    // pinning a row that does not exist.
+    const token = (await currentBattle(moduleId)).board.tokens.find(
+      (entry) => entry.label === 'Goblin Boss',
+    );
+    expect(token?.creatureKey).toBe(libraryCreatureKey(chunkId));
+    expect(await getAnyArtifact(token?.artifactId ?? '')).toBeUndefined();
+    // The same queue the editor batch uses lands the portrait on the campaign's
+    // presentation row — the row the board itself resolves through.
     await waitFor(async () => {
-      expect((await getAnyArtifact(artifactId))?.coverImageId).not.toBeNull();
+      expect(await creaturePortrait(chunkId)).not.toBeNull();
     });
     expect(generateImagesMock).toHaveBeenCalledTimes(1);
     expect(toastErrorMock).not.toHaveBeenCalled();
@@ -380,14 +423,9 @@ describe('battle-card mob portrait action', () => {
 
   it('imaged rulebook mob offers Regenerate (never Generate); Confirm regenerates with the canonical-republish toasts', async () => {
     const { moduleId, chunkId } = await seedRulebookBattle();
-    // Populate the canonical slot + cover through the normal flow first, so
-    // regen republishes fresh bytes (gen-1 → gen-2).
-    const artifactId = await tokenArtifactId(moduleId, 'Goblin Boss');
-    enqueueSingleMock.getMockImplementation()?.({ campaignId, artifactId, chunkId, name: 'Goblin Boss' });
-    await waitFor(async () => {
-      expect((await getAnyArtifact(artifactId))?.coverImageId).not.toBeNull();
-    });
-    const oldCover = (await getAnyArtifact(artifactId))?.coverImageId ?? '';
+    // Seed the portrait through the production seam first, so regen republishes
+    // fresh bytes (gen-1 → gen-2).
+    const oldCover = await seedCreaturePortrait(chunkId, 'old');
     enqueueSingleMock.mockClear();
     generateImagesMock.mockClear();
 
@@ -410,7 +448,12 @@ describe('battle-card mob portrait action', () => {
     await waitFor(() => {
       expect(regenerateSingleMock).toHaveBeenCalledTimes(1);
     });
-    expect(regenerateSingleMock).toHaveBeenCalledWith({ campaignId, artifactId, chunkId, name: 'Goblin Boss' });
+    expect(regenerateSingleMock).toHaveBeenCalledWith({
+      campaignId,
+      creatureKey: libraryCreatureKey(chunkId),
+      chunkId,
+      name: 'Goblin Boss',
+    });
     await waitFor(() => {
       expect(toastSuccessMock).toHaveBeenCalledWith(
         'Regenerating portrait for "Goblin Boss" — the existing cover is replaced',
@@ -423,9 +466,9 @@ describe('battle-card mob portrait action', () => {
         'Shared portrait republished for "Goblin Boss" — future portraits in every campaign use the new art; existing covers elsewhere keep theirs',
       );
     });
-    // Fresh bytes replaced the old cover on the token's artifact.
+    // Fresh bytes replaced the old portrait on the campaign's presentation row.
     await waitFor(async () => {
-      const cover = (await getAnyArtifact(artifactId))?.coverImageId;
+      const cover = await creaturePortrait(chunkId);
       expect(cover).not.toBeNull();
       expect(cover).not.toBe(oldCover);
     });
@@ -433,17 +476,8 @@ describe('battle-card mob portrait action', () => {
   });
 
   it('regen Cancel regenerates nothing and replays the already-has-portrait toast', async () => {
-    const { moduleId } = await seedRulebookBattle();
-    const artifactId = await tokenArtifactId(moduleId, 'Goblin Boss');
-    const uploaded = await createImage({
-      campaignId,
-      blob: blobOf('old'),
-      mimeType: 'image/png',
-      width: 10,
-      height: 10,
-      source: 'uploaded',
-    });
-    await updateArtifact(artifactId, { imageIds: [uploaded.id], coverImageId: uploaded.id });
+    const { moduleId, chunkId } = await seedRulebookBattle();
+    const uploaded = await seedCreaturePortrait(chunkId, 'old');
 
     await renderSurface(moduleId);
     await waitFor(() => {
@@ -461,7 +495,7 @@ describe('battle-card mob portrait action', () => {
     });
     expect(regenerateSingleMock).not.toHaveBeenCalled();
     expect(generateImagesMock).not.toHaveBeenCalled();
-    expect((await getAnyArtifact(artifactId))?.coverImageId).toBe(uploaded.id);
+    expect(await creaturePortrait(chunkId)).toBe(uploaded);
     await flushAsyncUpdates();
   });
 
@@ -508,17 +542,8 @@ describe('battle-card mob portrait action', () => {
   });
 
   it('player-safe view hides the portrait action for an imaged rulebook mob', async () => {
-    const { moduleId } = await seedRulebookBattle();
-    const artifactId = await tokenArtifactId(moduleId, 'Goblin Boss');
-    const uploaded = await createImage({
-      campaignId,
-      blob: blobOf('old'),
-      mimeType: 'image/png',
-      width: 10,
-      height: 10,
-      source: 'uploaded',
-    });
-    await updateArtifact(artifactId, { imageIds: [uploaded.id], coverImageId: uploaded.id });
+    const { moduleId, chunkId } = await seedRulebookBattle();
+    await seedCreaturePortrait(chunkId, 'old');
 
     await renderSurface(moduleId);
     await waitFor(() => {

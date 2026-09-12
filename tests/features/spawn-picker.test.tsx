@@ -4,17 +4,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 
-import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getBattleByModule, saveBattleBoard } from '@/db/battleRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { buildFighterStatsLookup } from '@/db/fighterStats';
-import { findMobArtifactByChunk } from '@/db/mobArtifacts';
 import { createRulebook, updateRulebook } from '@/db/rulebookRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import {
   createModule,
+  libraryCreatureKey,
   monsterEntrySchema,
   newId,
   ruleChunkSchema,
@@ -257,7 +257,13 @@ describe('spawn picker groups', () => {
     expect(vi.mocked(toastError)).not.toHaveBeenCalled();
   });
 
-  it('spawns a core mob through the mob-artifact path (one artifact, one frozen seed row)', async () => {
+  it('spawns a core mob through the CITATION (no artifact, one frozen seed row, shared identity)', async () => {
+    // The campaign's npc rows BEFORE the spawn: the claim is that this path
+    // creates none, and the fixture's own NPCs must not be mistaken for new
+    // ones.
+    const npcsBefore = (await listArtifactsByCampaign(campaignId)).filter(
+      (row) => row.kind === 'npc',
+    ).length;
     await renderPicker();
     const mobs = screen.getByTestId('spawn-picker-group-mobs');
     await waitFor(() => {
@@ -269,14 +275,22 @@ describe('spawn picker groups', () => {
     const battle = await currentBattle();
     const spawned = battle.board.tokens.find((token) => token.label === 'Goblin Boss 1');
     if (spawned === undefined) throw new Error('spawned goblin missing');
-    // The shared mob path: get-or-create the ONE mob artifact for the chunk,
-    // then freeze ONE seed row under it (never a stat copy on the token).
-    const mob = await findMobArtifactByChunk(campaignId, goblinChunkId);
-    expect(mob?.id).toBeDefined();
-    expect(spawned.artifactId).toBe(mob?.id);
+    // REWRITTEN (ledger row 106): the shared path used to get-or-create ONE mob
+    // artifact for the chunk and key the token's `artifactId` on it. The
+    // citation IS the reference now, so the token carries the creature IDENTITY
+    // and NOTHING is created; the frozen seed row is still exactly one.
+    expect(spawned.creatureKey).toBe(libraryCreatureKey(goblinChunkId));
+    // `artifactId` is the SYNTHETIC seed-row id the stat carrier gets
+    // (`db/battleSeed`) and names no artifact at all — the pin that matters is
+    // that no campaign row exists behind it, not the literal null.
+    expect(await getAnyArtifact(spawned.artifactId ?? '')).toBeUndefined();
     expect(spawned.currentHp).toBe(21);
     expect(spawned.visible).toBe(true);
-    expect(battle.seedFighters.filter((seed) => seed.id === mob?.id)).toHaveLength(1);
+    expect(battle.seedFighters).toHaveLength(1);
+    expect(battle.seedFighters[0]?.creatureKey).toBe(libraryCreatureKey(goblinChunkId));
+    expect(
+      (await listArtifactsByCampaign(campaignId)).filter((row) => row.kind === 'npc'),
+    ).toHaveLength(npcsBefore);
     expect(vi.mocked(toastError)).not.toHaveBeenCalled();
   });
 

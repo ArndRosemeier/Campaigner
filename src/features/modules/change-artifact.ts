@@ -1,10 +1,8 @@
 import type { ArtifactKind, AnyArtifact, Campaign, DungeonMapPath, Id } from '@/domain';
-import { ENTITY_KINDS } from '@/domain';
+import { ENTITY_KINDS, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
 import { getAnyArtifact } from '@/db/artifactRepo';
 import { getCampaign } from '@/db/campaignRepo';
 import { getModule } from '@/db/moduleRepo';
-import { isMobArtifact } from '@/db/mobArtifacts';
-import { creatureRowAiRefusal } from '@/features/campaign/creature-row-guard';
 import {
   regenerateEncounterEverything,
   repopulateEncounter,
@@ -41,8 +39,8 @@ import { claimModuleGeneration, releaseModuleGeneration } from '@/llm/canvasBusy
  * | `encounter`                         | `features/campaign/encounterRegen` | the requested one of the two EXISTING operations |
  * | `npc` / `location` / `event` /      | `features/modules/entity-batch`  | re-designs the row IN PLACE through               |
  * | `faction` / `note`                  | (with `buildEntityBrief`)        | `runEngine`'s refill (identity preserved)         |
- * | `npc` carrying the `monsterChunkId` | REFUSED — `creatureRowAiRefusal` | a RATIFIED boundary: nothing is written at all    |
- * | marker (a rulebook creature row)    |                                  |                                                   |
+ * | `npc` carrying a `creatureRef`      | REFUSED — `isCastCreatureNpc`    | a RATIFIED boundary: nothing is written at all    |
+ * | (a CAST CREATURE npc, docs/11 D4)   |                                  |                                                   |
  * | `pc`                                | UNSUPPORTED — the Party is authored | no persona produces a player character         |
  * | `plotarc`                           | UNSUPPORTED — outside the entity lane | the arc engine is not a module entity kind    |
  *
@@ -230,19 +228,21 @@ type ChangeRoute =
  * is not a user-facing refusal.
  */
 function resolveChangeRoute(artifact: AnyArtifact, request: ChangeArtifactRequest): ChangeRoute {
-  // RATIFIED BOUNDARY (owner decision, docs/17 row 101): a rulebook-cited,
-  // chunk-backed creature row is ONE shared row per campaign per cited chunk,
-  // and it is not rewritable by instruction. This is a deliberate exception to
-  // "change any artifact", not debt and not a TODO: the refusal names the
-  // shared-row reason and the remedy, writes nothing at all, and can never be
-  // reported as success. `isMobArtifact` is the ONLY classification of such a
-  // row (never a second reading of the marker).
-  if (artifact.kind === 'npc' && isMobArtifact(artifact)) {
+  // RATIFIED BOUNDARY (owner decision, docs/17 row 101, re-based on the
+  // cast seam by the core-mob arc): a CAST CREATURE npc is this module's own
+  // row for a LIBRARY creature, and its name IS the citation — an instruction
+  // that renamed or rewrote it would stop every encounter and battle citing
+  // that creature from finding it. This is a deliberate exception to "change
+  // any artifact", not debt and not a TODO: the refusal names the reason and
+  // the remedy, writes nothing at all, and can never be reported as success.
+  // `isCastCreatureNpc` is the ONLY classification of such a row (never a
+  // second reading of `creatureRef` at a call site).
+  if (isCastCreatureNpc(artifact)) {
     return {
       status: 'refused',
       artifactId: artifact.id,
       kind: artifact.kind,
-      reason: creatureRowAiRefusal(artifact.name),
+      reason: castCreatureWriteRefusal(artifact.name, artifact.name),
     };
   }
   if (artifact.kind === 'pc') {

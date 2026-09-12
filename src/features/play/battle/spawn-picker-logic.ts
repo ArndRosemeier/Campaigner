@@ -137,7 +137,7 @@ export async function spawnPickedEntry(battleId: Id, entry: MonsterEntry): Promi
   if (battle === undefined) throw new NotFoundError('Battle', battleId);
   const parsed = monsterEntrySchema.parse(entry);
   const at = nextFreeSpawnPoint(battle.board.tokens, battle.board.stagingGround);
-  const expansion = await expandRosterEntries(battle.campaignId, [parsed], {
+  const expansion = await expandRosterEntries([parsed], {
     visible: true,
     placeAt: () => at,
     numberFrom: countLabelSlots(battle.board.tokens, parsed.name) + 1,

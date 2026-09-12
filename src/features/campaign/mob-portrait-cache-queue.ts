@@ -27,12 +27,14 @@ import { intakeImage } from '@/lib/imageIntake';
  * slot's shared-blob imageId, generating (n=1) and publishing it when the
  * slot is empty.
  *
- * Cross-campaign locking is a single-flight pending map keyed by chunkId:
+ * Cross-campaign locking is a single-flight pending map keyed by creature
+ * identity (the same key the cache slot uses, docs/11 D6):
  * two campaigns citing one chunk concurrently join the SAME promise, so the
  * image model is called once and the Dexie publish converges on one record
- * (put-if-absent + unique `&chunkId`, cross-tab ConstraintError included).
- * Callers then CLONE the bytes into their own artifact covers — the worker
- * never attaches to an artifact itself (one generation, N covers).
+ * (put-if-absent + unique `&creatureKey`, cross-tab ConstraintError included).
+ * Callers then CLONE the bytes into their own presentation row or artifact
+ * cover — the worker never attaches anywhere itself (one generation, N
+ * renders).
  *
  * This is deliberately NOT a `createJobQueue` queue: a factory job has ONE
  * artifact owner, but a cache generation fans out to N awaiting requesters
@@ -50,6 +52,9 @@ import { intakeImage } from '@/lib/imageIntake';
  */
 
 export interface EnsureCanonicalPortrait {
+  /** The creature IDENTITY (docs/11 D6) — the cache slot's key. */
+  creatureKey: string;
+  /** The citation's chunk — the prompt's grounding text. */
   chunkId: Id;
   campaignId: Id;
   signal?: AbortSignal | undefined;
@@ -61,8 +66,9 @@ export interface EnsuredPortrait {
   generated: boolean;
 }
 
-/** In-flight canonical generations by chunkId — the cross-campaign lock. */
-const pendingGenerations = new Map<Id, Promise<EnsuredPortrait>>();
+/** In-flight canonical generations by creature identity — the cross-campaign
+ * lock. */
+const pendingGenerations = new Map<string, Promise<EnsuredPortrait>>();
 
 /** Test seam: drops un-settled pending entries (failed generations already
  * clear themselves; a settled entry never lingers past its `finally`). */
@@ -73,17 +79,17 @@ export function __clearPendingMobPortraitGenerationsForTests(): void {
 export async function ensureCanonicalMobPortrait(
   options: EnsureCanonicalPortrait,
 ): Promise<EnsuredPortrait> {
-  const fastPath = await getMobPortraitCacheEntry(options.chunkId);
+  const fastPath = await getMobPortraitCacheEntry(options.creatureKey);
   if (fastPath !== undefined) return { imageId: fastPath.imageId, generated: false };
-  const pending = pendingGenerations.get(options.chunkId);
+  const pending = pendingGenerations.get(options.creatureKey);
   if (pending !== undefined) return joinPending(options, pending);
   const owned = generateAndPublish(options);
-  pendingGenerations.set(options.chunkId, owned);
+  pendingGenerations.set(options.creatureKey, owned);
   try {
     return await owned;
   } finally {
-    if (pendingGenerations.get(options.chunkId) === owned) {
-      pendingGenerations.delete(options.chunkId);
+    if (pendingGenerations.get(options.creatureKey) === owned) {
+      pendingGenerations.delete(options.creatureKey);
     }
   }
 }
@@ -120,10 +126,10 @@ async function generateAndPublish(options: EnsureCanonicalPortrait): Promise<Ens
   const loaded = await loadCanonicalInputs(options);
   // Double-checked read: a generation that overlapped this one's chunk load
   // may have published while the prompt inputs were read.
-  const reread = await getMobPortraitCacheEntry(options.chunkId);
+  const reread = await getMobPortraitCacheEntry(options.creatureKey);
   if (reread !== undefined) return { imageId: reread.imageId, generated: false };
   const prepared = await generateFreshCanonicalImage(options, loaded);
-  const published = await storeCanonicalPortraitIfAbsent(options.chunkId, prepared);
+  const published = await storeCanonicalPortraitIfAbsent(options.creatureKey, prepared);
   return { imageId: published.imageId, generated: published.stored };
 }
 
@@ -150,7 +156,7 @@ export async function regenerateCanonicalMobPortrait(
   // bytes — a no-op regen) and unconditionally republishes the slot.
   const loaded = await loadCanonicalInputs(options);
   const prepared = await generateFreshCanonicalImage(options, loaded);
-  return replaceCanonicalPortrait(options.chunkId, prepared);
+  return replaceCanonicalPortrait(options.creatureKey, prepared);
 }
 
 interface CanonicalInputs {

@@ -12,7 +12,7 @@ export interface AliasEditorProps {
   aliases: readonly string[];
   onChange: (aliases: string[]) => void;
   placeholder?: string;
-  /** Read-only mode (a bestiary creature row: `features/campaign/creature-row-guard`).
+  /** Read-only mode, for a caller that shows the aliases without owning them.
    * The aliases stay VISIBLE — they are part of the row's identity every
    * wiki-link resolves through — but neither the add input nor the × buttons
    * accept a change, and `readOnlyReason` says why in place. Never a silently

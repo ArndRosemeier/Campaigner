@@ -19,6 +19,8 @@ import { toastError, toastInfo } from '@/lib/toast';
 import { readSettings, updateSettings } from '@/db/settingsRepo';
 import { HelpDialog } from '@/help/HelpDialog';
 import { useHelpStore } from '@/help/helpStore';
+import { useLibraryCreaturePool } from '@/app/use-library-creatures';
+import { formatCreatureCitationRepair } from '@/domain/creatureCitationRepair';
 import { SetupWizardDialog } from '@/features/onboarding/SetupWizardDialog';
 import { useOnboardingStore } from '@/features/onboarding/onboardingStore';
 import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
@@ -44,6 +46,10 @@ import { maybeAutoOpenWizard } from '@/features/onboarding/onboardingState';
 export function AppShell(): JSX.Element {
   useThemeSync();
   useUiScaleSync();
+  // THE library creature pool (docs/11 D10): published here because every
+  // reader surface resolves wiki-links through `lib/wikilinks`, and a mention
+  // of a bestiary creature must read as a CITATION rather than a broken link.
+  useLibraryCreaturePool();
   const openHelp = useHelpStore((state) => state.openHelp);
   const wizardOpen = useOnboardingStore((state) => state.open);
 
@@ -72,6 +78,26 @@ export function AppShell(): JSX.Element {
       })
       .catch((error: unknown) => {
         toastError('Could not report the play-view migration', error);
+      });
+  }, []);
+
+  useEffect(() => {
+    // ONE loud migration report (docs/11 D7): the core-mob arc's Dexie upgrade
+    // rewrote citations that pointed at a retired bestiary creature row and
+    // deleted those rows as cache. The upgrade body cannot toast (it runs
+    // before React, inside Dexie), so it writes what it did into settings and
+    // this reads it ONCE — the counts the owner needs to trust their
+    // encounters, and the names of anything it could NOT convert, stated in as
+    // many words rather than swallowed (AGENTS rule 2).
+    void readSettings()
+      .then(async (settings) => {
+        const report = settings.creatureCitationRepair;
+        if (report === null) return;
+        toastInfo(formatCreatureCitationRepair(report));
+        await updateSettings({ creatureCitationRepair: null });
+      })
+      .catch((error: unknown) => {
+        toastError('Could not report the bestiary citation repair', error);
       });
   }, []);
 

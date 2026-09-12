@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createCampaign } from '@/db/campaignRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createPackBook, createRulebook, finalizePackBook } from '@/db/rulebookRepo';
-import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { createArtifact, getAnyArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { getRun, updateRun } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { seedBattleFromEncounter } from '@/db/battleSeed';
@@ -26,6 +26,7 @@ import { sha256Hex } from '@/lib/hash';
 import { runEngine } from '@/llm/runEngine';
 import {
   enqueueInventedCreaturePortraits,
+  enqueueMobPortraits,
   planMobPortraitBatch,
   useMobPortraitQueue,
 } from '@/features/campaign/mob-portrait-queue';
@@ -397,16 +398,6 @@ function rosterLineAt(userContent: string, line: string): number {
 }
 
 
-/** Looks up THE mob artifact created for `chunkId` — the get-or-create is
- *  idempotent, so at most one exists per campaign (the arc's core pin). */
-async function mobArtifactIdOf(campaignId: Id, chunkId: Id): Promise<Id> {
-  const mob = (await listArtifactsByCampaign(campaignId)).find(
-    (row) => row.kind === 'npc' && row.data.monsterChunkId === chunkId,
-  );
-  if (mob === undefined) throw new Error(`no mob artifact for chunk ${chunkId}`);
-  return mob.id;
-}
-
 describe('encounter runs (M3-B)', () => {
   beforeEach(async () => {
     await clearDatabase();
@@ -468,7 +459,7 @@ describe('encounter runs (M3-B)', () => {
     // D10 amendment: the draft's own classification persists on the artifact.
     expect(artifact.data.locationKind).toBe('dungeon');
     const monsters = artifact.data.monsters;
-    expect(monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId), contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
+    expect(monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
     // fix-02 (decision 1): the uncited monster's inline block materializes
     // into a REAL NPC artifact linked via npc-ref — never inline, never none.
     expect(monsters[1]?.source.type).toBe('npc-ref');
@@ -625,7 +616,7 @@ describe('encounter runs (M3-B)', () => {
     expect((await getArtifact(campaignLevel.id))?.moduleId).toBeNull();
   });
 
-  it('two runs citing the same chunk share ONE mob artifact (idempotent get-or-create per chunkId)', async () => {
+  it('two runs citing the same chunk create NOTHING — the citation IS the reference (D5)', async () => {
     const { campaign, persona } = await seed();
     const goblinChunkId = await seedPackBook('Dnd5e Bestiary Pack');
     searchRulesMock.mockResolvedValue([]);
@@ -643,21 +634,17 @@ describe('encounter runs (M3-B)', () => {
     const firstSource = await rulebookSourceOf(first.runId);
     const secondSource = await rulebookSourceOf(second.runId);
     expect(firstSource.chunkId).toBe(goblinChunkId);
-    expect(secondSource.mobArtifactId).toBe(firstSource.mobArtifactId);
-
-    // Exactly ONE mob artifact exists for the chunk — roster name + marker,
-    // with NO stat text copied from the chunk (the chunk stays the truth).
-    const mobs = (await listArtifactsByCampaign(campaign.id)).filter(
-      (row) => row.kind === 'npc' && row.data.monsterChunkId === goblinChunkId,
-    );
-    expect(mobs).toHaveLength(1);
-    const mob = mobs[0];
-    if (mob?.kind !== 'npc') throw new Error('not an npc');
-    expect(mob.id).toBe(firstSource.mobArtifactId);
-    expect(mob.name).toBe('Goblin Boss');
-    expect(mob.data.statBlock).toBeNull();
-    expect(mob.body).toBe('');
-    expect(mob.summary).toBe('');
+    // REWRITTEN (ledger row 106): the citation carries the chunk and its
+    // content identity, and NOTHING ELSE. The old model stamped a
+    // `mobArtifactId` here and materialized one hidden `npc` per chunk; that
+    // artifact is exactly the row that went to a permanent `missing ref` when
+    // it was deleted out from under a live roster. Identity is the citation
+    // now, so the SAME chunk yields the byte-identical source on both runs and
+    // no artifact at all.
+    expect(secondSource).toEqual(firstSource);
+    expect(Object.keys(firstSource)).not.toContain('mobArtifactId');
+    expect(firstSource.creatureName).toBe('Goblin Boss');
+    expect(await listArtifactsByCampaign(campaign.id)).toHaveLength(2);
   });
 
   it('a materialized monster seeds fighting tokens backed by the NPC artifact (fix-02)', async () => {
@@ -748,7 +735,7 @@ describe('encounter runs (M3-B)', () => {
     expect(updated.summary).toBe(DRAFT.summary);
     expect(updated.body).toBe(DRAFT.body);
     expect(updated.data.difficulty).toBe('deadly');
-    expect(updated.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId), contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
+    expect(updated.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
     // fix-02 (decision 1): the IN-PLACE Smith path materializes too.
     expect(updated.data.monsters[1]?.source.type).toBe('npc-ref');
     const npcsAfter = (await listArtifactsByCampaign(campaign.id)).filter(
@@ -808,7 +795,6 @@ describe('encounter runs (M3-B)', () => {
     expect(artifact.data.monsters[0]?.source).toEqual({
       type: 'rulebook',
       chunkId: goblinChunkId,
-      mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId),
       contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'),
       creatureName: 'Goblin Boss',
     });
@@ -1132,14 +1118,29 @@ describe('encounter runs (M3-B)', () => {
     if (artifact?.kind !== 'encounter') throw new Error('no encounter artifact');
     // The collision path of the assertion rule: a staged creature with no
     // citable stat source becomes a REAL npc artifact, linked by reference.
+    // That row is an AUTHORED npc (it carries a hand-written stat block and no
+    // library citation) — the encounter never invents a library creature and
+    // never materializes one (docs/11 D5 amendment), so a `creatureRef` must
+    // not appear on it.
     expect(artifact.data.monsters[0]?.source.type).toBe('npc-ref');
+    const source = artifact.data.monsters[0]?.source;
+    if (source?.type !== 'npc-ref') throw new Error('not an npc-ref');
+    const linked = await getAnyArtifact(source.artifactId);
+    if (linked?.kind !== 'npc') throw new Error('linked artifact is not an npc');
+    expect(linked.data.creatureRef).toBeUndefined();
 
     const plan = await planMobPortraitBatch(artifact, campaign.id);
     expect(plan.missing).toEqual(['Risen Lumberjack']);
     expect(plan.imaged).toEqual([]);
 
-    const result = await enqueueInventedCreaturePortraits(artifact, campaign.id);
-    expect(result.enqueued).toBe(1);
+    // The AUTHORED lane owns it (its prose is the whole description), so the
+    // cited batch takes the job and the invented batch takes none.
+    const invented = await enqueueInventedCreaturePortraits(artifact, campaign.id);
+    expect(invented).toEqual({ enqueued: 0, alreadyImaged: [] });
+    const cited = await enqueueMobPortraits(artifact, campaign.id);
+    expect(cited).toEqual({ enqueued: 1, alreadyImaged: [] });
+    expect(useMobPortraitQueue.getState().queued[0]?.artifactId).toBe(source.artifactId);
+    expect(useMobPortraitQueue.getState().queued[0]?.chunkId).toBeUndefined();
     useMobPortraitQueue.getState().reset();
   });
 
@@ -1502,7 +1503,7 @@ describe('encounter runs (M3-B)', () => {
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
     // …and sourceChunkIndex 0 resolved through finalize to the pinned chunk.
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId), contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
   });
 
   it('a pinned null-statBlock chunk stays excerpt-context-only (fix-02 pool exclusion)', async () => {
@@ -1625,8 +1626,8 @@ describe('encounter runs (M3-B)', () => {
     ]);
     const artifact = await getArtifact(storedRun?.resultArtifactId ?? '');
     if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
-    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, goblinChunkId), contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
-    expect(artifact.data.monsters[1]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, mobArtifactId: await mobArtifactIdOf(campaign.id, trollChunkId), contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
+    expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: goblinChunkId, contentHash: await sha256Hex('Goblin Boss, humanoid, agile commander.'), creatureName: 'Goblin Boss' });
+    expect(artifact.data.monsters[1]?.source).toEqual({ type: 'rulebook', chunkId: trollChunkId, contentHash: await sha256Hex(TROLL_TEXT), creatureName: 'Troll' });
   });
 
   describe('roster prompt-window ordering (12-BESTIARY-PACKS §7 ratified chain)', () => {
@@ -1666,7 +1667,7 @@ describe('encounter runs (M3-B)', () => {
       if (artifact?.kind !== 'encounter') throw new Error('encounter missing');
       const { db } = await import('@/db/db');
       const cited = (await db.chunks.toArray()).find((row) => row.headingPath[0] === 'Creature 001');
-      expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: cited?.id, mobArtifactId: await mobArtifactIdOf(campaign.id, cited?.id ?? ''), contentHash: await sha256Hex('Creature 001, a ladder creature at level 1.'), creatureName: 'Creature 001' });
+      expect(artifact.data.monsters[0]?.source).toEqual({ type: 'rulebook', chunkId: cited?.id, contentHash: await sha256Hex('Creature 001, a ladder creature at level 1.'), creatureName: 'Creature 001' });
     });
 
     it('parses levelHint variants at the run-engine boundary (first digit run wins)', async () => {

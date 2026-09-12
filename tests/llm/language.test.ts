@@ -50,6 +50,7 @@ const SETTINGS_BASE = {
   dungeonMapPath: 'classic' as const,
   runExtras: { image: false, statBlock: false, mobPortraits: false },
   retiredSessionNotesRemoved: 0,
+  creatureCitationRepair: null,
   onboarding: { status: 'fresh' as const, stepState: [] },
   lastModule: null,
   newModuleDraft: null,

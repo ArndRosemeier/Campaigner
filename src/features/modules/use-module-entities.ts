@@ -17,25 +17,24 @@ export interface EntityEntry {
    * True when this name has an authored, DETAILED entity of its own — the
    * question this view answers (`features/modules/detailed-entity`), NOT "does
    * anything resolve": a name whose only resolution is a bestiary creature row
-   * (an `npc` carrying `data.monsterChunkId`) is NOT detailed, so the panel
+   * (a cited library creature, docs/11 D10) is NOT detailed, so the panel
    * offers it and the batch generates the module's own entity of that name.
    */
   resolved: boolean;
   ambiguous: boolean;
   /**
    * The detailed entity itself — `undefined` when the name has none (nothing
-   * resolves, or only a shared bestiary creature row does). Every row action
-   * (open the card, adopt, illustrate) acts on THIS artifact, never on a
-   * creature row.
+   * resolves, or only a library creature does). Every row action (open the
+   * card, adopt, illustrate) acts on THIS artifact, never on a creature.
    */
   artifact: AnyArtifact | undefined;
   /**
-   * The bestiary creature row the name still resolves to, when that is all it
-   * resolves to — the shared rulebook creature's row, which is not an authoring
-   * slot. The panel names it in the row's honest marker; `undefined` for every
-   * other entry.
+   * The LIBRARY CREATURE the name cites, when it cites one instead of naming an
+   * authored entity (docs/11 D10) — the creature's name as the bestiary spells
+   * it. There is no row behind it: the panel names it in the row's honest
+   * marker; `undefined` for every other entry.
    */
-  creatureRow: AnyArtifact | undefined;
+  creatureName: string | undefined;
   occurrences: { where: string; count: number }[];
   total: number;
   sentence: string;
@@ -50,9 +49,11 @@ export interface EntityEntry {
  *
  * The verdict on each name is `detailedEntityVerdict` — "does this name have an
  * authored, DETAILED entity of its own?" — never the bare resolution: a name
- * that resolves only to a shared bestiary creature row is NOT detailed, so the
- * panel offers it as work and the batch generates the module's own entity of
- * that name (`features/modules/detailed-entity`; docs/18 §4).
+ * that resolves only to a LIBRARY CREATURE is NOT detailed, so the panel offers
+ * it as work and the batch generates the module's own entity of that name
+ * (`features/modules/detailed-entity`; docs/18 §4). The mention itself still
+ * reads as RESOLVED on every display surface (docs/11 D10) — the two questions
+ * are different questions, and only this one is about work to do.
  */
 export function useModuleEntities(
   module: Module,
@@ -91,7 +92,7 @@ export function useModuleEntities(
         resolved: verdict.entity !== undefined,
         ambiguous: resolution.status === 'ambiguous',
         artifact: verdict.entity,
-        creatureRow: verdict.entity === undefined ? verdict.creatureRow : undefined,
+        creatureName: verdict.entity === undefined ? verdict.creatureName : undefined,
         occurrences,
         total: occurrences.reduce((sum, occurrence) => sum + occurrence.count, 0),
         sentence: sentenceAround(firstDoc?.markdown ?? '', name),

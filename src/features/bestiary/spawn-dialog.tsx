@@ -7,7 +7,7 @@ import { FolderPlusIcon, MapPinnedIcon } from 'lucide-react';
 import type { Id, Module } from '@/domain';
 import { useModules } from '@/features/modules/hooks';
 import { listCampaigns } from '@/db/campaignRepo';
-import { spawnMobArtifactIntoModule } from '@/db/mobArtifacts';
+import { castCreatureAsNpc } from '@/db/creatureRepo';
 import { toastError, toastSuccess } from '@/lib/toast';
 import { modulePath } from '@/app/routes';
 import { Button } from '@/components/ui/button';
@@ -33,10 +33,14 @@ export interface SpawnCreature {
 
 /**
  * Module picker for the bestiary roster's "Spawn into module" (owner-ratified
- * placement + auto-promote): the creature's mob artifact is get-or-created for the
- * picked campaign/module and stamped module-owned via
- * `stampModuleOwnership` — a second-module spawn PROMOTES it to shared
- * campaign level instead of moving it (10 D12). `/rules` is campaign-agnostic, so the dialog picks
+ * placement; re-based on the cast seam by the core-mob arc, docs/11 D4): the
+ * creature is CAST as an authored NPC owned by the picked module
+ * (`castCreatureAsNpc` — a real `npc` row carrying the creature's `creatureRef`
+ * and prose the module designer fills in, its stats derived from the library and
+ * its cover seeded from the creature's canonical portrait). Nothing is created
+ * for the CREATURE itself: the library row stays read-only and uncopyable
+ * (docs/11 D8), and casting the same creature under the same name twice reuses
+ * the same NPC. `/rules` is campaign-agnostic, so the dialog picks
  * the campaign too — one campaign preselects itself; several require an
  * explicit choice. Zero campaigns or zero modules are named empty states,
  * never silent no-ops. Success toasts with an "Open module" action that
@@ -63,7 +67,12 @@ export function SpawnModulePicker({
   async function spawn(module: Module): Promise<void> {
     if (creature === null || campaignId === null) return;
     try {
-      await spawnMobArtifactIntoModule(campaignId, creature.chunkId, creature.name, module.id, module.title);
+      await castCreatureAsNpc({
+        campaignId,
+        moduleId: module.id,
+        citation: { chunkId: creature.chunkId, creatureName: creature.name },
+        name: creature.name,
+      });
       toastSuccess(`${creature.name} spawned into '${module.title}'`, {
         label: 'Open module',
         onClick: () => {

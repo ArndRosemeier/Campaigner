@@ -145,15 +145,16 @@ describe('promoteSecondModuleUses (links)', () => {
 });
 
 describe('promoteRosterUses (roster)', () => {
-  it('promotes npc-ref and mob artifacts owned by another module', async () => {
+  it('promotes the rows another module\u2019s roster links, and never the library a citation names', async () => {
     const npc = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Orc Brute' });
     const chunkId = newId();
+    // A CAST creature npc (docs/11 D3/D4): its own row, the library's stats.
     const mob = await createArtifact({
       campaignId,
       moduleId: moduleA,
       kind: 'npc',
       name: 'Cave Fisher',
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: chunkId },
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
     });
 
     const promoted = await promoteRosterUses(moduleB, [
@@ -163,7 +164,20 @@ describe('promoteRosterUses (roster)', () => {
         count: 2,
         notes: '',
         treasure: '',
-        source: { type: 'rulebook', chunkId, mobArtifactId: mob.id },
+        source: { type: 'npc-ref', artifactId: mob.id },
+      },
+      // REWRITTEN (ledger row 106): the roster used to reach the cast row a
+      // second way — a `rulebook` citation whose chunk matched the row's hidden
+      // `monsterChunkId` — and the promotion followed that identity. There is no
+      // such identity to follow now: a citation names a LIBRARY creature, which
+      // is nobody's artifact and cannot be promoted. Only a row LINK promotes a
+      // row, which is what the two `npc-ref` entries above pin.
+      {
+        name: 'Cave Fisher',
+        count: 1,
+        notes: '',
+        treasure: '',
+        source: { type: 'rulebook', chunkId },
       },
     ]);
 

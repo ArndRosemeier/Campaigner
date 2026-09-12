@@ -118,7 +118,12 @@ describe('stopAllGenerations', () => {
       campaignId: campaign.id, moduleId: module.id, kind: 'npc', name: 'Kael', summary: 'Ember\u2019s gate warden.',
     });
     useMobPortraitQueue.getState().enqueue([
-      { campaignId: campaign.id, artifactId: goblin.id, name: 'Goblin Boss' },
+      {
+        campaignId: campaign.id,
+        creatureKey: `artifact:${goblin.id}`,
+        artifactId: goblin.id,
+        name: 'Goblin Boss',
+      },
     ]);
     useEntityImageQueue.getState().enqueue([
       { campaignId: campaign.id, moduleId: module.id, name: 'Kael' },

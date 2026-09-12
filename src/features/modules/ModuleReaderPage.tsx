@@ -43,6 +43,7 @@ import { WikiMarkdown } from '@/features/campaign/components/wiki-markdown';
 import { useModule } from '@/features/modules/hooks';
 import { GenerateModuleCoverButton, ModuleCoverHero } from '@/features/covers/cover-art';
 import { EntityPanel } from '@/features/modules/entity-panel';
+import { useCreaturePresentation } from '@/app/use-creature-presentation';
 import { PartTextEditor } from '@/features/modules/part-text-editor';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
@@ -74,6 +75,9 @@ export function ModuleReaderPage(): JSX.Element {
   const campaign = useCampaign(campaignId === '' ? undefined : campaignId);
   const module = useModule(moduleId === '' ? undefined : moduleId);
   const artifacts = useArtifacts(campaignId === '' ? undefined : campaignId);
+  // The creature PRESENTATION snapshot the entity panel is handed (docs/11 D6):
+  // the page owns data reads, the panel stays a pure function of its props.
+  const creaturePresentation = useCreaturePresentation(campaignId);
   // Module text resolves against the campaign pool PLUS the shared library —
   // a module quoting a global entity ("[[Goblin Warrior]]") must render a
   // resolved chip, not a stub. The combined pool feeds ONLY the reader's
@@ -643,6 +647,7 @@ export function ModuleReaderPage(): JSX.Element {
         onStub={(name, anchor) => {
           setStub({ name, ...anchor });
         }}
+        {...(creaturePresentation === undefined ? {} : { creaturePresentation })}
         onOpenCard={(artifact) => {
           // Encounters skip the peek modal: the owner always wants the
           // encounter directly in the workspace (same target as the peek

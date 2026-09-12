@@ -765,7 +765,9 @@ describe('import dependency enforcement', () => {
     const first = encounter.data.monsters[0];
     if (first === undefined) throw new Error('imported roster entry missing');
     const resolved = await resolveMonsterEntryWithRepos(first);
-    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref' });
+    // Named (docs/11 D9) — and the name is the CREATURE's, so the marker is
+    // directly actionable against the library that lacks it.
+    expect(resolved).toMatchObject({ statBlock: null, origin: 'missing ref (Goblin Warrior)' });
   });
 
   it('still aborts on version drift (L1) but import-anyway lands it', async () => {
@@ -978,7 +980,7 @@ describe('import content-identity healing', () => {
     expect(first.source.contentHash).toBe(contentHash);
     expect(await resolveMonsterEntryWithRepos(first)).toMatchObject({
       statBlock: null,
-      origin: 'missing ref',
+      origin: 'missing ref (Goblin Warrior)',
     });
 
     // Installing the byte-identical content later clears the marker with no

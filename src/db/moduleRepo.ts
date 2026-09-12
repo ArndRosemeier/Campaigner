@@ -197,6 +197,7 @@ export async function deleteModule(
       db.revisions,
       db.images,
       db.battles,
+      db.creatureImages,
       db.settings,
       db.campaigns,
       db.moduleVersions,

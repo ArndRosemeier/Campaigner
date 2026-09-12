@@ -1,4 +1,4 @@
-import type { AnyArtifact, Id } from '@/domain';
+import type { AnyArtifact, Id, WikiLinkCreature } from '@/domain';
 
 /**
  * Wiki-link syntax & resolution (08-MODULE-DESIGNER M4-A, pure): markdown
@@ -84,13 +84,21 @@ export function rewriteWikiLinkTargets(markdown: string, rewrites: readonly Link
 }
 
 /** One resolution outcome for a wiki-link name against the artifacts of the
- * resolution domain (campaign rows + globals; scope-filtered by the caller). */
+ * resolution domain (campaign rows + globals; scope-filtered by the caller) and
+ * — when the caller offers them — the library's creatures. */
 export interface WikiLinkResolution {
   status: 'resolved' | 'unresolved' | 'ambiguous';
-  /** For resolved/ambiguous: the winning artifact. */
+  /** For resolved/ambiguous: the winning artifact. Undefined for a CREATURE
+   * resolution, which has no artifact to win (docs/11 D10). */
   artifact: AnyArtifact | undefined;
   /** For ambiguous: every candidate of the winning scope tier, newest first. */
   candidates: AnyArtifact[];
+  /** The library creature this name resolves to when NOTHING carries it as a
+   * row: a derived creature node. Undefined when the name resolved to an
+   * artifact (an artifact always outranks a library creature — a campaign's own
+   * authored NPC of that name is what the reader must see) or did not resolve
+   * at all. */
+  creature: WikiLinkCreature | undefined;
 }
 
 /** Resolution context (10-MILESTONE-6 D8): inside a module's text its own
@@ -98,6 +106,43 @@ export interface WikiLinkResolution {
 export interface WikiLinkContext {
   /** The module whose text is being resolved, when resolving module text. */
   moduleId?: Id | undefined;
+  /**
+   * The library's creatures, when the caller has them (`domain/creature`'s
+   * identity). Present ⇒ a name that matches no artifact but names a bestiary
+   * creature resolves to a DERIVED creature node instead of reading as an
+   * unresolved/dangling link (docs/11 D10) — which is what keeps a module's
+   * `[[Zombie]]` from breaking the moment no mob artifact stands in for it.
+   * OMITTED ⇒ the process-wide library pool is used instead (below); absent
+   * and empty ⇒ artifact-only resolution, byte-identical to before.
+   */
+  creatures?: readonly WikiLinkCreature[] | undefined;
+}
+
+/**
+ * THE library creature pool for the whole app (docs/11 D10 / docs/18 §2): the
+ * process's read-only view of the installed bestiary's stat-block creatures,
+ * published once by `db/creatureRepo.publishLibraryCreaturePool` and refreshed
+ * whenever the library changes.
+ *
+ * Why a module-level value rather than a parameter at 20 call sites: the
+ * creature tier is a property of the WORKSPACE, not of any one resolution, so
+ * every reader (chips, canvas marks, the wiki graph, the entity panel, chat
+ * grounding) must see the same pool — and a parameter each caller could pass
+ * differently is exactly how two surfaces start disagreeing about whether
+ * `[[Zombie]]` is broken. This value is read-only data, never a cache of DB
+ * rows: `resolveWikiLink` stays pure and deterministic for the pool it sees.
+ */
+let libraryCreaturePool: readonly WikiLinkCreature[] = [];
+
+/** Publishes the library creature pool (see `libraryCreaturePool`). Idempotent
+ * and cheap; an empty list is a legitimate state (no bestiary installed). */
+export function setLibraryCreaturePool(creatures: readonly WikiLinkCreature[]): void {
+  libraryCreaturePool = creatures;
+}
+
+/** The pool `resolveWikiLink` falls back to when the caller passes none. */
+export function getLibraryCreaturePool(): readonly WikiLinkCreature[] {
+  return libraryCreaturePool;
 }
 
 /** Scope tier for precedence: lower wins. With a module context the module's
@@ -123,7 +168,9 @@ export function resolveWikiLink(
   context?: WikiLinkContext,
 ): WikiLinkResolution {
   const target = name.trim().toLowerCase();
-  if (target === '') return { status: 'unresolved', artifact: undefined, candidates: [] };
+  if (target === '') {
+    return { status: 'unresolved', artifact: undefined, candidates: [], creature: undefined };
+  }
 
   const byName = artifacts.filter((artifact) => artifact.name.trim().toLowerCase() === target);
   const byAlias = artifacts.filter((artifact) =>
@@ -139,7 +186,17 @@ export function resolveWikiLink(
   });
 
   if (matched.length === 0) {
-    return { status: 'unresolved', artifact: undefined, candidates: [] };
+    // No row carries the name: a LIBRARY CREATURE of that name still resolves
+    // (docs/11 D10) — the creature is cited, not owned, so there is no artifact
+    // to win and the node is derived. The library's spelling is used verbatim,
+    // so the chip's label and the creature's identity agree.
+    const creature = (context?.creatures ?? libraryCreaturePool).find(
+      (candidate) => candidate.name.trim().toLowerCase() === target,
+    );
+    if (creature !== undefined) {
+      return { status: 'resolved', artifact: undefined, candidates: [], creature };
+    }
+    return { status: 'unresolved', artifact: undefined, candidates: [], creature: undefined };
   }
 
   // Group by scope tier; the best tier decides. Within a tier: newest first.
@@ -157,6 +214,7 @@ export function resolveWikiLink(
     status: candidates.length > 1 ? 'ambiguous' : 'resolved',
     artifact: candidates[0],
     candidates,
+    creature: undefined,
   };
 }
 

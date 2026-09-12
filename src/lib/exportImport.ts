@@ -19,6 +19,7 @@ import {
   battleSchema,
   campaignSchema,
   collectDependencies,
+  creatureImageSchema,
   deliverableSchema,
   exportDependenciesSchema,
   exportMissingImageSchema,
@@ -26,6 +27,7 @@ import {
   personaRunSchema,
   storedImageSchema,
   type DependencyAnalysis,
+  type CreatureImage,
   type EncounterArtifactData,
   type ExportCitation,
   type ExportDependencies,
@@ -80,6 +82,15 @@ export interface CampaignExport {
   battles?: Battle[];
   runs?: PersonaRun[];
   deliverables?: Deliverable[];
+  /**
+   * Per-campaign PRESENTATION rows for cited creatures (docs/11 D5 amendment):
+   * the campaign's own portrait for a bestiary creature it mentions but does
+   * not own. Campaign state, so it travels with the campaign — without it a
+   * restored campaign would render initials for every cited mob while the
+   * library still held the creature. The library rows and the shared canonical
+   * slots never travel (they are the workspace's, not a campaign's).
+   */
+  creatureImages?: CreatureImage[];
   /** Dependency manifest (M3-E, v2): rulebook citations + library gaps. */
   dependencies?: ExportDependencies;
   /** Referenced image ids whose blob is gone (M3-E): the loud note. */
@@ -145,7 +156,7 @@ export async function buildCampaignExport(
   // Rows are schema-parsed (the battle/run parse-normalize precedent) so
   // legacy rows materialize current defaults — including the dropped
   // encounter `verify` step healing on run rows.
-  const [modules, battles, runs, deliverables] = await Promise.all([
+  const [modules, battles, runs, deliverables, creatureImageRows] = await Promise.all([
     db.modules
       .where('campaignId')
       .equals(campaignId)
@@ -166,11 +177,17 @@ export async function buildCampaignExport(
       .equals(campaignId)
       .toArray()
       .then((rows) => rows.map((row) => deliverableSchema.parse(row))),
+    db.creatureImages
+      .where('campaignId')
+      .equals(campaignId)
+      .toArray()
+      .then((rows) => rows.map((row) => creatureImageSchema.parse(row))),
   ]);
   exported.modules = modules;
   exported.battles = battles;
   exported.runs = runs;
   exported.deliverables = deliverables;
+  exported.creatureImages = creatureImageRows;
 
   // Dependency manifest (M3-E): chunk→book joins for rulebook citations,
   // advisories for run pins, unmet entries for library npc-refs. The pure
@@ -262,6 +279,12 @@ export async function buildCampaignExport(
   }
   if (campaign !== null) {
     noteRef(campaign.coverImageId, `campaign:${campaign.id}:cover`);
+  }
+  // Creature presentation rows (docs/11 D5 amendment): the row's document
+  // cover is the ONLY reference to its blob — no artifact points at it — so
+  // without this pin a JSON export would carry the row and drop its binary.
+  for (const row of creatureImageRows) {
+    noteRef(row.imageId, `creature:${row.creatureKey}`);
   }
   const imageRows = await db.images.bulkGet([...referencedBy.keys()]);
   const foundRows = imageRows.filter((row): row is NonNullable<typeof row> => row !== undefined);
@@ -650,7 +673,17 @@ export async function importExport(
   let created = 0;
   await db.transaction(
     'rw',
-    [db.campaigns, db.images, db.artifacts, db.revisions, db.modules, db.battles, db.runs, db.deliverables],
+    [
+      db.campaigns,
+      db.images,
+      db.artifacts,
+      db.revisions,
+      db.modules,
+      db.battles,
+      db.runs,
+      db.deliverables,
+      db.creatureImages,
+    ],
     async () => {
       await db.campaigns.add(campaign);
 
@@ -690,6 +723,22 @@ export async function importExport(
             prompt: image.prompt,
             model: image.model,
             source: image.source,
+          }),
+        );
+      }
+
+      // Cited creatures' presentation rows (docs/11 D5 amendment): a fresh id
+      // per row (ids are workspace-local), the campaign re-anchored, and the
+      // creature KEY kept VERBATIM — the identity is the reference, so the
+      // restored campaign's portraits still answer for the same creatures.
+      for (const exported of parsed.creatureImages ?? []) {
+        await db.creatureImages.add(
+          creatureImageSchema.parse({
+            ...exported,
+            id: crypto.randomUUID(),
+            campaignId: newCampaignId,
+            createdAt: stamp,
+            updatedAt: stamp,
           }),
         );
       }
@@ -891,6 +940,10 @@ const exportSchema = z.object({
   battles: z.array(battleSchema).optional(),
   runs: z.array(personaRunSchema).optional(),
   deliverables: z.array(deliverableSchema).optional(),
+  /** Cited creatures' per-campaign presentation rows (docs/11 D5 amendment):
+   * campaign state, so a v20+ file carries them and a v1/v2 file simply has
+   * none (a restore then shows initials until each portrait is generated). */
+  creatureImages: z.array(creatureImageSchema).optional(),
   /** Dependency manifest (M3-E, v2): validated metadata, not imported. */
   dependencies: exportDependenciesSchema.optional(),
   /** Loud missing-binary note (M3-E, v2). */
@@ -1060,6 +1113,10 @@ const tolerantShellSchema = z.object({
   battles: z.array(z.unknown()).optional(),
   runs: z.array(personaRunSchema).optional(),
   deliverables: z.array(deliverableSchema).optional(),
+  /** Cited creatures' per-campaign presentation rows (docs/11 D5 amendment):
+   * campaign state, so a v20+ file carries them and a v1/v2 file simply has
+   * none (a restore then shows initials until each portrait is generated). */
+  creatureImages: z.array(creatureImageSchema).optional(),
   dependencies: exportDependenciesSchema.optional(),
   missingImages: z.array(exportMissingImageSchema).optional(),
 });

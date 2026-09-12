@@ -494,6 +494,15 @@ export function CanvasPage(): JSX.Element {
   // "Resume automatic module creation" turns on when the live state falls short
   // of the RECORDED intent (`automationIntent`) — entities by kind, images,
   // battle maps, mob portraits. Legacy rows recorded no intent and stay inert.
+  // The portrait half of the deviation answers CONSERVATIVELY here (docs/11
+  // D6): this page reads no presentation snapshot, so an already-imaged
+  // creature can make "Resume automatic module creation" appear for work the
+  // sweep then declines. That is the harmless direction (the batch is
+  // skip-if-imaged, so nothing is regenerated) and it is the reason this page
+  // does NOT hold a live read of `db.creatureImages`: a live query here leaked
+  // act() noise into twenty canvas tests for a boolean it only uses to enable a
+  // control. The two surfaces that NAME the work — the "Generate everything"
+  // confirmation and the resume sweep — both pass the snapshot.
   const deviation = deriveAutomationDeviation(currentModule, artifacts);
   const resumable = !deviationIsEmpty(deviation);
   // Both actions rewrite the module's text/state ON DISK, so they are disabled

@@ -1527,19 +1527,24 @@ describe('PersonaPanel creation dialog (module placement + extras)', () => {
 });
 
 /**
- * The refill target picker never OFFERS a bestiary creature row — the panel
- * half of the creature-row fix (owner-reported data-integrity bug). A creature
- * row is ONE campaign-scoped `npc` artifact carrying the additive
- * `data.monsterChunkId` marker, pointed at by every encounter that cites the
- * creature, so a smith's invented prose written there is read by every citing
- * encounter; `runEngine`'s finalize refuses the write itself, and the panel
- * keeps the owner out of that dead end. `isMobArtifact` is the ONE
- * classification of "creature row" (the same predicate the artifact editor's
- * refusal and the entity paths read). The Illustrator keeps the full list —
- * a creature row is exactly where a mob portrait belongs.
+ * REWRITTEN (ledger row 106, docs/11 D3/D4). This block used to pin a REFUSAL:
+ * an `npc` carrying a hidden `monsterChunkId` was "really" a bestiary creature,
+ * so the refill picker hid it and a held-over selection was refused with
+ * "bestiary creature … not an authored NPC". That classification is gone — the
+ * row it described is now a CAST npc (an authored row whose stat block is
+ * derived from a library creature) — and the guard went with it, so the
+ * refusal was not relaxed: THERE IS NO REFUSAL SEAM. Retiring the guard is the
+ * owner's Aunt Agatha path (*"she will have zombie stats but with prose"*): a
+ * cast npc's prose is exactly what a refill is for.
+ *
+ * The distinction that remains, and is pinned elsewhere: `changeArtifact`
+ * REFUSES a cast npc, because an arbitrary instruction can RENAME it and the
+ * name is the cast's citation (`features/modules/change-artifact`). A refill
+ * rewrites prose in place and preserves the name, so it is allowed. The one
+ * thing neither may touch is `data.creatureRef`.
  */
-describe('PersonaPanel refill target guard (bestiary creature rows)', () => {
-  /** The reported pair: a bestiary creature row beside an authored NPC. */
+describe('PersonaPanel refill targets (bestiary creature rows are ordinary rows now)', () => {
+  /** The reported pair: a CAST bestiary creature row beside an authored NPC. */
   async function seedCreatureAndNpc(campaign: Campaign): Promise<void> {
     await createArtifact({
       campaignId: campaign.id,
@@ -1547,7 +1552,7 @@ describe('PersonaPanel refill target guard (bestiary creature rows)', () => {
       name: 'Goblin Warrior',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: newId() },
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId: newId() } },
     });
     await createArtifact({
       campaignId: campaign.id,
@@ -1570,7 +1575,7 @@ describe('PersonaPanel refill target guard (bestiary creature rows)', () => {
     });
   }
 
-  it('offers no creature row in the refill picker, and still offers it to the Illustrator', async () => {
+  it('offers the cast npc to BOTH pickers — a cast row is refillable and illustratable', async () => {
     const { campaign } = await seed();
     const user = userEvent.setup();
     await seedCreatureAndNpc(campaign);
@@ -1583,8 +1588,7 @@ describe('PersonaPanel refill target guard (bestiary creature rows)', () => {
     );
 
     // The Illustrator lists BOTH rows — a creature row is a legitimate
-    // portrait target (its portrait is cached per creature), so the guard must
-    // not narrow this picker.
+    // portrait target (its portrait is cached per creature).
     await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: 'Illustrator' }));
     await user.click(await screen.findByRole('combobox', { name: 'Artifact to illustrate' }));
@@ -1593,17 +1597,18 @@ describe('PersonaPanel refill target guard (bestiary creature rows)', () => {
     await user.click(screen.getByRole('option', { name: 'Goblin Warrior' }));
 
     // Switching to the smith (a generate persona that refills in place) keeps
-    // that artifact selected — and the refill picker then lists the authored
-    // NPC but NOT the creature row the owner is holding.
+    // that artifact selected — and the refill picker lists BOTH rows, the cast
+    // npc included: its prose is its own, and refilling it is the path the
+    // owner asked for. Nothing narrows this list any more.
     await user.click(screen.getByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: 'NPC Smith' }));
     await user.click(await screen.findByRole('combobox', { name: 'Artifact to refill' }));
     expect(await screen.findByRole('option', { name: 'Grix' })).toBeInTheDocument();
-    expect(screen.queryByRole('option', { name: 'Goblin Warrior' })).not.toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Goblin Warrior' })).toBeInTheDocument();
     await flushAsyncUpdates();
   }, 30000);
 
-  it('marks a held-over creature target refused with the reason, and cannot start the run', async () => {
+  it('keeps a held-over cast npc as a STARTABLE refill target, with no refusal notice', async () => {
     const { campaign } = await seed();
     const user = userEvent.setup();
     await seedCreatureAndNpc(campaign);
@@ -1615,26 +1620,24 @@ describe('PersonaPanel refill target guard (bestiary creature rows)', () => {
       </MemoryRouter>,
     );
 
-    // The Illustrator targets the creature row — allowed, untouched behavior.
     await user.click(await screen.findByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: 'Illustrator' }));
     await user.click(await screen.findByRole('combobox', { name: 'Artifact to illustrate' }));
     await user.click(await screen.findByRole('option', { name: 'Goblin Warrior' }));
 
     // Switching to the smith KEEPS the selected artifact (only the Encounter
-    // mode clears a target) — so this is the reachable path the notice covers:
-    // refused with the honest reason, never a silently dead control.
+    // mode clears a target) — and that is now a legal target rather than a
+    // reachable dead end.
     await user.click(screen.getByRole('combobox', { name: 'Persona' }));
     await user.click(await screen.findByRole('option', { name: 'NPC Smith' }));
 
-    const refused = await screen.findByTestId('refill-target-refused');
-    expect(refused).toHaveTextContent('Goblin Warrior');
-    expect(refused).toHaveTextContent('bestiary creature');
-    expect(refused).toHaveTextContent('not an authored NPC');
-    const start = screen.getByTestId('start-run');
-    expect(start).toBeDisabled();
-    expect(start.getAttribute('title') ?? '').toContain('bestiary creature');
-    // Nothing was started, so no run exists to fail later.
+    const start = await screen.findByTestId('start-run');
+    await waitFor(() => {
+      expect(start).toBeEnabled();
+    });
+    expect(start.getAttribute('title') ?? '').not.toContain('bestiary creature');
+    // Nothing was started: the pin is that the control is OFFERED, not that a
+    // run happened.
     expect(await actDrained(() => listRunsByCampaign(campaign.id))).toHaveLength(0);
     await flushAsyncUpdates();
   }, 30000);

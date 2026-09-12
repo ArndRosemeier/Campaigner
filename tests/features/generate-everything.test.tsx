@@ -512,7 +512,10 @@ describe('the entity sidebar control', () => {
         appearance: '',
         personality: '',
         statBlock: null,
-        monsterChunkId: '00000000-0000-4000-8000-00000000c001',
+        // A CAST creature npc (docs/11 D3/D4): an authored row whose stats come
+        // from the library. The retired `monsterChunkId` was the hidden marker
+        // that made a bestiary row look like a campaign mob artifact.
+        creatureRef: { chunkId: '00000000-0000-4000-8000-00000000c001' },
       },
     });
     // The encounter data shape, typed ONCE (an inline literal against the

@@ -2,8 +2,7 @@ import type { Campaign, Id, Module } from '@/domain';
 import { moduleDocumentText, moduleTagFor } from '@/domain';
 import { artifactRepo } from '@/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
-import { isMobArtifact } from '@/db/mobArtifacts';
-import { creatureLabel, creatureRowWriteRefusal } from '@/features/campaign/creature-row-guard';
+import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
@@ -76,19 +75,19 @@ export const RUN_STEP_LABELS: Record<string, string> = {
  * by name/alias), keeping the model's invented name as an alias so nothing
  * authored is lost.
  *
- * A BESTIARY CREATURE row is refused LOUDLY instead (`isMobArtifact`, see
- * `features/campaign/creature-row-guard`): such a row is ONE shared row per
- * campaign per cited rulebook chunk, and renaming it would take over an
- * identity every citing encounter, its roster entries and battle seeding
- * resolve through. The refusal is a throw — never a silent skip — so every
+ * A CAST CREATURE NPC is refused LOUDLY instead (`domain/creature`'s
+ * `isCastCreatureNpc`): such an NPC is the module's own row for a LIBRARY
+ * creature (`db/creatureRepo.castCreatureAsNpc`), and renaming it would sever
+ * the citation its stats derive from — every reader of that name would stop
+ * finding the creature. The refusal is a throw — never a silent skip — so every
  * caller has to surface the reason (AGENTS rule 2); the batch records it as a
  * per-entity failure with its toast.
  */
 export async function alignEntityName(artifactId: Id, entityName: string): Promise<void> {
   const artifact = await artifactRepo.getArtifact(artifactId);
   if (artifact === undefined) return;
-  if (isMobArtifact(artifact)) {
-    throw new Error(creatureRowWriteRefusal(artifact.name, entityName));
+  if (isCastCreatureNpc(artifact)) {
+    throw new Error(castCreatureWriteRefusal(artifact.name, entityName));
   }
   if (artifact.name.trim().toLowerCase() === entityName.trim().toLowerCase()) return;
   const modelName = artifact.name;
@@ -281,7 +280,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
           module.spine?.premise ?? '',
           stubKindCarriesPartyLevel(kind) ? partLevelForMention(module, target.name) : undefined,
           kind === 'encounter'
-            ? fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
+            ? await fixedCastForEncounter(target.name, contextParagraphs, castPool, module.id)
             : [],
           kind === 'encounter',
           instruction,
@@ -325,20 +324,17 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
         }
         if (outcome.status === 'completed' && outcome.resultArtifactId !== null) {
           // The DESTINATION of this entity is checked before anything is
-          // written (creature-row guard): a run that landed on a bestiary
-          // creature row — the campaign's shared `npc` row for a cited chunk —
+          // written (the cast guard): a run that landed on a CAST CREATURE npc
           // must not be renamed, re-scoped or tagged. Before this guard the
-          // rename/tag below silently took that shared row over, which is how
-          // an invented NPC's name became the linked creature's. The refusal is
-          // LOUD (a per-entity failure + its toast) and writes nothing.
+          // rename/tag below silently took such a row over, which is how an
+          // invented NPC's name became the linked creature's — the
+          // owner-reported defect this whole arc answers. The refusal is LOUD (a
+          // per-entity failure + its toast) and writes nothing.
           const destination = await artifactRepo.getArtifact(outcome.resultArtifactId);
-          if (destination !== undefined && isMobArtifact(destination)) {
-            const refusal = creatureRowWriteRefusal(destination.name, target.name);
+          if (destination !== undefined && isCastCreatureNpc(destination)) {
+            const refusal = castCreatureWriteRefusal(destination.name, target.name);
             failed.push({ name: target.name, message: refusal });
-            toastError(
-              `Refused to write a generated entity onto the bestiary creature ${creatureLabel(destination.name)}`,
-              new Error(refusal),
-            );
+            toastError(`Refused to write a generated entity onto ${castCreatureLabel(destination.name)}`, new Error(refusal));
           } else {
             producedIds.push(outcome.resultArtifactId);
             generated.push(target.name);

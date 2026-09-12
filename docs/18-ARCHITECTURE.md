@@ -96,12 +96,13 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Point a module/campaign cover slot at a stored image (the cover-writer seam) | `features/covers/cover-image-queue.attachCover` — `createImage` then `patchModule` / `updateCampaign` carrying `{coverImageId}` (loud existence check: a row deleted mid-flight throws NotFoundError, never a dangling slot); modules/campaigns have no revision snapshots, so no scrub step exists — regen is swap-then-`deleteImageIfUnreferenced(old)` (delete-after-replace, §5) | routing a cover write through `attachImagesToArtifact` (artifact-only seam: gallery/snapshot semantics that cover rows don't have); clearing the slot before the replacement lands |
 | Write rule chunks | `chunkRepo.writeChunks` (`putChunks` alias) — invalidates the keyword index with the write | `db.chunks.bulkPut` anywhere else; backup restore MUST route through this door |
 | Get/create the live battle for a module | `battleRepo.ensureBattle` — the v16 unique `&moduleId` index is the arbiter | get-then-create across two transactions |
-| Mob artifact per cited monster chunk | `mobArtifacts.getOrCreateMobArtifact` / `spawnMobArtifactIntoModule` — a second-module spawn PROMOTES the artifact (shared campaign level) instead of moving it away from the first module | scan-then-`createArtifact` in separate txs (splits token identity); moving a placed mob artifact to another module |
-| On-demand npc artifact per UNCITED roster entry (inline/none) | `mobArtifacts.materializeInventedCreatureArtifact` (roster name + notes/treasure appearance + inline block-or-null + encounter summary marker; `moduleId` = encounter's when module-owned else campaign-level; roster entry NOT rewritten so seeds stay identical) + the run-engine Smith finalize's inline-statblock path (`materializeMonsterNpc` — `moduleId` = the run's `placementModuleId` when placed, campaign level otherwise, matching the encounter/generate create sites; reuse prefers a same-named row the USING module already owns and never re-scopes the row it links — a scope change is only ever `moveScope`) + `features/campaign/mob-portrait-queue.enqueueInventedCreaturePortraits` (chunk-less local-only jobs — invented covers never read/populate/overwrite the global cache). Superseded: docs/fix-02 put this path at campaign scope, which made a module-placed encounter's inline mobs survive `deleteModule` | a new kind or a `monsterChunkId` marker on a chunk-less row; rewriting the entry to npc-ref (changes seed identity); materializing at campaign level regardless of placement |
+| Cite a library creature from an encounter roster (no artifact, nothing created) | The roster's `source` (`rulebook` / `npc-ref` / `inline` / `none`) + `db/creatureRepo.resolveCreatureCitation` — a citation names the BESTIARY (chunk id, else the content hash recorded at citation birth) and materializes nothing | the retired `mobArtifacts.getOrCreateMobArtifact` (docs/17 row 106)ing it away from the first module | scan-then-`createArtifact` in separate txs (splits token identity); moving a placed mob artifact to another module |
+| Cast a library creature as this campaign's OWN npc (the Aunt Agatha path) | `db/creatureRepo.castCreatureAsNpc` — ONE function, idempotent per (campaign, module, name, IDENTITY): it creates the row on first cast, REUSES it on the second (writing nothing), refuses a same-named rival that draws from a different creature, refuses to cast over an authored npc, and refuses a creature the library cannot supply. Only the MODULE generator and the bestiary spawn dialog hold it | `createArtifact` plus a hand-written `creatureRef` at a call site; any cast attempt from the encounter side (structurally impossible — the roster schema cannot express one) |
+| Ground an UNCITED roster entry's on-demand creature (inline/none) | The roster entry ITSELF — its name + `notes` are the identity (`domain/creature.contentCreatureKey`) and the portrait prompt's whole grounding (`MobPortraitJob.grounding`); no row exists | `mobArtifacts.materializeInventedCreatureArtifact` (retired, docs/17 row 106)mmary marker; `moduleId` = encounter's when module-owned else campaign-level; roster entry NOT rewritten so seeds stay identical) + the run-engine Smith finalize's inline-statblock path (`materializeMonsterNpc` — `moduleId` = the run's `placementModuleId` when placed, campaign level otherwise, matching the encounter/generate create sites; reuse prefers a same-named row the USING module already owns and never re-scopes the row it links — a scope change is only ever `moveScope`) + `features/campaign/mob-portrait-queue.enqueueInventedCreaturePortraits` (chunk-less local-only jobs — invented covers never read/populate/overwrite the global cache). Superseded: docs/fix-02 put this path at campaign scope, which made a module-placed encounter's inline mobs survive `deleteModule` | a new kind or a `monsterChunkId` marker on a chunk-less row; rewriting the entry to npc-ref (changes seed identity); materializing at campaign level regardless of placement |
 | Global mob portrait per cited chunk (canonical only, all campaigns) | `db/mobPortraitCache` (firewall `cacheKeyForMonsterSource`, read-through `fillCoverFromCache` (now called by NO production path: the portrait BATCH stopped passing it while enumerating — ledger 83: a cover-less canonical citation is a normal job whose worker clones the populated slot, so a visible hole is reported as WORK, never as `alreadyImaged`), render `cloneCachedPortraitToArtifact` — first-time clone skips imaged artifacts, the `force` flavor force-clones delete-after-replace for regen — plus artifact-to-artifact `cloneArtifactCover` for the content-regen carry-forward; all three ride the ONE `attachClonedCover` core, never a second mechanism — first-publish `storeCanonicalPortraitIfAbsent` — put-if-absent ONLY) + `features/campaign/mob-portrait-cache-queue.ensureCanonicalMobPortrait` (cross-campaign single-flight; Dexie v18 `mobPortraits` table `id, &chunkId`; docs/11 D5 amendment). Regen republishes through `replaceCanonicalPortrait` (the ONLY unconditional slot writer) via `regenerateCanonicalMobPortrait` (the ONLY always-fresh generation) — never `storeCanonicalPortraitIfAbsent` for a regen (it would keep the old bytes) | generating per campaign; attaching the shared global row as a cover; a flavored citation writing the cache; republishing the slot anywhere but `replaceCanonicalPortrait` |
 | Count a mob-portrait batch before acting (the encounter editor's confirm) | `features/campaign/mob-portrait-queue.planMobPortraitBatch` — the read-only half of `enumerateBatchKinds`, the SAME enumeration the additive batch (`enqueueMobPortraits` / `enqueueInventedCreaturePortraits`) and both regen paths walk: it resolves what EXISTS (`findMobArtifactByChunk`, `mobArtifacts.findInventedCreatureArtifact`) and creates, clones and enqueues NOTHING; a dangling stamped `mobArtifactId` throws loud in both modes | a second enumeration that drifts from the batch (the confirm would promise work the queue will not do); counting by creating or cloning |
 | Regenerate a mob / invented-creature portrait | `features/campaign/mob-portrait-queue.regenerateMobPortraits` (rulebook batch: validate → republish canonical slots fresh → enqueue delete-after-replace regen jobs `regen: true` for the imaged artifacts + the normal cover-less batch for the remainder) / `regenerateSingleMobPortrait` (battle-card single mob: the same three phases on one resolved target) / `regenerateInventedCreaturePortraits` (uncited: materialize → regen jobs for the imaged + the normal invented batch for the cover-less remainder) — delete-after-replace is the one way (docs/11 D5 preservation rule): the worker generates fresh bytes, then the attach seam swaps the cover in ONE tx (fresh cover commits, ONLY the superseded ids are scrubbed from that artifact's snapshots and refcount-pruned); a failed republish throws loud with all old covers intact and nothing enqueued; a failed, skipped, or queue-dropped regen keeps the old portrait with a loud error — regen entries upgrade (withdraw-then-enqueue) any stale queued/in-flight normal job for the same artifact so the dedupe can never strand a regen as a silent skip — the encounter editor's batch confirm chooses between the additive fill and this replace path from the read-only count (ledger 83), and states the shared-republish consequence BEFORE the click | detaching first (`removeImageFromArtifact` in a regen path — destroys the blob AND the restore path before the replacement exists); a second detach/enqueue path; re-enqueueing an imaged artifact expecting fresh bytes (the skip branch + cache read-through return the OLD art — a no-op regen); detaching without re-enqueueing (strands initials) |
-| Carry a mob cover onto a re-cited row (content-regen preservation) | `mobArtifacts.carryMobCoversForward` — runEngine's in-place encounter finalize calls it after the content write (old roster → new roster, same-name rulebook entries, cover-less new row inherits the old row's cover via `cloneArtifactCover`); old rows stay as orphans | re-citing without carrying (abandons the cover while tokens fall back to initials); deleting the old row as part of the carry |
+| Show a creature's portrait, and write it — THE one reading and THE one write | `db/creatureRepo.creatureCoverImageId` (presentation row for the identity → the CAST npc's own cover → null) / `setCreatureCover` (insert-or-replace + release the superseded blob when nothing else pins it). Every renderer asks THIS, so two surfaces cannot disagree about whether a creature is illustrated | a per-surface art reading; `carryMobCoversForward` (retired with the mob artifact, docs/17 row 106)r → new roster, same-name rulebook entries, cover-less new row inherits the old row's cover via `cloneArtifactCover`); old rows stay as orphans | re-citing without carrying (abandons the cover while tokens fall back to initials); deleting the old row as part of the carry |
 | Read / patch settings | `getSettings` (write-creates defaults) / `readSettings` (pure — liveQuery-safe) / `updateSettings` (tx, schema-validated merge; existing rows merge over defaults). The read is TWO parts: `coreSettingsSchema` (every load-bearing setting, strict) + the New Module draft validated on its own — see the draft row below | raw `db.settings` reads without the defaults-merge parse; a settings read that fails because of a CONVENIENCE field (docs/17 row 76) |
 | Persist the New Module dialog's draft (owner request, docs/17 row 70) | `domain/settings.newModuleDraftSchema` — ONE settings field, `newModuleDraft`, REQUIRED-but-NULLABLE like `lastModule` (`null` = nothing stored; a row/backup written before the field parses as null), TAGGED with `campaignId`; the dialog prefills it only when the tag matches the campaign being created in, overwrites it (never merges across campaigns), debounces the save and FLUSHES on run start / dialog close / unmount, and offers **Reset to defaults** as the escape hatch. Deleting a campaign clears a draft tagged with it (`campaignRepo.deleteCampaign`); the two campaign WIPES deliberately KEEP it (`removeAllGeneratedContent`, `maintenance.deleteCampaignWorkspace` — it is authored input and retry-after-reset is the feature). A stored draft that no longer validates is SCOPED to the draft (docs/17 row 76, ledger decision after the owner's recommendation): `readStoredNewModuleDraft` returns `{ draft, error }` — never a half-value — and the dialog, the ONE consumer that shows a draft, reports the failure with `toastError` (once per open, keyed by message) and opens at its own DEFAULT levels rather than half-prefilling from data the app cannot read. The load-bearing settings around it stay readable, so a legacy row whose draft names an artifact kind that was since RETIRED cannot brick the app; the old contract (`readSettings` itself rejects, the dialog hits the error boundary) is in the git history before `84e77a9`. The prefill itself: the user's typing always wins (the form's "edited" mark is armed SYNCHRONOUSLY by the interaction, never by an effect) and the row stays the source of truth until then (a newer snapshot is re-applied while the form is untouched, and only the user's edits are ever written back — docs/05 §New Module dialog) | a per-campaign MAP (a second record shape that every delete path would have to sweep — the orphan class closed twice already); prefilling an untagged or foreign draft; clearing it in a wipe (defeats the retry); returning a corrupt draft as a value, or prefilling it silently (AGENTS 1/3); letting one unreadable draft fail every settings read in the app |
 | Show an image | `useImageUrl` (`features/images/use-image-url.ts`) — object URLs revoked on change/unmount | `URL.createObjectURL` without revoke |
@@ -232,8 +233,18 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   unique `&moduleId`).
 - **One rw transaction per logical write**: multi-table writes declare all
   tables in ONE `db.transaction`; nested writes must be a table SUBSET of the
-  outer tx (e.g. `createArtifact` joins `mobArtifacts`'s get-or-create).
+  outer tx (e.g. `castCreatureAsNpc` joins `createArtifact`'s).
   Cascading deletes re-list rows INSIDE the tx (count honesty).
+- **Every tx that can free an image must include `db.creatureImages`** (real
+  incident, docs/17 row 106). `imageRepo.deleteImageIfUnreferenced` /
+  `deleteUnreferencedImages` / `pruneUnreferencedImages` implicitly JOIN the
+  open transaction and READ the presentation table, so a delete scope that
+  omitted it threw `NotFoundError: … object store did not exist` the moment a
+  row reached the pruning path — a silent-looking crash in an unrelated flow
+  (`removeAllGeneratedContent`). One missing table name in the scope broke three
+  test files; the widened scopes are `orphanSweep`, `artifactRepo` (three sites),
+  `campaignRepo` (`deleteCampaign`, `removeAllGeneratedContent`),
+  `maintenance` and `moduleRepo`.
 - **Loud existence checks at ownership boundaries**: writers that reference
   another row (`stampModuleOwnership`, run-finalize placement) verify the
   target exists inside the tx and throw. A module deleted mid-run fails the
@@ -440,13 +451,13 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   materialized monster (`npc-ref` → the artifact the encounter created for a
   creature the prose staged) matched neither, so the owner's click answered
   *"No creatures to illustrate — add roster entries first"* while his two risen
-  lumberjacks sat in the roster with no cover. Route by what the row's creature
-  IS: a chunk-backed artifact (`data.monsterChunkId`) shares the one bestiary
-  portrait; anything else is a LOCAL job with NO `chunkId` — and that absent
-  `chunkId` is the ONLY thing standing between an invented creature and the
-  global `mobPortraits` cache (owner decision: *"A special look for a special
-  zombie is ok"*), so never hand a chunk to an invented job or a lane label to
-  a router. Enumeration has no art side effects: an artifact with a cover is
+  lumberjacks sat in the roster with no cover. Route by the row's creature
+  IDENTITY, which is now a first-class value (`domain/creature`): a cited
+  creature's key is the library chunk it names; an invented one's is its NAME
+  AND its stat block (`contentCreatureKey`) — and that content identity is the
+  ONLY thing standing between an invented creature and the global `mobPortraits`
+  cache (owner decision: *"A special look for a special zombie is ok"*), so
+  never hand a library key to an invented job or a lane label to a router. Enumeration has no art side effects: an artifact with a cover is
   `alreadyImaged` and is never detached, replaced or regenerated — which is what
   keeps a named NPC's own portrait safe.
 - **A settings-row field is never allowed to be load-bearing for the whole
@@ -489,12 +500,13 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   reassign `db.transaction` (bind the original) — `vi.spyOn(db,
   'transaction')` is not reliable on the Dexie instance, and WhereClause
   objects are Proxy-wrapped (spying `.first()` resolves undefined); the
-  working wrapper pattern is in `tests/db/mobArtifacts.test.ts`.
+  working wrapper pattern is in `tests/db/removeAllGeneratedContent.test.ts`.
 - **Unique-index get-or-create.** Concurrent get-or-create converges by
   catching `ConstraintError` — match by error NAME, fake-indexeddb's
   DOMException shares it — and re-reading the winner
   (`battleRepo.ensureBattle`, v16 `&moduleId`). Alternatively serialize
-  scan+create in ONE tx (`mobArtifacts.getOrCreateMobArtifact`).
+  scan+create in ONE tx (`db/creatureRepo.castCreatureAsNpc`, whose idempotency
+  per (campaign, module, name, IDENTITY) is the live example).
 - **fake-indexeddb timing.** Live queries re-fire on its timed queue; any raw
   `await` while a tree is mounted can emit a state update outside act —
   that is exactly what `actDrained`/`flushAsyncUpdates` absorb (docs/08
@@ -612,75 +624,76 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   turn, outside the persisted history — do not "optimize" it back to the generation-time
   caps (owner-directed, ledger 51).
 
-- **A bestiary creature row is a wiki-link identity, not an authoring slot.**
-  An `npc` artifact carrying `data.monsterChunkId` is ONE campaign-scoped row
-  per cited rulebook chunk — shared by every encounter citing the creature,
-  stats resolved through it, one shared portrait — so `resolveWikiLink` still
-  resolves a name to it (display is untouched: reader chips, the tree, rosters
-  and battle seeding keep working exactly as before) and the entity paths must
-  never treat it as a generation target. ALL classification, refusal copy, the
-  authored-text detector and its repair live in
-  `src/features/campaign/creature-row-guard.ts` (the predicate itself is
-  `db/mobArtifacts.isMobArtifact`); the artifact editor disables its AI action
-  for such a row with the reason in `title`, `entity-batch.alignEntityName`
-  throws rather than renaming one (and the batch checks the produced row BEFORE
-  any write — no rename, no `stampModuleOwnership`, no tag), and authored text
-  found on one is reported and cleared only by the explicit two-step repair,
-  which leaves name, aliases, marker, stat block, images, cover, tags, links and
-  scope untouched. The refill WRITE is refused at DESTINATION RESOLUTION in
-  `runEngine.runFinalize` (`isMobArtifact` + the same refusal copy): a
-  creature-row target fails the run loudly (run row `errorMessage` + toast)
-  before any branch below can write — the row comes out byte-identical, with
-  no revision — and the persona panel's refill picker never OFFERS one (a
-  creature row held over from an Illustrator/Continuity selection is marked
-  refused with the same copy and a disabled Start whose `title` says why;
-  those two pickers keep the FULL list, because a creature row is exactly
-  where a mob portrait belongs and review is legitimate). That import of the
-  refusal copy into `llm/runEngine` is the seam `llm/moduleGen` already takes
-  into `features/modules/post-generation` — a deliberate seam, not layer-map
-  drift (both are enumerated in §5). Never a second interpretation of
-  "creature row" (ledger 81, ledger 84). **The HAND door is shut the same
-  way** (ledger 85): the artifact editor renders the authored inputs (name,
-  aliases, summary, body, appearance, personality) READ-ONLY on such a row —
-  per-field `title` plus an in-place notice, both from this module's ONE copy
-  source — and its save funnel writes through
-  `creature-row-guard.updateArtifactRefusingCreatureRowAuthored`, which throws
-  a `CreatureRowAuthoredWriteError` (carrying the untouched row) BEFORE the
-  repo write: autosave, form inputs, blur flush and unmount flush are covered
-  by construction, the row stays byte-identical with NO revision, and the
-  editor toasts it and puts the draft back on the row's real values. The
-  boundary lives in `features/campaign` and NOT in `db/artifactRepo` because
-  that layer may host neither the copy nor the predicate — a DB-layer check
-  would need an upward `db/**` → `features/**` import AND a second reading of
-  the `monsterChunkId` marker (§5; ledger 81). Repair vs. authoring is decided
-  INTRINSICALLY, never by a caller flag: `creatureRowAuthoredWriteFields`
-  authorizes a text change only when the next value is BLANK (the row's birth
-  state), so `clearCreatureRowAuthoredContent` writes through the SAME
-  boundary while any content write is refused; images, cover, tags, links and
-  scope pass through untouched (a cover change in the editor's Images section
-  still saves), and a revision RESTORE still works, which is how the repair is
-  undone. The dead end is replaced by an exit: with module context
-  (`artifact.moduleId !== null`) the editor runs the existing per-entity chain
-  (`features/modules/entity-detail.generateSingleEntity`, the 1-target batch —
-  never a new creation seam) to create the module's OWN npc of that name and
-  navigates to it; with none it says so and names the route (Modules → the
-  module → its entity panel) behind a plainly labelled navigation.
+- **The creature tier: a LIBRARY creature is not an artifact, and only the
+  module side may CAST one.** Three facts, and the arc that produced them
+  (docs/17 row 106) exists because the old model had a hidden `npc` artifact per
+  cited chunk carrying `data.monsterChunkId`, which made 67 usages across 17
+  files ask "is this NPC actually a mob?" — the question that stranded two
+  encounter roster entries on a permanent `missing ref`.
+  1. **Library tier, read-only and addressable.** A creature is a statblock
+     chunk (or a prose chunk whose stat block the reader derived).
+     `db/creatureRepo.listLibraryCreatures` / `wikiLinkCreatures` /
+     `publishLibraryCreaturePool` (the app shell publishes it once per library
+     state, `app/use-library-creatures`) READ it; nothing in the app writes a
+     library row, and there is no guard file left to enforce that because there
+     is no writer. A mention resolves to a DERIVED node
+     (`lib/wikilinks.WikiLinkCreature`), so `[[Zombie]]` resolves for the reader
+     (docs/11 D10) while the module entity view correctly answers "not detailed"
+     — resolution and DETAIL are different questions.
+  2. **A citation is data, never a row.** The roster's `source` variants are
+     unchanged on disk (`rulebook` / `npc-ref` / `inline` / `none`, docs/11 D2)
+     and `db/creatureRepo.resolveCreatureCitation` resolves ONE citation by
+     chunk id, falling back to the content hash recorded at citation birth
+     (survives a re-ingest under new row ids) and THROWING when the ref carries
+     neither. The resolution NEVER creates anything: no artifact, no module row,
+     no battle row.
+  3. **Casting is ONE function, and only the module side holds it.** An `npc`
+     carrying `data.creatureRef` is a CAST CREATURE: an AUTHORED row that
+     borrows the library's stat block (owner's path, verbatim: *"Often modules
+     want lets say a zombie, but its old aunt agatha. So, she will have zombie
+     stats but with prose."*). `db/creatureRepo.castCreatureAsNpc` is
+     idempotent per (campaign, module, name, IDENTITY) — created once, REUSED
+     without a write thereafter — refuses a rival drawing from a different
+     creature or an authored npc of that name, refuses a creature the library
+     cannot supply, and stamps `moduleTagFor(module.title)` so the row is an
+     ordinary module-owned npc to every module-scoped reader. Its stats are
+     DERIVED at read time (`resolveDerivedNpcStats`), never stored: the
+     `npcDataSchema` refine makes "a citation AND an authored stat block" a
+     parse error, so the two sources of truth cannot both exist. The asymmetry
+     is enforced by ABSENCE OF A FUNCTION, not by a guard: the encounter and
+     sweep paths have no cast seam and no schema field to express one (pinned in
+     `tests/db/creatureRepo.test.ts`), while the module generator and the
+     bestiary spawn dialog are the two callers.
+  Consequences a future edit must preserve: the cast row's `creatureRef` is
+  never written by any writer (it is a different field from the one prose and
+  stat-block writers touch), `changeArtifact` REFUSES a cast row (an instruction
+  can rename it, and the name is the cast's identity — a rename would let the
+  generator cast a second row for the same creature), and a refill of one is
+  legal and rewrites only its prose. Portraits ARE presentation
+  (`features/campaign/mob-portrait-queue`, `db/creatureRepo.setCreatureCover`):
+  one canonical blob per identity in the global `mobPortraits` table plus one
+  per-campaign presentation row in `creatureImages`, and every surface asks
+  `creatureCoverImageId` — the reading that makes `artWithoutCover`
+  structurally impossible (a creature the board illustrates is illustrated for
+  the batch too, because they ask the same question).
 - **The module entity view asks "does this name have an authored, DETAILED
   entity of its own?" — never "does anything resolve?"** The ONE verdict is
   `features/modules/detailed-entity.ts` (`detailedEntityVerdict` /
   `hasDetailedEntity`, read over the resolution's own winning-tier candidates;
-  the creature-row half is `isMobArtifact`, never a second reading of the
-  marker), and exactly TWO seams read it: `use-module-entities.useModuleEntities`
+  a creature answers `WikiLinkCreature`, so the creature half is the resolution
+  ITSELF — there is no artifact marker to inspect any more, which is what killed
+  the owner's bug at its root), and exactly TWO seams read it: `use-module-entities.useModuleEntities`
   (the entity panel's rows, buckets, "N detailed · M mentioned" line and batch
   work queue) and `post-generation.batchTargets` (the sweep's target set — and
   through it the "Generate everything" / "Resume automatic module creation"
   deviation, so a confirmation can never promise work the sweep skips). A name
-  whose only row is a bestiary creature row is therefore NOT detailed: the panel
-  offers it as work (the row carries a `bestiary only` marker whose title and
-  screen-reader sentence name the shared row and the remedy), the batch and the
-  automation generate the module's OWN `npc` of that exact name (module-owned
-  from birth, so the module tier then prefers it and the reader shows it too),
-  and the shared creature row comes out byte-identical. Boundaries, deliberate:
+  whose only resolution is a library creature is therefore NOT detailed: the
+  panel offers it as work (the row carries a `bestiary only` marker whose title
+  and screen-reader sentence name the creature the text cites and the remedy),
+  the batch and the automation generate the module's OWN `npc` of that exact
+  name (module-owned from birth, so the module tier then prefers it and the
+  reader shows it too), and NOTHING is created for the library creature — that
+  half is now structural rather than a pinned promise. Boundaries, deliberate:
   `imageTargets` keeps its own resolution semantics (an image job attaches to
   whatever row the name resolves to; the panel's images mode refuses a
   not-detailed row with "Detail this entity first"), the wiki-link tier rule
@@ -735,6 +748,58 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   outside the payload.
 
 - **A detector that reads the roster's SHAPE instead of the roster's PARTICIPANTS under-reports, and the offer then silently disagrees with the work** (owner report, docs/17 row 96). `post-generation.encountersNeedingMobPortraits` used to answer "does this encounter need portraits?" with its OWN rule — roster rows whose `source.type === 'rulebook'` — so an encounter whose creatures were materialized into artifacts (`npc-ref`, INCLUDING the core/bestiary ones carrying the `monsterChunkId` marker) or left uncited produced an EMPTY deviation: the module sweep enqueued nothing for it, and the entity sidebar's "Generate everything" control was not rendered at all (its place said "Nothing missing") although the roster showed un-imaged mobs. The rule is ONE predicate — `features/campaign/mob-portrait-participants.encounterNeedsMobPortraitWork`, built from the same routing/art/kind-identity rules the queue's enumeration imports (`rosterParticipantRoute`, `portraitArtOf`, `chunkKindKey`/`inventedKindKey`) — and the module sweep runs BOTH lanes (`enqueueMobPortraits` + `enqueueInventedCreaturePortraits`), additively, exactly as the encounter editor's fill does. Generalize it: when a surface promises work, derive the promise from the roster's PARTICIPANTS through the queue's own enumeration, never from the shape of the rows; and never gate a lane on that shape (the editor's own press gated the rulebook lane on `rulebookCount === 0`, so a roster of nothing but chunk-backed `npc-ref` monsters was counted as "Fill 1 missing portrait" and then enqueued nothing). Two readers must also agree on WHICH switch decides: the sweep reads the RUN's own config (`target ?? module`, destructured once — the four fields together), so `module.autoGenerateMobImages` in the portrait block (while images, entity kinds and battlemaps all read the local) made the entity sidebar's confirmation, which is derived from the TARGET, promise portraits and enqueue none for a module whose row had the toggle off (the default). The one deliberate residue is the LOUD direction, not silence: a roster row whose artifact the snapshot cannot see (a dangling `npc-ref` or stamped `mobArtifactId`, or a row this campaign does not own) counts as work — the enqueue resolves it from the DB or throws naming the creature, aggregated into the sweep's one per-encounter failure toast — because the queue's per-kind dedupe plus skip-if-imaged make a re-run a no-op.
+- **The offer and the work ask ONE portrait question, and a surface that NAMES
+  work must pass the presentation snapshot** (docs/17 row 106, docs/11 D6). Two
+  failures were found by tests while landing this arc, both in the "the offer
+  disagrees with the batch" family:
+  1. `enumerateBatchKinds` answered "is this creature imaged?" from the
+     presentation table ALONE for the creature lane, so a CAST npc that carries
+     its own cover was reported MISSING — the batch would have generated a second
+     portrait over the owner's art. Both the batch and
+     `encounterNeedsMobPortraitWork` now ask `creatureCoverImageId` (presentation
+     row → the artifact's own cover), which is the same seam the board and the
+     roster badge render from.
+  2. The deviation/sweep callers had no way to see a presentation row at all.
+     `encountersNeedingMobPortraits(module, artifacts, presentationByKey?)` and
+     `deriveAutomationDeviation(module, artifacts, target?, presentationByKey?)`
+     take it optionally; omitting it keeps the documented CONSERVATIVE answer
+     (the batch is skip-if-imaged, so nothing is regenerated) — but a surface
+     that lists specific work passes it, and `resume-automation` and the reader's
+     "Generate everything" panel both do (`app/use-creature-presentation`).
+     Consequence to remember: `artWithoutCover` is now structurally impossible —
+     art that the board shows is art the batch counts, because there is no second
+     reading left to drift.
+- **A "missing ref" is ONE reason with an OPTIONAL NAME, and a surface that
+  compares it to a literal goes silently dead** (docs/17 row 106; the bug was
+  mine and a test caught it). The resolver's reason became
+  `missing ref (Ghost Lumberjack)` — the cited name rides along, because a bare
+  stem tells a GM nothing — while `missing-refs-banner.tsx` and the roster badge
+  still compared the origin to the exact string `'missing ref'`, so the banner
+  never fired and nothing failed: the data was right and the surface was mute.
+  The predicate is `domain/encounterResolve.isMissingRefOrigin` (hash fallback
+  tried FIRST, one surviving reason shape), and every surface between the
+  resolver and the pixels must read it instead of re-spelling the string.
+- **A delete census counts what the delete will DO, so narrowing its inputs is a
+  user-visible change** (docs/17 row 106, docs/05 §Surface: campaign tree).
+  `describeArtifactKindRemoval` is the live census the delete dialog prints, and
+  it is computed by the same predicates the deletion runs — which is the point.
+  Two numbers moved when the creature tier landed, and both moves are CORRECT:
+  `rosterRefsDangling` counts only roster entries that name an ARTIFACT (a
+  `rulebook` citation names the library, so it cannot dangle and is no longer
+  counted), and the cascade no longer sees the retired hidden creature rows
+  because the sweep no longer creates them. A future edit that "restores" either
+  number is re-introducing the mob artifact, not fixing a regression.
+- **A lane's writers are defined by ABSENCE OF A FUNCTION, not by a guard.**
+  The encounter and sweep sides may CITE a library creature and may never CAST
+  one: they hold no cast seam and the roster schema cannot even express the
+  field, so there is nothing to check at runtime (pinned in
+  `tests/db/creatureRepo.test.ts`). The module generator and the bestiary spawn
+  dialog are the only two callers of `castCreatureAsNpc`, and the module
+  generator is the only place the owner's Aunt Agatha path belongs (*"the
+  encounter generated mobs ... should not introduce important NPCs on their
+  own"*). Deleting a guard is right when the thing it guarded can no longer be
+  expressed; keeping it "just in case" is how the 67-usage classification maze
+  grew back.
 - **An ability value is a d20 SCORE in EVERY system — a printed MODIFIER is
   never one, and only the SIGN can prove which the model meant** (owner report,
   docs/17 row 95, docs/12 §5). A generated Pathfinder 2e mob rendered
@@ -986,9 +1051,10 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   `db/campaignRepo.ts`, `db/moduleRepo.ts` and `db/maintenance.ts` → dynamic
   `import('@/llm/moduleGen')` (a static import would be a cycle);
   `llm/moduleGen` → `features/modules/post-generation.runModulePostGeneration`
-  and `llm/runEngine` → `features/campaign/creature-row-guard.creatureRowAiRefusal`
-  (the sweep and the refusal copy each have ONE implementation, and a copy
-  inside `llm` would drift from the code the UI reads — docs/17 rows 80, 84);
+  (the sweep has ONE implementation, and a copy inside `llm` would drift from
+  the code the UI reads — docs/17 row 80; the retired
+  `features/campaign/creature-row-guard` refusal copy went with the mob artifact
+  it protected, docs/17 row 106);
   `llm/moduleGen` + `llm/runEngine` → `@/app/routes`, plus all 28
   `features/**` sites → `@/app/routes` (route builders are treated as
   constants, not as app state); `domain/wikiGraph.ts` +

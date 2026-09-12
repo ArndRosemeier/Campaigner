@@ -101,7 +101,11 @@ describe('encounter form monster sources', () => {
     // NPC link resolves with origin badge.
     await screen.findByText('NPC: Vexra');
     // Dangling rulebook chunk → warning badge, no crash.
+    // The reason is NAMED (`missing ref (Ghost)`, docs/11 D9) and the badge
+    // renders it in its compact form — the roster row already shows the
+    // creature's name right beside it, so the badge does not repeat it.
     await screen.findByText('missing ref');
+    expect(await screen.findByText('Ghost')).toBeInTheDocument();
     // The resolved stat block card renders the NPC's stats.
     await waitFor(() => {
       expect(screen.getAllByText('AC').length).toBeGreaterThan(0);

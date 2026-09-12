@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 
 import type { AnyArtifact, Battle, BattleEffect, BattleEffectShape, BattleToken, BattleTokenId, BattleVeil, FighterStatsLookup, Id, StatBlock } from '@/domain';
-import { CANONICAL_ROOM_MARKERS } from '@/domain';
+import { CANONICAL_ROOM_MARKERS, contentCreatureKey } from '@/domain';
 import { nextTokenScale, TOKEN_STAMP_COLORS, tokenSizeFittingGrid, EFFECT_MIN_CELLS, VEIL_DEFAULT_CELLS } from '@/domain/battle';
 import { combatHpForToken } from '@/domain/battle/board';
 import { resizeEffectFromEdge, type EffectEdge } from '@/domain/battle/effect';
@@ -84,7 +84,7 @@ import {
 } from '@/db/battleRepo';
 import { getImage } from '@/db/imageRepo';
 import { getAnyArtifact } from '@/db/artifactRepo';
-import { getChunksByIds } from '@/db/chunkRepo';
+import { creaturePortraitArt, tokenCreature } from '@/db/creatureRepo';
 import { useImageUrl } from '@/features/images/use-image-url';
 import { ZoomableImage } from '@/features/images/zoomable-image';
 import {
@@ -511,55 +511,97 @@ export function BattleSurface(): JSX.Element {
   const selectedArtifact = selectedToken?.artifactId === null || selectedToken === null
     ? undefined
     : artifactById.get(selectedToken.artifactId);
-  const selectedMobChunkId = selectedArtifact?.kind === 'npc'
-    ? selectedArtifact.data.monsterChunkId ?? null
-    : null;
-  const selectedMobChunk = useLiveQuery(
+  // The selected token's CREATURE (docs/11 D5 amendment / D10): the board
+  // resolves a token's portrait and its stat block by the creature IDENTITY the
+  // token carries (`token.creatureKey`, stamped by seeding) — never by an
+  // artifact that a creature no longer has. A cast creature npc resolves
+  // through its own `creatureRef`; a plain authored npc has no creature
+  // identity, and its own card already carries everything about it.
+  const selectedCreatureKey =
+    selectedToken?.creatureKey ??
+    (selectedArtifact?.kind === 'npc' && selectedArtifact.data.creatureRef !== undefined
+      ? contentCreatureKey(selectedArtifact.name, null)
+      : null);
+  const selectedCreature = useLiveQuery(
     async () => {
-      if (selectedMobChunkId === null) return undefined;
-      return (await getChunksByIds([selectedMobChunkId]))[0];
+      if (selectedToken === null) return null;
+      return tokenCreature({
+        campaignId,
+        creatureKey: selectedToken.creatureKey,
+        artifactId: selectedToken.artifactId,
+        name: selectedArtifact?.name ?? selectedToken.label,
+      });
     },
-    [selectedMobChunkId],
-    undefined,
+    [selectedToken?.id, selectedToken?.creatureKey, selectedToken?.artifactId, selectedArtifact?.id, campaignId],
+    null,
   );
   const selectedStatBlock: StatBlock | null = !playerSafe && selectedToken !== null
-    ? selectedArtifact?.kind === 'npc' && selectedArtifact.data.statBlock !== null
-      ? selectedArtifact.data.statBlock
-      : selectedMobChunk?.chunkType === 'statblock'
-        ? selectedMobChunk.statBlock
-        : null
+    ? selectedCreature?.statBlock ??
+      (selectedArtifact?.kind === 'npc' ? selectedArtifact.data.statBlock : null)
     : null;
   const selectedEffect = battle?.board.effects.find((effect) => effect.id === selectedEffectId) ?? null;
-  // Battle-card portrait target (docs/11 D5): the selected token's mob
-  // artifact resolved two ways — the artifact's own `monsterChunkId` marker
-  // (the identity battleSeed froze onto the token's artifactId) plus the
-  // provenance encounter's roster entry (chunkId/mobArtifactId match) for the
-  // citing name behind the canonical-vs-flavor check, falling back to the
-  // artifact name. Null (NO action, never a dead button) when player-safe
-  // (portrait generation is a GM action everywhere), when the token has no
-  // artifact, or when its mob has NO rulebook chunk: PCs, real NPCs
-  // (npc-ref), inline synthetics and statless rows stay imageless here —
-  // their portraits are managed in the editor section, never on this card.
+  // Battle-card portrait target (docs/11 D5 amendment): the selected token's
+  // CREATURE, resolved by identity — the citing name behind the canonical-vs-
+  // flavor check comes from the creature itself (a library row carries the
+  // name the pack spells; an invented token carries its own). Null (NO action,
+  // never a dead button) when player-safe (portrait generation is a GM action
+  // everywhere), when the token stands for no creature (a PC, a plain authored
+  // npc, a statless row), or for an invented token whose name is blank — those
+  // portraits are managed in the editor section, never on this card.
+  const [portraitHasImage, setPortraitHasImage] = useState(false);
+  useEffect(() => {
+    if (selectedCreatureKey === null) {
+      setPortraitHasImage(false);
+      return;
+    }
+    let cancelled = false;
+    void creaturePortraitArt(campaignId, selectedCreatureKey)
+      .then((art) => {
+        if (!cancelled) setPortraitHasImage(art === 'cover');
+      })
+      .catch(() => {
+        // A campaign/creature read failure must not silently claim "no
+        // portrait" (AGENTS rule 2): the card's action reads as generate, and
+        // the enqueue's own loud failure path reports the real reason.
+        if (!cancelled) setPortraitHasImage(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [campaignId, selectedCreatureKey, selectedArtifact?.coverImageId, selectedCreature]);
   const selectedPortrait: { target: SingleMobPortraitTarget; hasImage: boolean } | null = useMemo(() => {
-    if (playerSafe || selectedToken === null || selectedArtifact?.kind !== 'npc') return null;
-    const chunkId = selectedArtifact.data.monsterChunkId;
-    if (chunkId === undefined) return null;
+    if (playerSafe || selectedToken === null || selectedCreature === null) return null;
+    const name = selectedCreature.name.trim();
+    if (name === '') return null;
     const roster =
       encounterArtifact !== 'loading' && encounterArtifact?.kind === 'encounter'
         ? encounterArtifact.data.monsters
         : null;
     const rosterName = roster?.find(
       (entry) =>
-        entry.source.type === 'rulebook' &&
-        (entry.source.mobArtifactId === selectedArtifact.id || entry.source.chunkId === chunkId),
+        (entry.source.type === 'rulebook' &&
+          `chunk:${entry.source.chunkId}` === selectedCreature.creatureKey) ||
+        (entry.source.type === 'npc-ref' && entry.source.artifactId === selectedToken.artifactId),
     )?.name;
-    const name = (rosterName ?? selectedArtifact.name).trim();
-    if (name === '') return null;
+    const citedName = (rosterName ?? name).trim();
+    if (citedName === '') return null;
     return {
-      target: { campaignId, artifactId: selectedArtifact.id, chunkId, name },
-      hasImage: selectedArtifact.coverImageId !== null || selectedArtifact.imageIds.length > 0,
+      target: {
+        campaignId,
+        creatureKey: selectedCreature.creatureKey,
+        name: citedName,
+        ...(selectedCreature.chunkId === undefined ? {} : { chunkId: selectedCreature.chunkId }),
+        // A CAST creature npc keeps its portrait on its own cover, so the
+        // token names the artifact when the row is one; a library or invented
+        // creature's portrait is the campaign's presentation row, which needs
+        // no artifact at all.
+        ...(selectedArtifact?.kind === 'npc' && selectedArtifact.data.creatureRef !== undefined
+          ? { artifactId: selectedArtifact.id }
+          : {}),
+      },
+      hasImage: portraitHasImage,
     };
-  }, [playerSafe, selectedToken, selectedArtifact, encounterArtifact, campaignId]);
+  }, [playerSafe, selectedToken, selectedArtifact, selectedCreature, portraitHasImage, encounterArtifact, campaignId]);
 
   function boardPointFromEvent(event: { clientX: number; clientY: number }): { x: number; y: number } {
     // Convert against the CONTENT element's post-transform rect: it bakes the

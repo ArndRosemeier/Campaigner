@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createAppRouter } from '@/app/router';
 import { modulesPath } from '@/app/routes';
-import { createArtifact, getArtifact } from '@/db/artifactRepo';
+import { createArtifact, getArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
 import { createCampaign, getCampaign } from '@/db/campaignRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
@@ -460,18 +460,16 @@ describe('ModulesListPage', () => {
   }, 20_000);
 });
 
-describe('ModulesListPage delete dialog blast radius (cited mob artifacts)', () => {
-  it('names the shared mob artifacts its encounters cite as a reference, never as owned', async () => {
+describe('ModulesListPage delete dialog blast radius (cited creatures)', () => {
+  it('names the LIBRARY creatures its encounters cite as a reference, never as owned', async () => {
     const user = userEvent.setup();
     const { campaignId, draftId } = await seedModules();
-    // ONE campaign-scoped mob artifact (rulebook-cited creature), cited by an
-    // encounter the draft module owns: a REFERENCE the cascade never touches.
-    const mob = await createArtifact({
-      campaignId,
-      kind: 'npc',
-      name: 'Goblin Boss',
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: newId() },
-    });
+    // REWRITTEN (ledger row 106): a cited creature is a LIBRARY row, so nothing
+    // is created for it and the dialog's census speaks of citations, not of
+    // shared mob artifacts. The old fixture created a campaign-scoped `npc`
+    // artifact carrying `monsterChunkId` and cited it by `mobArtifactId` —
+    // exactly the artifact whose deletion used to strand roster rows.
+    const before = await listArtifactsByCampaign(campaignId);
     await createArtifact({
       campaignId,
       moduleId: draftId,
@@ -486,7 +484,7 @@ describe('ModulesListPage delete dialog blast radius (cited mob artifacts)', () 
             count: 2,
             notes: '',
             treasure: '',
-            source: { type: 'rulebook', chunkId: newId(), mobArtifactId: mob.id },
+            source: { type: 'rulebook', chunkId: newId() },
           },
         ],
         terrain: '',
@@ -507,9 +505,13 @@ describe('ModulesListPage delete dialog blast radius (cited mob artifacts)', () 
     const confirm = await screen.findByRole('alertdialog', {}, { timeout: 5_000 });
     const census = await within(confirm).findByTestId('delete-module-cited-mobs', {}, { timeout: 5_000 });
     expect(census).toHaveTextContent('Goblin Boss');
-    expect(census).toHaveTextContent('shared creature');
-    // Honest wording: a reference, not an owned artifact.
-    expect(census).toHaveTextContent('not part of this module');
+    expect(census).toHaveTextContent('creature from the bestiary');
+    // Honest wording: a LIBRARY reference, not an owned artifact.
+    expect(census).toHaveTextContent('Those are library references, not part of this module');
+    // …and citing one created nothing: the only new row is the encounter.
+    const after = await listArtifactsByCampaign(campaignId);
+    expect(after).toHaveLength(before.length + 1);
+    expect(after.some((row) => row.kind === 'npc')).toBe(false);
     await flushAsyncUpdates();
   }, 20_000);
 });

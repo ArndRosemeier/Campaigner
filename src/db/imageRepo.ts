@@ -140,14 +140,20 @@ export async function deleteImageIfUnreferenced(imageId: Id): Promise<boolean> {
  * their campaign (`campaignId` = owner campaign; a campaign cover anchors to
  * its own id) referenced from outside the artifact tables, so the artifact
  * scan alone would GC them.
+ *
+ * Creature-presentation coverage (`creatureImages`, docs/11 D5 amendment): a
+ * cited creature's portrait is a row of its own keyed by the creature's
+ * IDENTITY, with no artifact behind it, so this scan is the only thing that
+ * keeps its blob alive.
  */
 async function referencedImageIdsGlobal(): Promise<Set<Id>> {
-  const [artifacts, revisions, battles, modules, campaigns] = await Promise.all([
+  const [artifacts, revisions, battles, modules, campaigns, creatureImages] = await Promise.all([
     db.artifacts.toArray(),
     db.revisions.toArray(),
     db.battles.toArray(),
     db.modules.toArray(),
     db.campaigns.toArray(),
+    db.creatureImages.toArray(),
   ]);
   const referenced = new Set<Id>();
   for (const artifact of artifacts) {
@@ -179,6 +185,12 @@ async function referencedImageIdsGlobal(): Promise<Set<Id>> {
   for (const battle of battles) {
     if (battle.board.mapImageId !== null) referenced.add(battle.board.mapImageId);
   }
+  // Presentation rows (docs/11 D5 amendment): a cited creature's portrait is a
+  // per-campaign row of its own, so the document cover it holds pins that blob
+  // exactly as an artifact's cover does.
+  for (const row of creatureImages) {
+    if (row.imageId !== '') referenced.add(row.imageId);
+  }
   return referenced;
 }
 
@@ -189,9 +201,10 @@ async function referencedImageIdsGlobal(): Promise<Set<Id>> {
  * battle boards (see above), by the campaign's modules (`coverImageId`),
  * and by the campaign row itself (`coverImageId`).
  *
- * SCOPE CONTRACT: reads `artifacts`, `revisions`, `battles`, `modules` and
- * `campaigns` — every caller transaction scope must include all five (a
- * read on a table the scope omits throws "object store not found").
+ * SCOPE CONTRACT: reads `artifacts`, `revisions`, `battles`, `modules`,
+ * `campaigns` and `creatureImages` — every caller transaction scope must
+ * include all six (a read on a table the scope omits throws "object store not
+ * found").
  *
  * `excludeArtifactIds` is the PREDICTION switch, used by exactly one caller:
  * `artifactRepo.describeArtifactKindRemoval` renders the per-region
@@ -206,7 +219,7 @@ export async function referencedImageIds(
   campaignId: Id,
   excludeArtifactIds?: ReadonlySet<Id>,
 ): Promise<Set<Id>> {
-  const [ownedRows, revisions, battles, modules, campaign] = await Promise.all([
+  const [ownedRows, revisions, battles, modules, campaign, creatureImages] = await Promise.all([
     db.artifacts.where('campaignId').equals(campaignId).toArray(),
     (async () => {
       const artifactIds = (
@@ -221,6 +234,7 @@ export async function referencedImageIds(
     db.battles.where('campaignId').equals(campaignId).toArray(),
     db.modules.where('campaignId').equals(campaignId).toArray(),
     db.campaigns.get(campaignId),
+    db.creatureImages.where('campaignId').equals(campaignId).toArray(),
   ]);
   const referenced = new Set<Id>();
   // The exclusion strips exactly the rows whose delete is being PREVIEWED —
@@ -257,6 +271,12 @@ export async function referencedImageIds(
     if (module.coverImageId !== null) referenced.add(module.coverImageId);
   }
   if (campaign?.coverImageId != null) referenced.add(campaign.coverImageId);
+  // The campaign's creature presentation rows (docs/11 D5 amendment): a cited
+  // creature's portrait lives here, keyed by identity, with no artifact behind
+  // it — the artifact scan above would GC it away.
+  for (const row of creatureImages) {
+    if (row.imageId !== '') referenced.add(row.imageId);
+  }
   return referenced;
 }
 

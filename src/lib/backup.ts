@@ -147,6 +147,12 @@ const OPTIONAL_TABLES: ReadonlySet<string> = new Set([
   'pdfFiles',
   'mobPortraits',
   'moduleVersions',
+  // `creatureImages` (per-campaign portraits of CITED creatures, docs/11 D5
+  // amendment) landed after backup v1: a pre-v20 zip carries none, and an
+  // empty presentation tier is exactly what that database had — every cited
+  // creature renders initials until its portrait is generated, and no
+  // authored text, roster or map is affected.
+  'creatureImages',
 ]);
 
 /**

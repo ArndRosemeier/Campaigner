@@ -20,10 +20,10 @@ export interface MarkdownBodyProps {
   hideHeading?: boolean | undefined;
   /** Optional test id on the textarea (the part editor hosts sibling inputs). */
   textareaTestId?: string | undefined;
-  /** Read-only mode (a bestiary creature row:
-   * `features/campaign/creature-row-guard`): the body stays readable and the
-   * Preview toggle keeps working, but the textarea refuses keystrokes at the
-   * DOM and says why in `title` — never a silently dropped keystroke. */
+  /** Read-only mode, for a caller that renders the body without owning it: the
+   * body stays readable and the Preview toggle keeps working, but the textarea
+   * refuses keystrokes at the DOM and says why in `title` — never a silently
+   * dropped keystroke. */
   readOnly?: boolean | undefined;
   readOnlyReason?: string | undefined;
 }

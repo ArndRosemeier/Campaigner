@@ -3,12 +3,15 @@ import 'fake-indexeddb/auto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, listArtifactsByCampaign } from '@/db/artifactRepo';
+import { presentationArtOfCampaign } from '@/features/campaign/mob-portrait-participants';
+import { setCreatureCover } from '@/db/creatureRepo';
+import { createImage } from '@/db/imageRepo';
 import { createCampaign } from '@/db/campaignRepo';
-import { inventedCreatureMarker } from '@/db/mobArtifacts';
 import { saveModule } from '@/db/moduleRepo';
 import { seedBuiltInPersonas } from '@/db/seed';
 import { saveSettings } from '@/db/settingsRepo';
 import {
+  contentCreatureKey,
   createModule,
   defaultSettings,
   modulePartSchema,
@@ -124,29 +127,36 @@ async function seedMobArtifact(
     summary: '',
     body: '',
     coverImageId: options.coverImageId ?? null,
-    data: { ...npcData, monsterChunkId: CHUNK_ID },
+    data: { ...npcData, creatureRef: { chunkId: CHUNK_ID } },
   });
 }
 
-/** An uncited (`none`) roster entry's on-demand creature, as the invented lane
- * materializes it (marker + name are the whole identity rule). */
-async function seedInventedCreature(
+/**
+ * An uncited (`none`) roster entry's portrait, as the invented lane leaves it
+ * (docs/11 D5 / ledger row 106): NO artifact is created for an invented
+ * creature, so "imaged" means the campaign's PRESENTATION row for its content
+ * identity points at a real image. `text` is the image's bytes, so a caller can
+ * assert which art the row holds.
+ */
+async function seedInventedPortrait(
   campaignId: string,
-  moduleId: string,
-  encounterId: string,
   name: string,
-  coverImageId: string | null,
-): Promise<Artifact> {
-  return createArtifact({
+  text: string,
+): Promise<string> {
+  const image = await createImage({
     campaignId,
-    moduleId,
-    kind: 'npc',
-    name,
-    summary: `On-demand creature created for encounter "Ash Gate" ${inventedCreatureMarker(encounterId)}`,
-    body: '',
-    coverImageId,
-    data: npcData,
+    blob: new Blob([text], { type: 'image/png' }),
+    mimeType: 'image/png',
+    width: 8,
+    height: 8,
+    source: 'uploaded',
   });
+  await setCreatureCover({
+    campaignId,
+    creatureKey: contentCreatureKey(name, null),
+    imageId: image.id,
+  });
+  return image.id;
 }
 
 /** The encounter data shape, typed ONCE: an inline literal against the
@@ -274,7 +284,7 @@ beforeEach(async () => {
   enqueueMobPortraits.mockReset();
   enqueueInventedPortraits.mockReset();
   enqueueMobPortraits.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
-  enqueueInventedPortraits.mockResolvedValue({ created: 0, enqueued: 0, alreadyImaged: [] });
+  enqueueInventedPortraits.mockResolvedValue({ enqueued: 0, alreadyImaged: [] });
   await saveSettings({ ...defaultSettings(), imagesEnabled: true });
 });
 
@@ -311,9 +321,9 @@ describe('the module-level portrait gap (docs/17 row 96)', () => {
     const plan = await real.planMobPortraitBatch(asEncounter(encounter), campaign.id);
     expect(plan.missing.sort()).toEqual(['Bog Lurker', 'Gelatinous Cube']);
     expect(plan.imaged).toEqual([]);
-    // The chunk-backed `npc-ref` rides the rulebook lane (`creates` counts the
-    // uncited one only: the mob artifact already exists).
-    expect(plan.creates).toBe(1);
+    // The chunk-backed `npc-ref` rides the cited lane; the uncited one rides
+    // the invented lane. NOTHING is created for either (docs/11 D5).
+    expect(plan.missing.sort()).toEqual(['Bog Lurker', 'Gelatinous Cube']);
   }, 30_000);
 
   it('enqueues BOTH lanes for it, and the completion toast counts both truthfully', async () => {
@@ -327,7 +337,7 @@ describe('the module-level portrait gap (docs/17 row 96)', () => {
     const mob = await seedMobArtifact(campaign.id, { name: 'Gelatinous Cube' });
     const encounter = await seedEncounter(campaign.id, module.id, ownerRoster(mob.id));
     enqueueMobPortraits.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
-    enqueueInventedPortraits.mockResolvedValue({ created: 1, enqueued: 1, alreadyImaged: [] });
+    enqueueInventedPortraits.mockResolvedValue({ enqueued: 1, alreadyImaged: [] });
 
     expect(module.autoGenerateMobImages).toBe(false);
     await runModulePostGeneration(module.id, campaign, FULL_AUTOMATION_TARGET);
@@ -357,10 +367,15 @@ describe('the module-level portrait gap (docs/17 row 96)', () => {
       coverImageId: COVER_ID,
     });
     const encounter = await seedEncounter(campaign.id, module.id, ownerRoster(mob.id));
-    await seedInventedCreature(campaign.id, module.id, encounter.id, 'Bog Lurker', COVER_ID);
+    // The uncited creature's portrait is its PRESENTATION row — nothing was
+    // authored for it.
+    await seedInventedPortrait(campaign.id, 'Bog Lurker', 'bog art');
     const artifacts = await campaignArtifacts(campaign.id);
 
-    const deviation = deriveAutomationDeviation(module, artifacts, PORTRAIT_ONLY);
+    // The snapshot the app surfaces pass (`app/use-creature-presentation`):
+    // with it, the deviation agrees with the batch's own plan.
+    const presentation = await presentationArtOfCampaign(campaign.id);
+    const deviation = deriveAutomationDeviation(module, artifacts, PORTRAIT_ONLY, presentation);
     expect(deviation.mobPortraits).toEqual([]);
     expect(deviationIsEmpty(deviation)).toBe(true);
 
@@ -378,31 +393,51 @@ describe('the module-level portrait gap (docs/17 row 96)', () => {
     expect(toastSuccessMock).not.toHaveBeenCalled();
   }, 30_000);
 
-  it('treats a gallery-only artifact as imaged on BOTH sides (one art reading)', async () => {
+  it('reads a CAST npc\u2019s own cover as its portrait, on BOTH sides (one art reading)', async () => {
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await seedModule(campaign.id);
-    // Art that is NOT a cover: the batch counts the kind imaged (there is real
-    // art, and setting the cover is the owner's call) — the detector must say
-    // the same, or the offer would disagree with the work again.
+    // A cast npc (docs/11 D3): its prose, the library's stats, its OWN cover.
+    // The queue reads that cover as the creature's portrait — so there is
+    // nothing to generate, and the pass must not generate anything.
+    //
+    // The SYNC detector must say the same: it holds the artifact snapshot, so
+    // the cast row's own cover IS visible to it — and if it were not, the
+    // confirmation would promise a portrait the batch then declines.
+    const image = await createImage({
+      campaignId: campaign.id,
+      blob: new Blob(['cube art'], { type: 'image/png' }),
+      mimeType: 'image/png',
+      width: 8,
+      height: 8,
+      source: 'uploaded',
+    });
     const mob = await createArtifact({
       campaignId: campaign.id,
       kind: 'npc',
       name: 'Gelatinous Cube',
       summary: '',
       body: '',
-      imageIds: ['00000000-0000-4000-8000-00000000e001'],
-      data: { ...npcData, monsterChunkId: CHUNK_ID },
+      coverImageId: image.id,
+      data: { ...npcData, creatureRef: { chunkId: CHUNK_ID } },
     });
     const encounter = await seedEncounter(campaign.id, module.id, [
       npcRefEntry('Gelatinous Cube', mob.id),
     ]);
     const artifacts = await campaignArtifacts(campaign.id);
 
-    expect(encountersNeedingMobPortraits(module, artifacts)).toEqual([]);
     const real = await realQueue();
     const plan = await real.planMobPortraitBatch(asEncounter(encounter), campaign.id);
     expect(plan.missing).toEqual([]);
     expect(plan.imaged).toEqual(['Gelatinous Cube']);
+
+    // …and the SYNC detector says the same word, because the artifact snapshot
+    // it holds is what answers for a cast npc's own cover. ONE art reading, no
+    // over-offer: the confirmation cannot promise work the batch will decline.
+    expect(encountersNeedingMobPortraits(module, artifacts)).toEqual([]);
+    real.useMobPortraitQueue.getState().reset();
+    const batch = await real.enqueueMobPortraits(asEncounter(encounter), campaign.id);
+    expect(batch).toEqual({ enqueued: 0, alreadyImaged: ['Gelatinous Cube'] });
+    expect(real.useMobPortraitQueue.getState().queued).toHaveLength(0);
   }, 30_000);
 
   it('never lets a dangling npc-ref crash the detector — and reports it loudly, not silently', async () => {

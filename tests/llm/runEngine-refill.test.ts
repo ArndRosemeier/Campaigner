@@ -7,7 +7,6 @@ import { createCampaign } from '@/db/campaignRepo';
 import {
   createArtifact,
   getArtifact,
-  listArtifactsByCampaign,
   listRevisions,
   updateArtifact,
 } from '@/db/artifactRepo';
@@ -414,31 +413,39 @@ describe('empty-content rejection (loud, at every layer)', () => {
 });
 
 /**
- * The creature-row refill guard — the WRITE chokepoint (owner-reported
- * data-integrity bug).
+ * REFILLING A CAST CREATURE ROW (rewritten, ledger row 106 — the guard is GONE).
  *
- * A bestiary creature row is a real `npc` artifact carrying the additive
- * `data.monsterChunkId` marker: ONE campaign-scoped row per cited rulebook
- * chunk, pointed at by every encounter that cites the creature, with battle
- * seeding resolving its stats through it. An in-place smith refill targeting
- * one wrote invented prose onto it, and `mergeRefillData` PRESERVES the marker
- * — so the row kept the creature's identity and name while describing some
- * other character, in text every citing encounter shares. finalize now refuses
- * at DESTINATION RESOLUTION, before any write of any branch: the row is left
- * byte-identical and the run fails loudly (run row + toastError).
+ * This block used to pin a REFUSAL at the write chokepoint: a bestiary creature
+ * row was a real `npc` artifact carrying the additive `data.monsterChunkId`
+ * marker, shared by every citing encounter, and an in-place refill wrote
+ * invented prose onto it while `mergeRefillData` PRESERVED the marker — so the
+ * row kept the creature's identity and described somebody else, in text every
+ * citing encounter shared. The refusal was the right answer to that model.
  *
- * `isMobArtifact` is the ONE classification of "creature row" — the same
- * predicate the artifact editor's refusal and the entity paths read.
+ * Under the ratified model that row does not exist. An `npc` carrying a
+ * `creatureRef` is a CAST CREATURE (docs/11 D3/D4): an AUTHORED row — the
+ * owner's Aunt Agatha, *"she will have zombie stats but with prose"* — whose
+ * prose is its own and is exactly what a refill is for. So the guard is not
+ * relaxed, it is UNNECESSARY, and the protection moved to where it structurally
+ * belongs:
+ *
+ * - `data.creatureRef` is a different field from the one the writer produces
+ *   (`mergeRefillData` merges prose and a stat block, never the citation), so
+ *   the citation cannot be clobbered even by a draft that tried;
+ * - the stats are DERIVED at read time from the library, so a refill must not
+ *   author a stat block onto the row — and the `npcDataSchema` refine makes
+ *   that impossible to get wrong silently (a citation AND an authored stat
+ *   block is a parse error, not a corrupted row).
+ *
+ * The two tests below are that pair, on a campaign-scoped and on a
+ * module-owned row (proving the answer does not depend on the module grounding —
+ * the distinction the old guard was blamed for).
  */
 describe('creature-row refill guard (the write chokepoint)', () => {
-  it('refuses a refill onto a bestiary creature row by name and leaves the row byte-identical', async () => {
+  it('refills a CAST creature row\u2019s prose and cannot touch its citation', async () => {
     const { campaign } = await seedCampaignOnly();
     const persona = await seedPersona();
     const chunkId = newId();
-    // A campaign-level creature row, born the way `getOrCreateMobArtifact`
-    // births one (empty authored text, stat source = the chunk). The
-    // owner-reported case: campaign-scoped, so the refill's grounding said
-    // `not-module-owned` and the smith invented a stranger.
     const creature = await createArtifact({
       campaignId: campaign.id,
       kind: 'npc',
@@ -448,9 +455,8 @@ describe('creature-row refill guard (the write chokepoint)', () => {
       links: [],
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: chunkId },
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
     });
-    const before = await getArtifact(creature.id);
     const revisionsBefore = await listRevisions(creature.id);
     chatMock.mockResolvedValue({
       text: JSON.stringify({ ...NPC_DRAFT, name: 'Goblin Warrior' }),
@@ -460,50 +466,38 @@ describe('creature-row refill guard (the write chokepoint)', () => {
 
     const runId = await runEngine.startRun(INPUT(campaign, persona, creature.id));
     await waitFor(async () => {
-      expect((await getRun(runId))?.status).toBe('failed');
+      expect((await getRun(runId))?.status).toBe('completed');
     });
 
-    // Loud at BOTH surfaces, with the creature and the reason named: the run
-    // row (the Runs tab) AND the toast.
-    const run = await getRun(runId);
-    expect(run?.errorMessage).toContain('In-place refill refused');
-    expect(run?.errorMessage).toContain('Goblin Warrior');
-    expect(run?.errorMessage).toContain('bestiary creature');
-    expect(run?.errorMessage).toContain('not an authored NPC');
-    expect(toastErrorMock).toHaveBeenCalledTimes(1);
-    expect(toastErrorMock.mock.calls[0]?.[0]).toContain('Goblin Warrior');
-    expect(toastErrorMock.mock.calls[0]?.[0]).toContain('bestiary creature');
-
-    // BYTE-IDENTICAL: no write reached the row (nothing written, no revision)
-    // and every field the refill would have overwritten is pinned.
     const after = await getArtifact(creature.id);
-    expect(after).toEqual(before);
+    // The prose landed: this row is authored, and that is the owner's path.
     expect(after?.name).toBe('Goblin Warrior');
-    expect(after?.aliases).toEqual(['Goblin']);
-    expect(after?.summary).toBe('');
-    expect(after?.body).toBe('');
-    if (after?.kind !== 'npc') throw new Error('the creature row is not an npc');
-    expect(after.data.appearance).toBe('');
-    expect(after.data.personality).toBe('');
-    expect(after.data.monsterChunkId).toBe(chunkId);
+    expect(after?.summary).toBe(NPC_DRAFT.summary);
+    expect(after?.body).toBe(NPC_DRAFT.body);
+    if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(after.data.appearance).toBe(NPC_DRAFT.appearance);
+    expect(after.data.personality).toBe(NPC_DRAFT.personality);
+    // THE CITATION IS BYTE-IDENTICAL — the field the writer is not given.
+    expect(after.data.creatureRef).toEqual({ chunkId });
+    // …and no stat block was authored onto it: the numbers come from the
+    // library, and writing one here would be the schema conflict below.
     expect(after.data.statBlock).toBeNull();
-    expect(after.coverImageId).toBeNull();
-    expect(after.imageIds).toEqual([]);
+    // The properties the owner put on the row survive the merge untouched.
+    expect(after.aliases).toEqual(['Goblin']);
     expect(after.tags).toEqual(['bestiary', 'goblinoid']);
     expect(after.links).toEqual([]);
-    expect(after.campaignId).toBe(campaign.id);
     expect(after.moduleId).toBeNull();
-    expect(await listRevisions(creature.id)).toEqual(revisionsBefore);
-    // No stray copy of the "other NPC" was created either.
-    expect(await listArtifactsByCampaign(campaign.id)).toHaveLength(1);
-    // The model DID run (this is a refusal at the write, not a run that never
-    // started) — a resume or a programmatic target can still reach it.
+    // A revision was written (the refill is a real write, not a silent no-op).
+    expect((await listRevisions(creature.id)).length).toBeGreaterThan(revisionsBefore.length);
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    // …and the write went through the model: a refill is a generation.
     expect(chatMock).toHaveBeenCalled();
   }, 30000);
 
-  it('refuses a module-owned creature row too (the guard is not the module grounding)', async () => {
+  it('a module-owned cast row behaves identically — the citation is field-protected, not module-gated', async () => {
     const { campaign, moduleId } = await seed();
     const persona = await seedPersona();
+    const chunkId = newId();
     const creature = await createArtifact({
       campaignId: campaign.id,
       moduleId,
@@ -511,9 +505,8 @@ describe('creature-row refill guard (the write chokepoint)', () => {
       name: 'Cinder Bat',
       summary: '',
       body: '',
-      data: { appearance: '', personality: '', statBlock: null, monsterChunkId: newId() },
+      data: { appearance: '', personality: '', statBlock: null, creatureRef: { chunkId } },
     });
-    const before = await getArtifact(creature.id);
     chatMock.mockResolvedValue({
       text: JSON.stringify({ ...NPC_DRAFT, name: 'Cinder Bat' }),
       modelUsed: 'test-model',
@@ -522,12 +515,17 @@ describe('creature-row refill guard (the write chokepoint)', () => {
 
     const runId = await runEngine.startRun(INPUT(campaign, persona, creature.id));
     await waitFor(async () => {
-      expect((await getRun(runId))?.status).toBe('failed');
+      expect((await getRun(runId))?.status).toBe('completed');
     });
 
-    const run = await getRun(runId);
-    expect(run?.errorMessage).toContain('Cinder Bat');
-    expect(await getArtifact(creature.id)).toEqual(before);
+    const after = await getArtifact(creature.id);
+    if (after?.kind !== 'npc') throw new Error('the refill target is not an npc');
+    expect(after.name).toBe('Cinder Bat');
+    expect(after.summary).toBe(NPC_DRAFT.summary);
+    expect(after.moduleId).toBe(moduleId);
+    expect(after.data.creatureRef).toEqual({ chunkId });
+    expect(after.data.statBlock).toBeNull();
+    expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
 
   it('still refills a legitimate npc row — the npc-ref roster shape (stat block, no chunk marker)', async () => {
@@ -565,7 +563,7 @@ describe('creature-row refill guard (the write chokepoint)', () => {
     // The curated stat block survives (the draft skipped its statblock step)
     // and no creature marker was invented.
     expect(after.data.statBlock?.hp).toBe(22);
-    expect(after.data.monsterChunkId).toBeUndefined();
+    expect(after.data.creatureRef).toBeUndefined();
     expect(toastErrorMock).not.toHaveBeenCalled();
   }, 30000);
 });

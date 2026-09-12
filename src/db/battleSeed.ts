@@ -1,5 +1,13 @@
 import type { AnyArtifact, Battle, BattleToken, BattleVeil, Id, MonsterEntry, SeedFighter } from '@/domain';
-import { GRID_SIZE_DEFAULT, newId, placeMonsters, spawnRoom, veilsFromSpawnClusters } from '@/domain';
+import {
+  contentCreatureKey,
+  GRID_SIZE_DEFAULT,
+  libraryCreatureKey,
+  newId,
+  placeMonsters,
+  spawnRoom,
+  veilsFromSpawnClusters,
+} from '@/domain';
 import {
   ensurePcTokens,
   fallbackSpawnPoint,
@@ -20,8 +28,8 @@ import {
   patchBattle,
 } from '@/db/battleRepo';
 import { pcFightersOf } from '@/db/fighterStats';
-import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { promoteRosterUses } from '@/db/artifactAutoPromote';
+import { inventedCreatureIdentity, resolveCreatureCitation } from '@/db/creatureRepo';
 import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
 
 /**
@@ -32,15 +40,30 @@ import { resolveMonsterEntryWithRepos } from '@/db/monsterResolve';
  * running battle REPLACES it (the UI confirms; the stage snapshot is
  * discarded).
  *
- * Mob artifacts (owner-ratified): every statful rulebook entry shares ONE
- * npc artifact keyed by its cited chunk across all instances, frozen with a
- * single seedFighters row; entries written before `mobArtifactId` existed
- * retro-fill their artifact here via the shared get-or-create (idempotent).
+ * Library creatures (docs/11 D5 amendment): a statful `rulebook` entry is a
+ * CITATION, not a row — it freezes ONE synthetic `seedFighters` row for its
+ * creature identity and stamps that identity onto each token's `creatureKey`
+ * (`domain/creature`), which is how the board finds the creature's portrait
+ * with no artifact anywhere. Seeding therefore creates NOTHING: a battle seed
+ * is pure read + write on the battle row.
  *
  * Loud-by-contract (AGENTS rule 1): roster entries without stats seed as
  * tokens WITHOUT HP that are excluded from initiative; the report lists them
  * so the UI can badge them. No placeholder numbers anywhere.
  */
+
+/**
+ * The creature identity a roster entry carries into its TOKENS, or null when it
+ * has none (an authored `npc-ref` keeps its portrait on its own artifact
+ * cover). ONE spelling, shared by the statful and the statless token paths so a
+ * cited creature's portrait never depends on whether its library row resolved.
+ */
+function creatureKeyForEntry(entry: MonsterEntry): string | null {
+  if (entry.source.type === 'rulebook') return libraryCreatureKey(entry.source.chunkId);
+  if (entry.source.type === 'inline') return contentCreatureKey(entry.name, entry.source.statBlock);
+  if (entry.source.type === 'none') return contentCreatureKey(entry.name, null);
+  return null;
+}
 
 /**
  * Staging ground used before the board has a real pixel size: normalized
@@ -121,20 +144,20 @@ export interface RosterExpansionOptions {
 /**
  * Roster → tokens + frozen seed rows (M5-C step 3). THE identity rules live
  * here and are shared by seeding and in-battle spawn: npc-ref entries resolve
- * through the real artifact; rulebook entries share ONE mob artifact per
- * cited chunk with ONE seed row (get-or-create is idempotent); inline entries
- * freeze per-instance synthetic rows; statless entries produce HP-less
- * tokens excluded from initiative and are reported loudly (AGENTS rule 1).
+ * through the real artifact; rulebook entries are LIBRARY CREATURE CITATIONS
+ * that share ONE frozen seed row per creature identity (nothing is created);
+ * inline entries freeze per-instance synthetic rows; statless entries produce
+ * HP-less tokens excluded from initiative and are reported loudly (AGENTS
+ * rule 1).
  */
 export async function expandRosterEntries(
-  campaignId: Id,
   entries: readonly MonsterEntry[],
   options: RosterExpansionOptions,
 ): Promise<RosterExpansion> {
   const seedFighters: SeedFighter[] = [];
-  // Mob artifacts: deduplicates get-or-creates within one expansion when
-  // several roster entries cite the same creature chunk.
-  const mobArtifacts = new Map<Id, Id>();
+  // Library creatures: ONE frozen seed row per cited creature identity within
+  // one expansion, so several entries citing the same chunk share it.
+  const creatureFighters = new Map<string, Id>();
   const statless: string[] = [];
   const tokens: BattleToken[] = [];
   for (const [monsterIndex, entry] of entries.entries()) {
@@ -149,10 +172,15 @@ export async function expandRosterEntries(
       const at = options.placeAt(monsterIndex, index) ?? fallbackSpawnPoint(tokens.length);
       if (resolved.statBlock === null) {
         statless.push(`${label} (${resolved.origin === '' ? 'no stats' : resolved.origin})`);
+        const statlessCreatureKey = creatureKeyForEntry(entry);
         const statlessToken: BattleToken = {
           id: newId(),
           // A statless token points at its npc artifact when one exists (so
-          // the badge can link back); rulebook/inline rows point nowhere.
+          // the badge can link back); an inline row points nowhere. Its creature
+          // identity rides along when it has one — a cited creature whose
+          // library row is absent still shows the campaign's presentation
+          // portrait, and the token is badged for its missing STATS, not for
+          // looking unknown.
           artifactId: entry.source.type === 'npc-ref' ? entry.source.artifactId : null,
           label,
           x: at.x,
@@ -167,49 +195,66 @@ export async function expandRosterEntries(
           treasure: entry.treasure,
           conditions: [],
         };
+        if (statlessCreatureKey !== null) statlessToken.creatureKey = statlessCreatureKey;
         tokens.push(statlessToken);
         continue;
       }
       const maxHp = resolved.statBlock.hp;
       const bonus = abilityModifier(resolved.statBlock.abilities.dex);
       let artifactId: Id;
+      /** The creature identity a CITATION gives its tokens (docs/11 D5
+       * amendment); undefined for every token that is not a cited creature. */
+      let creatureKey: string | undefined;
       if (entry.source.type === 'npc-ref') {
         // npc-ref tokens resolve stats through the real artifact — no seed
         // copy to drift (the artifact must NEVER store current HP).
         artifactId = entry.source.artifactId;
+        // An authored NPC cast from a library creature carries that creature's
+        // identity, so its token shows the creature's portrait; a hand-made NPC
+        // has no creature identity and keeps its portrait on its own cover.
+        const npc = await getAnyArtifact(entry.source.artifactId);
+        if (npc?.kind === 'npc' && npc.data.creatureRef !== undefined) {
+          const listing = await resolveCreatureCitation(npc.data.creatureRef, npc.name);
+          if (listing.chunk !== null) creatureKey = listing.identity.key;
+        }
       } else if (entry.source.type === 'rulebook') {
-        // Mob artifact (owner-ratified): ALL instances of a rulebook creature
-        // share ONE image-able npc artifact keyed by the cited chunk — created
-        // here lazily for encounters written before the marker existed (the
-        // get-or-create is idempotent, so old rows retro-fill on first seed),
-        // otherwise the finalize-stamped mobArtifactId is used verbatim (a
-        // dangling one behaves like a deleted npc-ref: scrubbed tokens, no
-        // stats). ONE seedFighters row under that artifact id carries the
-        // chunk-resolved stats; the fighterStats fallthrough (mob artifact
-        // itself has no statBlock → seed row) resolves every instance.
-        artifactId =
-          entry.source.mobArtifactId ??
-          (await getOrCreateMobArtifact(
-            campaignId,
-            entry.source.chunkId,
-            entry.name,
-            { source: 'user' },
-            mobArtifacts,
-          ));
-        if (!seedFighters.some((seed) => seed.id === artifactId)) {
-          seedFighters.push({ id: artifactId, name: entry.name, maxHp, initiativeBonus: bonus });
+        // A LIBRARY CREATURE CITATION (docs/11 D5 amendment): no row is created
+        // for it, so the creature identity is the token's portrait handle. ONE
+        // seedFighters row per IDENTITY (not per instance) carries the
+        // chunk-resolved stats; every instance resolves through it, exactly as
+        // the retired mob artifact's row used to.
+        const listing = await resolveCreatureCitation(entry.source, entry.name);
+        creatureKey = listing.identity.key;
+        const known = creatureFighters.get(creatureKey);
+        if (known === undefined) {
+          artifactId = newId();
+          creatureFighters.set(creatureKey, artifactId);
+          seedFighters.push({
+            id: artifactId,
+            name: entry.name,
+            maxHp,
+            initiativeBonus: bonus,
+            creatureKey,
+          });
+        } else {
+          artifactId = known;
         }
       } else {
-        // Inline monsters have no artifact: freeze the resolved stats onto
-        // the battle row under a synthetic per-instance id.
+        // Inline monsters have no artifact and no creature identity of their
+        // own beyond their content: freeze the resolved stats onto the battle
+        // row under a synthetic per-instance id and key their portrait on the
+        // content identity (docs/11 D5) so the invented mob still gets a look.
         artifactId = newId();
         seedFighters.push({ id: artifactId, name: label, maxHp, initiativeBonus: bonus });
+        creatureKey = inventedCreatureIdentity(entry.name, resolved.statBlock).key;
       }
       // tokenFromFighter gives a fresh NPC instance max HP and empty
       // initiative — exactly the seeding rule. The roster entry's treasure
       // is frozen onto the token (GM-only checklist; the entry can vanish
       // from the artifact later, the seeded token keeps its copy).
-      tokens.push(tokenFromFighter(artifactId, { kind: 'npc', name: label, maxHp }, tokens.length, options.visible, at, entry.treasure));
+      const token = tokenFromFighter(artifactId, { kind: 'npc', name: label, maxHp }, tokens.length, options.visible, at, entry.treasure);
+      if (creatureKey !== undefined) token.creatureKey = creatureKey;
+      tokens.push(token);
     }
   }
   return { tokens, seedFighters, statless };
@@ -249,9 +294,9 @@ export async function seedBattleFromEncounter(
   // Expand the roster (M5-C step 3): each entry with stats produces `count`
   // portrait tokens at fresh max HP (the token instance owns it); statless
   // entries produce HP-less tokens excluded from initiative. The expansion
-  // (identity rules, mob-artifact dedupe, seed freezing) is shared with
+  // (identity rules, creature-identity dedupe, seed freezing) is shared with
   // in-battle spawn (encounter-resume arc) — only placement differs.
-  const expansion = await expandRosterEntries(campaignId, encounter.data.monsters, {
+  const expansion = await expandRosterEntries(encounter.data.monsters, {
     visible: layout !== null,
     placeAt: (monsterIndex, instanceIndex) => {
       const placement = placementByInstance.get(
@@ -458,19 +503,25 @@ export async function spawnRosterInstance(
       : spawnPointInStagingGround(battle.board.tokens.length, battle.board.stagingGround);
   // ONE instance per spawn: clone the entry with count 1 — the expansion's
   // per-entry count would stamp the whole designed group.
-  const expansion = await expandRosterEntries(battle.campaignId, [{ ...entry, count: 1 }], {
+  const expansion = await expandRosterEntries([{ ...entry, count: 1 }], {
     visible: true,
     placeAt: () => at,
     numberFrom: existing + 1,
     forceNumbering: true,
   });
-  // Frozen seed rows merge FIRST (deduped by id — a mob artifact already
-  // carrying a row must not gain a second), so the ONE normalized save
-  // resolves HP/initiative bonuses for the appended tokens through the new
-  // rows. Provenance patch and board land in ONE patchBattle call.
+  // Frozen seed rows merge FIRST, deduped by CREATURE IDENTITY: a re-expansion
+  // of the same roster entry resolves the same identity, so it must not gain a
+  // second row (under the retired mob-artifact model the synthetic id WAS that
+  // stable key; now the identity is). Rows without an identity fall back to the
+  // id, which is stable for them (npc-ref/pc rows mirror an artifact).
   const merged = [...battle.seedFighters];
   for (const seed of expansion.seedFighters) {
-    if (!merged.some((existingSeed) => existingSeed.id === seed.id)) merged.push(seed);
+    const duplicate = merged.some((existingSeed) =>
+      seed.creatureKey !== undefined
+        ? existingSeed.creatureKey === seed.creatureKey
+        : existingSeed.id === seed.id,
+    );
+    if (!duplicate) merged.push(seed);
   }
   await patchBattle(battle.id, {
     seedFighters: merged,

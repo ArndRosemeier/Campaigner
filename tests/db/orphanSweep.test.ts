@@ -321,7 +321,13 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
     );
   });
 
-  it('keeps a mob artifact cited as a roster rulebook mobArtifactId', async () => {
+  it('a bestiary citation does NOT make a same-named npc row survive the sweep', async () => {
+    // REWRITTEN (ledger row 106): the roster reference is the CITATION, so a
+    // rulebook entry keeps nothing alive. The old model stamped a
+    // `mobArtifactId` on the citation and this sweep had to honor it — the
+    // same coupling that left two encounters stuck on a permanent
+    // `missing ref` when the artifact was deleted. A same-named authored npc
+    // is now an ordinary orphan.
     const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
     const module = await proseModule(campaign.id, 'Ember Crypt', 'Fight the [[Ambush]].');
     const mob = await createArtifact({
@@ -341,17 +347,14 @@ describe('sweepOrphanedArtifacts — hard guards (each pinned)', () => {
           count: 2,
           notes: '',
           treasure: '',
-          source: { type: 'rulebook', chunkId: newId(), mobArtifactId: mob.id },
+          source: { type: 'rulebook', chunkId: newId() },
         },
       ]),
     });
 
     const outcome = await sweepOrphanedArtifacts(module.id);
 
-    expect(outcome.deleted).toEqual([]);
-    expect(outcome.kept[0]?.reason).toBe(
-      'mob artifact for roster entry "Goblin" of the encounter "Ambush"',
-    );
+    expect(outcome.deleted.map((row) => row.id)).toEqual([mob.id]);
   });
 
   it('deletes an orphan cited only by an encounter the sweep also deletes', async () => {

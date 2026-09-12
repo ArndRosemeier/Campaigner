@@ -8,7 +8,6 @@ import {
 } from '@/db/artifactRepo';
 import { listDeliverablesByCampaign } from '@/db/deliverableRepo';
 import { getModule, listModulesByCampaign } from '@/db/moduleRepo';
-import { rosterArtifactIds } from '@/db/mobArtifacts';
 import { outlineArtifactIds } from '@/db/orphanSweep';
 import { db } from '@/db/db';
 import { buildWikiGraph } from '@/domain/wikiGraph';
@@ -178,7 +177,9 @@ export async function promoteSecondModuleUses(
 
 /**
  * ROSTER/BATTLE hook — every encounter `data.monsters` write and every
- * battle seed/spawn funnels its referenced artifact ids through here. The
+ * battle seed/spawn funnels its referenced ARTIFACT ids through here
+ * (`rosterArtifactIds`: the `npc-ref` targets; a `rulebook` entry cites the
+ * read-only library and has no owner to promote). The
  * encounter/battle module mismatching an artifact's owner promotes it.
  * `encounterModuleId: null` is a campaign-level use: it REFUSES to adopt
  * another module's rows (the owner-ratified campaign-level exception above) —
@@ -215,6 +216,25 @@ export async function promoteRosterUses(
 
 export type ReferenceVia = 'link' | 'relation' | 'roster' | 'battle' | 'outline';
 
+/**
+ * The artifact ids a roster points at: its `npc-ref` entries' targets, and
+ * nothing else. ONE reader for every roster consumer (the auto-promote
+ * ROSTER/BATTLE hook and the delete census) — never a second interpretation of
+ * `MonsterEntry.source`.
+ *
+ * A `rulebook` entry is a LIBRARY CREATURE CITATION and contributes no id
+ * (docs/11 D5 amendment): it names a read-only chunk, not a row this app owns,
+ * which is exactly why the incident this arc closes cannot recur — a roster
+ * can only ever dangle through an authored NPC the GM can see and restore.
+ */
+export function rosterArtifactIds(monsters: readonly MonsterEntry[]): Id[] {
+  const ids: Id[] = [];
+  for (const monster of monsters) {
+    if (monster.source.type === 'npc-ref') ids.push(monster.source.artifactId);
+  }
+  return ids;
+}
+
 export interface ReferencedOwnedArtifact {
   artifact: AnyArtifact;
   via: ReferenceVia;
@@ -225,8 +245,9 @@ export interface ReferencedOwnedArtifact {
  * referenced from OUTSIDE the module. No stored index exists: the reference
  * set unions the wiki-link graph edges, artifact `links[]` (the Relations
  * editor), artifact BODY wiki-links, the encounter roster scan
- * (npc-ref + mobArtifactId), the battle token/seed-fighter scan and
- * deliverable outline artifact nodes. References from the module's OWN
+ * (`rosterArtifactIds`: `npc-ref` targets — a `rulebook` entry cites the
+ * library and can never point at an owned row), the battle token/seed-fighter
+ * scan and deliverable outline artifact nodes. References from the module's OWN
  * encounters/battles do not count — those rows die with the module under
  * cascade.
  *
@@ -270,8 +291,9 @@ export async function modulesReferencingOwnedArtifacts(
     if (edge.moduleId !== moduleId && ownedIds.has(edge.to)) mark(edge.to, 'link');
   }
 
-  // Roster: npc-ref / mobArtifactId entries on encounters OUTSIDE the module
-  // (campaign-level and library rows included — they survive the delete).
+  // Roster: npc-ref entries on encounters OUTSIDE the module (campaign-level
+  // and library rows included — they survive the delete). A rulebook citation
+  // contributes no id: it names the library, not a row this module owns.
   for (const row of pool) {
     if (row.kind !== 'encounter' || row.moduleId === moduleId) continue;
     for (const id of rosterArtifactIds(row.data.monsters)) {

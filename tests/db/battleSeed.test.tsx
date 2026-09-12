@@ -3,6 +3,11 @@ import 'fake-indexeddb/auto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createArtifact, getAnyArtifact, listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
+import {
+  creatureCoverImageId,
+  creaturePortraitArt,
+  setCreatureCover,
+} from '@/db/creatureRepo';
 import { seedBattleFromEncounter, spawnRosterInstance } from '@/db/battleSeed';
 import { ensureBattle, getBattleByModule } from '@/db/battleRepo';
 import { createCampaign } from '@/db/campaignRepo';
@@ -10,12 +15,20 @@ import { createModule as createModuleRepo } from '@/db/moduleRepo';
 import { putChunks } from '@/db/chunkRepo';
 import { createImage } from '@/db/imageRepo';
 import { buildFighterStatsLookup, fighterStatsFromPc } from '@/db/fighterStats';
-import { getOrCreateMobArtifact } from '@/db/mobArtifacts';
 import { createRulebook } from '@/db/rulebookRepo';
 import { fighterTokens } from '@/domain/battle/board';
 import { stagingBlockRect } from '@/domain/encounterMap/layout';
 import type { Artifact, EncounterLayout, Id, StatBlock } from '@/domain';
-import { createModule as createModuleSchema, newId, packRooms, placeMonsters, ruleChunkSchema, stampNewEntity, statBlockSchema } from '@/domain';
+import {
+  createModule as createModuleSchema,
+  libraryCreatureKey,
+  newId,
+  packRooms,
+  placeMonsters,
+  ruleChunkSchema,
+  stampNewEntity,
+  statBlockSchema,
+} from '@/domain';
 import { sha256Hex } from '@/lib/hash';
 import { clearDatabase } from './helpers';
 
@@ -462,31 +475,28 @@ describe('mob artifact identity (owner-ratified arc)', () => {
       'Goblin Boss 2',
       'Goblin Boss 3',
     ]);
-    // ALL instances carry the SAME artifact id — the shared mob artifact.
-    const artifactIds = new Set(fighters.map((token) => token.artifactId));
-    expect(artifactIds.size).toBe(1);
-    const mobArtifactId = fighters[0]?.artifactId;
-    expect(mobArtifactId).toBeDefined();
-    const mob = await getAnyArtifact(mobArtifactId ?? '');
-    expect(mob?.kind).toBe('npc');
-    expect(mob?.name).toBe('Goblin Boss');
-    if (mob?.kind !== 'npc') throw new Error('not an npc');
-    expect(mob.data.monsterChunkId).toBe(chunkId);
-    // NO stat duplication: the chunk stays the source of truth.
-    expect(mob.data.statBlock).toBeNull();
-    // Exactly ONE seed row, keyed by the artifact id, stats from the chunk.
+    // REWRITTEN (ledger row 106): ALL instances carry the SAME CREATURE
+    // IDENTITY — the citation. Under the old model this was a shared `npc`
+    // artifact's id; that row is exactly what stranded roster entries when it
+    // was deleted, so identity replaced it. NO artifact exists at all.
+    const creatureKeys = new Set(fighters.map((token) => token.creatureKey));
+    expect(creatureKeys.size).toBe(1);
+    expect([...creatureKeys][0]).toBe(libraryCreatureKey(chunkId));
+    // Exactly ONE seed row, stats from the chunk (the library stays the truth).
     expect(battle.seedFighters).toHaveLength(1);
     expect(battle.seedFighters[0]).toMatchObject({
-      id: mobArtifactId,
       name: 'Goblin Boss',
       maxHp: 21,
       initiativeBonus: 2,
     });
-    // Every instance: fresh max HP, initiative resolves through the fallthrough.
+    // Every instance: fresh max HP, initiative resolves through the identity.
     for (const token of fighters) expect(token.currentHp).toBe(21);
     const stats = buildFighterStatsLookup(battle, await listArtifactsByCampaign(campaignId));
-    expect(stats(mobArtifactId ?? '')?.maxHp).toBe(21);
-    expect(stats(mobArtifactId ?? '')?.initiativeBonus).toBe(2);
+    const seedId = battle.seedFighters[0]?.id ?? '';
+    expect(stats(seedId)?.maxHp).toBe(21);
+    expect(stats(seedId)?.initiativeBonus).toBe(2);
+    // The seed row is a frozen stat copy, and it is NOT an artifact.
+    expect(await getAnyArtifact(seedId)).toBeUndefined();
   });
 
   it('retro-fills lazily: an old encounter (no mobArtifactId) converges on the same artifact across seeds', async () => {
@@ -499,42 +509,53 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     expect(encounter.data.monsters[0]?.source).toMatchObject({ type: 'rulebook', chunkId });
     const first = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     const second = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
-    const firstId = fighterTokens(first.battle.board)[0]?.artifactId;
-    const secondId = fighterTokens(second.battle.board)[0]?.artifactId;
+    const firstId = fighterTokens(first.battle.board)[0]?.creatureKey;
+    const secondId = fighterTokens(second.battle.board)[0]?.creatureKey;
     expect(secondId).toBe(firstId);
-    const mobs = (await listArtifactsByCampaign(campaignId)).filter(
-      (row) => row.kind === 'npc' && row.data.monsterChunkId === chunkId,
-    );
-    expect(mobs).toHaveLength(1);
+    expect(firstId).toBe(libraryCreatureKey(chunkId));
+    // Convergence costs NOTHING: the identity is the citation, so there is no
+    // artifact to converge on and none to leak.
+    expect(
+      (await listArtifactsByCampaign(campaignId)).filter((row) => row.kind === 'npc'),
+    ).toHaveLength(0);
   });
 
-  it('uses the finalize-stamped mobArtifactId verbatim instead of creating another artifact', async () => {
+  it('a roster row that also carries a stale artifact id still seeds by the CITATION (that id is ignored)', async () => {
+    // REWRITTEN (ledger row 106): the retired `mobArtifactId` was a second,
+    // artifact-shaped identity for the same creature. It is gone from the
+    // schema, and a row that still carried one would be stripped by zod — the
+    // token's identity comes from the chunk, always.
     const chunkId = await seedGoblinChunk();
-    const preexisting = await seedGoblinChunkCampaignArtifact(chunkId);
     const encounter = await addEncounter({
-      monsters: [
-        { name: 'Goblin Boss', count: 2, source: { type: 'rulebook', chunkId, mobArtifactId: preexisting } },
-      ],
+      monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'rulebook', chunkId } }],
     });
+    if (encounter.kind !== 'encounter') throw new Error('not an encounter');
+    expect(Object.keys(encounter.data.monsters[0]?.source ?? {})).toEqual([
+      'type',
+      'chunkId',
+    ]);
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
     for (const token of fighterTokens(battle.board)) {
-      expect(token.artifactId).toBe(preexisting);
+      expect(token.creatureKey).toBe(libraryCreatureKey(chunkId));
     }
     expect(battle.seedFighters).toHaveLength(1);
-    expect(battle.seedFighters[0]?.id).toBe(preexisting);
-    const mobs = (await listArtifactsByCampaign(campaignId)).filter(
-      (row) => row.kind === 'npc' && row.data.monsterChunkId === chunkId,
-    );
-    expect(mobs).toHaveLength(1);
+    expect(
+      (await listArtifactsByCampaign(campaignId)).filter((row) => row.kind === 'npc'),
+    ).toHaveLength(0);
   });
 
-  it('a portrait on the mob artifact is resolvable via coverImageId from the seeded tokens', async () => {
+  it('a portrait on the CREATURE IDENTITY is resolvable from the seeded tokens', async () => {
+    // REWRITTEN (ledger row 106): the presentation tier keys on identity
+    // (docs/11 D6), so a portrait lives on a per-campaign creature row and
+    // NOT on any artifact. The TokenView path is token → creatureKey →
+    // creature portrait → blob url.
     const chunkId = await seedGoblinChunk();
     const encounter = await addEncounter({
       monsters: [{ name: 'Goblin Boss', count: 2, source: { type: 'rulebook', chunkId } }],
     });
     const { battle } = await seedBattleFromEncounter(campaignId, newId(), encounter.id);
-    const mobArtifactId = fighterTokens(battle.board)[0]?.artifactId ?? '';
+    const creatureKey = fighterTokens(battle.board)[0]?.creatureKey ?? '';
+    expect(creatureKey).toBe(libraryCreatureKey(chunkId));
     const portrait = await createImage({
       campaignId,
       blob: new Blob([new Uint8Array([9, 9])], { type: 'image/png' }),
@@ -543,11 +564,13 @@ describe('mob artifact identity (owner-ratified arc)', () => {
       height: 64,
       source: 'uploaded',
     });
-    await updateArtifact(mobArtifactId, { imageIds: [portrait.id], coverImageId: portrait.id });
-    // The TokenView path: token → artifact → coverImageId → image url. Zero
-    // BattleSurface changes — the artifact lookup is the only requirement.
-    const mob = await getAnyArtifact(mobArtifactId);
-    expect(mob?.coverImageId).toBe(portrait.id);
+    await setCreatureCover({ campaignId, creatureKey, imageId: portrait.id });
+    expect(await creatureCoverImageId({ campaignId, creatureKey })).toBe(portrait.id);
+    expect(await creaturePortraitArt(campaignId, creatureKey)).toBe('cover');
+    // Zero artifacts exist for the creature — the identity is the whole key.
+    expect(
+      (await listArtifactsByCampaign(campaignId)).filter((row) => row.kind === 'npc'),
+    ).toHaveLength(0);
   });
 
   it('old seeding shapes are unchanged: inline keeps per-instance rows, a missing chunk stays statless', async () => {
@@ -565,7 +588,9 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     expect(new Set(goblins.map((token) => token.artifactId)).size).toBe(2);
     expect(battle.seedFighters.filter((seed) => seed.name.startsWith('Goblin'))).toHaveLength(2);
     // Missing chunk: statless token pointing nowhere — reported loudly.
-    expect(statless).toEqual(['Vanished (missing ref)']);
+    // The ONE surviving `missing ref` reason, named (docs/11 D9): the library
+    // row is genuinely gone and the content-hash fallback found nothing.
+    expect(statless).toEqual(['Vanished (missing ref (Vanished))']);
     const vanished = battle.board.tokens.find((token) => token.label === 'Vanished');
     expect(vanished?.artifactId).toBeNull();
     expect(vanished?.currentHp).toBeNull();
@@ -574,11 +599,6 @@ describe('mob artifact identity (owner-ratified arc)', () => {
     expect(real?.artifactId).toBeDefined();
   });
 });
-
-/** Creates the mob artifact the way finalize would have stamped it. */
-async function seedGoblinChunkCampaignArtifact(chunkId: Id): Promise<Id> {
-  return getOrCreateMobArtifact(campaignId, chunkId, 'Goblin Boss');
-}
 
 describe('map resolution', () => {
   it('uses the encounter’s battlemap, else a linked location’s map-role cover, else no map', async () => {
@@ -831,12 +851,13 @@ describe('in-battle spawn (encounter-resume arc)', () => {
     // The spawned instance inherits the roster entry's treasure (shared
     // expansion path).
     expect(spawned.treasure).toBe('Pouch: 5 gp');
-    expect(spawned.artifactId).toBe(fighters[0]?.artifactId);
+    // SAME creature identity as every other instance of the roster entry.
+    expect(spawned.creatureKey).toBe(fighters[0]?.creatureKey);
     expect(spawned.initiativeRoll).toBeNull();
     // NO stat duplication: the shared seed row is deduped, not duplicated.
     expect(after.seedFighters).toHaveLength(beforeSeedRows);
     const stats = buildFighterStatsLookup(after, await listArtifactsByCampaign(campaignId));
-    expect(stats(spawned.artifactId ?? '')?.maxHp).toBe(21);
+    expect(stats(after.seedFighters[0]?.id ?? '')?.maxHp).toBe(21);
     // Placement: inside the staging ground region, on the live board.
     expect(spawned.x).toBeGreaterThanOrEqual(0);
     expect(spawned.x).toBeLessThanOrEqual(1);
