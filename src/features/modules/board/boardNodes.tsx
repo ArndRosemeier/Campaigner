@@ -190,8 +190,18 @@ export const PartCardNode = memo(function PartCardNode({ id }: NodeProps): JSX.E
         </Badge>
         <PartStatusPill status={slice.status} />
         {slice.edited && (
+          // WHO wrote it, not "was it written outside the generator"
+          // (docs/17 row 113): a canvas-applied model rewrite is `edited` too,
+          // and a badge that called it hand-edited blamed the owner for a
+          // model's text. `null` origin = NOT RECORDED, which reads as
+          // human-authored (the conservative default) and renders its own
+          // always-true state instead of claiming the owner's hand.
           <Badge variant="secondary" className="shrink-0">
-            hand-edited
+            {slice.origin === 'model'
+              ? 'model-written'
+              : slice.origin === 'human'
+                ? 'hand-edited'
+                : 'written outside the generator'}
           </Badge>
         )}
         {slice.status === 'ready' && staged === undefined && (

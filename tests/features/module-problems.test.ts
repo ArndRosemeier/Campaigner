@@ -15,7 +15,11 @@ import {
 } from '@/domain';
 import {
   deriveModuleProblems,
+  heldRewriteSummary,
+  heldRewritesBanner,
   moduleHasProblems,
+  modulePartWriterLabel,
+  moduleTextWriterLabel,
   PREMISE_WHERE,
 } from '@/features/modules/module-problems';
 import { clearDatabase } from '../db/helpers';
@@ -133,7 +137,7 @@ describe('deriveModuleProblems — the encounter floor detector', () => {
     expect(problem?.required).toBe(1);
     expect(problem?.found).toBe(0);
     expect(problem?.moduleTotal).toBe(false);
-    expect(problem?.handEdited).toBe(false);
+    expect(problem?.writtenOutsideGenerator).toBe(false);
     // The confirmation line names the part, the band and both numbers.
     expect(problem?.label).toContain('Part 2 — Under the Docks');
     expect(problem?.label).toContain('band 2');
@@ -141,10 +145,12 @@ describe('deriveModuleProblems — the encounter floor detector', () => {
     expect(problem?.label).toContain('names 0');
   }, 30_000);
 
-  it('flags a hand-edited deficient part as such in the confirmation line', async () => {
+  it('flags a deficient part written outside the generator and NAMES the writer, never the owner by default', async () => {
     const module = await seedModule({
       encounterFloorGuardrail: ONE_PER_LEVEL,
       parts: [
+        // A LEGACY part: `edited` with NO recorded origin — the row cannot say
+        // who wrote it, so the label must not blame the owner (docs/17 row 113).
         modulePartSchema.parse({
           planIndex: 0,
           status: 'ready',
@@ -152,11 +158,15 @@ describe('deriveModuleProblems — the encounter floor detector', () => {
           edited: true,
           errorMessage: '',
         }),
+        // A MODEL-written part applied through the canvas: `edited` too, but
+        // the row names its writer — the correction this arc makes.
         modulePartSchema.parse({
           planIndex: 1,
           status: 'ready',
           markdown: '## Under the Docks\n\nThey break [[Drowned Stair]].',
-          edited: false,
+          edited: true,
+          writerModel: 'test/writer-model',
+          origin: 'model',
           errorMessage: '',
         }),
       ],
@@ -165,9 +175,36 @@ describe('deriveModuleProblems — the encounter floor detector', () => {
 
     const problems = deriveModuleProblems(module, []);
 
+    const legacy = problems.repairable.find((entry) => entry.planIndex === 0);
+    expect(legacy?.writtenOutsideGenerator).toBe(true);
+    expect(legacy?.label).toContain(
+      'This part was written by hand (or before the app recorded authorship).',
+    );
+    expect(legacy?.label).not.toContain('Hand-edited');
+    expect(legacy?.label).not.toContain('your text');
+  }, 30_000);
+
+  it('names the model that wrote a canvas-applied part in the confirmation line', async () => {
+    const module = await seedModule({
+      encounterFloorGuardrail: ONE_PER_LEVEL,
+      parts: [
+        modulePartSchema.parse({
+          planIndex: 0,
+          status: 'ready',
+          markdown: '## The Tide Gate\n\nNothing happens here.',
+          edited: true,
+          writerModel: 'anthropic/claude-x',
+          origin: 'model',
+          errorMessage: '',
+        }),
+      ],
+      entityKinds: [{ name: 'Drowned Stair', kind: 'encounter', absorbed: [] }],
+    });
+
+    const problems = deriveModuleProblems(module, []);
     const problem = problems.repairable.find((entry) => entry.planIndex === 0);
-    expect(problem?.handEdited).toBe(true);
-    expect(problem?.label).toContain('Hand-edited');
+    expect(problem?.label).toContain('The model `anthropic/claude-x` wrote this part.');
+    expect(problem?.label).toContain('This rewrite replaces it (a version is saved first).');
   }, 30_000);
 
   it('targets both parts when both bands are short', async () => {
@@ -407,4 +444,60 @@ describe('deriveModuleProblems — derived, never stored', () => {
     expect(Object.keys(edited)).not.toContain('deviates');
     expect(Object.keys(edited)).not.toContain('problems');
   }, 30_000);
+});
+
+describe('the held-rewrite sentence and the writer labels (docs/17 row 113)', () => {
+  it('names the documents held and says nothing was changed — and never claims authorship', async () => {
+    const module = await seedModule({
+      spine: moduleSpineSchema.parse({
+        premise: 'The gate of [[Ember Crypt]] opens at dusk.',
+        themes: [],
+        partPlan: [
+          { title: 'The Tide Gate', levelBand: '1', synopsis: '', levelUpTrigger: '' },
+          { title: 'Under the Docks', levelBand: '2', synopsis: '', levelUpTrigger: '' },
+        ],
+        origin: 'human',
+        writerModel: '',
+      }),
+    });
+    const parts = module.parts.map((part) =>
+      part.planIndex === 0 ? { ...part, origin: 'model' as const, writerModel: 'staged/x' } : part,
+    );
+    const held = { ...module, parts };
+
+    const summary = heldRewriteSummary(held, [
+      { planIndex: -1, replacements: [{ from: 'Ember Crypt', to: 'Ember Crypt' }] },
+      { planIndex: 0, replacements: [{ from: 'Ash Gate', to: 'The Ash Gate' }] },
+    ]);
+
+    // The documents are named in plan order, premise first, each once.
+    expect(summary.documents.map((entry) => entry.where)).toEqual([PREMISE_WHERE, 'part 1']);
+    expect(summary.rewriteCount).toBe(2);
+    expect(summary.documentsProse).toBe('premise and part 1');
+
+    const banner = heldRewritesBanner(summary);
+    expect(banner).toBe(
+      'Normalization is holding 2 link rewrites for review — premise and part 1. ' +
+        '2 documents are waiting on your decision; nothing has been changed.',
+    );
+    // The sentence the owner reported: never again, and never as a claim about
+    // who wrote the text.
+    expect(banner).not.toContain('hand-edited');
+    expect(banner).not.toContain('your text');
+
+    // The per-document writer the dialog rows print: what the ROW records, and
+    // an unrecorded origin says so rather than blaming the owner.
+    expect(summary.documents.map((entry) => entry.writer)).toEqual(['you', 'staged/x']);
+    expect(moduleTextWriterLabel({ origin: 'human', writerModel: '' })).toBe('you');
+    expect(moduleTextWriterLabel({ origin: 'model', writerModel: 'staged/x' })).toBe('staged/x');
+    expect(moduleTextWriterLabel({ origin: 'model', writerModel: '' })).toBe('the model');
+    expect(moduleTextWriterLabel({ origin: null, writerModel: 'old/model' })).toBe(
+      'written by hand (or before the app recorded authorship)',
+    );
+    // The SENTENCE form the confirmations over module text print.
+    expect(modulePartWriterLabel(parts[0])).toBe('The model `staged/x` wrote this part.');
+    expect(modulePartWriterLabel(module.parts[1])).toBe(
+      'This part was written by hand (or before the app recorded authorship).',
+    );
+  });
 });

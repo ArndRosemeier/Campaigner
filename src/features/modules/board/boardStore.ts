@@ -5,6 +5,7 @@ import {
   type Id,
   type Module,
   type ModulePartStatus,
+  type TextOrigin,
 } from '@/domain';
 
 /**
@@ -45,6 +46,15 @@ export interface PartCardSlice {
   errorMessage: string;
   markdown: string;
   edited: boolean;
+  /**
+   * WHO WROTE this part's text (docs/17 row 113): `'human'`, `'model'`, or
+   * `null` for NOT RECORDED (a row written before the field). The card's badge
+   * reads THIS, not `edited` — `edited` only says the text came from outside
+   * the generator, which is equally true of a model rewrite the owner accepted
+   * through the canvas. `textOriginIsMachineWritten` is the ONE predicate a
+   * consumer may apply; nothing re-derives authorship from `writerModel`.
+   */
+  origin: TextOrigin | null;
 }
 
 /** One prior module's read-only text group (premise + parts, TEXT ONLY). */
@@ -184,7 +194,8 @@ function partEquals(a: PartCardSlice, b: PartCardSlice): boolean {
     a.status === b.status &&
     a.errorMessage === b.errorMessage &&
     a.markdown === b.markdown &&
-    a.edited === b.edited
+    a.edited === b.edited &&
+    a.origin === b.origin
   );
 }
 

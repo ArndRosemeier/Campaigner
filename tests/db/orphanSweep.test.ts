@@ -77,6 +77,7 @@ async function proseModule(
     premise,
     themes: [],
     writerModel: '',
+    origin: null,
     partPlan: [
       {
         title: 'The Seal',

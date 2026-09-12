@@ -1,5 +1,6 @@
 import type { AnyArtifact, Campaign, EntityKind, Id, Module, ModuleEntityKind, ModulePart, ModuleSpine, PartPlan } from '@/domain';
 import {
+  carriedTextOrigin,
   createModule,
   encounterCountWord,
   encounterFloorGuardrailFor,
@@ -14,6 +15,7 @@ import {
   moduleSpineSchema,
   MODULE_SIZE_WORD_TARGETS,
   partWriterModelFor,
+  textOriginIsMachineWritten,
   withEntityBestiarySlots,
   type EncounterFloorGuardrail,
 } from '@/domain';
@@ -450,7 +452,10 @@ async function runSpinePass(
         // PROVENANCE (docs/17 row 93): the premise's writing model, recorded
         // with the spine it belongs to. `''` stays `''` (not recorded →
         // nothing displayed); nothing derives it from the settings.
-        spine: { ...nextSpine, writerModel },
+        // AUTHORSHIP (docs/17 row 113): this pass is the model writing the
+        // premise, so it records the origin as well — a model write by
+        // construction, never a `writerModel`-shaped guess.
+        spine: { ...nextSpine, writerModel, origin: 'model' },
         entityKinds: normalizedKinds,
         status: 'draft',
         errorMessage: '',
@@ -572,13 +577,18 @@ const modelEntityKindSchema = z.object({
  * marks it REQUIRED, so keeping it would force the decoder to emit an id the
  * model can only invent (which the run then overwrites anyway). The model is
  * asked for the prose; the run records which model served it, after the fact.
+ *
+ * AUTHORSHIP (docs/17 row 113): `origin` is omitted for exactly the same
+ * reason — it is the app's record of who wrote the premise, never a value the
+ * model may answer, and its presence in the emitted schema would add a
+ * required field to the contract for no prompt-side gain.
  */
 export const spineReplySchema = z
   .object({
     ...moduleSpineSchema.shape,
     entities: z.array(modelEntityKindSchema),
   })
-  .omit({ writerModel: true });
+  .omit({ writerModel: true, origin: true });
 
 /**
  * Parses the entity list the spine pass records alongside the spine (08
@@ -1086,8 +1096,11 @@ export function floorRepairTargets(
  * CANCELLED (`generatePart` clears the slot before its call, so without this the
  * pre-repair prose would be gone — AGENTS rule 1). Restores only when the attempt
  * left the slot EMPTY: text the attempt actually wrote is kept (the user judges
- * it, with the durable pre-change snapshot to undo it), and a newer hand edit is
- * never clobbered (`live.edited` with nothing of ours to undo). ONE restore used
+ * it, with the durable pre-change snapshot to undo it), and text already
+ * written outside the generator is never clobbered (`live.edited` with
+ * nothing of ours to undo — `edited` is exactly "written outside the
+ * generator", docs/17 row 113, so this guard deliberately reads that field
+ * and NOT `origin`). ONE restore used
  * by the in-pass floor repair and by the "Fix module problems" entry point.
  */
 async function restorePartAfterFailedRepair(moduleId: Id, snapshot: ModulePart | undefined): Promise<void> {
@@ -1398,13 +1411,17 @@ async function runPartsPassUnlocked(
         floorMessage +=
           ' Entity name normalization did not succeed for the current text, so the count uses the last recorded kinds — retry normalization from the entity panel if this looks wrong.';
       }
-      const editedDeficient = floorReport.deficient.filter((entry) =>
+      // `edited` is "written outside the generator", NOT an authorship claim
+      // (docs/17 row 113) — an accepted AI rewrite is in this list too, so the
+      // sentence says what is true of the text (it was not rewritten) instead
+      // of asserting the owner typed it.
+      const untouchedDeficient = floorReport.deficient.filter((entry) =>
         gated.parts.some((part) => part.planIndex === entry.planIndex && part.edited),
       );
-      if (editedDeficient.length > 0) {
+      if (untouchedDeficient.length > 0) {
         floorMessage +=
-          ` Hand-edited part(s) ${editedDeficient.map((entry) => `"${entry.title}"`).join(', ')} ` +
-          `were left untouched — add the missing [[encounter]] links by hand or rewrite.`;
+          ` Part(s) ${untouchedDeficient.map((entry) => `"${entry.title}"`).join(', ')} ` +
+          `already written outside the generator were left untouched — add the missing [[encounter]] links by hand or rewrite.`;
       }
       toastError('Module generation failed: encounter floor not met', new Error(floorMessage));
       await patchModule(moduleId, { status: 'failed', errorMessage: floorMessage });
@@ -1483,6 +1500,14 @@ export async function generatePart(
   // that actually wrote the markdown — a repair/rewrite escalation to the
   // fallback model is recorded as the fallback, never the configured model.
   const carriedWriterModel = partWriterModelFor('', previousWriterModel);
+  // AUTHORSHIP (docs/17 row 113): the same distinction applies to `origin` —
+  // the slots that hold NO new text (generating/pending/failed) carry the
+  // previous origin, and the `ready` slot is `'model'` by construction: this
+  // seam is the generator writing part prose, so it can never be a hand edit.
+  const previousOrigin = module.parts.find(
+    (entry): boolean => entry.planIndex === planIndex,
+  )?.origin;
+  const carriedOrigin = carriedTextOrigin(previousOrigin);
 
   await setPart({
     planIndex,
@@ -1491,6 +1516,7 @@ export async function generatePart(
     errorMessage: '',
     edited: false,
     writerModel: carriedWriterModel,
+    origin: carriedOrigin,
   });
 
   try {
@@ -1521,6 +1547,7 @@ export async function generatePart(
         errorMessage: debrisMessage,
         edited: false,
         writerModel: carriedWriterModel,
+        origin: carriedOrigin,
       });
       throw new Error(debrisMessage);
     }
@@ -1531,6 +1558,7 @@ export async function generatePart(
       errorMessage: '',
       edited: false,
       writerModel: partWriterModelFor(called.modelUsed, previousWriterModel),
+      origin: 'model',
     });
     // LINKS hook: generated part prose reuses established names exactly —
     // second-module wikilink uses promote to shared campaign ownership.
@@ -1546,6 +1574,7 @@ export async function generatePart(
         errorMessage: 'Cancelled',
         edited: false,
         writerModel: carriedWriterModel,
+        origin: carriedOrigin,
       });
       throw error;
     }
@@ -1557,6 +1586,7 @@ export async function generatePart(
       errorMessage: message,
       edited: false,
       writerModel: carriedWriterModel,
+      origin: carriedOrigin,
     });
     throw error;
   }
@@ -1883,8 +1913,10 @@ async function normalizationCall(
  * refers to. The verdict is applied mechanically:
  *
  * - link targets are rewritten to `[[canonical|<original display>]]`
- *   (rendered prose byte-identical) in generated parts — hand-edited parts
- *   and the premise produce stored proposals for the panel's consent review;
+ *   (rendered prose byte-identical) in machine-written documents — generated
+ *   parts AND the generated premise (owner decision, docs/17 row 113) —
+ *   while text a human authored produces stored proposals for the panel's
+ *   consent review;
  * - a canonical that is an existing artifact gains the variant as an alias;
  * - `entityKinds` is REPLACED with one record per canonical entity
  *   (`canonicalEntityRecords` — never merged, or stale variant records
@@ -2018,9 +2050,10 @@ export function unclassifiedModuleNames(
  * It is the SAME normalization machinery, never a second classifier: the same
  * prompt builder, the same JSON contract + validator + one repair retry, the
  * same mechanical application, and the same consent rule for text rewrites
- * (generated parts apply immediately; hand-edited parts and the premise become
- * stored proposals for the panel's review — chat-applied text is hand-edited
- * by definition, the one part-text save path stamps `edited: true`). Its input
+ * (machine-written documents — generated parts, the generated premise, and
+ * text a model wrote through the canvas — apply immediately; text a human
+ * authored becomes a stored proposal for the panel's review; the predicate is
+ * `textOriginIsMachineWritten`, docs/17 row 113). Its input
  * is narrowed to the names that have no record yet and do not resolve, and its
  * record write is APPEND-ONLY (`mergeNewEntityRecords`): names already recorded
  * are untouched, so repeating the run — or chatting again — can neither
@@ -2103,8 +2136,8 @@ export async function classifyNewModuleEntityNames(moduleId: Id): Promise<NewEnt
 }
 
 /**
- * Applies a validated verdict mechanically (fix-01): rewrites generated text,
- * holds proposals for hand-edited text and the premise, records aliases, and
+ * Applies a validated verdict mechanically (fix-01): rewrites machine-written
+ * text, holds proposals for text a human authored, records aliases, and
  * writes `entityKinds`. The canonical spelling written into tokens/records is
  * the listed or artifact spelling of the entity the model chose — the verdict
  * itself is never altered.
@@ -2118,7 +2151,7 @@ export async function classifyNewModuleEntityNames(moduleId: Id): Promise<NewEnt
  *   BYTE-IDENTICAL and only genuinely new canonicals are appended
  *   (`mergeNewEntityRecords` — no re-keying, no duplicate, the fix-01
  *   no-duplicate guarantee the batch buckets read), and a review already
- *   pending for hand-edited text is preserved rather than replaced
+ *   pending for human-authored text is preserved rather than replaced
  *   (`mergeEntityRewriteProposals`).
  */
 async function applyNormalizationVerdict(
@@ -2159,17 +2192,23 @@ async function applyNormalizationVerdict(
     await updateArtifact(artifactId, { aliases: [...artifact.aliases, ...additions] });
   }
 
-  // Generated parts apply immediately; hand-edited parts and the premise are
-  // held as proposals (the pass runs headless — consent is the panel's job).
-  // The premise ALWAYS takes the proposal path (planIndex −1): it is user-
-  // visible everywhere, so its text changes only on explicit consent.
+  // CONSENT (fix-01, re-based on AUTHORSHIP by docs/17 row 113): a rewrite is
+  // applied IMMEDIATELY to machine-written text and HELD as a proposal for text
+  // a human authored. The predicate is `textOriginIsMachineWritten` — the ONE
+  // authorship accessor (domain/provenance) — because `edited` only ever meant
+  // "written outside the generator", which is equally true of a canvas-applied
+  // model rewrite and of an auto-accepted proposal. Reading `edited` here was
+  // the bug the owner hit: a module he never touched raised the consent banner
+  // about "hand-edited text" purely because its premise named a variant.
+  // `origin: null` (rows written before the field) counts as HUMAN, so such
+  // text keeps asking rather than being silently rewritten.
   const sortedParts = [...module.parts].sort((a, b) => a.planIndex - b.planIndex);
   const appliedParts = sortedParts.map((part) => {
-    if (part.edited) return part;
+    if (!textOriginIsMachineWritten(part.origin)) return part;
     const rewritten = rewriteWikiLinkTargets(part.markdown, rewrites);
     return rewritten === part.markdown ? part : { ...part, markdown: rewritten };
   });
-  const premise = module.spine?.premise ?? '';
+  const storedPremise = module.spine?.premise ?? '';
   // Per-document proposal: only the replacements whose token actually occurs
   // in that document (the stored record stays truthful for the consent UI;
   // applying a replacement whose token is gone is a harmless no-op).
@@ -2178,12 +2217,30 @@ async function applyNormalizationVerdict(
     return rewrites.filter((rewrite) => names.has(rewrite.from.trim().toLowerCase()));
   };
   const proposals: { planIndex: number; replacements: LinkRewrite[] }[] = [];
-  const premiseRewrites = rewritesFor(premise);
-  if (premiseRewrites.length > 0) {
-    proposals.push({ planIndex: -1, replacements: premiseRewrites });
+  // THE PREMISE (owner decision, verbatim: "Yes — normalize the generated
+  // premise automatically, like a generated part."): this pass used to ALWAYS
+  // hold a premise proposal (planIndex −1), which is the other half of the
+  // banner the owner hit. The operation only retargets `[[…]]` links and
+  // preserves the display text, so a machine-written premise takes it
+  // directly; a premise the owner typed is still held, exactly as before.
+  let nextSpine: ModuleSpine | null = module.spine;
+  const premiseMachineWritten = textOriginIsMachineWritten(module.spine?.origin);
+  if (premiseMachineWritten) {
+    const rewrittenPremise = rewriteWikiLinkTargets(storedPremise, rewrites);
+    if (rewrittenPremise !== storedPremise && module.spine !== null) {
+      // The document this pass wrote is no longer the one the model wrote —
+      // and NONE of it was typed by the owner, which is the question the
+      // consent rule asks, so the origin stays `'model'`.
+      nextSpine = { ...module.spine, premise: rewrittenPremise, origin: 'model' };
+    }
+  } else {
+    const premiseRewrites = rewritesFor(storedPremise);
+    if (premiseRewrites.length > 0) {
+      proposals.push({ planIndex: -1, replacements: premiseRewrites });
+    }
   }
   for (const part of sortedParts) {
-    if (!part.edited) continue;
+    if (textOriginIsMachineWritten(part.origin)) continue;
     const partRewrites = rewritesFor(part.markdown);
     if (partRewrites.length > 0) {
       proposals.push({ planIndex: part.planIndex, replacements: partRewrites });
@@ -2207,6 +2264,10 @@ async function applyNormalizationVerdict(
         : null;
   await patchModule(moduleId, {
     parts: appliedParts,
+    // The premise, when this pass rewrote it (a machine-written premise); the
+    // row's own spine is otherwise written back BYTE-IDENTICAL, so a proposal
+    // that was just held can never disturb the text it is about.
+    spine: nextSpine,
     entityKinds: records,
     entityNamesNormalized: true,
     entityNormalizationError: '',
@@ -2297,13 +2358,33 @@ async function runAutomatedParts(moduleId: Id, campaign: Campaign): Promise<void
  * "Generate parts" from the spine checkpoint: stores the (user-edited) spine,
  * then runs pass 1. Failures land on the module/parts rows and surface there;
  * the caller navigates to the reader either way.
+ *
+ * AUTHORSHIP (docs/17 row 113), and why the comparison below exists rather
+ * than a flag on the caller: the checkpoint is ALWAYS on, so this call happens
+ * whether or not the owner touched the premise — and the draft it hands in is
+ * the model's own text when he did not touch it. A blanket `'human'` here
+ * would claim the owner wrote prose he never typed (the exact class of lie
+ * this arc removes); a blanket carry-forward would MISS the premise he did
+ * rewrite, silently auto-normalizing his own text later. The row cannot be
+ * asked either, because the incoming `spine` is the whole patch. So the
+ * decision is made on the TEXT: a premise that differs from the one already
+ * on the row was written by the owner; one that does not differ is the
+ * model's, and keeps the origin already recorded (or `null` — not recorded —
+ * for a row written before the field, which reads as human-authored).
  */
 export async function approveSpineAndRun(
   moduleId: Id,
   campaign: Campaign,
   spine: ModuleSpine,
 ): Promise<void> {
-  await patchModule(moduleId, { spine });
+  const stored = await getModule(moduleId);
+  const editedByHand = stored !== undefined && (stored.spine?.premise ?? '') !== spine.premise;
+  await patchModule(moduleId, {
+    spine: {
+      ...spine,
+      origin: editedByHand ? 'human' : carriedTextOrigin(stored?.spine?.origin),
+    },
+  });
   // LINKS hook: a user-edited spine may link another module's entities.
   await promoteSecondModuleUses(moduleId, [spine.premise]);
   const epoch = getStopEpoch();

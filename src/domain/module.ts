@@ -54,6 +54,32 @@ export const partPlanSchema = z.object({
 export type PartPlan = z.infer<typeof partPlanSchema>;
 
 /**
+ * WHO WROTE one module-text document (owner-directed, docs/17 row 113 — the
+ * seam `moduleRepo.patchModulePartText` stamps it at write time, because the
+ * origin is knowable there and nowhere else).
+ *
+ *   - `'model'` — a model write: the seam was handed the serving model
+ *     (`writerModel`). Generated parts, a canvas chat apply and an accepted
+ *     AI proposal are all this case. The owner's auto-accept checkbox is a
+ *     DELEGATION of consent for exactly this text, so the normalization pass
+ *     applies its link rewrites to it directly.
+ *   - `'human'` — a HUMAN write: no model served it (the reader's hand edit,
+ *     the canvas' manual Save). Its consent protection is unchanged: a
+ *     rewrite of it is held as a proposal until the owner applies it.
+ *   - `null` — NOT RECORDED, i.e. every row written before this field. The
+ *     origin is NOT recoverable from what those rows carry: a hand edit
+ *     deliberately KEEPS the previous `writerModel` (docs/17 row 93), so a
+ *     recorded model id does not prove a model wrote the current text. Every
+ *     reader therefore treats `null` as human-authored — the CONSERVATIVE
+ *     default: such text keeps asking, and no rewrite is ever auto-applied to
+ *     text that may have been typed by hand. `textOriginIsMachineWritten` is
+ *     the ONE place that turns this into a verdict.
+ */
+export const textOriginSchema = z.enum(['human', 'model']);
+
+export type TextOrigin = z.infer<typeof textOriginSchema>;
+
+/**
  * Pass-0 output: premise + themes + the approved part plan. All of it lands
  * on the ALWAYS-on spine checkpoint for user review before pass 1 runs, so a
  * model-omitted optional field defaults to empty (visible, editable) instead
@@ -77,6 +103,28 @@ export const moduleSpineSchema = z.object({
    * (the field answers "which model wrote this").
    */
   writerModel: z.string().default(''),
+  /**
+   * WHO WROTE the premise right now (see `textOriginSchema`). Additive
+   * `.default(null)` — parse-on-read, NO Dexie version, exactly like
+   * `writerModel` beside it.
+   *
+   * Stamped by the two premise writers, and by no one else:
+   *   - the spine pass records `'model'` with the premise it just wrote;
+   *   - `moduleGen.approveSpineAndRun` — the "Generate parts" click, whose
+   *     draft the checkpoint let the owner edit — records `'human'` ONLY when
+   *     the approved premise's TEXT differs from the premise already on the
+   *     row (an untouched draft is the model's own text, so clicking through
+   *     the always-on checkpoint must not claim authorship of it), and
+   *     carries the recorded origin forward when it does not differ;
+   *   - `moduleGen.applyNormalizationVerdict` records `'model'` after it
+   *     rewrites the premise's link targets, because the document it wrote is
+   *     no longer the one the owner typed.
+   *
+   * `null` = NOT RECORDED (every module written before the field) and reads
+   * as HUMAN-AUTHORED (the conservative default, `textOriginSchema`). No
+   * surface may infer it from `writerModel` — see the seam's rationale.
+   */
+  origin: textOriginSchema.nullable().default(null),
 });
 
 export type ModuleSpine = z.infer<typeof moduleSpineSchema>;
@@ -88,8 +136,11 @@ export const modulePartSchema = z.object({
   markdown: z.string(),
   status: modulePartStatusSchema,
   errorMessage: z.string(),
-  /** True once the user hand-edited the part after generation (08 §M4-B:
-   * rewrite then confirms before overwriting). */
+  /** True once the part was written OUTSIDE the generator — a hand edit, a
+   * chat apply, an accepted AI proposal (08 §M4-B / docs/17 row 113: rewrite
+   * then confirms before overwriting). It is NOT an authorship claim: a
+   * canvas-applied model rewrite sets it too. `origin` below is the field that
+   * answers "who wrote this text" and is what the consent rule reads. */
   edited: z.boolean(),
   /**
    * PROVENANCE (provenance arc, docs/17 row 93): the model that wrote THIS
@@ -107,6 +158,21 @@ export const modulePartSchema = z.object({
    * and never backfilled (docs/18 §2.2, §4).
    */
   writerModel: z.string().default(''),
+  /**
+   * WHO WROTE this part's markdown right now (see `textOriginSchema`).
+   * Additive `.default(null)` — parse-on-read, NO Dexie version.
+   *
+   * THE ONE authoring record, stamped at THE one part-text save seam
+   * (`moduleRepo.patchModulePartText`: handing it a `writerModel` records
+   * `'model'`, omitting it records `'human'`) and by the generator's own part
+   * writes (`'model'`). It answers what `edited` never could: an auto-accepted
+   * AI rewrite is `edited: true` AND `origin: 'model'`.
+   *
+   * `null` = NOT RECORDED (every part written before the field) and reads as
+   * HUMAN-AUTHORED — the conservative default. NEVER inferred from
+   * `writerModel`, which a hand edit deliberately carries forward.
+   */
+  origin: textOriginSchema.nullable().default(null),
 });
 
 export type ModulePart = z.infer<typeof modulePartSchema>;

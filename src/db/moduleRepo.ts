@@ -1,4 +1,12 @@
-import type { Id, Module, ModulePart, ModulePatch, ModuleSpine, PartPlan } from '@/domain';
+import type {
+  Id,
+  Module,
+  ModulePart,
+  ModulePatch,
+  ModuleSpine,
+  PartPlan,
+  TextOrigin,
+} from '@/domain';
 import { moduleSchema, recordedWritingModel } from '@/domain';
 import { db } from '@/db/db';
 import {
@@ -156,12 +164,33 @@ export async function savePartPlan(id: Id, partPlan: PartPlan[]): Promise<Module
  *     text now on the row, i.e. the LAST writer;
  *   - a part with no recorded id that a hand edit touches stays `''` (not
  *     recorded → the reader displays nothing), never a settings-derived guess.
+ *
+ * AUTHORSHIP (docs/17 row 113): this function is ALSO the one place a part's
+ * `origin` is stamped, and the rule is the same argument the line above makes
+ * — the origin is knowable HERE and thrown away nowhere else. Handing it a
+ * `writerModel` records `origin: 'model'` (a model wrote the text now on the
+ * row: a canvas chat apply, an accepted AI proposal, an auto-accepted one);
+ * omitting it records `origin: 'human'`. `edited` deliberately stays `true`
+ * for BOTH — it means "written outside the generator", which is what its
+ * readers assume — so the two fields are recorded side by side rather than
+ * one being overloaded into a lie. A generator write sets `edited: false` and
+ * `origin: 'model'` itself (it is the generator's own text by construction).
+ *
+ * `authorship` is for the one caller shape the writer-model signal cannot
+ * express — a write that does not CHANGE who wrote the text: the board's
+ * Apply re-lands the text the engine just wrote (so the model's origin must
+ * survive it) and the board's Discard puts the PREVIOUS text back together
+ * with the authorship that text had (`stagedRewrites` captures it before the
+ * rewrite overwrites the row). It states the origin the caller holds; it is
+ * not a second record of authorship — nothing else derives or stores one, and
+ * `undefined` keeps the writer-model rule above as the single default.
  */
 export async function patchModulePartText(
   id: Id,
   planIndex: number,
   markdown: string,
   writerModel?: string,
+  authorship?: TextOrigin | null,
 ): Promise<Module> {
   return db.transaction('rw', db.modules, async () => {
     const current = await db.modules.get(id);
@@ -177,6 +206,11 @@ export async function patchModulePartText(
       // Omitted `writerModel` = this write cannot name a model (a hand edit),
       // so the recorded id is CARRIED — never blanked.
       writerModel: writerModel ?? recordedWritingModel(existing?.writerModel) ?? '',
+      // The author of the text this write just landed. A write that named a
+      // model is machine-written; one that could not is the owner's; and a
+      // caller that KNOWS the authorship (a write that did not change it)
+      // states it.
+      origin: authorship !== undefined ? authorship : writerModel === undefined ? 'human' : 'model',
     };
     const parts = existing === undefined
       ? [...module.parts, nextPart].sort((a, b) => a.planIndex - b.planIndex)

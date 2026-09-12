@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import type { Module } from '@/domain';
+import { modulePartWriterLabel } from '@/features/modules/module-problems';
 
 /**
  * Per-part "Rewrite…" dialog on the board (08-MODULE-DESIGNER §Module
@@ -63,7 +64,10 @@ export function RewritePartDialog({
             className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm"
             role="alert"
           >
-            This part was hand-edited after generation — the rewrite replaces your edits.
+            {modulePartWriterLabel(
+              module.parts.find((part) => part.planIndex === target.planIndex),
+            )}{' '}
+            Outside the generator — the rewrite replaces it.
           </p>
         )}
         <div className="flex flex-col gap-1.5">

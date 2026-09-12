@@ -3,6 +3,10 @@
  * generated texts … indicating which model wrote this. And a small id below
  * images indicating the image model."
  *
+ * Also the home of the AUTHORSHIP accessors (docs/17 row 113): `origin` is
+ * the record of WHO wrote a module-text document, and
+ * `textOriginIsMachineWritten` is the ONE place it turns into a verdict.
+ *
  * The intent is EXPERIMENT VISIBILITY: the owner is trying models out and
  * wants to look at a passage or an image and see which model produced it.
  * Which makes one thing load-bearing — the id must be the model that ACTUALLY
@@ -39,6 +43,8 @@
  *     `tests/lib/provenance-export.test.ts`.
  */
 
+import type { TextOrigin } from '@/domain/module';
+
 /** The one display rule: the model id to SHOW, or null when nothing is
  * recorded (which renders nothing at all — never a placeholder, never a
  * settings-derived guess). Whitespace-only values are "not recorded" too. */
@@ -74,6 +80,64 @@ export interface ModuleWritingScope {
   label: string;
   /** The recorded writing model, or null when NOT RECORDED. */
   model: string | null;
+}
+
+/**
+ * WHO AUTHORED a module-text document (docs/17 row 113).
+ *
+ * THE ONE decision point. Nothing else may re-derive it — no reader parses
+ * `edited`, and NOTHING infers it from a recorded `writerModel` (a hand edit
+ * deliberately carries the previous model id forward, so an id is not
+ * evidence that a model wrote the CURRENT text).
+ *
+ * `edited` and `origin` answer different questions and the difference is the
+ * whole point of this helper: `edited` is "written outside the generator"
+ * (true for a hand edit AND for an auto-accepted model rewrite), `origin` is
+ * "who wrote the text now".
+ *
+ * Returns `true` when the text is NOT machine-written — which is the
+ * conservative direction on purpose: `origin: null` (every row written before
+ * the field) is reported as human-authored, because the alternative is
+ * silently auto-applying a rewrite to text that may have been typed by hand.
+ */
+export function textOriginIsMachineWritten(origin: TextOrigin | null | undefined): boolean {
+  return origin === 'model';
+}
+
+/**
+ * The origin a write leaves behind when a document's text is replaced but its
+ * AUTHORSHIP does not change (a `generating`/`pending`/`failed` slot that
+ * holds no new prose, a version restore that puts the recorded text back).
+ * `null` stays `null`: an unrecorded row is never upgraded to a verdict.
+ */
+export function carriedTextOrigin(
+  previous: TextOrigin | null | undefined,
+): TextOrigin | null {
+  return previous ?? null;
+}
+
+/**
+ * Who to NAME as the writer of one module-text document — the honest label a
+ * consent dialog puts on a row, so a rewrite is never attributed to the wrong
+ * party.
+ *
+ * Four outcomes, and no fifth:
+ *   - `'you'` — a HUMAN write: the owner typed (or pasted) this text.
+ *   - the model id — a model write whose serving model is recorded.
+ *   - `'the model'` — a model write whose id is genuinely not recorded (a
+ *     legacy row, or a call that reported none): the row still says a model
+ *     wrote it, so claim a model, never a name that was never captured.
+ *   - `null` — NOT RECORDED origin: the app CANNOT tell, and says so instead
+ *     of guessing (the caller renders its own "may have been written by hand"
+ *     wording; `textOriginIsMachineWritten` is false, so the text is held).
+ */
+export function recordedWriterLabel(
+  origin: TextOrigin | null | undefined,
+  writerModel: string | null | undefined,
+): string | null {
+  if (origin === null || origin === undefined) return null;
+  if (origin === 'human') return 'you';
+  return recordedWritingModel(writerModel) ?? 'the model';
 }
 
 /**

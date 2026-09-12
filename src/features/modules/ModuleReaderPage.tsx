@@ -45,6 +45,7 @@ import { GenerateModuleCoverButton, ModuleCoverHero } from '@/features/covers/co
 import { EntityPanel } from '@/features/modules/entity-panel';
 import { useCreaturePresentation } from '@/app/use-creature-presentation';
 import { PartTextEditor } from '@/features/modules/part-text-editor';
+import { modulePartWriterLabel } from '@/features/modules/module-problems';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { QuickFindDialog } from '@/features/quickfind/quickfind-dialog';
 import { ReaderSearch } from '@/features/modules/reader-search';
@@ -737,7 +738,10 @@ export function ModuleReaderPage(): JSX.Element {
           {rewriteTarget !== null &&
             module.parts.find((entry) => entry.planIndex === rewriteTarget)?.edited === true && (
               <p className="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-sm" role="alert">
-                This part was hand-edited after generation — regenerating overwrites your edits.
+                {modulePartWriterLabel(
+                  module.parts.find((entry) => entry.planIndex === rewriteTarget),
+                )}{' '}
+                Regenerating overwrites it.
               </p>
             )}
           <div className="flex flex-col gap-1.5">

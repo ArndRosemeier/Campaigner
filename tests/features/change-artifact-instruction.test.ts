@@ -57,6 +57,7 @@ async function seedNpc(): Promise<{ npcId: string; moduleId: string }> {
       premise: 'The chapter house sank with its chapter inside.',
       themes: [],
       writerModel: '',
+      origin: null,
       partPlan: [{ title: 'Descent', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
     },
     parts: [
@@ -67,6 +68,7 @@ async function seedNpc(): Promise<{ npcId: string; moduleId: string }> {
         errorMessage: '',
         edited: false,
         writerModel: '',
+        origin: null,
       },
     ],
   });

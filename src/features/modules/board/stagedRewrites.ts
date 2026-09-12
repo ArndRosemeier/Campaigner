@@ -1,5 +1,7 @@
 import { create } from 'zustand';
 
+import type { TextOrigin } from '@/domain';
+
 /**
  * Staged board rewrites (08-MODULE-DESIGNER §Module board, owner decision):
  * the decision layer for per-part rewrites on the board. NO DIFFS and no
@@ -15,8 +17,9 @@ import { create } from 'zustand';
  * staging simply disappears with the old text unrecoverable). Documented on
  * purpose — do not "fix" this with persistence.
  *
- * Flow: `stageProposal` when the rewrite starts (captures the OLD text and
- * the module row stays the engine's business) → `appendGhost` streams tokens
+ * Flow: `stageProposal` when the rewrite starts (captures the OLD text AND its
+ * AUTHORSHIP — the rewrite overwrites the row, so what the old text was can
+ * only be captured here; docs/17 row 113) → `appendGhost` streams tokens
  * into the ghost preview (rAF-throttled by the board page — partial text
  * never touches the module row) → `finishProposal` when the engine's ready
  * write landed (newMarkdown = the complete text) → the owner either Applys
@@ -33,6 +36,15 @@ export interface StagedRewrite {
   planIndex: number;
   /** The text the part had before the rewrite — "Show previous" reads this. */
   oldMarkdown: string;
+  /**
+   * WHO WROTE that previous text (docs/17 row 113), captured at stage time
+   * because the engine's rewrite stamps the row `origin: 'model'` and Discard
+   * must put the OLD authorship back with the old text — restoring a
+   * machine-written part must not relabel it as the owner's.
+   */
+  oldOrigin: TextOrigin | null;
+  /** The model id that text carried, restored with it (never invented). */
+  oldWriterModel: string;
   /** The complete rewritten text (set once the engine's ready write landed). */
   newMarkdown: string;
   /** Streaming ghost preview (accumulated tokens; never canonical). */
@@ -42,7 +54,13 @@ export interface StagedRewrite {
 
 interface StagedRewritesState {
   byNodeKey: Record<string, StagedRewrite>;
-  stageProposal: (input: { nodeKey: string; planIndex: number; oldMarkdown: string }) => void;
+  stageProposal: (input: {
+    nodeKey: string;
+    planIndex: number;
+    oldMarkdown: string;
+    oldOrigin: TextOrigin | null;
+    oldWriterModel: string;
+  }) => void;
   appendGhost: (nodeKey: string, delta: string) => void;
   finishProposal: (nodeKey: string, newMarkdown: string) => void;
   markApplied: (nodeKey: string) => void;
@@ -52,11 +70,20 @@ interface StagedRewritesState {
 
 export const useStagedRewritesStore = create<StagedRewritesState>((set) => ({
   byNodeKey: {},
-  stageProposal: ({ nodeKey, planIndex, oldMarkdown }) => {
+  stageProposal: ({ nodeKey, planIndex, oldMarkdown, oldOrigin, oldWriterModel }) => {
     set((state) => ({
       byNodeKey: {
         ...state.byNodeKey,
-        [nodeKey]: { nodeKey, planIndex, oldMarkdown, newMarkdown: '', ghost: '', status: 'proposed' },
+        [nodeKey]: {
+          nodeKey,
+          planIndex,
+          oldMarkdown,
+          oldOrigin,
+          oldWriterModel,
+          newMarkdown: '',
+          ghost: '',
+          status: 'proposed',
+        },
       },
     }));
   },

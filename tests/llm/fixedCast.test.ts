@@ -99,6 +99,7 @@ async function seedWorld(): Promise<{ campaign: Campaign; moduleId: Id }> {
       premise: 'Pit premise.',
       themes: [],
       writerModel: '',
+      origin: null,
       partPlan: [{ title: 'Descent', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
     },
     parts: [
@@ -109,6 +110,7 @@ async function seedWorld(): Promise<{ campaign: Campaign; moduleId: Id }> {
         errorMessage: '',
         edited: false,
         writerModel: '',
+        origin: null,
       },
     ],
   });
@@ -196,6 +198,7 @@ describe('NPC draft structured level', () => {
       premise: 'premise',
       themes: [],
       writerModel: '',
+      origin: null,
       partPlan: [{ title: 'Descent', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
     },
     parts: [
@@ -206,6 +209,7 @@ describe('NPC draft structured level', () => {
         errorMessage: '',
         edited: false,
         writerModel: '',
+        origin: null,
       },
     ],
   };
@@ -544,6 +548,7 @@ describe('partCall constants-only sentence', () => {
         premise: 'The target premise.',
         themes: [],
         writerModel: '',
+        origin: null,
         partPlan: [
           { title: 'First', levelBand: '1', synopsis: '', levelUpTrigger: '' },
           { title: 'Second', levelBand: '2', synopsis: '', levelUpTrigger: '' },

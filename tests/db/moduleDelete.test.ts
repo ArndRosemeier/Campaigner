@@ -149,7 +149,7 @@ describe('deleteModule — transaction atomicity', () => {
     // The reader module links the hexer in its part text — an outside
     // reference that must survive the delete as a shared row.
     await patchModule(reader.id, {
-      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' }],
+      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' , origin: null }],
     });
 
     await deleteModule(doomed.id, 'promote-referenced');

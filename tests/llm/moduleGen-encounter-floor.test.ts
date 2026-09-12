@@ -140,6 +140,7 @@ function floorModule(options: {
     errorMessage: '',
     edited: part.edited ?? false,
     writerModel: '',
+    origin: null,
   }));
   return {
     ...base,
@@ -547,7 +548,7 @@ describe('encounter floor gates (mocked chat)', () => {
         partPlan: SPINE_PLAN,
       }),
       parts: [
-        { planIndex: 0, markdown: prose('SEEDED'), status: 'ready', errorMessage: '', edited: false, writerModel: '' },
+        { planIndex: 0, markdown: prose('SEEDED'), status: 'ready', errorMessage: '', edited: false, writerModel: '', origin: null },
       ],
     });
     chatMock.mockResolvedValue(partReply('PART'));

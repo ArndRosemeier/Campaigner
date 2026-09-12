@@ -69,6 +69,8 @@ const toastSuccessMock = vi.mocked(toastSuccess);
 
 const OLD_TEXT = 'The old gate bargain text. '.repeat(10);
 const NEW_TEXT = 'The brand-new rewritten text. '.repeat(10);
+/** The model the mocked rewrite reports as its writer (the real engine stamps this). */
+const BOARD_REWRITE_MODEL = 'staged/board-rewrite-model';
 
 let world: { campaignId: Id; moduleId: Id } = { campaignId: '', moduleId: '' };
 
@@ -116,10 +118,22 @@ function mockEngineRun(): void {
     const { moduleGenEvents } = await import('@/llm/moduleGen');
     moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta: 'The brand-new ' });
     moduleGenEvents.emit({ kind: 'part-token', moduleId, planIndex, delta: 'rewritten text. ' });
+    // The ready write carries what the REAL `generatePart` stamps: the
+    // generator's own text (`edited: false`) written by a MODEL (`origin:
+    // 'model'` + the serving id, docs/17 row 113). The board's Apply then
+    // adopts that text without re-deriving who wrote it.
     await patchModule(moduleId, {
       parts: [
-        modulePartSchema.parse({ planIndex, markdown: NEW_TEXT, status: 'ready', errorMessage: '', edited: false }),
-        modulePartSchema.parse({ planIndex: 1, markdown: 'Part two. '.repeat(10), status: 'ready', errorMessage: '', edited: false }),
+        modulePartSchema.parse({
+          planIndex,
+          markdown: NEW_TEXT,
+          status: 'ready',
+          errorMessage: '',
+          edited: false,
+          origin: 'model',
+          writerModel: BOARD_REWRITE_MODEL,
+        }),
+        modulePartSchema.parse({ planIndex: 1, markdown: 'Part two. '.repeat(10), status: 'ready', errorMessage: '', edited: false, origin: 'model', writerModel: BOARD_REWRITE_MODEL }),
       ],
     });
     moduleGenEvents.emit({ kind: 'done', moduleId });
@@ -203,6 +217,13 @@ describe('board rewrite + staging', () => {
       expect(part?.markdown).toBe(NEW_TEXT);
       expect(part?.edited).toBe(true);
       expect(part?.status).toBe('ready');
+      // AUTHORSHIP (docs/17 row 113): applying the ENGINE's rewrite keeps it
+      // the model's text (`edited: true` marks it as written outside the
+      // generator — not as the owner's), and the serving id survives the
+      // adopt write untouched. Stamping 'human' here is what would make the
+      // normalization pass ask the owner about a rewrite he never typed.
+      expect(part?.origin).toBe('model');
+      expect(part?.writerModel).toBe(BOARD_REWRITE_MODEL);
     });
     expect(toastSuccessMock).toHaveBeenCalledWith('Rewrite applied');
     // Staging dropped: the card renders canonical content again.
@@ -212,8 +233,23 @@ describe('board rewrite + staging', () => {
     await flushAsyncUpdates();
   }, 30_000);
 
-  it('discard restores the previous text through the save path and drops the staging', async () => {
+  it('discard restores the previous text WITH the authorship it had, through the save path', async () => {
     const user = userEvent.setup();
+    // The part being replaced is the owner's OWN text over a model's earlier
+    // draft — `origin: 'human'` with the model id still carried (docs/17 row
+    // 93). This is the case that tells the two rules apart: the rewrite is
+    // about to overwrite the row, and the discard must put back BOTH the text
+    // and its authorship (docs/17 row 113). Deriving the origin from the
+    // carried id here would relabel the owner's text as the model's.
+    const current = await getModule(world.moduleId);
+    if (current === undefined) throw new Error('seed module missing');
+    await patchModule(world.moduleId, {
+      parts: current.parts.map((part) =>
+        part.planIndex === 0
+          ? { ...part, origin: 'human' as const, writerModel: 'staged/original-model' }
+          : part,
+      ),
+    });
     mockEngineRun();
     renderAppAt(boardPath(world.campaignId, world.moduleId));
     const partCard = await screen.findByTestId('board-part-0', {}, { timeout: 10_000 });
@@ -230,6 +266,8 @@ describe('board rewrite + staging', () => {
       const part = row?.parts.find((entry) => entry.planIndex === 0);
       expect(part?.markdown).toBe(OLD_TEXT);
       expect(part?.edited).toBe(true);
+      expect(part?.origin).toBe('human');
+      expect(part?.writerModel).toBe('staged/original-model');
     });
     // Discard restores through the save path — promote scan fired for the
     // restored text too (it is a part-text write like any other).

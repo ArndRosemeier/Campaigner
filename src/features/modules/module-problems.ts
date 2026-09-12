@@ -1,5 +1,6 @@
-import type { AnyArtifact, Module } from '@/domain';
+import type { AnyArtifact, Module, ModulePart, TextOrigin } from '@/domain';
 import { countModuleEncounters, floorRepairTargets } from '@/llm/moduleGen';
+import { recordedWriterLabel, recordedWritingModel } from '@/domain';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 
 /**
@@ -95,8 +96,14 @@ export interface EncounterFloorProblem {
    * part is targeted for DISTINCT encounters rather than for its own band.
    */
   moduleTotal: boolean;
-  /** The part carries hand-written text — the rewrite replaces it. */
-  handEdited: boolean;
+  /**
+   * The part carries text written OUTSIDE the generator — a hand edit, or a
+   * model rewrite applied through the canvas. The rewrite replaces it, so the
+   * confirmation must say so; it must NOT call that text the owner's, because
+   * `edited` cannot tell those two apart (`origin` can — see
+   * `modulePartWriterLabel`, which the label uses).
+   */
+  writtenOutsideGenerator: boolean;
 }
 
 /**
@@ -160,6 +167,59 @@ function partName(planIndex: number, title: string): string {
     : `Part ${String(planIndex + 1)} — ${trimmed}`;
 }
 
+/** The authorship fields of one module-text document. */
+export interface ModuleTextDocumentOrigin {
+  origin: TextOrigin | null | undefined;
+  writerModel: string | null | undefined;
+}
+
+/**
+ * WHO WROTE one module-text document, as a label a consent surface can print
+ * (docs/17 row 113). THE attribution wording for every surface that names the
+ * author of module text, so no two of them can disagree — and so none of them
+ * can fall back to the unconditional "you wrote this"/"hand-edited" claim this
+ * arc removed.
+ *
+ * Four honest outcomes:
+ *   - `'you'` — a HUMAN write: the owner typed it.
+ *   - the model id — a model write whose serving model is recorded.
+ *   - `'the model'` — a model write with no recorded id (a legacy row, or a
+ *     call that reported none): still a model, never a name that was not
+ *     captured.
+ *   - `'written by hand (or before the app recorded authorship)'` — NOT
+ *     RECORDED (`origin: null`): the app cannot tell, and says so. Every
+ *     reader treats that text as human-authored (the conservative default,
+ *     `textOriginIsMachineWritten`), which is exactly the sentence above.
+ *
+ * Deliberately NOT keyed on `edited`: that flag only says the text was written
+ * outside the generator, which is equally true of a model rewrite the owner
+ * accepted through the canvas.
+ */
+export function moduleTextWriterLabel(document: ModuleTextDocumentOrigin): string {
+  return (
+    recordedWriterLabel(document.origin, document.writerModel) ??
+    'written by hand (or before the app recorded authorship)'
+  );
+}
+
+/**
+ * The same attribution as a SENTENCE about one PART — "You wrote this part." /
+ * "The model `openai/gpt-x` wrote this part." / "This part was written by hand
+ * (or before the app recorded authorship)." — the form the confirmations over
+ * module text print, so a rewrite is never attributed to the wrong party.
+ */
+export function modulePartWriterLabel(part: ModulePart | undefined): string {
+  const origin = part?.origin ?? null;
+  const recorded = recordedWritingModel(part?.writerModel);
+  if (origin === 'human') return 'You wrote this part.';
+  if (origin === 'model') {
+    return recorded === null
+      ? 'A model wrote this part.'
+      : `The model \`${recorded}\` wrote this part.`;
+  }
+  return 'This part was written by hand (or before the app recorded authorship).';
+}
+
 /**
  * Derives the module text's problems. `artifacts` is the READER's pool
  * (campaign artifacts + shared library) — the pool whose resolution decides
@@ -181,15 +241,15 @@ export function deriveModuleProblems(
 
   const floorProblems: EncounterFloorProblem[] = floorTargets.map((target) => {
     const part = module.parts.find((entry) => entry.planIndex === target.planIndex);
-    const handEdited = part?.edited === true;
+    const writtenOutsideGenerator = part?.edited === true;
     const head = repeats
       ? `${partName(target.planIndex, target.title)}: the module names ${String(report.found)} distinct encounter${report.found === 1 ? '' : 's'} of ${String(report.required)} — names repeat across parts, so this part must add distinct ones`
       : `${partName(target.planIndex, target.title)} (band ${target.levelBand}): the encounter floor needs ${String(target.required)}, the text names ${String(target.found)}`;
     return {
       check: 'encounter-floor',
       repairable: true,
-      label: handEdited
-        ? `${head}. Hand-edited — this rewrite replaces your text (a version is saved first).`
+      label: writtenOutsideGenerator
+        ? `${head}. ${modulePartWriterLabel(part)} This rewrite replaces it (a version is saved first).`
         : `${head}.`,
       planIndex: target.planIndex,
       title: target.title,
@@ -197,7 +257,7 @@ export function deriveModuleProblems(
       required: repeats ? report.required : target.required,
       found: repeats ? report.found : target.found,
       moduleTotal: repeats,
-      handEdited,
+      writtenOutsideGenerator,
     };
   });
 
@@ -237,4 +297,95 @@ export function deriveModuleProblems(
       (problem): problem is UnresolvedLinkProblem => problem.check === 'unresolved-link',
     ),
   };
+}
+
+/** One held normalization proposal, described without an authorship claim. */
+export interface HeldRewriteProposal {
+  /** `planIndex` −1 is the premise (the stored record's own convention). */
+  planIndex: number;
+  /** How the reader names the document: `premise`, `part 2`. */
+  where: string;
+  /** `Premise`, `Part 3` — the label a list row prints. */
+  label: string;
+  /** How many link rewrites this document's proposal carries. */
+  rewriteCount: number;
+  /** True when the pass reached this document at all (it always did: the
+   * stored record only exists for documents whose text was not rewritten —
+   * `moduleGen.applyNormalizationVerdict` holds a proposal exactly when it
+   * did NOT apply the rewrite). */
+  writer: string;
+}
+
+/**
+ * What the normalization pass is WAITING for, derived from the stored
+ * proposals (docs/17 row 113): the count, and which documents.
+ *
+ * The banner this feeds used to assert "hand-edited text"/"text you wrote",
+ * which the record never said — a proposal exists for text the pass left
+ * alone, and since docs/17 row 113 that is text a HUMAN wrote (machine text
+ * is normalized immediately, so it never appears here). Even so, the wording
+ * is derived from the record rather than asserted about the owner, and the
+ * per-document writer comes from the row's own `origin` + `writerModel`.
+ */
+export function heldRewriteSummary(
+  module: Module,
+  proposals: readonly { planIndex: number; replacements: readonly unknown[] }[],
+): { documents: HeldRewriteProposal[]; rewriteCount: number; documentsProse: string } {
+  const documents = proposals.map((proposal) => {
+    const planIndex = proposal.planIndex;
+    const part =
+      planIndex === -1 ? undefined : module.parts.find((entry) => entry.planIndex === planIndex);
+    const label = planIndex === -1 ? 'Premise' : `Part ${String(planIndex + 1)}`;
+    return {
+      planIndex,
+      where: planIndex === -1 ? PREMISE_WHERE : `part ${String(planIndex + 1)}`,
+      label,
+      rewriteCount: proposal.replacements.length,
+      writer: moduleTextWriterLabel(
+        planIndex === -1
+          ? { origin: module.spine?.origin, writerModel: module.spine?.writerModel }
+          : { origin: part?.origin, writerModel: part?.writerModel },
+      ),
+    };
+  });
+  // Plan order with the premise first — the order the reader reads and the
+  // order the proposal builder produced, derived here rather than assumed.
+  documents.sort((a, b) => a.planIndex - b.planIndex);
+  return {
+    documents,
+    rewriteCount: documents.reduce((total, document) => total + document.rewriteCount, 0),
+    documentsProse: joinNames(documents.map((document) => document.where)),
+  };
+}
+
+/** `a`, `a and b`, `a, b and c` — the list wording the banner prints. */
+function joinNames(names: readonly string[]): string {
+  if (names.length <= 1) return names[0] ?? '';
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1] ?? ''}`;
+}
+
+/**
+ * THE banner sentence for held normalization rewrites (docs/17 row 113).
+ *
+ * What it says: how many rewrites are waiting and where. What it deliberately
+ * does NOT say: who wrote that text. The previous sentence —
+ * *"Normalization wants to update hand-edited text — review the proposed
+ * rewrites."* — asserted authorship the record never carried, and it fired on
+ * modules the owner had never touched (the generated premise always took the
+ * proposal path). The rewrites ARE pending, so a banner is still required; it
+ * just reports the pending work instead of blaming him for text he did not
+ * write. Who wrote each document is named per row in the dialog, where the
+ * row's own `origin`/`writerModel` can be stated precisely.
+ */
+export function heldRewritesBanner(summary: {
+  documents: readonly { where: string }[];
+  rewriteCount: number;
+  documentsProse: string;
+}): string {
+  return (
+    `Normalization is holding ${String(summary.rewriteCount)} link rewrite${summary.rewriteCount === 1 ? '' : 's'} ` +
+    `for review — ${summary.documentsProse}. ${String(summary.documents.length)} ` +
+    `${summary.documents.length === 1 ? 'document is' : 'documents are'} waiting on your decision; ` +
+    'nothing has been changed.'
+  );
 }

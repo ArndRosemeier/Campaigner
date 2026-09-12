@@ -49,8 +49,11 @@ interface ModulePart {
   markdown: string;             // the actual module text, with [[wiki-links]]
   status: 'pending' | 'generating' | 'ready' | 'failed';
   errorMessage: string;
-  edited: boolean;              // hand-edited since generation (M4-A)
-  writerModel: string;          // PROVENANCE (docs/17 row 93): who wrote THIS part
+  edited: boolean;              // written OUTSIDE the generator (M4-A) — NOT an authorship claim
+  writerModel: string;          // PROVENANCE (docs/17 row 93): who wrote THIS part, or '' when not recorded
+  origin: 'human' | 'model' | null; // AUTHORSHIP (docs/17 row 113): who wrote the text the row holds NOW
+                                    // ('model' when the write supplied a writerModel; null = a row from
+                                    //  before the field — read as the person's, so it keeps asking for consent)
 }
 // table: modules: 'id, campaignId, updatedAt'
 ```
@@ -865,8 +868,10 @@ sizeDial-independent). The pass checks NOTHING else: the declared mix and its
 validator are gone (§M4-B-1). Each deficient part in the run's scope gets ONE
 repair rewrite via the `rewritePart` engine (`generatePart`) on the
 escalated model — the repair carries the resolution shape (finale-aware: the
-closing part may satisfy at full price) — hand-edited parts are never touched
-(they fail loud instead) — then the pass re-normalizes and recounts. A full run
+closing part may satisfy at full price) — parts written outside the generator
+are never touched (they fail loud instead, and the confirmation NAMES the
+writer the row records — docs/17 row 113) — then the pass re-normalizes and
+recounts. A full run
 owns the whole-module total; a subset run (single-part rewrite/retry) owns only
 its parts' band shares. Still short →
 module `status:'failed'` with an `errorMessage` naming the deficient part
@@ -903,7 +908,9 @@ AbortError, a wrapped transport error, or no error at all).
 Per-part **"Rewrite…"** button (also for successful parts): optional user
 instruction appended, regenerates just that part with the same context recipe
 (prior part = current text of part i−1). Overwrites the part's markdown —
-confirm dialog when the part was hand-edited since generation.
+confirm dialog when the part was written outside the generator, naming the
+writer the row records ("You wrote this part." / the model's id — docs/17 row
+113).
 
 ### Editable encounter floor (numeric, Advanced)
 
@@ -1293,13 +1300,24 @@ row says the text is not normalized (the full pass owns that state) and the
 panel keeps the affordance disabled while the module is generating (its own
 pass records the names when the parts land).
 
-**Consent is unchanged (fix-01).** Generated (unedited) parts take the link
-rewrites immediately; hand-edited parts and the premise become stored
-proposals for the review dialog — and chat-applied parts ARE hand-edited
-(the one part-text save path stamps `edited: true`), so a variant a chat turn
-introduced is folded only after the user accepts it there. A review already
+**Consent follows the RECORDED ORIGIN, not `edited` (fix-01, amended by docs/17
+row 113).** The pass asks ONE question, `textOriginIsMachineWritten(origin)`:
+text a MODEL wrote takes the link rewrites immediately — the generator's own
+prose, and a part the canvas chat applied and the owner accepted, which is
+`edited: true` and still the model's text (the owner's bug, verbatim: the
+banner "ALWAYS brings up" on a module with "actually nothing hand written") —
+while text a PERSON wrote is held as a stored proposal for the review dialog.
+The generous half is new: the **generated premise** now normalizes like a
+generated part instead of asking about itself; a premise the owner wrote at
+the checkpoint (`approveSpineAndRun` stamps `'human'` when the approved text
+differs from the stored one) is still held, and simply clicking through the
+checkpoint claims nothing. A row written before `origin` existed reads as the
+person's and keeps asking: the origin is NOT recoverable from stored data (a
+hand edit carries the previous `writerModel` forward — docs/17 row 93), so the
+conservative default is a recorded policy, not a guess. A review already
 pending is preserved (unioned, deduped by document + from → to), never
-replaced. A run that rewrites text also takes the durable pre-change
+replaced, and every surface names the writer the row records rather than
+asserting one. A run that rewrites text also takes the durable pre-change
 snapshot first, like every other normalization pass (docs/18 §2.3).
 
 **Idempotency.** The record write is APPEND-ONLY: a canonical that already
@@ -1539,6 +1557,17 @@ own group.
   **Discard** restores the old text through the same save path (the engine
   had already written its text to the row). A failed apply reverts the
   staging to proposed with a loud toast.
+- **Both board writes state the authorship they do not change** (docs/17 row
+  113). The text Apply lands is the ENGINE's own rewrite, so the row keeps
+  `origin: 'model'` and the serving id it was written with — `edited: true`
+  says the text came from outside the generator, which is not a claim that a
+  person typed it. Discard replaces the engine's text with the PREVIOUS one,
+  so it restores that text's own `origin` + `writerModel`: the staged entry
+  captures both at `stageProposal` (the one moment they are still readable —
+  the engine's write overwrites them) and the write puts them back. Without
+  this, both gestures would fall back to the save path's writer-model default
+  and relabel a model's text as the owner's — which is exactly what makes the
+  normalization pass ask him about a rewrite he never typed.
 - **One part-text save path (seam)**: `features/modules/partText.ts` — the
   reader's hand edit, the board rewrite's Apply and Discard all funnel
   through `saveModulePartText`; the row re-read inside the write makes a

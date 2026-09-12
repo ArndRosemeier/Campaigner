@@ -217,6 +217,7 @@ function floorModule(options: {
       errorMessage: '',
       edited: false,
       writerModel: '',
+      origin: null,
     })),
     entityKinds: options.entityKinds ?? [],
   };

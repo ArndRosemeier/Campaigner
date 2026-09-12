@@ -50,6 +50,10 @@ import {
   useModuleOrphans,
   type ModuleOrphanRow,
 } from '@/features/modules/entity-orphans';
+import {
+  heldRewriteSummary,
+  heldRewritesBanner,
+} from '@/features/modules/module-problems';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 import {
   deriveAutomationDeviation,
@@ -315,6 +319,15 @@ export function EntityPanel({
     [entries, module.entityKinds, module.entityRewriteProposals],
   );
 
+  // What the normalization pass is WAITING for (docs/17 row 113): the count,
+  // the documents, and — per document — who wrote it. Derived once, so the
+  // banner's sentence and the dialog's rows cannot disagree, and neither
+  // asserts an authorship the row does not carry.
+  const heldRewrites = useMemo(
+    () => heldRewriteSummary(module, module.entityRewriteProposals ?? []),
+    [module],
+  );
+
   // "Generate everything" (owner request, verbatim: "In the entities sidebar i
   // would like to have a button 'generate everything' that just fills all
   // generation gaps. All entity details, all images, encounters, maps in
@@ -526,7 +539,7 @@ export function EntityPanel({
         module.id,
         moduleTexts({ ...module, spine, parts }),
       );
-      toastSuccess('Normalization rewrites applied to the hand-edited text');
+      toastSuccess('Normalization rewrites applied');
     } catch (error) {
       toastError('Could not apply the normalization rewrites', error);
     }
@@ -738,7 +751,7 @@ export function EntityPanel({
               data-testid="entity-proposals-banner"
             >
               <span className="min-w-0 flex-1">
-                Normalization wants to update hand-edited text — review the proposed rewrites.
+                {heldRewritesBanner(heldRewrites)}
               </span>
               <Button
                 variant="outline"
@@ -1137,22 +1150,27 @@ export function EntityPanel({
             <DialogTitle>Apply the normalization rewrites?</DialogTitle>
             <DialogDescription>
               The pass wants to point variant wiki-links at their canonical
-              entity in text you edited by hand. The display text you wrote
-              stays exactly as it is — only the link target changes. Applying
-              re-checks each document&apos;s <em>current</em> text; tokens you
-              removed meanwhile are skipped.
+              entity in the documents listed below, which it left alone because
+              they were written by hand (or before the app recorded who wrote
+              them). Each row names the writer of that text. Applying re-checks
+              each document&apos;s <em>current</em> text; tokens you removed
+              meanwhile are skipped. The display text stays exactly as it is —
+              only the link target changes.
             </DialogDescription>
           </DialogHeader>
           <ul className="max-h-48 space-y-1 overflow-y-auto overscroll-contain text-xs" data-testid="entity-proposals-list">
-            {(module.entityRewriteProposals ?? []).map((proposal) => (
-              <li key={String(proposal.planIndex)} className="rounded bg-muted px-2 py-1">
-                <span className="font-medium">
-                  {proposal.planIndex === -1
-                    ? 'Premise'
-                    : `Part ${String(proposal.planIndex + 1)}`}
-                </span>
+            {heldRewrites.documents.map((document) => (
+              <li key={String(document.planIndex)} className="rounded bg-muted px-2 py-1">
+                <span className="font-medium">{document.label}</span>
+                {' — '}
+                <span className="text-muted-foreground">{document.writer}</span>
                 {': '}
-                {proposal.replacements.map((rewrite) => `[[${rewrite.from}]] → [[${rewrite.to}]]`).join(', ')}
+                {(module.entityRewriteProposals ?? [])
+                  .find((proposal) => proposal.planIndex === document.planIndex)
+                  ?.replacements.map(
+                    (rewrite) => `[[${rewrite.from}]] → [[${rewrite.to}]]`,
+                  )
+                  .join(', ')}
               </li>
             ))}
           </ul>

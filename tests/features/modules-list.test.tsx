@@ -523,7 +523,7 @@ describe('ModulesListPage delete third state (referenced artifacts)', () => {
     // The draft owns an npc; the failed module links it in its part text.
     const hexer = await createArtifact({ campaignId, moduleId: draftId, kind: 'npc', name: 'Shared Hexer' });
     await patchModule(failedId, {
-      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' }],
+      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' , origin: null }],
     });
     renderAppAt(modulesPath(campaignId));
     await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });
@@ -554,7 +554,7 @@ describe('ModulesListPage delete third state (referenced artifacts)', () => {
     const { campaignId, draftId, failedId } = await seedModules();
     const hexer = await createArtifact({ campaignId, moduleId: draftId, kind: 'npc', name: 'Shared Hexer' });
     await patchModule(failedId, {
-      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' }],
+      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' , origin: null }],
     });
     renderAppAt(modulesPath(campaignId));
     await screen.findByText('Vault of Whispers', {}, { timeout: 10_000 });

@@ -416,7 +416,7 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     expect(screen.queryByTestId('entity-classify-new')).not.toBeInTheDocument();
   }, 20000);
 
-  it('folds a chat-introduced VARIANT onto the recorded entity: no second record, and the rewrite waits for consent', async () => {
+  it('folds a chat-introduced VARIANT onto the recorded entity: no second record, and the machine text is rewritten WITHOUT waiting', async () => {
     const user = userEvent.setup();
     chatMock.mockResolvedValueOnce({
       text: 'A title lands.\n<edit><search>[[Kael]] watches the gate</search><replace>[[Warden Kael]] watches the gate</replace></edit>',
@@ -438,6 +438,9 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     });
     await flushAsyncUpdates();
     expect((await getModule(world.moduleId))?.parts[0]?.markdown).toContain('[[Warden Kael]]');
+    // The applied chat turn recorded the MODEL as the author of this text
+    // (docs/17 row 113) — it is `edited: true`, but authorship is the model's.
+    expect((await getModule(world.moduleId))?.parts[0]?.origin).toBe('model');
 
     const panel = await renderFreshPanel();
     expect(screen.getByTestId('entity-classify-new')).toHaveTextContent('Classify 1 new name');
@@ -451,14 +454,53 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     });
     await user.click(screen.getByTestId('entity-classify-new'));
     await waitFor(async () => {
-      expect((await getModule(world.moduleId))?.entityRewriteProposals).not.toBeNull();
+      expect((await getModule(world.moduleId))?.parts[0]?.markdown).toContain('[[Kael|Warden Kael]]');
     });
 
     const row = await getModule(world.moduleId);
     // ONE record for the canonical — the variant never becomes a second one.
     expect(row?.entityKinds.map((entry) => entry.name)).toEqual(['Kael']);
-    // The chat-applied part is hand-edited text: the rewrite is HELD for the
-    // review dialog, and the text is untouched until the user consents.
+    // The text is MACHINE-written (a model rewrite the owner accepted through
+    // the chat), so the pass applies the retarget immediately and holds
+    // nothing: the owner's report was a banner about text he never wrote.
+    expect(row?.entityRewriteProposals).toBeNull();
+    expect(row?.parts[0]?.markdown).toContain('[[Kael|Warden Kael]]');
+
+    await panel.rerender();
+    expect(screen.queryByTestId('entity-proposals-banner')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('entity-classify-new')).not.toBeInTheDocument();
+    expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 1 npc');
+  }, 20000);
+
+  it('the SAME variant in text the owner typed by hand is still HELD for consent', async () => {
+    const user = userEvent.setup();
+    // The owner's own edit through THE one part-text save path (no writer
+    // model): the origin is recorded as human, so the variant rewrite waits —
+    // the protection this arc must not touch.
+    await saveModulePartText(
+      world.moduleId,
+      0,
+      'Rain hammers the stones. [[Kael]] watches the gate and [[Warden Kael]] counts the boats.',
+    );
+    const saved = await getModule(world.moduleId);
+    expect(saved?.parts[0]?.origin).toBe('human');
+
+    const panel = await renderFreshPanel();
+    chatMock.mockResolvedValueOnce({
+      text: JSON.stringify({
+        entities: [{ name: 'Warden Kael', canonical: 'Kael', kind: 'npc' }],
+      }),
+      modelUsed: 'test-model',
+      fallback: null,
+    });
+    await user.click(screen.getByTestId('entity-classify-new'));
+    await waitFor(async () => {
+      expect((await getModule(world.moduleId))?.entityRewriteProposals).not.toBeNull();
+    });
+
+    const row = await getModule(world.moduleId);
+    expect(row?.entityKinds.map((entry) => entry.name)).toEqual(['Kael']);
+    // HELD, and the text is untouched until the owner consents.
     expect(row?.entityRewriteProposals).toEqual([
       { planIndex: 0, replacements: [{ from: 'Warden Kael', to: 'Kael' }] },
     ]);
@@ -469,9 +511,13 @@ describe('names the module text picked up later (08 §M4-C record gate)', () => 
     await user.click(screen.getByTestId('entity-proposals-review'));
     await user.click(within(screen.getByTestId('entity-proposals-dialog')).getByTestId('entity-proposals-apply'));
     await waitFor(async () => {
-      expect((await getModule(world.moduleId))?.parts[0]?.markdown).toContain('[[Kael|Warden Kael]]');
+      const applied = await getModule(world.moduleId);
+      expect(applied?.parts[0]?.markdown).toContain('[[Kael|Warden Kael]]');
+      expect(applied?.entityRewriteProposals).toBeNull();
     });
 
+    // RERENDER the same panel (a second mount would leave this one stale): the
+    // rewrite applied, so the name is recorded and the affordance is gone.
     await panel.rerender();
     expect(screen.queryByTestId('entity-classify-new')).not.toBeInTheDocument();
     expect(screen.getByTestId('batch-npc')).toHaveTextContent('Generate 1 npc');

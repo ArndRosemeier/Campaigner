@@ -160,6 +160,11 @@ export function BoardPage(): JSX.Element {
         nodeKey,
         planIndex,
         oldMarkdown: previous?.markdown ?? '',
+        // AUTHORSHIP (docs/17 row 113): the rewrite below OVERWRITES this row,
+        // so who wrote the text being replaced can only be captured now — a
+        // Discard must put the old text back with its own authorship.
+        oldOrigin: previous?.origin ?? null,
+        oldWriterModel: previous?.writerModel ?? '',
       });
       try {
         await runParts(moduleId, campaign, {
@@ -198,7 +203,11 @@ export function BoardPage(): JSX.Element {
       if (entry === undefined) return;
       useStagedRewritesStore.getState().markApplied(nodeKey);
       try {
-        await saveModulePartText(moduleId, entry.planIndex, entry.newMarkdown);
+        // The text is the ENGINE's own ready write (it already stamped the row
+        // `origin: 'model'` with the serving model); Apply adopts it, so the
+        // authorship must survive this write rather than being re-derived from
+        // an omitted writer model (docs/17 row 113).
+        await saveModulePartText(moduleId, entry.planIndex, entry.newMarkdown, undefined, 'model');
         useStagedRewritesStore.getState().drop(nodeKey);
         toastSuccess('Rewrite applied');
       } catch (error) {
@@ -215,8 +224,17 @@ export function BoardPage(): JSX.Element {
       if (entry === undefined) return;
       try {
         // The engine already wrote its text to the row; discarding restores
-        // the previous text through THE one save path.
-        await saveModulePartText(moduleId, entry.planIndex, entry.oldMarkdown);
+        // the previous text through THE one save path — WITH the authorship
+        // and the recorded model those bytes had before the rewrite (docs/17
+        // row 113), so a restored machine-written part is never relabelled as
+        // the owner's.
+        await saveModulePartText(
+          moduleId,
+          entry.planIndex,
+          entry.oldMarkdown,
+          entry.oldWriterModel,
+          entry.oldOrigin,
+        );
         useStagedRewritesStore.getState().drop(nodeKey);
       } catch (error) {
         toastError('Could not restore the previous part text', error);
@@ -556,6 +574,7 @@ function partSlicesFor(module: Module): Record<string, PartCardSlice> {
       errorMessage: part?.errorMessage ?? '',
       markdown: part?.markdown ?? '',
       edited: part?.edited ?? false,
+      origin: part?.origin ?? null,
     };
   }
   return slices;

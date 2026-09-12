@@ -21,6 +21,7 @@ import {
   type Id,
   type Module,
   type ModuleEntityKind,
+  type TextOrigin,
 } from '@/domain';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
@@ -97,6 +98,9 @@ async function seedReaderModule(
     /** PROVENANCE (docs/17 row 93): the id recorded on part 0, as the
      * generator would have left it. Absent = a row from before the field. */
     part0WriterModel?: string;
+    /** AUTHORSHIP (docs/17 row 113): who wrote part 0. Absent = NOT RECORDED,
+     * i.e. a row from before the field, which reads as human-authored. */
+    part0Origin?: TextOrigin;
   } = {},
 ): Promise<{
   campaign: Campaign;
@@ -155,6 +159,7 @@ async function seedReaderModule(
         ...(options.part0WriterModel === undefined
           ? {}
           : { writerModel: options.part0WriterModel }),
+        ...(options.part0Origin === undefined ? {} : { origin: options.part0Origin }),
       }),
       modulePartSchema.parse({
         planIndex: 1,
@@ -425,6 +430,12 @@ describe('ModuleReaderPage', () => {
         // The recorded writer SURVIVES the hand edit (owner decision 2): the
         // id answers "which model wrote this", not "who touched it last".
         expect(part?.writerModel).toBe('staged/reader-part-model');
+        // AUTHORSHIP (docs/17 row 113): the origin does NOT survive — this
+        // write recorded the owner as the author of the text now on the row,
+        // which is the question the consent rule asks. The two fields are
+        // recorded side by side precisely because they answer different
+        // questions.
+        expect(part?.origin).toBe('human');
       },
       { timeout: 10_000 },
     );
@@ -444,18 +455,27 @@ describe('ModuleReaderPage', () => {
     await flushAsyncUpdates();
   }, 20_000);
 
-  it('confirms a rewrite of the hand-edited part: warning, inert Cancel, confirm calls rewritePart', async () => {
+  it('confirms a rewrite of text written outside the generator: warning, inert Cancel, confirm calls rewritePart', async () => {
     const user = userEvent.setup();
     // The part is marked edited first (the persisting edit path itself is
-    // covered by the test above).
+    // covered by the test above). `edited` with NO recorded origin is a LEGACY
+    // row: the app cannot say who wrote it, so the warning names that state
+    // instead of claiming the owner typed it (docs/17 row 113).
     const { campaign, campaignId, moduleId } = await seedReaderModule({ part0Edited: true });
     renderAppAt(modulePath(campaignId, moduleId));
     await findPartSection(0);
 
     await user.click(screen.getByTestId('part-rewrite'));
     const dialog = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
-    // Hand-edited warning is shown before the destructive rewrite.
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('hand-edited');
+    // Attribution warning is shown before the destructive rewrite — and it
+    // does NOT call the text the owner's.
+    const alert = within(dialog).getByRole('alert');
+    expect(alert).toHaveTextContent(
+      'This part was written by hand (or before the app recorded authorship).',
+    );
+    expect(alert).toHaveTextContent('Regenerating overwrites it.');
+    expect(alert).not.toHaveTextContent('hand-edited');
+    expect(alert).not.toHaveTextContent('your edits');
 
     // Cancel closes without touching the generator.
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
@@ -470,6 +490,31 @@ describe('ModuleReaderPage', () => {
     await user.click(within(dialog2).getByRole('button', { name: 'Rewrite part' }));
     expect(rewriteMock).toHaveBeenCalledTimes(1);
     expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('names the MODEL when a canvas-applied (edited) part is about to be rewritten', async () => {
+    const user = userEvent.setup();
+    // `edited: true` AND `origin: 'model'`: the canvas applied a model rewrite,
+    // so the row knows who wrote the text even though the text came from
+    // outside the generator (docs/17 row 113).
+    const { campaignId, moduleId } = await seedReaderModule({
+      part0Edited: true,
+      part0Origin: 'model',
+      part0WriterModel: 'staged/canvas-apply-model',
+    });
+    renderAppAt(modulePath(campaignId, moduleId));
+    await findPartSection(0);
+
+    await user.click(screen.getByTestId('part-rewrite'));
+    const dialog = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
+    const alert = within(dialog).getByRole('alert');
+    expect(alert).toHaveTextContent(
+      'The model `staged/canvas-apply-model` wrote this part.',
+    );
+    expect(alert).not.toHaveTextContent('You wrote this part');
+    expect(alert).not.toHaveTextContent('hand-edited');
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }));
     await flushAsyncUpdates();
   }, 20_000);
 
@@ -600,10 +645,12 @@ describe('ModuleReaderPage', () => {
 
     // …so the rewrite dialog warns before overwriting, exactly as after a
     // blur-save (the confirm reads `edited` off the module row, and part
-    // markdown lives on the MODULE ROW — there is no artifact revision).
+    // markdown lives on the MODULE ROW — there is no artifact revision). The
+    // hand save recorded `origin: 'human'` at the save seam, which is what the
+    // warning now names.
     await user.click(screen.getByTestId('part-rewrite'));
     const dialog = await screen.findByTestId('rewrite-dialog', {}, { timeout: 5_000 });
-    expect(within(dialog).getByRole('alert')).toHaveTextContent('hand-edited');
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('You wrote this part.');
     await user.click(within(dialog).getByRole('button', { name: 'Rewrite part' }));
     expect(rewriteMock).toHaveBeenCalledTimes(1);
     expect(rewriteMock).toHaveBeenCalledWith(moduleId, campaign, 0, '');

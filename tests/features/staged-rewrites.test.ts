@@ -24,7 +24,13 @@ beforeEach(() => {
 describe('staged rewrite lifecycle', () => {
   it('proposes with old text, streams ghost, completes with the new text', () => {
     const store = useStagedRewritesStore.getState();
-    store.stageProposal({ nodeKey: 'part-0', planIndex: 0, oldMarkdown: 'OLD TEXT' });
+    store.stageProposal({
+      nodeKey: 'part-0',
+      planIndex: 0,
+      oldMarkdown: 'OLD TEXT',
+      oldOrigin: 'model',
+      oldWriterModel: 'staged/board-model',
+    });
 
     let entry = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0');
     expect(entry).toMatchObject({
@@ -35,6 +41,12 @@ describe('staged rewrite lifecycle', () => {
       ghost: '',
       status: 'proposed',
     });
+    // AUTHORSHIP (docs/17 row 113): the OLD text's authorship is captured here
+    // because the engine's rewrite is about to stamp the row `origin: 'model'`
+    // — after that the old answer is unrecoverable, and a Discard would have to
+    // guess it.
+    expect(entry?.oldOrigin).toBe('model');
+    expect(entry?.oldWriterModel).toBe('staged/board-model');
 
     store.appendGhost('part-0', 'NEW ');
     store.appendGhost('part-0', 'TEXT');
@@ -49,7 +61,13 @@ describe('staged rewrite lifecycle', () => {
 
   it('apply marks applied, then the landing drops the entry; a failed apply reverts', () => {
     const store = useStagedRewritesStore.getState();
-    store.stageProposal({ nodeKey: 'part-1', planIndex: 1, oldMarkdown: 'OLD' });
+    store.stageProposal({
+      nodeKey: 'part-1',
+      planIndex: 1,
+      oldMarkdown: 'OLD',
+      oldOrigin: 'human',
+      oldWriterModel: 'staged/earlier-model',
+    });
     store.finishProposal('part-1', 'NEW');
 
     store.markApplied('part-1');
@@ -70,7 +88,13 @@ describe('staged rewrite lifecycle', () => {
 
   it('discard drops the staging outright', () => {
     const store = useStagedRewritesStore.getState();
-    store.stageProposal({ nodeKey: 'part-2', planIndex: 2, oldMarkdown: 'OLD' });
+    store.stageProposal({
+      nodeKey: 'part-2',
+      planIndex: 2,
+      oldMarkdown: 'OLD',
+      oldOrigin: null,
+      oldWriterModel: '',
+    });
     store.finishProposal('part-2', 'NEW');
     store.drop('part-2');
     expect(useStagedRewritesStore.getState().byNodeKey['part-2']).toBeUndefined();
@@ -85,16 +109,40 @@ describe('staged rewrite lifecycle', () => {
     store.drop('missing');
     expect(useStagedRewritesStore.getState().byNodeKey).toEqual({});
 
-    store.stageProposal({ nodeKey: 'part-0', planIndex: 0, oldMarkdown: 'FIRST' });
-    store.stageProposal({ nodeKey: 'part-0', planIndex: 0, oldMarkdown: 'SECOND' });
+    store.stageProposal({
+      nodeKey: 'part-0',
+      planIndex: 0,
+      oldMarkdown: 'FIRST',
+      oldOrigin: 'model',
+      oldWriterModel: 'staged/first-model',
+    });
+    store.stageProposal({
+      nodeKey: 'part-0',
+      planIndex: 0,
+      oldMarkdown: 'SECOND',
+      oldOrigin: 'human',
+      oldWriterModel: '',
+    });
     expect(stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0')?.oldMarkdown).toBe(
       'SECOND',
     );
+    // The authorship follows the text it describes: the second proposal
+    // replaced the first entry whole (text AND its captured origin), so a
+    // Discard restores what the SECOND rewrite actually replaced.
+    const second = stagedRewriteFor(useStagedRewritesStore.getState().byNodeKey, 'part-0');
+    expect(second?.oldOrigin).toBe('human');
+    expect(second?.oldWriterModel).toBe('');
   });
 
   it('is session-only: nothing reaches localStorage', () => {
     const store = useStagedRewritesStore.getState();
-    store.stageProposal({ nodeKey: 'part-0', planIndex: 0, oldMarkdown: 'OLD' });
+    store.stageProposal({
+      nodeKey: 'part-0',
+      planIndex: 0,
+      oldMarkdown: 'OLD',
+      oldOrigin: null,
+      oldWriterModel: '',
+    });
     store.appendGhost('part-0', 'streaming text');
     store.finishProposal('part-0', 'NEW');
     store.markApplied('part-0');

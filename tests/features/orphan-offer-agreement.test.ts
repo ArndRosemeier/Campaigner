@@ -68,6 +68,7 @@ async function proseModule(campaignId: Id, title: string, premise: string): Prom
     premise,
     themes: [],
     writerModel: '',
+    origin: null,
     partPlan: [
       {
         title: 'The Seal',

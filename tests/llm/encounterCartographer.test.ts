@@ -2103,6 +2103,7 @@ describe('Encounter Cartographer run', () => {
           premise: 'Crypt premise.',
           themes: [],
           writerModel: '',
+          origin: null,
           partPlan: [{ title: 'Descent', levelBand: '2', synopsis: '', levelUpTrigger: '' }],
         },
         parts: [
@@ -2113,6 +2114,7 @@ describe('Encounter Cartographer run', () => {
             errorMessage: '',
             edited: false,
             writerModel: '',
+            origin: null,
           },
         ],
       });

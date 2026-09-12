@@ -8,7 +8,7 @@ import { createArtifact } from '@/db/artifactRepo';
 import { listModuleVersions } from '@/db/moduleVersionRepo';
 import { getModule, patchModule, saveModule } from '@/db/moduleRepo';
 import { updateSettings } from '@/db/settingsRepo';
-import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, type Campaign, type Id, type Module } from '@/domain';
+import { assembleModulePartsDocument, createModule, modulePartSchema, moduleSpineSchema, newId, type Campaign, type Id, type Module, type ModulePart } from '@/domain';
 import {
   cancelModuleGen,
   campaignCastContext,
@@ -176,23 +176,33 @@ async function seedSpine(moduleId: Id): Promise<void> {
   await patchModule(moduleId, { spine: moduleSpineSchema.parse(VALID_SPINE) });
 }
 
+/**
+ * Seeds one ready part. `edited: false` is the GENERATOR's own shape, so the
+ * part records `origin: 'model'` (the generator writes `edited: false` +
+ * `origin: 'model'` itself, docs/17 row 113); `edited: true` is text written
+ * outside the generator, and this helper seeds it as the owner's — pass an
+ * explicit `origin` to seed a canvas-applied MODEL part, which is ALSO
+ * `edited: true`.
+ */
 async function seedReadyPart(
   moduleId: Id,
   planIndex: number,
   markdown: string | ChatResult,
-  options: { edited?: boolean } = {},
+  options: { edited?: boolean; origin?: ModulePart['origin'] } = {},
 ): Promise<void> {
   const current = await getModule(moduleId);
   if (current === undefined) throw new Error('seed module is missing');
   const prose = typeof markdown === 'string' ? markdown : markdown.text;
+  const edited = options.edited === true;
   const parts = current.parts.filter((part) => part.planIndex !== planIndex);
   parts.push({
     planIndex,
     markdown: prose,
     status: 'ready',
     errorMessage: '',
-    edited: options.edited === true,
+    edited,
     writerModel: '',
+    origin: options.origin ?? (edited ? 'human' : 'model'),
   });
   parts.sort((a, b) => a.planIndex - b.planIndex);
   await patchModule(moduleId, { parts });

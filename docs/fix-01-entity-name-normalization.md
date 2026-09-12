@@ -216,6 +216,27 @@ For each `name → canonical` where canonical ≠ name, and text containing
    absorbed (`absorbed: string[]`) so the checkpoint can show what a
    canonical entry folded.
 
+### Consent for text that was written OUTSIDE the generator
+
+> **Amended by docs/17 row 113 (owner report: *"Module creation after creating
+> parts when normalizing now ALWAYS brings up this: 'Normalization wants to
+> update hand-edited text ? review the proposed rewrites.' There is actually
+> nothing hand written."*).** The rule below originally keyed the prompt on
+> `ModulePart.edited === true` and treated the premise as "user-authored,
+> editable at the checkpoint, with no `edited` flag" — so the premise took the
+> proposal path UNCONDITIONALLY, and `edited` (which the ONE part-text save
+> seam stamps on EVERY write through it, including model text the canvas
+> auto-accepted) was read as "the owner wrote this". Authorship is now
+> RECORDED, not inferred: reading this section, substitute
+> **`textOriginIsMachineWritten(origin) === false`** for "hand-edited"
+> everywhere it appears —
+> `ModulePart.origin` / `ModuleSpine.origin` (`'human' | 'model' | null`,
+> `domain/module.textOriginSchema`), so the GENERATED premise normalizes
+> automatically and only text a person authored holds a proposal. `edited`
+> keeps its own, unchanged meaning: "written outside the generator" (the
+> durable-version restore guard and the floor repair target list read it, and
+> neither is an authorship question). The original text follows, unedited.
+
 ### Consent for hand-edited text
 
 Parts the user has hand-edited (`ModulePart.edited === true`) and the
@@ -234,6 +255,31 @@ the parts-run progress job), so it never blocks on UI:
   text, so edits made since the pass are preserved); declining drops the
   proposals and the panel keeps showing its variant rows. Either way the
   proposals are cleared after the choice.
+
+**Where the authorship comes from (row 113), and the one decision point.**
+`domain/provenance.textOriginIsMachineWritten(origin)` is the ONLY authorship
+test the pass consults — `origin === 'model'` and nothing else, so `null`,
+`undefined` and `'human'` all mean "a person's text" (the conservative
+default: a row written before the field keeps asking). The origin is stamped
+at the ONE seam that writes part text, `moduleRepo.patchModulePartText`: a
+write that supplies a `writerModel` is a MODEL write (every canvas/chat apply
+path supplies one — `canvas/saveDoc.ts`, `CanvasPage`'s apply,
+`canvas/chatController.ts`, `canvas/snapshotChat.ts`) and a hand save
+deliberately omits it. `writerModel` is NOT a proxy for the origin: a hand
+edit CARRIES the previous model id forward (docs/17 row 93), so a stored id
+can never answer "who wrote this text now". The generator stamps
+`origin: 'model'` on the premise it emits and on every part its pass writes
+(and `spineReplySchema` omits the field, so the model cannot answer a question
+about its own authorship); the checkpoint's **Generate parts**
+(`approveSpineAndRun`) stamps `'human'` only when the approved premise TEXT
+differs from the stored one, so clicking through the checkpoint claims
+nothing. The board's two gestures state the authorship they do NOT change
+(docs/17 row 113): Apply adopts the engine's own rewrite as the model's, and
+Discard restores the replaced text together with the `origin` + `writerModel`
+`stagedRewrites.stageProposal` captured before the rewrite overwrote the row.
+The banner, the dialog rows and the rewrite alerts name the writer
+the row records ("you", the model's id, or "written by hand — or before the
+app recorded authorship") rather than asserting one.
 
 ### Rewrite mechanics (mechanical, not decisions)
 

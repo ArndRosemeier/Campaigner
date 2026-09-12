@@ -1,4 +1,4 @@
-import type { Id, Module } from '@/domain';
+import type { Id, Module, TextOrigin } from '@/domain';
 import { patchModulePartText } from '@/db/moduleRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
 
@@ -17,14 +17,25 @@ import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
  * it). A hand edit omits it, and `patchModulePartText` then CARRIES the id
  * already on the row — the owner's edits must not erase which model wrote the
  * text (owner decision).
+ *
+ * AUTHORSHIP (docs/17 row 113): that same argument — supplied or omitted —
+ * is what records the part's `origin`, in the row write below and nowhere
+ * else. A model write (a chat apply, an accepted proposal, an auto-accepted
+ * one) records `'model'`, so the normalization pass applies its link
+ * rewrites to it directly; an omitted id records `'human'`, whose rewrites
+ * keep waiting for consent. `authorship` states the origin for the writes
+ * whose TEXT does not change the answer — the board's Apply (the engine's own
+ * text stays the model's) and its Discard (the previous text comes back with
+ * the authorship it had, captured before the rewrite overwrote the row).
  */
 export async function saveModulePartText(
   moduleId: Id,
   planIndex: number,
   markdown: string,
   writerModel?: string,
+  authorship?: TextOrigin | null,
 ): Promise<Module> {
-  const saved = await patchModulePartText(moduleId, planIndex, markdown, writerModel);
+  const saved = await patchModulePartText(moduleId, planIndex, markdown, writerModel, authorship);
   await promoteSecondModuleUses(moduleId, [markdown]);
   return saved;
 }

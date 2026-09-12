@@ -66,6 +66,7 @@ async function seedWorld(): Promise<World> {
       premise: 'The chapter house sank with its chapter inside.',
       themes: [],
       writerModel: '',
+      origin: null,
       partPlan: [{ title: 'Descent', levelBand: '1', synopsis: '', levelUpTrigger: '' }],
     },
     parts: [
@@ -76,6 +77,7 @@ async function seedWorld(): Promise<World> {
         errorMessage: '',
         edited: false,
         writerModel: '',
+        origin: null,
       },
     ],
   });

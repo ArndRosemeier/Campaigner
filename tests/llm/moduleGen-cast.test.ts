@@ -260,6 +260,7 @@ async function seedPart(moduleId: string, markdown: string): Promise<void> {
         errorMessage: '',
         edited: false,
         writerModel: TEST_MODEL,
+        origin: null,
       },
     ],
   });

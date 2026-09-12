@@ -271,7 +271,7 @@ describe('modulesReferencingOwnedArtifacts (delete scan)', () => {
     // Module B links the hag in its part text and rosters the ogre in a
     // campaign-level encounter's roster (survives the delete).
     await patchModule(moduleB, {
-      parts: [{ planIndex: 0, markdown: 'Beware [[Linked Hag]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' }],
+      parts: [{ planIndex: 0, markdown: 'Beware [[Linked Hag]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' , origin: null }],
     });
     await createArtifact({
       campaignId,
@@ -407,7 +407,7 @@ describe("deleteModule 'promote-referenced'", () => {
     const shared = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Shared Hexer' });
     const doomed = await createArtifact({ campaignId, moduleId: moduleA, kind: 'npc', name: 'Doomed Squire' });
     await patchModule(moduleB, {
-      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' }],
+      parts: [{ planIndex: 0, markdown: 'Hire [[Shared Hexer]].', status: 'ready', errorMessage: '', edited: true, writerModel: '' , origin: null }],
     });
 
     await deleteModule(moduleA, 'promote-referenced');

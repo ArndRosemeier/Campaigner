@@ -960,6 +960,7 @@ describe('EntityPanel — normalization state (fix-01)', () => {
           errorMessage: '',
           edited: true,
           writerModel: '',
+          origin: null,
           markdown: 'The tide rose. [[Guard Mira]] kept the watch.',
         },
       ],
@@ -975,13 +976,29 @@ describe('EntityPanel — normalization state (fix-01)', () => {
       />,
     );
 
+    // The banner reports the PENDING WORK — how many rewrites and where — and
+    // makes no authorship claim (docs/17 row 113). Both stored proposals are
+    // held (the premise and part 1 carry no recorded origin).
     expect(screen.getByTestId('entity-proposals-banner')).toHaveTextContent(
-      'Normalization wants to update hand-edited text',
+      'Normalization is holding 2 link rewrites for review — premise and part 1.',
     );
+    expect(screen.getByTestId('entity-proposals-banner')).toHaveTextContent(
+      '2 documents are waiting on your decision; nothing has been changed.',
+    );
+    expect(screen.getByTestId('entity-proposals-banner')).not.toHaveTextContent('hand-edited');
+    expect(screen.getByTestId('entity-proposals-banner')).not.toHaveTextContent('you wrote');
     await user.click(screen.getByTestId('entity-proposals-review'));
     const dialog = screen.getByTestId('entity-proposals-dialog');
+    // Each row names WHERE and WHO — and the who is the row's own record: no
+    // origin recorded means the app says so instead of blaming the owner.
     expect(within(dialog).getByTestId('entity-proposals-list')).toHaveTextContent('Premise');
     expect(within(dialog).getByTestId('entity-proposals-list')).toHaveTextContent('Part 1');
+    expect(within(dialog).getByTestId('entity-proposals-list')).toHaveTextContent(
+      'written by hand (or before the app recorded authorship)',
+    );
+    expect(within(dialog).getByTestId('entity-proposals-list')).not.toHaveTextContent(
+      'text you edited by hand',
+    );
     await user.click(within(dialog).getByTestId('entity-proposals-apply'));
 
     // The apply is fire-and-forget from the click (the dialog closes at once),
@@ -1040,6 +1057,7 @@ describe('EntityPanel — normalization state (fix-01)', () => {
           errorMessage: '',
           edited: true,
           writerModel: '',
+          origin: null,
           markdown: 'The tide rose. [[Guard Mira]] kept the watch.',
         },
       ],
@@ -1071,6 +1089,72 @@ describe('EntityPanel — normalization state (fix-01)', () => {
     // Declining rewrites nothing, so it snapshots nothing either (the durable
     // capture is tied to the WRITE, not to the click).
     expect(await actDrained(() => listModuleVersions(module.id))).toEqual([]);
+    await flushAsyncUpdates();
+  }, 20_000);
+
+  it('names the true writer of each held document in the dialog rows', async () => {
+    const user = userEvent.setup();
+    const campaign = await createCampaign({ name: 'Ember', system: 'dnd5e' });
+    const fixtureSpine = moduleFixture(campaign.id).spine;
+    if (fixtureSpine === null) throw new Error('fixture spine missing');
+    const module = await seedNormalizedModule(campaign.id, {
+      spine: {
+        ...fixtureSpine,
+        premise: `${PREMISE} [[Guard Mira]] was seen at dusk.`,
+        writerModel: 'ignored/old-model',
+        origin: 'human',
+      },
+      entityRewriteProposals: [
+        { planIndex: -1, replacements: [{ from: 'Guard Mira', to: 'Mira' }] },
+        { planIndex: 0, replacements: [{ from: 'Guard Mira', to: 'Mira' }] },
+      ],
+      parts: [
+        {
+          planIndex: 0,
+          status: 'ready' as const,
+          errorMessage: '',
+          // A canvas-applied model rewrite: written outside the generator,
+          // and the row names the model that wrote it.
+          edited: true,
+          writerModel: 'staged/canvas-apply-model',
+          origin: 'model' as const,
+          markdown: 'The tide rose. [[Guard Mira]] kept the watch.',
+        },
+      ],
+    });
+
+    render(
+      <EntityPanel
+        module={module}
+        artifacts={[]}
+        campaign={campaign}
+        onStub={vi.fn()}
+        onOpenCard={vi.fn()}
+      />,
+    );
+
+    // The banner counts only — no authorship claim.
+    const banner = screen.getByTestId('entity-proposals-banner');
+    expect(banner).toHaveTextContent('Normalization is holding 2 link rewrites for review');
+    expect(banner).not.toHaveTextContent('you wrote');
+
+    await user.click(screen.getByTestId('entity-proposals-review'));
+    const list = within(screen.getByTestId('entity-proposals-dialog')).getByTestId(
+      'entity-proposals-list',
+    );
+    // The hand-written premise is the OWNER's; the canvas-applied part is the
+    // MODEL's, named by its recorded id.
+    expect(list).toHaveTextContent('Premise — you:');
+    expect(list).toHaveTextContent('Part 1 — staged/canvas-apply-model:');    expect(list).toHaveTextContent('[[Guard Mira]] → [[Mira]]');
+
+    await user.click(
+      within(screen.getByTestId('entity-proposals-dialog')).getByTestId(
+        'entity-proposals-decline',
+      ),
+    );
+    await waitFor(() => {
+      expect(screen.queryByTestId('entity-proposals-dialog')).not.toBeInTheDocument();
+    });
     await flushAsyncUpdates();
   }, 20_000);
 });
@@ -1193,6 +1277,7 @@ describe('EntityPanel — orphaned entities', () => {
       premise,
       themes: [],
       writerModel: '',
+      origin: null,
       partPlan: [
         {
           title: 'The Shore',
