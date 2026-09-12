@@ -81,12 +81,18 @@ function previewSurface(
   }
 }
 
-/** Validates and previews one style for the editor. */
+/** Validates and previews one style for the editor.
+ *
+ * The conditional clauses a run may not carry are rendered as PRESENT here,
+ * because this surface documents what a style's placeholders hold when they
+ * hold anything: the sample encounter floor, and the bestiary slot
+ * (`bestiaryAvailable: true`) — a workspace WITH a bestiary is the case a style
+ * author needs to see, and the template itself is the same either way. */
 export function previewPromptStyle(style: Pick<PromptStyle, 'templateText'>): PromptStylePreviewSet {
   const shared = sampleDataValues();
   const spine = previewSurface(style.templateText, 'spine', {
     ...shared,
-    ...spineContractValues({ floorClause: SAMPLE_FLOOR_CLAUSE }),
+    ...spineContractValues({ floorClause: SAMPLE_FLOOR_CLAUSE, bestiaryAvailable: true }),
   });
   const parts = previewSurface(style.templateText, 'parts', {
     ...shared,

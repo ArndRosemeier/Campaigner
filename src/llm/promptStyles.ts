@@ -39,6 +39,36 @@ const SPINE_ENTITY_KINDS =
   '- List every named entity you introduce with its kind: "npc" (a person or creature the party meets), "location" (a place), "event" (a non-combat scene the party plays through; same shape as a location), "faction" (an organization or group), "encounter" (a fight — a battle map and a monster roster), or "note" (anything else — items, rumors, mysteries, plot devices). One entry per named entity, one canonical spelling — a person is listed once, not once per role or title. Reuse existing campaign entities by exact name; never duplicate one to fill the floor.';
 
 /**
+ * The bestiary slot, appended to the entity-kind clause (docs/17 row 107):
+ * how a module casts a memorable character onto a common creature — the
+ * owner's Aunt Agatha case, verbatim: *"Often modules want lets say a zombie,
+ * but its old aunt agatha. So, she will have zombie stats but with prose."*
+ *
+ * It rides the ENTITY-KIND bullet because that is where NPC entities are
+ * described, and it rides the CLAUSE'S VALUE rather than a placeholder of its
+ * own because an empty library must leave the clause's bytes untouched: the
+ * built-in styles' templates never change, and a run with no library creature
+ * to name composes the pre-change prompt byte for byte (pinned by fixture).
+ *
+ * The clause names the field, the case it is for and the one it is NOT for,
+ * and the disambiguator — nothing else. It teaches a REQUEST, never a
+ * statistic: the creature's numbers stay the library's, and the entity's own
+ * name and prose stay the module's.
+ */
+const SPINE_BESTIARY =
+  ' When an NPC is a MEMORABLE CHARACTER who happens to use a common creature\u2019s numbers \u2014 the zombie is really old Aunt Agatha, the bandit captain is the miller everyone knows \u2014 give that entity a bestiary slot naming the library creature\u2019s own name ("bestiary": { "creature": "Zombie" }). The NPC keeps its OWN name and your prose about them and borrows only the creature\u2019s stats; add "book" (the book\u2019s title) only when the library holds several creatures of that name. A generic mob that is not a character gets no NPC entity and no slot \u2014 write it into the scene instead.';
+
+/**
+ * The entity-kind clause as one run renders it: the vocabulary, plus the
+ * bestiary slot when the workspace actually holds a creature to cast
+ * (docs/17 row 107). `null` = no library creature ⇒ the clause is the
+ * pre-change constant itself, byte for byte.
+ */
+export function spineEntityKindsClause(bestiaryAvailable: boolean): string {
+  return bestiaryAvailable ? `${SPINE_ENTITY_KINDS}${SPINE_BESTIARY}` : SPINE_ENTITY_KINDS;
+}
+
+/**
  * What an encounter IS (contract slot). Load-bearing: `post-generation` gives
  * battle maps and mob portraits to artifacts whose recorded kind is
  * `encounter` and nothing else.
@@ -556,10 +586,20 @@ export function promptStyleForModule(module: {
 }
 
 /** The contract values for a spine run. */
-export function spineContractValues(input: { floorClause: string | null }): Record<string, string> {
+export function spineContractValues(input: {
+  floorClause: string | null;
+  /**
+   * Whether the workspace holds a library creature an entity could be cast
+   * from (docs/17 row 107). `false` — an EMPTY library, which is every
+   * workspace that never imported a bestiary — renders EXACTLY the bytes this
+   * builder rendered before the field existed: the additive discipline
+   * (docs/18 §4). A run that cannot cast is not told about casting.
+   */
+  bestiaryAvailable: boolean;
+}): Record<string, string> {
   return {
     'contract.replyFormat': SPINE_REPLY_FORMAT,
-    'contract.entityKinds': SPINE_ENTITY_KINDS,
+    'contract.entityKinds': spineEntityKindsClause(input.bestiaryAvailable),
     'contract.sceneKinds': SPINE_SCENE_KINDS,
     'contract.wikiLinks': SPINE_WIKI_LINKS,
     // Inline slot: the clause carries its own trailing space, so a disabled

@@ -300,6 +300,32 @@ export const moduleAutomationIntentSchema = z.object({
 export type ModuleAutomationIntent = z.infer<typeof moduleAutomationIntentSchema>;
 
 /**
+ * THE bestiary slot (the Aunt Agatha path, docs/11 D4/§Module-side cast,
+ * docs/17 row 107): a library creature whose STATS this entity borrows while
+ * keeping its own name and prose — *"Often modules want lets say a zombie, but
+ * its old aunt agatha. So, she will have zombie stats but with prose."*
+ * (owner, verbatim).
+ *
+ * The model emits it on an entity RECORD, so the request is expressible in the
+ * module-generation contract itself. It names a LIBRARY creature only — the
+ * app resolves the name to the chunk's identity, so the model never has to
+ * invent a chunk id or a content hash, and no campaign row is involved.
+ */
+export const entityBestiarySlotSchema = z.object({
+  /** The creature's name as the library spells it (`canonicalCreatureName`):
+   * the last non-empty heading of a stat-block chunk. */
+  creature: z.string().trim().min(1),
+  /**
+   * The BOOK to disambiguate with, when the library carries more than one
+   * creature of that name — the rulebook's title as the app shows it in an
+   * origin label. Omit it for the common case.
+   */
+  book: z.string().trim().min(1).optional(),
+});
+
+export type EntityBestiarySlot = z.infer<typeof entityBestiarySlotSchema>;
+
+/**
  * One model-recorded entity type: a wiki-link name and its kind.
  *
  * Rows written before the conflict-kind vocabulary was retired may still carry
@@ -317,9 +343,94 @@ export const moduleEntityKindSchema = z.object({
   /** fix-01: variant names this canonical entry absorbed (checkpoint
    * display only; the panel folds via rewritten links). Empty otherwise. */
   absorbed: z.array(z.string()).default([]),
+  /**
+   * The library creature this entity's stats come from, when the model asked
+   * for a cast (the Aunt Agatha path, docs/17 row 107).
+   *
+   * ADDITIVE and OPTIONAL — as strictly additive as a field can be: a record
+   * written before the field, a record that asks for nothing, and the model's
+   * own `"bestiary": null` (the strict contract's spelling of "no cast") ALL
+   * read as `undefined`. Nothing is backfilled, no default is materialized onto
+   * rows that predate the question, and every existing assertion about a
+   * record's shape (`{ name, kind, absorbed }`) stays true. `undefined` is
+   * "this entity is detailed by its own persona run", which is what every
+   * module written before this arc asks for.
+   *
+   * It is a REQUEST, not a resolved citation: the app resolves it against the
+   * library at the moment the entity becomes an artifact
+   * (`features/modules/entity-batch` → `db/creatureRepo.castCreatureAsNpc`,
+   * the ONE cast function), and an unresolvable or ambiguous name fails the
+   * entity LOUDLY by name rather than being guessed at.
+   */
+  bestiary: z
+    .preprocess((value) => (value === null ? undefined : value), entityBestiarySlotSchema.optional()),
 });
 
 export type ModuleEntityKind = z.infer<typeof moduleEntityKindSchema>;
+
+/**
+ * Carries the model's bestiary slots onto the CANONICAL records a name
+ * normalization pass produces (docs/17 row 107).
+ *
+ * The normalization reply describes names and canonicals; it knows nothing
+ * about casting, and it must not have to — so the pass records the canonical
+ * names+kind ("records: `module.entityKinds` is REPLACED with these —
+ * never merged into the previous variant-keyed records") and this helper
+ * restores the REQUEST the model already made. Matching is exact and
+ * case-insensitive over the record's own name plus every `absorbed` variant,
+ * the same comparison the normalization pass itself is allowed to use; a name
+ * whose spelling the pass canonicalized keeps its request, because the variant
+ * it was written under still resolves to that canonical.
+ *
+ * LOUD, never a pick (AGENTS rule 1): two source records answering one
+ * canonical with DIFFERENT creatures is a state the normalizer cannot have
+ * meant, and quietly choosing one would silently re-stat an entity.
+ */
+export function withEntityBestiarySlots(
+  records: readonly ModuleEntityKind[],
+  source: readonly ModuleEntityKind[],
+): ModuleEntityKind[] {
+  /** Every name a source record answers to, mapped to that record. */
+  const sourceByName = new Map<string, ModuleEntityKind>();
+  for (const entry of source) {
+    for (const alias of [entry.name, ...entry.absorbed]) {
+      const key = alias.trim().toLowerCase();
+      if (key !== '') sourceByName.set(key, entry);
+    }
+  }
+  return records.map((record) => {
+    const parts = [record.name, ...record.name.split(',')].map((part) => part.trim().toLowerCase());
+    const contributing = [...record.absorbed, ...parts]
+      .map((alias) => sourceByName.get(alias.trim().toLowerCase()))
+      .filter((entry): entry is ModuleEntityKind => entry !== undefined);
+    const found: EntityBestiarySlot[] = [];
+    for (const entry of contributing) {
+      const slot = entry.bestiary;
+      if (slot === undefined) continue;
+      if (!found.some((existing) => sameSlot(existing, slot))) found.push(slot);
+    }
+    if (found.length === 0) return record;
+    if (found.length > 1) {
+      // Two source records answer ONE canonical with different creatures: the
+      // normalizer cannot have meant that, and picking one would silently
+      // re-stat an entity (AGENTS rule 1).
+      throw new Error(
+        `entity bestiary slot: «${record.name}» was asked to borrow the stats of two different library ` +
+          `creatures (${found.map((slot) => `«${slot.creature}»`).join(' and ')}) — one entity cannot be cast twice`,
+      );
+    }
+    return { ...record, bestiary: found[0] };
+  });
+}
+
+/** Two slots asking for the same creature from the same book (trimmed,
+ * case-insensitive — the comparison the normalization pass itself may make). */
+function sameSlot(a: EntityBestiarySlot, b: EntityBestiarySlot): boolean {
+  return (
+    a.creature.trim().toLowerCase() === b.creature.trim().toLowerCase() &&
+    (a.book ?? '').trim().toLowerCase() === (b.book ?? '').trim().toLowerCase()
+  );
+}
 
 /**
  * How many recorded entities one module row carries (`entityKinds` schema
@@ -353,6 +464,22 @@ export function entityKindFor(
   return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.kind;
 }
 
+/**
+ * The bestiary slot the module RECORDED for one entity name — the model's cast
+ * request, read back at the moment the entity becomes an artifact (docs/17
+ * row 107). `null` when the name has no record or its record asks for no cast,
+ * which is every module written before the field and every entity that is
+ * detailed by its own persona run. ONE read, so the finalize path and a test
+ * can never disagree about which record carries the request.
+ */
+export function bestiarySlotForEntity(
+  entityKinds: readonly ModuleEntityKind[],
+  name: string,
+): EntityBestiarySlot | null {
+  const target = name.trim().toLowerCase();
+  if (target === '') return null;
+  return entityKinds.find((entry) => entry.name.trim().toLowerCase() === target)?.bestiary ?? null;
+}
 /**
  * The module canvas chat thread (08-MODULE-DESIGNER §Module canvas chat,
  * docs/17 row 57): the persisted conversation — user instructions plus the

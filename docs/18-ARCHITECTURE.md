@@ -98,6 +98,7 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
 | Get/create the live battle for a module | `battleRepo.ensureBattle` — the v16 unique `&moduleId` index is the arbiter | get-then-create across two transactions |
 | Cite a library creature from an encounter roster (no artifact, nothing created) | The roster's `source` (`rulebook` / `npc-ref` / `inline` / `none`) + `db/creatureRepo.resolveCreatureCitation` — a citation names the BESTIARY (chunk id, else the content hash recorded at citation birth) and materializes nothing | the retired `mobArtifacts.getOrCreateMobArtifact` (docs/17 row 106)ing it away from the first module | scan-then-`createArtifact` in separate txs (splits token identity); moving a placed mob artifact to another module |
 | Cast a library creature as this campaign's OWN npc (the Aunt Agatha path) | `db/creatureRepo.castCreatureAsNpc` — ONE function, idempotent per (campaign, module, name, IDENTITY): it creates the row on first cast, REUSES it on the second (writing nothing), refuses a same-named rival that draws from a different creature, refuses to cast over an authored npc, and refuses a creature the library cannot supply. Only the MODULE generator and the bestiary spawn dialog hold it | `createArtifact` plus a hand-written `creatureRef` at a call site; any cast attempt from the encounter side (structurally impossible — the roster schema cannot express one) |
+| Ask the MODULE GENERATOR for a cast (the Aunt Agatha path, docs/17 row 107) | The entity record's optional `bestiary` slot (`domain/module.ts` — `{ creature, book? }`, the creature's name as the library spells it, `book` only when two books share it) + the spine clause `llm/promptStyles.spineEntityKindsClause` (rendered ONLY when `db/creatureRepo.listLibraryCreatures` is non-empty, so an empty library composes the pre-change prompt byte for byte) + `features/modules/entity-batch.libraryCitationForEntity` resolving the NAME to a citation at finalize and casting through `castCreatureAsNpc`, which is also where a persona run is NOT started (the stats are the library's, the prose is the module's own paragraphs about the entity). A name the library cannot supply, or one two books both carry, FAILS the entity loudly by name into the batch's existing `failed[]` | writing `creatureRef` by hand at a call site; a second creature lookup or a second cast function; guessing between two candidates; dropping the prose into a statless twin; making the clause unconditional (an unconditional clause changes the prompt for every workspace that has no bestiary) |
 | Ground an UNCITED roster entry's on-demand creature (inline/none) | The roster entry ITSELF — its name + `notes` are the identity (`domain/creature.contentCreatureKey`) and the portrait prompt's whole grounding (`MobPortraitJob.grounding`); no row exists | `mobArtifacts.materializeInventedCreatureArtifact` (retired, docs/17 row 106)mmary marker; `moduleId` = encounter's when module-owned else campaign-level; roster entry NOT rewritten so seeds stay identical) + the run-engine Smith finalize's inline-statblock path (`materializeMonsterNpc` — `moduleId` = the run's `placementModuleId` when placed, campaign level otherwise, matching the encounter/generate create sites; reuse prefers a same-named row the USING module already owns and never re-scopes the row it links — a scope change is only ever `moveScope`) + `features/campaign/mob-portrait-queue.enqueueInventedCreaturePortraits` (chunk-less local-only jobs — invented covers never read/populate/overwrite the global cache). Superseded: docs/fix-02 put this path at campaign scope, which made a module-placed encounter's inline mobs survive `deleteModule` | a new kind or a `monsterChunkId` marker on a chunk-less row; rewriting the entry to npc-ref (changes seed identity); materializing at campaign level regardless of placement |
 | Global mob portrait per cited chunk (canonical only, all campaigns) | `db/mobPortraitCache` (firewall `cacheKeyForMonsterSource`, read-through `fillCoverFromCache` (now called by NO production path: the portrait BATCH stopped passing it while enumerating — ledger 83: a cover-less canonical citation is a normal job whose worker clones the populated slot, so a visible hole is reported as WORK, never as `alreadyImaged`), render `cloneCachedPortraitToArtifact` — first-time clone skips imaged artifacts, the `force` flavor force-clones delete-after-replace for regen — plus artifact-to-artifact `cloneArtifactCover` for the content-regen carry-forward; all three ride the ONE `attachClonedCover` core, never a second mechanism — first-publish `storeCanonicalPortraitIfAbsent` — put-if-absent ONLY) + `features/campaign/mob-portrait-cache-queue.ensureCanonicalMobPortrait` (cross-campaign single-flight; Dexie v18 `mobPortraits` table `id, &chunkId`; docs/11 D5 amendment). Regen republishes through `replaceCanonicalPortrait` (the ONLY unconditional slot writer) via `regenerateCanonicalMobPortrait` (the ONLY always-fresh generation) — never `storeCanonicalPortraitIfAbsent` for a regen (it would keep the old bytes) | generating per campaign; attaching the shared global row as a cover; a flavored citation writing the cache; republishing the slot anywhere but `replaceCanonicalPortrait` |
 | Count a mob-portrait batch before acting (the encounter editor's confirm) | `features/campaign/mob-portrait-queue.planMobPortraitBatch` — the read-only half of `enumerateBatchKinds`, the SAME enumeration the additive batch (`enqueueMobPortraits` / `enqueueInventedCreaturePortraits`) and both regen paths walk: it resolves what EXISTS (`findMobArtifactByChunk`, `mobArtifacts.findInventedCreatureArtifact`) and creates, clones and enqueues NOTHING; a dangling stamped `mobArtifactId` throws loud in both modes | a second enumeration that drifts from the batch (the confirm would promise work the queue will not do); counting by creating or cloning |
@@ -663,7 +664,13 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
      is enforced by ABSENCE OF A FUNCTION, not by a guard: the encounter and
      sweep paths have no cast seam and no schema field to express one (pinned in
      `tests/db/creatureRepo.test.ts`), while the module generator and the
-     bestiary spawn dialog are the two callers.
+     bestiary spawn dialog are the two callers. AMENDED (docs/17 row 107): the
+     module generator no longer only HOLDS the function, it can now ASK for it —
+     an entity record carries an optional `bestiary` slot (the library
+     creature's name, plus a book to disambiguate), the spine prompt states the
+     clause offering it whenever the workspace has creatures to cast, and
+     finalize resolves the name and calls `castCreatureAsNpc`. The request is
+     the model's; the cast is still only ever this one function's (§2.1).
   Consequences a future edit must preserve: the cast row's `creatureRef` is
   never written by any writer (it is a different field from the one prose and
   stat-block writers touch), `changeArtifact` REFUSES a cast row (an instruction
@@ -800,6 +807,34 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   own"*). Deleting a guard is right when the thing it guarded can no longer be
   expressed; keeping it "just in case" is how the 67-usage classification maze
   grew back.
+  AMENDED (docs/17 row 107): the module generator can now ASK for a cast — an
+  entity record carries the optional `bestiary` slot, the spine clause offers it
+  — and that does NOT weaken the asymmetry by one inch, because the encounter
+  side still has no schema field and no function to reach: the pin was EXTENDED
+  from the encounter artifact's data schema to the encounter GENERATION
+  contracts (the Smith draft and the Cartographer brief carry no `bestiary` and
+  no `cast` property anywhere, `runEngine`/`encounterRoster` name neither
+  `castCreatureAsNpc` nor `bestiarySlotForEntity`), in
+  `tests/llm/moduleGen-cast.test.ts`. The direction to remember is the one the
+  owner gave: the generator ASKS, the encounter side cannot even speak it.
+
+- **A clause that is added to a shared prompt must be rendered CONDITIONALLY on
+  something a run already has, or it changes the prompt for every workspace that
+  has nothing to do with it** (docs/17 row 107, the additive discipline). The
+  bestiary slot's clause rides the entity-kind bullet
+  (`llm/promptStyles.spineEntityKindsClause`) and renders ONLY when
+  `db/creatureRepo.listLibraryCreatures()` is non-empty: a workspace with no
+  bestiary composes the pre-change prompt **byte for byte**, which is MEASURED,
+  not asserted from memory — `tests/llm/moduleGen-cast.test.ts` runs the real
+  `runSpine` against the same module row the pre-style golden was captured from
+  and compares the prompt to
+  `tests/fixtures/promptStyles/spine-classic-default.txt` character for
+  character, then asserts the WITH-library prompt's delta is exactly
+  `spineEntityKindsClause(true) - spineEntityKindsClause(false)` and that the
+  field is mentioned nowhere else in the prompt. The style-preview surface is
+  the deliberate exception (`features/settings/prompt-style-preview` renders the
+  clause as PRESENT — it documents what a placeholder holds when it holds
+  anything, and the template itself is identical either way).
 - **An ability value is a d20 SCORE in EVERY system — a printed MODIFIER is
   never one, and only the SIGN can prove which the model meant** (owner report,
   docs/17 row 95, docs/12 §5). A generated Pathfinder 2e mob rendered

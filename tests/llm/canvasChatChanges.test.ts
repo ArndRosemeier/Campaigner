@@ -278,9 +278,11 @@ async function rowBytes(artifactId: Id): Promise<string> {
   return JSON.stringify(await getAnyArtifact(artifactId));
 }
 
-/** What the seam's entity lane returns when it succeeded. */
+/** What the seam's entity lane returns when it succeeded. `cast: []` — this
+ * change ran a persona draft, never the module-side bestiary cast (docs/17 row
+ * 107). */
 function produced(name: string, artifactId: Id) {
-  return { generated: [name], produced: [{ name, artifactId }], failed: [] };
+  return { generated: [name], cast: [], produced: [{ name, artifactId }], failed: [] };
 }
 
 function changeReply(...changes: string[]): string {

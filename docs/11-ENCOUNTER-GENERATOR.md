@@ -97,6 +97,76 @@ they should not introduce important NPCs on their own."*
 
 ---
 
+### The module-side cast — how the generator ASKS for the Aunt Agatha path (owner intent, docs/17 row 107)
+
+The creature tier gave casting ONE implementation and two possible holders. This
+section is the half that makes it reachable **from the module generator itself**
+— the owner's own emphasis, verbatim:
+
+> *"Thats actually an important path. Often modules want lets say a zombie, but
+> its old aunt agatha. So, she will have zombie stats but with prose. This path
+> should be easily available for mob generation (inside the module generator
+> mainly, i think the encounter generated mobs wont need it, they should not
+> introduce important NPCs on their own)."*
+
+The request travels in three hops, and each hop has exactly one owner.
+
+1. **The contract** (`domain/module.ts`). An entity record — the
+   `{ name, kind }` entries the pass-0 spine declares and every later entity
+   pass reads — gains ONE optional field, `bestiary`:
+   `{ creature: string, book?: string }`. `creature` is the creature's name **as
+   the library spells it** (`canonicalCreatureName`: the innermost heading of a
+   stat-block chunk); `book` is the disambiguator a workspace with two books
+   needs, matched against the same origin label every creature surface shows
+   (`creatureOriginLabel`). The field is **additive in the strictest sense**: a
+   record written before it parses with no `bestiary` key at all, a record that
+   asks for nothing never gains one, and the model's own `"bestiary": null` (the
+   strict JSON contract's spelling of "absent") reads as `undefined`.
+2. **The prompt** (`llm/promptStyles.spineEntityKindsClause`). The clause rides
+   the entity-kind bullet — the place the prompt describes what an NPC entity is
+   — and it is rendered **only when the workspace holds at least one library
+   creature** (`db/creatureRepo.listLibraryCreatures`). It teaches the REQUEST,
+   never a statistic: a memorable character keeps its own name and the module's
+   prose about it and borrows only the creature's numbers; a generic mob that is
+   not a character gets no NPC entity at all. An empty library therefore composes
+   the pre-change prompt **byte for byte** (pinned against
+   `tests/fixtures/promptStyles/spine-classic-default.txt`).
+3. **Finalize** (`features/modules/entity-batch.ts`). When the entity becomes an
+   artifact, the batch reads the slot off the module row
+   (`domain/module.bestiarySlotForEntity`), resolves the name to a library
+   citation, and casts through `db/creatureRepo.castCreatureAsNpc` — the ONE cast
+   function, unchanged. It does **not** start a persona run for that entity: the
+   creature's numbers are the library's, and the prose is the module's own
+   paragraphs about the entity (`surroundingParagraphs` over
+   `moduleDocumentText`), which is what the generator wrote about her. The
+   result is ONE `npc` row carrying her name, that prose and a `creatureRef`, with
+   **no authored stat block** — the pair `npcDataSchema` refuses by name — and a
+   second run REUSES the row through the cast's own idempotency.
+
+**Failures are LOUD and NAMED, never a guess and never a silent drop of the
+prose.** `entity-batch.libraryCitationForEntity` refuses, in the owner's terms:
+
+| Situation | What happens |
+|---|---|
+| The library holds no creature of that name | the entity FAILS with "the entity «X» asks to borrow the stats of «Y», but this workspace's library holds no creature of that name — import the book it comes from" |
+| Two creatures share the name and the slot named no book | the entity FAILS listing both candidates and their books, naming the field to disambiguate with |
+| A book is named that holds no such creature | the entity FAILS naming the book and listing what the library does have |
+| One canonical entity is asked for two different creatures | the slot carry itself throws rather than picking one |
+
+Each refusal lands in the batch's existing `failed[]` (name + message) — the
+convention the panel and the module automation already toast — so the entity is
+reported exactly like any other per-entity generation failure, and NOTHING is
+written: no statless twin, no half-cast row.
+
+**The asymmetry stays structural.** The encounter side can cite and cannot cast,
+because it holds no cast seam and no schema field to express one; the new tests
+extend that pin from the encounter ARTIFACT's data schema to the encounter
+GENERATION contracts (the Smith draft, the Cartographer brief) and to the
+absence of any cast call in `runEngine`/`encounterRoster`. The opposite claim
+would be a second invented-creature path, which the tier exists to prevent.
+
+---
+
 ### D5 amendment — mob portraits (2026-09-05, owner-ratified; afa23f4, 070d4ba, 64b30f9; coverage + level contract amended 2026-09-10, docs/17 row 90) — SUPERSEDED IN MECHANISM, kept as the record
 
 The original D5 was written when a rulebook-cited monster had NO artifact

@@ -1,8 +1,10 @@
-import type { Campaign, Id, Module } from '@/domain';
-import { moduleDocumentText, moduleTagFor } from '@/domain';
-import { artifactRepo } from '@/db';
+import type { Campaign, EntityBestiarySlot, Id, Module } from '@/domain';
+import { bestiarySlotForEntity, moduleDocumentText, moduleTagFor } from '@/domain';
+import type { CreatureCitation } from '@/domain/encounterResolve';
+import { artifactRepo, db } from '@/db';
 import { listArtifactsByCampaign } from '@/db/artifactRepo';
 import { castCreatureLabel, castCreatureWriteRefusal, isCastCreatureNpc } from '@/domain';
+import { castCreatureAsNpc, listLibraryCreatures } from '@/db/creatureRepo';
 import { listPersonas } from '@/db/personaRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { runEngine, waitForRunStatus, type StartRunInput } from '@/llm/runEngine';
@@ -99,6 +101,124 @@ export async function alignEntityName(artifactId: Id, entityName: string): Promi
   await artifactRepo.updateArtifact(artifactId, { name: entityName, aliases });
 }
 
+/** The library's OWN disclosure of where one candidate creature comes from:
+ * the rulebook's title exactly as an origin label renders it (a pack's title,
+ * or the 'Rulebook' placeholder when the row's own title is empty — the same
+ * reading `domain/encounterResolve.creatureOriginLabel` performs). ONE reading
+ * of "which book is this creature from", and the same one every creature
+ * surface shows, so a slot's `book` is matched against what the owner can
+ * actually read on screen. */
+async function creatureBookTitle(chunkId: Id): Promise<string> {
+  const chunk = await db.chunks.get(chunkId);
+  if (chunk === undefined) return 'Rulebook';
+  const book = await db.rulebooks.get(chunk.bookId);
+  const title = book?.title.trim() ?? '';
+  return title === '' ? 'Rulebook' : title;
+}
+
+/**
+ * The cast an entity's BESTIARY SLOT asked for, resolved against the library
+ * (docs/17 row 107, "The Aunt Agatha case").
+ *
+ * This is a NAME lookup over the library pool the rest of the app already reads
+ * (`db/creatureRepo.listLibraryCreatures` — the ONE stat-block pool, the same
+ * one the wiki-link resolver and the bestiary browser use). It is NOT a second
+ * creature lookup: it answers "which chunk does this name mean?", and
+ * everything after that — the citation's identity, the derived stats, the
+ * portrait key — is `castCreatureAsNpc`'s, unchanged.
+ *
+ * EVERY failure is LOUD and NAMES both halves (AGENTS rules 1-3), because the
+ * alternative is the exact defect this path must not have: a guess, or a silent
+ * drop of the prose the model wrote:
+ *
+ * - no creature of that name in the workspace (a module designed before the
+ *   bestiary was imported, a typo, a creature the owner deleted);
+ * - the name is ambiguous — two creatures share it, which happens the moment
+ *   two books are installed — and the slot named no book, or named a book that
+ *   holds no such creature.
+ */
+async function libraryCitationForEntity(
+  entityName: string,
+  slot: EntityBestiarySlot,
+): Promise<CreatureCitation> {
+  const wanted = slot.creature.trim();
+  const book = slot.book?.trim() ?? '';
+  const named = `the entity «${entityName}» asks to borrow the stats of «${wanted}»`;
+  const pool = await listLibraryCreatures();
+  const sameName = pool.filter(
+    (creature) => creature.name.trim().toLowerCase() === wanted.toLowerCase(),
+  );
+  // The library's own disclosure of which book each candidate comes from. Read
+  // for the candidates ONLY, and only when a book is named or the name turns
+  // out to be ambiguous, so the common unambiguous case costs nothing.
+  const titleOf = new Map<string, string>();
+  const titleFor = async (chunkId: string): Promise<string> => {
+    const cached = titleOf.get(chunkId);
+    if (cached !== undefined) return cached;
+    const title = await creatureBookTitle(chunkId);
+    titleOf.set(chunkId, title);
+    return title;
+  };
+  const describe = async (entries: typeof pool): Promise<string> => {
+    const lines = await Promise.all(
+      entries.map(async (entry) => `${entry.name} (${await titleFor(entry.chunkId)})`),
+    );
+    return lines.join(', ');
+  };
+  if (sameName.length === 0) {
+    throw new Error(
+      `bestiary cast: ${named}, but this workspace's library holds no creature of that name — ` +
+        'import the book it comes from, or name a creature the library has (never a guess)',
+    );
+  }
+  let candidates = sameName;
+  if (book !== '') {
+    candidates = [];
+    for (const entry of sameName) {
+      if ((await titleFor(entry.chunkId)).toLowerCase() === book.toLowerCase()) {
+        candidates.push(entry);
+      }
+    }
+    if (candidates.length === 0) {
+      throw new Error(
+        `bestiary cast: ${named} from the book «${book}», but that book holds no creature of that ` +
+          `name — the library has ${await describe(sameName)}`,
+      );
+    }
+  }
+  if (candidates.length > 1) {
+    throw new Error(
+      `bestiary cast: ${named}, but this workspace's library holds ${String(candidates.length)} creatures ` +
+        `of that name (${await describe(candidates)}) — name the book in the entity's bestiary slot ` +
+        '("book": the book\'s title) so the cast is unambiguous',
+    );
+  }
+  const resolved = candidates[0];
+  if (resolved === undefined) {
+    // Unreachable: the empty case threw above and any ambiguity threw just
+    // here. Stated rather than asserted so the compiler proves it too.
+    throw new Error(`bestiary cast: ${named}, and no library creature answered the name`);
+  }
+  // Built the way every other citation site builds one: the chunk, its content
+  // hash at citation birth, and the library's own spelling of the creature's
+  // name — so a cast made here and a cast made from the bestiary browser share
+  // ONE identity and therefore one reuse rule (docs/11 D4/D9).
+  return {
+    chunkId: resolved.chunkId,
+    contentHash: resolved.contentHash,
+    creatureName: resolved.name,
+  };
+}
+
+/**
+ * The cast an entity's record ASKED for, or `null` — read from the module row
+ * (`domain/module.bestiarySlotForEntity`), so a caller cannot ask for a cast
+ * the module never recorded, and the encounter side has nowhere to put one.
+ */
+function castSlotFor(module: Module, name: string): EntityBestiarySlot | null {
+  return bestiarySlotForEntity(module.entityKinds, name);
+}
+
 /** Plural bucket label for the progress bar ("Generating 3 npcs"). */
 export const KIND_PLURALS: Record<StubKind, string> = {
   npc: 'npcs',
@@ -161,9 +281,20 @@ export interface EntityBatchProduced {
 export interface EntityBatchResult {
   /** Names whose chain step completed (artifact produced + aligned). */
   generated: string[];
+  /**
+   * Names whose entity record carried a BESTIARY SLOT and whose cast landed
+   * (docs/17 row 107) — the artifact exists, module-owned, with the library
+   * creature's stats behind its `creatureRef`. Kept OUT of `generated` on
+   * purpose: `generated` counts artifacts a persona RUN produced, and a cast
+   * runs no model call at all (its stats are the library's, its prose is the
+   * module's own text about the entity). A caller reporting counts can tell
+   * the two apart without reading statuses.
+   */
+  cast: string[];
   /** The produced artifacts, name-matched — callers that need the artifact
    * itself (the stub popover returns the artifactId) without re-resolving
-   * the wiki link. */
+   * the wiki link. A cast artifact is in here too: it IS the produced
+   * artifact for that entity. */
   produced: EntityBatchProduced[];
   /** Entities that produced no artifact, with the reason — loud in the
    * toast and the Runs tab (AGENTS rule 2). */
@@ -190,6 +321,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
   const progressFinish = useProgressStore.getState().finish;
   progressStart(jobId, `Generating ${String(total)} ${KIND_PLURALS[kind]}`);
   const generated: string[] = [];
+  const cast: string[] = [];
   const produced: EntityBatchProduced[] = [];
   const failed: EntityBatchFailure[] = [];
   // In-flight entities for the dock detail: name → current run step label.
@@ -261,6 +393,40 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
       inFlight.set(target.name, null);
       updateDetail();
       try {
+        // THE CAST PATH (docs/17 row 107, docs/11 §Module-side cast): this
+        // entity's RECORD carries a bestiary slot, so its stats are a LIBRARY
+        // creature's and it must be born through the ONE cast function — never
+        // by running a persona that would author a stat block beside the
+        // citation (`npcDataSchema` refuses that pair by name) and never by
+        // writing `creatureRef` here. A persona run is therefore NOT started
+        // for this entity at all: the creature's numbers come from the library,
+        // and the PROSE is the module's own text about the entity — the
+        // paragraphs around its wiki-link, which is what the generator wrote
+        // about her. `castCreatureAsNpc` reuses an existing cast of the same
+        // creature under the same name (so a second run mints no twin) and its
+        // prose is never rewritten by a later cast.
+        const slot = castSlotFor(module, target.name);
+        if (slot !== null && kind === 'npc' && target.artifactId === undefined) {
+          const citation = await libraryCitationForEntity(target.name, slot);
+          // The prose the cast row carries: the module's own paragraphs about
+          // this entity — what the generator wrote about her, at the mention
+          // site. An entity the text never actually mentions (it was declared
+          // in the spine's entity list but never written into a scene) still
+          // gets a NON-EMPTY body naming her rather than an empty one, which is
+          // a state and not a placeholder (AGENTS rule 1).
+          const context = surroundingParagraphs(moduleText, target.name).trim();
+          const castOutcome = await castCreatureAsNpc({
+            campaignId: campaign.id,
+            moduleId: module.id,
+            citation,
+            name: target.name,
+            prose: { body: context === '' ? target.name : context },
+          });
+          producedIds.push(castOutcome.artifactId);
+          cast.push(target.name);
+          produced.push({ name: target.name, artifactId: castOutcome.artifactId });
+          return;
+        }
         // The brief stands alone per entity: module text around the wiki-link
         // plus the spine premise — no dependency on sibling entities.
         // Encounter and NPC drafts additionally carry the structured level
@@ -392,6 +558,7 @@ export async function runEntityBatch(input: RunEntityBatchInput): Promise<Entity
     const producedByName = new Map(produced.map((entry) => [entry.name, entry]));
     return {
       generated,
+      cast,
       produced: targets.flatMap((target) => {
         const entry = producedByName.get(target.name);
         return entry === undefined ? [] : [entry];

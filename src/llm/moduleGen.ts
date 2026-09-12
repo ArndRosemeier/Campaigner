@@ -5,6 +5,8 @@ import {
   encounterFloorGuardrailFor,
   encounterFloorPerPart,
   encounterFloorTotal,
+  ENTITY_KINDS,
+  entityBestiarySlotSchema,
   entityKindFor,
   moduleCreationPool,
   moduleDocumentText,
@@ -12,6 +14,7 @@ import {
   moduleSpineSchema,
   MODULE_SIZE_WORD_TARGETS,
   partWriterModelFor,
+  withEntityBestiarySlots,
   type EncounterFloorGuardrail,
 } from '@/domain';
 import { canonicalEntityRecords, mergeEntityRewriteProposals, mergeNewEntityRecords, normalizationReplySchema, unclassifiedEntityNames, validateNormalizationReply, type NormalizationEntry } from '@/domain/entityNormalization';
@@ -29,6 +32,14 @@ import {
   spineContractValues,
 } from '@/llm/promptStyles';
 import { getModule, listModulesByCampaign, patchModule, saveModule } from '@/db/moduleRepo';
+// The library tier is READ here, for ONE question (docs/17 row 107): does the
+// workspace hold a library creature a module entity could be cast from? The
+// spine prompt offers the bestiary slot only when one exists, so a workspace
+// without a bestiary composes the pre-change prompt byte for byte. The cast
+// itself is not this module's — the entity batch resolves the requested name
+// and casts through `db/creatureRepo.castCreatureAsNpc`, the ONE cast
+// function (docs/18 §2.2).
+import { listLibraryCreatures } from '@/db/creatureRepo';
 import { listArtifactsByCampaign, updateArtifact } from '@/db/artifactRepo';
 import { snapshotModuleVersion } from '@/db/moduleVersionRepo';
 import { promoteSecondModuleUses } from '@/db/artifactAutoPromote';
@@ -37,6 +48,7 @@ import { getSettings, readPromptStyles } from '@/db/settingsRepo';
 import { chat, MissingApiKeyError, type ChatMessage, type ChatStreamActivity } from '@/llm/openrouter';
 import { parseErrorSummary, parseJsonReply } from '@/llm/jsonReply';
 import { repairModel } from '@/llm/modelFallback';
+import { absentable } from '@/llm/schemas';
 import { schemaResponseFormat } from '@/llm/strictSchema';
 import { searchRules } from '@/search';
 import { extractWikiLinks, resolveWikiLink, rewriteWikiLinkTargets, surroundingParagraphs, type LinkRewrite } from '@/lib/wikilinks';
@@ -348,8 +360,13 @@ export async function runSpine(
           artifactNames,
         );
         // Spine-time verdicts map names only — the records are the canonical
-        // form of the planner's own entity list.
-        normalizedKinds = canonicalEntityRecords(verdicts);
+        // form of the planner's own entity list. The planner's BESTIARY slots
+        // are carried onto them by name (docs/17 row 107): the normalization
+        // reply answers which canonical name each listed name refers to and
+        // knows nothing about casting, so the request the model already made
+        // rides through the substitution rather than being dropped with the
+        // variant-keyed records it was written on.
+        normalizedKinds = withEntityBestiarySlots(canonicalEntityRecords(verdicts), nextKinds);
       }
       const saved = await patchModule(moduleId, {
         // PROVENANCE (docs/17 row 93): the premise's writing model, recorded
@@ -444,6 +461,28 @@ export function parseSpine(raw: string): ModuleSpine {
 const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSchema) });
 
 /**
+ * The entity record as a MODEL answers it (the spine's and the entity list's
+ * emitted contract, docs/17 row 107).
+ *
+ * `absorbed` is the normalization pass's record, not a model-authored field:
+ * `.default([])` keeps its emitted shape exactly as it was before this field
+ * existed (a defaulted field comes out REQUIRED in the strict subset, which is
+ * what the decoder has always been asked for).
+ *
+ * `bestiary` is the one field a reply may genuinely omit, and the strict JSON
+ * schema re-emits a `.optional()` property as required+NULLABLE
+ * (strictSchema.ts) — so `absentable` is what lets a reply that asks for NO
+ * cast answer `"bestiary": null` and still land on the stored `T | undefined`
+ * shape. Both spellings read the same: no cast.
+ */
+const modelEntityKindSchema = z.object({
+  name: z.string().trim().min(1),
+  kind: z.enum(ENTITY_KINDS),
+  absorbed: z.array(z.string()).default([]),
+  bestiary: absentable(entityBestiarySlotSchema),
+});
+
+/**
  * The STRICT structured-output contract for the spine pass: one reply carries
  * the spine AND the entity list (both parse from the same JSON), so the
  * emitted schema is their composition. Runtime parsing keeps the two separate
@@ -456,10 +495,10 @@ const entityKindsReplySchema = z.object({ entities: z.array(moduleEntityKindSche
  * model can only invent (which the run then overwrites anyway). The model is
  * asked for the prose; the run records which model served it, after the fact.
  */
-const spineReplySchema = z
+export const spineReplySchema = z
   .object({
     ...moduleSpineSchema.shape,
-    entities: z.array(moduleEntityKindSchema),
+    entities: z.array(modelEntityKindSchema),
   })
   .omit({ writerModel: true });
 
@@ -741,6 +780,13 @@ async function spineMessages(
           .map((artifact) => `- ${artifact.name} (${artifact.kind})${artifact.summary === '' ? '' : ` — ${artifact.summary}`}`)
           .join('\n')}`;
   const priorContext = priorModulesContext(await priorModulesOf(module), campaignCastContext(artifacts));
+  // The bestiary slot (docs/17 row 107): the spine prompt offers casting ONLY
+  // when the workspace actually holds a library creature to name — an empty
+  // library composes the pre-change prompt byte for byte (docs/18 §4), and a
+  // module created before any bestiary was imported is not told about a
+  // library it does not have. Read here, like every other prompt input, so the
+  // clause and the slot the model answers with describe the same library.
+  const bestiaryAvailable = (await listLibraryCreatures()).length > 0;
 
   const levelCount = module.levelMax - module.levelMin + 1;
   // Tone dial teeth (08 §M4-B): the module's tone rules out a few OUTCOMES,
@@ -776,7 +822,7 @@ async function spineMessages(
         toneBans.length === 0
           ? ''
           : ` This module’s tone rules out these outcomes, each because it would erase the choice that produced it: ${toneBans.map((ban, index) => `(${String(index + 1)}) ${ban}`).join(' ')}`,
-      ...spineContractValues({ floorClause: floorRequirement }),
+      ...spineContractValues({ floorClause: floorRequirement, bestiaryAvailable }),
     },
   });
 
@@ -2052,10 +2098,15 @@ async function applyNormalizationVerdict(
     }
   }
 
+  // The pass's own canonical records, carrying any BESTIARY slot the model
+  // asked for onto the canonical name it landed on (docs/17 row 107) — the
+  // FULL pass answers the records that replaced the planner's list, and on an
+  // INCREMENTAL run the module's existing records keep their bytes
+  // (`mergeNewEntityRecords`) while the new ones are freshly classified names
+  // that carry no slot of their own.
+  const canonical = withEntityBestiarySlots(canonicalEntityRecords(verdicts), module.entityKinds);
   const records =
-    mode === 'incremental'
-      ? mergeNewEntityRecords(module.entityKinds, canonicalEntityRecords(verdicts))
-      : canonicalEntityRecords(verdicts);
+    mode === 'incremental' ? mergeNewEntityRecords(module.entityKinds, canonical) : canonical;
   const nextProposals =
     mode === 'incremental'
       ? mergeEntityRewriteProposals(module.entityRewriteProposals, proposals)
