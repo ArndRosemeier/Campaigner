@@ -652,6 +652,29 @@ export const moduleSchema = z
      * of the row. NEVER read by a generation prompt (module grounding
      * reads premise + parts only). */
     chatThread: z.array(moduleChatMessageSchema).default([]),
+    /**
+     * The module's DOCUMENT PLAN (docs/17 row 109, docs/07 §M3-D,
+     * `domain/documentPlan.ts`): the LLM-authored, zod-validated layout plan
+     * for this module's PDFs. Additive `.default(null)` — parse-on-read, NO
+     * Dexie version, NO index change (the `modules` store indexes `id`,
+     * `campaignId`, `updatedAt` only, and this field is not indexed), and it
+     * rides backup plus campaign export/import with the rest of the row
+     * (`moduleSchema` IS the export shape).
+     *
+     * Stored UNVALIDATED (`z.unknown()`) on purpose, and this is the one field
+     * of the row that is: a plan is model output, so a corrupt or hand-edited
+     * value must NOT make the whole module row unreadable at the repo
+     * boundary (every other surface — reader, canvas, battle — would die for a
+     * defect that belongs to the PDF alone). `domain/documentPlan.
+     * readStoredDocumentPlan` is the ONE read: absent ⇒ the procedural
+     * outline, silently (the normal case); invalid ⇒ a LOUD report at the
+     * document, whose export still lands (AGENTS rules 1–2).
+     *
+     * Written by exactly one writer, the planner seam
+     * (`llm/modulePlan.planModuleDocument` → `patchModule`); the renderer
+     * reads it straight off the row, so no call site passes a plan around.
+     */
+    documentPlan: z.unknown().default(null),
   })
   .refine((module) => module.levelMax >= module.levelMin, {
     message: 'levelMax must be >= levelMin',

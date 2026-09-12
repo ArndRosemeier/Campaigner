@@ -83,6 +83,7 @@ import { enclosingBlockOf, refineModuleText } from '@/llm/canvasRefine';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModule, useModuleVersions } from '@/features/modules/hooks';
 import { ModulePdfButton } from '@/features/modules/module-pdf-button';
+import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
 import { PeekModal } from '@/features/modules/peek-modal';
 import { CanvasEditor } from '@/features/modules/canvas/canvasEditor';
 import { activeCanvasView, lastCanvasScroll } from '@/features/modules/canvas/canvasView';
@@ -1473,6 +1474,12 @@ export function CanvasPage(): JSX.Element {
             campaign tree's module row (ONE component, both surfaces).
           */}
           <ModulePdfButton module={currentModule} artifacts={pool} />
+          {/*
+            The document plan (docs/17 row 109): the AI's structural decisions
+            for that same PDF, inspectable and regenerable — the module's own
+            surface, never a second copy of the document.
+          */}
+          <ModulePlanButton module={currentModule} artifacts={pool} />
           <BlockedControl testId="canvas-preview-toggle" reason={viewBusyReason}>
             <Button
               variant="ghost"

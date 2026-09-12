@@ -1,11 +1,24 @@
 import type { Content, ContentImage, Style, TDocumentDefinitions } from 'pdfmake/interfaces';
 
-import type { AnyArtifact, ArtifactKind, Battle, Id, Module, StatBlock } from '@/domain';
+import type {
+  AnyArtifact,
+  ArtifactKind,
+  Battle,
+  DocumentPlanAudience,
+  DocumentPlanRole,
+  DocumentPlanSource,
+  Id,
+  Module,
+  StatBlock,
+} from '@/domain';
 import {
   abilityModifier,
   assembleModulePartsDocument,
+  documentPlanIssues,
+  documentPlanSectionDestination,
   formatModifier,
   printsAbilityModifiers,
+  readStoredDocumentPlan,
   splitPartsDocument,
 } from '@/domain';
 import { isMissingRefOrigin, missingCreatureOrigin } from '@/domain/encounterResolve';
@@ -78,10 +91,11 @@ export interface ModulePdfProblem {
 export type ModulePdfAudience = 'gm' | 'player';
 
 /**
- * The renderer's input. Deliberately a bag: the LLM-authored document plan
- * (sections/order/titles/roles/image anchors, a later slice) lands here as one
- * more optional field and this renderer executes it — nothing else about the
- * call changes.
+ * The renderer's input. Deliberately a bag. The LLM-authored document plan is
+ * NOT one of these fields: it rides the MODULE ROW (`module.documentPlan`,
+ * docs/17 row 109), so every caller — the export button, the campaign tree, a
+ * test — gets the same document without passing anything new, and there is
+ * exactly ONE reader of the stored plan (`resolveDocumentPlan` below).
  */
 export interface ModulePdfInput {
   module: Module;
@@ -107,6 +121,16 @@ export interface ModulePdfInput {
    * missing-ref reason of a citation the library cannot satisfy.
    */
   rosterOrigins?: Readonly<Record<Id, readonly string[]>>;
+  /**
+   * When this document was compiled. Defaults to now, and it is PRINTED (the
+   * cover's "Compiled with Campaigner · <date>") and pinned into the PDF's own
+   * metadata at DAY granularity. Pass it to make a re-render byte-identical:
+   * with a fixed instant, the same (module, plan, artifacts, images) produces
+   * the same definition AND the same bytes — measured, see the determinism
+   * test. Without it, a compile on another day is a different document,
+   * because the printed date is part of the document.
+   */
+  compiledAt?: Date;
 }
 
 function isGmOnly(artifact: AnyArtifact): boolean {
@@ -153,11 +177,12 @@ const ALERT_BOX_LAYOUT = {
  * naming the site and the reason: a reader of the PDF must never have to guess
  * why a plate or a section is absent (AGENTS rule 1).
  */
-function alertBox(text: string): Content {
+function alertBox(text: string, options: { pageBreak?: boolean } = {}): Content {
   return {
     table: { widths: ['*'], body: [[{ text, italics: true, color: ALERT }]] },
     layout: ALERT_BOX_LAYOUT,
     margin: [0, 4, 0, 6],
+    ...(options.pageBreak === true ? { pageBreak: 'before' as const } : {}),
   };
 }
 
@@ -339,34 +364,11 @@ export function modulePdfImageRequests(input: {
   artifacts: readonly AnyArtifact[];
   battles?: readonly Battle[];
 }): PdfImageRequest[] {
-  const { module, artifacts } = input;
-  const battles = input.battles ?? [];
-  const requests: PdfImageRequest[] = [];
-  if (module.coverImageId !== null) {
-    requests.push({
-      id: module.coverImageId,
-      maxLongEdge: PDF_COVER_MAX_LONG_EDGE,
-      where: `the cover of “${module.title}”`,
-    });
-  }
-  for (const artifact of modulePdfArtifacts(module, artifacts)) {
-    if (artifact.coverImageId !== null) {
-      requests.push({
-        id: artifact.coverImageId,
-        maxLongEdge: PDF_COVER_MAX_LONG_EDGE,
-        where: `the cover of “${artifact.name}”`,
-      });
-    }
-    const mapImageId = encounterMapImageId(artifact, battles);
-    if (mapImageId !== null) {
-      requests.push({
-        id: mapImageId,
-        maxLongEdge: PDF_MAP_MAX_LONG_EDGE,
-        where: `the map of “${artifact.name}”`,
-      });
-    }
-  }
-  return requests;
+  return imageInventories({
+    module: input.module,
+    scoped: modulePdfArtifacts(input.module, input.artifacts),
+    battles: input.battles ?? [],
+  }).requests;
 }
 
 /** The parts of the module, split through the ONE parts-document seam. */
@@ -375,6 +377,165 @@ interface RenderedPart {
   title: string;
   levelBand: string;
   text: string;
+}
+
+// --- The document plan (docs/17 row 109) ------------------------------------
+
+/**
+ * One image a plan anchors: the id, and what the image IS — which the RENDERER
+ * decides (a map prints as a plate, a cover as art), never the plan.
+ */
+interface PlannedImage {
+  id: Id;
+  kind: 'map' | 'cover';
+  /** The addressable site, e.g. `the map of “Pier Ambush”`. */
+  where: string;
+}
+
+/** One plan section, reference-checked and resolved against live rows. */
+interface PlannedSection {
+  title: string;
+  role: DocumentPlanRole;
+  audience: DocumentPlanAudience;
+  source: DocumentPlanSource;
+  images: readonly PlannedImage[];
+  /** The section's stable pdfmake destination (`node-plan-<index>`). */
+  destination: string;
+  /** The artifact this section prints, when its source names one. */
+  artifact: AnyArtifact | null;
+}
+
+/**
+ * What the module row's plan means for THIS document. Four outcomes, and the
+ * difference between the last two is the whole failure contract:
+ *
+ * - `absent` — no plan stored (or `null`): the PROCEDURAL outline, silently.
+ *   This is the normal state, not a failure.
+ * - `invalid` — a stored value that is not a plan at all: LOUD.
+ * - `rejected` — a well-formed plan naming a part, artifact, encounter or
+ *   image the module does not have (it went stale, or the model invented one):
+ *   LOUD, and NOTHING from the plan is rendered.
+ * - `applied` — every reference checked out; the sections below are the
+ *   document's body, in plan order.
+ */
+type DocumentPlanOutcome =
+  | { status: 'absent' }
+  | { status: 'invalid'; reason: string }
+  | { status: 'rejected'; reason: string }
+  | { status: 'applied'; sections: readonly PlannedSection[] };
+
+/** The named problem site for a plan this document could not apply. */
+const PLAN_PROBLEM_WHERE = 'the document plan';
+
+/** Every image the document could print, by id: budget + site + what it IS. */
+function imageInventories(input: {
+  module: Module;
+  scoped: readonly AnyArtifact[];
+  battles: readonly Battle[];
+}): { byId: Map<Id, PlannedImage>; requests: PdfImageRequest[] } {
+  const byId = new Map<Id, PlannedImage>();
+  const requests: PdfImageRequest[] = [];
+  const { module, scoped, battles } = input;
+  const add = (
+    id: Id,
+    kind: 'map' | 'cover',
+    where: string,
+    maxLongEdge: number,
+  ): void => {
+    requests.push({ id, maxLongEdge, where });
+    // First classification wins: an id used as BOTH a cover and a map (the same
+    // row referenced twice) prints as the plate, which is the larger treatment
+    // and the one a battlemap needs.
+    const existing = byId.get(id);
+    if (existing === undefined || (existing.kind === 'cover' && kind === 'map')) {
+      byId.set(id, { id, kind, where });
+    }
+  };
+  if (module.coverImageId !== null) {
+    add(
+      module.coverImageId,
+      'cover',
+      `the cover of “${module.title}”`,
+      PDF_COVER_MAX_LONG_EDGE,
+    );
+  }
+  for (const artifact of scoped) {
+    if (artifact.coverImageId !== null) {
+      add(
+        artifact.coverImageId,
+        'cover',
+        `the cover of “${artifact.name}”`,
+        PDF_COVER_MAX_LONG_EDGE,
+      );
+    }
+    const mapImageId = encounterMapImageId(artifact, battles);
+    if (mapImageId !== null) {
+      add(mapImageId, 'map', `the map of “${artifact.name}”`, PDF_MAP_MAX_LONG_EDGE);
+    }
+  }
+  return { byId, requests };
+}
+
+/**
+ * Reads the module's stored plan and turns it into renderable sections — THE
+ * one reader, used by the definition builder (which renders) and by the async
+ * builder (which decides what to preload, from the same outcome, so the loaded
+ * set and the printed set can never disagree).
+ */
+export function resolveDocumentPlan(input: {
+  module: Module;
+  scoped: readonly AnyArtifact[];
+  battles: readonly Battle[];
+}): DocumentPlanOutcome {
+  const { module, scoped, battles } = input;
+  const stored = readStoredDocumentPlan(module.documentPlan);
+  if (stored.status === 'absent') return { status: 'absent' };
+  if (stored.status === 'invalid') {
+    return {
+      status: 'invalid',
+      reason: `the stored plan is not a valid document plan (${stored.reason})`,
+    };
+  }
+  const images = imageInventories({ module, scoped, battles });
+  const issues = documentPlanIssues(stored.plan.sections, {
+    partPlan: module.spine?.partPlan ?? [],
+    hasPremise: (module.spine?.premise ?? '').trim() !== '',
+    artifacts: scoped,
+    imageIds: [...images.byId.keys()],
+  });
+  if (issues.length > 0) {
+    return {
+      status: 'rejected',
+      reason: issues.map((issue) => `${issue.where} — ${issue.reason}`).join('; '),
+    };
+  }
+  const byId = new Map(scoped.map((artifact) => [artifact.id, artifact]));
+  return {
+    status: 'applied',
+    sections: stored.plan.sections.map((section, index) => ({
+      title: section.title,
+      role: section.role,
+      audience: section.audience,
+      source: section.source,
+      images: section.images.map((imageId) => {
+        const image = images.byId.get(imageId);
+        // The reference check above proved every anchor exists, so this is
+        // total for an applied plan; the fallback keeps the type honest.
+        return image ?? { id: imageId, kind: 'cover' as const, where: `image ${imageId}` };
+      }),
+      destination: documentPlanSectionDestination(index),
+      artifact: section.source.type === 'part' ? null : (byId.get(section.source.artifactId) ?? null),
+    })),
+  };
+}
+
+/** The one-line statement a document carries when its plan could not be used. */
+function planFallbackStatement(reason: string): string {
+  return (
+    'This document was laid out from the procedural outline: the module’s document plan ' +
+    `could not be applied — ${reason}. Regenerate it from the module’s “Document plan” ` +
+    'surface to print the planned document.'
+  );
 }
 
 function renderedParts(module: Module, problems: ModulePdfProblem[]): RenderedPart[] {
@@ -415,8 +576,15 @@ function renderedParts(module: Module, problems: ModulePdfProblem[]): RenderedPa
 interface RenderState {
   input: ModulePdfInput;
   audience: ModulePdfAudience;
-  /** Every artifact id the document actually prints (internal links only). */
-  rendered: ReadonlySet<Id>;
+  /**
+   * Every artifact the document actually prints → the pdfmake destination id
+   * it prints AT. Internal cross-references are emitted only for a destination
+   * that exists (pdfmake throws otherwise), so this is the ONE place that
+   * decides linkability — in the procedural document an artifact's id IS its
+   * destination (`node-<id>`), while a planned section is addressed by its
+   * section (`node-plan-<index>`), because a plan may name one row twice.
+   */
+  destinations: ReadonlyMap<Id, string>;
   byId: ReadonlyMap<Id, AnyArtifact>;
   problems: ModulePdfProblem[];
 }
@@ -446,10 +614,14 @@ function rosterOriginRun(
       // No row and no resolution: the reference genuinely dangles. Loud, named.
       return [{ text: ` — ${missingCreatureOrigin(entry.name)}`, italics: true, color: ALERT }];
     }
-    return state.rendered.has(target.id)
+    return state.destinations.has(target.id)
       ? [
           { text: ' — see ', italics: true },
-          { text: target.name, italics: true, linkToDestination: `node-${target.id}` },
+          {
+            text: target.name,
+            italics: true,
+            linkToDestination: state.destinations.get(target.id),
+          },
         ]
       : [{ text: ` — see ${target.name}`, italics: true }];
   }
@@ -580,6 +752,96 @@ function monsterHeaderKicker(difficulty: string, levelHint: string): Content | n
   };
 }
 
+/**
+ * One artifact's cover image, loudly. An image that EXISTS on the row but
+ * cannot be embedded prints a named placeholder and reports a problem — the
+ * shipped renderer silently skipped it.
+ */
+function artifactCoverContent(artifact: AnyArtifact, state: RenderState): Content[] {
+  if (artifact.coverImageId === null) return [];
+  const images = state.input.images ?? NO_PDF_IMAGES;
+  const where = `the cover of “${artifact.name}”`;
+  const dataUrl = imageDataUrlFor(images, artifact.coverImageId);
+  if (dataUrl === undefined) {
+    const failure = failureFor(images, artifact.coverImageId);
+    const reason = failure?.reason ?? 'it was not in the preloaded image set';
+    state.problems.push({ where, reason });
+    return [alertBox(`“${artifact.name}” has a cover image that could not be embedded — ${reason}`)];
+  }
+  if (artifact.kind === 'location' || artifact.kind === 'event') {
+    // Locations and events may span full width; everything else ≤45% via
+    // columns (pdfmake has no float).
+    return [imageNode(dataUrl, where, { fit: [450, 320], margin: [0, 0, 0, 6] })];
+  }
+  return [
+    {
+      columns: [
+        { image: assertImage(dataUrl, where), fit: [200, 150] },
+        { text: '', width: '55%' },
+      ],
+      margin: [0, 0, 0, 6],
+    },
+  ];
+}
+
+/**
+ * The map plate of an encounter at its own anchor (owner, verbatim: "Encounter
+ * maps should obviously be part of the PDF. They need to be included at the
+ * right places."). An encounter with NO map image prints NO plate — the owner's
+ * decision, not a failure. A map that EXISTS but cannot be embedded is loud,
+ * always: never a silent drop.
+ */
+function encounterMapPlate(artifact: AnyArtifact, state: RenderState): Content[] {
+  if (artifact.kind !== 'encounter') return [];
+  const mapImageId = encounterMapImageId(artifact, state.input.battles ?? []);
+  if (mapImageId === null) return [];
+  const images = state.input.images ?? NO_PDF_IMAGES;
+  const where = `the map of “${artifact.name}”`;
+  const dataUrl = imageDataUrlFor(images, mapImageId);
+  if (dataUrl === undefined) {
+    const failure = failureFor(images, mapImageId);
+    const reason = failure?.reason ?? 'it was not in the preloaded image set';
+    state.problems.push({ where, reason });
+    return [alertBox(`The map of “${artifact.name}” could not be embedded — ${reason}`)];
+  }
+  return [
+    imageNode(dataUrl, where, {
+      fit: [PAGE_CONTENT_WIDTH, MAP_PLATE_MAX_HEIGHT],
+      alignment: 'center',
+      margin: [0, 2, 0, 8],
+    }),
+  ];
+}
+
+/** An artifact's outgoing relations, with the dangling-reference placeholder. */
+function artifactLinksContent(artifact: AnyArtifact, state: RenderState): Content[] {
+  if (artifact.links.length === 0) return [];
+  const refs: Content[] = artifact.links.map((link): Content => {
+    const target = state.byId.get(link.targetId);
+    if (target === undefined) {
+      // The dangling-reference placeholder, kept and made loud: the shipped
+      // renderer dropped a relation whose target row is gone, silently.
+      const named = link.relation.trim() === '' ? link.targetId : link.relation;
+      return {
+        text: `see ${missingCreatureOrigin(named)}`,
+        italics: true,
+        color: ALERT,
+        margin: [0, 0, 0, 2],
+      };
+    }
+    const destination = state.destinations.get(target.id);
+    return destination === undefined
+      ? { text: `see ${target.name}`, italics: true, margin: [0, 0, 0, 2] }
+      : {
+          text: `see ${target.name}`,
+          italics: true,
+          linkToDestination: destination,
+          margin: [0, 0, 0, 2],
+        };
+  });
+  return [{ text: refs, margin: [0, 4, 0, 0] }];
+}
+
 /** One artifact's body: cover image, prose, per-kind data, cross-references. */
 function artifactBody(
   artifact: AnyArtifact,
@@ -587,88 +849,13 @@ function artifactBody(
   options: { covers: boolean },
 ): Content[] {
   const out: Content[] = [];
-  const images = state.input.images ?? NO_PDF_IMAGES;
-  if (options.covers && artifact.coverImageId !== null) {
-    const where = `the cover of “${artifact.name}”`;
-    const dataUrl = imageDataUrlFor(images, artifact.coverImageId);
-    if (dataUrl === undefined) {
-      // The shipped renderer SKIPPED a cover it could not find in the loaded
-      // image map — a silent drop of the owner's art. This is the loud form.
-      const failure = failureFor(images, artifact.coverImageId);
-      const reason = failure?.reason ?? 'it was not in the preloaded image set';
-      out.push(
-        alertBox(`“${artifact.name}” has a cover image that could not be embedded — ${reason}`),
-      );
-      state.problems.push({ where, reason });
-    } else if (artifact.kind === 'location' || artifact.kind === 'event') {
-      // Locations and events may span full width; everything else ≤45% via
-      // columns (pdfmake has no float).
-      out.push(imageNode(dataUrl, where, { fit: [450, 320], margin: [0, 0, 0, 6] }));
-    } else {
-      out.push({
-        columns: [
-          { image: assertImage(dataUrl, where), fit: [200, 150] },
-          { text: '', width: '55%' },
-        ],
-        margin: [0, 0, 0, 6],
-      });
-    }
-  }
-  if (artifact.kind === 'encounter') {
-    // The map plate at the encounter's own anchor (owner, verbatim: "Encounter
-    // maps should obviously be part of the PDF. They need to be included at the
-    // right places."). An encounter with NO map image prints NO plate — the
-    // owner's decision, not a failure. A map that EXISTS but cannot be embedded
-    // is loud, always: never a silent drop.
-    const mapImageId = encounterMapImageId(artifact, state.input.battles ?? []);
-    if (mapImageId !== null) {
-      const where = `the map of “${artifact.name}”`;
-      const dataUrl = imageDataUrlFor(images, mapImageId);
-      if (dataUrl === undefined) {
-        const failure = failureFor(images, mapImageId);
-        const reason = failure?.reason ?? 'it was not in the preloaded image set';
-        out.push(alertBox(`The map of “${artifact.name}” could not be embedded — ${reason}`));
-        state.problems.push({ where, reason });
-      } else {
-        out.push(
-          imageNode(dataUrl, where, {
-            fit: [PAGE_CONTENT_WIDTH, MAP_PLATE_MAX_HEIGHT],
-            alignment: 'center',
-            margin: [0, 2, 0, 8],
-          }),
-        );
-      }
-    }
-  }
+  if (options.covers) out.push(...artifactCoverContent(artifact, state));
+  out.push(...encounterMapPlate(artifact, state));
   if (artifact.body.trim() !== '') {
     out.push(...mdToPdfmakeContent(artifact.body));
   }
   out.push(...dataSections(artifact, state));
-  if (artifact.links.length > 0) {
-    const refs: Content[] = artifact.links.map((link): Content => {
-      const target = state.byId.get(link.targetId);
-      if (target === undefined) {
-        // The dangling-reference placeholder, kept and made loud: the shipped
-        // renderer dropped a relation whose target row is gone, silently.
-        const named = link.relation.trim() === '' ? link.targetId : link.relation;
-        return {
-          text: `see ${missingCreatureOrigin(named)}`,
-          italics: true,
-          color: ALERT,
-          margin: [0, 0, 0, 2],
-        };
-      }
-      return state.rendered.has(target.id)
-        ? {
-            text: `see ${target.name}`,
-            italics: true,
-            linkToDestination: `node-${target.id}`,
-            margin: [0, 0, 0, 2],
-          }
-        : { text: `see ${target.name}`, italics: true, margin: [0, 0, 0, 2] };
-    });
-    out.push({ text: refs, margin: [0, 4, 0, 0] });
-  }
+  out.push(...artifactLinksContent(artifact, state));
   return out;
 }
 
@@ -728,14 +915,263 @@ function npcGallery(scoped: readonly AnyArtifact[], audience: ModulePdfAudience)
   return scoped.filter((artifact) => artifact.kind === 'npc' && audible(artifact, audience));
 }
 
-/** The treasure ledger rows: every PRINTED encounter that stores treasure. */
-function treasureLedger(chapters: readonly KindChapter[]): { name: string; treasure: string }[] {
-  const encounters = chapters.find((chapter) => chapter.id === 'encounters')?.artifacts ?? [];
-  return encounters.flatMap((entry): { name: string; treasure: string }[] =>
-    entry.kind === 'encounter' && entry.data.treasure.trim() !== ''
-      ? [{ name: entry.name, treasure: entry.data.treasure }]
-      : [],
-  );
+/**
+ * The treasure ledger rows: every encounter the BODY printed that stores
+ * treasure (the encounters chapter in the procedural document; the planned
+ * encounter sections when a plan is applied).
+ */
+function treasureLedger(
+  printed: readonly AnyArtifact[],
+): { name: string; treasure: string }[] {
+  return printed
+    .filter((entry) => entry.kind === 'encounter')
+    .flatMap((entry): { name: string; treasure: string }[] =>
+      entry.data.treasure.trim() !== ''
+        ? [{ name: entry.name, treasure: entry.data.treasure }]
+        : [],
+    );
+}
+
+// --- The four role treatments ----------------------------------------------
+//
+// The owner's layout insight, made explicit and CLOSED (docs/17 row 109): the
+// explanation is the body, the module's own narration is a read-aloud element,
+// mechanical content is a GM note, and a genuinely parenthetical insert is an
+// aside. Every treatment below is the RENDERER's decision — the plan picks a
+// role by name and can express nothing else (no size, no colour, no font, no
+// pdfmake node), which is what keeps a re-export byte-identical.
+
+/** Read-aloud boxes and GM notes share ONE box shape, with their own border. */
+const ROLE_BOX_PADDING = {
+  paddingLeft: () => 8,
+  paddingRight: () => 8,
+  paddingTop: () => 6,
+  paddingBottom: () => 6,
+};
+
+/** The neutral border of a GM note — never the ALERT red (that means "problem"). */
+const GM_NOTE_BORDER = '#6b7280';
+
+/** An aside is INDENTED, not boxed: a parenthetical insert in the margin. */
+const ASIDE_INDENT = 24;
+
+/** One bordered, filled box: the shared shape of read-aloud and GM note. */
+function roleBox(input: {
+  blocks: Content[];
+  style: string;
+  border: string;
+  fill: string;
+  label: string | null;
+}): Content {
+  const body: Content[] =
+    input.label === null
+      ? input.blocks
+      : [{ text: input.label, style: 'kicker' }, ...input.blocks];
+  return {
+    table: {
+      widths: ['*'],
+      body: [[{ stack: body, style: input.style, fillColor: input.fill }]],
+    },
+    layout: {
+      hLineWidth: () => 1,
+      vLineWidth: () => 1,
+      hLineColor: () => input.border,
+      vLineColor: () => input.border,
+      ...ROLE_BOX_PADDING,
+    },
+    margin: [0, 4, 0, 6],
+  };
+}
+
+/** `read-aloud`: the module's own narration, boxed in the read-aloud style. */
+function readAloudRoleContent(blocks: Content[]): Content[] {
+  return [roleBox({ blocks, style: 'readAloud', border: ACCENT, fill: '#f6efe2', label: null })];
+}
+
+/** `gm-note`: mechanical/GM content, boxed and LABELED as the GM's. */
+function gmNoteRoleContent(blocks: Content[]): Content[] {
+  return [
+    roleBox({ blocks, style: 'gmNote', border: GM_NOTE_BORDER, fill: '#f4f4f5', label: 'GM note' }),
+  ];
+}
+
+/** `aside`: a small, indented, muted parenthetical insert (never a chapter). */
+function asideRoleContent(blocks: Content[]): Content[] {
+  return [
+    {
+      table: {
+        widths: [ASIDE_INDENT, '*'],
+        body: [[{ text: '' }, { stack: blocks, style: 'aside' }]],
+      },
+      layout: 'noBorders',
+      margin: [0, 2, 0, 6],
+    },
+  ];
+}
+
+/**
+ * The body of a planned section, by ROLE — the ONE place a role becomes a
+ * treatment. `explanation` and `gm-note` also carry the source's own structured
+ * data (a roster, a stat box, kind fields): that data IS the mechanical content
+ * a reader of that section needs, and it stays filtered by the DOCUMENT's
+ * audience, so the plan can never print GM mechanics into the player book.
+ * `read-aloud` and `aside` carry prose only — a stat block inside narration or
+ * a parenthetical would be a lie about what the section is.
+ */
+function roleBody(
+  role: DocumentPlanRole,
+  blocks: Content[],
+  artifact: AnyArtifact | null,
+  state: RenderState,
+): Content[] {
+  const data = artifact === null ? [] : dataSections(artifact, state);
+  switch (role) {
+    case 'read-aloud':
+      return readAloudRoleContent(blocks);
+    case 'aside':
+      return asideRoleContent(blocks);
+    case 'gm-note':
+      return [...gmNoteRoleContent(blocks), ...data];
+    case 'explanation':
+      return [...blocks, ...data];
+  }
+}
+
+/** The kicker above a planned section: what the section IS, never its role. */
+const PLAN_KIND_LABELS: Readonly<Record<ArtifactKind, string>> = {
+  pc: 'PC',
+  npc: 'NPC',
+  location: 'Location',
+  event: 'Event',
+  faction: 'Faction',
+  note: 'Note',
+  encounter: 'Encounter',
+  plotarc: 'Plot arc',
+};
+
+/** The module's premise as document content, or the LOUD missing-premise box. */
+function premiseContent(module: Module, problems: ModulePdfProblem[]): Content[] {
+  const premise = module.spine?.premise ?? '';
+  if (premise.trim() !== '') return mdToPdfmakeContent(premise);
+  const reason = 'the module has no premise yet (the spine pass has not run)';
+  problems.push({ where: 'the premise of the module', reason });
+  return [alertBox(`The premise is missing — ${reason}`)];
+}
+
+/** One part's text, or the LOUD empty-part box naming its position. */
+function partTextContent(
+  part: RenderedPart,
+  total: number,
+  problems: ModulePdfProblem[],
+): Content[] {
+  const position = part.planIndex + 1;
+  if (part.text.trim() !== '') return mdToPdfmakeContent(part.text);
+  const reason = `part ${String(position)} of ${String(total)} has no text yet`;
+  problems.push({ where: `part ${String(position)} (“${part.title}”)`, reason });
+  return [alertBox(`Part ${String(position)} — “${part.title}” is empty — ${reason}`)];
+}
+
+/** One image a plan anchored: a MAP prints as a plate, a cover as art. */
+function anchoredImageContent(image: PlannedImage, state: RenderState): Content[] {
+  const images = state.input.images ?? NO_PDF_IMAGES;
+  const dataUrl = imageDataUrlFor(images, image.id);
+  if (dataUrl === undefined) {
+    const failure = failureFor(images, image.id);
+    const reason = failure?.reason ?? 'it was not in the preloaded image set';
+    state.problems.push({ where: image.where, reason });
+    return [alertBox(`The image at ${image.where} could not be embedded — ${reason}`)];
+  }
+  if (image.kind === 'map') {
+    return [
+      imageNode(dataUrl, image.where, {
+        fit: [PAGE_CONTENT_WIDTH, MAP_PLATE_MAX_HEIGHT],
+        alignment: 'center',
+        margin: [0, 2, 0, 8],
+      }),
+    ];
+  }
+  return [imageNode(dataUrl, image.where, { fit: [450, 320], margin: [0, 0, 0, 6] })];
+}
+
+/** Whether a planned section belongs in THIS audience's document. */
+function plannedSectionAudible(
+  section: PlannedSection,
+  audience: ModulePdfAudience,
+): boolean {
+  return section.audience === 'all' || section.audience === audience;
+}
+
+/**
+ * One planned section, as the document prints it: heading (title from the
+ * PLAN, page break and ToC entry from the RENDERER), the source-naming kicker,
+ * the images the plan anchored, then the body its role prescribes.
+ */
+function plannedSectionContent(
+  section: PlannedSection,
+  state: RenderState,
+  parts: ReadonlyMap<number, RenderedPart>,
+  total: number,
+  module: Module,
+): Content[] {
+  const out: Content[] = [];
+  const aside = section.role === 'aside';
+  out.push({
+    text: section.title,
+    style: aside ? 'h2' : 'chapter',
+    id: section.destination,
+    ...(aside ? {} : { tocItem: 'chapters' as const, pageBreak: 'before' as const }),
+  });
+  const source = section.source;
+  if (source.type === 'part') {
+    if (source.planIndex === -1) {
+      out.push(kicker(module.title));
+    } else {
+      const part = parts.get(source.planIndex);
+      const levelText =
+        part !== undefined && part.levelBand !== '' ? ` · levels ${part.levelBand}` : '';
+      out.push(
+        kicker(`Part ${String(source.planIndex + 1)} of ${String(total)}${levelText}`),
+      );
+    }
+  } else {
+    out.push(kicker(PLAN_KIND_LABELS[section.artifact?.kind ?? 'note']));
+  }
+  for (const image of section.images) {
+    out.push(...anchoredImageContent(image, state));
+  }
+
+  let blocks: Content[];
+  if (source.type === 'part') {
+    if (source.planIndex === -1) {
+      blocks = premiseContent(module, state.problems);
+    } else {
+      const part = parts.get(source.planIndex);
+      // A part the parts-document seam refused (or a module with no spine at
+      // all) is LOUD here, never an empty page.
+      blocks =
+        part === undefined
+          ? [
+              alertBox(
+                `“${section.title}” — the part text could not be read (the parts of the module could not be assembled)`,
+              ),
+            ]
+          : partTextContent(part, total, state.problems);
+    }
+  } else {
+    const artifact = section.artifact;
+    if (artifact === null) {
+      blocks = [
+        alertBox(`“${section.title}” — the row it names is not in this document's pool`),
+      ];
+    } else {
+      blocks = artifact.body.trim() === '' ? [] : mdToPdfmakeContent(artifact.body);
+    }
+  }
+  out.push(...roleBody(section.role, blocks, section.artifact, state));
+  if (section.artifact !== null && section.role !== 'read-aloud' && section.role !== 'aside') {
+    out.push(...artifactLinksContent(section.artifact, state));
+  }
+  return out;
 }
 
 /**
@@ -757,22 +1193,63 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   const scoped = modulePdfArtifacts(module, input.artifacts);
   const byId = new Map(scoped.map((artifact) => [artifact.id, artifact]));
   const chapters = kindChapters(scoped, audience);
-  const gallery = npcGallery(scoped, audience);
+  const battles = input.battles ?? [];
+  // THE plan read (docs/17 row 109). `applied` ⇒ the sections below are the
+  // document's body; anything else ⇒ the procedural outline, silently when the
+  // plan is merely ABSENT and LOUDLY (problem + a statement in the document)
+  // when a stored plan exists but cannot be used.
+  const planOutcome = resolveDocumentPlan({ module, scoped, battles });
+  const plannedSections =
+    planOutcome.status === 'applied'
+      ? planOutcome.sections.filter((section) => plannedSectionAudible(section, audience))
+      : null;
+  // The parts are read through the ONE seam only when something prints them.
+  const total = module.spine?.partPlan.length ?? 0;
+  const needsParts =
+    plannedSections === null || plannedSections.some((section) => section.source.type === 'part');
+  const parts = needsParts ? renderedParts(module, problems) : [];
+  const partsByIndex = new Map(parts.map((part) => [part.planIndex, part]));
+  // What the BODY printed: the gallery completes it (an NPC the plan already
+  // printed as a section is not printed a second time) and the treasure ledger
+  // aggregates its encounters.
+  const printedArtifacts: AnyArtifact[] =
+    plannedSections === null
+      ? chapters.flatMap((chapter) => chapter.artifacts)
+      : plannedSections.flatMap((section) => (section.artifact === null ? [] : [section.artifact]));
+  const printedIds = new Set<Id>(printedArtifacts.map((artifact) => artifact.id));
+  const gallery = npcGallery(scoped, audience).filter((npc) => !printedIds.has(npc.id));
   // The ledger aggregates the encounters' `treasure` field, which the player
   // document strips from every encounter — so it is a GM-only appendix. The
   // shipped renderer printed it to players, contradicting §M3-D's own rule.
-  const ledger = audience === 'gm' ? treasureLedger(chapters) : [];
-  // EVERY artifact the document actually prints, so an internal link is only
-  // ever emitted for a destination that exists (pdfmake throws otherwise).
-  const rendered = new Set<Id>([
-    ...chapters.flatMap((chapter) => chapter.artifacts.map((artifact) => artifact.id)),
-    ...gallery.map((artifact) => artifact.id),
-  ]);
-  const state: RenderState = { input, audience, rendered, byId, problems };
+  const ledger =
+    audience === 'gm'
+      ? treasureLedger(printedArtifacts.filter((artifact) => artifact.kind === 'encounter'))
+      : [];
+  // EVERY artifact the document actually prints → where it prints, so an
+  // internal link is only ever emitted for a destination that exists (pdfmake
+  // throws otherwise). A planned section is addressed by its SECTION id: a plan
+  // may name one row twice, and two nodes cannot share a destination.
+  const destinations = new Map<Id, string>();
+  if (plannedSections === null) {
+    for (const artifact of printedArtifacts) destinations.set(artifact.id, `node-${artifact.id}`);
+  } else {
+    for (const section of plannedSections) {
+      if (section.artifact === null) continue;
+      if (!destinations.has(section.artifact.id)) {
+        destinations.set(section.artifact.id, section.destination);
+      }
+    }
+  }
+  for (const npc of gallery) {
+    if (!destinations.has(npc.id)) destinations.set(npc.id, `node-${npc.id}`);
+  }
+  const state: RenderState = { input, audience, destinations, byId, problems };
 
   const content: Content[] = [];
 
   // ---- Cover -------------------------------------------------------------
+  const compiledAt = input.compiledAt ?? new Date();
+  const compiledDay = compiledAt.toISOString().slice(0, 10);
   const levelLine =
     module.levelMax > module.levelMin
       ? `A module for levels ${String(module.levelMin)}–${String(module.levelMax)}`
@@ -799,7 +1276,7 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     }
   }
   content.push({
-    text: `Compiled with Campaigner · ${new Date().toISOString().slice(0, 10)}`,
+    text: `Compiled with Campaigner · ${compiledDay}`,
     style: 'muted',
     alignment: 'center',
     margin: [0, 24, 0, 0],
@@ -809,98 +1286,98 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   content.push({ text: 'Contents', style: 'part', pageBreak: 'before' });
   content.push({ toc: { id: 'chapters', title: { text: 'Contents', style: 'part' } } });
 
-  // ---- Premise -----------------------------------------------------------
-  content.push({
-    text: 'Premise',
-    style: 'chapter',
-    tocItem: 'chapters',
-    id: 'node-premise',
-    pageBreak: 'before',
-  });
-  content.push(kicker(module.title));
-  const premise = module.spine?.premise ?? '';
-  if (premise.trim() === '') {
-    const reason = 'the module has no premise yet (the spine pass has not run)';
-    content.push(alertBox(`The premise is missing — ${reason}`));
-    problems.push({ where: 'the premise of the module', reason });
-  } else {
-    content.push(...mdToPdfmakeContent(premise));
+  // ---- The plan's verdict, in the document ---------------------------------
+  // A stored plan that CANNOT be applied is never a silent fallback: the owner
+  // sees it here, on the page he opens, AND on the export's problems list.
+  if (planOutcome.status === 'invalid' || planOutcome.status === 'rejected') {
+    problems.push({ where: PLAN_PROBLEM_WHERE, reason: planOutcome.reason });
+    content.push(alertBox(planFallbackStatement(planOutcome.reason), { pageBreak: true }));
   }
 
-  // ---- Part plan (GM only: the planning apparatus, not the story) ---------
-  const plan = module.spine?.partPlan ?? [];
-  if (audience === 'gm' && plan.length > 0) {
+  if (plannedSections === null) {
+    // ---- Premise ---------------------------------------------------------
     content.push({
-      text: 'Part plan',
+      text: 'Premise',
       style: 'chapter',
       tocItem: 'chapters',
-      id: 'node-plan',
+      id: 'node-premise',
       pageBreak: 'before',
     });
-    content.push(kicker(`${String(plan.length)} planned parts`));
-    content.push({
-      table: {
-        widths: ['auto', 'auto', '*', '*'],
-        body: [
-          [
-            { text: 'Part', bold: true },
-            { text: 'Level', bold: true },
-            { text: 'Synopsis', bold: true },
-            { text: 'Ends when', bold: true },
-          ],
-          ...plan.map((entry) => [
-            entry.title,
-            entry.levelBand,
-            entry.synopsis,
-            entry.levelUpTrigger,
-          ]),
-        ],
-      },
-      layout: 'lightHorizontalLines',
-    });
-  }
+    content.push(kicker(module.title));
+    content.push(...premiseContent(module, problems));
 
-  // ---- The parts ---------------------------------------------------------
-  const parts = renderedParts(module, problems);
-  const total = plan.length;
-  for (const part of parts) {
-    const position = part.planIndex + 1;
-    const levelText = part.levelBand === '' ? '' : ` · levels ${part.levelBand}`;
-    content.push({
-      text: part.title,
-      style: 'chapter',
-      tocItem: 'chapters',
-      id: `node-part-${String(part.planIndex)}`,
-      pageBreak: 'before',
-    });
-    content.push(kicker(`Part ${String(position)} of ${String(total)}${levelText}`));
-    if (part.text.trim() === '') {
-      const reason = `part ${String(position)} of ${String(total)} has no text yet`;
-      content.push(alertBox(`Part ${String(position)} — “${part.title}” is empty — ${reason}`));
-      problems.push({ where: `part ${String(position)} (“${part.title}”)`, reason });
-    } else {
-      content.push(...mdToPdfmakeContent(part.text));
-    }
-  }
-
-  // ---- Per-kind reference chapters --------------------------------------
-  for (const chapter of chapters) {
-    content.push({
-      text: chapter.title,
-      style: 'chapter',
-      tocItem: 'chapters',
-      id: `node-${chapter.id}`,
-      pageBreak: 'before',
-    });
-    for (const artifact of chapter.artifacts) {
-      content.push(kicker(chapter.title));
+    // ---- Part plan (GM only: the planning apparatus, not the story) ------
+    const partPlan = module.spine?.partPlan ?? [];
+    if (audience === 'gm' && partPlan.length > 0) {
       content.push({
-        text: artifact.name,
-        style: 'artifact',
+        text: 'Part plan',
+        style: 'chapter',
         tocItem: 'chapters',
-        id: `node-${artifact.id}`,
+        id: 'node-plan',
+        pageBreak: 'before',
       });
-      content.push(...artifactBody(artifact, state, { covers: true }));
+      content.push(kicker(`${String(partPlan.length)} planned parts`));
+      content.push({
+        table: {
+          widths: ['auto', 'auto', '*', '*'],
+          body: [
+            [
+              { text: 'Part', bold: true },
+              { text: 'Level', bold: true },
+              { text: 'Synopsis', bold: true },
+              { text: 'Ends when', bold: true },
+            ],
+            ...partPlan.map((entry) => [
+              entry.title,
+              entry.levelBand,
+              entry.synopsis,
+              entry.levelUpTrigger,
+            ]),
+          ],
+        },
+        layout: 'lightHorizontalLines',
+      });
+    }
+
+    // ---- The parts -------------------------------------------------------
+    for (const part of parts) {
+      const position = part.planIndex + 1;
+      const levelText = part.levelBand === '' ? '' : ` · levels ${part.levelBand}`;
+      content.push({
+        text: part.title,
+        style: 'chapter',
+        tocItem: 'chapters',
+        id: `node-part-${String(part.planIndex)}`,
+        pageBreak: 'before',
+      });
+      content.push(kicker(`Part ${String(position)} of ${String(total)}${levelText}`));
+      content.push(...partTextContent(part, total, problems));
+    }
+
+    // ---- Per-kind reference chapters --------------------------------------
+    for (const chapter of chapters) {
+      content.push({
+        text: chapter.title,
+        style: 'chapter',
+        tocItem: 'chapters',
+        id: `node-${chapter.id}`,
+        pageBreak: 'before',
+      });
+      for (const artifact of chapter.artifacts) {
+        content.push(kicker(chapter.title));
+        content.push({
+          text: artifact.name,
+          style: 'artifact',
+          tocItem: 'chapters',
+          id: `node-${artifact.id}`,
+        });
+        content.push(...artifactBody(artifact, state, { covers: true }));
+      }
+    }
+  } else {
+    // ---- The planned document: the plan's sections, in the plan's order ----
+    for (const section of plannedSections) {
+      content.push(...plannedSectionContent(section, state, partsByIndex, total, module));
     }
   }
 
@@ -962,6 +1439,11 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     muted: { fontSize: 10, color: '#555555' },
     code: { font: 'Roboto', fontSize: 9, background: '#f3f3f3' },
     readAloud: { fontSize: 11, italics: true, fillColor: '#f6efe2' },
+    // The two remaining role treatments (docs/17 row 109): a GM note reads as
+    // one step smaller than the body, and an aside is the smallest, muted,
+    // indented voice in the document.
+    gmNote: { fontSize: 10, color: '#3f3f46' },
+    aside: { fontSize: 9.5, italics: true, color: '#555555' },
   };
 
   // ONE report per problem: a failure the loader recorded is pushed up front
@@ -980,6 +1462,7 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
       content,
       styles,
       defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.35 },
+      info: documentInfo(module, compiledDay),
       footer: (currentPage): Content => ({
         text: `${module.title} · ${currentPage}`,
         alignment: 'center',
@@ -988,6 +1471,40 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     },
     problems: reported,
   };
+}
+
+/** The app that compiles the document (the PDF's own `Creator` entry). */
+const COMPILED_BY = 'Campaigner';
+
+/**
+ * The PDF's metadata dictionary. Two reasons this is pinned rather than left to
+ * pdfmake:
+ *
+ * 1. **`creationDate` is pinned to the compile DAY** — the same date the cover
+ *    prints. pdfkit derives the document `/ID` AND its `CreationDate` entry
+ *    from that one value, so an unpinned document differs between two renders
+ *    of the SAME definition (MEASURED: equal sizes, first differing byte at the
+ *    trailer's `/ID`). Pinned, two renders of one definition are byte-identical,
+ *    which is what makes "the same (module, plan) renders the same book" a
+ *    checkable claim instead of a hope.
+ * 2. **`title`/`creator` name the document honestly** — the module's title and
+ *    the app that compiled it, never a model id (docs/17 row 93: provenance is
+ *    app-only and reaches no exported document).
+ *
+ * The cast carries the ONE field pdfmake's shipped type forgets: its
+ * `createMetadata` (build/pdfmake.js) lowercases every key and maps
+ * `creationDate` → `CreationDate`, but `TDocumentInformation` declares no date
+ * field. Nothing else is loose.
+ */
+function documentInfo(module: Module, compiledDay: string): TDocumentDefinitions['info'] {
+  const info = {
+    title: module.title,
+    creator: COMPILED_BY,
+    creationDate: new Date(`${compiledDay}T00:00:00.000Z`),
+  };
+  // A plain assignment, not a cast: the extra `creationDate` key is structurally
+  // fine on a non-fresh object, so only pdfmake's DECLARATION is narrow here.
+  return info;
 }
 
 /** The pdfmake definition for a module document (see `buildModulePdfDocument`). */
@@ -1004,19 +1521,24 @@ async function moduleBattles(module: Module): Promise<Battle[]> {
 /**
  * Builds the module PDF end to end: resolve the encounters' rosters (so a
  * citation nothing can satisfy reports its NAMED missing-ref reason), preload
- * every image at the budget its site prints at, build the definition, render
- * it.
+ * the images the document will actually print at the budget each site prints
+ * at, build the definition, render it.
  *
- * Returns the blob AND the loud problems — an image that could not be embedded
- * or a part the parts-document seam refused is visible TWICE: a placeholder in
- * the document the owner opens, and an entry here for the export surface to
- * report (AGENTS rule 2). The export itself never fails on missing data.
+ * Returns the blob AND the loud problems — an image that could not be embedded,
+ * a part the parts-document seam refused, or a stored document plan that could
+ * not be applied is visible TWICE: a placeholder or a statement in the document
+ * the owner opens, and an entry here for the export surface to report (AGENTS
+ * rule 2). The export itself never fails on missing data.
  */
 export async function buildModulePdf(
   module: Module,
   artifacts: readonly AnyArtifact[],
   generate: (definition: TDocumentDefinitions) => Promise<Blob>,
-  options: { audience?: ModulePdfAudience; codec?: PdfImageCodec } = {},
+  options: {
+    audience?: ModulePdfAudience;
+    codec?: PdfImageCodec;
+    compiledAt?: Date;
+  } = {},
 ): Promise<{ blob: Blob; problems: ModulePdfProblem[] }> {
   const battles = await moduleBattles(module);
   const scoped = modulePdfArtifacts(module, artifacts);
@@ -1026,7 +1548,28 @@ export async function buildModulePdf(
     const resolved = await resolveMonsterEntries(artifact.data.monsters);
     rosterOrigins[artifact.id] = resolved.map((entry) => entry.origin);
   }
-  const images = await loadPdfImages(modulePdfImageRequests({ module, artifacts, battles }), {
+  // What to PRELOAD comes from the same plan read the renderer uses: with a
+  // plan applied the document prints exactly the images the plan anchored, so
+  // preloading an unanchored one would both waste the decode and report a
+  // failure for an image the document never wanted. A plan that cannot be
+  // applied falls back to the procedural document, which wants them all.
+  const outcome = resolveDocumentPlan({ module, scoped, battles });
+  const allRequests = imageInventories({ module, scoped, battles }).requests;
+  const wanted =
+    outcome.status === 'applied'
+      ? new Set(outcome.sections.flatMap((section) => section.images.map((image) => image.id)))
+      : null;
+  const requests =
+    wanted === null
+      ? allRequests
+      : allRequests.filter(
+          (request) =>
+            wanted.has(request.id) ||
+            // The cover page is not a planned section: it prints the module's
+            // own cover whenever the module has one.
+            request.id === module.coverImageId,
+        );
+  const images = await loadPdfImages(requests, {
     ...(options.codec === undefined ? {} : { codec: options.codec }),
   });
   const { definition, problems } = buildModulePdfDocument({
@@ -1036,6 +1579,7 @@ export async function buildModulePdf(
     images,
     rosterOrigins,
     ...(options.audience === undefined ? {} : { audience: options.audience }),
+    ...(options.compiledAt === undefined ? {} : { compiledAt: options.compiledAt }),
   });
   return { blob: await generate(definition), problems };
 }

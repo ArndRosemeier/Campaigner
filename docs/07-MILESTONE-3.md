@@ -339,9 +339,16 @@ copy of the module could only drift from it.
 
 ### The source of the document
 
+Two shapes come out of ONE builder. **When the module carries a document plan
+(docs/17 row 109), the PLAN decides what the body is** — which sections print,
+in what order, under which titles, roles and audiences, with which stored images
+— and the renderer decides only how each one looks. With no plan the procedural
+outline below prints, which is the pre-plan behavior and remains the default.
+
 | Printed | Read from |
 |---|---|
 | Cover (title, concept, system, "Compiled with Campaigner · date") | the module row + optional `coverImageId` |
+| The body's sections (order, titles, roles, audiences, image anchors) | `module.documentPlan` when it is present and APPLICABLE; otherwise the procedural rows in this table, in the order below |
 | Contents | pdfmake `toc` over the chapters below (real page numbers) |
 | Premise | `module.spine.premise` |
 | Part plan | `module.spine.partPlan` (GM document only) |
@@ -356,11 +363,76 @@ scaffold labels, and printing that text would put the app's internal editing
 scaffolding on a reader's page. `splitPartsDocument` is what removes it, so the
 module PDF and the canvas can never disagree about where a part begins.
 
+### The document plan: a model authors the PLAN, the renderer authors the PAGES (docs/17 row 109)
+
+**Owner's decision, verbatim:** *"The more i think about this the more i think we
+should have an actual LLM author for this, to make this good. Just for structural
+decisions. If we do this purely procedural, i think this will look bad often."* —
+and the reason the procedural outline could not be fixed by adding rules:
+*"A real module has the module text and things like explanations and such in a
+sidebar. While i do like this format i think it would not work well for us since
+our explanations are pretty beefy and our module text is kind of slim."*
+
+`module.documentPlan` is an ordered list of sections. Each one carries a
+`title`, ONE role from a CLOSED set, an `audience`, a `source` and `images`:
+
+| Role | Treatment (the renderer's, not the model's) |
+|---|---|
+| `explanation` | the body: explanatory prose plus that row's structured data |
+| `read-aloud` | the filled read-aloud box (accent border, warm fill, italics) |
+| `gm-note` | the labeled GM box (neutral border, "GM note") |
+| `aside` | a small, indented, muted parenthetical insert — NOT a chapter: no page break, no ToC entry |
+
+The `source` is a union of exactly three shapes, and every one of them must
+name something that EXISTS: a part of the part plan by its stable `planIndex`
+(`-1` is the premise), an artifact the module owns or mentions (by id), or an
+encounter (by id). **A plan that names something absent is refused WHOLE, by
+name** (`the plan's section "…" — …`), never trimmed to fit: the failure names
+the section and the reason, the export still lands, and the document says so on
+its own page (see the fallback rule below). A plan cannot smuggle rendering in
+either — the schema is strict, so an extra key is a refusal, and there is no
+field a renderer would have to ignore.
+
+**Audience is the plan's, and the kind rules are its defaults.** `audience` is
+`all | gm | player`, and it decides a section's PLACEMENT: a note or plot arc
+declared `all` prints for players (the override is visible in the plan the owner
+inspects), while FIELD-level GM material — faction `methods`, encounter
+`tactics`/`treasure`/`terrain`, PC `notes`, the part plan, the treasure ledger —
+stays keyed on the DOCUMENT audience, which is the leak boundary. Both documents
+come out of ONE plan and ONE builder.
+
+**A plan that cannot be applied is loud in two places, and renders nothing of
+itself.** Schema-invalid, or stale after the owner deleted a row it names, the
+plan prints the procedural document, pushes a problem at `the document plan`
+into the export's `problems` list, and states it IN the document on its own
+page. An ABSENT plan is neither: it is the normal pre-plan state and prints the
+procedural outline silently.
+
+**Determinism.** The renderer never calls a model — export applies the stored
+plan — so the same `(module, plan)` produces the same book. Measured on the
+fixture: two renders of the definition are identical (6359 characters) and two
+full PDF builds with a pinned `compiledAt` are byte-identical (51271 bytes, first
+differing byte `-1`). The pin is required because the cover prints a compile
+DATE and pdfkit derives the trailer `/ID` from `info.creationDate`
+(`md5(CreationDate.getTime() + info)`): without it two renders of the same
+definition differ in the trailer and nowhere else (measured: first difference at
+offset 7740).
+
+**The surface** (`src/features/modules/module-plan-dialog.tsx`, next to
+`ModulePdfButton` in the canvas header): the sections in order with their title,
+role, audience, source and anchor count; the model that decided them; and
+Regenerate. There is NO drag-and-drop builder, no tree editor and no
+add/remove/reorder control — the ONE per-section control is the AUDIENCE, and a
+failed regeneration toasts by name and leaves the previous plan untouched.
+
 ### GM and player: ONE code path, audience as an option
 
 `buildModulePdf(module, artifacts, generate, { audience })` — the audience is an
 argument to the ONE builder (`ModulePdfAudience = 'gm' | 'player'`), never a
-second renderer. The player document omits:
+second renderer. Both documents are built from the SAME document plan when one
+is present (docs/17 row 109), so the two books cannot disagree about the
+module's structure; what differs is the audience rule below. The player document
+omits:
 
 - artifacts tagged `gm-only`;
 - every `note` artifact, every `plotArc` artifact;
@@ -433,7 +505,10 @@ PDF. They need to be included at the right places."*
 
 `ModulePdfButton` (`src/features/modules/module-pdf-button.tsx`), mounted in the
 canvas header and in the campaign tree's module-group header — ONE component for
-both entry points, offering "GM document" and "Player document". The
+both entry points, offering "GM document" and "Player document". Next to it in
+the canvas header sits `ModulePlanButton` (docs/17 row 109): the same document's
+STRUCTURE, inspectable and regenerable, so the decision the renderer executes is
+never a black box. The
 destination is acquired first, inside the click's gesture window (the
 artifact-PDF export precedent), and the finished blob is written to it. The
 problems list is REPORTED: a build that recorded any problem announces them by
@@ -466,10 +541,31 @@ compatibility requirement) but it never disappears silently:
 - The player variant of the same module contains no GM-only artifact, no note,
   no plot arc, no faction methods, no encounter tactics/treasure/terrain, no
   part plan and no treasure ledger — while every map still prints.
+- With a document plan on the module, the printed body IS the plan's sections in
+  the plan's order under the plan's titles, each in its declared role's
+  treatment; the procedural chapter set does not print, and neither does any
+  section of a plan that could not be applied.
+- A plan naming a missing part, artifact, encounter or image is a LOUD named
+  failure in TWO places (the export's `problems` and a statement on the
+  document's own page) while the procedural document still lands — never a
+  half-applied plan, and never silence.
+- The GM and the player document come from ONE plan: a section declared `gm`
+  prints only for the GM, and the player document still carries no GM-only
+  artifact, no note, no plot arc, no faction methods, no encounter
+  tactics/treasure/terrain, no part plan and no treasure ledger.
+- Two exports of the same `(module, plan)` with the same compile day are
+  byte-identical.
 - Every roster entry states its origin or its named missing-ref reason.
 - An unreadable image (or a format pdfmake cannot embed) produces a named
   placeholder plus a reported problem; the export never fails silently and never
   claims success for a document with problems.
+- **Unproven for the document plan too** (docs/17 row 109 carries the full
+  list): the planner is never run against a live provider — every test mocks
+  `chat` at the protocol boundary — so whether a real model plans WELL from the
+  names/kinds/summaries inventory is unmeasured, and no human has judged a
+  plan's aesthetic quality. The plan also cannot suppress or reorder the back
+  matter, and a plan that declares a GM-tagged row `all` puts it in the player
+  document by design (visible in the plan; the FIELD-level boundary still holds).
 - **Unproven in the test environment** (declared, not implied — docs/17 row 108
   and docs/18 §4 carry the same list): jsdom has no `createImageBitmap` and no
   real canvas, so the REAL decode/encode of a JPEG or WebP byte stream is not
@@ -490,6 +586,10 @@ deleted it — docs/17 row 108; an old file's rows are COUNTED and reported on
 import rather than dropped in silence.)
 
 ### Scope: carried vs excluded (owner-confirmed)
+
+A module's DOCUMENT PLAN (docs/17 row 109) is a module row field, so it travels
+with the module row in this file and in a database backup — no export change was
+needed for it, and an import restores the decision whole.
 
 | Carried | Excluded (never in the file) |
 |---|---|
