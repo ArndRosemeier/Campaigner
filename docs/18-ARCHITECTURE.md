@@ -1311,6 +1311,31 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   made; `bug` would tell the owner to report a deliberate refusal), the kind
   only ANNOTATES — the message is the surface — and `llm/failureKind.ts` is a
   different seam than this one, so it is left alone.
+- **A stop is an INTENT that outlives the call recording it, and the run
+  pipeline asks about it at every write boundary.** `RunEngine.cancelRequested`
+  is not a momentary flag that `cancel()` toggles: the step holding an `await`
+  when the owner stops a run has not observed the abort yet, so clearing the
+  intent inside `cancel()` made that live pipeline uncancellable — its next write
+  restored `'running'` OVER the `'cancelled'` row (a stopped run that then
+  "completed"), and a write meeting a row the owner had since deleted threw
+  `NotFoundError` out of `runRepo.updateRun` (`src/db/runRepo.ts:50`), which the
+  pipeline's catch wrapped as `Encounter step "brief" failed: PersonaRun not
+  found: …` and `fail` toasted — a failure report for a stop the owner asked for
+  (MEASURED: that is exactly the message the spurious-toast pin in
+  `tests/features/encounter-map-queue.test.ts` produces before this fix, on
+  demand, by delaying the reply the step is waiting on; `docs/05-UI.md`: "a
+  cancelled run is never reported as a failure"). Three rules hold this seam
+  together: the intent is CONSUMED where the pipeline actually ends
+  (`executeFrom`'s `finally`, and its early return for a run already
+  cancelled/failed/gone) and DROPPED by each deliberate restart of the same row
+  (`startRun`/`retryStep`/`resumeRun`/`regenerateEncounter*` — the newest owner
+  action wins); a step result that lands AFTER the stop is discarded before any
+  write, so the stop's verdict on the row stands; and the cancel path's own
+  writes go through `recordCancelled`, which tolerates a row that no longer
+  exists — cancel-path ONLY, so a step that dies with no stop in play still
+  wraps, still toasts and still writes its failed row. Do not "simplify" any of
+  the three by keying on an error's KIND (`AbortError`, `NotFoundError`): a
+  genuine failure arriving in the same clothes would be swallowed (ledger 115).
 
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point

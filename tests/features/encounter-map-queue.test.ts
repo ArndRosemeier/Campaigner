@@ -7,7 +7,7 @@ import { createArtifact, getArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { createModule as saveModule } from '@/db/moduleRepo';
 import { createPersona as savePersona } from '@/db/personaRepo';
-import { listRunsByCampaign } from '@/db/runRepo';
+import { deleteRun, getRun, listRunsByCampaign } from '@/db/runRepo';
 import { saveSettings } from '@/db/settingsRepo';
 import { createModule, defaultSettings, type Id } from '@/domain';
 import { encounterNeedsMap, isEncounterMapPending, useEncounterMapQueue } from '@/features/modules/encounter-map-queue';
@@ -146,6 +146,56 @@ afterEach(() => {
   useProgressStore.getState().reset();
   vi.restoreAllMocks();
 });
+
+/**
+ * Drain the task queue so a FIRE-AND-FORGET pipeline reaches its next write.
+ * `runEngine.startRun` resolves as soon as the run ROW is written and drives
+ * the rest of the pipeline through `void this.executeFrom(…).catch(fail)`
+ * (src/llm/runEngine.ts:1651), so the late write these pins own is observable
+ * only after the microtasks of the deferred reply AND fake-indexeddb's
+ * macrotask transaction commits have run. Deliberately not a sleep that
+ * decides an outcome (docs/08 §the pending-continuation flake): the race is
+ * forced by the deferred reply the test resolves itself, and this only lets
+ * that reply LAND.
+ */
+async function drainPipeline(turns = 12): Promise<void> {
+  for (let turn = 0; turn < turns; turn += 1) {
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 0);
+    });
+  }
+}
+
+/**
+ * Park ONE test's brief reply on a promise the test resolves by hand (docs/08
+ * §own the promise, not the clock) and let every other caller answer normally.
+ *
+ * The filter is load-bearing, not decoration. An earlier test in this file
+ * leaves a real map job in flight (docs/17 row 115), and its pipeline reaches
+ * the SAME chat mock by the same prompt path — measured: in a full-suite run a
+ * stray call arrived while this test was still building its fixtures, satisfied
+ * a bare `expect(chatMock).toHaveBeenCalled()` wait, and left the test holding
+ * an unassigned resolver. Keyed on the campaign name the Cartographer prompt
+ * carries (`Campaign: <name>`, src/llm/runEngine.ts:3736) only this run's call
+ * can park here and only this run's reply can be the one the test hands over.
+ */
+function parkThisRunsBrief(campaignName: string, onParked: (release: () => void) => void): void {
+  chatMock.mockImplementation((messages: unknown) => {
+    const reply = { text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null };
+    if (!JSON.stringify(messages).includes(campaignName)) return Promise.resolve(reply);
+    return new Promise((resolve) => {
+      onParked(() => {
+        resolve(reply);
+      });
+    });
+  });
+}
+
+/** The parked resolver, asserted loudly: a premise that never happened must not pass silently. */
+function takeResolver<T extends (...args: never[]) => void>(resolver: T | undefined, what: string): T {
+  if (resolver === undefined) throw new Error(`${what} never parked on the test's hand`);
+  return resolver;
+}
 
 describe('module encounter map queue', () => {
   it('uses one candidate, continues after failure, and retries only failed jobs', async () => {
@@ -502,5 +552,206 @@ describe('module encounter map queue', () => {
     }, { timeout: 10000 });
     // Silent: a job the user just stopped never toasts or lands on the retry list.
     expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30000);
+
+  it('a step whose reply lands AFTER the owner stopped the run is not reported, and the cancel verdict stands (late-write seam)', async () => {
+    const campaign = await createCampaign({ name: 'Late brief', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    const encounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Stopped mid-brief',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+    });
+    // THE DELAY IS THE CAUSE, NOT THE CLOCK (docs/08 §the pending-continuation
+    // flake, the `89e5d71` method): the brief's reply is a promise the TEST
+    // resolves, so the step's write is held open while the owner stops the run
+    // and released at the exact moment the late write is under test. No sleep
+    // decides the outcome and nothing loads the machine.
+    let releaseBrief: (() => void) | undefined;
+    parkThisRunsBrief(campaign.name, (release) => {
+      releaseBrief = release;
+    });
+    const job = { campaignId: campaign.id, moduleId: null as Id | null, artifactId: encounter.id, name: encounter.name };
+    useEncounterMapQueue.getState().enqueue([job]);
+    // The step is IN FLIGHT: this run's brief call is parked on the test's hand
+    // (a wait for the model call in general would be satisfied by a pipeline an
+    // earlier test left running — see parkThisRunsBrief).
+    await waitFor(() => {
+      expect(releaseBrief).toBeTypeOf('function');
+    }, { timeout: 10000 });
+    const openRun = (await listRunsByCampaign(campaign.id)).find(
+      (run) => run.targetArtifactId === encounter.id,
+    );
+    if (openRun === undefined) throw new Error('the map run never appeared');
+    expect(openRun.status).toBe('running');
+
+    const withdrawn = await useEncounterMapQueue.getState().cancelAll();
+    expect(withdrawn).toBe(1);
+    // The cancel path's own verdict, asserted and not assumed (docs/05 §Progress
+    // dock: a cancelled run is never reported as a failure).
+    const cancelled = await getRun(openRun.id);
+    expect(cancelled?.status).toBe('cancelled');
+    expect(cancelled?.errorMessage).toBe('');
+
+    // NOW the model reply arrives — the step's write lands after the abort.
+    takeResolver(releaseBrief, "this run's brief reply")();
+    await drainPipeline();
+
+    // A deliberate stop is not an incident: no toast, and the late step result
+    // must not resurrect the row the cancel path settled.
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    const settled = await getRun(openRun.id);
+    expect(settled?.status).toBe('cancelled');
+    expect(settled?.errorMessage).toBe('');
+    const after = await getArtifact(encounter.id);
+    if (after?.kind !== 'encounter') throw new Error('encounter missing');
+    expect(after.data.layout).toBeNull();
+  }, 30000);
+
+  it('a step whose write lands after the run row is gone is not reported as an error (spurious-toast pin)', async () => {
+    const campaign = await createCampaign({ name: 'Vanished row', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    const encounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Row gone',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+    });
+    let releaseBrief: (() => void) | undefined;
+    parkThisRunsBrief(campaign.name, (release) => {
+      releaseBrief = release;
+    });
+    const job = { campaignId: campaign.id, moduleId: null as Id | null, artifactId: encounter.id, name: encounter.name };
+    useEncounterMapQueue.getState().enqueue([job]);
+    await waitFor(() => {
+      expect(releaseBrief).toBeTypeOf('function');
+    }, { timeout: 10000 });
+    const openRun = (await listRunsByCampaign(campaign.id)).find(
+      (run) => run.targetArtifactId === encounter.id,
+    );
+    if (openRun === undefined) throw new Error('the map run never appeared');
+
+    await useEncounterMapQueue.getState().cancelAll();
+    // The row disappears underneath the still-live pipeline — in the suite the
+    // NEXT test's `clearDatabase()` (tests/db/helpers.ts), in the app the Runs
+    // list's delete of a run the owner deleted (db/runRepo.ts `deleteRun`).
+    await deleteRun(openRun.id);
+    takeResolver(releaseBrief, "this run's brief reply")();
+    await drainPipeline();
+
+    // The stopped step's write has nothing to record and no failure to report:
+    // "Encounter step "brief" failed: PersonaRun not found: …" is exactly the
+    // spurious toast three full-suite sightings recorded (docs/17 row 115).
+    expect(toastErrorMock).not.toHaveBeenCalled();
+  }, 30000);
+
+  it('a step that dies AFTER the owner stopped the run is not reported as a failure either (the row is already gone)', async () => {
+    const campaign = await createCampaign({ name: 'Stopped then died', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    const encounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Stopped then died',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+    });
+    // A reply the test can REJECT by hand: the abort of a stopped run reaches
+    // the step as whatever the provider raised (a transport error, a
+    // DOMException) — the engine must key on the STOP it recorded, never on the
+    // error's kind (docs/17 row 115).
+    let killBrief: ((error: Error) => void) | undefined;
+    chatMock.mockImplementation((messages: unknown) => {
+      const reply = { text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null };
+      if (!JSON.stringify(messages).includes(campaign.name)) return Promise.resolve(reply);
+      return new Promise((_resolve, reject) => {
+        killBrief = (error: Error) => {
+          reject(error);
+        };
+      });
+    });
+    const job = { campaignId: campaign.id, moduleId: null as Id | null, artifactId: encounter.id, name: encounter.name };
+    useEncounterMapQueue.getState().enqueue([job]);
+    await waitFor(() => {
+      expect(killBrief).toBeTypeOf('function');
+    }, { timeout: 10000 });
+    const openRun = (await listRunsByCampaign(campaign.id)).find(
+      (run) => run.targetArtifactId === encounter.id,
+    );
+    if (openRun === undefined) throw new Error('the map run never appeared');
+
+    await useEncounterMapQueue.getState().cancelAll();
+    await deleteRun(openRun.id);
+    takeResolver(killBrief, "this run's brief reply")(new Error('transport died with the stop'));
+
+    await drainPipeline();
+    expect(toastErrorMock).not.toHaveBeenCalled();
+    // The stop settled the job; the death is not a retryable failure.
+    expect(useEncounterMapQueue.getState().failed).toEqual([]);
+  }, 30000);
+
+  it('a step that dies on its own — no cancel in play — still toasts and still writes its failed run', async () => {
+    const campaign = await createCampaign({ name: 'Genuine failure', system: 'dnd5e' });
+    await savePersona({
+      slug: 'encounter-cartographer',
+      name: 'Encounter Cartographer',
+      description: '',
+      systemPrompt: '',
+      mode: 'encounter',
+      producesKind: 'encounter',
+      builtIn: true,
+    });
+    await saveSettings({ ...defaultSettings(), openRouterApiKey: 'key', imagesEnabled: true });
+    const encounter = await createArtifact({
+      campaignId: campaign.id, kind: 'encounter', name: 'Provider died',
+      data: { difficulty: '', levelHint: '', monsters: [{ name: 'Skeleton', count: 1, notes: '', treasure: '', source: { type: 'none' } }], terrain: '', tactics: '', treasure: '', mapImageId: null, layout: null, preset: 'standard', locationKind: 'other', siteShape: 'single', budgetAdvisory: '' },
+    });
+    // Nobody stopped anything: the step itself dies (the provider's reply is a
+    // hard error). This is the guard against curing the seam by swallowing —
+    // AGENTS rule 2 still binds every genuine failure. The campaign filter keeps
+    // a straggler pipeline from an earlier test (see parkThisRunsBrief) from
+    // failing into this assertion: only THIS run's brief gets the hard error.
+    chatMock.mockImplementation((messages: unknown) => {
+      if (!JSON.stringify(messages).includes(campaign.name)) {
+        return Promise.resolve({ text: JSON.stringify(BRIEF), modelUsed: 'test-model', fallback: null });
+      }
+      return Promise.reject(new Error('provider exploded'));
+    });
+    const job = { campaignId: campaign.id, moduleId: null as Id | null, artifactId: encounter.id, name: encounter.name };
+    useEncounterMapQueue.getState().enqueue([job]);
+    await waitFor(() => {
+      expect(useEncounterMapQueue.getState().failed.map((failed) => failed.artifactId)).toEqual([encounter.id]);
+    }, { timeout: 15000 });
+    // The engine's failure surface: the wrapped sentence (and the queue's own
+    // per-artifact toast rides the same failure).
+    expect(toastErrorMock).toHaveBeenCalledWith(
+      expect.stringContaining('Encounter step "brief" failed: provider exploded'),
+      expect.any(Error),
+    );
+    // …and the failed run row is still written, with its message.
+    const runs = await listRunsByCampaign(campaign.id);
+    const failedRun = runs.find((run) => run.targetArtifactId === encounter.id);
+    expect(failedRun?.status).toBe('failed');
+    expect(failedRun?.errorMessage).toContain('provider exploded');
   }, 30000);
 });

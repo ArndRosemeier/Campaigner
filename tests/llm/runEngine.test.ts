@@ -558,6 +558,70 @@ describe('runEngine', () => {
     expect(run?.resultArtifactId).toBeNull();
   }, 20000);
 
+  it('a run the owner STOPPED is not resurrected by the step that was already in flight (docs/17 row 115)', async () => {
+    const { campaignId, persona } = await seed();
+    const draft = deferred();
+    chatMock.mockImplementation(() => draft.promise);
+
+    // The run is genuinely LIVE and parked inside its draft model call — the
+    // exact state a Stop meets (the engine drives the rest of the pipeline with
+    // `void executeFrom(…).catch(fail)`, so startRun has long since resolved).
+    const runId = await runEngine.startRun({ ...INPUT(campaignId, persona), autonomy: 'auto' as const });
+    await waitFor(() => {
+      expect(chatMock).toHaveBeenCalled();
+    });
+    expect((await getRun(runId))?.status).toBe('running');
+
+    await runEngine.cancel(runId);
+    expect((await getRun(runId))?.status).toBe('cancelled');
+
+    // The model answers AFTER the stop: the step's result is the abort's tail,
+    // so it is discarded — a step write would restore 'running' and then run the
+    // whole remaining pipeline over a run the owner stopped.
+    await act(() => {
+      draft.resolve({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+      return Promise.resolve();
+    });
+    await new Promise((resolve) => {
+      window.setTimeout(resolve, 0);
+    });
+    const settled = await getRun(runId);
+    expect(settled?.status).toBe('cancelled');
+    expect(settled?.errorMessage).toBe('');
+    // No artifact was minted by the discarded draft either (no silent fallback:
+    // the stop wins over the work it interrupted).
+    expect((await listRunsByCampaign(campaignId))[0]?.resultArtifactId).toBeNull();
+  }, 20000);
+
+  it('a stopped run still offers its Retry: the stop does not strand the row (docs/17 row 115)', async () => {
+    const { campaignId, persona } = await seed();
+    // A model call that never answers — why the owner stops a generation in the
+    // first place. The engine stays parked on it, so the stop's intent has no
+    // pipeline end to be consumed by; the ROW's own recovery door (docs/05:
+    // cancelled rows keep their Retry) must still work.
+    const parked = deferred();
+    chatMock.mockImplementation(() => parked.promise);
+
+    const input = INPUT(campaignId, persona);
+    const runId = await runEngine.startRun(input);
+    await waitFor(() => {
+      expect(chatMock).toHaveBeenCalled();
+    });
+    await runEngine.cancel(runId);
+    expect((await getRun(runId))?.status).toBe('cancelled');
+
+    // Retry is NEW work on the row, so it supersedes the stop.
+    chatMock.mockReset();
+    chatMock.mockResolvedValue({ text: JSON.stringify(VALID_DRAFT), modelUsed: 'test-model', fallback: null });
+    await runEngine.retryStep(runId, '', input);
+    await waitFor(async () => {
+      const run = await getRun(runId);
+      expect(run?.status).toBe('awaiting_user');
+    });
+    const retried = await getRun(runId);
+    expect(retried?.steps[1]?.status).toBe('done');
+  }, 20000);
+
   it('resumeRun resumes a failed run from the failed step, preserving prior completed steps', async () => {
     const { campaignId, persona } = await seed();
     chatMock

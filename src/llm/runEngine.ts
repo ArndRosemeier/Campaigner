@@ -1573,6 +1573,24 @@ function effectiveReasoningEffort(persona: Persona, settings: Settings): Reasoni
 export class RunEngine {
   private listeners = new Set<Listener>();
   private controllers = new Map<Id, AbortController>();
+  /**
+   * Runs whose in-flight pipeline the owner deliberately stopped — the cancel
+   * INTENT, not a momentary flag. It outlives `cancel()` on purpose (docs/17
+   * row 115): the step that is in flight when the owner stops a run has not
+   * observed the abort yet, and it may still be holding an `await` (a model
+   * reply, a write). Clearing the intent inside `cancel()` made that live
+   * pipeline uncancellable — its next write restored 'running' over the
+   * cancelled row, and a write that met a row the owner had since deleted
+   * surfaced as `Encounter step "brief" failed: PersonaRun not found: …`, a
+   * spurious failure toast for a stop the owner asked for (docs/05: "a
+   * cancelled run is never reported as a failure").
+   *
+   * The intent is therefore consumed where the run's pipeline actually ENDS
+   * (executeFrom's finally, or the early return for a run that is already
+   * cancelled/failed/gone) and dropped by a deliberate restart on the same row
+   * (resume/retry/regenerate write 'running' as new work — the newest owner
+   * action wins).
+   */
   private cancelRequested = new Set<Id>();
   /** JSON-parse retry state per run (one automatic fix retry per LLM step). */
   private draftRetried = new Set<Id>();
@@ -1803,6 +1821,10 @@ export class RunEngine {
     if (stepIndex === -1) return;
     await this.resetStep(runId, stepIndex);
     await updateRun(runId, { status: 'running', errorMessage: '', failureKind: null });
+    // A deliberate restart is NEW work on the row: it supersedes a previous stop,
+    // whose intent would otherwise end this pipeline at its first step boundary
+    // (docs/17 row 115).
+    this.cancelRequested.delete(runId);
     this.emit({ kind: 'run', runId, status: 'running' });
     void this.executeFrom(runId, stepIndex, input, extraInstruction).catch((error: unknown) => {
       void this.fail(runId, error);
@@ -1871,6 +1893,9 @@ export class RunEngine {
       // not carry the previous attempt's failure kind if it fails again.
       failureKind: null,
     });
+    // A deliberate restart is NEW work on the row: it supersedes a previous stop
+    // (docs/17 row 115).
+    this.cancelRequested.delete(runId);
     this.emit({ kind: 'run', runId, status: 'running' });
 
     void this.executeFrom(runId, resumeIndex, input, extraInstruction).catch((error: unknown) => {
@@ -1898,6 +1923,9 @@ export class RunEngine {
       errorMessage: '',
       failureKind: null,
     });
+    // A deliberate restart is NEW work on the row: it supersedes a previous stop
+    // (docs/17 row 115).
+    this.cancelRequested.delete(runId);
     void this.executeFrom(runId, stepIndex, input).catch((error: unknown) => {
       void this.fail(runId, error);
     });
@@ -1942,6 +1970,9 @@ export class RunEngine {
       errorMessage: '',
       failureKind: null,
     });
+    // A deliberate restart is NEW work on the row: it supersedes a previous stop
+    // (docs/17 row 115).
+    this.cancelRequested.delete(runId);
     void this.executeFrom(runId, stepIndex, input).catch((error: unknown) => {
       void this.fail(runId, error);
     });
@@ -1951,14 +1982,17 @@ export class RunEngine {
   async cancel(runId: Id): Promise<void> {
     this.cancelRequested.add(runId);
     this.controllers.get(runId)?.abort();
-    // A cancelled run is not a failed one: the stale interruption text an
-    // earlier reconcile may have left goes, and the background line stops
-    // claiming the run is working (docs/17 row 110).
+    // The intent deliberately OUTLIVES this call (see the field's docs): the step
+    // that is in flight right now has not observed the abort yet, so the knowledge
+    // that this run was stopped must still be here when its write lands;
+    // executeFrom's finally — and each deliberate restart — consumes it. What the
+    // ROW says here is the other half: a cancelled run is not a failed one, so the
+    // stale interruption text an earlier reconcile may have left goes, and the
+    // background line stops claiming the run is working (docs/17 row 110).
     await updateRun(runId, { status: 'cancelled', errorMessage: '' });
     clearBackgroundActivity(`run-${runId}`);
     this.emit({ kind: 'run', runId, status: 'cancelled' });
     this.controllers.delete(runId);
-    this.cancelRequested.delete(runId);
     this.draftRetried.delete(runId);
     this.statblockRetried.delete(runId);
     this.sourceRepaired.delete(runId);
@@ -2000,7 +2034,13 @@ export class RunEngine {
     extraInstruction = '',
   ): Promise<void> {
     const run = await getRun(runId);
-    if (run === undefined || run.status === 'cancelled' || run.status === 'failed') return;
+    if (run === undefined || run.status === 'cancelled' || run.status === 'failed') {
+      // This pipeline never started, so the cancel intent (if any) has nothing
+      // left to stop — it must not strand a later Resume/Retry of the row
+      // (docs/17 row 115).
+      this.cancelRequested.delete(runId);
+      return;
+    }
 
     const steps: RunStep[] = [...run.steps];
     const kinds: StepName[] =
@@ -2031,7 +2071,10 @@ export class RunEngine {
         if (name === undefined) break;
         activeStepName = name;
         if (this.cancelRequested.has(runId)) {
-          await updateRun(runId, { status: 'cancelled', errorMessage: '' });
+          // The owner stopped this run before the step started: the cancel's own
+          // verdict is written (or the row is already gone), and nothing about
+          // this stop is an incident (docs/17 row 115).
+          await this.recordCancelled(runId);
           clearBackgroundActivity(activityId);
           this.emit({ kind: 'run', runId, status: 'cancelled' });
           return;
@@ -2064,6 +2107,15 @@ export class RunEngine {
           extraInstruction,
         );
         debugLog('run', `step ${name} finished with status ${outcome.step.status}`);
+        // A step that lands AFTER the owner stopped the run is not a step's
+        // result — it is the abort's tail. The cancel path already wrote this
+        // run's verdict (and the row may not exist any more), so the late
+        // result is DISCARDED here, before any write: writing it would restore
+        // 'running' and resurrect a run the owner stopped (and then run the
+        // rest of the pipeline over it), while reporting it would surface a
+        // deliberate stop as a failure (docs/05: "a cancelled run is never
+        // reported as a failure"; docs/17 row 115, docs/18 §4).
+        if (this.cancelRequested.has(runId)) return;
         steps[i] = outcome.step;
         // The encounter pipeline shape re-resolves after the brief (docs/11
         // vision path): only the brief knows the room count, so an auto run
@@ -2142,6 +2194,11 @@ export class RunEngine {
         }
       }
 
+      // Same rule as the per-step write above, at the pipeline's TAIL: a cancel
+      // that landed after the last step must not be overwritten by a completion
+      // verdict — the cancel path's 'cancelled' is the state the owner asked
+      // for (docs/17 row 115).
+      if (this.cancelRequested.has(runId)) return;
       // Belt and braces (docs/17 row 110): every path to this write passes a
       // step write, which clears the verdict already — MEASURED (removing this
       // clearing leaves the suite green), so it is redundant TODAY and kept so
@@ -2163,7 +2220,10 @@ export class RunEngine {
         // A user stop is not a failure and leaves no verdict behind: the row
         // must not keep a stale interruption message from an earlier reconcile,
         // and the background line must not claim a completion (docs/17 row 110).
-        await updateRun(runId, { status: 'cancelled', errorMessage: '' });
+        // The verdict goes through recordCancelled so a row the owner has since
+        // deleted cannot turn the stop into a `PersonaRun not found` incident
+        // (docs/17 row 115).
+        await this.recordCancelled(runId);
         clearBackgroundActivity(activityId);
         this.emit({ kind: 'run', runId, status: 'cancelled' });
       } else if (input.persona.mode === 'encounter' && activeStepName !== null) {
@@ -2173,7 +2233,11 @@ export class RunEngine {
         throw error;
       }
     } finally {
+      // The pipeline is over, so the cancel intent has been consumed: keeping it
+      // any longer would strand the row's next deliberate Resume/Retry
+      // (docs/17 row 115).
       this.controllers.delete(runId);
+      this.cancelRequested.delete(runId);
     }
   }
 
@@ -5934,6 +5998,23 @@ export class RunEngine {
     if (step === undefined) return;
     steps[stepIndex] = { ...step, ...patch };
     await updateRun(runId, { steps });
+  }
+
+  /**
+   * The cancelled verdict, written only when there is still a row to carry it.
+   *
+   * A row that is already GONE has nothing to record: the owner stopped this
+   * run on purpose, and a vanished row (the Runs list's delete of a running run,
+   * or a wiped database) is not work that failed — reporting `PersonaRun not
+   * found` for a stop the owner asked for is exactly the spurious toast
+   * docs/17 row 115 removes. This is NOT a general tolerance for a vanished row
+   * (AGENTS rule 1): it is reachable only on the cancel path, and a step that
+   * dies with no cancel in play still wraps, still toasts and still writes its
+   * failed row through `fail` (pinned in tests/features/encounter-map-queue.test.ts).
+   */
+  private async recordCancelled(runId: Id): Promise<void> {
+    if ((await getRun(runId)) === undefined) return;
+    await updateRun(runId, { status: 'cancelled', errorMessage: '' });
   }
 
   private async fail(runId: Id, error: unknown): Promise<void> {
