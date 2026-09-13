@@ -11,19 +11,38 @@ import {
 } from '@/features/modules/canvas/chatStore';
 
 /**
- * Chat command application onto the WHOLE-document editor (canvas v3,
- * 08-MODULE-DESIGNER §Module canvas chat): the canvas editor doc IS the
- * whole module's parts document, so every command — whatever part it
- * targets — lands as ONE CodeMirror 6 transaction over that doc with NORMAL
- * history (one undo step per command; a replace-all's ranges ride the same
- * transaction). Command matching is still PER PART
- * (`resolveCanvasEditAcrossParts` against the per-part texts) and
- * RE-RESOLVED PER COMMAND against the CURRENT doc — earlier commands in one
- * reply never shift later ranges (the split's section ranges are re-derived
- * from the live doc each time, so matched ranges map onto exact
- * whole-document coordinates and can never leak across a section boundary).
- * The caller persists the batch afterwards through the split-save (only the
- * parts whose text changed hit the row).
+ * THE chat-command applier (canvas v3, 08-MODULE-DESIGNER §Module canvas
+ * chat): ONE algorithm over an injected DOCUMENT HANDLE, plus the two handles
+ * the two chat surfaces need.
+ *
+ * The canvas has TWO places a chat batch lands, and they are the same
+ * algorithm over different documents:
+ *
+ * - the whole-document EDITOR (the canvas editor doc IS the module's parts
+ *   document) — `applyChatCommandsToDocument` over `editorChatHandle(view)`;
+ * - the PREVIEW SNAPSHOT STRING (the editor is unmounted in preview, the
+ *   default view) — `applyChatCommandsToSnapshot` over `stringChatHandle(doc)`.
+ *
+ * These were TWO byte-identical copies once (86% of one file verbatim; the
+ * preview copy even said so: "Semantics mirror `applyChatCommandsToDocument`
+ * (chatApply.ts)"). A measured 3000-case differential fuzz found ZERO
+ * divergences, which is exactly why the duplication was pure risk: nothing
+ * failed when a copy was born, and nothing would fail when a copy drifts. The
+ * applier is ONE function now (`applyChatCommands`) and the two entry points
+ * are ~5-line ADAPTERS over it (there is no second implementation to drift).
+ * The differential pin that obliges this seam (AGENTS §Centralization item 2)
+ * is `tests/features/canvas-chat-apply-differential.test.ts`, which runs BOTH
+ * entry points over one input table and requires identical document text and
+ * identical outcome fields.
+ *
+ * Whatever the handle, the semantics are the editor's, unchanged: command
+ * matching stays PER PART (`resolveCanvasEditAcrossParts` against the
+ * per-part texts) and RE-RESOLVED PER COMMAND against the CURRENT document —
+ * earlier commands in one reply never shift later ranges (the split's section
+ * ranges are re-derived from the live doc each time, so matched ranges map
+ * onto exact whole-document coordinates and can never leak across a section
+ * boundary). The caller persists the batch afterwards through the split-save
+ * (only the parts whose text changed hit the row).
  *
  * Nothing is ever silently skipped: a command that cannot apply uniquely
  * comes back as a LOUD failed outcome (with the closest candidate snippet
@@ -77,9 +96,71 @@ function appliedOutcome(
   };
 }
 
-const MAX_CARD_SNIPPET = 280;
+/** How much of a replaced/candidate span an outcome card shows. */
+export const MAX_CARD_SNIPPET = 280;
 
-export interface ApplyChatCommandsResult {
+/**
+ * The document the applier works over — the ONE seam between the algorithm
+ * and the two surfaces. `read()` is called per command (the doc MOVES between
+ * commands), and `replaceRanges` is the surface's single write: the WHOLE
+ * command lands as ONE user action, never one action per range.
+ */
+export interface ChatDocumentHandle {
+  /** The whole-document text right now. */
+  read(): string;
+  /**
+   * Replaces every (non-overlapping) whole-document range with `insert`, as
+   * ONE user action. The editor adapter dispatches ONE CodeMirror transaction
+   * (which is what makes a replace-all one undo step — a real `undo(view)`
+   * reverts the whole command, pinned in tests/features/canvas-chat.test.tsx);
+   * the string adapter splices from the END backwards, so every earlier
+   * offset stays valid.
+   */
+  replaceRanges(ranges: readonly { from: number; to: number }[], insert: string): void;
+}
+
+/** The editor handle: ONE transaction per `replaceRanges` call, normal history. */
+export function editorChatHandle(view: EditorView): ChatDocumentHandle {
+  return {
+    read: () => view.state.doc.toString(),
+    replaceRanges: (ranges, insert) => {
+      // ONE transaction per command (all its part ranges together) — CM6
+      // maps simultaneous changes atomically, so ranges computed against the
+      // pre-dispatch doc are exact; normal history: one undo step reverts
+      // the whole command. Ranges are non-overlapping, left-to-right.
+      view.dispatch({
+        changes: [...ranges]
+          .sort((a, b) => a.from - b.from)
+          .map((range) => ({ from: range.from, to: range.to, insert })),
+        userEvent: 'canvas.chat.apply',
+      });
+    },
+  };
+}
+
+/** The string handle: pure splices, plus the document they produced. */
+export interface ChatStringHandle extends ChatDocumentHandle {
+  /** The text after every `replaceRanges` call (=== the input when nothing applied). */
+  text(): string;
+}
+
+export function stringChatHandle(doc: string): ChatStringHandle {
+  let current = doc;
+  return {
+    read: () => current,
+    replaceRanges: (ranges, insert) => {
+      // Backwards: splicing the last range first keeps every earlier offset
+      // valid, so the result is the same document the editor's atomic
+      // transaction produces.
+      for (const range of [...ranges].sort((a, b) => b.from - a.from)) {
+        current = current.slice(0, range.from) + insert + current.slice(range.to);
+      }
+    },
+    text: () => current,
+  };
+}
+
+export interface ChatApplyResult {
   outcomes: CanvasChatOutcome[];
   /** True when any command changed the doc (caller persists via the
    * split-save; unchanged parts never hit the row). */
@@ -94,29 +175,29 @@ export interface ApplyChatCommandsResult {
 }
 
 /**
- * Applies commands IN ORDER to the live whole-document editor; outcomes in
- * reply order, one per (command × part) application plus one per failure.
- * Each command re-splits the CURRENT doc against the plan and re-resolves
- * against those per-part texts, the canvasRefine-parity debris scan runs
- * per replace text, and `all="false"` demands EXACTLY ONE match across the
- * WHOLE module. A broken scaffolding mid-batch (a replace faked a section
- * header) throws `ModulePartsDocumentError` loud — the caller surfaces it;
- * the already-applied commands stay in the doc as unsaved edits.
+ * Applies commands IN ORDER to the handle's document; outcomes in reply
+ * order, one per (command × part) application plus one per failure. Each
+ * command re-splits the CURRENT doc against the plan and re-resolves against
+ * those per-part texts, the canvasRefine-parity debris scan runs per replace
+ * text, and `all="false"` demands EXACTLY ONE match across the WHOLE module.
+ * A broken scaffolding mid-batch (a replace faked a section header) throws
+ * `ModulePartsDocumentError` loud — the caller surfaces it; the already-
+ * applied commands stay in the doc as unsaved edits.
  */
-export function applyChatCommandsToDocument(input: {
+export function applyChatCommands(input: {
   commands: readonly CanvasEditCommand[];
   /** The plan titles in order (position i IS planIndex i). */
   partPlan: readonly { title: string }[];
-  view: EditorView;
-}): ApplyChatCommandsResult {
-  const { view } = input;
+  handle: ChatDocumentHandle;
+}): ChatApplyResult {
+  const { handle } = input;
   const outcomes: CanvasChatOutcome[] = [];
   let docChanged = false;
   let lastApplied: { from: number; to: number } | null = null;
 
   /** Fresh per-part sections of the CURRENT doc (ranges included). */
   const currentSections = (): ModulePartsSection[] =>
-    splitPartsDocument(view.state.doc.toString(), input.partPlan);
+    splitPartsDocument(handle.read(), input.partPlan);
 
   for (const command of input.commands) {
     // Generated-text hygiene scan (canvasRefine parity): escape debris OR our
@@ -168,11 +249,8 @@ export function applyChatCommandsToDocument(input: {
       // the part's new text replaces its (empty) section range.
       const section = parts[resolution.partIndex];
       if (section === undefined) throw new Error('parts snapshot has no section for the fill target');
-      const before = view.state.doc.sliceString(section.textFrom, section.textTo);
-      view.dispatch({
-        changes: { from: section.textFrom, to: section.textTo, insert: resolution.newText },
-        userEvent: 'canvas.chat.apply',
-      });
+      const before = handle.read().slice(section.textFrom, section.textTo);
+      handle.replaceRanges([{ from: section.textFrom, to: section.textTo }], resolution.newText);
       docChanged = true;
       lastApplied = { from: section.textFrom, to: section.textFrom + resolution.newText.length };
       outcomes.push(
@@ -210,13 +288,13 @@ export function applyChatCommandsToDocument(input: {
       );
       continue;
     }
-    const doc = view.state.doc.toString();
-    // ONE transaction per command (all its part ranges together) — CM6
-    // maps simultaneous changes atomically, so ranges computed against the
-    // pre-dispatch doc are exact; normal history: one undo step reverts
-    // the whole command. Ranges are non-overlapping, left-to-right.
-    const changes: { from: number; to: number; insert: string }[] = [];
-    const perPart: { section: ModulePartsSection; docRanges: { from: number; to: number }[]; before: string }[] = [];
+    const doc = handle.read();
+    const ranges: { from: number; to: number }[] = [];
+    const perPart: {
+      section: ModulePartsSection;
+      docRanges: { from: number; to: number }[];
+      before: string;
+    }[] = [];
     for (const match of resolution.matches) {
       const section = parts[match.partIndex];
       if (section === undefined) throw new Error('parts snapshot has no section for a match');
@@ -229,9 +307,9 @@ export function applyChatCommandsToDocument(input: {
         docRanges,
         before: doc.slice(docRanges[0]?.from ?? 0, docRanges[0]?.to ?? 0),
       });
-      changes.push(...docRanges.map((range) => ({ from: range.from, to: range.to, insert: command.replace })));
+      ranges.push(...docRanges);
     }
-    view.dispatch({ changes, userEvent: 'canvas.chat.apply' });
+    handle.replaceRanges(ranges, command.replace);
     docChanged = true;
     const firstRange = perPart[0]?.docRanges[0];
     if (firstRange !== undefined) {
@@ -251,4 +329,52 @@ export function applyChatCommandsToDocument(input: {
     }
   }
   return { outcomes, docChanged, lastApplied };
+}
+
+/** `applyChatCommands` with the result type the editor callers use. */
+export type ApplyChatCommandsResult = ChatApplyResult;
+
+/**
+ * The EDITOR entry point: applies commands to the live whole-document editor
+ * through the one applier. Kept as a named function (rather than making every
+ * caller build a handle) because it IS the shape the canvas page and the chat
+ * controller speak.
+ */
+export function applyChatCommandsToDocument(input: {
+  commands: readonly CanvasEditCommand[];
+  /** The plan titles in order (position i IS planIndex i). */
+  partPlan: readonly { title: string }[];
+  view: EditorView;
+}): ApplyChatCommandsResult {
+  return applyChatCommands({
+    commands: input.commands,
+    partPlan: input.partPlan,
+    handle: editorChatHandle(input.view),
+  });
+}
+
+export interface SnapshotApplyResult extends ChatApplyResult {
+  /** The snapshot after every command (=== input when nothing applied). */
+  doc: string;
+}
+
+/**
+ * The PREVIEW entry point: the SAME applier over a snapshot string (no
+ * view — the editor is unmounted while the preview is open, by contract) and
+ * pure splices. Semantics are the editor's by construction, not by mirroring.
+ */
+export function applyChatCommandsToSnapshot(input: {
+  commands: readonly CanvasEditCommand[];
+  /** The plan titles in order (position i IS planIndex i). */
+  partPlan: readonly { title: string }[];
+  /** The snapshot the model saw (send-time string). */
+  doc: string;
+}): SnapshotApplyResult {
+  const handle = stringChatHandle(input.doc);
+  const applied = applyChatCommands({
+    commands: input.commands,
+    partPlan: input.partPlan,
+    handle,
+  });
+  return { doc: handle.text(), ...applied };
 }

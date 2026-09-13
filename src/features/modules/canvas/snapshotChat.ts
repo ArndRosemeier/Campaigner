@@ -1,22 +1,18 @@
 import type { Id } from '@/domain';
-import { splitPartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
 import {
   NO_PARTS_MESSAGE,
   chatProseSoFar,
   composeFailureReport,
-  resolveCanvasEditAcrossParts,
   sendCanvasChatMessage,
   type CanvasEditCommand,
 } from '@/llm/canvasChat';
 import { ModuleBusyError } from '@/llm/moduleGen';
 import { getModule } from '@/db/moduleRepo';
-import { generatedTextIssuesForFields } from '@/llm/generatedTextHygiene';
 import {
   newChatId,
   useCanvasChatStore,
   type CanvasChatMessage,
   type CanvasChatOutcome,
-  type CanvasChatOutcomePart,
 } from '@/features/modules/canvas/chatStore';
 import { saveWholeModuleDocument } from '@/features/modules/canvas/saveDoc';
 import {
@@ -24,239 +20,36 @@ import {
   reportChatChangeOutcome,
 } from '@/features/modules/canvas/chatChanges';
 import { scheduleChatPersist } from '@/features/modules/canvas/chatPersist';
+import { applyChatCommandsToSnapshot } from '@/features/modules/canvas/chatApply';
 import { toastError } from '@/lib/toast';
 
 /**
- * Chat command application onto the PREVIEW SNAPSHOT STRING (preview-default
- * arc, 08-MODULE-DESIGNER §Module canvas): the editor is unmounted while the
+ * The PREVIEW surface of the chat applier (preview-default arc,
+ * 08-MODULE-DESIGNER §Module canvas): the editor is unmounted while the
  * preview is open (v3 contract — never remounted hidden), so preview-applied
- * chat edits target the snapshot string the preview renders from instead of
- * a CM6 view. Matching rides the EXISTING per-part ladder
- * (`resolveCanvasEditAcrossParts` — no second matcher): each command
- * re-splits the CURRENT snapshot and re-resolves against those per-part
- * texts, so earlier commands in one reply never shift later ranges and a
- * replace faked as a section header fails the batch loudly through the
- * existing `ModulePartsDocumentError` path. Persistence rides the existing
- * split-save (`saveWholeModuleDocument` — headless row writes, no editor).
+ * chat edits target the snapshot string the preview renders from instead of a
+ * CM6 view.
+ *
+ * THE ALGORITHM IS NOT HERE. Both surfaces go through ONE applier —
+ * `chatApply.applyChatCommands` over an injected `ChatDocumentHandle` — and
+ * this module used to carry a byte-identical COPY of the editor's
+ * `applyChatCommandsToDocument` (166 of 192 code lines verbatim). A measured
+ * 3000-case differential fuzz found ZERO divergences, which is what made the
+ * copy pure risk: nothing fails when a copy is born, and a later edit to one
+ * side would silently split the two behaviours. The two entry points are
+ * adapters over the one algorithm now, and
+ * `tests/features/canvas-chat-apply-differential.test.ts` runs them over one
+ * input table requiring identical documents and identical outcome fields
+ * (AGENTS §Centralization item 2).
  *
  * DOCUMENTED CAVEAT (no undo): preview-applied edits have no CM history
  * while the editor is unmounted — they cannot be undone. Outcome cards are
  * unchanged (before→after still shown per command).
+ *
+ * Re-exported here so the preview callers keep ONE import path for their
+ * surface; the seam itself lives in `chatApply.ts`.
  */
-
-function failedOutcome(command: CanvasEditCommand, reason: string, extra: {
-  closest?: string | null;
-  failureFrom?: number | null;
-  targetParts?: CanvasChatOutcomePart[];
-} = {}): CanvasChatOutcome {
-  return {
-    id: newChatId('outcome'),
-    kind: 'failed',
-    command,
-    targetParts: extra.targetParts ?? [],
-    occurrences: null,
-    from: null,
-    to: null,
-    before: null,
-    reason,
-    closest: extra.closest ?? null,
-    failureFrom: extra.failureFrom ?? null,
-    reported: false,
-  };
-}
-
-function appliedOutcome(
-  command: CanvasEditCommand,
-  targetPart: CanvasChatOutcomePart,
-  occurrences: number,
-  from: number | null,
-  to: number | null,
-  before: string,
-): CanvasChatOutcome {
-  return {
-    id: newChatId('outcome'),
-    kind: 'applied',
-    command,
-    targetParts: [targetPart],
-    occurrences,
-    from,
-    to,
-    before,
-    reason: null,
-    closest: null,
-    failureFrom: null,
-    reported: false,
-  };
-}
-
-const MAX_CARD_SNIPPET = 280;
-
-export interface SnapshotApplyResult {
-  /** The snapshot after every command (=== input when nothing applied). */
-  doc: string;
-  outcomes: CanvasChatOutcome[];
-  docChanged: boolean;
-  /** The LAST command's FIRST applied range in POST-apply whole-document
-   * coordinates (the last-replacement highlight) — null when nothing
-   * applied. Valid in the returned doc (no later command shifts it). */
-  lastApplied: { from: number; to: number } | null;
-}
-
-/**
- * Applies commands IN ORDER to a whole-document snapshot string; outcomes
- * in reply order, one per (command × part) application plus one per
- * failure. Semantics mirror `applyChatCommandsToDocument` (chatApply.ts):
- * the debris scan, the empty-search guard, per-part ladder resolution,
- * `all="false"` demanding exactly one match across the whole module, the
- * empty-part label-anchor fill, and loud failed outcomes (closest candidate
- * on zero matches) — never a guess, never a partial apply (AGENTS 1/2).
- * Outcome anchors are whole-document coordinates, same as the editor path.
- */
-export function applyChatCommandsToSnapshot(input: {
-  commands: readonly CanvasEditCommand[];
-  /** The plan titles in order (position i IS planIndex i). */
-  partPlan: readonly { title: string }[];
-  /** The snapshot the model saw (send-time string). */
-  doc: string;
-}): SnapshotApplyResult {
-  let doc = input.doc;
-  const outcomes: CanvasChatOutcome[] = [];
-  let docChanged = false;
-  let lastApplied: { from: number; to: number } | null = null;
-
-  /** Fresh per-part sections of the CURRENT snapshot (ranges included). */
-  const currentSections = (): ModulePartsSection[] =>
-    splitPartsDocument(doc, input.partPlan);
-
-  /** Splices non-overlapping whole-doc ranges (left-to-right) with one insert. */
-  const spliceRanges = (ranges: readonly { from: number; to: number }[], insert: string): void => {
-    const ordered = [...ranges].sort((a, b) => b.from - a.from);
-    for (const range of ordered) {
-      doc = doc.slice(0, range.from) + insert + doc.slice(range.to);
-    }
-  };
-
-  for (const command of input.commands) {
-    const issues = generatedTextIssuesForFields([{ field: 'replace', text: command.replace }]);
-    if (issues.length > 0) {
-      outcomes.push(
-        failedOutcome(command, `unusable generated text in the replace text — ${issues.join('; ')}`),
-      );
-      continue;
-    }
-    if (command.search.trim() === '') {
-      outcomes.push(
-        failedOutcome(
-          command,
-          'the search text is empty — every command must copy the text it replaces from the current document',
-        ),
-      );
-      continue;
-    }
-    const parts = currentSections();
-    const resolution = resolveCanvasEditAcrossParts(command, parts);
-    if (resolution.status === 'none') {
-      const anchor =
-        resolution.closestPartIndex === null ? undefined : parts[resolution.closestPartIndex];
-      outcomes.push(
-        failedOutcome(command, 'the search text does not appear in the current document', {
-          closest: resolution.closest === '' ? null : resolution.closest.slice(0, MAX_CARD_SNIPPET),
-          failureFrom:
-            resolution.closestFrom === null || anchor === undefined
-              ? null
-              : anchor.textFrom + resolution.closestFrom,
-          targetParts: anchor === undefined ? [] : [{ planIndex: anchor.planIndex, title: anchor.title }],
-        }),
-      );
-      continue;
-    }
-    if (resolution.status === 'fill-failed') {
-      const section = parts[resolution.partIndex];
-      if (section === undefined) throw new Error('parts snapshot has no section for the fill target');
-      outcomes.push(failedOutcome(command, resolution.reason, {
-        targetParts: [{ planIndex: section.planIndex, title: section.title }],
-      }));
-      continue;
-    }
-    if (resolution.status === 'filled') {
-      const section = parts[resolution.partIndex];
-      if (section === undefined) throw new Error('parts snapshot has no section for the fill target');
-      const before = doc.slice(section.textFrom, section.textTo);
-      spliceRanges([{ from: section.textFrom, to: section.textTo }], resolution.newText);
-      docChanged = true;
-      lastApplied = { from: section.textFrom, to: section.textFrom + resolution.newText.length };
-      outcomes.push(
-        appliedOutcome(
-          command,
-          { planIndex: section.planIndex, title: section.title },
-          1,
-          section.textFrom,
-          section.textTo,
-          before.slice(0, MAX_CARD_SNIPPET),
-        ),
-      );
-      continue;
-    }
-    // status 'found'.
-    if (resolution.totalRanges > 1 && !command.all) {
-      const first = resolution.matches[0];
-      const firstSection = first === undefined ? undefined : parts[first.partIndex];
-      const firstRange = first?.ranges[0];
-      outcomes.push(
-        failedOutcome(
-          command,
-          `${String(resolution.totalRanges)} matches — add surrounding context to the search or set all="true"`,
-          {
-            failureFrom:
-              firstSection === undefined || firstRange === undefined
-                ? null
-                : firstSection.textFrom + firstRange.from,
-            targetParts:
-              firstSection === undefined
-                ? []
-                : [{ planIndex: firstSection.planIndex, title: firstSection.title }],
-          },
-        ),
-      );
-      continue;
-    }
-    const docRanges: { from: number; to: number }[] = [];
-    const perPart: { section: ModulePartsSection; ranges: { from: number; to: number }[]; before: string }[] = [];
-    for (const match of resolution.matches) {
-      const section = parts[match.partIndex];
-      if (section === undefined) throw new Error('parts snapshot has no section for a match');
-      const ranges = match.ranges.map((range) => ({
-        from: section.textFrom + range.from,
-        to: section.textFrom + range.to,
-      }));
-      perPart.push({
-        section,
-        ranges,
-        before: doc.slice(ranges[0]?.from ?? 0, ranges[0]?.to ?? 0),
-      });
-      docRanges.push(...ranges);
-    }
-    spliceRanges(docRanges, command.replace);
-    docChanged = true;
-    const firstRange = perPart[0]?.ranges[0];
-    if (firstRange !== undefined) {
-      lastApplied = { from: firstRange.from, to: firstRange.from + command.replace.length };
-    }
-    for (const applied of perPart) {
-      outcomes.push(
-        appliedOutcome(
-          command,
-          { planIndex: applied.section.planIndex, title: applied.section.title },
-          applied.ranges.length,
-          applied.ranges[0]?.from ?? null,
-          applied.ranges[0]?.to ?? null,
-          applied.before.slice(0, MAX_CARD_SNIPPET),
-        ),
-      );
-    }
-  }
-  return { doc, outcomes, docChanged, lastApplied };
-}
+export { applyChatCommandsToSnapshot, type SnapshotApplyResult } from '@/features/modules/canvas/chatApply';
 
 // --- preview turn controller ----------------------------------------------------
 
