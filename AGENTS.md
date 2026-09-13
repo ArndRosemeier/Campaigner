@@ -73,6 +73,22 @@ better route to the same intent exists.
    re-arguing; record the reasoning in the commit body or docs if it matters
    later.
 
+## Reading the owner's reports (transport artifacts)
+
+The owner pastes into an interface that goes through a transport layer with
+character limitations, and he has stated that this is currently unfixable on his
+side. So: **unusual characters in a report are the PASTE, not a symptom.** A `?`
+where the source has `—`, a mangled umlaut, a broken quote or a stray glyph is
+the transport layer — do NOT scope work from it and do NOT report it as a defect
+of ours (real near-miss: a `—` pasted as `?` was read as a PDF font failure and
+nearly cost a slice chasing an encoding bug that does not exist, while the real
+signal sat in the same quote).
+
+Diagnose a genuine encoding or rendering problem only from evidence that is not
+the paste: what the owner says he SEES ON SCREEN (one line asking that settles
+it when the distinction decides the work), or a rendered artifact we can inspect
+ourselves.
+
 ## Workflow
 
 - Start every task at `docs/18-ARCHITECTURE.md` (the seam index: layer map,
