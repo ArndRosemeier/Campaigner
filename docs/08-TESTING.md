@@ -2283,10 +2283,17 @@ back and `git diff --stat` checked BEFORE the run, one suite at a time at
 `CAMPAIGNER_TEST_WORKERS=2`, raw output kept in the slice's scratch, then
 restored from an OUT-OF-TREE copy and verified with `git hash-object` —
 `src/features/modules/persona-request.ts`
-`93c70c2c43f625791682a20914d974a589647548` before and after, plus
-`src/features/modules/entity-batch.ts` `a2d518544853cb25f8d333efb2e3664bedc3c3f4`
+`1c703ed304fc5cbdc18d8519659401925c334c2f` before and after, plus
+`src/features/modules/entity-batch.ts` `b8b93aa1e99882d16e0d96daf4ddf0a95e49dafe`
 for I2; `git checkout --` restores HEAD and would have destroyed this uncommitted
-work, so the backups were taken first):
+work, so the backups were taken first. **CORRECTED by the dispatcher at landing
+verification:** these two hashes (and I2's line number below) were recorded
+BEFORE the ledger-row renumbering (139 → 140), which edits a comment in each of
+these files — so as first written they identified the pre-renumbering blobs, not
+the landed ones, and I2's argument sits at `entity-batch.ts:601` in the landed
+file. Both injections were re-run against the LANDED blobs and reproduced their
+results exactly (I1 RED 8 / GREEN 6, I2 RED 3 / GREEN 11), each restoring
+byte-identically to the hash above):
 
 | injection | line it hits | result |
 |---|---|---|
