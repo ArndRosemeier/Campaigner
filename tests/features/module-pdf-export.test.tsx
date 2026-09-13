@@ -11,6 +11,7 @@ import { createCampaign } from '@/db/campaignRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { createModule, modulePartSchema, moduleSpineSchema, type Id } from '@/domain';
 import type * as ModulePdfModule from '@/lib/modulePdf';
+import type * as ModulePlanModule from '@/llm/modulePlan';
 import type * as FilePickerModule from '@/lib/filePicker';
 import { clearDatabase } from '../db/helpers';
 import { flushAsyncUpdates } from '../helpers/flush';
@@ -33,6 +34,7 @@ import { flushAsyncUpdates } from '../helpers/flush';
 const openSaveTargetMock = vi.fn();
 const writeMock = vi.fn();
 const buildModulePdfMock = vi.fn();
+const planAndStoreMock = vi.fn();
 
 vi.mock('@/lib/toast', () => ({
   toastError: vi.fn(),
@@ -48,6 +50,14 @@ vi.mock('@/lib/filePicker', async (importOriginal) => ({
 vi.mock('@/lib/modulePdf', async (importOriginal) => ({
   ...(await importOriginal<typeof ModulePdfModule>()),
   buildModulePdf: (...args: unknown[]) => buildModulePdfMock(...args) as unknown,
+}));
+
+// The export's automatic planning step (docs/17 row 139) reaches a MODEL, so
+// this WIRING test fakes the seam and lets the end-to-end file
+// (`module-pdf-auto-plan.test.tsx`) own the planning behaviour itself.
+vi.mock('@/llm/modulePlan', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModulePlanModule>()),
+  planAndStoreModuleDocument: (...args: unknown[]) => planAndStoreMock(...args) as unknown,
 }));
 
 const { toastInfo, toastError, toastSuccess } = await import('@/lib/toast');
@@ -80,7 +90,7 @@ beforeEach(async () => {
     sizeDial: 'standard',
     includePriorModules: false,
   });
-  await saveModule({
+  const saved = await saveModule({
     ...draft,
     spine: moduleSpineSchema.parse({
       premise: 'A drowned vault.',
@@ -97,6 +107,9 @@ beforeEach(async () => {
       }),
     ],
   });
+  // The export's planning step resolves to the module row it just planned (the
+  // real seam returns the PATCHED row); this file pins the wiring, not planning.
+  planAndStoreMock.mockResolvedValue(saved);
   world = { campaignId: campaign.id, moduleId: draft.id };
 });
 
@@ -210,5 +223,31 @@ describe('the module PDF lives on the module surface', () => {
     expect(buildModulePdfMock).not.toHaveBeenCalled();
     expect(writeMock).not.toHaveBeenCalled();
     expect(toastError).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The plan is not a step (docs/17 row 139): each press of an export item goes
+   * through the planning seam FIRST, ONCE, and the renderer is handed the
+   * PATCHED row. A failure of that step is not fatal, and it reaches the
+   * renderer as `planFailure` so the document can state what it printed.
+   */
+  it('plans once per export before rendering, and hands a FAILED plan to the renderer', async () => {
+    const user = userEvent.setup();
+    planAndStoreMock.mockRejectedValue(new Error('no provider'));
+    await openMenu();
+    await user.click(screen.getByTestId('module-pdf-menu'));
+    await user.click(await screen.findByTestId('module-pdf-gm'));
+
+    await waitFor(() => {
+      expect(writeMock).toHaveBeenCalledTimes(1);
+    });
+    expect(planAndStoreMock).toHaveBeenCalledTimes(1);
+    const planArgs = planAndStoreMock.mock.calls[0]?.[0] as { moduleId: string };
+    expect(planArgs.moduleId).toBe(world.moduleId);
+    const optionsArg = (buildModulePdfMock.mock.calls[0] as unknown[])[3] as {
+      planFailure?: string;
+    };
+    expect(optionsArg.planFailure).toBe('no provider');
+    expect(toastError).toHaveBeenCalledTimes(1);
   });
 });

@@ -9,11 +9,17 @@ import {
   createModule,
   moduleSpineSchema,
   newId,
+  readStoredDocumentPlan,
   type AnyArtifact,
   type Id,
   type Module,
 } from '@/domain';
-import { planModuleDocument, modulePlanMessages, modulePlannerReplySchema } from '@/llm/modulePlan';
+import {
+  planAndStoreModuleDocument,
+  planModuleDocument,
+  modulePlanMessages,
+  modulePlannerReplySchema,
+} from '@/llm/modulePlan';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -298,6 +304,86 @@ describe('planModuleDocument — the ONE writer of a plan', () => {
       planModuleDocument({ moduleId: world.moduleId, artifacts: world.artifacts, turn }),
     ).rejects.toThrow();
     expect(chatMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('planAndStoreModuleDocument — the ONE plan WRITE (docs/17 row 139)', () => {
+  it('plans and PERSISTS on the module row, returning the patched row', async () => {
+    const locationId = world.artifacts[0]?.id ?? '';
+    replyFor([
+      section({ title: 'The Premise', source: { type: 'part', planIndex: -1 } }),
+      section({ title: 'At the Gate', source: { type: 'artifact', artifactId: locationId } }),
+    ]);
+
+    const patched = await planAndStoreModuleDocument({
+      moduleId: world.moduleId,
+      artifacts: world.artifacts,
+      turn: new AbortController(),
+    });
+
+    // The row it returns IS the row on disk: the plan is written ONCE, here,
+    // with the app's provenance — the reason both the export's automatic step
+    // and the surface's Regenerate can share it.
+    const row = await getModule(world.moduleId);
+    const stored = readStoredDocumentPlan(row?.documentPlan);
+    expect(stored.status).toBe('valid');
+    if (stored.status !== 'valid') throw new Error('unreachable');
+    expect(stored.plan.sections.map((entry) => entry.title)).toEqual([
+      'The Premise',
+      'At the Gate',
+    ]);
+    expect(stored.plan.plannedByModel).toBe('vendor/planner-1');
+    expect(stored.plan.plannedAt).toBeGreaterThan(0);
+    expect(readStoredDocumentPlan(patched.documentPlan)).toEqual(stored);
+  });
+
+  it('REPLACES the plan already stored — it is a record, never a cache', async () => {
+    replyFor([section({ title: 'The Gate', source: { type: 'part', planIndex: 0 } })]);
+    await planAndStoreModuleDocument({
+      moduleId: world.moduleId,
+      artifacts: world.artifacts,
+      turn: new AbortController(),
+    });
+    const first = readStoredDocumentPlan((await getModule(world.moduleId))?.documentPlan);
+    replyFor([section({ title: 'A Second Decision', source: { type: 'part', planIndex: -1 } })]);
+    await planAndStoreModuleDocument({
+      moduleId: world.moduleId,
+      artifacts: world.artifacts,
+      turn: new AbortController(),
+    });
+
+    expect(chatMock).toHaveBeenCalledTimes(2);
+    const second = readStoredDocumentPlan((await getModule(world.moduleId))?.documentPlan);
+    expect(first.status === 'valid' ? first.plan.sections[0]?.title : null).toBe('The Gate');
+    expect(second.status === 'valid' ? second.plan.sections[0]?.title : null).toBe(
+      'A Second Decision',
+    );
+  });
+
+  it('writes NOTHING when the reply is refused (the previous plan survives)', async () => {
+    replyFor([section()]);
+    await planAndStoreModuleDocument({
+      moduleId: world.moduleId,
+      artifacts: world.artifacts,
+      turn: new AbortController(),
+    });
+    chatMock.mockResolvedValue({
+      text: JSON.stringify({ sections: [section({ source: { type: 'artifact', artifactId: newId() } })] }),
+      modelUsed: 'vendor/planner-1',
+      fallback: null,
+    });
+
+    await expect(
+      planAndStoreModuleDocument({
+        moduleId: world.moduleId,
+        artifacts: world.artifacts,
+        turn: new AbortController(),
+      }),
+    ).rejects.toThrow(/names something that does not exist/);
+
+    const row = await getModule(world.moduleId);
+    const stored = readStoredDocumentPlan(row?.documentPlan);
+    expect(stored.status === 'valid' ? stored.plan.sections[0]?.title : null).toBe('The Gate');
   });
 });
 

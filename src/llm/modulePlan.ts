@@ -11,7 +11,7 @@ import {
   type Module,
   type ModuleDocumentPlan,
 } from '@/domain';
-import { getModule } from '@/db/moduleRepo';
+import { getModule, patchModule } from '@/db/moduleRepo';
 import { getSettings } from '@/db/settingsRepo';
 import { chat, type ChatMessage } from '@/llm/openrouter';
 import { ModuleBusyError } from '@/llm/moduleGen';
@@ -45,8 +45,12 @@ import { modulePdfArtifacts, modulePdfImageRequests } from '@/lib/modulePdf';
  * - the reply is parsed with zod AT THIS BOUNDARY: an invalid JSON reply, a
  *   shape failure, or a plan naming something that is not there THROWS. There
  *   is no coercion, no repair, no partial plan and no defaulted section.
- * - the plan never reaches the row from here: the caller persists the returned
- *   plan (`patchModule`), so a failed call writes nothing at all.
+ * - the plan never reaches the row from `planModuleDocument`: it returns the
+ *   validated plan, so a failed call writes nothing at all.
+ *   `planAndStoreModuleDocument` is the ONE seam that persists it
+ *   (`patchModule`), and BOTH callers — the export's automatic planning step
+ *   and the "Document plan" surface's Regenerate — go through it, so the app
+ *   has ONE plan write (docs/17 row 139).
  * - ONE generation per module: the shared `canvasBusy` registry is claimed
  *   synchronously at entry (`ModuleBusyError` when another canvas generation
  *   holds the module) and the turn is registered for "Stop all" through the
@@ -184,6 +188,37 @@ export async function planModuleDocument(
     handle.releaseHandle();
     releaseModuleGeneration(input.moduleId);
   }
+}
+
+/**
+ * THE planning step: plan this module's document and STORE the result on the
+ * row, returning the module row as it now stands. It exists because the export
+ * no longer has a plan STEP (docs/17 row 139): `ModulePdfButton` calls this
+ * before rendering and the "Document plan" surface's Regenerate calls it for
+ * the same reason, so the plan+persist pair is spelled ONCE (AGENTS rule 4)
+ * instead of at each surface.
+ *
+ * It is NOT a cache and must never be read as one (owner decision, docs/17 row
+ * 139: *"I dont think we need a cache. Chances to do 2 reports on the same
+ * module thats unchanged are VERY slim."*). **Every export plans, always** —
+ * this seam takes no "is the stored plan still good?" decision, and a caller
+ * may not add one: the stored plan is (a) the record of what the LAST export
+ * decided, which is the only evidence when a book comes out badly, and (b) the
+ * escape hatch that lets the app print the last book again without spending a
+ * call, because the renderer applies whatever plan the row holds. A fresh call
+ * therefore REPLACES the stored plan, which is the property row 139 records as
+ * knowingly traded away: the same module exported twice yields two different
+ * books.
+ *
+ * Failure is loud and writes nothing (AGENTS rules 1–3): this throws whatever
+ * `planModuleDocument` throws — busy module, refused reply, a plan naming
+ * something that does not exist — and the PREVIOUS plan stays exactly as it was
+ * on the row, which is what makes the caller's fallback honest rather than a
+ * cleared field.
+ */
+export async function planAndStoreModuleDocument(input: ModulePlanInput): Promise<Module> {
+  const { plan } = await planModuleDocument(input);
+  return patchModule(input.moduleId, { documentPlan: plan });
 }
 
 /**

@@ -17,7 +17,7 @@ import {
 } from '@/domain';
 import { ModulePlanButton } from '@/features/modules/module-plan-dialog';
 import { buildCampaignExport, importExport } from '@/lib/exportImport';
-import { toastError } from '@/lib/toast';
+import { toastError, toastSuccess } from '@/lib/toast';
 import { clearDatabase } from '../db/helpers';
 
 /**
@@ -36,7 +36,11 @@ import { clearDatabase } from '../db/helpers';
 
 vi.mock('@/llm/modulePlan', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  planModuleDocument: vi.fn(),
+  // The plan+persist PAIR since docs/17 row 139: the surface calls the one seam
+  // that plans AND writes, so THAT is what this file fakes (the seam's own
+  // behaviour, write included, is pinned in tests/llm/modulePlan.test.ts and
+  // through the export in tests/features/module-pdf-auto-plan.test.tsx).
+  planAndStoreModuleDocument: vi.fn(),
 }));
 
 vi.mock('@/lib/toast', () => ({
@@ -45,9 +49,10 @@ vi.mock('@/lib/toast', () => ({
   toastInfo: vi.fn(),
 }));
 
-const { planModuleDocument } = await import('@/llm/modulePlan');
-const planMock = vi.mocked(planModuleDocument);
+const { planAndStoreModuleDocument } = await import('@/llm/modulePlan');
+const planMock = vi.mocked(planAndStoreModuleDocument);
 const toastErrorMock = vi.mocked(toastError);
+const toastSuccessMock = vi.mocked(toastSuccess);
 
 const LOCATION_ID = newId();
 const ENCOUNTER_ID = newId();
@@ -200,27 +205,30 @@ describe('inspecting what the AI decided', () => {
 });
 
 describe('planning and regenerating', () => {
-  it('writes the planned plan to the MODULE ROW (the only write site)', async () => {
-    planMock.mockResolvedValue({ plan: plan(), modelUsed: 'vendor/planner-1' });
+  it('hands the ONE plan+persist seam the id, the pool and a turn — and writes NOTHING itself', async () => {
+    // The stubbed seam resolves WITHOUT writing: since docs/17 row 139 the
+    // write belongs to it (`planAndStoreModuleDocument`), never to the surface.
+    // So a plan on the row HERE would prove the surface had written one itself.
+    planMock.mockResolvedValue(module);
     await open();
     const user = userEvent.setup();
 
     // The seam is handed the module id and the artifact pool; it is never
     // handed a callback or a place to write.
     await user.click(screen.getByTestId('module-plan-generate'));
-    await waitFor(async () => {
-      const row = await getModule(module.id);
-      expect(readStoredDocumentPlan(row?.documentPlan).status).toBe('valid');
+    await waitFor(() => {
+      expect(planMock).toHaveBeenCalledTimes(1);
     });
-
-    expect(planMock).toHaveBeenCalledTimes(1);
     const call = planMock.mock.calls[0]?.[0];
     expect(call?.moduleId).toBe(module.id);
     expect(call?.artifacts).toEqual(ARTIFACTS);
     expect(call?.turn).toBeInstanceOf(AbortController);
+    // …and it is the SURFACE that reports the outcome it was handed.
+    await waitFor(() => {
+      expect(toastSuccessMock).toHaveBeenCalledWith('Planned the document');
+    });
     const row = await getModule(module.id);
-    const stored = readStoredDocumentPlan(row?.documentPlan);
-    expect(stored.status === 'valid' ? stored.plan.sections.length : 0).toBe(3);
+    expect(readStoredDocumentPlan(row?.documentPlan).status).toBe('absent');
   });
 
   it('leaves the PREVIOUS plan exactly as it was when planning fails', async () => {

@@ -32,13 +32,20 @@ import {
   type Module,
   type ModuleDocumentPlan,
 } from '@/domain';
-import { planModuleDocument } from '@/llm/modulePlan';
+import { planAndStoreModuleDocument } from '@/llm/modulePlan';
 import { toastError, toastInfo, toastSuccess } from '@/lib/toast';
 
 /**
  * The DOCUMENT PLAN surface (docs/17 row 109, docs/05 §Module PDF): what the
  * model decided about this module's PDF, and the ONE action that decides it
  * again.
+ *
+ * **Since docs/17 row 139 it is NOT a prerequisite for anything.** Exporting
+ * plans for itself (one press plans, stores and prints), so this surface is an
+ * INSPECTOR with a manual regenerate: the owner opens it to SEE what the last
+ * export decided — the plan is the record of that decision, and the reason the
+ * plan is stored at all — and to correct it or ask for another one. Nothing
+ * requires a visit here; a module that has never been planned exports fine.
  *
  * It is deliberately an INSPECTOR, not an editor. The owner has just paid to
  * delete a drag-and-drop outline builder, and a plan is regenerable rather than
@@ -79,8 +86,9 @@ export function ModulePlanButton({
     const turn = new AbortController();
     turnRef.current = turn;
     try {
-      const { plan } = await planModuleDocument({ moduleId: module.id, artifacts, turn });
-      await patchModule(module.id, { documentPlan: plan });
+      // The SAME seam the export's automatic step uses (docs/17 row 139): plan
+      // and persist in one call, so the app has ONE plan write.
+      await planAndStoreModuleDocument({ moduleId: module.id, artifacts, turn });
       toastSuccess('Planned the document');
     } catch (error) {
       if (turn.signal.aborted) {
@@ -143,8 +151,9 @@ export function ModulePlanButton({
 
           {stored.status === 'absent' ? (
             <p className="text-muted-foreground" data-testid="module-plan-absent">
-              No plan yet — this module’s PDFs print the procedural outline (premise, part plan,
-              parts, one chapter per kind, gallery, treasure).
+              No plan yet — this module has not been exported since planning became automatic.
+              Exporting it plans the document for you; “Generate plan” decides it here instead, so
+              you can read it before it prints.
             </p>
           ) : stored.status === 'invalid' ? (
             <div

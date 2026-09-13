@@ -131,6 +131,16 @@ export interface ModulePdfInput {
    * because the printed date is part of the document.
    */
   compiledAt?: Date;
+  /**
+   * Why THIS build carries no freshly planned document (docs/17 row 139): set
+   * by the export when its automatic planning step FAILED, and absent on every
+   * other build. It is not a plan and it never becomes one — it is the report
+   * of a failed attempt, and the renderer prints it IN the document (beside the
+   * export's own loud toast) so a book produced without planning can never be
+   * mistaken for the planned one (AGENTS rules 1–2). The plan itself still
+   * comes off the module row and nowhere else.
+   */
+  planFailure?: string;
 }
 
 function isGmOnly(artifact: AnyArtifact): boolean {
@@ -535,6 +545,23 @@ function planFallbackStatement(reason: string): string {
     'This document was laid out from the procedural outline: the module’s document plan ' +
     `could not be applied — ${reason}. Regenerate it from the module’s “Document plan” ` +
     'surface to print the planned document.'
+  );
+}
+
+/**
+ * The statement a document carries when the export's AUTOMATIC planning failed
+ * (docs/17 row 139). Two sentences, because the two outcomes are different
+ * documents and a reader must be able to tell them apart: with a stored plan
+ * still on the row the book is the LAST planned one, without one it is the
+ * procedural outline. Either way the reason is named verbatim.
+ */
+function planFailureStatement(planApplied: boolean, reason: string): string {
+  const head = planApplied
+    ? 'This document was laid out from the module’s LAST STORED document plan'
+    : 'This document was laid out from the procedural outline';
+  return (
+    `${head}: the automatic planning step for this export failed — ${reason}. ` +
+    'Regenerate the plan from the module’s “Document plan” surface and export again.'
   );
 }
 
@@ -1292,6 +1319,20 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   if (planOutcome.status === 'invalid' || planOutcome.status === 'rejected') {
     problems.push({ where: PLAN_PROBLEM_WHERE, reason: planOutcome.reason });
     content.push(alertBox(planFallbackStatement(planOutcome.reason), { pageBreak: true }));
+  } else if (input.planFailure !== undefined) {
+    // The export PLANNED and the planning FAILED (docs/17 row 139). The document
+    // still lands — the renderer's contract is that a missing row is a visible
+    // defect inside the document, not a lost document — but it must never look
+    // like a successful planned export: the reason is stated on its own page AND
+    // pushed onto the problems list the export surface reports.
+    const planApplied = planOutcome.status === 'applied';
+    content.push(alertBox(planFailureStatement(planApplied, input.planFailure), { pageBreak: true }));
+    problems.push({
+      where: PLAN_PROBLEM_WHERE,
+      reason:
+        `${planApplied ? 'the module’s last stored plan printed instead' : 'no plan was stored, so the procedural outline printed'}: ` +
+        `the automatic planning step failed — ${input.planFailure}`,
+    });
   }
 
   if (plannedSections === null) {
@@ -1538,6 +1579,8 @@ export async function buildModulePdf(
     audience?: ModulePdfAudience;
     codec?: PdfImageCodec;
     compiledAt?: Date;
+    /** See `ModulePdfInput.planFailure`: this build's automatic planning failed. */
+    planFailure?: string;
   } = {},
 ): Promise<{ blob: Blob; problems: ModulePdfProblem[] }> {
   const battles = await moduleBattles(module);
@@ -1580,6 +1623,7 @@ export async function buildModulePdf(
     rosterOrigins,
     ...(options.audience === undefined ? {} : { audience: options.audience }),
     ...(options.compiledAt === undefined ? {} : { compiledAt: options.compiledAt }),
+    ...(options.planFailure === undefined ? {} : { planFailure: options.planFailure }),
   });
   return { blob: await generate(definition), problems };
 }

@@ -610,6 +610,11 @@ needs that proof must run it in a browser, not in jsdom.
 | A half-applicable plan is NEVER half-applied: the good sections are dropped with the bad one and the procedural outline prints | `modulePdfPlan.test` | ✅ |
 | A schema-invalid stored value falls back loudly (naming `sections.0`); an ABSENT plan is SILENT and byte-for-byte the procedural document | `modulePdfPlan.test` | ✅ |
 | Determinism, stated as numbers: two renders of the definition are identical (6359 characters) and two full PDF builds with a pinned `compiledAt` are byte-identical (51271 bytes, first differing byte `-1`), with the image budgets asserted on the values that reached the codec | `modulePdfPlan.test` | ✅ |
+| **ONE press exports the PLANNED book**: the export entry point plans (exactly ONE model call through the ordinary transport seam), stores the plan on the row with the app's provenance, and the definition it hands the PDF generator is the PLAN's document — the procedural outline did not print (docs/17 row 139) | `module-pdf-auto-plan.test` | ✅ |
+| **Every export plans — the stored plan is NOT a cache**: an export on a module that already holds a valid, fresh plan still calls the planner exactly once, and the stored plan is REPLACED by the new sections + the new `plannedByModel`/`plannedAt` | `module-pdf-auto-plan.test` | ✅ |
+| **A planning failure is loud and never mistakable for success**: `toastError` with the planner's own cause, the failure named in the export's problems toast, NO success toast, the file still written, and the document stating on its own page which book it printed instead (the LAST STORED plan, else the procedural outline) — with NOTHING fabricated on the row | `module-pdf-auto-plan.test` | ✅ |
+| The planning call reports through the shared progress seam while it is in flight (label + `Planning the document…`), and the job is gone when the export ends | `module-pdf-auto-plan.test` | ✅ |
+| The export's WIRING: one planning call per press before rendering, and a failed planning reaches the renderer as `planFailure` while the export still lands | `module-pdf-export.test` | ✅ |
 | The surface shows absence, a valid plan (order, role, audience, source in the owner's terms, anchor count, and the model) and an invalid plan (with the named reason); it offers NO structural editing — one planning action plus the audience select | `module-plan-dialog.test` | ✅ |
 | Regeneration writes through `patchModule` only, hands the seam the module id + pool + abort controller, and a FAILED regeneration toasts by name while the previous plan stays byte-identical on the row | `module-plan-dialog.test` | ✅ |
 | A reply that names something absent leaves the field ABSENT — not a partial plan, not an empty object | `module-plan-dialog.test`, `modulePlan.test` | ✅ |
@@ -2181,6 +2186,63 @@ pinned: the reader header's only canvas entry now forces the chat sidebar open
 (deliberate, ledger 57), and no pin asserts what a reader does about it —
 the remedy (the list row's Canvas icon, the sidebar's own toggle) is documented
 in docs/05 §Module canvas rather than measured.
+
+### One press exports the planned book — the plan is not a step (docs/17 row 139)
+
+The owner, verbatim: *"i just noticed this document plan button. Bad design to
+put one functionality behind 2 buttons that need to be pressed sequentially. And
+i do want to have that automatic."* — and, on the design the first brief
+proposed instead: *"I dont think we need a cache. Chances to do 2 reports on the
+same module thats unchanged are VERY slim."*
+
+| What is pinned | Where | State |
+|---|---|---|
+| **The owner's complaint, end to end**: on a module with NO stored plan, ONE press of the export item calls the planner exactly once (through the real `llm/modulePlan` seam, only `chat` faked), writes the plan onto the module row with `plannedByModel`/`plannedAt` from the app, and the definition handed to the PDF generator is the PLAN's document — the procedural outline's `Premise`/`Part plan` chapters do NOT print, and the export reports success | `module-pdf-auto-plan.test` | ✅ |
+| **Not a cache**: a module that already holds a valid plan with its own provenance (`vendor/previous`) still gets exactly ONE planning call, and the row is REPLACED — new section titles, new `plannedByModel`, a strictly later `plannedAt`; the OLD title is nowhere in the book | `module-pdf-auto-plan.test` | ✅ |
+| **Failure is loud in three places, and the outcome is distinguishable from success**: `toastError('Could not plan the document — exporting without a fresh plan', <the Error>)`, the same failure in the export's problems toast, no success toast, the file still written, and a statement ON the document page (*"…the automatic planning step for this export failed — vendor/planner-1 returned no content"*); the row keeps NO plan (nothing fabricated) | `module-pdf-auto-plan.test` | ✅ |
+| **The escape hatch**: with a valid stored plan and a FAILING call, the export prints the LAST STORED plan (its titles are in the book), states *"LAST STORED document plan"* rather than claiming the outline, and leaves the row's plan byte-identical (a failed call writes nothing) | `module-pdf-auto-plan.test` | ✅ |
+| **The progress surface**: observed from INSIDE the planning call — the shared progress seam holds one job (`Exporting The Drowned Vault` / `Planning the document…`) at that instant, and holds none when the export ends | `module-pdf-auto-plan.test` | ✅ |
+| **The wiring**: one planning call per press, made BEFORE the renderer, with the module's id; a failed planning is handed to the renderer as `planFailure` while the write still happens | `module-pdf-export.test` (+1 pin) | ✅ |
+
+**RED BEFORE, kept.** The whole new file was run against the base commit
+`18eb3c4` (pristine worktree, only `chat` faked, same file): `Test Files 1
+failed (1)`, `Tests 5 failed | 1 passed (6)`. The FIRST pin — the owner's
+complaint — failed at its first assertion with `expected "vi.fn()" to be called
+1 times, but got 0 times`: at the base NOTHING planned on export, so the plan
+row stayed empty and the procedural outline printed (the base behaviour the
+pre-existing pin *"is SILENT when there is no plan at all"* describes). The 4
+failure-path/cache pins failed for the same reason (no call, no plan, no
+progress job), and the one GREEN test is the fixture's non-vacuity check.
+
+**REVERT-PROVEN** (the injection applied to the exact executing line, `:100`
+printed back, `git diff --stat src/features/modules/module-pdf-button.tsx` = 56
+insertions / 3 deletions — the slice's own diff — checked BEFORE the run, raw
+output in `/tmp/injection2.txt`):
+
+| Injected | The executing line | Result |
+|---|---|---|
+| **the plan-before-render step DISABLED** (`planned = await planAndStoreModuleDocument({ moduleId: module.id, artifacts, turn });` → `planned = module;` + `await Promise.resolve();`) | `src/features/modules/module-pdf-button.tsx:100` | **RED 6 of 79, all six of them the new pins**: the 5 in `module-pdf-auto-plan.test.tsx` (single press plans/stores/prints the planned book; every export plans — the stored plan is replaced; the progress job while planning; the loud failure with the on-page statement; the LAST-STORED-plan escape hatch) and the wired one in `module-pdf-export.test.tsx` (`plans once per export before rendering, and hands a FAILED plan to the renderer`). **GREEN: 73**, including every pre-existing pin in `modulePdfPlan` (18 — the renderer still executes a stored plan), `modulePdf` (the module document + real-PDF builds), `modulePlan` (14: the planner seam plus its 3 new write pins), `module-plan-dialog` (10, the surface) and `campaign-tree-plan-control` (3, the one-dialog/one-write scans), plus `module-pdf-export`'s other 6 pins (GM/player audiences, destination-before-build, problem toasts, failed save, cancelled picker) |
+| **the file's own byte-identity** | — | restored from an OUT-OF-TREE backup: `git hash-object` before = `857b2bb44ce2715e4407c41169cc245f821f942f`, after = `857b2bb44ce2715e4407c41169cc245f821f942f`, and `grep -c INJECTION` = 0 |
+
+**TWO PRE-EXISTING PINS THIS SLICE HAD TO AMEND, NAMED** (both are pins about
+the ONE plan write, which the fold below moved — neither was loosened):
+`campaign-tree-plan-control.test.tsx`'s *"the tree carries no second plan
+surface: one import, one dialog, one regeneration path"* scanned for the literal
+`await planModuleDocument({` in the dialog; since the dialog now calls the new
+`planAndStoreModuleDocument`, the scan was re-aimed at its new truth and
+STRENGTHENED: the planner is called from exactly ONE file
+(`src/llm/modulePlan.ts`, so a caller that bypasses the persisting seam fails)
+and the plan WRITE (`{ documentPlan: plan }`) lives in exactly that file.
+`module-plan-dialog.test.tsx`'s *"writes the planned plan to the MODULE ROW (the
+only write site)"* asserted the row turned `valid` after Generate — which it did
+by calling the unmocked `patchModule` itself — and it is now
+*"hands the ONE plan+persist seam the id, the pool and a turn — and writes
+NOTHING itself"*, which is the same claim moved to where it now belongs: the
+stub resolves WITHOUT writing and the row must stay `absent`, so a surface that
+wrote a plan itself fails. The write itself is pinned where it now lives, by
+three NEW pins in `tests/llm/modulePlan.test.ts` (`planAndStoreModuleDocument`
+persists + returns the patched row; it REPLACES a stored plan on a second call;
+a refused reply writes NOTHING and the previous plan survives).
 
 ### Remaining gaps
 

@@ -343,12 +343,20 @@ Two shapes come out of ONE builder. **When the module carries a document plan
 (docs/17 row 109), the PLAN decides what the body is** — which sections print,
 in what order, under which titles, roles and audiences, with which stored images
 — and the renderer decides only how each one looks. With no plan the procedural
-outline below prints, which is the pre-plan behavior and remains the default.
+outline below prints, which is the pre-plan behavior and remains the renderer's
+default.
+
+**The exported document is always planned** (docs/17 row 139): the export plans
+BEFORE it renders, so the second shape is what a normal export produces, and a
+module that has never been planned is planned on the press that prints it. The
+procedural outline is still what the renderer falls back to — and what a
+planning FAILURE prints, loudly (see "when exporting's own planning fails"
+below).
 
 | Printed | Read from |
 |---|---|
 | Cover (title, concept, system, "Compiled with Campaigner · date") | the module row + optional `coverImageId` |
-| The body's sections (order, titles, roles, audiences, image anchors) | `module.documentPlan` when it is present and APPLICABLE; otherwise the procedural rows in this table, in the order below |
+| The body's sections (order, titles, roles, audiences, image anchors) | `module.documentPlan` — planned by the export itself when the row does not carry one (docs/17 row 139) — when it is APPLICABLE; otherwise the procedural rows in this table, in the order below |
 | Contents | pdfmake `toc` over the chapters below (real page numbers) |
 | Premise | `module.spine.premise` |
 | Part plan | `module.spine.partPlan` (GM document only) |
@@ -405,13 +413,53 @@ come out of ONE plan and ONE builder.
 itself.** Schema-invalid, or stale after the owner deleted a row it names, the
 plan prints the procedural document, pushes a problem at `the document plan`
 into the export's `problems` list, and states it IN the document on its own
-page. An ABSENT plan is neither: it is the normal pre-plan state and prints the
-procedural outline silently.
+page. An ABSENT plan is neither: it is the normal pre-plan state for the
+RENDERER and prints the procedural outline silently — but the export no longer
+leaves it absent, because the export plans (row 139).
 
-**Determinism.** The renderer never calls a model — export applies the stored
-plan — so the same `(module, plan)` produces the same book. Measured on the
-fixture: two renders of the definition are identical (6359 characters) and two
-full PDF builds with a pinned `compiledAt` are byte-identical (51271 bytes, first
+**The plan is not a step — exporting plans for itself (docs/17 row 139).** The
+owner's report, verbatim: *"i just noticed this document plan button. Bad design
+to put one functionality behind 2 buttons that need to be pressed sequentially.
+And i do want to have that automatic."* So `ModulePdfButton` — the ONE export
+component — calls `llm/modulePlan.planAndStoreModuleDocument` BEFORE it renders,
+stores the plan on the row (provenance written by the app: `plannedByModel` =
+the model that served the call, `plannedAt`) and prints the row it just wrote.
+One press, planning included.
+
+**Every export plans, always — the stored plan is NOT a cache.** The owner's
+decision, verbatim: *"I dont think we need a cache. Chances to do 2 reports on
+the same module thats unchanged are VERY slim."* There is therefore no staleness
+check, no reuse branch and no timestamp comparison in the path: an export on a
+module that already holds a valid plan re-plans and REPLACES it. (The tempting
+rule — replan when `module.updatedAt > plan.plannedAt` — is provably broken
+here: `saveModule` stamps `updatedAt` AFTER the planner stamped `plannedAt`, so
+the fresh plan is already "older than the module" and that rule would replan
+every time.) Storage keeps two other jobs: it is the RECORD of what the last
+export decided (the "Document plan" surface shows it), and it is the escape
+hatch that lets a failed planning call print the LAST book again without
+spending a call. The price, accepted knowingly: **two exports of the same
+module can now produce two different books** — the renderer is still
+deterministic for a stored `(module, plan)`, which is exactly the scope of row
+109's reproducibility guarantee now.
+
+**When exporting's own planning fails, the export still lands — loudly, twice.**
+A planner error (busy module, transport, invalid JSON, a plan naming something
+that does not exist) raises `toastError` with the raw cause, pushes a problem at
+`the document plan`, AND prints a statement on the document's own page naming
+which book it printed instead: the module's LAST STORED plan when it has one,
+else the procedural outline — *"the automatic planning step for this export
+failed — <reason>"*. Aborting was declined: a PDF export needs no provider, and
+aborting would remove the ability to print any module document while the LLM is
+unreachable. The result is never mistakable for a planned export (red error
+toast, a problem in the export's own list, and the statement on the page). The
+planning call reports through the shared progress dock while it runs.
+
+**Determinism.** The renderer never calls a model — it applies the `(module,
+plan)` it is handed, and the plan reaches it off the row — so the same
+`(module, plan)` produces the same book (the export's own planning step is what
+may change the plan between two presses; row 139). Measured on the fixture: two
+renders of the definition are identical (6359 characters) and two full PDF
+builds with a pinned `compiledAt` are byte-identical (51271 bytes, first
 differing byte `-1`). The pin is required because the cover prints a compile
 DATE and pdfkit derives the trailer `/ID` from `info.creationDate`
 (`md5(CreationDate.getTime() + info)`): without it two renders of the same
@@ -421,7 +469,9 @@ offset 7740).
 **The surface** (`src/features/modules/module-plan-dialog.tsx`, next to
 `ModulePdfButton` in the canvas header): the sections in order with their title,
 role, audience, source and anchor count; the model that decided them; and
-Regenerate. There is NO drag-and-drop builder, no tree editor and no
+Regenerate. It is an INSPECTOR with a manual regenerate — **no longer a
+prerequisite for anything** (row 139): exporting plans by itself, and nothing
+requires a visit here. There is NO drag-and-drop builder, no tree editor and no
 add/remove/reorder control — the ONE per-section control is the AUDIENCE, and a
 failed regeneration toasts by name and leaves the previous plan untouched.
 

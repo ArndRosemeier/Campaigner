@@ -223,13 +223,21 @@ describe('the plan control in the module group header', () => {
     expect(tree).not.toContain('documentPlan');
 
     // Across the whole app each load-bearing piece lives in ONE file: a copy
-    // of the dialog to a second surface fails every one of these scans.
+    // of the dialog to a second surface — or a SECOND plan write, or a caller
+    // of the planner that skips the seam which persists it — fails every one of
+    // these scans. Since docs/17 row 139 the planner and its persistence are
+    // ONE seam (`planAndStoreModuleDocument`), so the planner is called from
+    // exactly that file and that file is the only writer of a planned plan.
     expect(named((text) => text.includes('data-testid="module-plan-dialog"'))).toEqual([
       'src/features/modules/module-plan-dialog.tsx',
     ]);
-    expect(named((text) => text.includes('await planModuleDocument({'))).toEqual([
-      'src/features/modules/module-plan-dialog.tsx',
+    expect(named((text) => text.includes('planModuleDocument('))).toEqual([
+      'src/llm/modulePlan.ts',
     ]);
+    expect(named((text) => text.includes('{ documentPlan: plan }'))).toEqual([
+      'src/llm/modulePlan.ts',
+    ]);
+    // The dialog's OWN write is the audience-only correction and nothing else.
     expect(
       named((text) => text.includes('patchModule(module.id, { documentPlan')),
     ).toEqual(['src/features/modules/module-plan-dialog.tsx']);
