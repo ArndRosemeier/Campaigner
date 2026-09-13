@@ -1,5 +1,6 @@
 import 'fake-indexeddb/auto';
 
+import type { TDocumentDefinitions } from 'pdfmake/interfaces';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -8,16 +9,24 @@ import {
   modulePartSchema,
   moduleSpineSchema,
   newId,
+  ruleChunkSchema,
+  stampNewEntity,
+  statBlockSchema,
   type Artifact,
   type AnyArtifact,
   type Id,
   type Module,
+  type RuleChunk,
+  type StatBlock,
 } from '@/domain';
 import { createArtifact } from '@/db/artifactRepo';
 import { createCampaign } from '@/db/campaignRepo';
 import { patchBattle, ensureBattle } from '@/db/battleRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { createRulebook } from '@/db/rulebookRepo';
 import { saveModule } from '@/db/moduleRepo';
 import { createImage } from '@/db/imageRepo';
+import { sha256Hex } from '@/lib/hash';
 import {
   assertPdfmakeImageDataUrl,
   loadPdfImages,
@@ -91,6 +100,51 @@ function statBlockFixture(): Parameters<typeof statBoxContent>[0] {
     legendary: [],
     extras: {},
   };
+}
+
+/**
+ * A LIBRARY creature's block as ingest parsed it — a PF2e-style statblock whose
+ * REACTIONS, LEGENDARY actions and `extras` are all populated, because those are
+ * exactly the sections the module PDF's box used to drop (docs/17 row 144).
+ */
+function citedStatBlockFixture(): StatBlock {
+  return statBlockSchema.parse({
+    ...statBlockFixture(),
+    system: 'pathfinder2e',
+    level: '4',
+    size: 'Medium',
+    creatureType: 'animal',
+    ac: 18,
+    acNote: '',
+    hp: 44,
+    hpFormula: '8d8',
+    abilities: { str: 14, dex: 18, con: 12, int: 2, wis: 14, cha: 6 },
+    senses: 'darkvision',
+    traits: [{ name: 'Grasping Antennae', text: 'Reach 10 feet.' }],
+    actions: [{ name: 'Mandible', text: 'Melee: +12 to hit, 2d8+4 piercing.' }],
+    reactions: [{ name: 'Reactive Snap', text: 'Strike a creature that enters its reach.' }],
+    legendary: [{ name: 'Skitter Away', text: 'Stride without provoking reactions.' }],
+    extras: { Perception: '+11' },
+  });
+}
+
+/** A statblock chunk as ingestion persists it (its own hash of its text). */
+async function citedChunkRow(
+  bookId: Id,
+  over: { pageStart?: number; statBlock?: StatBlock | null } = {},
+): Promise<RuleChunk> {
+  const text = 'Cave Fisher';
+  return ruleChunkSchema.parse({
+    ...stampNewEntity(),
+    bookId,
+    pageStart: over.pageStart ?? 132,
+    pageEnd: over.pageStart ?? 132,
+    chunkType: 'statblock',
+    headingPath: ['Cave Fisher'],
+    text,
+    statBlock: over.statBlock === undefined ? citedStatBlockFixture() : over.statBlock,
+    contentHash: await sha256Hex(text),
+  });
 }
 
 function owned(artifact: AnyArtifact): Artifact {
@@ -409,14 +463,16 @@ describe('buildModuleDefinition — the module IS the document', () => {
       buildModuleDefinition({
         module: seeded.module,
         artifacts: seeded.artifacts,
-        rosterOrigins: {
+        rosterResolution: {
           [seeded.encounterId]: [
-            'Cultist (inline stat block)',
-            // An `npc-ref` the library satisfied — resolves to a named origin.
-            'Vexra',
+            { statBlock: null, origin: 'inline' },
+            // An `npc-ref`: its row is a real artifact, so the reference is a
+            // cross-reference — no library resolution is involved.
+            { statBlock: null, origin: 'Vexra' },
             // Nothing satisfies it: the NAMED missing-ref reason.
-            'missing ref (Harbour Thug)',
-            'Monster Core: Cave Fisher',
+            { statBlock: null, origin: 'missing ref (Harbour Thug)' },
+            // A cited library creature: the REAL origin of its numbers…
+            { statBlock: citedStatBlockFixture(), origin: 'Monster Core: Cave Fisher' },
           ],
         },
       }),
@@ -426,8 +482,12 @@ describe('buildModuleDefinition — the module IS the document', () => {
     // runs, so the link target is the pin, not a substring).
     expect(text).toContain('— see ');
     expect(text).toContain(`"linkToDestination":"node-${seeded.npcId}"`);
-    // The rulebook entry keeps the shipped "(see Bestiary)" wording.
-    expect(text).toContain('(see Bestiary)');
+    // The cited entry prints the origin it RESOLVED — the book and page the
+    // numbers come from (docs/17 row 144)…
+    expect(text).toContain('Monster Core: Cave Fisher');
+    // …and NOT the dead constant this used to print, which pointed at a
+    // bestiary chapter the module PDF has never had.
+    expect(text).not.toContain('see Bestiary');
     // A citation nothing can satisfy prints its reason, which NAMES the
     // creature (so an exact-stem comparison could never match it).
     expect(text).toContain('missing ref (Harbour Thug)');
@@ -435,6 +495,138 @@ describe('buildModuleDefinition — the module IS the document', () => {
     // (never a "no stats" line contradicting the stat block beneath it).
     expect(text).toContain('"text":"Cultist ×4"');
     expect(text).not.toContain('Cultist ×4 — no stats');
+  });
+
+  /**
+   * The owner's decision 3 (docs/17 row 144, verbatim: *"Print the numbers for
+   * cited mobs too."*): a `rulebook`-cited roster row prints the LIBRARY
+   * CHUNK'S OWN numbers, in the same box an `inline` entry uses, with the
+   * resolved origin printed ON the box so the book says where they came from.
+   *
+   * Revert-proof: print no box for a non-`inline` source (the pre-142 builder)
+   * and this reads no `Cave Fisher ×1` box, no `Grasping Antennae`, no
+   * `Reactive Snap`, no `Numbers from …`.
+   */
+  it('prints a cited mob’s OWN numbers, with the source on the box (owner decision 3)', async () => {
+    const seeded = await seed();
+    const text = textOf(
+      buildModuleDefinition({
+        module: seeded.module,
+        artifacts: seeded.artifacts,
+        rosterResolution: {
+          [seeded.encounterId]: [
+            { statBlock: null, origin: 'inline' },
+            { statBlock: null, origin: 'Vexra' },
+            { statBlock: null, origin: 'missing ref (Harbour Thug)' },
+            { statBlock: citedStatBlockFixture(), origin: 'Monster Core: Cave Fisher' },
+          ],
+        },
+      }),
+    );
+
+    // The chunk's numbers really are in the book: not a pointer, not a stub.
+    expect(text).toContain('Cave Fisher ×1');
+    expect(text).toContain('"AC "');
+    expect(text).toContain('"18"');
+    expect(text).toContain('"44 (8d8)"');
+    // INCLUDING the sections a PF2e-style block is unusable without.
+    expect(text).toContain('Grasping Antennae');
+    expect(text).toContain('Reactive Snap');
+    expect(text).toContain('Skitter Away');
+    expect(text).toContain('"Perception: "');
+    expect(text).toContain('"+11"');
+    // The box NAMES its source (the resolved origin, on the box itself).
+    expect(text).toContain('Numbers from Monster Core: Cave Fisher');
+  });
+
+  /**
+   * A citation the library cannot supply prints its NAMED reason and NO box.
+   * `chunk.statBlock` is legitimately `null` (best-effort ingest parse), so the
+   * `null` a resolution returns here is a real state, not a test artefact — and
+   * an EMPTY or placeholder box standing in for the numbers would be exactly
+   * the silent fallback AGENTS rule 1 forbids.
+   */
+  it('prints NO box for a citation whose chunk carries no parseable block', async () => {
+    const seeded = await seed();
+    const text = textOf(
+      buildModuleDefinition({
+        module: seeded.module,
+        artifacts: seeded.artifacts,
+        rosterResolution: {
+          [seeded.encounterId]: [
+            { statBlock: null, origin: 'inline' },
+            { statBlock: null, origin: 'Vexra' },
+            { statBlock: null, origin: 'missing ref (Harbour Thug)' },
+            // The library HAS the chunk; its ingest parsed no stat block.
+            { statBlock: null, origin: 'missing ref (Cave Fisher)' },
+          ],
+        },
+      }),
+    );
+
+    expect(text).toContain('missing ref (Cave Fisher)');
+    // No box, no heading, no placeholder: the row prints its reason and stops.
+    expect(text).not.toContain('Cave Fisher ×1');
+    expect(text).not.toContain('Numbers from');
+    expect(text).not.toContain('unresolved citation');
+  });
+
+  /**
+   * The pre-pass really is what reaches the renderer: `buildModulePdf` resolves
+   * every encounter roster itself, and a cited creature resolves to the chunk's
+   * own block through the ONE resolution order — so the module book prints
+   * numbers for a citation with nobody handing it a resolution.
+   */
+  it('resolves a cited roster row itself, end to end through buildModulePdf', async () => {
+    const seeded = await seed();
+    const rulebook = await createRulebook({
+      title: 'Bestiary',
+      system: 'pathfinder2e',
+      filename: 'bestiary.pdf',
+    });
+    const chunk = await citedChunkRow(rulebook.id);
+    await putChunks([chunk]);
+    const withCitation = seeded.artifacts.map((artifact) =>
+      artifact.id === seeded.encounterId && artifact.kind === 'encounter'
+        ? {
+            ...artifact,
+            data: {
+              ...artifact.data,
+              monsters: artifact.data.monsters.map((monster) =>
+                monster.name === 'Cave Fisher'
+                  ? {
+                      ...monster,
+                      source: {
+                        type: 'rulebook' as const,
+                        chunkId: chunk.id,
+                        contentHash: chunk.contentHash,
+                        creatureName: 'Cave Fisher',
+                      },
+                    }
+                  : monster,
+              ),
+            },
+          }
+        : artifact,
+    );
+
+    let definition: TDocumentDefinitions | undefined;
+    await buildModulePdf(seeded.module, withCitation, (built) => {
+      // The generator is the only place the finished definition is visible, so
+      // the pin reads the REAL document `buildModulePdf` produced.
+      definition = built;
+      return Promise.resolve(new Blob(['pdf']));
+    });
+    if (definition === undefined) throw new Error('the generator was never called');
+    const text = textOf(definition);
+
+    expect(text).toContain(`Bestiary p.${chunk.pageStart}`);
+    expect(text).not.toContain('see Bestiary');
+    expect(text).toContain('Reactive Snap');
+    expect(text).toContain('Skitter Away');
+    expect(text).toContain('"Perception: "');
+    expect(text).toContain('"+11"');
+    expect(text).toContain(`Numbers from Bestiary p.${chunk.pageStart}`);
   });
 
   it('a roster entry with no citation and no resolution says what is true about it', async () => {

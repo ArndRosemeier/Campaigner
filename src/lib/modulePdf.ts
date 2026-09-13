@@ -9,6 +9,7 @@ import type {
   DocumentPlanSource,
   Id,
   Module,
+  MonsterEntry,
   StatBlock,
 } from '@/domain';
 import {
@@ -21,7 +22,12 @@ import {
   readStoredDocumentPlan,
   splitPartsDocument,
 } from '@/domain';
-import { isMissingRefOrigin, missingCreatureOrigin } from '@/domain/encounterResolve';
+import {
+  missingCreatureOrigin,
+  rosterReferenceFor,
+  rosterStatBlockFor,
+  type ResolvedMonster,
+} from '@/domain/encounterResolve';
 import { getBattleByModule } from '@/db/battleRepo';
 import { resolveMonsterEntries } from '@/db/monsterResolve';
 import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
@@ -114,13 +120,22 @@ export interface ModulePdfInput {
   /** The GM document (default) or the player document. */
   audience?: ModulePdfAudience;
   /**
-   * Per-encounter roster resolution (the async pre-pass in `buildModulePdf`):
-   * encounter artifact id → one resolved origin per roster row, in order.
-   * Absent ⇒ a `rulebook` entry still prints "(see Bestiary)" and an `npc-ref`
-   * still cross-references its row; what resolution adds is the NAMED
-   * missing-ref reason of a citation the library cannot satisfy.
+   * Per-encounter roster RESOLUTION (the async pre-pass in `buildModulePdf`):
+   * encounter artifact id → one resolved monster per roster row, in order.
+   *
+   * It carries BOTH halves of what a roster row prints (docs/17 row 144): the
+   * `origin` — the reference line, through the ONE formatter
+   * `domain/encounterResolve.rosterReferenceFor` — and, for a cited creature,
+   * the library chunk's own `statBlock`, which the row's stat box prints.
+   *
+   * Absent ⇒ every roster row still prints: an `inline` entry carries its own
+   * block, an `npc-ref` still cross-references its row, and a `rulebook`
+   * citation states loudly that THIS build resolved no origin for it — it never
+   * falls back to a citation-shaped claim the document cannot honour (the
+   * `(see Bestiary)` constant this replaced pointed at a chapter no module PDF
+   * has; docs/17 row 108 amended by reference, row 144).
    */
-  rosterOrigins?: Readonly<Record<Id, readonly string[]>>;
+  rosterResolution?: Readonly<Record<Id, readonly ResolvedMonster[]>>;
   /**
    * When this document was compiled. Defaults to now, and it is PRINTED (the
    * cover's "Compiled with Campaigner · <date>") and pinned into the PDF's own
@@ -214,8 +229,26 @@ function imageNode(dataUrl: string, where: string, options: ImageNodeOptions): C
   return { image: assertImage(dataUrl, where), ...options };
 }
 
-/** Bordered two-column stat box (M2 export layout, module styling). */
-export function statBoxContent(statBlock: StatBlock, name: string): Content {
+/**
+ * Bordered two-column stat box (M2 export layout, module styling).
+ *
+ * THE box every roster surface prints — `inline` and a CITED library creature
+ * alike (docs/17 row 144) — so a printed mob's numbers are the same block
+ * wherever they appear and the single-artifact exporter can never print a
+ * different one. Every section a block may carry prints: traits, actions,
+ * REACTIONS, LEGENDARY actions and `extras` (a PF2e-style block without its
+ * reactions is not usable at the table, and the owner decided a printed mob must
+ * be).
+ *
+ * `source`: the resolved origin of a CITED creature. A box standing for numbers
+ * the book took from somewhere else says so — a reader must be able to tell
+ * whose numbers these are without turning back to the roster line.
+ */
+export function statBoxContent(
+  statBlock: StatBlock,
+  name: string,
+  source?: string,
+): Content {
   const left: Content[] = [
     {
       text: [statBlock.size, statBlock.creatureType, statBlock.level]
@@ -250,29 +283,59 @@ export function statBoxContent(statBlock: StatBlock, name: string): Content {
     labeledSection('Skills', statBlock.skills),
     labeledSection('Senses', statBlock.senses),
     labeledSection('Languages', statBlock.languages),
+    ...Object.entries(statBlock.extras).map(
+      ([label, value]): Content | null => labeledSection(label, value),
+    ),
   ].filter((entry): entry is Content => entry !== null);
-  return {
+  /** One full-width section of named entries (traits → reactions). */
+  const namedSection = (rows: readonly { name: string; text: string }[]): Content[] =>
+    rows.map(
+      (row): Content => labeledSection(row.name, row.text) ?? { text: row.text },
+    );
+  const box: Content = {
     table: {
       widths: ['*', '*'],
       body: [
         [{ colSpan: 2, text: name, bold: true, style: 'h3' }, ''],
+        ...(source === undefined
+          ? []
+          : [
+              [
+                {
+                  colSpan: 2,
+                  text: `Numbers from ${source}`,
+                  italics: true,
+                  style: 'label',
+                },
+                '',
+              ],
+            ]),
         [left, right],
         [
           {
             colSpan: 2,
-            stack: statBlock.traits.map(
-              (trait): Content => labeledSection(trait.name, trait.text) ?? { text: trait.text },
-            ),
+            stack: namedSection(statBlock.traits),
           },
           '',
         ],
         [
           {
             colSpan: 2,
-            stack: statBlock.actions.map(
-              (action): Content =>
-                labeledSection(action.name, action.text) ?? { text: action.text },
-            ),
+            stack: namedSection(statBlock.actions),
+          },
+          '',
+        ],
+        [
+          {
+            colSpan: 2,
+            stack: namedSection(statBlock.reactions),
+          },
+          '',
+        ],
+        [
+          {
+            colSpan: 2,
+            stack: namedSection(statBlock.legendary),
           },
           '',
         ],
@@ -290,6 +353,7 @@ export function statBoxContent(statBlock: StatBlock, name: string): Content {
     },
     margin: [0, 6, 0, 6],
   };
+  return box;
 }
 
 /** The module's prose, in the order a reader meets it (premise, then parts). */
@@ -616,55 +680,53 @@ interface RenderState {
   problems: ModulePdfProblem[];
 }
 
-/** The roster entry's origin run, as ONE rule (docs/17 row 108, C5). */
-function rosterOriginRun(
-  entry: { name: string; source: { type: string } },
-  resolvedOrigin: string | undefined,
+/**
+ * A roster row's reference AS PRINTED — the ONE run every roster reference goes
+ * through (`domain/encounterResolve.rosterReferenceFor` decides WHAT it says,
+ * docs/17 row 144). Two styling outcomes, never a second rule:
+ *
+ * - the named missing-ref reason is LOUD (italics + the alert colour);
+ * - an internal cross-reference keeps its `linkToDestination`, emitted only for
+ *   a row this document actually prints (pdfmake throws on a dangling one);
+ * - everything else is the formatter's plain text.
+ *
+ * No reference at all (an `inline` entry) is an EMPTY run: its stat box prints
+ * immediately below and an origin line there would contradict it.
+ */
+function referenceRun(
+  entry: MonsterEntry,
+  resolved: ResolvedMonster | undefined,
   artifactId: Id | null,
   state: RenderState,
 ): Content[] {
-  // A citation nothing can satisfy: the NAMED reason, through the ONE
-  // predicate — never a `=== 'missing ref'` comparison, which silently never
-  // matches because the reason carries the creature's name.
-  if (resolvedOrigin !== undefined && isMissingRefOrigin(resolvedOrigin)) {
-    return [{ text: ` — ${resolvedOrigin}`, italics: true, color: ALERT }];
+  const target = artifactId === null ? undefined : state.byId.get(artifactId);
+  const destination = target === undefined ? undefined : state.destinations.get(target.id);
+  const reference = rosterReferenceFor(
+    entry,
+    resolved,
+    target === undefined || destination === undefined
+      ? undefined
+      : { name: target.name, destination },
+  );
+  if (reference.printed === '') return [];
+  if (reference.link !== undefined) {
+    // The SAME characters the formatter's `printed` carries (` — see <name>`),
+    // with the name LINKED — the document composes runs, it never rewords the
+    // rule.
+    return [
+      { text: ' — see ', italics: true },
+      { text: reference.link.name, italics: true, linkToDestination: reference.link.destination },
+    ];
   }
-  if (entry.source.type === 'inline') {
-    // An inline entry CARRIES its stat block, printed immediately below: it
-    // needs no origin run at all (the shipped fallback said "no stats" here,
-    // which contradicted the stat box under it — a plain lie in the document).
-    return [];
-  }
-  if (entry.source.type === 'npc-ref') {
-    const target = artifactId === null ? undefined : state.byId.get(artifactId);
-    if (target === undefined) {
-      // No row and no resolution: the reference genuinely dangles. Loud, named.
-      return [{ text: ` — ${missingCreatureOrigin(entry.name)}`, italics: true, color: ALERT }];
-    }
-    return state.destinations.has(target.id)
-      ? [
-          { text: ' — see ', italics: true },
-          {
-            text: target.name,
-            italics: true,
-            linkToDestination: state.destinations.get(target.id),
-          },
-        ]
-      : [{ text: ` — see ${target.name}`, italics: true }];
-  }
-  if (entry.source.type === 'rulebook') {
-    // Kept verbatim from the shipped layout: the numbers live in the Bestiary.
-    return [{ text: ' (see Bestiary)', italics: true }];
-  }
-  // A name-only roster entry records no citation at all. The resolution pass
-  // normally reports the named missing-ref reason for it (the branch above);
-  // with no resolution available this states what is actually true about the
-  // row, instead of the shipped renderer's bare "name ×count".
+  // A resolved citation is a plain label; the named missing-ref reason and the
+  // no-citation statement are the document TELLING the GM something is wrong,
+  // so they stay loud.
+  const loud = entry.source.type === 'none' || resolved?.statBlock == null;
   return [
     {
-      text: ' — no stats: this roster entry names the creature without a citation',
+      text: reference.printed,
       italics: true,
-      color: '#555555',
+      ...(loud ? { color: entry.source.type === 'none' ? '#555555' : ALERT } : {}),
     },
   ];
 }
@@ -722,26 +784,39 @@ function dataSections(artifact: AnyArtifact, state: RenderState): Content[] {
       out,
       monsterHeaderKicker(artifact.data.difficulty, artifact.data.levelHint),
       ...artifact.data.monsters.map((monster, index): Content => {
-        const stats =
-          monster.source.type === 'inline'
-            ? [statBoxContent(monster.source.statBlock, `${monster.name} ×${monster.count}`)]
-            : [];
+        const resolved = state.input.rosterResolution?.[artifact.id]?.[index];
+        // THE box rule and THE reference rule, both shared with the
+        // single-artifact exporter (docs/17 row 144): a CITED creature prints
+        // the library's own numbers and the reference NAMES where they came
+        // from. A citation whose chunk carries no parseable block resolves to
+        // `null` — then no box prints at all, and the named missing-ref line
+        // above the notes stands alone (never an empty or invented block).
+        const statBlock = rosterStatBlockFor(monster, resolved);
+        const cited = monster.source.type === 'rulebook';
         return {
           stack: [
             {
               text: [
                 { text: monster.name, bold: true },
                 { text: ` ×${monster.count}` },
-                ...rosterOriginRun(
+                ...referenceRun(
                   monster,
-                  state.input.rosterOrigins?.[artifact.id]?.[index],
+                  resolved,
                   monster.source.type === 'npc-ref' ? monster.source.artifactId : null,
                   state,
                 ),
               ],
             },
             ...(monster.notes === '' ? [] : [{ text: monster.notes, style: 'muted' }]),
-            ...stats,
+            ...(statBlock === null
+              ? []
+              : [
+                  statBoxContent(
+                    statBlock,
+                    `${monster.name} ×${monster.count}`,
+                    cited ? resolved?.origin : undefined,
+                  ),
+                ]),
           ],
           margin: [0, 0, 0, 3],
         };
@@ -1585,11 +1660,10 @@ export async function buildModulePdf(
 ): Promise<{ blob: Blob; problems: ModulePdfProblem[] }> {
   const battles = await moduleBattles(module);
   const scoped = modulePdfArtifacts(module, artifacts);
-  const rosterOrigins: Record<Id, readonly string[]> = {};
+  const rosterResolution: Record<Id, readonly ResolvedMonster[]> = {};
   for (const artifact of scoped) {
     if (artifact.kind !== 'encounter') continue;
-    const resolved = await resolveMonsterEntries(artifact.data.monsters);
-    rosterOrigins[artifact.id] = resolved.map((entry) => entry.origin);
+    rosterResolution[artifact.id] = await resolveMonsterEntries(artifact.data.monsters);
   }
   // What to PRELOAD comes from the same plan read the renderer uses: with a
   // plan applied the document prints exactly the images the plan anchored, so
@@ -1620,7 +1694,7 @@ export async function buildModulePdf(
     artifacts,
     battles,
     images,
-    rosterOrigins,
+    rosterResolution,
     ...(options.audience === undefined ? {} : { audience: options.audience }),
     ...(options.compiledAt === undefined ? {} : { compiledAt: options.compiledAt }),
     ...(options.planFailure === undefined ? {} : { planFailure: options.planFailure }),

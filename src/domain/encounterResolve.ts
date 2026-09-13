@@ -227,6 +227,150 @@ export async function resolveDerivedNpcStats(
   };
 }
 
+/**
+ * The CROSS-REFERENCE a roster entry's reference may need: the row it names and
+ * the pdfmake destination that row prints at. A `npc-ref` reference is a `see
+ * <name>` link when the document prints that row (pdfmake throws on a
+ * destination that does not exist) and plain text when it does not, so the
+ * caller is handed the NAME plus the optional destination rather than a
+ * pre-linked run.
+ */
+export interface MonsterReferenceLink {
+  name: string;
+  destination: string;
+}
+
+/**
+ * What a document PRINTS as a roster row's reference (docs/17 row 144): the
+ * addressable text, plus — for a `npc-ref` — the row to cross-reference. An
+ * EMPTY `text` means the row needs no reference at all (an `inline` entry
+ * carries its own numbers).
+ *
+ * ONE formatter for every surface that prints a roster reference — the module
+ * PDF and the single-artifact GM export both render THIS, so the two books
+ * cannot label the same entry differently (AGENTS rule 4). It is driven by the
+ * `resolved` origin the async pre-pass already produces: the true origin of a
+ * `rulebook` citation (`Bestiary p.132`), the named missing-ref reason, the
+ * cross-reference of an `npc-ref`, and the no-citation statement of `none`.
+ * Nothing here writes anything and nothing is materialized: the numbers stay the
+ * cited library chunk's own (docs/12 §Storage, docs/11 D2/D3).
+ */
+export interface MonsterReference {
+  /** The reference text as a caller sets it off, with NO separator. */
+  text: string;
+  /**
+   * `text` AS ONE PRINTED LINE, separator included (`Zombie ×4` +
+   * `printed` = `Zombie ×4 — Bestiary p.132`), and `''` for a row that prints
+   * no reference. THE string a caller renders when it prints a plain line, so a
+   * link run and a plain run can never disagree about the visible words.
+   */
+  printed: string;
+  /** Present only for an `npc-ref` whose row the document prints (clickable). */
+  link?: MonsterReferenceLink;
+}
+
+/** An `inline` entry carries its own stat block: no reference line at all. */
+const NO_REFERENCE: MonsterReference = { text: '', printed: '' };
+/** The separator between a roster line and its reference. */
+const REFERENCE_SEPARATOR = ' — ';
+const NO_CITATION_REFERENCE = 'no stats: this roster entry names the creature without a citation';
+/**
+ * A citation the pre-pass did not resolve — reachable only when a builder is
+ * called WITHOUT resolution data (no production path does). It never falls back
+ * to a citation-shaped claim the document cannot honour (AGENTS rule 1): the
+ * document says the citation could not be resolved, in the same named register
+ * as the missing-ref reason.
+ */
+const UNRESOLVED_CITATION_REFERENCE = 'unresolved citation: this build resolved no origin for it';
+
+/** A plain reference: the text, plus the same text as one printed line. */
+function plainReference(text: string): MonsterReference {
+  return { text, printed: `${REFERENCE_SEPARATOR}${text}` };
+}
+
+/**
+ * WHAT a roster row's reference is, and what a cited mob prints — the ONE rule
+ * every roster-printing surface goes through (docs/17 row 144).
+ *
+ * It is driven by the `resolved` origin the async pre-pass already produces: the
+ * TRUE origin of a `rulebook` citation (`Bestiary p.132`), the named missing-ref
+ * reason of a citation nothing can satisfy, the `see <name>` cross-reference of
+ * an `npc-ref`, and the no-citation statement of a name-only entry. An `inline`
+ * entry gets NO reference at all, because its own stat box prints underneath.
+ *
+ * `printed` is the string a caller renders for a plain line and `link` the row a
+ * caller links to; both are composed HERE, so the module PDF and the
+ * single-artifact GM export cannot label one entry differently (AGENTS rule 4).
+ * Nothing is written and nothing is materialized: the numbers stay the cited
+ * library chunk's own (docs/12 §Storage, docs/11 D2/D3).
+ */
+export function rosterReferenceFor(
+  entry: MonsterEntry,
+  resolved: ResolvedMonster | undefined,
+  target?: MonsterReferenceLink,
+): MonsterReference {
+  // A citation nothing can satisfy: the NAMED reason, through the ONE
+  // predicate — never a `=== 'missing ref'` comparison, which silently never
+  // matches because the reason carries the creature's name.
+  if (resolved !== undefined && isMissingRefOrigin(resolved.origin)) {
+    return plainReference(resolved.origin);
+  }
+  switch (entry.source.type) {
+    case 'inline':
+      // The stat box prints immediately below: an origin run here would
+      // contradict the block under it.
+      return NO_REFERENCE;
+    case 'npc-ref':
+      if (target === undefined) {
+        // No row and no resolution: the reference genuinely dangles.
+        return plainReference(missingCreatureOrigin(entry.name));
+      }
+      return { ...plainReference(`see ${target.name}`), link: target };
+    case 'rulebook':
+      // The REAL origin of the cited creature — the book and page the numbers
+      // actually come from. The pre-pass resolves it for every row it runs
+      // over, so the constant `(see Bestiary)` this used to print pointed at a
+      // chapter no module PDF has ever had (docs/17 row 108 superseded by 142,
+      // which amends row 108 by reference).
+      return resolved === undefined
+        ? plainReference(UNRESOLVED_CITATION_REFERENCE)
+        : plainReference(resolved.origin);
+    case 'none':
+      // A name-only roster entry records no citation at all. The resolution
+      // pass reports the named missing-ref reason for it (the branch above);
+      // with no resolution available this states what is actually true about
+      // the row, instead of the shipped renderer's bare "name ×count".
+      return plainReference(NO_CITATION_REFERENCE);
+  }
+}
+
+/**
+ * The stat block a roster row PRINTS: the cited library creature's resolved
+ * numbers for a `rulebook` citation, the entry's own block for `inline`.
+ *
+ * THE one rule for "does this row print a box, and whose numbers are they",
+ * read by both exporters. A citation the library cannot satisfy resolves to
+ * `null` (the chunk is absent, or its ingest left no parseable `statBlock`), and
+ * that case prints NO box — the named missing-ref reference line stands alone
+ * rather than an empty or invented one (AGENTS rule 1). A `rulebook` entry with
+ * NO resolution at all likewise prints no box: an unresolved citation must not
+ * silently become a heading with nothing under it.
+ */
+export function rosterStatBlockFor(
+  entry: MonsterEntry,
+  resolved: ResolvedMonster | undefined,
+): StatBlock | null {
+  switch (entry.source.type) {
+    case 'inline':
+      return entry.source.statBlock;
+    case 'rulebook':
+      return resolved?.statBlock ?? null;
+    case 'npc-ref':
+    case 'none':
+      return null;
+  }
+}
+
 export async function resolveMonsterEntry(
   entry: MonsterEntry,
   lookups: MonsterLookups,

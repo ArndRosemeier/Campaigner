@@ -581,7 +581,8 @@ test) · ❌ gap.
 | The format boundary is LOUD: a WebP data URL (which throws inside pdfmake's measurement pass) is refused by `assertPdfmakeImageDataUrl` at the seam, for both a document node and a caller-built node passed to `generatePdfBlob` | `modulePdf.test` (gate hole D-ii) | ✅ |
 | An unreadable image / a missing row / a codec error becomes a NAMED placeholder AND a reported problem; the document still lands | `modulePdf.test` (C3) | ✅ |
 | Data renders: location/event `locationType`/`inhabitants`/`pointsOfInterest`/`hooks`; difficulty kickers; two-column stat boxes with PF2e bonuses | `modulePdf.test` (C4) | ✅ |
-| Roster origins: `npc-ref` cross-reference, `inline` stat box with NO origin line, `rulebook`'s `(see Bestiary)`, and a name-only entry's named `isMissingRefOrigin` reason | `modulePdf.test` (C5) | ✅ |
+| Roster references: `npc-ref` cross-reference (with its page destination), `inline` stat box with NO origin line, a `rulebook` citation printing its REAL resolved origin (the dead `(see Bestiary)` constant is gone) plus **the cited chunk's own numbers**, and a name-only entry's named `isMissingRefOrigin` reason | `modulePdf.test` (C5), `domain/encounterReference.test`, `lib/roster-reference-parity.test`, `pdfExport.test` (docs/17 row 144, §A cited mob's reference and numbers) | ✅ |
+| A cited mob's numbers reach BOTH books through ONE formatter and ONE box — differential over the two real documents, and a source scan for a second implementation | `lib/roster-reference-parity.test` | ✅ |
 | GM vs player from ONE builder: the player document drops gm-only rows, notes, plot arcs, faction methods, encounter tactics/treasure/terrain, PC notes, the part plan and the treasure ledger — while maps stay in both | `modulePdf.test` — the same fixture rendered twice and diffed by what it must NOT contain | ✅ |
 | The export surface: ONE control (canvas header + campaign tree module group), GM/player as an ARGUMENT to the ONE renderer, destination acquired before the build, the blob written, problems reported, picker cancel silent | `module-pdf-export.test` | ✅ |
 | Exports do not leak the internal token (row 105's rule) and `writerModel` provenance never reaches a document | `wiki-raw-export.test`, `provenance-export.test`, `modulePdf.test` | ✅ |
@@ -2521,6 +2522,58 @@ pays is unmeasured here: how many stored citations will read `missing ref` on
 the next re-import of the PF2e item packs needs a real database, so landing 2
 inherits "this is the accepted cost" as a DECISION, not as a number.
 
+
+### A cited mob's reference and numbers — one formatter, both books (docs/17 row 144, docs/11 §What a roster row PRINTS, docs/18 §2.1/§2.3)
+
+The owner, reading the exported module PDF: *"Encounters do not have their mobs
+detailed. Makes it hard for the GM who needs to find references for mobs."* His
+three answers: his roster lines read `Zombie ×4 — (see Bestiary)`; *"Keep the jump,
+and list the encounter's mobs below its row in the reader's entity panel."* (a
+SEPARATE slice — the reader half is still open); *"Print the numbers for cited mobs
+too."* The defect was a reference the renderer already COMPUTED and then threw away
+(`rosterOriginRun` used the resolved origin only for its missing-ref check and
+printed the constant `' (see Bestiary)'` — a chapter the module PDF has never had),
+and a single-artifact export that printed no reference at all.
+
+| fact pinned | where |
+|---|---|
+| **A `rulebook` citation prints its REAL origin**: `— Bestiary p.132` for an ingested book and `— Monster Core: Cave Fisher` for a pack (the two `creatureOriginLabel` shapes), never the dead constant | `tests/domain/encounterReference.test.ts` (2 pins, NEW: `prints the REAL origin of a cited creature, not a constant`, `prints a pack citation's creature name`) |
+| **The constant is PROVEN GONE**, not merely unused: a source scan over the domain seam and both exporters (comments stripped, so the prose that explains the removal does not satisfy it) finds no `see Bestiary` anywhere, with a non-vacuity check that the rule itself is still implemented | `tests/lib/roster-reference-parity.test.ts` (`the dead "(see Bestiary)" constant is gone from every source`, NEW) |
+| **EXACTLY ONE implementation** (AGENTS rule 4: never centralize by prose): the formatter is the only source that spells the reference vocabulary, no exporter carries a copy, and both name `rosterReferenceFor` + `rosterStatBlockFor` — plus the single-artifact export renders `modulePdf.statBoxContent` rather than growing a second stat renderer | `tests/lib/roster-reference-parity.test.ts` (`no source composes a reference without the shared formatter`, `both exporters call the shared rule and the shared box`, NEW) |
+| **The two books agree, differentially**: the SAME encounter row is built into the module definition AND the single-artifact GM definition over the same resolution, and both print the identical formatted reference (`Cave Fisher ×1 — Bestiary p.132`) and the identical no-citation statement — so a caller that formats its own line cannot pass | `tests/lib/roster-reference-parity.test.ts` (`a cited mob's reference is byte-identical in the module book and the GM export`, NEW) |
+| **A cited mob PRINTS ITS NUMBERS** (owner answer 3): the chunk's own `AC`/`HP` values and its `traits`/`actions` reach the row's box in BOTH books, with the resolved origin printed ON the box (`Numbers from Bestiary p.132`) | `tests/lib/roster-reference-parity.test.ts` (`both exporters print the cited chunk's NUMBERS, with the source on the box`), `tests/lib/modulePdf.test.ts` (`prints a cited mob's OWN numbers, with the source on the box (owner decision 3)`, NEW), `tests/lib/pdfExport.test.ts` (`prints a cited mob's reference AND its numbers in the GM export`, NEW) |
+| **The box carries REACTIONS, LEGENDARY and `extras`** — the three sections the module box dropped while the single-artifact exporter printed two of them: one box, both the `inline` and the cited path, so a PF2e-style block is usable at the table | `tests/lib/roster-reference-parity.test.ts` (`the shared box carries every section a PF2e-style block needs`, `a box with no source prints no attribution line`, NEW) |
+| **A citation whose chunk carries no parseable block stays LOUD**: `statBlock: null` (a legitimate best-effort ingest outcome) prints the NAMED `missing ref (Cave Fisher)` line and **NO box at all** — asserted as an ABSENCE (`not.toContain('Numbers from')`, `not.toContain('44 (8d8)')`), so a placeholder or an empty box fails the pin | `tests/lib/modulePdf.test.ts` (`prints NO box for a citation whose chunk carries no parseable block`), `tests/domain/encounterReference.test.ts` (`prints NO block for a citation whose chunk carries no parseable block`), `tests/lib/roster-reference-parity.test.ts` (the same, in both books) |
+| **A citation nothing can satisfy still reads as it did** — the named reason, unchanged, through `isMissingRefOrigin` (never a `=== 'missing ref'` comparison) | `tests/domain/encounterReference.test.ts` (`keeps a citation nothing can satisfy NAMED, in the same words as before`), `tests/lib/modulePdf.test.ts` (`states each roster origin through the ONE rule (C5)`, updated) |
+| **An unresolved citation never becomes a claim**: a `rulebook` entry the pre-pass did not resolve prints `unresolved citation: …` LOUDLY instead of a citation-shaped line the document cannot honour (the replaced constant's exact failure mode) | `tests/domain/encounterReference.test.ts` (`never claims a citation it could not resolve`, NEW); the renderer's colour rule is covered by the existing `modulePdf.test` C5 pins |
+| **`npc-ref` is UNCHANGED** where it already worked: `— see Vexra` with a real `linkToDestination`, and the named `missing ref (Vexra)` when the row is gone — `link` is only ever produced for a row the document prints | `tests/domain/encounterReference.test.ts` (`cross-references an npc-ref whose row prints…`), `tests/lib/modulePdf.test.ts` (C5, updated) |
+| **`inline` and `none` are UNCHANGED except for the shared box**: no reference line for `inline` (never a "no stats" line contradicting the box beneath), the same no-citation statement for `none` | `tests/domain/encounterReference.test.ts` (2 pins), `tests/lib/modulePdf.test.ts` (`a roster entry with no citation and no resolution says what is true about it`, unchanged) |
+| **The async pre-pass really feeds the renderer, end to end**: `buildModulePdf` resolves a cited roster row ITSELF (a real rulebook + statblock chunk in the DB) and the produced document carries `Bestiary p.132`, the chunk's reactions and the box attribution; the single-artifact entry point is driven through its `generate` seam so a definition builder wired to nothing cannot pass | `tests/lib/modulePdf.test.ts` (`resolves a cited roster row itself, end to end through buildModulePdf`), `tests/lib/pdfExport.test.ts` (the same pin, via `exportArtifactPdf`'s generator seam) |
+| **NOTHING is materialized**: after resolving and rendering a cited encounter, the roster's own JSON is byte-identical (the export reads the citation, it never rewrites it) — the storage rule of docs/11/§12 is untouched | `tests/lib/roster-reference-parity.test.ts` (`nothing is materialized: neither exporter writes a chunk or a citation`) |
+| **The pre-existing pins are UNCHANGED and GREEN**: the module PDF's other roster pins, the provenance pin (no `writerModel` in either document), `wiki-raw-export`, and `modulePdfPlan` all pass untouched | those files, in the gate |
+
+**REVERT-PROVEN** (each injection made on the working tree, the RED set recorded,
+the file restored from an OUT-OF-TREE copy and re-hashed with `git hash-object`;
+`git diff --stat` printed before every run):
+
+| injection | what it does | RED | GREEN (unchanged) |
+|---|---|---|---|
+| **I1** `domain/encounterResolve.ts:337` — the `rulebook` arm returns `plainReference('(see Bestiary)')` again | restores the pre-142 constant | 7: `encounterReference.test` ×2 (`prints the REAL origin…`, `prints a pack citation's creature name`), `modulePdf.test` ×2 (C5, `resolves a cited roster row itself…`), `pdfExport.test` ×1 (the GM-export pin), `roster-reference-parity.test` ×2 (the differential, and the constant-gone scan) | 62 tests, incl. every `npc-ref`/`inline`/`none`/missing-ref pin, provenance and `wiki-raw-export` |
+| **I2** `domain/encounterResolve.ts:367` — `rosterStatBlockFor`'s `rulebook` arm returns `null` (the pre-142 behaviour: no box for a cited mob) | removes the cited mob's numbers | 5: `modulePdf.test` ×2, `pdfExport.test` ×1, `encounterReference.test` ×1, `roster-reference-parity.test` ×1 | 64 tests — every reference pin stays GREEN, which is the point: the two rules are independent and separately pinned |
+| **I3** `lib/pdfExport.ts:132` — the single-artifact export's reference is `''` (the pre-142 line) | disconnects the shared formatter in ONE caller | 3: `pdfExport.test` ×1, `roster-reference-parity.test` ×2 (the differential and the statless-block differential) | 66 tests — incl. the MODULE book's reference and numbers, so the pin identifies the caller, not the rule |
+| **I4** `lib/pdfExport.ts:479` — `roster` is `[]`, the async pre-pass disconnected | drops the resolution the definition is built from | 1: `pdfExport.test` ×1 (the end-to-end pin, which is why it drives the public entry point rather than the builder) | 68 tests |
+
+**What these pins CANNOT prove**, stated rather than implied: (a) that the
+OWNER'S EXISTING modules look right — his stored modules carry their citations
+unchanged (that is the point: nothing was written), so a module generated before
+this change renders the numbers only on its NEXT export, and no test can assert
+what his table will see; (b) that a real PDF's TEXT matches the printed runs — the
+pins read the pdfmake DEFINITION, and the layout/rendering of a wide stat box (a
+page break inside it, a long `extras` entry) is unverified; (c) that the library a
+real campaign ingests produces a page-accurate origin — `pageStart` is the chunk's
+own field and its accuracy is the ingest's concern, not this renderer's; (d) the
+READER half of the owner's answer 2 (the jump and the entity panel listing), which
+is a separate slice and untested here by design.
 
 ### Remaining gaps
 

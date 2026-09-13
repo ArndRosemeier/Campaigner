@@ -2,7 +2,14 @@ import type { Content, NamedStyle, TDocumentDefinitions } from 'pdfmake/interfac
 
 import type { Artifact, StatBlock } from '@/domain';
 import { abilityModifier, formatModifier, imageBlob, printsAbilityModifiers } from '@/domain';
+import {
+  rosterReferenceFor,
+  rosterStatBlockFor,
+  type ResolvedMonster,
+} from '@/domain/encounterResolve';
 import { getImage } from '@/db/imageRepo';
+import { resolveMonsterEntries } from '@/db/monsterResolve';
+import { statBoxContent } from '@/lib/modulePdf';
 import { fileSlug } from '@/lib/fileSlug';
 import { blobToScaledDataUrl } from '@/lib/imageIntake';
 import { markdownToDisplayText } from '@/lib/markdown';
@@ -104,7 +111,49 @@ function statBlockSection(statBlock: StatBlock): object[] {
   ];
 }
 
-function dataSections(artifact: Artifact): object[] {
+/**
+ * The encounter roster AS PRINTED by this export, one row per participant:
+ * `Name ×count — Bestiary p.132: notes`, then the creature's stat box.
+ *
+ * THE reference rule and THE box rule are the SHARED ones (docs/17 row 144):
+ * `domain/encounterResolve.rosterReferenceFor` decides what the reference says and
+ * `rosterStatBlockFor` which numbers print, and `modulePdf.statBoxContent` is
+ * the box — the same three seams the module book uses, so one entry cannot read
+ * or count differently in the two books. Before this, a `rulebook`-cited mob
+ * reached the GM as a bare name with no reference and no numbers at all.
+ *
+ * The numbers are the cited library chunk's own, read at export time; nothing is
+ * copied into the database (docs/12 §Storage).
+ */
+function rosterRows(artifact: Artifact, roster?: readonly ResolvedMonster[]): object[] {
+  if (artifact.kind !== 'encounter') return [];
+  return artifact.data.monsters.flatMap((monster, index): object[] => {
+    const resolved = roster?.[index];
+    const reference = rosterReferenceFor(monster, resolved).printed;
+    const statBlock = rosterStatBlockFor(monster, resolved);
+    return [
+      {
+        text: [
+          { text: `${monster.name} ×${monster.count}`, bold: true },
+          ...(reference === '' ? [] : [{ text: reference }]),
+          ...(monster.notes === '' ? [] : [{ text: `: ${monster.notes}` }]),
+        ],
+        style: 'value',
+      },
+      ...(statBlock === null
+        ? []
+        : [
+            statBoxContent(
+              statBlock,
+              `${monster.name} ×${monster.count}`,
+              monster.source.type === 'rulebook' ? resolved?.origin : undefined,
+            ) as object,
+          ]),
+    ];
+  });
+}
+
+function dataSections(artifact: Artifact, roster?: readonly ResolvedMonster[]): object[] {
   const sections: object[] = [];
   const add = (heading: string, rows: (object | null)[]): void => {
     const kept = rows.filter((row): row is object => row !== null);
@@ -182,18 +231,9 @@ function dataSections(artifact: Artifact): object[] {
         labelValue('Terrain', artifact.data.terrain),
         labelValue('Tactics', artifact.data.tactics),
         labelValue('Treasure', artifact.data.treasure),
-        ...(artifact.data.monsters.length > 0
-          ? [
-              { text: 'Monsters', style: 'subheading' },
-              ...artifact.data.monsters.map((monster) => ({
-                text: [
-                  { text: `${monster.name} ×${monster.count}: `, bold: true },
-                  { text: monster.notes },
-                ],
-                style: 'value',
-              })),
-            ]
-          : []),
+        ...(artifact.data.monsters.length === 0
+          ? []
+          : [{ text: 'Monsters', style: 'subheading' }, ...rosterRows(artifact, roster)]),
       ]);
       break;
     }
@@ -275,6 +315,17 @@ function coverImageNode(cover: PdfCoverImage): Content {
 export function buildGmNotesDefinition(
   artifact: Artifact,
   cover?: PdfCoverImage | null,
+  /**
+   * The encounter roster's resolved rows, in order — the SAME resolution the
+   * module PDF's pre-pass produces (`ModulePdfInput.rosterResolution`), so one
+   * entry prints the same reference and the same numbers in either book
+   * (docs/17 row 144). Omitted ⇒ an `inline` entry still prints its own block
+   * and an `npc-ref` still cross-references its row, while a `rulebook` citation
+   * prints the LOUD `unresolved citation` line rather than a citation-shaped
+   * claim this export cannot honour: only a cited creature needs the pass,
+   * because its numbers live in the library.
+   */
+  roster?: readonly ResolvedMonster[],
 ): TDocumentDefinitions {
   const doc = baseDoc(artifact);
   const content: Content[] = [doc.content].flat();
@@ -284,12 +335,25 @@ export function buildGmNotesDefinition(
     text: artifact.body === '' ? '(no body)' : markdownToDisplayText(artifact.body),
     style: 'body',
   });
-  content.push(...(dataSections(artifact) as Content[]));
+  content.push(...(dataSections(artifact, roster) as Content[]));
   if (artifact.links.length > 0) {
     content.push({ text: 'Relations', style: 'heading' });
     content.push(...(listItems(artifact.links.map((link) => link.relation)) as Content[]));
   }
   return { ...doc, content };
+}
+
+/**
+ * The encounter roster's resolved rows for the export pre-pass — the SAME
+ * resolution the module PDF runs (`db/monsterResolve.resolveMonsterEntries`,
+ * which delegates to the ONE `domain/encounterResolve.resolveMonsterEntry`), so
+ * a cited creature's numbers and origin are the library chunk's own on every
+ * surface. Returns `[]` for a non-encounter row: it has no roster.
+ */
+export function resolveExportRoster(artifact: Artifact): Promise<ResolvedMonster[]> {
+  return artifact.kind === 'encounter'
+    ? resolveMonsterEntries(artifact.data.monsters)
+    : Promise.resolve([]);
 }
 
 /** Player handout: name, summary, body — no structured data, no mechanics. */
@@ -397,14 +461,29 @@ export async function generatePdfBlob(definition: TDocumentDefinitions): Promise
   return document.getBlob();
 }
 
-/** Generates the PDF blob; pdfmake is loaded on demand (heavy dependency). */
-export async function exportArtifactPdf(artifact: Artifact, template: PdfTemplate): Promise<Blob> {
+/**
+ * Generates the PDF blob; pdfmake is loaded on demand (heavy dependency).
+ *
+ * `generate` is the renderer seam `buildModulePdf` already takes: the default is
+ * pdfmake, and a caller can observe the finished DEFINITION (the only place a
+ * document is inspectable) without a second code path.
+ */
+export async function exportArtifactPdf(
+  artifact: Artifact,
+  template: PdfTemplate,
+  generate: (definition: TDocumentDefinitions) => Promise<Blob> = generatePdfBlob,
+): Promise<Blob> {
   const cover = await loadPdfCoverImage(artifact);
+  // The async PRE-PASS, following `buildModulePdf`'s existing pattern: the
+  // definition builders stay pure over rows plus already-resolved data, so a
+  // cited creature's numbers and origin are resolved HERE and the render is a
+  // pure function of them.
+  const roster = template === 'gm' ? await resolveExportRoster(artifact) : [];
   const definition =
     template === 'gm'
-      ? buildGmNotesDefinition(artifact, cover)
+      ? buildGmNotesDefinition(artifact, cover, roster)
       : buildPlayerHandoutDefinition(artifact, cover);
-  return generatePdfBlob(definition);
+  return generate(definition);
 }
 
 interface PdfDocument {

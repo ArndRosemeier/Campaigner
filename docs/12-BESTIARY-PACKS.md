@@ -49,6 +49,15 @@ pack chunks are ordinary `statblock` chunks with a **non-null, exact**
 
 ## 2. Licensing constraints (binding)
 
+**Scope of "never re-serve" (docs/17 row 144).** The binding line below is a
+PRODUCT-level constraint — Campaigner never bundles, redistributes or re-serves
+library content to anyone. It does not govern what the OWNER does with the
+library he ingested into his own local workspace: an export he generates for his
+own table renders the cited numbers into the PDF (he decided: *"Print the numbers
+for cited mobs too."*), writes nothing back to the database, and ships nothing
+anywhere. Nothing in this file's storage model changes: a citation is still a
+citation.
+
 Campaigner must **never bundle, redistribute, or re-serve** the content below
 (amended 2026-09-05 by 16-BESTIARY-FETCH: *user-triggered fetch from the
 pinned sources there is allowed and changes the acquisition channel, not the
@@ -470,7 +479,16 @@ a compact **roster index** from the pack books:
   recorded at citation birth, and a THROW on an empty ref). Nothing is
   materialized: the chunk stays the single source of truth, battles seed shared
   identity from the creature identity (`libraryCreatureKey(chunkId)`), and
-  portraits come from the presentation tier. To give a creature an `npc` row of
+  portraits come from the presentation tier. **A citation's RENDER reads the
+  chunk, it never copies it** (docs/17 row 144): the module PDF and the
+  single-artifact GM export print the cited creature's reference (`Bestiary
+  p.132`) and its own `statBlock` — including a `reactions`/`legendary`/`extras`
+  section — composed at export time from this same resolution, through ONE
+  domain formatter (`domain/encounterResolve.rosterReferenceFor` /
+  `rosterStatBlockFor`). No copy enters the database, the citation keeps its
+  `chunkId` + identity, and a re-ingest is reflected by the next export; a
+  citation whose chunk has no parseable block prints its named missing-ref line
+  and NO box (never a placeholder standing in for numbers). To give a creature an `npc` row of
   its own — the owner's Aunt Agatha path — the MODULE side calls
   `db/creatureRepo.castCreatureAsNpc`; the encounter/bestiary-roster citation
   path deliberately has no cast seam. The bestiary pack's own tier is therefore

@@ -1,8 +1,22 @@
 import 'fake-indexeddb/auto';
 
+import type { TDocumentDefinitions } from 'pdfmake/interfaces';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createArtifact, newId } from '@/domain';
+import {
+  createArtifact,
+  newId,
+  ruleChunkSchema,
+  stampNewEntity,
+  type Artifact,
+} from '@/domain';
+import { createArtifact as persistArtifact } from '@/db/artifactRepo';
+import { createCampaign } from '@/db/campaignRepo';
+import { putChunks } from '@/db/chunkRepo';
+import { createRulebook } from '@/db/rulebookRepo';
+import { sha256Hex } from '@/lib/hash';
+import { resolveExportRoster } from '@/lib/pdfExport';
 import {
   buildGmNotesDefinition,
   buildPlayerHandoutDefinition,
@@ -80,6 +94,12 @@ function dump(content: unknown): string {
   return JSON.stringify(content);
 }
 
+/** The export builders take campaign-OWNED rows; narrow loudly, never cast. */
+function owned(artifact: { campaignId: string | null }): Artifact {
+  if (artifact.campaignId === null) throw new Error('expected a campaign-owned row');
+  return artifact as Artifact;
+}
+
 describe('pdf export definitions', () => {
   it('GM notes include structured data and the stat block', () => {
     const artifact = createArtifact({ ...NPC });
@@ -155,6 +175,120 @@ describe('pdf export definitions', () => {
       'Not a link: [[ not even this one',
     );
   });
+
+  /**
+   * The owner read his roster lines in THIS export as `Zombie ×4 — (see
+   * Bestiary)` (docs/17 row 144): a name, a constant pointing at a chapter the
+   * module book does not have, and no numbers. The GM template now prints the
+   * resolved reference and the cited chunk's own numbers, through the SAME
+   * `domain/encounterResolve` rule and the SAME `modulePdf.statBoxContent` the
+   * module PDF uses.
+   *
+   * Revert-proof (I3): format no reference here (the pre-142 line) and the
+   * `Bestiary p.132` pin goes RED while the module book stays GREEN — measured,
+   * see docs/08-TESTING.md.
+   */
+  it('prints a cited mob’s reference AND its numbers in the GM export', async () => {
+    const campaign = await createCampaign({ name: 'Export', system: 'pathfinder2e' });
+    const rulebook = await createRulebook({
+      title: 'Bestiary',
+      system: 'pathfinder2e',
+      filename: 'bestiary.pdf',
+    });
+    const text = 'Cave Fisher';
+    const chunk = ruleChunkSchema.parse({
+      ...stampNewEntity(),
+      bookId: rulebook.id,
+      pageStart: 132,
+      pageEnd: 132,
+      chunkType: 'statblock',
+      headingPath: ['Cave Fisher'],
+      text,
+      statBlock: {
+        system: 'pathfinder2e',
+        level: '4',
+        size: 'Medium',
+        creatureType: 'animal',
+        ac: 18,
+        acNote: '',
+        hp: 44,
+        hpFormula: '8d8',
+        speed: '30 ft.',
+        abilities: { str: 14, dex: 18, con: 12, int: 2, wis: 14, cha: 6 },
+        saves: '',
+        skills: '',
+        senses: 'darkvision',
+        languages: '',
+        traits: [{ name: 'Grasping Antennae', text: 'Reach 10 feet.' }],
+        actions: [{ name: 'Mandible', text: 'Melee: +12 to hit.' }],
+        reactions: [{ name: 'Reactive Snap', text: 'Strike a creature that enters its reach.' }],
+        legendary: [{ name: 'Skitter Away', text: 'Stride without provoking reactions.' }],
+        extras: { Perception: '+11' },
+      },
+      contentHash: await sha256Hex(text),
+    });
+    await putChunks([chunk]);
+    const encounterRow = await persistArtifact({
+      campaignId: campaign.id,
+      kind: 'encounter',
+      name: 'Pier Ambush',
+      data: {
+        difficulty: 'severe',
+        levelHint: '4',
+        monsters: [
+          {
+            name: 'Cave Fisher',
+            count: 1,
+            notes: 'clings to the pilings',
+            treasure: '',
+            source: {
+              type: 'rulebook',
+              chunkId: chunk.id,
+              contentHash: chunk.contentHash,
+              creatureName: 'Cave Fisher',
+            },
+          },
+        ],
+        terrain: 'wet planks',
+        tactics: 'drag them under',
+        treasure: 'a silver bell',
+        mapImageId: null,
+        layout: null,
+        preset: 'standard',
+        locationKind: 'other',
+        siteShape: 'single',
+        budgetAdvisory: '',
+      },
+    });
+    const encounter = owned(encounterRow);
+
+    const roster = await resolveExportRoster(encounter);
+    const definition = buildGmNotesDefinition(encounter, null, roster);
+    const content = dump(definition.content);
+    // The reference NAMES the source — never the dead constant. The separator
+    // is what makes this the REFERENCE and not the box's attribution line.
+    expect(content).toContain(' — Bestiary p.132');
+    expect(content).not.toContain('see Bestiary');
+    // And the numbers are in the book, reactions and legendary included.
+    expect(content).toContain('Reactive Snap');
+    expect(content).toContain('Skitter Away');
+    expect(content).toContain('44 (8d8)');
+    expect(content).toContain('Numbers from Bestiary p.132');
+
+    // The ASYNC PRE-PASS reaches the definition the PUBLIC export builds: the
+    // generator seam (the same one `buildModulePdf` takes) is the only place a
+    // finished definition is visible, so driving the REAL entry point with an
+    // observer proves the one code path a GM's click takes.
+    let passed: TDocumentDefinitions | undefined;
+    await exportArtifactPdf(encounter, 'gm', (definition) => {
+      passed = definition;
+      return Promise.resolve(new Blob(['%PDF-']));
+    });
+    if (passed === undefined) throw new Error('the export never generated a document');
+    expect(dump(passed.content)).toContain(' — Bestiary p.132');
+    expect(dump(passed.content)).toContain('Reactive Snap');
+    expect(dump(passed.content)).toContain('Numbers from Bestiary p.132');
+  }, 30000);
 
   it('generates a real PDF blob for both templates', async () => {
     const artifact = createArtifact({ ...NPC });

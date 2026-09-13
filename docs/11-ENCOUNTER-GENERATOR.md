@@ -59,6 +59,52 @@ stays **battle**. The new persona is the **Encounter Cartographer** (`slug:
 | D18 | **Two-button regeneration (owner-directed, 2026-09-09)**: the encounter editor offers EXACTLY two automatic actions for BOTH shapes, plus the prose checkbox — the old one-fight content "Regenerate with AI" and the standalone battlemap "Generate layout & map / Regenerate" are DELETED (subsumed, never renamed). **Regenerate everything** = a new dungeon top to bottom (complex: a fresh full Cartographer run — new roster + new layout + new map, same as if module-generated fresh; a roomless complex resets the row first so the fill-grade machinery runs against the row's own preset; single: a fresh Smith one-fight draft + a fresh map, one action). **Repopulate** = the map looks fine, the spawn looks wrong — a NEW roster for ALL rooms (complex: ROSTER-ONLY Cartographer pass — brief with the 'empty'/'over' repair loop + room-mirror + fresh cap, finalize persisting ONLY `monsters` (+ lowered `targetLevel`s) onto the PRESERVED rooms/map; single: today's Smith one-fight fill). A dungeon's repopulation is NOT a Smith extension — its clauses key on the target's actual shape. The **prose checkbox** ("Also redesign name and prose", default OFF) chains AFTER the automatic pass: a Smith PROSE-ONLY run (persists name/prose/body; any roster drift fails the run loud with nothing persisted). Unticked, a dungeon's name and prose stay byte-identical (singles always get fresh Smith prose; the box additionally replaces the name there). Both buttons honor the draw-once fill grade, the row preset, the remembered-preset trap fix, the cap math and the repair-turn semantics; manual Clear (map deletion) and the invisible unattended map queue stay as-is. Amended 2026-09-09 (D19): the D18 section gains a complex-only per-run **Map path** control (Use default / Classic / Vision) for Regenerate everything — the choice rides `EncounterRegenOptions.dungeonMapPath` through the run row (explicit-only, never persisted as the Settings default); singles ignore it, repopulation takes none. See "D18 — two-button regeneration" below. |
 | D19 | **A second, vision-located dungeon path for complex maps (owner-directed, 2026-09-09; the lab's labeled-map recipe production-hardened — "31 of 32 letters found, success for this config")**: the Settings `dungeonMapPath: 'classic' \| 'vision'` (DEFAULT `'classic'` — vision is opt-in; select beside the encounter preset, labels "Classic (vector rooms)" / "Vision-located labels") governs complex/multi-room production (initial runs + the unattended queue + Regenerate everything); the D18 per-run choice beats it both ways for ONE run. SINGLES always map classic (one arena needs no registration — the override is ignored, never an error); REPOPULATION is path-independent (roster-only, never touches the map); the unattended queue passes no override (the setting governs). The vision pipeline is `brief → vision-map → finalize`: (a) SIDECAR FIRST — rooms (letter A..N in room order for 4–10 rooms, name, description, encounter assignment, declared graph edges) + the brief's `entryRoomIndex` room flagged as the entrance (entry keeps its letter; the prompt draws it AS the visual ingress — stairs/cave mouth/gate/portal per concept, plaque included — and its observed point doubles as party ingress) authored from the brief BEFORE any image exists; (b) ONE labeled map through the existing image pipeline + storage (same `mapImageId` home; no aspect normalization — the image IS the map); (c) ONE structured vision pass with the configured chat model (0–1000 grid, zod boundary — a vision-incapable model fails the map step loud); (d) VERIFY by count check + a focused re-ask per miss ("only label D", found points as context) — still missing ⇒ the MAP STEP FAILS LOUD (candidate pruned, nothing persisted) naming the letters, NEVER an invented coordinate. Geometry posture: vision rooms carry NO `rects`/`mobsRect`/`entrance`/corridor-`rects` (schema-enforced); corridors carry declared `a`/`b` edges; spawns, group veils and key markers resolve to the observed point (+ deterministic scatter/placement around a point); anything needing polygons fails loud, never silently centers; connectivity IS the sidecar's declared room graph. Shape follows each room's description + the dungeon concept — NO regular/irregular distinction or toggle anywhere in the vision path. KNOWN DEBT (accepted): layout drift (the painted map drifting from the declared graph) has no verifier this arc — Regenerate everything is the correction. See "Vision-located dungeon path" below. |
 
+### What a roster row PRINTS — the reference and the numbers (docs/17 row 144)
+
+The owner, reading his exported module PDF: *"Encounters do not have their mobs
+detailed. Makes it hard for the GM who needs to find references for mobs."* The
+encounter is the artifact that OWNS the opposition (row 140: the opposition
+*"belongs to the encounter artifact … and that is where a GM gets them"*), so the
+mobs have to be reachable and readable WHERE THE ENCOUNTER IS — in the book and in
+the single-artifact export, not only in the library.
+
+**The rule, and where it lives.** ONE domain formatter,
+`domain/encounterResolve.rosterReferenceFor(entry, resolved, target?)` — beside
+`creatureOriginLabel` / `missingCreatureOrigin` / `isMissingRefOrigin`, which it is
+built on — answers what a roster row prints, for every `source` type:
+
+| `source` | what the row prints |
+|---|---|
+| `rulebook` | the REAL resolved origin — `Zombie ×4 — Bestiary p.132` for an ingested book, `Zombie ×4 — Monster Core: Zombie` for a pack — plus **the cited chunk's own stat box** (traits, actions, reactions, legendary, `extras`), with the origin printed ON the box (`Numbers from Bestiary p.132`) |
+| `npc-ref` | `— see <name>`, linked to the row's own page when the document prints it |
+| `inline` | no reference at all (its own stat box prints immediately below), the same box the cited path uses |
+| `none` | `— no stats: this roster entry names the creature without a citation` |
+| any citation the library cannot supply | the named `missing ref (<creature>)` reason, and **NO box** |
+
+`rosterStatBlockFor(entry, resolved)` is the twin rule for *whose numbers print*.
+Both exporters render them and nothing else: `lib/modulePdf` (the roster resolution
+pre-pass fills `ModulePdfInput.rosterResolution`) and `lib/pdfExport`
+(`resolveExportRoster` — the same pre-pass for the single-artifact GM export). The
+two callers that used to format their own versions are gone: `modulePdf` printed the
+constant `' (see Bestiary)'`, which pointed at a bestiary chapter the module PDF has
+never had (it never reads a creature chunk), and the single-artifact export printed
+the name and the notes with no reference and no numbers at all.
+
+**Storage is UNCHANGED — and that is why printing is legitimate here.** A citation
+stays a citation: `{chunkId, contentHash?, creatureName?}` on the roster entry, the
+numbers read from the library chunk's own `statBlock` at EXPORT TIME. Nothing is
+materialized (`docs/11` D2/D3, `docs/12` §Storage): no schema change, no Dexie
+version, no migration, and no copy of library content in the campaign database — a
+module generated before this change keeps its stored citations and gains the numbers
+on its next export. A `rulebook`-cited row's numbers print for the PLAYER document
+too, exactly as an `inline` row's always have.
+
+**Still open:** the reader half (owner's answer *"Keep the jump, and list the
+encounter's mobs below its row in the reader's entity panel."*) is a separate slice
+over the module reader / entity panel and is NOT part of this one.
+
+
+
 ### D5 amendment, SECOND revision — the creature tier supersedes the mob artifact (docs/17 row 106)
 
 **READ THIS BEFORE THE BLOCK BELOW.** The first revision of this amendment
