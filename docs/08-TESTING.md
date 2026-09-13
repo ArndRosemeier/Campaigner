@@ -1143,6 +1143,110 @@ writer's page-hide half returns early unless `timerRef.current !== null`), not b
 injection — only the editor's flush was driven red.
 
 
+### A negative DOM assertion on TRANSIENT UI is a flake, not a pin (docs/17 row 124, docs/18 §4)
+
+**The sighting.** A full gate came back `exit 1` with **3345 of 3346 tests
+passing**: `FAIL |jsdom| tests/rules-page.test.tsx > rules screen > states why
+the import/embed controls are held: the page-wide import, the per-book embed,
+the delete icon and both menu items` — `Error: expect(element).not.toBeInTheDocument()`,
+`found <div class="z-50 …" data-slot="tooltip-content" data-instant="delay"
+data-open="" data-side="bottom">`. A second identical run was green
+(3346/3346), and NOTHING about the assertion was wrong: it is a race.
+
+**WHICH tooltip, and WHO opened it (measured, not guessed).** The element was
+the reason POPUP of **the very control under assertion** — `…-blocked-reason`
+for the same book id, `data-open` (open, not closing) — and
+`document.activeElement` was that control's own wrapper,
+`SPAN[retry-book-<id>-blocked]` / `SPAN[embed-book-<id>-blocked]`. So it was NOT
+a leftover from an earlier test (jsdom `cleanup()` unmounts between tests), NOT
+the test's own pointer (the helper's `hover` had not run yet), and NOT the app
+rendering a permanent node: **the APP opened it on its own, by putting FOCUS on
+the held control.** A Base UI menu places focus on the held item's wrapper as it
+opens (`useFocusableWhenDisabled` — the `aria-disabled` item is not natively
+focusable, the wrapper's `tabIndex=0` is the tab stop), and `BlockedControl`
+opens the reason on focus **by design** (docs/05 §Why a control cannot act), so
+one extra async turn is the whole difference between the old synchronous
+`not.toBeInTheDocument()` passing and failing. An event trace of the blocking
+window (`pointerover`/`focusin`/`pointerdown` in capture phase + a
+`MutationObserver` on `body`) showed the `focusin` landing on the wrapper ~2ms
+after the assertion ran in a green run, and before it in a red one.
+
+**Is the pin's MEANING right? Yes — this is a test-side race, not an app
+finding.** The reason is delivered through `BlockedControl` (the one documented
+device), never through a `title` on the disabled control that Chrome would not
+show; the wrapper is the trigger, focusable, `aria-describedby`-associated with
+the hidden sentence. Nothing in the app had to change — and the burst of "fix the
+app" was not taken, because the app's behaviour here is the documented intent.
+
+**Both edges of the popup are the framework's own transitions.** Base UI mounts
+the popup while the tooltip is open and removes it when the exit animation
+finishes: `internals/useAnimationsFinished` waits one `requestAnimationFrame`
+(`frame.request(exec)`) and a microtask, then `flushSync(forceUnmount)` — jsdom
+takes exactly that path, because `tests/setup.ts` stubs `Element.getAnimations`
+to `[]`. Measured consequence: a popup can also be present-but-CLOSED
+(`…-blocked-reason:closed` seen in the document at the NEXT control's assertion)
+while its exit frame is still pending.
+
+**REPRODUCED DETERMINISTICALLY by DELAYING THE CAUSE (the `89e5d71` method),
+never by loading the box** — one file, `CAMPAIGNER_TEST_WORKERS=2`, one run at a
+time:
+
+- pre-fix tree, as-is: **green 10 runs of 10** in isolation (a bare repetition
+  never finds this; the full-suite timing is what the dispatcher's gate caught);
+- pre-fix tree with **ONE macrotask injected at the exact site** (the helper's
+  step immediately before the absence assertion): **RED 3 runs of 3**, with the
+  popup of the control under assertion open and `activeElement` = its
+  `…-blocked` wrapper;
+- pre-fix tree with that delay expressed in-tree as `settleAppFocus()`
+  (`flushAsyncUpdates`, the suite's own drain seam) and the fix REVERTED:
+  **RED 2 runs of 2** — the same `not.toBeInTheDocument()` signature the
+  dispatcher saw, `data-open=""`, `data-slot="tooltip-content"`;
+- pre-fix tree with the fix AND that in-tree probe removed: **GREEN 3 runs of
+  3** — the measurement that makes the delayed cause the *only* honest proof
+  here.
+
+**The fix, ONE seam** (`tests/helpers/blocked-reason.ts → dismissOpenPopup`, so
+all nine files that pin a reason go through it): (1) `flushAsyncUpdates()` so
+what the app has already scheduled has landed; (2) hand back the two triggers
+the app can have used — `user.unhover(trigger)` and
+`document.activeElement.blur()`; (3) `await waitFor(() => expect(popup).not.toBeInTheDocument())`.
+Step 3 is an await of a REAL transition (not a sleep, not a retry), and it is
+also the half that keeps the pin honest: a popup that cannot leave fails LOUDLY
+on the timeout instead of the pin passing on a wrapper that opens nothing. The
+in-tree `settleAppFocus()` probe stays for the same reason — with the fix
+reverted it is what makes the failure deterministic instead of a coin flip.
+
+**REVERT-PROVEN lines** (each injection applied, printed with `grep -n`,
+`git diff --stat` checked, then restored **byte-identically** — `git hash-object`
+verified identical before and after every one):
+
+| injection | line it hits | result |
+|---|---|---|
+| `await dismissOpenPopup(...)` → the pre-fix synchronous `expect(...).not.toBeInTheDocument()` | `blocked-reason.ts:91` (inside `assertReason`, the executing path) | **RED 2/2**, the dispatcher's exact signature |
+| the drain `await flushAsyncUpdates()` removed from `dismissOpenPopup` | `blocked-reason.ts` step 1 | **GREEN** (10 files, 69+7 tests) — named below |
+| the `blur()` removed (drain kept) | `blocked-reason.ts` step 2 | **RED** — the app-opened popup can then never leave |
+| the awaited `waitFor(...)` → a synchronous assertion (drain + blur kept) | `blocked-reason.ts` step 3 | **RED** — the exit frame has not run yet |
+| an ALWAYS-RENDERED `data-testid="…-blocked-reason"` node injected into `src/components/blocked-control.tsx:93` | the app, not the test | **RED**, and it names the node — the guard still has teeth |
+
+**The GREEN one, named rather than dressed as coverage:** removing the helper's
+internal drain leaves every current pin green (`tests/rules-page.test.tsx` 7/7,
+plus 9 helper-consumer files, 69/69), because the two call sites where the app's
+focus is actually pending pre-drain in-tree (`settleAppFocus`). The line is kept
+as step 1 of the seam because it is what makes steps 2–3 deterministic at ANY
+call site — without it the dismissal is a race with the app's pending focus, and
+every caller would have to remember to drain first (AGENTS rule 4).
+
+**UNPROVEN.** (1) No real-browser measurement: jsdom has no layout and no
+hit-testing, so that the popup paints over the control is still pinned as a DOM
+contract only (ledger row 98's honest limit, unchanged). (2) The exact scheduler
+that places the menu's focus (a `setTimeout(0)` task, measured only as "one
+macrotask is enough" — the injected `setTimeout(…, 1)` flipped the tree 3/3) was
+not traced into Base UI's internals. (3) Which of the four menu items Base UI
+chooses to focus was not determined — only that the held item's wrapper is what
+receives it, in both menus where a held item exists. (4) The internal drain has
+no failing pin of its own (the green injection above).
+
+
 ### Remaining gaps
 
 1. **Monster source UI** (`monster-source.tsx`) — the source selector, NPC

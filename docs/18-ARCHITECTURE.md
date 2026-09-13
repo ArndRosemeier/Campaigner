@@ -1546,6 +1546,41 @@ cross-campaign hammers' privilege, never the per-region rung (ledger 66).
   counted `FOLDED` set (docs/08 §The two deferred folds and the busy message's
   own sentence).
 
+- **A negative DOM assertion built on TRANSIENT UI state is a flaky pin, and
+  the cure is to AWAIT the transition — never to sleep, never to loosen it**
+  (ledger 124). `tests/rules-page.test.tsx` failed about one full gate in two
+  with `expect(element).not.toBeInTheDocument()` on a live
+  `div[data-slot="tooltip-content"][data-open=""]` — measured to be the reason
+  POPUP of the very control under assertion, mounted with no hover from the
+  test; `document.activeElement` was that control's own `…-blocked` wrapper.
+  Both edges of a Base UI tooltip popup are the framework's own asynchronous
+  transitions: it is mounted while the tooltip is open and removed after the
+  exit animation's frame (`internals/useAnimationsFinished`: one
+  `requestAnimationFrame` + a microtask, then a `flushSync` unmount — jsdom
+  takes exactly that path, `Element.getAnimations` is stubbed empty in
+  `tests/setup.ts`). So a synchronous absence assertion is a race against
+  whatever the APP does on its own schedule, and this app opens the reason
+  ITSELF wherever it puts FOCUS on a held control: a Base UI menu's own focus
+  placement lands on the held item's wrapper (`useFocusableWhenDisabled` — the
+  disabled item is not natively focusable, the wrapper's `tabIndex=0` is the tab
+  stop, §2.3) and `BlockedControl` opens the reason on focus BY DESIGN. That is
+  a correct pin on a racy instant, not a broken assertion — and it is not an app
+  defect either: the reason really is delivered through `BlockedControl`, never
+  through a `title` Chrome would not show.
+  The cure is ONE seam behind every reason pin
+  (`tests/helpers/blocked-reason.dismissOpenPopup`): (1) drain what the app has
+  already scheduled (`flushAsyncUpdates`, the suite's own drain), (2) hand back
+  the two triggers it can have used (pointer away, focus away), then (3) AWAIT
+  the removal. Step 3 is also the non-vacuity half, and it is why the assertion
+  was not relaxed instead: a popup that is always rendered cannot be dismissed,
+  so it fails LOUDLY on the timeout rather than passing on a wrapper that opens
+  nothing. Two shapes are rejected by this rule: a `setTimeout` sleep (it
+  guesses a duration the transition owns) and dropping the assertion (it stops
+  pinning anything). The falsifier ships WITH the fix — a test-side drain at the
+  exact site (the delayed cause) that turns the pre-fix tree RED 3 runs of 3,
+  while the pre-fix tree WITHOUT it stays green on repetition alone, which is
+  why repetition was never evidence.
+
 ## 5. Known debt (live divergences at HEAD — do not "discover" them)
 - **Every upward import that exists at HEAD** (§1 says dependencies point
   downward; these are the exceptions, all deliberate — do not "discover" them

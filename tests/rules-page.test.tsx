@@ -55,6 +55,26 @@ function importPackFiles(files: File[]): void {
   fireEvent.change(input);
 }
 
+/**
+ * The DELAYED CAUSE of the transient-reason-popup race, kept in-tree so this
+ * pin stays falsifiable (docs/08-TESTING §"a negative DOM assertion on transient
+ * UI", ledger 124).
+ *
+ * A Base UI menu places FOCUS on the held item's wrapper as it opens and
+ * `BlockedControl` opens the reason on focus BY DESIGN (docs/05 §Why a control
+ * cannot act), so the reason POPUP can already be mounted when a reason pin
+ * looks — with no hover from the test. Draining the app's own scheduled work
+ * here is what an extra async turn (or a slower machine) does on its own:
+ * MEASURED on the pre-fix tree, one injected async turn at exactly this site
+ * made the pin fail 3 runs of 3, on the wrapper's own popup. This is the suite's
+ * drain seam, not a sleep and not a retry; `dismissOpenPopup` in
+ * `tests/helpers/blocked-reason` is what makes the pin hold with the app's focus
+ * already landed.
+ */
+async function settleAppFocus(): Promise<void> {
+  await flushAsyncUpdates();
+}
+
 vi.mock('@/ingest/ingestFiles', async (importOriginal) => {
   // A passthrough mock: the four import tests in this file drive the REAL
   // ingest; the reason pins hold one call with `mockImplementationOnce`.
@@ -309,6 +329,7 @@ describe('rules screen', () => {
     // The failed book's "Retry…" starts ANOTHER import — same flag, same reason.
     await user.click(screen.getByRole('button', { name: 'Menu for torn-scan' }));
     await screen.findByTestId(`retry-book-${broken.id}`, {}, { timeout: 10000 });
+    await settleAppFocus();
     await expectBlockedReasonMenuItem(user, `retry-book-${broken.id}`, IMPORT_REASON);
     await user.keyboard('{Escape}');
 
@@ -335,6 +356,7 @@ describe('rules screen', () => {
     });
     await user.click(screen.getByRole('button', { name: 'Menu for emberfall-core' }));
     await screen.findByTestId(`embed-book-${ready.id}`, {}, { timeout: 10000 });
+    await settleAppFocus();
     await expectBlockedReasonMenuItem(
       user,
       `embed-book-${ready.id}`,
