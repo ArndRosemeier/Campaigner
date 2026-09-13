@@ -34,6 +34,20 @@ import { extractWikiLinks, resolveWikiLink } from '@/lib/wikilinks';
 import { mdToPdfmakeContent } from '@/lib/mdToPdfmake';
 import { blockText, textBlocks } from '@/lib/textBlocks';
 import {
+  COLUMN_GUTTER,
+  DETAIL_FONT_SIZE,
+  MAIN_COLUMN_WIDTH,
+  PAGE_CONTENT_WIDTH,
+  PAGE_MARGIN,
+  SIDEBAR_COLUMN_WIDTH,
+  estimateHeight,
+  paginateDocument,
+  detailPlacement,
+  type DocumentPage,
+  type MeasureStyle,
+  type PageBlock,
+} from '@/lib/pdfPageModel';
+import {
   NO_PDF_IMAGES,
   PDF_COVER_MAX_LONG_EDGE,
   PDF_MAP_MAX_LONG_EDGE,
@@ -80,9 +94,10 @@ import {
 const ACCENT = '#9a7b4f';
 const ALERT = '#b91c1c';
 
-/** A4 minus pdfmake's default 40pt side margins — the plate's usable width. */
-const PAGE_CONTENT_WIDTH = 515;
-/** A map plate never exceeds this printed height (it then scales by width). */
+/** A map plate never exceeds this printed height (it then scales by width).
+ * The WIDTH it prints at is the page's own content width (`pdfPageModel`
+ * owns every geometry value, so the margins the page model sets and the box
+ * a plate is allowed to fill cannot drift apart). */
 const MAP_PLATE_MAX_HEIGHT = 660;
 
 /** GM-only tag: artifacts tagged so are skipped for audience 'player'. */
@@ -648,6 +663,40 @@ function planFallbackStatement(reason: string): string {
 }
 
 /**
+ * The statement a document carries when the plan placed artifacts the module's
+ * own text never refers to (docs/17 row 148, the owner's decision).
+ *
+ * WHY THEY ARE NOT PRINTED. Since docs/19 the artifact's mechanics are a
+ * COMPANION: they sit in the sidebar of the page whose text refers to them, or
+ * on their own page right after it. An artifact nothing refers to has no such
+ * page — there is no "where it is referred to" to place it at — and the owner's
+ * answer to docs/19 §10's third OPEN question is that it is DROPPED rather than
+ * scattered to the back (which is the one thing §4 forbids).
+ *
+ * WHY THIS SENTENCE EXISTS. §9's rule binds whatever the answer is: *"any
+ * promotion, continuation or omission is visible in the document and
+ * diagnosable afterwards"*. So an omission is never a silent disappearance —
+ * the reader is told which rows were planned and why they are not here, and the
+ * export's own problem list carries the same fact with the same site name.
+ */
+function omittedArtifactsStatement(omitted: readonly AnyArtifact[]): string {
+  const names = omitted.map((artifact) => `“${artifact.name}”`).join(', ');
+  const verb = omitted.length === 1 ? 'is' : 'are';
+  return (
+    `Not placed: ${names} ${verb} named by the module’s document plan, but nothing in the ` +
+    'module’s own text refers to ' +
+    (omitted.length === 1 ? 'it' : 'them') +
+    ' — so there is no page for ' +
+    (omitted.length === 1 ? 'it' : 'them') +
+    ' to sit beside. Reference ' +
+    (omitted.length === 1 ? 'it' : 'them') +
+    ' in the module’s prose (or remove ' +
+    (omitted.length === 1 ? 'it' : 'them') +
+    ' from the plan) and export again.'
+  );
+}
+
+/**
  * The statement a document carries when the export's AUTOMATIC planning failed
  * (docs/17 row 139). Two sentences, because the two outcomes are different
  * documents and a reader must be able to tell them apart: with a stored plan
@@ -713,6 +762,14 @@ interface RenderState {
   destinations: ReadonlyMap<Id, string>;
   byId: ReadonlyMap<Id, AnyArtifact>;
   problems: ModulePdfProblem[];
+  /**
+   * The document's `styles` dictionary, for the ONE height estimator the page
+   * model runs (`lib/pdfPageModel.estimateHeight`). It is here because the
+   * styles are declared by THIS builder and the estimator must read the same
+   * type sizes the renderer prints — a second copy of the tiers would let the
+   * arithmetic measure a document nobody prints.
+   */
+  measureStyles: Readonly<Record<string, MeasureStyle>>;
 }
 
 /**
@@ -979,8 +1036,22 @@ function artifactLinksContent(artifact: AnyArtifact, state: RenderState): Conten
   return [{ text: refs, margin: [0, 4, 0, 0] }];
 }
 
-/** One artifact's body: cover image, prose, per-kind data, cross-references. */
-function artifactBody(
+/**
+ * One artifact's PROSE — "the text" (docs/19 §3): the row's own body, through
+ * the ONE markdown seam. Always main-column content, never a companion.
+ */
+function artifactProse(artifact: AnyArtifact): Content[] {
+  return artifact.body.trim() === '' ? [] : mdToPdfmakeContent(artifact.body);
+}
+
+/**
+ * One artifact's DETAIL — the mechanics a reader keeps beside the text
+ * (docs/19 §3, §4): its cover art, its map plate, every per-kind labeled
+ * section, and its cross-references. This is the list the page model routes to
+ * a sidebar or to the artifact's own page; it is built by the SAME builders
+ * that always built it, so the layout moves content and never rewrites it.
+ */
+function artifactDetail(
   artifact: AnyArtifact,
   state: RenderState,
   options: { covers: boolean },
@@ -988,9 +1059,6 @@ function artifactBody(
   const out: Content[] = [];
   if (options.covers) out.push(...artifactCoverContent(artifact, state));
   out.push(...encounterMapPlate(artifact, state));
-  if (artifact.body.trim() !== '') {
-    out.push(...mdToPdfmakeContent(artifact.body));
-  }
   out.push(...dataSections(artifact, state));
   out.push(...artifactLinksContent(artifact, state));
   return out;
@@ -1147,31 +1215,44 @@ function asideRoleContent(blocks: Content[]): Content[] {
 }
 
 /**
- * The body of a planned section, by ROLE — the ONE place a role becomes a
- * treatment. `explanation` and `gm-note` also carry the source's own structured
- * data (a roster, a stat box, kind fields): that data IS the mechanical content
- * a reader of that section needs, and it stays filtered by the DOCUMENT's
- * audience, so the plan can never print GM mechanics into the player book.
+ * The PROSE of a planned section, by ROLE — the ONE place a role becomes a
+ * treatment. Since docs/19 row 148 the split is explicit: a role dresses the
+ * section's TEXT, and the section's mechanical data (`roleDetail` below) is the
+ * companion the page model places. The two are different columns of the page,
+ * never two renderings of one thing.
+ *
  * `read-aloud` and `aside` carry prose only — a stat block inside narration or
- * a parenthetical would be a lie about what the section is.
+ * a parenthetical would be a lie about what the section is — which is why
+ * `roleDetail` answers "no companion" for exactly those two roles.
  */
-function roleBody(
-  role: DocumentPlanRole,
-  blocks: Content[],
-  artifact: AnyArtifact | null,
-  state: RenderState,
-): Content[] {
-  const data = artifact === null ? [] : dataSections(artifact, state);
+function roleProse(role: DocumentPlanRole, blocks: Content[]): Content[] {
   switch (role) {
     case 'read-aloud':
       return readAloudRoleContent(blocks);
     case 'aside':
       return asideRoleContent(blocks);
     case 'gm-note':
-      return [...gmNoteRoleContent(blocks), ...data];
+      return gmNoteRoleContent(blocks);
     case 'explanation':
-      return [...blocks, ...data];
+      return blocks;
   }
+}
+
+/**
+ * The COMPANION of a planned section: the source's own structured data (a
+ * roster, a stat box, kind fields) and its outgoing cross-references. It stays
+ * filtered by the DOCUMENT's audience, so the plan can never print GM mechanics
+ * into the player book — and it is the SAME `dataSections` the procedural
+ * document prints, so one artifact's mechanics read identically in both.
+ */
+function roleDetail(
+  role: DocumentPlanRole,
+  artifact: AnyArtifact | null,
+  state: RenderState,
+): Content[] {
+  if (artifact === null) return [];
+  if (role === 'read-aloud' || role === 'aside') return [];
+  return [...dataSections(artifact, state), ...artifactLinksContent(artifact, state)];
 }
 
 /** The kicker above a planned section: what the section IS, never its role. */
@@ -1239,42 +1320,43 @@ function plannedSectionAudible(
 }
 
 /**
- * One planned section, as the document prints it: heading (title from the
- * PLAN, page break and ToC entry from the RENDERER), the source-naming kicker,
- * the images the plan anchored, then the body its role prescribes.
+ * One planned section as a PAGE-MODEL BLOCK (docs/19 §3–§5): the heading, the
+ * source-naming kicker, the images the plan anchored and the role-treated prose
+ * are MAIN content ("the text"), and the source's own structured data is the
+ * DETAIL companion the page model routes to a sidebar or to an own page.
+ *
+ * `pageBreak` is GONE from the heading. docs/19 §3: *"Sections flow. No page
+ * break per section"* — a break is now the PAGE MODEL's decision (an own-page
+ * artifact, a chapter start), emitted on the page node itself, because a break
+ * inside a page's column stack would tear the two columns apart.
  */
-function plannedSectionContent(
+function plannedSectionBlock(
   section: PlannedSection,
   state: RenderState,
   parts: ReadonlyMap<number, RenderedPart>,
   total: number,
   module: Module,
-): Content[] {
-  const out: Content[] = [];
+): PageBlock {
+  const main: Content[] = [];
   const aside = section.role === 'aside';
-  out.push({
+  main.push({
     text: section.title,
     style: aside ? 'h2' : 'chapter',
     id: section.destination,
-    ...(aside ? {} : { tocItem: 'chapters' as const, pageBreak: 'before' as const }),
+    ...(aside ? {} : { tocItem: 'chapters' as const }),
   });
   const source = section.source;
   if (source.type === 'part') {
     if (source.planIndex === -1) {
-      out.push(kicker(module.title));
+      main.push(kicker(module.title));
     } else {
       const part = parts.get(source.planIndex);
       const levelText =
         part !== undefined && part.levelBand !== '' ? ` · levels ${part.levelBand}` : '';
-      out.push(
-        kicker(`Part ${String(source.planIndex + 1)} of ${String(total)}${levelText}`),
-      );
+      main.push(kicker(`Part ${String(source.planIndex + 1)} of ${String(total)}${levelText}`));
     }
   } else {
-    out.push(kicker(PLAN_KIND_LABELS[section.artifact?.kind ?? 'note']));
-  }
-  for (const image of section.images) {
-    out.push(...anchoredImageContent(image, state));
+    main.push(kicker(PLAN_KIND_LABELS[section.artifact?.kind ?? 'note']));
   }
 
   let blocks: Content[];
@@ -1301,14 +1383,153 @@ function plannedSectionContent(
         alertBox(`“${section.title}” — the row it names is not in this document's pool`),
       ];
     } else {
-      blocks = artifact.body.trim() === '' ? [] : mdToPdfmakeContent(artifact.body);
+      blocks = artifactProse(artifact);
     }
   }
-  out.push(...roleBody(section.role, blocks, section.artifact, state));
-  if (section.artifact !== null && section.role !== 'read-aloud' && section.role !== 'aside') {
-    out.push(...artifactLinksContent(section.artifact, state));
+
+  // A plan-anchored image is a full-width item (a plate especially), so it
+  // rides the MAIN column of the section's own page — see `blockPlacement`.
+  for (const image of section.images) {
+    main.push(...anchoredImageContent(image, state));
   }
-  return out;
+  main.push(...roleProse(section.role, blocks));
+  const detail = roleDetail(section.role, section.artifact, state);
+  return {
+    main,
+    detail,
+    placement: blockPlacement({
+      kind: section.artifact?.kind ?? null,
+      hasImage: section.images.length > 0,
+      detail,
+      styles: state.measureStyles,
+    }),
+    name: section.artifact?.name ?? null,
+  };
+}
+
+/**
+ * THE one place a block's placement is asked for: the block's companion height
+ * is measured once, in the column it would actually print in, and handed to the
+ * page model's `detailPlacement` — which owns the tiers and the ladder
+ * (docs/19 §4/§5). A block with no companion is `beside` with nothing to place,
+ * which is what keeps a text-only block flowing in the main column.
+ */
+function blockPlacement(input: {
+  kind: ArtifactKind | null;
+  hasImage: boolean;
+  detail: readonly Content[];
+  styles: Readonly<Record<string, MeasureStyle>>;
+}): PageBlock['placement'] {
+  if (input.detail.length === 0) return { kind: 'beside' };
+  const height = input.detail.reduce<number>(
+    (sum, node) =>
+      sum +
+      estimateHeight(node, {
+        width: SIDEBAR_COLUMN_WIDTH,
+        fontSize: DETAIL_FONT_SIZE,
+        lineHeight: 1.35,
+        styles: input.styles,
+      }),
+    0,
+  );
+  return detailPlacement({ kind: input.kind, hasImage: input.hasImage, height });
+}
+
+/**
+ * The pages, as pdfmake nodes: ONE `columns` node per page (docs/19 §3 — the
+ * document is built page-level, so a screen viewer's single page carries both
+ * bars), or a plain full-width stack for a page that has no companion at all
+ * ("the sidebar exists on every page that has companions", §3 — where there are
+ * none, the text gets the whole page).
+ *
+ * The sidebar COLUMN node carries the detail tier (§3: 9.5 pt), which every
+ * stat box, labeled section and table inside it inherits through pdfmake's own
+ * style stack — the smaller type for detail is the lever that absorbs the fit
+ * problem, and it is applied here, once, rather than at every builder.
+ *
+ * Every page starts with a break: the body always follows the Contents page,
+ * and a break is the PAGE MODEL's to decide (§3), never a node's.
+ */
+function pageNodes(pages: readonly DocumentPage[]): Content[] {
+  return pages.map((page): Content => {
+    if (page.sidebar.length === 0) {
+      return { stack: page.main, pageBreak: 'before' };
+    }
+    return {
+      columns: [
+        { width: MAIN_COLUMN_WIDTH, stack: page.main },
+        {
+          width: SIDEBAR_COLUMN_WIDTH,
+          stack: page.sidebar,
+          style: 'detail',
+          fontSize: DETAIL_FONT_SIZE,
+        },
+      ],
+      columnGap: COLUMN_GUTTER,
+      pageBreak: 'before',
+    };
+  });
+}
+
+/** A chapter heading: a title node the ToC lists, with NO page break of its
+ * own — the page model decides where the page ends (`pageNodes`). */
+function chapterHeading(title: string, id: string): Content {
+  return { text: title, style: 'chapter', tocItem: 'chapters', id };
+}
+
+/**
+ * A chapter opening as a flow block: the heading and its kicker, and nothing
+ * else. It is `breakBefore` so a chapter always starts a page (docs/19 §3:
+ * breaks happen "where content or the plan demands one … a chapter start"),
+ * and it carries no companion of its own.
+ */
+function chapterBlock(title: string, id: string, kickerText: string | null): PageBlock {
+  return {
+    main: [
+      chapterHeading(title, id),
+      ...(kickerText === null ? [] : [kicker(kickerText)]),
+    ],
+    detail: [],
+    placement: { kind: 'beside' },
+    name: null,
+    breakBefore: true,
+  };
+}
+
+/**
+ * One artifact as a flow block, for the PROCEDURAL outline and the NPC
+ * gallery: the chapter's kicker and the artifact's name are the block's main
+ * content together with its prose, and `artifactDetail` is the companion the
+ * page model places by §4/§5.
+ */
+function artifactBlock(
+  artifact: AnyArtifact,
+  state: RenderState,
+  options: { chapterKicker: string | null; covers: boolean; destination: string | null },
+): PageBlock {
+  const main: Content[] = [];
+  if (options.chapterKicker !== null) main.push(kicker(options.chapterKicker));
+  main.push({
+    text: artifact.name,
+    style: 'artifact',
+    tocItem: 'chapters',
+    ...(options.destination === null ? {} : { id: options.destination }),
+  });
+  main.push(...artifactProse(artifact));
+  const detail = artifactDetail(artifact, state, { covers: options.covers });
+  return {
+    main,
+    detail,
+    placement: blockPlacement({
+      kind: artifact.kind,
+      hasImage:
+        artifact.coverImageId !== null ||
+        encounterMapImageId(artifact, state.input.battles ?? []) !== null,
+      detail,
+      styles: state.measureStyles,
+    }),
+    name: artifact.name,
+  };
 }
 
 /**
@@ -1340,21 +1561,55 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     planOutcome.status === 'applied'
       ? planOutcome.sections.filter((section) => plannedSectionAudible(section, audience))
       : null;
+  // THE OWNER'S DECISION, at the one place it can be applied (docs/19 §10's
+  // third open question, answered by the owner while this landing was in
+  // flight): an artifact the module's own prose refers to NOWHERE is not
+  // printed. "Referred to" is the reader's own rule, `moduleMentionOrder`, and
+  // "the plan placed it" is the only way it could have reached the document —
+  // so the omission is a PLANNING fact with a planning record behind it, and it
+  // is stated in the document and reported on the export's problem list rather
+  // than silently dropped (§9).
+  //
+  // It does NOT apply to the procedural outline, which has no plan and no plan
+  // record to attribute an omission to: there the renderer's own outline
+  // deliberately prints every scoped row, including an owned orphan, exactly as
+  // it always has.
+  const mentionOrder = moduleMentionOrder(module, scoped);
+  const omitted: AnyArtifact[] =
+    plannedSections === null
+      ? []
+      : plannedSections
+          .flatMap((section) => (section.artifact === null ? [] : [section.artifact]))
+          .filter((artifact) => !mentionOrder.has(artifact.id));
+  const omittedIds = new Set<Id>(omitted.map((artifact) => artifact.id));
+  /** The planned sections that actually print: the plan's own sections minus
+   * the rows its own text never refers to. */
+  const printableSections =
+    plannedSections === null
+      ? null
+      : plannedSections.filter(
+          (section) => section.artifact === null || !omittedIds.has(section.artifact.id),
+        );
   // The parts are read through the ONE seam only when something prints them.
   const total = module.spine?.partPlan.length ?? 0;
   const needsParts =
-    plannedSections === null || plannedSections.some((section) => section.source.type === 'part');
+    printableSections === null || printableSections.some((section) => section.source.type === 'part');
   const parts = needsParts ? renderedParts(module, problems) : [];
   const partsByIndex = new Map(parts.map((part) => [part.planIndex, part]));
   // What the BODY printed: the gallery completes it (an NPC the plan already
   // printed as a section is not printed a second time) and the treasure ledger
-  // aggregates its encounters.
+  // aggregates its encounters. An OMITTED row is neither: the gallery must not
+  // smuggle back in the row the plan's own omission statement says is not here.
   const printedArtifacts: AnyArtifact[] =
-    plannedSections === null
+    printableSections === null
       ? chapters.flatMap((chapter) => chapter.artifacts)
-      : plannedSections.flatMap((section) => (section.artifact === null ? [] : [section.artifact]));
+      : printableSections.flatMap((section) =>
+          section.artifact === null ? [] : [section.artifact],
+        );
   const printedIds = new Set<Id>(printedArtifacts.map((artifact) => artifact.id));
-  const gallery = npcGallery(scoped, audience).filter((npc) => !printedIds.has(npc.id));
+  const gallery = npcGallery(scoped, audience).filter(
+    (npc) => !printedIds.has(npc.id) && !omittedIds.has(npc.id),
+  );
   // The ledger aggregates the encounters' `treasure` field, which the player
   // document strips from every encounter — so it is a GM-only appendix. The
   // shipped renderer printed it to players, contradicting §M3-D's own rule.
@@ -1367,10 +1622,10 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   // throws otherwise). A planned section is addressed by its SECTION id: a plan
   // may name one row twice, and two nodes cannot share a destination.
   const destinations = new Map<Id, string>();
-  if (plannedSections === null) {
+  if (printableSections === null) {
     for (const artifact of printedArtifacts) destinations.set(artifact.id, `node-${artifact.id}`);
   } else {
-    for (const section of plannedSections) {
+    for (const section of printableSections) {
       if (section.artifact === null) continue;
       if (!destinations.has(section.artifact.id)) {
         destinations.set(section.artifact.id, section.destination);
@@ -1380,7 +1635,37 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   for (const npc of gallery) {
     if (!destinations.has(npc.id)) destinations.set(npc.id, `node-${npc.id}`);
   }
-  const state: RenderState = { input, audience, destinations, byId, problems };
+  // The document's ONE type repertoire (docs/19 §3): body 11 pt (the
+  // defaultStyle), the detail tier 9.5 pt for the sidebar, the kicker at 8 pt,
+  // the role treatments. Declared BEFORE the flow is built, because the page
+  // model's height estimator reads the same dictionary the renderer prints from
+  // — a second copy of the tiers would measure a document nobody prints.
+  const measureStyles: Record<string, Style> = {
+    coverTitle: { fontSize: 32, bold: true, alignment: 'center' },
+    coverSubtitle: { fontSize: 16, italics: true, alignment: 'center', color: '#555555' },
+    chapter: { fontSize: 26, bold: true, margin: [0, 0, 0, 10] },
+    part: { fontSize: 18, bold: true, margin: [0, 14, 0, 6] },
+    artifact: { fontSize: 14, bold: true, margin: [0, 10, 0, 4] },
+    h1: { fontSize: 16, bold: true, margin: [0, 8, 0, 4] },
+    h2: { fontSize: 14, bold: true, margin: [0, 8, 0, 4] },
+    h3: { fontSize: 12, bold: true, margin: [0, 6, 0, 3] },
+    kicker: { fontSize: 8, color: ACCENT, characterSpacing: 1 },
+    label: { fontSize: 10 },
+    muted: { fontSize: 10, color: '#555555' },
+    code: { font: 'Roboto', fontSize: 9, background: '#f3f3f3' },
+    readAloud: { fontSize: 11, italics: true, fillColor: '#f6efe2' },
+    // The detail tier of docs/19 §3: the sidebar's own type size, applied to
+    // the sidebar COLUMN so every stat box, labeled section and table inside it
+    // inherits 9.5 pt through pdfmake's style stack.
+    detail: { fontSize: DETAIL_FONT_SIZE },
+    // The two remaining role treatments (docs/17 row 109): a GM note reads as
+    // one step smaller than the body, and an aside is the smallest, muted,
+    // indented voice in the document.
+    gmNote: { fontSize: 10, color: '#3f3f46' },
+    aside: { fontSize: 9.5, italics: true, color: '#555555' },
+  };
+
+  const state: RenderState = { input, audience, destinations, byId, problems, measureStyles };
 
   const content: Content[] = [];
 
@@ -1445,48 +1730,71 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     });
   }
 
-  if (plannedSections === null) {
+  // ---- The plan's omissions, in the document -------------------------------
+  // An artifact the plan placed and the module's text never refers to has no
+  // page to sit beside: it is not printed, and BOTH this statement and the
+  // export's problem list say so by name (docs/19 §9 — never a silent
+  // disappearance).
+  if (omitted.length > 0) {
+    content.push(alertBox(omittedArtifactsStatement(omitted), { pageBreak: true }));
+    for (const artifact of omitted) {
+      problems.push({
+        where: `the document plan’s placement of “${artifact.name}”`,
+        reason:
+          'nothing in the module’s own text refers to this row, so it has no page to sit ' +
+          'beside; the row is not printed (docs/19 §10)',
+      });
+    }
+  }
+
+  // ---- The body, as a FLOW the page model lays out ------------------------
+  // Every block below is "the text" (its `main`) plus, for an artifact, the
+  // companion its mechanics make (its `detail`). Nothing here decides a
+  // column, a page break or a type size: that is `lib/pdfPageModel`'s single
+  // job — docs/19 §2's split, where the plan says what belongs with what and
+  // the renderer says where it fits.
+  const blocks: PageBlock[] = [];
+
+  if (printableSections === null) {
     // ---- Premise ---------------------------------------------------------
-    content.push({
-      text: 'Premise',
-      style: 'chapter',
-      tocItem: 'chapters',
-      id: 'node-premise',
-      pageBreak: 'before',
+    blocks.push(chapterBlock('Premise', 'node-premise', module.title));
+    blocks.push({
+      main: premiseContent(module, problems),
+      detail: [],
+      placement: { kind: 'beside' },
+      name: null,
     });
-    content.push(kicker(module.title));
-    content.push(...premiseContent(module, problems));
 
     // ---- Part plan (GM only: the planning apparatus, not the story) ------
     const partPlan = module.spine?.partPlan ?? [];
     if (audience === 'gm' && partPlan.length > 0) {
-      content.push({
-        text: 'Part plan',
-        style: 'chapter',
-        tocItem: 'chapters',
-        id: 'node-plan',
-        pageBreak: 'before',
-      });
-      content.push(kicker(`${String(partPlan.length)} planned parts`));
-      content.push({
-        table: {
-          widths: ['auto', 'auto', '*', '*'],
-          body: [
-            [
-              { text: 'Part', bold: true },
-              { text: 'Level', bold: true },
-              { text: 'Synopsis', bold: true },
-              { text: 'Ends when', bold: true },
-            ],
-            ...partPlan.map((entry) => [
-              entry.title,
-              entry.levelBand,
-              entry.synopsis,
-              entry.levelUpTrigger,
-            ]),
-          ],
-        },
-        layout: 'lightHorizontalLines',
+      blocks.push(chapterBlock('Part plan', 'node-plan', `${String(partPlan.length)} planned parts`));
+      blocks.push({
+        main: [
+          {
+            table: {
+              widths: ['auto', 'auto', '*', '*'],
+              body: [
+                [
+                  { text: 'Part', bold: true },
+                  { text: 'Level', bold: true },
+                  { text: 'Synopsis', bold: true },
+                  { text: 'Ends when', bold: true },
+                ],
+                ...partPlan.map((entry) => [
+                  entry.title,
+                  entry.levelBand,
+                  entry.synopsis,
+                  entry.levelUpTrigger,
+                ]),
+              ],
+            },
+            layout: 'lightHorizontalLines',
+          },
+        ],
+        detail: [],
+        placement: { kind: 'beside' },
+        name: null,
       });
     }
 
@@ -1494,67 +1802,66 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
     for (const part of parts) {
       const position = part.planIndex + 1;
       const levelText = part.levelBand === '' ? '' : ` · levels ${part.levelBand}`;
-      content.push({
-        text: part.title,
-        style: 'chapter',
-        tocItem: 'chapters',
-        id: `node-part-${String(part.planIndex)}`,
-        pageBreak: 'before',
+      blocks.push(
+        chapterBlock(
+          part.title,
+          `node-part-${String(part.planIndex)}`,
+          `Part ${String(position)} of ${String(total)}${levelText}`,
+        ),
+      );
+      blocks.push({
+        main: partTextContent(part, total, problems),
+        detail: [],
+        placement: { kind: 'beside' },
+        name: null,
       });
-      content.push(kicker(`Part ${String(position)} of ${String(total)}${levelText}`));
-      content.push(...partTextContent(part, total, problems));
     }
 
     // ---- Per-kind reference chapters --------------------------------------
     for (const chapter of chapters) {
-      content.push({
-        text: chapter.title,
-        style: 'chapter',
-        tocItem: 'chapters',
-        id: `node-${chapter.id}`,
-        pageBreak: 'before',
-      });
+      // The kind chapter's OWN heading never carried a kicker (each artifact
+      // below names the chapter instead), so it still does not: this layout
+      // moves content, it does not invent a second title.
+      blocks.push(chapterBlock(chapter.title, `node-${chapter.id}`, null));
       for (const artifact of chapter.artifacts) {
-        content.push(kicker(chapter.title));
-        content.push({
-          text: artifact.name,
-          style: 'artifact',
-          tocItem: 'chapters',
-          id: `node-${artifact.id}`,
-        });
-        content.push(...artifactBody(artifact, state, { covers: true }));
+        blocks.push(
+          artifactBlock(artifact, state, {
+            chapterKicker: chapter.title,
+            covers: true,
+            destination: `node-${artifact.id}`,
+          }),
+        );
       }
     }
   } else {
     // ---- The planned document: the plan's sections, in the plan's order ----
-    for (const section of plannedSections) {
-      content.push(...plannedSectionContent(section, state, partsByIndex, total, module));
+    for (const section of printableSections) {
+      blocks.push(plannedSectionBlock(section, state, partsByIndex, total, module));
     }
   }
 
   // ---- Back matter: the NPC gallery --------------------------------------
   if (gallery.length > 0) {
-    content.push({
-      text: 'NPC Gallery',
-      style: 'chapter',
-      tocItem: 'chapters',
-      id: 'node-npcs',
-      pageBreak: 'before',
-    });
+    blocks.push(chapterBlock('NPC Gallery', 'node-npcs', null));
     for (const npc of gallery) {
-      content.push(kicker('NPC Gallery'));
-      content.push({
-        text: npc.name,
-        style: 'artifact',
-        tocItem: 'chapters',
-        id: `node-${npc.id}`,
-      });
       // The gallery is a reference list: no cover thumbnails (unchanged).
-      content.push(...artifactBody(npc, state, { covers: false }));
+      blocks.push(
+        artifactBlock(npc, state, {
+          chapterKicker: 'NPC Gallery',
+          covers: false,
+          destination: `node-${npc.id}`,
+        }),
+      );
     }
   }
 
+  // The page model turns the flow into pages: main column + sidebar (docs/19
+  // §3), own pages for the oversized things (§4), the overflow ladder (§5).
+  content.push(...pageNodes(paginateDocument(blocks, { styles: measureStyles })));
+
   // ---- Back matter: the treasure ledger (GM only) ------------------------
+  // A ledger is a table, not a companion: it keeps a page of its own, at full
+  // width, exactly as it always did.
   if (ledger.length > 0) {
     content.push({
       text: 'Treasure',
@@ -1575,28 +1882,6 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
       layout: 'lightHorizontalLines',
     });
   }
-
-  const styles: Record<string, Style> = {
-    coverTitle: { fontSize: 32, bold: true, alignment: 'center' },
-    coverSubtitle: { fontSize: 16, italics: true, alignment: 'center', color: '#555555' },
-    chapter: { fontSize: 26, bold: true, margin: [0, 0, 0, 10] },
-    part: { fontSize: 18, bold: true, margin: [0, 14, 0, 6] },
-    artifact: { fontSize: 14, bold: true, margin: [0, 10, 0, 4] },
-    h1: { fontSize: 16, bold: true, margin: [0, 8, 0, 4] },
-    h2: { fontSize: 14, bold: true, margin: [0, 8, 0, 4] },
-    h3: { fontSize: 12, bold: true, margin: [0, 6, 0, 3] },
-    kicker: { fontSize: 8, color: ACCENT, characterSpacing: 1 },
-    label: { fontSize: 10 },
-    muted: { fontSize: 10, color: '#555555' },
-    code: { font: 'Roboto', fontSize: 9, background: '#f3f3f3' },
-    readAloud: { fontSize: 11, italics: true, fillColor: '#f6efe2' },
-    // The two remaining role treatments (docs/17 row 109): a GM note reads as
-    // one step smaller than the body, and an aside is the smallest, muted,
-    // indented voice in the document.
-    gmNote: { fontSize: 10, color: '#3f3f46' },
-    aside: { fontSize: 9.5, italics: true, color: '#555555' },
-  };
-
   // ONE report per problem: a failure the loader recorded is pushed up front
   // (so an image that is no longer referenced is still reported) and the
   // renderer pushes it again at the site it printed a placeholder for. The
@@ -1611,8 +1896,12 @@ export function buildModulePdfDocument(input: ModulePdfInput): {
   return {
     definition: {
       content,
-      styles,
+      styles: measureStyles,
       defaultStyle: { font: 'Roboto', fontSize: 11, lineHeight: 1.35 },
+      // docs/19 §3's margins, from the ONE place that owns the page geometry —
+      // the main column, the gutter and the sidebar consume the content width
+      // they leave behind exactly.
+      pageMargins: [PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN, PAGE_MARGIN],
       info: documentInfo(module, compiledDay),
       footer: (currentPage): Content => ({
         text: `${module.title} · ${currentPage}`,

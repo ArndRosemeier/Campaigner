@@ -9,6 +9,21 @@ marked OPEN are not decided yet; everything else is binding intent for the slice
 that build it. Nothing here is implemented beyond what each section says already
 exists.**
 
+**BUILD STATE (kept honest landing by landing — `BUILT` means the definitions and
+the pins exist at HEAD, `spec only` means nothing implements it yet):**
+
+| § | state |
+|---|---|
+| §3 The page (main column + sidebar, flowing sections, typographic tiers) | **BUILT** — docs/17 row 148 |
+| §4 Two tiers, locality DERIVED from the first reference | **BUILT** — docs/17 row 148 (the `adjacent` pointer is a sentence in the sidebar, §5 step 3) |
+| §5 The overflow ladder (beside → continued → own page), never clip, never shorten | **BUILT** — docs/17 row 148 |
+| §9 "no silent fitting" (a promotion, continuation or omission is visible and diagnosable) | **BUILT** — docs/17 row 148 |
+| §6 The planner's toolkit (real content through the chat's retrieval seam) | spec only |
+| §7 Navigation (links everywhere, a TOC with page numbers, back-references from every artifact section) | spec only — the own-page pointer of §5 is the only navigation this slice adds |
+| §8 One press, every export plans | **BUILT** — docs/17 row 139 |
+| §10.4 Print refinement / duplex spread pairing | OPEN, deferred (§11 step 6) |
+| §10.5 Geometry and detail type sizes are starting points | the BUILT values are listed in docs/17 row 148; they are tuned, not frozen |
+
 ## 0. The owner's intent, verbatim
 
 > "The pdf export is very basic, i was imagining something a lot more involved and
@@ -90,6 +105,21 @@ that exist, and an invalid plan is a loud, named failure (AGENTS rules 1–3).
   absorbs most of the fit problem — it is why the model does not need to know
   heights.
 
+**BUILT (docs/17 row 148).** The geometry above is what the definitions carry —
+`pdfPageModel` converts the millimetres ONCE (56.7 / 294.8 / 170.1 / 17 pt) and
+`lib/modulePdf` imports them instead of holding a width of its own, so the
+margins a page sets and the column widths it draws cannot drift apart. The detail
+tier reaches the sidebar as a pdfmake `fontSize` on the COLUMN, not field by
+field, so a stat box prints at 9.5 pt without knowing it. Sections flow: the
+`pageBreak` moved off every heading and onto the page node, which is why a
+section can now share a page with the one after it.
+**One deviation, recorded rather than hidden:** §2 says the renderer places by
+*measuring*; the builder is synchronous and definition-only (a two-pass render
+would put a clock and a layout pass into a deliberately deterministic export), so
+`estimateHeight` is arithmetic over the definition's own text — tuned
+deliberately WIDE, so the arithmetic errs toward promotion rather than toward
+overflow, and an unknown node contributes ZERO (it can never drop content).
+
 ## 4. Placement: two tiers, and locality is DERIVED (ratified)
 
 - **`beside`** — a companion (a short artifact body, a stat block, a note) that
@@ -109,6 +139,17 @@ they are referred to". Consequences the renderer enforces:
 - An artifact referenced nowhere either prints where the plan puts it or is not
   printed at all (OPEN, §10) — but it never silently disappears.
 
+**BUILT (docs/17 row 148), and the OPEN question above is now ANSWERED BY THE
+OWNER: such an artifact is DROPPED.** Recorded exactly, because it is a real
+choice and not a spec default: it is dropped from the printed document, it is NOT
+scattered to the back (§4 forbids that), and §9 binds the other direction — the
+document states the omission on its own page and the export's `problems` names
+the same site. Two limits belong with the answer: it applies to the PLANNED
+document only (the procedural outline has no plan record to attribute an omission
+to, so it still prints every row it scopes), and the plan's own validator already
+refuses a section naming a row the module neither owns nor mentions — so the case
+that can reach the renderer is an OWNED row the prose never names.
+
 ## 5. Overflow: never clip, never shorten
 
 Deterministic step-down, in this order, with every step VISIBLE in the document:
@@ -118,6 +159,15 @@ Deterministic step-down, in this order, with every step VISIBLE in the document:
 3. still oversized → promoted to its own page(s) directly after its referring text
    (§4), marked in the sidebar where the space ran out.
 
+**BUILT (docs/17 row 148), all three steps.** Step 2 arms the continuation
+BEFORE the page closes, because closing the page is what opens the next one — a
+companion that outgrows one sidebar opens the next page's sidebar with the
+"(continued)" head. Step 3 leaves the pointer sentence in the sidebar where the
+space ran out and prints the artifact full width on the page that follows. The
+ladder is a PURE function of `(kind, hasImage, height)`, so the same input always
+places the same way, and it is pinned both as that function and as the definition
+a real module produces.
+
 The owner's decision, recorded: **no model-authored summaries or condensation.**
 The content is verbatim by contract ("the app prints the module's own text and the
 named row's own text, verbatim"), and the reason is the owner's: a summarized stat
@@ -125,6 +175,10 @@ block is silently wrong. Revisit only if we must, as a deliberate decision — n
 as a renderer convenience.
 
 ## 6. The model's toolkit (owner's direction: tools, not constraints)
+
+**Spec only — nothing in this section is built.** Placement is currently derived
+by the RENDERER from the module's own text (§4), which is why the planner's
+toolkit is an improvement rather than a blocker for §3–§5.
 
 - **Today:** one call, no tools, one-line artifact excerpts (§1).
 - **v2:** the planner reads what it needs — the module's own text (all of it, not a
@@ -143,6 +197,11 @@ as a renderer convenience.
 - A TOC with page numbers (the `chapters` TOC exists).
 - Every artifact section states where it is referenced from.
 - The audience split stays: one plan, and a full / GM / player document from it.
+
+**Spec only** except the first bullet, which exists for wiki-links and has since
+row 105; the own-page pointer sentence of §5 is the only navigation this slice
+adds. A TOC with PAGE NUMBERS is not built (the `chapters` TOC prints without
+them), and an artifact section does not yet state where it is referenced from.
 
 ## 8. The export flow
 
@@ -170,18 +229,26 @@ as a renderer convenience.
 
 ## 10. OPEN — decisions the owner still holds
 
-1. **Does the sidebar repeat?** When a long section spans several pages, does a
-   companion print once (at first reference, later references link back), or does
-   the sidebar repeat it on each page? Proposal: once, with links.
-2. **May the plan omit?** Must the document be complete, or may the plan leave
-   something out entirely (relying on the audience split for GM/player)? Proposal:
-   complete, so nothing is lost by a layout decision.
-3. **An artifact referenced nowhere:** printed where the plan puts it, or dropped?
-4. **Print refinement:** if the document is ever printed and bound, do we add
-   duplex spread pairing (left page text, right page its detail) on top of the
-   page model? Only after the screen version works.
+**The owner answered 1–4 while the page model landed (docs/17 row 148); the
+answers are HIS, and where an answer differs from the proposal below it is his
+call, not a spec default.** No question in this section is still open.
+
+1. **Does the sidebar repeat?** — **ONCE, with a link back.** (His answer matches
+   the proposal. The link back is the §5 pointer sentence.)
+2. **May the plan omit?** — **NO: the document is COMPLETE.** Nothing the plan
+   places is dropped for space; the audience split remains the only thing that
+   removes material from a document. Proposal: complete.
+3. **An artifact referenced nowhere:** — **DROPPED, not printed where the plan
+   puts it** — a DEPARTURE from the proposal ("prints where the plan puts it or
+   is not printed at all"), and the reason the §4 BUILT note above spells out its
+   two limits. §9's rule is what keeps the answer safe: an omission is visible on
+   the page and diagnosable in the export's `problems`, never silent.
+4. **Print refinement (duplex spread pairing):** — **DEFERRED.** Not implemented,
+   not attempted here (§11 step 6). The page model is page-level by design so
+   that pairing can be added on top later without rebuilding the paginator.
 5. Geometry (§3) and detail type sizes are starting points to be tuned against real
-   modules, not fixed values.
+   modules, not fixed values. — **Still true, and the values in use are recorded
+   in docs/17 row 148** so a tuning pass has one place to change them.
 
 ## 11. Build order (each slice: pins, an injection proof, docs — as always)
 
@@ -189,8 +256,11 @@ as a renderer convenience.
    a record.
 2. **The planner's toolkit:** real content through the chat's retrieval seam, so
    placement judgement has something to judge.
-3. **The page model:** flowing sections, main column + sidebar, detail tiers.
-4. **Adjacency and overflow:** own-page insertion after the first reference, the
-   step-down ladder, continuation markers.
+3. ~~**The page model:** flowing sections, main column + sidebar, detail tiers.~~
+   **DONE** (docs/17 row 148).
+4. ~~**Adjacency and overflow:** own-page insertion after the first reference, the
+   step-down ladder, continuation markers.~~ **DONE** (docs/17 row 148 — it
+   landed with 3, because a placement rule with no paginator has nowhere to put
+   its answer).
 5. **Navigation:** back-references from artifact sections, links everywhere.
 6. **Print refinement** (OPEN, §10).

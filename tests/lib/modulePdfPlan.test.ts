@@ -53,6 +53,22 @@ const COVER_MARKER = 'data:image/png;base64,COVERmarkerCOVERmarker';
 const ONE_PIXEL_PNG =
   'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mP4z8AAAAMBAQD3A0FDAAAAAElFTkSuQmCC';
 
+/**
+ * The top-level PAGE node (docs/19 §3: one `columns` node per page, or a
+ * full-width `stack` for a page with no companion) whose serialized content
+ * names `needle`. Since row 148 a section's break belongs to the page and not
+ * to the heading, so a pin about page breaks has to read the page.
+ */
+function pageContaining(
+  definition: { content: unknown },
+  needle: string,
+): Record<string, unknown> {
+  for (const node of definition.content as unknown[]) {
+    if (JSON.stringify(node).includes(needle)) return node as Record<string, unknown>;
+  }
+  throw new Error(`no page node carries ${needle}`);
+}
+
 function fixedCodec(): PdfImageCodec {
   return () => Promise.resolve({ dataUrl: ONE_PIXEL_PNG, width: 1, height: 1 });
 }
@@ -413,24 +429,34 @@ describe('the renderer executes the plan', () => {
 
   it('treats an aside as an insert, never a chapter (no page break, no ToC entry)', async () => {
     const seeded = await seed();
-    const text = textOf(
-      buildModuleDefinition({
-        module: withPlan(seeded, planFor(seeded)),
-        artifacts: seeded.artifacts,
-        images: imagesFor(seeded),
-      }),
-    );
+    const definition = buildModuleDefinition({
+      module: withPlan(seeded, planFor(seeded)),
+      artifacts: seeded.artifacts,
+      images: imagesFor(seeded),
+    });
+    const text = textOf(definition);
 
     // The aside's node is addressed by its own destination and carries neither
     // a page break nor a ToC entry (the owner's "genuinely parenthetical").
-    const asideIndex = at(text, '"text":"The Bell, Quietly"');
-    const asideNode = text.slice(asideIndex - 60, asideIndex + 120);
+    // The window is the NODE ITSELF, extracted by its own shape: docs/17 row
+    // 148 moved the page break off the heading and onto the PAGE (docs/19 §3 —
+    // sections flow, a break inside a page's column stack would tear the two
+    // columns apart), so the old fixed 60-character reach backwards no longer
+    // measures the aside at all — it measures the previous page's break.
+    const asideNode = /\{"text":"The Bell, Quietly"[^}]*\}/.exec(text)?.[0] ?? '';
     expect(asideNode).toContain('node-plan-5');
     expect(asideNode).not.toContain('pageBreak');
     expect(asideNode).not.toContain('tocItem');
-    // A chapter DOES carry both (non-vacuity for the negative above).
-    expect(at(text, '"id":"node-plan-1"')).toBeGreaterThan(0);
-    expect(text).toContain('"id":"node-plan-1","tocItem":"chapters","pageBreak":"before"');
+    // A chapter-start section still OPENS a page (non-vacuity for the negative
+    // above) — the ToC entry is on the heading, the break is on the page node
+    // that holds it.
+    expect(text).toContain('"id":"node-plan-1","tocItem":"chapters"}');
+    expect(pageContaining(definition, '"id":"node-plan-1"')).toMatchObject({
+      pageBreak: 'before',
+    });
+    expect(pageContaining(definition, '"text":"The Bell, Quietly"')).not.toBe(
+      pageContaining(definition, '"id":"node-plan-1"'),
+    );
   });
 
   it('prints exactly the images the plan anchored — and no others', async () => {
@@ -444,8 +470,12 @@ describe('the renderer executes the plan', () => {
     );
     expect(withAnchors).toContain(MAP_MARKER);
     expect(withAnchors).toContain(COVER_MARKER);
-    // The map is a PLATE: full content width, tall fit.
-    expect(withAnchors).toContain('"fit":[515,660]');
+    // The map is a PLATE: full content width, tall fit. The width is the page's
+    // own content box — A4 minus docs/19 §3's 20 mm margins, owned by
+    // `lib/pdfPageModel` so the plate and the margins cannot drift apart.
+    // UPDATED by docs/17 row 148: this was `515` while the page kept pdfmake's
+    // default 40 pt margins; the spec's 20 mm margins make it 481.9.
+    expect(withAnchors).toContain('"fit":[481.9,660]');
     // The cover art is inline art, not a plate.
     expect(withAnchors).toContain('"fit":[450,320]');
 
@@ -759,8 +789,13 @@ describe('determinism: the same (module, plan) renders the same book', () => {
     const first = JSON.stringify(buildModuleDefinition(input));
     const second = JSON.stringify(buildModuleDefinition({ ...input }));
     expect(second).toBe(first);
-    // MEASURED: the planned definition of this fixture is this many characters.
-    expect(first.length).toBe(6359);
+    // MEASURED: the planned definition of this fixture is this many
+    // characters. UPDATED by docs/17 row 148 (6359 → 6973): the layout wraps
+    // the sections in page nodes (a `columns` per page, a `stack` for a page
+    // with no companion), moves each artifact's mechanics into a sidebar column
+    // and adds the own-page pointers — so the definition is bigger and the
+    // BYTE-IDENTITY above is what this pin is actually about.
+    expect(first.length).toBe(6973);
   });
 
   it('produces byte-identical PDF BYTES twice (measured size + first-difference)', async () => {
@@ -784,7 +819,11 @@ describe('determinism: the same (module, plan) renders the same book', () => {
         break;
       }
     }
-    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 51271 });
+    // UPDATED by docs/17 row 148 (51271 → 51183): the pagination changes how
+    // much of the page each item occupies, so the compressed bytes move a
+    // little; `firstDiff: -1` — no differing byte at all — is unchanged, and is
+    // what this pin exists for.
+    expect({ firstDiff, size: a.length }).toEqual({ firstDiff: -1, size: 51183 });
     expect(first.problems).toEqual(second.problems);
   });
 

@@ -751,7 +751,11 @@ describe('the encounter map plate (owner: maps belong in the PDF, at the right p
 
     expect(text).toContain(ONE_PIXEL_PNG.slice(0, 40));
     // The plate is sized for print (content width × the plate's max height).
-    expect(text).toContain('"fit":[515,660]');
+    // UPDATED by docs/17 row 148: the content width is docs/19 §3's own
+    // geometry (A4 minus 20 mm margins) and is owned by `lib/pdfPageModel`, so
+    // it was 515 while the page kept pdfmake's default 40 pt margins and is
+    // 481.9 under the spec's page.
+    expect(text).toContain('"fit":[481.9,660]');
     // It sits at the ENCOUNTER (its owner wanted the right place), not on the
     // cover or in an appendix: the image node's position follows the
     // encounter's name in the document text.
