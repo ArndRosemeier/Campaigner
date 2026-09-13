@@ -1,6 +1,7 @@
 import type { Id } from '@/domain';
 import type { EditorView } from '@codemirror/view';
 import {
+  NO_PARTS_MESSAGE,
   chatProseSoFar,
   composeFailureReport,
   sendCanvasChatMessage,
@@ -64,7 +65,8 @@ export interface ChatTurnOptions {
   /** Per-MODULE chat key (canvasChatKey) — one conversation per module. */
   key: string;
   /** Pre-flight: a module without planned parts must not send an empty
-   * context ("no parts to chat about — generate the module first"). */
+   * context (`llm/canvasChat.NO_PARTS_MESSAGE` — the ONE sentence, declared
+   * beside the engine guard that raises it). */
   hasPlannedParts: boolean;
   /** The live canvas editor view of the WHOLE module (the doc string is
    * the truth for every part). */
@@ -75,8 +77,6 @@ export interface ChatTurnOptions {
    * reach this canvas generation (canvasBusy's abort registry). */
   turn: AbortController;
 }
-
-export const NO_PARTS_MESSAGE = 'no parts to chat about — generate the module first';
 
 function historyFor(key: string): { role: 'user' | 'assistant'; text: string }[] {
   return useCanvasChatStore

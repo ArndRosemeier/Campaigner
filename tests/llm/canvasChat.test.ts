@@ -1,5 +1,8 @@
 import 'fake-indexeddb/auto';
 
+import { readFileSync, readdirSync } from 'node:fs';
+import { join, relative } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -765,7 +768,13 @@ describe('sendCanvasChatMessage (engine)', () => {
     const module = await (await import('@/db/moduleRepo')).getModule(world.moduleId);
     if (module === undefined) throw new Error('seed missing');
     await saveModule({ ...module, spine: null, parts: [] });
-    await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(/no parts to chat about/);
+    // THE FULL SENTENCE, anchored (docs/17 row 150): this pin used to be the
+    // PREFIX regex `/no parts to chat about/`, so rewording the tail of a
+    // user-visible refusal could not fail anything. The sentence is now
+    // declared ONCE (`llm/canvasChat.NO_PARTS_MESSAGE`) and pinned verbatim.
+    await expect(sendCanvasChatMessage(baseInput())).rejects.toThrow(
+      /^no parts to chat about — generate the module first$/,
+    );
     expect(chatMock).not.toHaveBeenCalled();
   });
 
@@ -828,5 +837,62 @@ describe('sendCanvasChatMessage (engine)', () => {
     controller.abort();
     await expect(sendCanvasChatMessage(baseInput({ turn: controller }))).rejects.toThrow(/abort/i);
     expect(chatMock).not.toHaveBeenCalled();
+  });
+});
+
+// --- The ONE "no parts to chat about" sentence (docs/17 row 150) -------------
+
+/**
+ * "a rule enforced at three call sites is a bug waiting at the fourth"
+ * (AGENTS rule 4). `'no parts to chat about — generate the module first'` was
+ * spelled THREE times: the exported `chatController.NO_PARTS_MESSAGE`, an
+ * inline literal in `snapshotChat.ts`, and a third inline literal in this
+ * module's own pre-flight. Only the two inline copies were behaviourally
+ * identical by luck, and the only pin was a PREFIX regex — so the tail of a
+ * user-visible refusal could be reworded with every test still green.
+ *
+ * The sentence now lives at `llm/canvasChat.NO_PARTS_MESSAGE` (beside the
+ * engine guard that raises it — a cycle-free home: the two turn controllers
+ * already import from this module). The behaviour above pins its bytes; the
+ * scan below is the "exactly ONE declarer" half.
+ *
+ * WHAT A SOURCE SCAN CANNOT PROVE: it sees a literal, not a meaning. A fourth
+ * call site that builds the same sentence from fragments, or a second one
+ * written in another language, would slip through. It is a GUARD against the
+ * cheap re-copy, not a proof of uniqueness.
+ */
+describe('the "no parts to chat about" sentence is declared EXACTLY once (SOURCE SCAN)', () => {
+  const SENTENCE = 'no parts to chat about — generate the module first';
+
+  function srcSources(dir = join(process.cwd(), 'src')): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) return srcSources(full);
+      return /\.tsx?$/.test(entry.name) ? [full] : [];
+    });
+  }
+
+  it('carries the literal in ONE file under src/, and that file is the seam', () => {
+    const all = srcSources();
+    // Non-vacuity: a walk that saw nothing would make the count meaningless.
+    expect(all.length).toBeGreaterThan(200);
+    const carriers = all.filter((file) => readFileSync(file, 'utf8').includes(SENTENCE));
+    expect(carriers.map((file) => relative(process.cwd(), file))).toEqual([
+      join('src', 'llm', 'canvasChat.ts'),
+    ]);
+  });
+
+  it('leaves the TWO former copies free of it (chatController, snapshotChat)', () => {
+    for (const file of [
+      join(process.cwd(), 'src', 'features', 'modules', 'canvas', 'chatController.ts'),
+      join(process.cwd(), 'src', 'features', 'modules', 'canvas', 'snapshotChat.ts'),
+    ]) {
+      const text = readFileSync(file, 'utf8');
+      expect(text.includes(SENTENCE), `${relative(process.cwd(), file)} carries its own copy`).toBe(
+        false,
+      );
+      // Both surfaces READ the one constant instead.
+      expect(text).toContain('NO_PARTS_MESSAGE');
+    }
   });
 });

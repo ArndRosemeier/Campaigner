@@ -186,6 +186,20 @@ export const MAX_DETAILS_BLOCK_CHARS = 12000;
 /** Window (chars) of current-text context around a failure point. */
 export const FAILURE_EXCERPT_RADIUS = 300;
 
+/**
+ * THE sentence for "this module has no planned parts to chat about" — the ONE
+ * source (AGENTS rule 4). It is raised in three places and they must read
+ * identically: this file's own pre-flight (`sendCanvasChatMessage`, which the
+ * turn controllers reach through the engine) and the two turn controllers'
+ * pre-flight guards (`chatController.runChatTurn` and
+ * `snapshotChat.runSnapshotChatTurn`, which refuse BEFORE a message lands).
+ * It used to be three separate literals — one exported constant plus two
+ * inline copies — so a reword could leave two surfaces lying about the same
+ * condition; `tests/llm/canvasChat.test.ts` pins the sentence's full text AND
+ * that it is declared exactly once under `src/`.
+ */
+export const NO_PARTS_MESSAGE = 'no parts to chat about — generate the module first';
+
 /** A malformed, unbalanced or over-cap reply — the whole reply fails. */
 export class CanvasChatParseError extends Error {
   /** The offending reply tail (for the error card + report-to-LLM turn). */
@@ -2259,7 +2273,7 @@ export async function sendCanvasChatMessage(input: CanvasChatTurnInput): Promise
       throw new ModuleBusyError(input.moduleId);
     }
     if (module.spine === null || module.spine.partPlan.length === 0) {
-      throw new Error('no parts to chat about — generate the module first');
+      throw new Error(NO_PARTS_MESSAGE);
     }
     const settings = await getSettings();
     const grounding = await loadChatGrounding(module);

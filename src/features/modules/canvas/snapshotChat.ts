@@ -1,6 +1,7 @@
 import type { Id } from '@/domain';
 import { splitPartsDocument, type ModulePartsSection } from '@/domain/modulePartsDocument';
 import {
+  NO_PARTS_MESSAGE,
   chatProseSoFar,
   composeFailureReport,
   resolveCanvasEditAcrossParts,
@@ -322,7 +323,7 @@ export async function runSnapshotChatTurn(
     throw new Error('the chat instruction is empty');
   }
   if (!options.hasPlannedParts) {
-    throw new Error('no parts to chat about — generate the module first');
+    throw new Error(NO_PARTS_MESSAGE);
   }
   const store = useCanvasChatStore.getState();
   const userMessage: CanvasChatMessage = {
