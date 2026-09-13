@@ -30,6 +30,7 @@ import { saveModulePartText } from '@/features/modules/partText';
 import { moduleGenEvents, ModuleBusyError, runParts } from '@/llm/moduleGen';
 import { stopModuleGeneration } from '@/llm/moduleGenReconcile';
 import { toastError, toastSuccess } from '@/lib/toast';
+import { registerPageFlush } from '@/lib/pageFlush';
 import { useArtifacts, useCampaign, useGlobalArtifacts } from '@/features/campaign/hooks';
 import { useModule, useModules } from '@/features/modules/hooks';
 import {
@@ -64,6 +65,13 @@ import { useBoardStore, type PartCardSlice } from '@/features/modules/board/boar
  */
 
 const BOARD_PERSIST_DEBOUNCE_MS = 600;
+
+/**
+ * The layout debounce, exported because the tests that pin the page-hide flush
+ * cap their waits BELOW it: a wait longer than the window would pass on the
+ * timer alone and stop proving that a flush landed the write.
+ */
+export { BOARD_PERSIST_DEBOUNCE_MS };
 
 type BoardFlowNode = Node<Record<string, never>>;
 
@@ -352,17 +360,44 @@ export function BoardPage(): JSX.Element {
     }, BOARD_PERSIST_DEBOUNCE_MS);
   }, [persistLayout]);
 
-  // A pending debounced write flushes on unmount — a drag followed by an
-  // immediate navigation (or reload) must not silently drop the layout.
-  useEffect(() => {
-    return () => {
-      if (persistTimer.current !== null) {
-        clearTimeout(persistTimer.current);
-        persistTimer.current = null;
-        void persistLayout();
-      }
-    };
+  /**
+   * Lands a layout write that is still inside the debounce window, and does
+   * NOTHING otherwise: a timer that already fired has already written and set
+   * `persistTimer` to null, so the page cannot be re-written by a display
+   * event (docs/18 §2 `lib/pageFlush` — a pending-gated flush is what keeps
+   * `visibilitychange` from becoming a write loop). Taking the timer out of
+   * the queue BEFORE the write is what makes it idempotent, so `hidden`
+   * followed by `pagehide` performs ONE write. Fire-and-forget: a lifecycle
+   * handler cannot hold the page open, and `persistLayout` already reports its
+   * own failures ('Could not save the board layout').
+   */
+  const flushPendingLayout = useCallback((): void => {
+    if (persistTimer.current === null) return;
+    clearTimeout(persistTimer.current);
+    persistTimer.current = null;
+    void persistLayout();
   }, [persistLayout]);
+
+  /**
+   * THE two triggers that legitimately need that flush, in one effect because
+   * they are the same work and the same lifetime:
+   *
+   * 1. `registerPageFlush` — the page GOING AWAY (docs/17 row 111,
+   *    `lib/pageFlush`). This is the hole: closing, discarding or freezing a
+   *    tab never unmounts React, so a drag still inside the 600 ms window was
+   *    lost silently, and that is exactly what the app's one page-hide seam
+   *    exists for. The seam owns the ONE `pagehide` + ONE `visibilitychange`
+   *    listener; this page adds no second mechanism.
+   * 2. The cleanup — the in-app unmount, which already worked and must keep
+   *    working (a drag followed by an immediate navigation or reload).
+   */
+  useEffect(() => {
+    const unregister = registerPageFlush(flushPendingLayout);
+    return () => {
+      unregister();
+      flushPendingLayout();
+    };
+  }, [flushPendingLayout]);
 
   const onNodesChange = useCallback(
     (changes: NodeChange<BoardFlowNode>[]) => {

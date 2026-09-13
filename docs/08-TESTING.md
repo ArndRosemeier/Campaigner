@@ -623,7 +623,7 @@ printed on the cover, so tomorrow's build differs on purpose).
 | `hidden` followed by `pagehide` performs ONE write, and a page with nothing queued writes nothing at all (asserted with a row sentinel, so a write would be visible as changed data and not only as a call count) | `page-flush.test` | ✅ |
 | The seam itself: a registered flush runs on `pagehide`, stops running once unregistered; and a second flush through the writer's own entry point writes nothing (the debounce contract survives) | `page-flush.test` | ✅ |
 | The DRAFT writer flushes a typed draft on `pagehide` inside the 500 ms window, and writes NOTHING on a later `pagehide`/tab switch once the debounce landed (the pending gate; counted through the settings write seam) | `new-module-draft.test` | ✅ |
-| The module BOARD's layout write on page hide | **NOT covered, by instruction** — `features/modules/board/BoardPage.tsx` was occupied by another writer's uncommitted work and was left byte-identical to the base commit; its 600 ms debounce still flushes on unmount only (docs/17 row 111 (4b), docs/18 §2.3) | ❌ |
+| The module BOARD's layout write on page hide | **COVERED by docs/17 row 118** (this row 111 section's "NOT covered, by instruction" was true of row 111's tree, not of HEAD): `features/modules/board/BoardPage.tsx` registers a pending-gated `flushPendingLayout` through `lib/pageFlush`, pinned by `board-page-flush.test` — see §The page-hide seam's third and fourth writers below | ✅ (row 118) |
 | The cast count in the module-automation toast (row 107's gap) | **NOT covered, by instruction** — the fix was written, tested and injected on this branch and then dropped whole because `features/modules/post-generation.ts` was occupied by another writer's uncommitted work; the item is queued for a later slice and NO test of it remains here (docs/17 row 111 (4a)) | ❌ |
 
 **NON-VACUITY (injections, each restored byte-identically and verified with
@@ -653,11 +653,14 @@ wait below the writer's debounce (400 ms against 600 ms, 300 ms against 500 ms) 
 re-run, injection A reds 4 tests. Recorded in docs/18 §4 as a general rule.
 
 Two further injections — the cast toast's `parts` entry removed (2 tests red)
-and a fixed singular instead of the count (1 test red), plus the board's
-`registerPageFlush` removed (1 test red) — were measured on this branch BEFORE
-the scope change that dropped those two slices, and their code and tests are not
-in the commit. They are recorded here as the measurements they were, not as
-coverage that exists (docs/17 row 111 (4a)/(4b)).
+and a fixed singular instead of the count (1 test red) — were measured on this
+branch BEFORE the scope change that dropped that slice, and its code and tests
+are not in the commit. They are recorded here as the measurements they were,
+not as coverage that exists (docs/17 row 111 (4a)). The third measurement that
+paragraph used to carry — the board's `registerPageFlush` removed, 1 test red —
+was taken against the board's OLD unmount-only flush and its waited pin; it is
+superseded by `board-page-flush.test` and by the fresh injections recorded in
+§The page-hide seam's third and fourth writers below (docs/17 row 118).
 
 **UNPROVEN.** jsdom has no tab lifecycle: `pagehide`/`visibilitychange` are
 dispatched by hand, and no browser was asked to freeze, bfcache or discard a
@@ -667,8 +670,9 @@ debounce window and was issued", nothing more (docs/17 row 111 (a)/(b)). The
 tree's two header controls were asserted at the component/props level and by
 source scan, never in a real browser at a narrow pane width, so the header's
 layout is not measured (row 111 (c)). Item 2 has no test by design. The cast
-count and the board's layout write are untested here because they are not in
-this commit at all.
+count is untested here because it is not in this commit at all; the board's
+layout write was in the same position when this section was written and is
+covered now — see §The page-hide seam's third and fourth writers below.
 
 ### Runs and generations in the background (docs/17 row 110)
 
@@ -813,6 +817,89 @@ widened timeout decides any outcome.
 | **REGRESSION GUARD — the shared factory did not move its other consumers**: the three other `createJobQueue` queues, `dequeue`'s three callers, `cancelAll`'s only caller, and the two callers FOLDED onto the predicate | `features/entity-image-queue.test.ts` + `features/mob-portrait-queue.test.ts` + `features/cover-image-queue.test.ts` + `features/single-mob-portrait-queue.test.ts` (39), `features/stop-all-generations.test.ts` + `features/run-delete-running.test.tsx` + `features/progress-dock.test.tsx` + `lib/progress.test.ts` + `llm/runEngine.test.ts` (51), `llm/chainRunner.test.ts` (13), `features/entity-batch.integration.test.tsx` + `features/entity-batch-fixed-cast.test.ts` (4), `llm/moduleGen-cast.test.ts` + `features/change-artifact-instruction.test.ts` | ✅ all green, byte-unchanged except the three mock factories that had to expose the REAL predicate (a mock that re-implemented it would judge the fold against a fake) |
 | **REVERT-PROVEN, the ten injections that bite, each restored byte-identically (`git hash-object` before/after):** `ctx.withdraw` → no-op **REDs 3**; the counter decrement dropped **REDs 4** (including the PRE-EXISTING `cancelAll` dock-drain pin — the queue's withdrawal and the body's are one path); `isRunWithdrawn` → `false` **REDs 4**; its gone-row face → `run?.status === 'cancelled'` **REDs 2**; its cancelled face → `run === undefined` **REDs 1**; the cancel branch's `ctx.withdraw()` **REDs 2**; the delete branch's **REDs 2**; the row re-read **REDs 1**; the swallow-everything condition **REDs 3**; the enqueue-time clear **REDs 1** | as listed | ✅ 10 RED of 12 injections |
 | **UNPROVEN — stated, not implied (same row):** TWO lines are NOT reached by any pin and both injections come back GREEN — the `withdrawn`-set idempotence guard in `withdrawJob` (it protects the concurrent `cancelAll`-during-a-body's-own-unwinding race, which no pin forces) and `processJob`'s aborted-never-settles-as-work return (the encounter-map body always throws after `withdraw()`; it protects a body that RESOLVES after a dequeue, which no pin drives). Also unproven: the three FOLDS are behaviour-identical by construction for a defined row but have no pin of their own (injecting `false` at each folded line leaves `llm/chainRunner.test.ts` 13/13 and the two entity-batch suites 4/4 green — my pins reach the SAME predicate through the map queue); no live-provider or real-browser sighting was reproduced (every pin mocks `chat` at the protocol boundary and drives the queue in jsdom); a DELETED ENCOUNTER (not a deleted run) stays loud by design and was not measured; and no pin asserts the withdrawn run row's final state beyond `'cancelled'`/gone | `docs/17 row 117`; `docs/18 §4/§5` | stated |
+
+### The page-hide seam's third and fourth writers (docs/17 row 118, extending row 111)
+
+Row 111 built `lib/pageFlush` for the two writers that existed then and left the
+board open by instruction (row 111 (4b)). Row 118 folds the board's layout write
+onto that seam and, in the same sweep, the artifact editor's autosave — the last
+two debounced ROW writers in the app that could lose work when the page is taken
+away without unmounting.
+
+| Surface | Covered by | State |
+| --- | --- | --- |
+| A board DRAG whose 600 ms layout write is still inside the window LANDS on `pagehide` — with the `patchModule` call asserted SYNCHRONOUSLY in the same turn as `dispatchEvent`, the row asserted UNWRITTEN first, and the row then read back at the dragged position | `board-page-flush.test` | ✅ |
+| …and separately on the hidden `visibilitychange` the seam listens for | `board-page-flush.test` | ✅ |
+| A `visibilitychange` → VISIBLE is not a write: nothing is issued AND the queued drag still lands on a later `pagehide` (the gate, not just the silence) | `board-page-flush.test` | ✅ |
+| A board with NO pending layout write writes NOTHING on either signal (asserted with a row sentinel — `canvas` stays `null` — so a write is visible as changed data, not only as a call count) | `board-page-flush.test` | ✅ |
+| `hidden` then `pagehide` for one drag is ONE write (the pending timer leaves the queue before the write) | `board-page-flush.test` | ✅ |
+| The IN-APP unmount flush still lands the pending drag (the regression this change could have moved) | `board-page-flush.test` | ✅ |
+| A FAILING page-hide write still reaches the owner: `Could not save the board layout` | `board-page-flush.test` | ✅ |
+| The seam still keeps ONE registration list: the only files under `src/**` that add a `pagehide`/`visibilitychange` listener are `src/lib/pageFlush.ts` and `src/lib/pageLiveness.ts` (the suspend/resume CLOCK — an unrelated seam), and `BoardPage.tsx` names neither event; TWO writers (the board's drag and the chat thread's queued turn) each write exactly ONCE on ONE dispatch | `board-page-flush.test` — source scan + a behavioural two-writer pin | ✅ |
+| An artifact EDIT inside the 800 ms autosave window LANDS on `pagehide`, and separately on the hidden `visibilitychange`; nothing was written before the event; the row and its revision count are read back | `editor-page-flush.test` | ✅ |
+| The editor's autosave gate holds: with nothing pending, neither signal writes (no row write, no revision), asserted through the Dexie table the real save path writes | `editor-page-flush.test` | ✅ |
+| ONE save when both signals fire for one edit, and the editor's IN-APP unmount flush still lands the edit | `editor-page-flush.test` | ✅ |
+| An editor save that FAILS on the page-hide path still toasts `Autosave failed`, writes no row and fires no revision | `editor-page-flush.test` | ✅ |
+| `lib/pageFlush.ts` itself | **UNCHANGED** — byte-identical (`git hash-object` `1d1eef7424e22680db5e0d6b591adca90771ef78` before and after this slice), so the two existing registrations' pins (`page-flush.test`, `new-module-draft.test`) are re-run and green without a contract change | n/a |
+
+**NON-VACUITY (REVERT-PROVEN lines — every injection applied on the new tests,
+named by the pins it killed, then restored byte-identically and verified with
+`git hash-object` before/after; every hash matched).**
+
+| Injected line | Killed |
+| --- | --- |
+| `BoardPage`: the `registerPageFlush` call deleted (unmount flush left intact) | **6** of 9 `board-page-flush.test` — both page-hide pins, the visible-gate pin, the one-write pin, the failing-write pin and the two-writer pin |
+| `BoardPage`: the pending gate removed (`flushPendingLayout` always writes) | **3** — "writes nothing … when no layout write is pending" (called twice), "writes ONCE when both signals fire" (2 ≠ 1), the two-writer pin (3 ≠ 2) |
+| `BoardPage`: the timer dequeue removed (flush writes but leaves the timer queued — idempotence gone) | **4** — the one-write pin, the unmount pin (the timer then writes a second time), the failing-write pin, the two-writer pin |
+| `BoardPage`: the cleanup's `flushPendingLayout()` removed (the pre-existing unmount guarantee) | **1** — "still flushes the pending write on unmount" |
+| `BoardPage`: the `catch` around `patchModule` removed (no failure report) | **1** — "reports a failing write on the page-hide flush too" (plus an unhandled rejection, which is the point of the catch) |
+| `artifact-editor`: the `registerPageFlush` call deleted | **3** — both page-hide pins and the one-save pin |
+| `artifact-editor`: the cleanup's `flushPendingEdits()` removed | **1** — "still flushes the pending edit on unmount" |
+| `artifact-editor`: `saveDraft`'s `deepEqual(effective, lastSavedRef.current)` early return removed (the pending gate) | **2** — "writes nothing when no edit is pending" and "writes ONCE when both signals fire" |
+| `artifact-editor`: `toastError('Autosave failed', error)` removed | **1** — "reports a failing write on the page-hide flush too" |
+| FLAW-DETECTOR VERIFICATION (not a revert of shipped code): a SECOND `window.addEventListener('pagehide', …)` added to `BoardPage.tsx` — the exact shape AGENTS rule 4 forbids | **1** — the source-scan pin, reporting `['src/lib/pageFlush.ts', 'src/lib/pageLiveness.ts', 'src/features/modules/board/BoardPage.tsx']` |
+
+**TWO INJECTIONS CAME BACK GREEN, AND BOTH CHANGED THE PINS.** They are the
+reason this section exists rather than a claim of coverage.
+
+1. **The editor's page-hide pins passed with its `registerPageFlush` deleted
+   (6/6 green).** The waits were bounded by `waitFor(… AUTOSAVE_DELAY_MS + 1000)`,
+   so the 800 ms debounce landed the write inside the wait: the pins proved the
+   TIMER, not the flush — row 111's own lesson, one writer later. Fixed by
+   asserting the write at the EVENT: the editor's row writes are counted through
+   `db.artifacts.put`/`db.revisions.put` around the dispatch, after a
+   microtask-only drain that advances no timers — so a write that appears there
+   can only have come from the flush. Re-injected: **3 red**.
+2. **The editor pin for the failing write initially could not fail at all**,
+   because the instrument was wrong rather than the code: `vi.mock('@/db/artifactRepo')`
+   never reached the component (the `@/db` barrel's namespace re-export is a
+   separate frozen module object), and assigning over the barrel's property
+   throws `Cannot set property updateArtifact of [object Module] which has only
+   a getter`. The pin was green while exercising the REAL, unmocked writer.
+   Fixed by watching the Dexie table; re-injected: **1 red**. Recorded as a
+   general gotcha in docs/18 §4.
+3. **A third measurement limits the seam-model pin**: `vi.spyOn(document,
+   'addEventListener')` does NOT intercept the seam's own
+   `document.addEventListener('visibilitychange', …)` call — an instrumented
+   seam logged `isMock=undefined` while the spy DID record the document's other
+   listeners (React Flow's `keydown`/`selectionchange`), and the window spy DOES
+   see `pagehide`, so a listener-count pin would have failed on one event and
+   passed on the other for reasons that have nothing to do with the seam. The
+   model is pinned by the source scan (last row of the matrix above) plus the
+   two-writer behavioural pin instead; the count-based attempt was deleted rather
+   than left as a false witness.
+
+**UNPROVEN here too.** jsdom cannot freeze a page, throttle its timers, put a
+page in bfcache or discard a tab, so `pagehide`/`visibilitychange` are dispatched
+by hand and no real mobile Safari / Chrome tab-management run was performed:
+whether the transaction issued from a lifecycle handler COMMITS before teardown
+stays unmeasured (row 111 (a)/(b)) — the same limit the seam's other two
+registrations carry. The editor's page-hide flush sets `saveState` from a
+lifecycle event, a React state update that in the app happens outside `act`; the
+pins wrap the dispatch in `act` and cover nothing about the unwrapped path. The
+board pins assert the write was ISSUED and the row carries the drag — they do not
+re-measure `moduleRepo.patchModule`'s read-inside-the-transaction merge against a
+concurrent parts write.
 
 ### Remaining gaps
 

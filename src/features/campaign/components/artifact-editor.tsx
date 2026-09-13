@@ -76,10 +76,18 @@ import { useRevisions } from '@/features/campaign/hooks';
 import { deepEqual } from '@/lib/equal';
 import { formatDateTime } from '@/lib/format';
 import { toastError, toastSuccess } from '@/lib/toast';
+import { registerPageFlush } from '@/lib/pageFlush';
 import { cn } from '@/lib/utils';
 
 /** Autosave debounce (05-UI §Artifact editor). */
 const AUTOSAVE_DELAY_MS = 800;
+
+/**
+ * The autosave debounce, exported because the tests that pin the page-hide
+ * flush cap their waits against it: a wait longer than the window would pass
+ * on the timer alone and stop proving that a flush landed the write.
+ */
+export { AUTOSAVE_DELAY_MS };
 
 /**
  * The editable slice of an artifact, correlated with its kind so `data` stays
@@ -272,12 +280,39 @@ export function ArtifactEditor({
     }
   }, [artifact]);
 
-  // Flush pending edits when leaving the artifact.
-  useEffect(() => {
-    return () => {
-      void saveDraft();
-    };
+  /**
+   * THE page-hide flush (docs/17 row 111, `lib/pageFlush`). The unmount flush
+   * below covers a route change and nothing else: closing, discarding or
+   * freezing a tab never unmounts React, so an edit sitting inside the 800 ms
+   * autosave window was lost with the tab and — this file's own contract —
+   * with no revision to restore it from.
+   */
+  const flushPendingEdits = useCallback((): void => {
+    void saveDraft();
   }, [saveDraft]);
+
+  /**
+   * The SAME flush on the two triggers that need it, in one effect because
+   * they are the same work and the same lifetime:
+   *
+   * 1. `registerPageFlush` — the page going away. `saveDraft` IS the flush: it
+   *    is already PENDING-GATED (it returns early unless the draft differs from
+   *    `lastSavedRef`) and idempotent for the same reason (a successful write
+   *    moves `lastSavedRef` onto what it wrote), so a tab switch writes nothing
+   *    and fires no revision, while a failed write still reaches the owner
+   *    ('Autosave failed').
+   * 2. The cleanup — leaving the artifact (a route change), which already
+   *    worked and must keep working. It runs on re-registration too, on the
+   *    closure being replaced, so a new `saveDraft` identity never drops the
+   *    edits the old one captured.
+   */
+  useEffect(() => {
+    const unregister = registerPageFlush(flushPendingEdits);
+    return () => {
+      unregister();
+      flushPendingEdits();
+    };
+  }, [flushPendingEdits]);
 
   async function handleRestore(revision: number): Promise<void> {
     try {
