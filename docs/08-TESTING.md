@@ -499,6 +499,10 @@ test) · ❌ gap.
 | Converted reason sites keep their gate and gain the perceivable reason (`generate-everything`, the entity batch gate, encounter Repopulate/Regenerate everything) | `generate-everything.test`, `entity-classify-new.test`, `images-ui.test` | ✅ |
 | A reason is never stated in a `title` beside its wrapper (docs/17 rows 125/127): all SEVEN surfaces that restated it there state it ONLY through the device now, the scan's two-entry known list was DELETED in the same commit that folded the two sites it licensed, and any restated title in `src/**` reds it | `blocked-control-title-scan.test` (SCAN, 2 — strict, no allowance), `module-canvas.test` (the Save control), `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (the batch gate + classify), `generate-everything.test` (both held states), `editor-surfaces.test` + `change-artifact-ui.test` (Repopulate, both held states) | ✅ |
 | The DESCRIPTION a held control used to lose survives on the LIVE control: each of the five gated descriptions is asserted byte-identical while the control can act, and its ABSENCE is asserted while the control is held (gated on the FULL held expression, so no held state leaks one) | `canvas-module-actions.test` (Fix + Resume), `entity-classify-new.test` (classify), `generate-everything.test` (live + two held), `editor-surfaces.test` (stocked complex + single), `change-artifact-ui.test` (held by the other run) | ✅ |
+| **The canvas chat's applier and turn controller are ONE implementation each** (docs/17 row 150): a 310-case DIFFERENTIAL runs the editor view and the preview string over the same inputs and requires identical document text / `docChanged` / `lastApplied` / every outcome field, and a SOURCE SCAN holds both declarations to one file | `canvas-chat-apply-differential.test` (6, NEW), `canvas-chat-turn-parity.test` (10, NEW) | ✅ |
+| **A chat turn's WRITE PATH is pinned on BOTH surfaces**: the machine-write signature (`origin: 'model'` + `writerModel` = the `modelUsed` that served the reply) and EXACTLY ONE durable `moduleVersions` snapshot per turn, asserted by COUNT | `canvas-chat-turn-parity.test` (NEW) | ✅ |
+| **A failed chat turn returns the document its own refusal promises** (docs/17 row 150): the applied edits are still in it and `docChanged` says so, on the editor AND the preview surface, each with its own sentence | `canvas-chat-turn-parity.test` (NEW) | ✅ |
+| The `'no parts to chat about — generate the module first'` sentence is declared EXACTLY once under `src/` and pinned as the FULL anchored sentence (the pin used to be a prefix regex) | `llm/canvasChat.test` (60) | ✅ |
 | Self-evident blocks are pinned AS self-evident (no reason wrapper): a blank chat input, an already-`Reported` outcome, the Versions menu's clear-all beside its own empty-state paragraph | `blocked-reasons.test` | ✅ |
 | The SILENT-block sweep (docs/17 row 99): every control that was disabled with no reason stated anywhere now states one through the shared device, in the gate's own order, and each pin asserts the gate is UNCHANGED (`toBeDisabled()` / `aria-disabled` per the control's own form) together with the reason being present, associated, focusable and openable on hover | `blocked-reasons-writers-room.test` (8 + 3), `blocked-reasons-entity-sweep.test` (stub popover 3 + images 2 + export 1), `spine-checkpoint.test` (4), `module-board-rewrite.test` (1), `rules-page.test` (5), `rules/embedding-panel.test` (2), `bestiary-fetch-section.test` (1), `mob-portraits-section.test` (2), `dice-roller.test` (1) | ✅ |
 | Every one of those pins is REVERT-PROVEN, both directions: with the reason reverted to `null` the NAMED pin fails (31/31, one control at a time, files restored byte-identical by `md5`), with the reason replaced by a wrong sentence it fails on the exact text (4 injections), and for a SELF-EVIDENT pin the forbidden wrapper is injected at that control and the pin fails (11), while the controls carrying no wrapper at all are proven by relaxing their gate so the pin's held half is exercised (4) | the above files; the scripts are scratch, the proofs are the measured run log recorded in docs/17 row 99 | ✅ |
@@ -3062,6 +3066,84 @@ prove the new bytes are RIGHT for a document the fixtures do not contain (a real
 PF2e table without `<thead>`/`<tbody>`, for instance, still runs its rows
 together on one line, which the sample pin states as the measured `\s*`
 swallow).
+### The canvas chat's two copies become ONE applier and ONE turn controller (docs/17 row 150, docs/18 §2.3)
+
+`snapshotChat.ts` carried byte-identical copies of two neighbouring modules, measured
+at base `a07a5af`:
+
+| copy | size | divergence |
+|---|---|---|
+| `chatApply.ts`'s `applyChatCommandsToDocument` | **166 / 192 code lines verbatim (86%)**, three blocks of 45 normalized lines byte-identical | **0 divergences** — a 3000-case differential fuzz plus 5 hand-built cases found identical document text, outcome fields and error messages |
+| `chatController.ts`'s `runChatTurn` | **266 / 306 verbatim (87%)** | **DIVERGED** on the failure paths: the editor returned the LIVE document (edits included, `chatController.ts:357,378`), the preview returned the PRE-TURN document with `docChanged: false` (`snapshotChat.ts:539,559`) — contradicting its own refusal at `:448` ("the edits are still in the preview, switch to Edit and use Save to retry") |
+
+Zero divergence is why the apply pair was pure SIZE RISK: nothing fails when a copy is
+born, and nothing would fail the day one side is edited. The turn pair had already
+drifted, and a user-visible sentence (`'no parts to chat about — generate the module
+first'`) was spelled **three times** with only a prefix-regex pin.
+
+**The shape landed (three commits).** `chatApply.applyChatCommands({ commands, partPlan,
+handle })` is THE applier, over an injected `ChatDocumentHandle` (`read()` /
+`replaceRanges(ranges, insert)` = ONE user action per call). `editorChatHandle(view)`
+dispatches ONE CodeMirror transaction per command; `stringChatHandle(doc)` splices
+backwards from the end. `applyChatCommandsToDocument` and `applyChatCommandsToSnapshot`
+are handle + core and nothing else (the preview entry point is re-exported by
+`snapshotChat.ts`). The byte-identical `failedOutcome`/`appliedOutcome` builders and the
+twice-declared `MAX_CARD_SNIPPET = 280` moved in beside it. `chatTurn.runCanvasChatTurn`
+is THE turn (send → stream → apply → split-save → thread persist → every loud surface);
+`chatController.runChatTurn` and `snapshotChat.runSnapshotChatTurn` are wrappers passing
+a handle plus a `ChatTurnSurface`. The three-spelling sentence now lives once, at
+`llm/canvasChat.NO_PARTS_MESSAGE` (beside the engine guard that raises it — a cycle-free
+home, since both controllers already import that module).
+
+**The failure-path decision.** A failed (or aborted) turn returns `handle.read()` — the
+document that still carries whatever was applied — with `docChanged` reporting it, on
+BOTH surfaces. The refusal text is a promise about where the user's edits ARE, and the
+reading the owner is TOLD (the preview's own copy) is that they are still there; the
+pre-turn return discarded exactly what the copy promised. The page's consequence is its
+existing one for a document holding unsaved text (a split-save whose parts partly failed
+already returns `docChanged: true` and is mirrored), never a new silent discard.
+
+| fact pinned | where |
+|---|---|
+| **THE DIFFERENTIAL** (the obligation pin): 310 cases — 10 hand-built (one replace, replace-all across parts, per-command re-resolution, zero matches, multi-match without `all`, empty search, empty-part label-anchor fill, scaffolding echo, a replace that fakes the scaffolding so the NEXT split throws, empty command list) + 300 fuzz cases from a FIXED seed `mulberry32(0x5eed150)` — run through BOTH entry points and compared on document text, `docChanged`, `lastApplied` and every outcome field (ids excluded: they are a counter), including the PARTIAL document a mid-batch throw leaves behind and the thrown error itself | `tests/features/canvas-chat-apply-differential.test.tsx` (NEW) |
+| **THE COUNT** — `expect(HAND_BUILT).toHaveLength(10)`, `expect(FUZZ).toHaveLength(300)`, `expect(CASES).toHaveLength(310)` — so a generator that silently empties out cannot turn the differential into a no-op, plus a non-vacuity pin: the table really applies (>50), really fails (>20), really throws (>0) and really leaves PARTIAL edits on a throw (>0) | same file |
+| **The two PUBLIC entry points are held to their handles** (`applyChatCommandsToDocument` ≡ `editorChatHandle` + core; `applyChatCommandsToSnapshot` ≡ `stringChatHandle` + core) over the whole table | same file |
+| **THE SOURCE SCAN (applier)**: the declarations (`applyChatCommands`, both entry points, both outcome builders, `MAX_CARD_SNIPPET`, `ChatDocumentHandle`) exist in exactly ONE canvas file, `snapshotChat.ts` declares none of them, and `resolveCanvasEditAcrossParts` has exactly ONE caller outside `llm/canvasChat.ts` | same file |
+| **THE SOURCE SCAN (turn)**: `runCanvasChatTurn`, `historyFor`, `ensureFollowUpMessage`, `followUpRafRef`, the details-round-trip sentence and the module-gone sentence exist in exactly ONE canvas file; the two wrapper modules carry none of the flow and both call the controller | `tests/features/canvas-chat-turn-parity.test.ts` (NEW) |
+| **AUTHORSHIP ON BOTH CALLERS**: after a chat turn that applied edits in two parts, each part row reads `origin: 'model'` AND `writerModel` = the `modelUsed` that served the reply; non-vacuity asserted first (the seed's parts read `origin: null`, `writerModel: ''`), so the pin proves the turn wrote the signature | same file |
+| **VERSIONING ON BOTH CALLERS, BY COUNT**: `countModuleVersions(moduleId)` is 0 before and **exactly 1** after a turn whose one batch changed two parts — a "some snapshot exists" assertion would pass on the twice-snapshot defect; plus a turn with NO commands takes ZERO snapshots | same file |
+| **THE FAILURE PATH, BOTH SURFACES**: with the module row deleted inside the model call, the returned doc CONTAINS the applied edit, `docChanged` is true, `lastApplied` is null, and the card's error is that surface's own sentence ("…still in the editor, use Save to retry" / "…still in the preview, switch to Edit and use Save to retry") — the pre-fix preview returned the pre-turn doc with `docChanged: false`; a transport failure with NOTHING applied still returns the untouched document | same file |
+| **THE SENTENCE, FULL AND ANCHORED**: `rejects.toThrow(/^no parts to chat about — generate the module first$/)` (was the PREFIX regex `/no parts to chat about/`, which could not notice a reworded tail) | `tests/llm/canvasChat.test.ts` |
+| **THE SENTENCE, DECLARED ONCE**: a source walk over `src/**/*.ts(x)` (non-vacuity: >200 files) finds the literal in exactly ONE file, `src/llm/canvasChat.ts`, and asserts both former copies read `NO_PARTS_MESSAGE` instead | same file |
+
+**REVERT-PROVEN (each injection printed back, `git diff --stat` before the run, the file
+restored from an OUT-OF-TREE copy and `git hash-object` identical after).**
+
+| injection | file | result |
+|---|---|---|
+| **A — the DELETED preview copy re-introduced verbatim** as `src/features/modules/canvas/secondApplier.ts` (its outcome builders, `MAX_CARD_SNIPPET` and `applyChatCommandsToSnapshot` restored from commit `3e8481b`) | new file | **RED 2 / GREEN 4** — the two SOURCE-SCAN pins (declarations exactly once; one ladder caller) fail naming `secondApplier.ts`. The DIFFERENTIAL stays GREEN, and that is the honest expected result: a byte-identical copy nobody calls is invisible to behaviour, which is exactly why the source pin exists |
+| **B — two transactions per command** (`for (const range of ranges) view.dispatch(…)` instead of one `dispatch({ changes })` in `editorChatHandle`) | `src/features/modules/canvas/chatApply.ts` | **RED 2 / GREEN 19** — `canvas-chat.test.tsx`'s "an applied replace-all rides ONE transaction (one undo step)" (`undo(view)` leaves `Mist here.`) plus the multi-part `all="true"` pin (sequential offsets corrupt the second range) |
+| **C — `writerModel` dropped** from the turn's split-save call | `src/features/modules/canvas/chatTurn.ts` | **RED 2 / GREEN 8** — BOTH authorship pins, with `part 0 origin: expected 'human' to be 'model'`: the machine-write signature's absence stamps model text as the reader's, silently |
+| **D — the durable snapshot taken TWICE** in `saveWholeModuleDocument` | `src/features/modules/canvas/saveDoc.ts` | **RED 2 / GREEN 8** — both count pins with `expected 2 to be 1` (the editor surface AND the preview surface) |
+
+**REGRESSION GUARD.** No pre-existing assertion was changed, weakened or deleted by this
+landing. ONE pre-existing assertion was EDITED, deliberately and in the tightening
+direction: `tests/llm/canvasChat.test.ts`'s no-planned-parts pin went from
+`.rejects.toThrow(/no parts to chat about/)` (prefix) to
+`.rejects.toThrow(/^no parts to chat about — generate the module first$/)` (full,
+anchored). The eight affected suites (both turn controllers, the applier units, the
+preview units, the llm chat suite, `entity-classify-new`) run **146 tests green**, before
+and after the fold; `canvas-preview-default.test.tsx`'s 8 snapshot units (including the
+split-parity pin) and `canvas-chat.test.tsx`'s 5 raw-view units are untouched.
+
+**WHAT THE PINS CANNOT PROVE.** The fuzz has a FIXED seed and a bounded (300) case
+count, so it covers the shapes its generator can spell and cannot cover an unimagined
+input shape. A byte-identical second copy is invisible to EVERY behavioural pin here
+(injection A demonstrates it) — the source scan is a GUARD over the shapes and names
+that exist today, not a proof of uniqueness, and a copy assembled at runtime or written
+in another language slips past it. Nothing proves a future author will not re-copy the
+controller into a third file. The differential proves the two HANDLES cannot drift on
+the inputs it drives; it says nothing about whether a third applier would agree.
 
 ### Remaining gaps
 
